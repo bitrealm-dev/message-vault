@@ -10,7 +10,8 @@ export type BadgeVisibility = "on" | "off";
 export const DEFAULT_SHOW_MESSAGE_BADGE: BadgeVisibility = "off";
 export const DEFAULT_SHOW_GROUP_MESSAGE_BADGE: BadgeVisibility = "off";
 export const DEFAULT_SHOW_CONTACT_INITIALS: BadgeVisibility = "on";
-export const DEFAULT_SHOW_CONTACT_DATE_RANGE: BadgeVisibility = "on";
+/** Off by default: activity belongs in the conversations panel. */
+export const DEFAULT_SHOW_CONTACT_DATE_RANGE: BadgeVisibility = "off";
 
 export function isBadgeVisibility(
   v: string | null | undefined,

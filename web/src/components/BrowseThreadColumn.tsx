@@ -44,6 +44,9 @@ export function BrowseThreadColumn({
   loadingSelectionGroups,
   threadsLoadedFor,
   hasConversationChoices = false,
+  conversationsPanelCollapsed = false,
+  highlightTerms = [],
+  scrollToMessageId = null,
   onContactNameClick,
   onGroupParticipantClick,
   onClearContactSelection,
@@ -75,6 +78,9 @@ export function BrowseThreadColumn({
   loadingSelectionGroups: boolean;
   threadsLoadedFor: number | null;
   hasConversationChoices?: boolean;
+  conversationsPanelCollapsed?: boolean;
+  highlightTerms?: string[];
+  scrollToMessageId?: number | null;
   onContactNameClick: (anchorRect: DOMRect) => void;
   onGroupParticipantClick: (
     participant: GroupParticipant,
@@ -167,6 +173,9 @@ export function BrowseThreadColumn({
               vaultReadOnly ? undefined : onGroupParticipantClick
             }
             hasConversationChoices={hasConversationChoices}
+            conversationsPanelCollapsed={conversationsPanelCollapsed}
+            highlightTerms={highlightTerms}
+            scrollToMessageId={scrollToMessageId}
           />
         </div>
       ) : null}

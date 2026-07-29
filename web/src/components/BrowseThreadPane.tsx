@@ -48,6 +48,9 @@ export function BrowseThreadPane({
   groupThread,
   onParticipantClick,
   hasConversationChoices = false,
+  conversationsPanelCollapsed = false,
+  highlightTerms = [],
+  scrollToMessageId = null,
 }: {
   detail: ContactDetail | null;
   sources: string[];
@@ -69,6 +72,13 @@ export function BrowseThreadPane({
   ) => void;
   /** Direct and/or groups exist in column 3 — prompt the user to pick one. */
   hasConversationChoices?: boolean;
+  /**
+   * When the conversations panel (panel 3) is visible, hide the duplicated
+   * group identity header. Show it only when that panel is collapsed.
+   */
+  conversationsPanelCollapsed?: boolean;
+  highlightTerms?: string[];
+  scrollToMessageId?: number | null;
 }) {
   const { formatDateRange } = useDateTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -225,6 +235,15 @@ export function BrowseThreadPane({
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  useEffect(() => {
+    if (scrollToMessageId == null || loadingMessages) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    const el = root.querySelector(`#msg-${scrollToMessageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [scrollToMessageId, loadingMessages, visibleMessages]);
+
   const sourceOptions = [
     {
       id: null as string | null,
@@ -275,8 +294,9 @@ export function BrowseThreadPane({
     ? formatDateRange(groupThread.dateStart, groupThread.dateEnd)
     : null;
 
-  // DM name lives in Panel 4's top strip; only group threads keep in-pane identity.
+  // Group identity lives in panel 3 rows; only repeat it when that panel is collapsed.
   const showGroupIdentity =
+    conversationsPanelCollapsed &&
     !!groupThread &&
     (groupThread.participants.length > 0 || !!dateLabel);
   const hasMessages = messages.length > 0;
@@ -487,7 +507,10 @@ export function BrowseThreadPane({
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <MessageList messages={section.messages} />
+                  <MessageList
+                    messages={section.messages}
+                    highlightTerms={highlightTerms}
+                  />
                 </div>
               </div>
             ))}

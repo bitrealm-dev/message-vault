@@ -171,7 +171,7 @@ export function BrowseContactList({
         <PaneSearchField
           value={query}
           onChange={onQueryChange}
-          placeholder={`Search ${sectionLabel}`}
+          placeholder="Filter contacts"
         />
       </div>
       <div className="flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
@@ -349,8 +349,12 @@ export function BrowseContactList({
                           showGroupMessageBadge && c.groupMessageCount > 0;
                         const showCountBadge =
                           showMessageBadge && c.messageCount > 0;
+                        const rowLabels = (c.labels ?? []).filter(Boolean);
                         const hasBottomLine =
-                          !!dateLabel || showGroupIcon || showCountBadge;
+                          !!dateLabel ||
+                          showGroupIcon ||
+                          showCountBadge ||
+                          rowLabels.length > 0;
                         if (!showHandle && !hasBottomLine) return null;
                         return (
                           <>
@@ -359,7 +363,25 @@ export function BrowseContactList({
                                 {formattedHandle}
                               </span>
                             ) : null}
-                            {hasBottomLine ? (
+                            {rowLabels.length > 0 ? (
+                              <span className="mt-0.5 flex min-w-0 flex-wrap gap-1">
+                                {rowLabels.slice(0, 3).map((label) => (
+                                  <span
+                                    key={label}
+                                    className="max-w-[7rem] truncate rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-muted"
+                                    title={label}
+                                  >
+                                    {label}
+                                  </span>
+                                ))}
+                                {rowLabels.length > 3 ? (
+                                  <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                                    +{rowLabels.length - 3}
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : null}
+                            {dateLabel || showGroupIcon || showCountBadge ? (
                               <span className="mt-0.5 flex min-w-0 items-center justify-between gap-2">
                                 <span className="inline-flex shrink-0 items-center gap-1.5">
                                   {/* Reserve the icon slot whenever the setting is on so badges align across rows. */}

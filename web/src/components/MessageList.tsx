@@ -15,7 +15,13 @@ function DateSeparator({ label }: { label: string }) {
 }
 
 /** Renders messages with iMessage-style centered date separators on day changes. */
-export function MessageList({ messages }: { messages: MessageRow[] }) {
+export function MessageList({
+  messages,
+  highlightTerms = [],
+}: {
+  messages: MessageRow[];
+  highlightTerms?: string[];
+}) {
   const { formatDate } = useDateTimeFormat();
 
   return (
@@ -30,7 +36,7 @@ export function MessageList({ messages }: { messages: MessageRow[] }) {
             {showDate ? (
               <DateSeparator label={formatDate(m.timestamp)} />
             ) : null}
-            <MessageBubble message={m} />
+            <MessageBubble message={m} highlightTerms={highlightTerms} />
           </Fragment>
         );
       })}

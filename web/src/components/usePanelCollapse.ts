@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 
 const DEFAULT_GROUPS_MIN_PX = 180;
@@ -17,14 +23,17 @@ export function usePanelCollapse(
   groupsMinPx = DEFAULT_GROUPS_MIN_PX,
 ) {
   const prevListPxRef = useRef<number | null>(null);
+  const [groupsCollapsed, setGroupsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(storageKey) === "1";
+  });
 
   const persistCollapsed = useCallback(() => {
     const groups = groupsPanelRef.current;
     if (!groups) return;
-    window.localStorage.setItem(
-      storageKey,
-      groups.isCollapsed() ? "1" : "0",
-    );
+    const collapsed = groups.isCollapsed();
+    window.localStorage.setItem(storageKey, collapsed ? "1" : "0");
+    setGroupsCollapsed(collapsed);
   }, [groupsPanelRef, storageKey]);
 
   const collapseInsteadOfShrinkingList = useCallback(() => {
@@ -59,6 +68,7 @@ export function usePanelCollapse(
       ) {
         panel.collapse();
       }
+      setGroupsCollapsed(panel.isCollapsed());
       const list = listPanelRef.current;
       if (list) prevListPxRef.current = list.getSize().inPixels;
     };
@@ -86,5 +96,5 @@ export function usePanelCollapse(
     [collapseInsteadOfShrinkingList],
   );
 
-  return { onGroupsResize, onListResize };
+  return { onGroupsResize, onListResize, groupsCollapsed };
 }

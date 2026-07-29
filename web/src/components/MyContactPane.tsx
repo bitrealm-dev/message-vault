@@ -5,7 +5,6 @@ import type { VaultOwner } from "@/lib/vaultOwner";
 import { IconHoverTarget } from "./IconHoverLabel";
 import { ListHistoryMenu } from "./history";
 import { ChevronDownIcon, PeopleGroupIcon } from "./icons";
-import { PaneSearchField } from "./PaneSearchField";
 
 /** Contact-list chrome for vault owner — matches Panel 2; most controls inert. */
 export function MyContactPane({ owner }: { owner: VaultOwner }) {
@@ -24,11 +23,7 @@ export function MyContactPane({ owner }: { owner: VaultOwner }) {
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-sidebar">
       <div className="flex h-[45px] shrink-0 items-center border-b border-border px-3">
-        <PaneSearchField
-          value=""
-          placeholder="Search Group Messages"
-          disabled
-        />
+        <span className="text-[13px] font-semibold text-text">My contact</span>
       </div>
       <div className="flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
         <label className="flex min-w-0 items-center gap-2">

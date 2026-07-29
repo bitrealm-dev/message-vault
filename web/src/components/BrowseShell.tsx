@@ -23,7 +23,9 @@ import {
   useState,
 } from "react";
 import { useVaultReadOnly } from "./useVaultReadOnly";
+import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { SearchConversationHit } from "@/lib/search";
 import { seedContactEditDraft } from "./contactEdit";
 import {
   BrowseContactCtxMenu,
@@ -182,6 +184,7 @@ export function BrowseShell({
   const {
     onGroupsResize: onGroupsPanelResize,
     onListResize: onListPanelResize,
+    groupsCollapsed,
   } = usePanelCollapse(
     groupsPanelRef,
     listPanelRef,
@@ -207,7 +210,11 @@ export function BrowseShell({
   const [groupChatFilterYear, setGroupChatFilterYear] = useState<number | null>(
     null,
   );
-  const [groupChatQuery, setGroupChatQuery] = useState("");
+  const initialVaultQuery = searchParams.get("q") ?? "";
+  const vaultSearch = useVaultSearch(initialVaultQuery);
+  const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(
+    null,
+  );
   const [selectedGroupConversationId, setSelectedGroupConversationId] =
     useState<number | null>(null);
   const [selectionGroupChats, setSelectionGroupChats] = useState<
@@ -326,7 +333,6 @@ export function BrowseShell({
       allowAutoOpenThreadRef.current = true;
       setSelectedGroupConversationId(null);
       setGroupChatFilterYear(null);
-      setGroupChatQuery("");
       cancelContactFormRef.current();
       if (id === contactId) {
         // Re-focus: reload and let the threads effect apply Direct-only auto-open.
@@ -671,7 +677,7 @@ export function BrowseShell({
     useCollapsedGroupChatList({
       groupChats: panelGroupChats,
       filterYear: groupChatFilterYear,
-      query: groupChatQuery,
+      query: "",
       sortBy: groupChatSortBy,
       sortOrder: groupChatSortOrder,
     });
@@ -868,7 +874,6 @@ export function BrowseShell({
     setExcludeOverrides(new Map());
     selectionDirtyRef.current = false;
     cancelContactFormRef.current();
-    setGroupChatQuery("");
   }, [paneStorageKey, setSelectedIds, selectionDirtyRef]);
 
   const clearSelection = useCallback(() => {
@@ -901,7 +906,6 @@ export function BrowseShell({
   useEffect(() => {
     if (!hasSelection) return;
     participantForm.cancelContactForm();
-    setGroupChatQuery("");
   }, [hasSelection, participantForm.cancelContactForm]);
 
   const beginContactEdit = useCallback(
@@ -1031,7 +1035,6 @@ export function BrowseShell({
         setActiveThread(null);
         setContactId(null);
         setGroupChatFilterYear(null);
-        setGroupChatQuery("");
         setSelectedGroupConversationId(null);
         loadedContactIdRef.current = null;
         setThreadsLoadedFor(null);
@@ -1554,23 +1557,45 @@ export function BrowseShell({
           sortBy={groupChatSortBy}
           sortOrder={groupChatSortOrder}
           onSortChange={setGroupChatSort}
-          searchQuery={groupChatQuery}
-          onSearchQueryChange={setGroupChatQuery}
-          searchDisabled={!hasSelection && !contactId}
+          searchQuery={vaultSearch.draft}
+          onSearchQueryChange={vaultSearch.setDraft}
+          onSearchSubmit={(q) => {
+            vaultSearch.submit(q);
+            const params = new URLSearchParams(searchParams.toString());
+            if (q.trim()) params.set("q", q.trim());
+            else params.delete("q");
+            const qs = params.toString();
+            router.replace(qs ? `${pathname}?${qs}` : pathname, {
+              scroll: false,
+            });
+          }}
+          searchSources={sources}
+          searchLabels={allLabels}
+          resultsMode={vaultSearch.resultsMode}
+          searchHits={vaultSearch.hits}
+          searchTotal={vaultSearch.total}
+          searchLoading={vaultSearch.loading}
+          onSelectSearchHit={(hit: SearchConversationHit) => {
+            clearGroupSelection();
+            setSelectedGroupConversationId(hit.conversationId);
+            setScrollToMessageId(hit.topMatch?.id ?? null);
+            openThread(
+              [hit.conversationId],
+              hit.conversationType === "group"
+                ? `gfull-${hit.conversationId}`
+                : "dm",
+            );
+          }}
           emptyLabel={
             hasSelection
               ? loadingSelectionGroups
                 ? "Loading…"
-                : groupChatQuery.trim()
-                  ? "No matches"
-                  : selectedIds.size > 1
-                    ? "No shared group messages"
-                    : "No group messages"
+                : selectedIds.size > 1
+                  ? "No shared group messages"
+                  : "No group messages"
               : contactId && loadingThreads
                 ? "Loading…"
-                : groupChatQuery.trim()
-                  ? "No matches"
-                  : "No group messages"
+                : "No group messages"
           }
           directAvailable={
             !hasSelection &&
@@ -1631,6 +1656,9 @@ export function BrowseShell({
             (yearly.some((y) => y.conversationIds.length > 0) ||
               groupChats.length > 0)
           }
+          conversationsPanelCollapsed={groupsCollapsed}
+          highlightTerms={vaultSearch.highlightTerms}
+          scrollToMessageId={scrollToMessageId}
           onContactNameClick={onContactNameClick}
           onGroupParticipantClick={onGroupParticipantClick}
           onClearContactSelection={clearSelection}

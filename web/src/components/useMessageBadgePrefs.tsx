@@ -71,7 +71,7 @@ export function MessageBadgePrefsProvider({
   const [showMessageBadge, setShowMessageBadgeState] = useState(false);
   const [showGroupMessageBadge, setShowGroupMessageBadgeState] = useState(false);
   const [showContactInitials, setShowContactInitialsState] = useState(true);
-  const [showContactDateRange, setShowContactDateRangeState] = useState(true);
+  const [showContactDateRange, setShowContactDateRangeState] = useState(false);
 
   useEffect(() => {
     setShowMessageBadgeState(

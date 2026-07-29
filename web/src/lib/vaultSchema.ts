@@ -331,6 +331,186 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
+  ensureMessagesFts(db);
+}
+
+/** Marker for the one-time FTS5 backfill of existing messages. */
+export const MESSAGES_FTS_BACKFILL_META_KEY = "messages_fts_backfill_v1";
+
+/** Contentless FTS5 index over message body/subject plus attachment text. */
+function ensureMessagesFts(db: Database.Database): void {
+  if (!tableExists(db, "messages")) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      body,
+      subject,
+      attachment_text,
+      content='',
+      tokenize='unicode61 remove_diacritics 2'
+    );
+  `);
+
+  db.exec(`
+    DROP TRIGGER IF EXISTS messages_fts_ai;
+    DROP TRIGGER IF EXISTS messages_fts_ad;
+    DROP TRIGGER IF EXISTS messages_fts_au;
+    DROP TRIGGER IF EXISTS attachments_fts_ai;
+    DROP TRIGGER IF EXISTS attachments_fts_ad;
+    DROP TRIGGER IF EXISTS attachments_fts_au;
+
+    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+      VALUES (
+        new.id,
+        coalesce(new.body, ''),
+        coalesce(new.subject, ''),
+        (
+          SELECT coalesce(
+            group_concat(
+              trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
+              ' '
+            ),
+            ''
+          )
+          FROM attachments
+          WHERE message_id = new.id
+        )
+      );
+    END;
+
+    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+      VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
+    END;
+
+    CREATE TRIGGER messages_fts_au AFTER UPDATE OF body, subject ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+      VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
+      INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+      VALUES (
+        new.id,
+        coalesce(new.body, ''),
+        coalesce(new.subject, ''),
+        (
+          SELECT coalesce(
+            group_concat(
+              trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
+              ' '
+            ),
+            ''
+          )
+          FROM attachments
+          WHERE message_id = new.id
+        )
+      );
+    END;
+
+    CREATE TRIGGER attachments_fts_ai AFTER INSERT ON attachments BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+      SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+      FROM messages m WHERE m.id = new.message_id;
+      INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+      SELECT
+        m.id,
+        coalesce(m.body, ''),
+        coalesce(m.subject, ''),
+        (
+          SELECT coalesce(
+            group_concat(
+              trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+              ' '
+            ),
+            ''
+          )
+          FROM attachments a
+          WHERE a.message_id = m.id
+        )
+      FROM messages m WHERE m.id = new.message_id;
+    END;
+
+    CREATE TRIGGER attachments_fts_ad AFTER DELETE ON attachments BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+      SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+      FROM messages m WHERE m.id = old.message_id;
+      INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+      SELECT
+        m.id,
+        coalesce(m.body, ''),
+        coalesce(m.subject, ''),
+        (
+          SELECT coalesce(
+            group_concat(
+              trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+              ' '
+            ),
+            ''
+          )
+          FROM attachments a
+          WHERE a.message_id = m.id
+        )
+      FROM messages m WHERE m.id = old.message_id;
+    END;
+
+    CREATE TRIGGER attachments_fts_au AFTER UPDATE OF original_name, transcription ON attachments BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+      SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+      FROM messages m WHERE m.id = new.message_id;
+      INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+      SELECT
+        m.id,
+        coalesce(m.body, ''),
+        coalesce(m.subject, ''),
+        (
+          SELECT coalesce(
+            group_concat(
+              trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+              ' '
+            ),
+            ''
+          )
+          FROM attachments a
+          WHERE a.message_id = m.id
+        )
+      FROM messages m WHERE m.id = new.message_id;
+    END;
+  `);
+
+  backfillMessagesFts(db);
+}
+
+function backfillMessagesFts(db: Database.Database): void {
+  if (!tableExists(db, "schema_meta")) return;
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(MESSAGES_FTS_BACKFILL_META_KEY) as { n: number };
+  if (already.n > 0) return;
+
+  db.exec(`
+    INSERT INTO messages_fts(messages_fts) VALUES('delete-all');
+    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+    SELECT
+      m.id,
+      coalesce(m.body, ''),
+      coalesce(m.subject, ''),
+      coalesce((
+        SELECT group_concat(
+          trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+          ' '
+        )
+        FROM attachments a
+        WHERE a.message_id = m.id
+      ), '')
+    FROM messages m;
+  `);
+  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+    MESSAGES_FTS_BACKFILL_META_KEY,
+  );
 }
 
 /** Marker for the one-time migration that locks existing accounts by default. */

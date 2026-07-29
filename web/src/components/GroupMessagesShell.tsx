@@ -47,6 +47,8 @@ import { useSourceFilter } from "./SourceFilter";
 import { useThreadMessages } from "./useThreadMessages";
 import { useTrashActions } from "./useTrashActions";
 import { useVaultReadOnly } from "./useVaultReadOnly";
+import { useVaultSearch } from "./useVaultSearch";
+import type { SearchConversationHit } from "@/lib/search";
 
 export function GroupMessagesShell({
   owner,
@@ -72,7 +74,11 @@ export function GroupMessagesShell({
   );
   const [focusYear, setFocusYear] = useState<number | null>(initialYear);
   const [status, setStatus] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const initialVaultQuery = searchParams.get("q") ?? "";
+  const vaultSearch = useVaultSearch(initialVaultQuery);
+  const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(
+    null,
+  );
   const [filterYear, setFilterYear] = useState<number | null>(null);
   const [fullMessageIds, setFullMessageIds] = useState<number[] | null>(
     initialConversationId != null ? [initialConversationId] : null,
@@ -110,6 +116,7 @@ export function GroupMessagesShell({
   const {
     onGroupsResize: onGroupsPanelResize,
     onListResize: onListPanelResize,
+    groupsCollapsed,
   } = usePanelCollapse(
     groupsPanelRef,
     listPanelRef,
@@ -151,7 +158,7 @@ export function GroupMessagesShell({
     useCollapsedGroupChatList({
       groupChats: panelThreads,
       filterYear,
-      query,
+      query: "",
       sortBy: groupChatSortBy,
       sortOrder: groupChatSortOrder,
     });
@@ -468,11 +475,40 @@ export function GroupMessagesShell({
             sortBy={groupChatSortBy}
             sortOrder={groupChatSortOrder}
             onSortChange={setGroupChatSort}
-            searchQuery={query}
-            onSearchQueryChange={setQuery}
-            emptyLabel={
-              query.trim() ? "No matches" : "No group messages"
-            }
+            searchQuery={vaultSearch.draft}
+            onSearchQueryChange={vaultSearch.setDraft}
+            onSearchSubmit={(q) => {
+              vaultSearch.submit(q);
+              const params = new URLSearchParams(searchParams.toString());
+              if (q.trim()) params.set("q", q.trim());
+              else params.delete("q");
+              const qs = params.toString();
+              router.replace(qs ? `${pathname}?${qs}` : pathname, {
+                scroll: false,
+              });
+            }}
+            searchSources={sources}
+            searchLabels={[]}
+            resultsMode={vaultSearch.resultsMode}
+            searchHits={vaultSearch.hits}
+            searchTotal={vaultSearch.total}
+            searchLoading={vaultSearch.loading}
+            onSelectSearchHit={(hit: SearchConversationHit) => {
+              setSelectedIds(new Set());
+              setConversationId(hit.conversationId);
+              setScrollToMessageId(hit.topMatch?.id ?? null);
+              setFullMessageIds([hit.conversationId]);
+              setActiveThread(`gfull-${hit.conversationId}`);
+              const year = hit.dateEnd
+                ? Number(hit.dateEnd.slice(0, 4))
+                : null;
+              if (year != null && Number.isFinite(year)) {
+                setFocusYear(year);
+                pendingScrollYearRef.current = year;
+              }
+              syncUrl(hit.conversationId, year);
+            }}
+            emptyLabel="No group messages"
           />
         </Panel>
 
@@ -527,6 +563,9 @@ export function GroupMessagesShell({
                       ? undefined
                       : participantForm.onParticipantClick
                   }
+                  conversationsPanelCollapsed={groupsCollapsed}
+                  highlightTerms={vaultSearch.highlightTerms}
+                  scrollToMessageId={scrollToMessageId}
                 />
               </div>
             )}

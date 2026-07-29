@@ -661,6 +661,7 @@ export function TrashShell({
                   }
                   activeThread={activeThread}
                   groupThread={groupThreadMeta}
+                  conversationsPanelCollapsed
                 />
               ) : null}
             </div>
