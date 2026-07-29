@@ -189,10 +189,10 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
         opts.exclude_csv.display()
     );
 
-    println!("  sql:      ensuring schema + recreating staging tables…");
+    println!("  sql:      ensuring schema + resetting staging for account…");
     let _ = io::stdout().flush();
     schema::ensure_messages_schema(&conn)?;
-    schema::recreate_staging(&conn)?;
+    schema::reset_staging_for_account(&conn, opts.account_id)?;
     if opts.mode == ImportMode::Replace {
         println!(
             "  sql:      deleting existing messages for source '{}'…",
@@ -295,7 +295,7 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
         stats.tapbacks = promote_stats.tapbacks;
     }
 
-    schema::clear_staging(&conn)?;
+    schema::clear_staging_for_account(&conn, opts.account_id)?;
 
     let unknown =
         contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
@@ -321,6 +321,7 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
 }
 
 /// Write NDJSON bytes to a temp file and import (HTTP body / single stream).
+#[allow(dead_code)] // retained for callers/tests that pass an in-memory body
 pub fn import_ndjson_bytes(bytes: &[u8], opts: &ImportOptions<'_>) -> Result<ImportStats> {
     let dir = tempfile::tempdir().context("failed to create temp dir for NDJSON import")?;
     let path = dir.path().join("import.json");
@@ -336,7 +337,42 @@ fn prepare_attachments(
 ) -> Result<Vec<PreparedAttachment>> {
     let mut prepared = Vec::with_capacity(attachments.len());
     for att in attachments {
-        let stored = if let Some(rel) = att.path.as_deref() {
+        let stored = if let Some(sha) = att.sha256.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        {
+            if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
+                asset_stats.deduped += 1;
+                Some(StoredAsset {
+                    mime_type: att.mime_type.clone().or(found.mime_type),
+                    ..found
+                })
+            } else if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                // Digest claimed but not pre-uploaded: fall back to path under asset_root.
+                let source = export_dir.join(rel);
+                match assets::store_verified(
+                    &source,
+                    sha,
+                    assets_dir,
+                    att.mime_type.as_deref(),
+                ) {
+                    Ok((stored, already)) => {
+                        if already {
+                            asset_stats.deduped += 1;
+                        } else {
+                            asset_stats.copied += 1;
+                        }
+                        Some(stored)
+                    }
+                    Err(_) if !source.is_file() => {
+                        asset_stats.missing += 1;
+                        None
+                    }
+                    Err(e) => return Err(e),
+                }
+            } else {
+                asset_stats.missing += 1;
+                None
+            }
+        } else if let Some(rel) = att.path.as_deref() {
             assets::hash_and_store(
                 &export_dir.join(rel),
                 assets_dir,
@@ -384,11 +420,11 @@ impl<'conn> StagingInserts<'conn> {
             msg: tx.prepare(
                 r#"
                 INSERT OR IGNORE INTO staging_messages (
-                    conversation_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
+                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                     subject, body, is_announcement, is_reply, thread_originator_guid,
                     thread_originator_part, num_replies, sort_order
                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
                 )
                 "#,
             )?,
@@ -629,6 +665,7 @@ fn import_conversation_to_staging(
 
         let inserted = stmts.msg.execute(params![
             conversation_id,
+            &stmts.account_id,
             source,
             msg.guid,
             msg.timestamp,
@@ -911,12 +948,12 @@ fn promote_append(
         let inserted = tx.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                 subject, body, is_announcement, is_reply, thread_originator_guid,
                 thread_originator_part, num_replies, sort_order
             )
             SELECT
-                cm.prod_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
                 sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
             FROM staging_messages sm
@@ -957,16 +994,15 @@ fn promote_append(
         let max_before: i64 =
             tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
 
-        let new_filter = format!(
-            r#"
+        let new_filter = r#"
             (sm.guid IS NULL OR sm.guid = '')
             OR NOT EXISTS (
                 SELECT 1 FROM messages m
-                JOIN conversations c ON c.id = m.conversation_id
-                WHERE m.source = sm.source AND m.guid = sm.guid AND c.account_id = '{account_id}'
+                WHERE m.account_id = sm.account_id
+                  AND m.source = sm.source
+                  AND m.guid = sm.guid
             )
-            "#
-        );
+            "#;
 
         let staging_ids: Vec<i64> = tx
             .prepare(&format!(
@@ -974,32 +1010,32 @@ fn promote_append(
                 SELECT sm.id
                 FROM staging_messages sm
                 JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE {new_filter}
+                WHERE sm.account_id = ?1 AND ({new_filter})
                 ORDER BY sm.id
                 "#
             ))?
-            .query_map([], |row| row.get(0))?
+            .query_map(params![account_id], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
 
         let inserted = tx.execute(
             &format!(
                 r#"
                 INSERT INTO messages (
-                    conversation_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
+                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                     subject, body, is_announcement, is_reply, thread_originator_guid,
                     thread_originator_part, num_replies, sort_order
                 )
                 SELECT
-                    cm.prod_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                    cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
                     sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                     sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
                 FROM staging_messages sm
                 JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE {new_filter}
+                WHERE sm.account_id = ?1 AND ({new_filter})
                 ORDER BY sm.id
                 "#
             ),
-            [],
+            params![account_id],
         )?;
         stats.messages = inserted as u64;
         stats.messages_appended = inserted as u64;

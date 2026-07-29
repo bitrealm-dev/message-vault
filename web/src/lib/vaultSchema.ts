@@ -128,6 +128,7 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY,
       conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       source TEXT NOT NULL,
       guid TEXT,
       timestamp TEXT NOT NULL,
@@ -150,9 +151,6 @@ export function ensureVaultSchema(db: Database.Database): void {
       ON messages (conversation_id, timestamp);
     CREATE INDEX IF NOT EXISTS ix_messages_conversation_source_timestamp
       ON messages (conversation_id, source, timestamp);
-    CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_source_guid
-      ON messages (source, guid)
-      WHERE guid IS NOT NULL AND guid != '';
     CREATE INDEX IF NOT EXISTS ix_messages_content_key
       ON messages (content_key)
       WHERE content_key IS NOT NULL AND content_key != '';
@@ -216,6 +214,7 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS staging_messages (
       id INTEGER PRIMARY KEY,
       conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       source TEXT NOT NULL,
       guid TEXT,
       timestamp TEXT NOT NULL,
@@ -234,8 +233,10 @@ export function ensureVaultSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS ix_staging_messages_conversation_timestamp
       ON staging_messages (conversation_id, timestamp);
-    CREATE UNIQUE INDEX IF NOT EXISTS ix_staging_messages_source_guid
-      ON staging_messages (source, guid)
+    CREATE INDEX IF NOT EXISTS ix_staging_messages_account_id
+      ON staging_messages (account_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_staging_messages_account_source_guid
+      ON staging_messages (account_id, source, guid)
       WHERE guid IS NOT NULL AND guid != '';
 
     CREATE TABLE IF NOT EXISTS staging_attachments (
@@ -327,6 +328,45 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateLegacyAccountsEmailColumn(db);
   migrateVaultOwnerNameColumns(db);
   migrateContactGroupsToLabels(db);
+  migrateMessagesAccountGuid(db);
+}
+
+/** Denormalize account_id onto messages; scope GUID uniqueness per account. */
+function migrateMessagesAccountGuid(db: Database.Database): void {
+  if (!tableExists(db, "messages")) return;
+
+  if (!tableHasColumn(db, "messages", "account_id")) {
+    db.exec(
+      `ALTER TABLE messages ADD COLUMN account_id TEXT REFERENCES accounts(id);`,
+    );
+    db.exec(`
+      UPDATE messages
+      SET account_id = (
+        SELECT c.account_id FROM conversations c
+        WHERE c.id = messages.conversation_id
+      )
+      WHERE account_id IS NULL;
+    `);
+    const orphans = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM messages WHERE account_id IS NULL OR account_id = ''`,
+      )
+      .get() as { n: number };
+    if (orphans.n > 0) {
+      throw new Error(
+        `messages.account_id migration found ${orphans.n} orphan message(s)`,
+      );
+    }
+  }
+
+  // Fresh CREATE TABLE IF NOT EXISTS may still leave a legacy global GUID index.
+  db.exec(`
+    DROP INDEX IF EXISTS ix_messages_source_guid;
+    CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_account_source_guid
+      ON messages (account_id, source, guid)
+      WHERE guid IS NOT NULL AND guid != '';
+  `);
 }
 
 /** Rename legacy contact_groups* tables to contact_labels*. */

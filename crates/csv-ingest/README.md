@@ -2,7 +2,9 @@
 
 Convert per-conversation **CSV** into **vault NDJSON** using Python converters. Rust provides the CLI and a thin dispatcher that shells out to `python3`.
 
-**`vault-push`** (CLI) converts a local export directory and uploads **one conversation at a time** to a remote `message-vault-rs serve` (multipart NDJSON + attachments). **`vault-push-gui`** is a cross-platform egui front-end that only collects settings and runs the CLI.
+**Deprecated:** `vault-push` / `vault-push-gui` remain for CSV remote push. Prefer Message Exporters JSONL import (`message-vault-client` / GUI Vault tab).
+
+Legacy **`vault-push`** converts a local CSV export directory and uploads **one conversation at a time** to a remote `message-vault-rs serve` (multipart NDJSON + attachments). Legacy **`vault-push-gui`** wraps that CLI.
 
 Ingest contract: [`../message-json/docs/CSV_INGEST.md`](../message-json/docs/CSV_INGEST.md).
 

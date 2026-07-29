@@ -36,6 +36,7 @@ db = "data/vault.db"
 data_dir = "data"
 assets_dir = "assets"
 assets_converted_dir = "assets_converted"
+# Templates used to seed per-account files under data/<account_id>/ on first use.
 contacts_csv = "config/contacts.csv"
 exclude_csv = "config/exclude.csv"
 

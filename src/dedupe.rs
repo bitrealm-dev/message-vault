@@ -834,11 +834,11 @@ mod tests {
         conn.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender, subject, body, sort_order
-            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7)
+            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
             "#,
-            params![source, guid, local, utc, from_me, body, sort_order],
+            params![TEST_ACCOUNT_ID, source, guid, local, utc, from_me, body, sort_order],
         )
         .unwrap();
         conn.last_insert_rowid()

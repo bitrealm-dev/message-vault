@@ -288,8 +288,9 @@ fn main() -> Result<()> {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let contacts_csv = contacts_csv.unwrap_or_else(|| cfg.paths.contacts_csv.clone());
-            let exclude_csv = exclude_csv.unwrap_or_else(|| cfg.paths.exclude_csv.clone());
+            let (default_contacts, default_exclude) = cfg.paths.ensure_account_csvs(&account)?;
+            let contacts_csv = contacts_csv.unwrap_or(default_contacts);
+            let exclude_csv = exclude_csv.unwrap_or(default_exclude);
             let mode = import::ImportMode::parse(&mode)?;
 
             if all && source.is_some() {
@@ -418,9 +419,10 @@ fn main() -> Result<()> {
             account,
         } => {
             let cfg = Config::load(&config)?;
-            let db = db.unwrap_or(cfg.paths.db);
+            let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let contacts_csv = contacts_csv.unwrap_or(cfg.paths.contacts_csv);
+            let (default_contacts, _) = cfg.paths.ensure_account_csvs(&account)?;
+            let contacts_csv = contacts_csv.unwrap_or(default_contacts);
 
             if let Some(parent) = db.parent() {
                 if !parent.as_os_str().is_empty() {

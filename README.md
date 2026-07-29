@@ -10,10 +10,10 @@ Turning a phone backup into files the vault understands is done by a separate pr
 
 ```text
 1. Export     Take a backup from your phone or backup app
-              → spreadsheet files + photos (message-exporters)
+              → JSONL + photos (message-exporters Message tab)
 
 2. Import     Send that folder into your vault
-              → vault-push-gui (or a command on the same machine)
+              → Message Exporters Vault tab (or vault-push CLI)
 
 3. Browse     Open the website on your computer
               → read and search your history
@@ -72,40 +72,28 @@ Keep `serve` running while you import.
 
 On the machine that has your backup files, use [message-exporters](https://github.com/bitrealm-dev/message-exporters). Pick the converter that matches what you have (for example Apple Messages, SMS Backup & Restore, SMS Backup+, GO SMS Pro).
 
-You will get an **export folder** of CSV spreadsheets and media. Open a CSV in a spreadsheet app if you want to spot-check names and times before importing.
+Prefer a **JSONL** export folder (plus `attachments/`) from Message Exporters. CSV remains useful for spreadsheet review and local staging ingest.
 
 ### 3. Send the export into the vault
 
-The easiest way is the graphical importer.
+Prefer **Message Exporters** (Vault tab or `vault-push` CLI). Export with **JSONL** in the Message tab, then import that folder.
 
-On the machine that has the export folder (it can be a different computer from the vault, as long as it can reach the vault over the network):
-
-```bash
-cargo run -p csv-ingest --bin vault-push-gui --features gui --release
-```
-
-Then:
-
-1. Enter your vault URL (for example `http://127.0.0.1:8080` or your vault host’s address).
-2. Paste your **Import API token** from Settings.
-3. Click **Authenticate**.
-4. Choose the export folder and the source type (or let detection pick it).
-5. Click **Start import**.
-
-Progress appears in the log. You can close and re-run later; unfinished chats can resume with append mode.
-
-**Command-line option** (same idea, no window):
+In the [message-exporters](https://github.com/bitrealm-dev/message-exporters) repo:
 
 ```bash
-cargo run -p csv-ingest --bin vault-push --release -- \
-  --input ./path/to/your-export-folder \
-  --source-id go-sms-pro \
+# GUI
+cargo run -p message-exporters-gui --release
+# → Vault tab: URL, username, Vault key (Import API token), input directory
+
+# CLI
+cargo run -p message-vault-client --bin vault-push --features cli --release -- \
+  --input ./path/to/your-jsonl-export \
   --url http://vault-host:8080 \
-  --token "$VAULT_API_TOKEN" \
-  --mode append
+  --username yourusername \
+  --key "$VAULT_KEY"
 ```
 
-Omit `--account` when using your personal Import API token. If you use the server’s admin token from `config.toml`, pass `--account yourusername`.
+The old `csv-ingest` `vault-push` / `vault-push-gui` binaries remain buildable for CSV workflows but are **deprecated**.
 
 ### 4. Browse
 
@@ -165,7 +153,13 @@ Ingest contract (CSV columns → vault NDJSON): [`crates/message-json/docs/CSV_I
 
 ### HTTP import API
 
-`serve` reads `[server]` in config (`bind`, `api_token`). Prefer **vault-push** (multipart: conversation data + attachment files). Per-account tokens come from web Settings; `[server] api_token` is an admin secret for ops/smoke.
+`serve` reads `[server]` in config (`bind`, `api_token`). Prefer Message Exporters **vault-push** / Vault tab:
+
+1. `GET /v1/auth/check` — verify username + Import API token  
+2. `PUT /v1/assets/{sha256}?source=&account=` — upload each attachment by digest  
+3. `POST /v1/import?source=&account=&mode=` — vault NDJSON (`application/x-ndjson`), with attachment `sha256` fields resolving to uploaded assets  
+
+Per-account tokens come from web Settings; `[server] api_token` is an admin secret for ops/smoke. Legacy csv-ingest clients still use multipart `ndjson` + `file` parts.
 
 ```bash
 curl -sS "http://127.0.0.1:8080/v1/auth/check" \
@@ -177,7 +171,7 @@ Smokes: `./scripts/smoke-import-api.sh`, `./scripts/smoke-vault-push.sh`.
 ### Import modes and dedupe
 
 - **replace** — wipe that source’s messages, then reload.
-- **append** — keep existing rows; skip when `(source, guid)` already exists.
+- **append** — keep existing rows; skip when `(account_id, source, guid)` already exists.
 
 Cross-source soft-dedupe (exact / near-time matches): [docs/dedupe.md](docs/dedupe.md).  
 Database tables: [docs/schema.md](docs/schema.md).

@@ -126,6 +126,10 @@ pub struct AttachmentRecord {
     pub original_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Content hash of the attachment bytes (lowercase hex). When set, import may
+    /// resolve a previously uploaded blob under the account/source asset store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_sticker: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

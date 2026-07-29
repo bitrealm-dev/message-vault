@@ -11,7 +11,7 @@ use csv_ingest::detect_export_source;
 #[derive(Debug, Parser)]
 #[command(
     name = "vault-push",
-    about = "Convert staging CSV and push each conversation to message-vault-rs serve"
+    about = "DEPRECATED: Convert staging CSV and push to message-vault-rs (use Message Exporters vault-push)"
 )]
 struct Cli {
     /// Local export directory (or single .csv) from message-exporters
@@ -80,6 +80,11 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
+    eprintln!(
+        "warning: this csv-ingest vault-push is deprecated. \
+         Prefer Message Exporters JSONL vault-push \
+         (cargo run -p message-vault-client --bin vault-push --features cli)."
+    );
     match run() {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),

@@ -1,16 +1,40 @@
 import fs from "fs";
 import path from "path";
 import { parse } from "smol-toml";
+import { currentAccountId } from "./accountScope";
 import { phoneHandlesOnly } from "./handleKind";
-import { configTomlPath, repoRoot } from "./paths";
+import { accountDataDir, configTomlPath, repoRoot } from "./paths";
 
-function contactsCsvPath(): string {
-  const text = fs.readFileSync(configTomlPath(), "utf8");
-  const cfg = parse(text) as {
-    paths?: { contacts_csv?: string };
-  };
-  const rel = cfg.paths?.contacts_csv ?? "config/contacts.csv";
-  return path.isAbsolute(rel) ? rel : path.join(repoRoot(), rel);
+const DEFAULT_CONTACTS_CSV_HEADER =
+  "phones,first_name,last_name,exclude,label_1,label_2,label_3,label_4,label_5\n";
+
+/** Per-account contacts CSV under `data/<account_id>/contacts.csv`. */
+function contactsCsvPath(accountId = currentAccountId()): string {
+  const dest = path.join(accountDataDir(accountId), "contacts.csv");
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const legacy = legacyContactsCsvPath();
+    if (legacy && fs.existsSync(legacy)) {
+      fs.copyFileSync(legacy, dest);
+    } else {
+      fs.writeFileSync(dest, DEFAULT_CONTACTS_CSV_HEADER, "utf8");
+    }
+  }
+  return dest;
+}
+
+/** Legacy/template path from config (seed source only). */
+function legacyContactsCsvPath(): string | null {
+  try {
+    const text = fs.readFileSync(configTomlPath(), "utf8");
+    const cfg = parse(text) as {
+      paths?: { contacts_csv?: string };
+    };
+    const rel = cfg.paths?.contacts_csv ?? "config/contacts.csv";
+    return path.isAbsolute(rel) ? rel : path.join(repoRoot(), rel);
+  } catch {
+    return null;
+  }
 }
 
 function parseCsvLine(line: string): string[] {

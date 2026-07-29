@@ -63,10 +63,12 @@ pub struct PathsConfig {
     /// Directory *name* for converted media under each source (default `assets_converted`).
     #[serde(default = "default_assets_converted_dir_name")]
     pub assets_converted_dir: String,
-    /// Contacts CSV (default: `config/contacts.csv`).
+    /// Legacy/template contacts CSV. Runtime imports use
+    /// `data_dir/<account_id>/contacts.csv` (seeded from this path when missing).
     #[serde(default = "default_contacts_csv")]
     pub contacts_csv: PathBuf,
-    /// Handles to skip on import (default: `config/exclude.csv`).
+    /// Legacy/template exclude CSV. Runtime imports use
+    /// `data_dir/<account_id>/exclude.csv` (seeded from this path when missing).
     #[serde(default = "default_exclude_csv")]
     pub exclude_csv: PathBuf,
     /// Legacy single-export path; used only when `sources` is empty.
@@ -106,6 +108,55 @@ fn default_contacts_csv() -> PathBuf {
 
 fn default_exclude_csv() -> PathBuf {
     PathBuf::from("config/exclude.csv")
+}
+
+const DEFAULT_CONTACTS_CSV_HEADER: &str =
+    "phones,first_name,last_name,exclude,label_1,label_2,label_3,label_4,label_5\n";
+const DEFAULT_EXCLUDE_CSV_HEADER: &str = "phones,label\n";
+
+impl PathsConfig {
+    /// Per-account contacts CSV: `data_dir/<account_id>/contacts.csv`.
+    pub fn contacts_csv_for_account(&self, account_id: &str) -> PathBuf {
+        self.data_dir.join(account_id).join("contacts.csv")
+    }
+
+    /// Per-account exclude CSV: `data_dir/<account_id>/exclude.csv`.
+    pub fn exclude_csv_for_account(&self, account_id: &str) -> PathBuf {
+        self.data_dir.join(account_id).join("exclude.csv")
+    }
+
+    /// Ensure per-account CSVs exist. Seeds from legacy global `paths.contacts_csv` /
+    /// `paths.exclude_csv` when present; otherwise writes empty headers.
+    pub fn ensure_account_csvs(&self, account_id: &str) -> Result<(PathBuf, PathBuf)> {
+        let contacts = self.contacts_csv_for_account(account_id);
+        let exclude = self.exclude_csv_for_account(account_id);
+        if let Some(parent) = contacts.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create account data dir {}", parent.display()))?;
+        }
+        seed_csv_if_missing(&contacts, &self.contacts_csv, DEFAULT_CONTACTS_CSV_HEADER)?;
+        seed_csv_if_missing(&exclude, &self.exclude_csv, DEFAULT_EXCLUDE_CSV_HEADER)?;
+        Ok((contacts, exclude))
+    }
+}
+
+fn seed_csv_if_missing(dest: &Path, legacy: &Path, empty_header: &str) -> Result<()> {
+    if dest.is_file() {
+        return Ok(());
+    }
+    if legacy.is_file() {
+        fs::copy(legacy, dest).with_context(|| {
+            format!(
+                "seed {} from legacy {}",
+                dest.display(),
+                legacy.display()
+            )
+        })?;
+        return Ok(());
+    }
+    fs::write(dest, empty_header)
+        .with_context(|| format!("write empty CSV header {}", dest.display()))?;
+    Ok(())
 }
 
 impl SourceConfig {

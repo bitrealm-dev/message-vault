@@ -10,11 +10,11 @@ Conversation headers carry a `"schema"` discriminator and `schema_version`:
 
 | Wire schema | Rust module | Who writes it | Discriminator |
 |-------------|-------------|---------------|---------------|
-| **Vault NDJSON** | [`message_json::vault`](src/vault.rs) | `csv-ingest` (all CSV sources); `POST /v1/import` body | `"schema": "vault"`, `schema_version` 1 |
+| **Vault NDJSON** | [`message_json::vault`](src/vault.rs) | `csv-ingest`; Message Exporters `vault-push`; `POST /v1/import` body | `"schema": "vault"`, `schema_version` 1 |
 | **iMessage NDJSON** | [`message_json::imessage`](src/imessage.rs) | `imessage-exporter-json` (legacy wire) | `"schema": "imessage"`, `schema_version` 4 (headers without `schema` still default to imessage) |
 | **SMS NDJSON** | [`message_json::sms`](src/sms.rs) | SMS Backup+ exporter | `"schema": "sms"`, `schema_version` 2 |
 
-`vault` is the one standard message shape for every source. It holds every field the vault understands (text, attachments, tapbacks, replies, announcements, …). Sources leave unused fields empty or omit them. `service` is the channel (`SMS`, `iMessage`, …), not the wire schema name.
+`vault` is the one standard message shape for every source. It holds every field the vault understands (text, attachments, tapbacks, replies, announcements, …). Sources leave unused fields empty or omit them. `service` is the channel (`SMS`, `iMessage`, …), not the wire schema name. Attachment records may include `sha256` so remote clients can `PUT /v1/assets/{sha256}` first, then import without multipart file parts.
 
 Conversation headers use `"conversation_type": "individual" | "group"` (not `"type"`).
 

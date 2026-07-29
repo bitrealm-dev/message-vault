@@ -66,8 +66,9 @@ One row = one text (or similar message) inside a chat.
 |--------|----------------|
 | `id` | Internal number for this message |
 | `conversation_id` | Which chat it belongs to (points to `conversations.id`) |
+| `account_id` | Which vault tenant owns this message (denormalized from the conversation; used for per-account GUID uniqueness) |
 | `source` | Which archive it came from (for example `sms-backup-plus`) |
-| `guid` | Optional id string from that archive |
+| `guid` | Optional id string from that archive (unique together with `account_id` + `source`) |
 | `timestamp` / `timestamp_utc` | When it was sent |
 | `is_from_me` | Whether you sent it |
 | `sender` | Who sent it (phone/email text when known) |
@@ -232,7 +233,7 @@ During import, data is first written into mirror tables, then moved into the rea
 |---------------|---------|
 | `staging_conversations` | `conversations` (includes `account_id`) |
 | `staging_participants` | `participants` |
-| `staging_messages` | `messages` (without cross-source duplicate fields) |
+| `staging_messages` | `messages` (includes `account_id`; without cross-source duplicate fields). Import clears staging **per account**, not globally. |
 | `staging_attachments` | `attachments` |
 | `staging_tapbacks` | `tapbacks` |
 

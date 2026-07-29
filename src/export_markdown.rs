@@ -942,35 +942,35 @@ mod tests {
         conn.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender, body, sort_order
-            ) VALUES (?1, 'imessage', 'g1', '2023-06-01T10:00:00-04:00', '2023-06-01T14:00:00Z', 1,
+            ) VALUES (?1, ?2, 'imessage', 'g1', '2023-06-01T10:00:00-04:00', '2023-06-01T14:00:00Z', 1,
                       NULL, 'Hello 2023', 0)
             "#,
-            params![conv_id],
+            params![conv_id, TEST_ACCOUNT_ID],
         )
         .unwrap();
         conn.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender, body, sort_order
-            ) VALUES (?1, 'imessage', 'g2', '2024-01-07T23:38:00-05:00', '2024-01-08T04:38:00Z', 1,
+            ) VALUES (?1, ?2, 'imessage', 'g2', '2024-01-07T23:38:00-05:00', '2024-01-08T04:38:00Z', 1,
                       NULL, 'Meet you tomorrow?', 0)
             "#,
-            params![conv_id],
+            params![conv_id, TEST_ACCOUNT_ID],
         )
         .unwrap();
         let kept = conn.last_insert_rowid();
         conn.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender, body, sort_order, duplicate_of
-            ) VALUES (?1, 'go-sms-pro', 'g3', '2024-01-07T23:38:00-05:00', '2024-01-08T04:38:00Z', 1,
-                      NULL, 'HIDDEN DUPE BODY', 1, ?2)
+            ) VALUES (?1, ?2, 'go-sms-pro', 'g3', '2024-01-07T23:38:00-05:00', '2024-01-08T04:38:00Z', 1,
+                      NULL, 'HIDDEN DUPE BODY', 1, ?3)
             "#,
-            params![conv_id, kept],
+            params![conv_id, TEST_ACCOUNT_ID, kept],
         )
         .unwrap();
 

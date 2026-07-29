@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::{params, Connection};
 
 const MESSAGE_TABLES_DDL: &str = r#"
@@ -27,6 +27,7 @@ CREATE TABLE participants (
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     source TEXT NOT NULL,
     guid TEXT,
     timestamp TEXT NOT NULL,
@@ -49,8 +50,9 @@ CREATE INDEX ix_messages_conversation_timestamp
     ON messages (conversation_id, timestamp);
 CREATE INDEX ix_messages_conversation_source_timestamp
     ON messages (conversation_id, source, timestamp);
-CREATE UNIQUE INDEX ix_messages_source_guid
-    ON messages (source, guid)
+CREATE INDEX ix_messages_account_id ON messages (account_id);
+CREATE UNIQUE INDEX ix_messages_account_source_guid
+    ON messages (account_id, source, guid)
     WHERE guid IS NOT NULL AND guid != '';
 CREATE INDEX ix_messages_content_key
     ON messages (content_key)
@@ -115,6 +117,7 @@ CREATE TABLE staging_participants (
 CREATE TABLE staging_messages (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     source TEXT NOT NULL,
     guid TEXT,
     timestamp TEXT NOT NULL,
@@ -133,8 +136,9 @@ CREATE TABLE staging_messages (
 
 CREATE INDEX ix_staging_messages_conversation_timestamp
     ON staging_messages (conversation_id, timestamp);
-CREATE UNIQUE INDEX ix_staging_messages_source_guid
-    ON staging_messages (source, guid)
+CREATE INDEX ix_staging_messages_account_id ON staging_messages (account_id);
+CREATE UNIQUE INDEX ix_staging_messages_account_source_guid
+    ON staging_messages (account_id, source, guid)
     WHERE guid IS NOT NULL AND guid != '';
 
 CREATE TABLE staging_attachments (
@@ -328,6 +332,7 @@ pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
     }
     migrate_messages_source(conn)?;
     migrate_messages_dedupe_columns(conn)?;
+    migrate_messages_account_guid(conn)?;
     migrate_delete_performance_indexes(conn)?;
     Ok(())
 }
@@ -340,12 +345,49 @@ fn migrate_messages_source(conn: &Connection) -> Result<()> {
             DROP INDEX IF EXISTS ix_messages_guid;
             CREATE INDEX IF NOT EXISTS ix_messages_conversation_source_timestamp
                 ON messages (conversation_id, source, timestamp);
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_source_guid
-                ON messages (source, guid)
-                WHERE guid IS NOT NULL AND guid != '';
             "#,
         )?;
     }
+    Ok(())
+}
+
+/// Denormalize `account_id` onto messages and scope GUID uniqueness per account.
+fn migrate_messages_account_guid(conn: &Connection) -> Result<()> {
+    if !table_has_column(conn, "messages", "account_id")? {
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN account_id TEXT REFERENCES accounts(id);",
+        )?;
+        conn.execute_batch(
+            r#"
+            UPDATE messages
+            SET account_id = (
+                SELECT c.account_id FROM conversations c
+                WHERE c.id = messages.conversation_id
+            )
+            WHERE account_id IS NULL;
+            "#,
+        )?;
+        let orphans: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE account_id IS NULL OR account_id = ''",
+            [],
+            |row| row.get(0),
+        )?;
+        if orphans > 0 {
+            bail!(
+                "messages.account_id migration found {orphans} orphan message(s) without a conversation account"
+            );
+        }
+    }
+
+    conn.execute_batch(
+        r#"
+        DROP INDEX IF EXISTS ix_messages_source_guid;
+        CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_account_source_guid
+            ON messages (account_id, source, guid)
+            WHERE guid IS NOT NULL AND guid != '';
+        "#,
+    )?;
     Ok(())
 }
 
@@ -439,7 +481,61 @@ pub fn delete_messages_for_source(
     Ok(n as u64)
 }
 
-/// Drop and recreate staging message tables.
+fn index_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(exists)
+}
+
+/// Ensure staging tables exist (idempotent). Migrates older staging schemas in place.
+pub fn ensure_staging_schema(conn: &Connection) -> Result<()> {
+    ensure_accounts_schema(conn)?;
+    if !table_exists(conn, "staging_conversations")? {
+        conn.execute_batch(STAGING_TABLES_DDL)?;
+        return Ok(());
+    }
+
+    // Older staging lacked account_id on messages, or used a global GUID unique index.
+    if table_exists(conn, "staging_messages")?
+        && (!table_has_column(conn, "staging_messages", "account_id")?
+            || index_exists(conn, "ix_staging_messages_source_guid")?)
+    {
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            DROP TABLE IF EXISTS staging_tapbacks;
+            DROP TABLE IF EXISTS staging_attachments;
+            DROP TABLE IF EXISTS staging_messages;
+            DROP TABLE IF EXISTS staging_participants;
+            DROP TABLE IF EXISTS staging_conversations;
+            "#,
+        )?;
+        conn.execute_batch(STAGING_TABLES_DDL)?;
+    }
+    Ok(())
+}
+
+/// Clear one account's staging rows (CASCADE removes children). Other accounts are untouched.
+pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<()> {
+    ensure_staging_schema(conn)?;
+    conn.execute(
+        "DELETE FROM staging_conversations WHERE account_id = ?1",
+        params![account_id],
+    )?;
+    Ok(())
+}
+
+/// Clear one account's staging after a successful promote.
+pub fn clear_staging_for_account(conn: &Connection, account_id: &str) -> Result<()> {
+    reset_staging_for_account(conn, account_id)
+}
+
+/// Wipe and recreate all staging tables (emergency / tests). Prefer
+/// [`reset_staging_for_account`] for normal imports.
+#[allow(dead_code)]
 pub fn recreate_staging(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
@@ -453,22 +549,6 @@ pub fn recreate_staging(conn: &Connection) -> Result<()> {
         "#,
     )?;
     conn.execute_batch(STAGING_TABLES_DDL)?;
-    Ok(())
-}
-
-/// Drop all staging tables (after a successful promote).
-pub fn clear_staging(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-
-        DROP TABLE IF EXISTS staging_tapbacks;
-        DROP TABLE IF EXISTS staging_attachments;
-        DROP TABLE IF EXISTS staging_messages;
-        DROP TABLE IF EXISTS staging_participants;
-        DROP TABLE IF EXISTS staging_conversations;
-        "#,
-    )?;
     Ok(())
 }
 
@@ -636,4 +716,127 @@ pub fn recreate_contacts(conn: &Connection) -> Result<()> {
         "#,
     )?;
     ensure_contacts_schema(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A1: &str = "11111111-1111-1111-1111-111111111111";
+    const A2: &str = "22222222-2222-2222-2222-222222222222";
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        ensure_messages_schema(&conn).unwrap();
+        ensure_staging_schema(&conn).unwrap();
+        for (id, user) in [(A1, "alice"), (A2, "bob")] {
+            conn.execute(
+                "INSERT INTO accounts (id, username, read_only) VALUES (?1, ?2, 0)",
+                params![id, user],
+            )
+            .unwrap();
+            conn.execute(
+                r#"
+                INSERT INTO conversations (
+                    account_id, chat_identifier, service, conversation_type,
+                    group_title, exported_at, source_file
+                ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
+                "#,
+                params![id],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn same_source_guid_allowed_across_accounts() {
+        let conn = setup();
+        let c1: i64 = conn
+            .query_row(
+                "SELECT id FROM conversations WHERE account_id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let c2: i64 = conn
+            .query_row(
+                "SELECT id FROM conversations WHERE account_id = ?1",
+                params![A2],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        for (conv, acct) in [(c1, A1), (c2, A2)] {
+            conn.execute(
+                r#"
+                INSERT INTO messages (
+                    conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
+                ) VALUES (?1, ?2, 'sms-backup-restore', 'same-guid', '2020-01-01T00:00:00Z', 0, 0)
+                "#,
+                params![conv, acct],
+            )
+            .unwrap();
+        }
+
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE guid = 'same-guid'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn reset_staging_for_account_leaves_other_accounts() {
+        let conn = setup();
+        for acct in [A1, A2] {
+            conn.execute(
+                r#"
+                INSERT INTO staging_conversations (
+                    account_id, chat_identifier, service, conversation_type,
+                    group_title, exported_at, source_file
+                ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
+                "#,
+                params![acct],
+            )
+            .unwrap();
+            let sid = conn.last_insert_rowid();
+            conn.execute(
+                r#"
+                INSERT INTO staging_messages (
+                    conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
+                ) VALUES (?1, ?2, 'sms-backup-restore', 'g1', '2020-01-01T00:00:00Z', 0, 0)
+                "#,
+                params![sid, acct],
+            )
+            .unwrap();
+        }
+
+        reset_staging_for_account(&conn, A1).unwrap();
+
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
+                params![A2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let gone: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 1);
+        assert_eq!(gone, 0);
+        let msgs: i64 = conn
+            .query_row("SELECT COUNT(*) FROM staging_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msgs, 1);
+    }
 }

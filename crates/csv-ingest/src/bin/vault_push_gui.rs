@@ -848,14 +848,19 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result<()> {
+    eprintln!(
+        "warning: vault-push-gui is deprecated. \
+         Use Message Exporters → Vault tab instead \
+         (cargo run -p message-exporters-gui)."
+    );
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 700.0])
-            .with_title("Message Vault Import"),
+            .with_title("Message Vault Import (deprecated)"),
         ..Default::default()
     };
     eframe::run_native(
-        "Message Vault Import",
+        "Message Vault Import (deprecated)",
         options,
         Box::new(|_cc| Ok(Box::new(App::default()))),
     )

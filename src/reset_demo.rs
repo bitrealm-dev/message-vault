@@ -60,14 +60,13 @@ pub fn run_reset_demo_for_account(
 
     let cfg = Config::load(config_dest)?;
     wipe_vault(&cfg, account_id)?;
-    restore_demo_csvs(&bundle, &cfg)?;
+    restore_demo_csvs(&bundle, &cfg, account_id)?;
 
     let src = cfg.source("imessage")?;
     let export_dir = src.export_dir.clone();
     let assets_dir = src.resolved_assets_dir_for_account(&cfg.paths, account_id);
     let db = cfg.paths.db.clone();
-    let contacts_csv = cfg.paths.contacts_csv.clone();
-    let exclude_csv = cfg.paths.exclude_csv.clone();
+    let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(account_id)?;
 
     println!("Reset demo");
     println!("  bundle:       {}", bundle.display());
@@ -167,11 +166,15 @@ fn seed_demo_account(db_path: &Path, account_id: &str, cfg: &Config) -> Result<(
     Ok(())
 }
 
-fn restore_demo_csvs(bundle: &Path, cfg: &Config) -> Result<()> {
+fn restore_demo_csvs(bundle: &Path, cfg: &Config, account_id: &str) -> Result<()> {
     let demo_contacts = bundle.join("config/contacts.csv");
     let demo_exclude = bundle.join("config/exclude.csv");
+    // Keep legacy template paths for seed fallback, and write per-account copies.
     copy_if_exists(&demo_contacts, &cfg.paths.contacts_csv)?;
     copy_if_exists(&demo_exclude, &cfg.paths.exclude_csv)?;
+    let (contacts, exclude) = cfg.paths.ensure_account_csvs(account_id)?;
+    copy_if_exists(&demo_contacts, &contacts)?;
+    copy_if_exists(&demo_exclude, &exclude)?;
     Ok(())
 }
 

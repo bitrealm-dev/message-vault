@@ -19,6 +19,72 @@ pub struct StoredAsset {
     pub mime_type: Option<String>,
 }
 
+/// Look up an already-stored blob by lowercase hex SHA-256.
+pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
+    let sha = normalize_sha256(sha256)?;
+    let existing = find_existing(assets_root, &sha)?;
+    let assets_path = path_relative_to(assets_root, &existing).ok()?;
+    Some(StoredAsset {
+        sha256: sha,
+        assets_path,
+        mime_type: resolve_mime(None, &existing),
+    })
+}
+
+/// Store `source` under `assets_root` using a caller-claimed SHA-256 (verified).
+///
+/// Returns `(stored, already_present)`.
+pub fn store_verified(
+    source: &Path,
+    claimed_sha256: &str,
+    assets_root: &Path,
+    export_mime: Option<&str>,
+) -> Result<(StoredAsset, bool)> {
+    let claimed = normalize_sha256(claimed_sha256)
+        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))?;
+    if !source.is_file() {
+        anyhow::bail!("asset source is not a file: {}", source.display());
+    }
+    let actual = hash_file(source)
+        .with_context(|| format!("failed to hash {}", source.display()))?;
+    if actual != claimed {
+        anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
+    }
+
+    if let Some(existing) = lookup_by_sha256(assets_root, &claimed) {
+        return Ok((
+            StoredAsset {
+                mime_type: resolve_mime(export_mime, source).or(existing.mime_type),
+                ..existing
+            },
+            true,
+        ));
+    }
+
+    let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
+    let rel = format!("{}/{}{}", &claimed[..2], claimed, ext);
+    let dest = assets_root.join(&rel);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::copy(source, &dest).with_context(|| {
+        format!(
+            "failed to copy {} → {}",
+            source.display(),
+            dest.display()
+        )
+    })?;
+    Ok((
+        StoredAsset {
+            sha256: claimed,
+            assets_path: rel,
+            mime_type: resolve_mime(export_mime, source),
+        },
+        false,
+    ))
+}
+
 /// Hash `source` and store under `assets_root/<sha[0:2]>/<sha><ext>`.
 /// If the blob already exists, skip the copy and count as deduped.
 pub fn hash_and_store(
@@ -34,43 +100,21 @@ pub fn hash_and_store(
 
     let sha = hash_file(source)
         .with_context(|| format!("failed to hash {}", source.display()))?;
-    let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
-    let rel = format!("{}/{}{}", &sha[..2], sha, ext);
-    let dest = assets_root.join(&rel);
-
-    if dest.is_file() {
+    let (stored, already) = store_verified(source, &sha, assets_root, export_mime)?;
+    if already {
         stats.deduped += 1;
     } else {
-        // Dedupe across extension variants for the same hash.
-        if let Some(existing) = find_existing(assets_root, &sha) {
-            stats.deduped += 1;
-            let assets_path = path_relative_to(assets_root, &existing)?;
-            return Ok(Some(StoredAsset {
-                sha256: sha,
-                assets_path,
-                mime_type: resolve_mime(export_mime, source),
-            }));
-        }
-
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::copy(source, &dest).with_context(|| {
-            format!(
-                "failed to copy {} → {}",
-                source.display(),
-                dest.display()
-            )
-        })?;
         stats.copied += 1;
     }
+    Ok(Some(stored))
+}
 
-    Ok(Some(StoredAsset {
-        sha256: sha,
-        assets_path: rel,
-        mime_type: resolve_mime(export_mime, source),
-    }))
+fn normalize_sha256(sha: &str) -> Option<String> {
+    let s = sha.trim().to_ascii_lowercase();
+    if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(s)
 }
 
 fn hash_file(path: &Path) -> Result<String> {

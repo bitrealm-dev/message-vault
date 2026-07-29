@@ -68,14 +68,16 @@ pub fn ingest(cfg: &Config, opts: &IngestOptions) -> Result<IngestStats> {
     }
 
     let assets = src.resolved_assets_dir_for_account(&cfg.paths, &opts.account_id);
+    let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&opts.account_id)?;
     println!("  phase:    import → {}", cfg.paths.db.display());
     println!("  assets:   {}", assets.display());
+    println!("  contacts: {}", contacts_csv.display());
     let import_stats = import::import_export(
         &staging,
         &cfg.paths.db,
         &assets,
-        &cfg.paths.contacts_csv,
-        &cfg.paths.exclude_csv,
+        &contacts_csv,
+        &exclude_csv,
         opts.overwrite_contacts,
         opts.mode,
         &src.id,

@@ -1,18 +1,21 @@
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{FromRequest, Multipart, Query, Request, State};
+use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use rusqlite::Connection;
 
 use crate::api_tokens;
+use crate::assets;
 use crate::config::Config;
 use crate::dedupe;
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
@@ -33,8 +36,9 @@ enum AuthIdentity {
 #[derive(Clone)]
 struct AppState {
     cfg: Arc<Config>,
-    /// Serialize imports — SQLite writes are not safe to overlap from this process.
-    import_lock: Arc<Mutex<()>>,
+    /// Per-account import mutex: same-account imports stay serialized so staging
+    /// rows for that tenant are not wiped mid-run. Different accounts may overlap.
+    account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,13 +115,14 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let state = AppState {
         cfg: Arc::new(cfg),
-        import_lock: Arc::new(Mutex::new(())),
+        account_import_locks: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/auth/check", get(auth_check))
         .route("/v1/import", post(import_handler))
+        .route("/v1/assets/{sha256}", put(asset_put_handler))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .with_state(state);
 
@@ -126,10 +131,13 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer user or admin token)");
     eprintln!(
+        "  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)"
+    );
+    eprintln!(
         "  POST /v1/import?source=&account=&mode=append|replace&dedupe=false"
     );
     eprintln!("       account= optional for user tokens (bound to token); required for admin");
-    eprintln!("       Content-Type: application/x-ndjson  (body only; assets from export_dir)");
+    eprintln!("       Content-Type: application/x-ndjson  (body only; assets by sha256 or export_dir)");
     eprintln!(
         "       Content-Type: multipart/form-data   (field ndjson + file parts; remote push)"
     );
@@ -451,13 +459,16 @@ async fn import_handler(
     }
 
     if is_ndjson_content_type(ct) {
-        let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
-            .await
-            .map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
-        if body.is_empty() {
+        let temp = tempfile::tempdir()
+            .map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+        let ndjson_path = temp.path().join("_import.ndjson");
+        let n = stream_body_to_file(request.into_body(), &ndjson_path).await?;
+        if n == 0 {
             return Err(ApiError::BadRequest("request body is empty".into()));
         }
-        return run_import(state, query, body.to_vec(), None).await;
+        let response = run_import_path(state, query, ndjson_path, None).await;
+        drop(temp);
+        return response;
     }
 
     Err(ApiError::BadRequest(
@@ -465,12 +476,106 @@ async fn import_handler(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+struct AssetPutQuery {
+    source: String,
+    #[serde(default)]
+    account: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetPutResponse {
+    ok: bool,
+    sha256: String,
+    assets_path: String,
+    already_present: bool,
+}
+
+async fn asset_put_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+    request: Request,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let server = state
+        .cfg
+        .require_server()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let auth = resolve_auth(&headers, &server.api_token, &state.cfg.paths.db).await?;
+    if query.source.trim().is_empty() {
+        return Err(ApiError::BadRequest("query param source is required".into()));
+    }
+    let _source = state
+        .cfg
+        .source(&query.source)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?
+        .clone();
+    let account = resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+
+    let temp = tempfile::tempdir()
+        .map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+    let tmp_path = temp.path().join("upload.bin");
+    let n = stream_body_to_file(request.into_body(), &tmp_path).await?;
+    if n == 0 {
+        return Err(ApiError::BadRequest("request body is empty".into()));
+    }
+
+    let mime = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
+
+    let cfg = Arc::clone(&state.cfg);
+    let sha = sha256.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let assets_dir = _source.resolved_assets_dir_for_account(&cfg.paths, &account);
+        std::fs::create_dir_all(&assets_dir)?;
+        assets::store_verified(
+            &tmp_path,
+            &sha,
+            &assets_dir,
+            mime.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    drop(temp);
+    let (stored, already_present) = result;
+    Ok(Json(AssetPutResponse {
+        ok: true,
+        sha256: stored.sha256,
+        assets_path: stored.assets_path,
+        already_present,
+    }))
+}
+
+async fn stream_body_to_file(
+    body: axum::body::Body,
+    dest: &Path,
+) -> Result<u64, ApiError> {
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
+        })?;
+    }
+    let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+    let n = bytes.len() as u64;
+    tokio::fs::write(dest, &bytes)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
+    Ok(n)
+}
+
 async fn stream_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     dest: &Path,
 ) -> Result<u64, ApiError> {
-    use tokio::io::AsyncWriteExt;
-
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
             ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
@@ -556,20 +661,17 @@ async fn import_multipart(
             "multipart missing required field 'ndjson'".into(),
         ));
     }
-    let ndjson = tokio::fs::read(&ndjson_path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("read ndjson temp: {e}")))?;
     eprintln!("import: multipart ndjson + {file_count} file(s)");
 
-    let response = run_import(state, query, ndjson, Some(asset_root)).await;
+    let response = run_import_path(state, query, ndjson_path, Some(asset_root)).await;
     drop(temp);
     response
 }
 
-async fn run_import(
+async fn run_import_path(
     state: AppState,
     query: ImportQuery,
-    ndjson: Vec<u8>,
+    ndjson_path: PathBuf,
     asset_root_override: Option<PathBuf>,
 ) -> Result<Json<ImportResponse>, ApiError> {
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -587,25 +689,32 @@ async fn run_import(
     let source_id = source.id.clone();
     let do_dedupe = query.dedupe;
 
-    let _guard = state.import_lock.lock().await;
+    let account_lock = {
+        let mut map = state.account_import_locks.lock().await;
+        map.entry(account.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = account_lock.lock().await;
 
     let result = tokio::task::spawn_blocking(move || {
         let assets_dir = source.resolved_assets_dir_for_account(&cfg.paths, &account);
         let asset_root = asset_root_override
             .as_deref()
             .unwrap_or(source.export_dir.as_path());
+        let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&account)?;
         let opts = ImportOptions {
             db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
             asset_root,
-            contacts_csv: &cfg.paths.contacts_csv,
-            exclude_csv: &cfg.paths.exclude_csv,
+            contacts_csv: &contacts_csv,
+            exclude_csv: &exclude_csv,
             overwrite_contacts: false,
             mode,
             source: &source_id,
             account_id: &account,
         };
-        let stats = import::import_ndjson_bytes(&ndjson, &opts)?;
+        let stats = import::import_ndjson_files(&[ndjson_path], &opts)?;
         let dedupe_stats = if do_dedupe {
             let priority: Vec<String> = cfg.sources.iter().map(|s| s.id.clone()).collect();
             Some(dedupe::run_dedupe(&cfg.paths.db, &account, &priority, 2)?)

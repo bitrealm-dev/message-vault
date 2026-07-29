@@ -55,6 +55,7 @@ fn attachment_from_sms(a: message_json::sms::AttachmentRecord) -> AttachmentReco
         path: a.path,
         original_name: a.original_name,
         mime_type: a.mime_type,
+        sha256: None,
         is_sticker: false,
         transcription: None,
     }
