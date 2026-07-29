@@ -1,0 +1,2 @@
+{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075555678","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075555678","name_hint":"Bob"}]}
+{"record":"message","guid":"smoke-msg-att-1","timestamp":"2015-03-12T14:05:22-04:00","timestamp_utc":"2015-03-12T18:05:22Z","is_from_me":true,"text":"Photo","attachments":[{"path":"media/photo.jpg","mime_type":"image/jpeg"}]}

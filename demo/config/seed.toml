@@ -1,0 +1,12 @@
+# Demo account identity used only by `reset-demo`.
+# Not copied into the runtime config.toml.
+
+[owner]
+display_name = "Demo User"
+phones = ["+14155559000"]
+emails = ["demo.ingest@example.com"]
+
+[account]
+username = "demo"
+login_email = "demo@example.com"
+read_only = false
