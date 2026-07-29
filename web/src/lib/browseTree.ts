@@ -130,12 +130,22 @@ export function flattenBrowseTree(options: {
   }
 
   if (mode === "shared-groups") {
-    return sharedGroups.map((conversation) => ({
-      kind: "group" as const,
-      key: groupRowKey(conversation.conversationId),
-      contactId: null,
-      conversation,
+    // Contacts stay visible so checkbox selection remains usable; shared
+    // groups follow as a flat section under the list.
+    const rows: BrowseTreeRow[] = contacts.map((contact) => ({
+      kind: "contact" as const,
+      key: contactRowKey(contact.id),
+      contact,
     }));
+    for (const conversation of sharedGroups) {
+      rows.push({
+        kind: "group",
+        key: groupRowKey(conversation.conversationId),
+        contactId: null,
+        conversation,
+      });
+    }
+    return rows;
   }
 
   const rows: BrowseTreeRow[] = [];

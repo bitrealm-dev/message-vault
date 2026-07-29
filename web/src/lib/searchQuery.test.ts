@@ -16,11 +16,10 @@ describe("parseSearchQuery", () => {
 
   it("parses operators", () => {
     const q = parseSearchQuery(
-      'from:alice to:bob subject:hi has:attachment after:2020-01-01 before:2021 source:imessage is:group label:Family in:trash',
+      'from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group label:Family in:trash',
     );
     assert.equal(q.from, "alice");
     assert.equal(q.to, "bob");
-    assert.equal(q.subject, "hi");
     assert.equal(q.hasAttachment, true);
     assert.equal(q.after, "2020-01-01");
     assert.equal(q.before, "2021-01-01");
@@ -28,6 +27,11 @@ describe("parseSearchQuery", () => {
     assert.equal(q.conversationType, "group");
     assert.equal(q.label, "Family");
     assert.equal(q.includeTrash, true);
+  });
+
+  it("treats with: and to: as the same participant filter", () => {
+    assert.equal(parseSearchQuery("with:sam").to, "sam");
+    assert.equal(parseSearchQuery("to:sam").to, "sam");
   });
 
   it("parses negation", () => {
@@ -45,21 +49,23 @@ describe("parseSearchQuery", () => {
 describe("composeSearchQuery", () => {
   it("round-trips advanced form fields into operators", () => {
     const s = composeSearchQuery({
-      from: "Ann Lee",
+      withPerson: "Ann Lee",
       hasWords: "birthday",
       doesntHave: "spam",
       conversationType: "group",
       hasAttachment: true,
       includeTrash: true,
     });
-    assert.match(s, /from:"Ann Lee"/);
+    assert.match(s, /with:"Ann Lee"/);
     assert.match(s, /birthday/);
     assert.match(s, /-spam/);
     assert.match(s, /is:group/);
     assert.match(s, /has:attachment/);
     assert.match(s, /in:trash/);
+    assert.doesNotMatch(s, /subject:/);
+    assert.doesNotMatch(s, /from:/);
     const parsed = parseSearchQuery(s);
-    assert.equal(parsed.from, "Ann Lee");
+    assert.equal(parsed.to, "Ann Lee");
     assert.deepEqual(parsed.terms, ["birthday"]);
     assert.deepEqual(parsed.exclude, ["spam"]);
     assert.equal(parsed.conversationType, "group");
@@ -70,13 +76,13 @@ describe("composeSearchQuery", () => {
 
 describe("toFtsMatch / hasSearchCriteria", () => {
   it("builds an FTS expression from terms and exclusions", () => {
-    const q = parseSearchQuery('hello "exact" -nope subject:hi');
-    assert.equal(toFtsMatch(q), '"hello" AND "exact" AND NOT "nope" AND subject:"hi"');
+    const q = parseSearchQuery('hello "exact" -nope');
+    assert.equal(toFtsMatch(q), '"hello" AND "exact" AND NOT "nope"');
     assert.equal(hasSearchCriteria(q), true);
   });
 
   it("returns null when only metadata filters are set", () => {
-    const q = parseSearchQuery("has:attachment is:group");
+    const q = parseSearchQuery("has:attachment is:group with:bob");
     assert.equal(toFtsMatch(q), null);
     assert.equal(hasSearchCriteria(q), true);
   });

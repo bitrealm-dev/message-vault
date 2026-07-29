@@ -275,51 +275,6 @@ export function BrowsePeopleTreePane({
         <div className="flex h-[45px] shrink-0 items-center border-b border-border px-3">
           <span className="text-[13px] text-muted">Search results</span>
         </div>
-      ) : mode === "shared-groups" ? (
-        <div className="flex h-[45px] shrink-0 items-center justify-between gap-2 border-b border-border px-3">
-          <label className="flex min-w-0 items-center gap-2">
-            <IconHoverTarget label="Select all" placement="bottom">
-              <input
-                ref={groupSelectAllRef}
-                type="checkbox"
-                checked={allGroupsSelected}
-                disabled={groupItems.length === 0}
-                aria-label="Select all group messages"
-                onChange={onToggleSelectAllGroups}
-                className="checkbox-list"
-              />
-            </IconHoverTarget>
-            <span className="truncate text-[13px] text-muted tabular-nums">
-              {selectedGroupIds.size > 0 ? selectedGroupIds.size : ""}
-            </span>
-          </label>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <YearFilterMenu
-              years={years}
-              value={filterYear}
-              onChange={onFilterYearChange}
-            />
-            <BrowseGroupChatSortMenu
-              sortBy={groupSortBy}
-              order={groupSortOrder}
-              onChange={onGroupSortChange}
-              disabled={groupItems.length === 0}
-            />
-            {!vaultReadOnly && onTrashMessages && (
-              <IconHoverTarget label="Delete group messages" placement="bottom">
-                <button
-                  type="button"
-                  aria-label="Delete group messages"
-                  disabled={trashDisabled}
-                  onClick={onTrashMessages}
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/15 hover:text-red-300 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <TrashMessagesIcon className="size-4" />
-                </button>
-              </IconHoverTarget>
-            )}
-          </div>
-        </div>
       ) : (
         <>
           <div className="flex h-[45px] shrink-0 items-center border-b border-border px-3">
@@ -329,7 +284,7 @@ export function BrowsePeopleTreePane({
               placeholder="Filter contacts"
             />
           </div>
-          <div className="flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
+          <div className="@container/tree-tools flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
             <label className="flex min-w-0 items-center gap-2">
               <IconHoverTarget label="Select all" placement="bottom">
                 <input
@@ -352,9 +307,27 @@ export function BrowsePeopleTreePane({
                 sort={contactSort}
                 order={contactSortOrder}
                 onChange={onContactSortChange}
+                scopeLabel="People"
+                scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
               />
-              {expandedContactId != null && (
+              {(hasContactSelection || expandedContactId != null) && (
                 <>
+                  {hasContactSelection && (
+                    <IconHoverTarget
+                      label="Select all group messages"
+                      placement="bottom"
+                    >
+                      <input
+                        ref={groupSelectAllRef}
+                        type="checkbox"
+                        checked={allGroupsSelected}
+                        disabled={groupItems.length === 0}
+                        aria-label="Select all group messages"
+                        onChange={onToggleSelectAllGroups}
+                        className="checkbox-list"
+                      />
+                    </IconHoverTarget>
+                  )}
                   <YearFilterMenu
                     years={years}
                     value={filterYear}
@@ -365,6 +338,8 @@ export function BrowsePeopleTreePane({
                     order={groupSortOrder}
                     onChange={onGroupSortChange}
                     disabled={groupItems.length === 0}
+                    scopeLabel="Chats"
+                    scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
                   />
                   {!vaultReadOnly && onTrashMessages && (
                     <IconHoverTarget
@@ -399,28 +374,6 @@ export function BrowsePeopleTreePane({
           onSelect={(hit) => onSelectSearchHit?.(hit)}
           emptyLabel="No matches"
         />
-      ) : mode === "shared-groups" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-          <div className="sticky top-0 z-10 border-b border-border bg-sidebar px-3 py-1 text-[11px] font-semibold text-muted">
-            Shared group messages
-          </div>
-          {groupItems.length === 0 ? (
-            <p className="px-3 py-4 text-[12px] text-muted">{emptyGroupsLabel}</p>
-          ) : (
-            groupItems.map((g, i) => (
-              <GroupConversationRow
-                key={g.conversationId}
-                conversation={g}
-                active={g.conversationId === selectedConversationId}
-                checked={selectedGroupIds.has(g.conversationId)}
-                selectionActive={groupSelectionActive}
-                showBorder={i < groupItems.length - 1}
-                onSelectColumnClick={onGroupSelectColumnClick}
-                onRowClick={onGroupRowClick}
-              />
-            ))
-          )}
-        </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {sortedCount === 0 && (
@@ -436,10 +389,13 @@ export function BrowsePeopleTreePane({
               {items.map((c, i) => {
                 const menuTarget =
                   contextMenuId != null && c.id === contextMenuId;
-                const expanded = expandedContactId === c.id;
-                const active =
-                  c.id === contactId || menuTarget || expanded;
+                // While contacts are checkbox-selected, keep the list flat so
+                // shared groups can appear as their own section below.
+                const expanded =
+                  !hasContactSelection && expandedContactId === c.id;
                 const checked = selectedContactIds.has(c.id);
+                const active =
+                  c.id === contactId || menuTarget || expanded || checked;
                 return (
                   <div key={c.id}>
                     <BrowseContactRow
@@ -448,7 +404,7 @@ export function BrowsePeopleTreePane({
                       checked={checked}
                       selectionActive={contactSelectionActive}
                       expanded={expanded}
-                      showExpandChevron
+                      showExpandChevron={!hasContactSelection}
                       showInsetDivider={!expanded && i < items.length - 1}
                       onSelectColumnClick={onContactSelectColumnClick}
                       onNamePhoneClick={onContactNamePhoneClick}
@@ -514,6 +470,33 @@ export function BrowsePeopleTreePane({
               })}
             </div>
           ))}
+          {hasContactSelection && (
+            <>
+              <div className="sticky top-0 z-10 border-b border-t border-border bg-sidebar px-3 py-1 text-[11px] font-semibold text-muted">
+                {selectedContactIds.size > 1
+                  ? "Shared group messages"
+                  : "Group messages"}
+              </div>
+              {groupItems.length === 0 ? (
+                <p className="px-3 py-4 text-[12px] text-muted">
+                  {emptyGroupsLabel}
+                </p>
+              ) : (
+                groupItems.map((g, i) => (
+                  <GroupConversationRow
+                    key={g.conversationId}
+                    conversation={g}
+                    active={g.conversationId === selectedConversationId}
+                    checked={selectedGroupIds.has(g.conversationId)}
+                    selectionActive={groupSelectionActive}
+                    showBorder={i < groupItems.length - 1}
+                    onSelectColumnClick={onGroupSelectColumnClick}
+                    onRowClick={onGroupRowClick}
+                  />
+                ))
+              )}
+            </>
+          )}
         </div>
       )}
     </aside>

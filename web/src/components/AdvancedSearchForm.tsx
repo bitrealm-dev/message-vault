@@ -8,7 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 const inputClass =
   "w-full rounded-md border border-border bg-elevated px-2.5 py-1.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent";
-const labelClass = "w-24 shrink-0 text-[13px] text-muted";
+const labelClass = "w-28 shrink-0 text-[13px] text-muted";
 
 export function AdvancedSearchForm({
   sources,
@@ -23,9 +23,7 @@ export function AdvancedSearchForm({
   onSearch: (query: string) => void;
   onCancel: () => void;
 }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [subject, setSubject] = useState("");
+  const [withPerson, setWithPerson] = useState("");
   const [hasWords, setHasWords] = useState("");
   const [doesntHave, setDoesntHave] = useState("");
   const [after, setAfter] = useState("");
@@ -47,9 +45,7 @@ export function AdvancedSearchForm({
 
   const submit = () => {
     const form: FormState = {
-      from,
-      to,
-      subject,
+      withPerson,
       hasWords,
       doesntHave,
       after,
@@ -66,27 +62,12 @@ export function AdvancedSearchForm({
   return (
     <div className="border-b border-border bg-panel px-3 py-3">
       <div className="space-y-2">
-        <Field label="From">
+        <Field label="With person">
           <input
             className={inputClass}
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
+            value={withPerson}
+            onChange={(e) => setWithPerson(e.target.value)}
             placeholder="Name or number"
-          />
-        </Field>
-        <Field label="To">
-          <input
-            className={inputClass}
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            placeholder="Participant"
-          />
-        </Field>
-        <Field label="Subject">
-          <input
-            className={inputClass}
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
           />
         </Field>
         <Field label="Has the words">
@@ -164,7 +145,7 @@ export function AdvancedSearchForm({
             </select>
           </Field>
         ) : null}
-        <label className="flex items-center gap-2 pl-[6.5rem] text-[13px] text-text">
+        <label className="flex items-center gap-2 pl-32 text-[13px] text-text">
           <input
             type="checkbox"
             checked={hasAttachment}
@@ -173,7 +154,7 @@ export function AdvancedSearchForm({
           />
           Has an attachment
         </label>
-        <label className="flex items-center gap-2 pl-[6.5rem] text-[13px] text-text">
+        <label className="flex items-center gap-2 pl-32 text-[13px] text-text">
           <input
             type="checkbox"
             checked={includeTrash}

@@ -118,7 +118,7 @@ describe("flattenBrowseTree", () => {
     );
   });
 
-  it("uses shared groups in multiselect mode", () => {
+  it("keeps contacts visible and appends shared groups in multiselect mode", () => {
     const rows = flattenBrowseTree({
       mode: "shared-groups",
       contacts,
@@ -130,7 +130,12 @@ describe("flattenBrowseTree", () => {
     });
     assert.deepEqual(
       rows.map((r) => r.key),
-      [groupRowKey(10)],
+      [
+        contactRowKey(1),
+        contactRowKey(2),
+        contactRowKey(3),
+        groupRowKey(10),
+      ],
     );
   });
 

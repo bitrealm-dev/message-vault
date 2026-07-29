@@ -388,8 +388,16 @@ export function BrowseShell({
         return;
       }
       setContactId(id);
+      setDetail(null);
+      setYearly([]);
+      setGroupChats([]);
+      setMessageSources([]);
+      setSourceCounts({ all: 0, bySource: {} });
       setThreadConversationIds(null);
       setActiveThread(null);
+      setSelectedGroupConversationId(null);
+      loadedContactIdRef.current = null;
+      setThreadsLoadedFor(null);
       expandContact(id);
       const params = new URLSearchParams(searchParams.toString());
       params.set("c", String(id));
@@ -476,8 +484,28 @@ export function BrowseShell({
 
     setLoadingThreads(peopleTreeLoading);
     const data = peopleTreeBundle;
-    if (!data || peopleTreeExpandedId !== contactId) {
-      if (!peopleTreeLoading && peopleTreeExpandedId === contactId) {
+    // Ignore bundles that belong to a different contact (stale cache/race).
+    if (
+      !data ||
+      peopleTreeExpandedId !== contactId ||
+      data.detail.id !== contactId
+    ) {
+      if (peopleTreeExpandedId === contactId && !peopleTreeLoading) {
+        // Expanded for this contact but no valid bundle yet/failed.
+        if (!data || data.detail.id !== contactId) {
+          setDetail(null);
+          setYearly([]);
+          setGroupChats([]);
+          setMessageSources([]);
+          setSourceCounts({ all: 0, bySource: {} });
+          setThreadConversationIds(null);
+          setActiveThread(null);
+          loadedContactIdRef.current = null;
+          setThreadsLoadedFor(null);
+        }
+      } else if (loadedContactIdRef.current !== contactId) {
+        // Switching contacts: clear previous person's inspector/reader shell
+        // until the matching bundle arrives.
         setDetail(null);
         setYearly([]);
         setGroupChats([]);
@@ -485,6 +513,9 @@ export function BrowseShell({
         setSourceCounts({ all: 0, bySource: {} });
         setThreadConversationIds(null);
         setActiveThread(null);
+        setSelectedGroupConversationId(null);
+        loadedContactIdRef.current = null;
+        setThreadsLoadedFor(null);
       }
       return;
     }
@@ -495,7 +526,7 @@ export function BrowseShell({
       activeThreadRef.current == null &&
       pendingConvIdRef.current == null;
 
-    if (switchingContact) {
+    {
       const contact = data.detail;
       const ov = labelOverridesRef.current.get(contact.id);
       setDetail(ov ? { ...contact, labels: ov } : contact);

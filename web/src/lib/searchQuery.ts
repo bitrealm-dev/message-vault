@@ -1,10 +1,14 @@
 /**
- * Gmail-style vault search query parser / composer.
+ * Vault search query parser / composer.
  *
  * Supported operators:
- *   from:  to:  subject:  has:attachment  after:  before:
+ *   with:  from:  to:  has:attachment  after:  before:
  *   source:  is:group  is:direct  label:  in:trash
  *   "quoted phrases"  -term
+ *
+ * `with:` and `to:` both mean “conversation includes this person”.
+ * `from:` still means they sent the message. `subject:` is accepted for
+ * typed queries but is not offered in the advanced form (rare for SMS).
  */
 
 export type ParsedSearchQuery = {
@@ -27,9 +31,8 @@ export type ParsedSearchQuery = {
 };
 
 export type AdvancedSearchForm = {
-  from?: string;
-  to?: string;
-  subject?: string;
+  /** Name or number of a conversation participant. */
+  withPerson?: string;
   hasWords?: string;
   doesntHave?: string;
   after?: string;
@@ -58,7 +61,7 @@ const EMPTY: ParsedSearchQuery = {
 };
 
 const OPERATOR_RE =
-  /^(from|to|subject|has|after|before|source|is|label|in):(.*)$/i;
+  /^(with|from|to|subject|has|after|before|source|is|label|in):(.*)$/i;
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -154,6 +157,7 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
         case "from":
           out.from = value;
           break;
+        case "with":
         case "to":
           out.to = value;
           break;
@@ -205,10 +209,8 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
   const quoteIfNeeded = (v: string) =>
     /\s/.test(v) ? `"${v.replace(/"/g, "")}"` : v;
 
-  if (form.from?.trim()) parts.push(`from:${quoteIfNeeded(form.from.trim())}`);
-  if (form.to?.trim()) parts.push(`to:${quoteIfNeeded(form.to.trim())}`);
-  if (form.subject?.trim()) {
-    parts.push(`subject:${quoteIfNeeded(form.subject.trim())}`);
+  if (form.withPerson?.trim()) {
+    parts.push(`with:${quoteIfNeeded(form.withPerson.trim())}`);
   }
   if (form.hasWords?.trim()) parts.push(form.hasWords.trim());
   if (form.doesntHave?.trim()) {

@@ -110,9 +110,17 @@ export function useBrowsePeopleTree({
         setError(null);
         return;
       }
+      // Drop the previous contact's bundle immediately so consumers never apply
+      // stale detail/threads while the next fetch (or cache read) is in flight.
+      setBundle((prev) => {
+        if (prev?.detail.id === contactId && !options?.force) return prev;
+        return null;
+      });
+      setLoading(true);
+      setError(null);
       void loadContact(contactId, options);
     },
-    [applyBundle, loadContact],
+    [loadContact],
   );
 
   const invalidate = useCallback(() => {

@@ -21,6 +21,10 @@ export function SortMenu<T extends string>({
   order,
   onChange,
   ariaLabel = "Sort by",
+  /** Compact visible scope (e.g. People / Chats) next to the icon. */
+  scopeLabel,
+  /** Extra classes for the scope label (e.g. container-query hide/show). */
+  scopeLabelClassName,
   disabled = false,
 }: {
   fields: SortField<T>[];
@@ -28,6 +32,8 @@ export function SortMenu<T extends string>({
   order: SortOrder;
   onChange: (next: { sort: T; order: SortOrder }) => void;
   ariaLabel?: string;
+  scopeLabel?: string;
+  scopeLabelClassName?: string;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -64,14 +70,13 @@ export function SortMenu<T extends string>({
   const sortLabel =
     fields.find((field) => field.id === sort)?.label ?? String(sort);
   const orderLabel = order === "asc" ? "Ascending" : "Descending";
+  const hoverLabel = scopeLabel
+    ? `${scopeLabel}: sorted by ${sortLabel}, ${orderLabel}`
+    : `Sorted by ${sortLabel}, ${orderLabel}`;
 
   return (
     <div className="relative" ref={rootRef}>
-      <IconHoverTarget
-        label={`Sorted by ${sortLabel}, ${orderLabel}`}
-        placement="bottom"
-        hidden={open}
-      >
+      <IconHoverTarget label={hoverLabel} placement="bottom" hidden={open}>
         <button
           ref={buttonRef}
           type="button"
@@ -79,9 +84,20 @@ export function SortMenu<T extends string>({
           aria-expanded={open}
           disabled={disabled}
           onClick={toggle}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:pointer-events-none disabled:opacity-40"
+          className={`flex h-7 min-w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:pointer-events-none disabled:opacity-40 ${
+            scopeLabel ? "gap-1 px-1.5" : "w-7"
+          }`}
         >
           <SortIcon />
+          {scopeLabel ? (
+            <span
+              className={`max-w-[3.25rem] truncate text-[11px] font-medium ${
+                scopeLabelClassName ?? ""
+              }`}
+            >
+              {scopeLabel}
+            </span>
+          ) : null}
         </button>
       </IconHoverTarget>
       {open && menuPos && (
@@ -89,6 +105,11 @@ export function SortMenu<T extends string>({
           className="fixed z-[100] min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 shadow-xl"
           style={{ top: menuPos.top, right: menuPos.right }}
         >
+          {scopeLabel ? (
+            <div className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+              {scopeLabel}
+            </div>
+          ) : null}
           <div className="px-3 pb-1.5 text-[12px] font-semibold text-text">
             Sort By
           </div>
@@ -141,10 +162,15 @@ export function SortByMenu({
   sort,
   order,
   onChange,
+  scopeLabel = "People",
+  scopeLabelClassName,
 }: {
   sort: SortMode;
   order: SortOrder;
   onChange: (next: { sort: SortMode; order: SortOrder }) => void;
+  /** Visible scope chip; pass null to keep the icon-only trigger. */
+  scopeLabel?: string | null;
+  scopeLabelClassName?: string;
 }) {
   return (
     <SortMenu
@@ -152,7 +178,9 @@ export function SortByMenu({
       sort={sort}
       order={order}
       onChange={onChange}
-      ariaLabel="Sort by"
+      ariaLabel="Sort people"
+      scopeLabel={scopeLabel ?? undefined}
+      scopeLabelClassName={scopeLabelClassName}
     />
   );
 }
@@ -235,11 +263,16 @@ export function BrowseGroupChatSortMenu({
   order,
   onChange,
   disabled = false,
+  scopeLabel = "Chats",
+  scopeLabelClassName,
 }: {
   sortBy: BrowseGroupChatSortBy;
   order: SortOrder;
   onChange: (next: { sortBy: BrowseGroupChatSortBy; order: SortOrder }) => void;
   disabled?: boolean;
+  /** Visible scope chip; pass null to keep the icon-only trigger. */
+  scopeLabel?: string | null;
+  scopeLabelClassName?: string;
 }) {
   return (
     <SortMenu
@@ -249,7 +282,9 @@ export function BrowseGroupChatSortMenu({
       onChange={({ sort, order: nextOrder }) =>
         onChange({ sortBy: sort, order: nextOrder })
       }
-      ariaLabel="Sort group messages"
+      ariaLabel="Sort chats"
+      scopeLabel={scopeLabel ?? undefined}
+      scopeLabelClassName={scopeLabelClassName}
       disabled={disabled}
     />
   );
