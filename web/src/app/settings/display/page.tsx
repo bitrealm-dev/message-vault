@@ -1,23 +1,13 @@
 import { DateTimeSettings } from "@/components/DateTimeSettings";
 import { MessageBadgeSettings } from "@/components/MessageBadgeSettings";
-import { StyleGuidePreview } from "@/components/StyleGuidePreview";
 import { ThemeSettings } from "@/components/ThemeSettings";
 
 export default function SettingsDisplayPage() {
   return (
-    <>
-      <h2 className="text-2xl font-semibold tracking-tight">Display options</h2>
-      <p className="mt-2 max-w-xl text-[14px] text-muted">
-        Customize how Message Vault looks and feels.
-      </p>
-      <div className="mt-8">
-        <MessageBadgeSettings />
-      </div>
-      <div className="mt-10">
-        <ThemeSettings />
-      </div>
+    <div className="space-y-10">
+      <MessageBadgeSettings />
+      <ThemeSettings />
       <DateTimeSettings />
-      <StyleGuidePreview />
-    </>
+    </div>
   );
 }

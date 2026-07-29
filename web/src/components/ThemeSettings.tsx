@@ -86,12 +86,12 @@ export function ThemeSettings() {
 
   return (
     <section className="max-w-xl">
-      <h3 className="text-lg font-semibold tracking-wide text-muted uppercase">
+      <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
         Theme
-      </h3>
-      <p className="mt-1 text-[14px] text-muted">
+      </h2>
+      <p className="mt-1 text-[13px] text-muted">
         Four colors define your theme. Surfaces and bubbles are derived from
-        the active header and accent.
+        the active header and accent. Changes save automatically.
       </p>
 
       <div

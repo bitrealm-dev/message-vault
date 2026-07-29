@@ -2,7 +2,7 @@
 
 Tokens live in [`src/app/globals.css`](src/app/globals.css). Use semantic Tailwind utilities (`bg-panel`, `text-muted`) — never raw hex in components.
 
-Appearance: **User Settings → Display options**. Live swatches are on that page (`StyleGuidePreview`).
+Appearance: **Settings → Appearance**. Live token swatches are in `StyleGuidePreview` (developer preview component; not shown on the Appearance page).
 
 ## Four-seed themes
 
@@ -19,7 +19,7 @@ Mode is `light` | `dark` | `system`. Only the active header+accent pair is appli
 
 **Default (Graphite Blue):** `#e6e9ee,#2b7fff,#222426,#5ea1ff`
 
-**Share string:** same comma-separated form — copy/paste under Display options. Stored in `localStorage` as `mv-theme` (mode) and `mv-theme-seeds` (share string or JSON).
+**Share string:** same comma-separated form — copy/paste under Settings → Appearance. Stored in `localStorage` as `mv-theme` (mode) and `mv-theme-seeds` (share string or JSON).
 
 Presets (“tried and true”) are built-in four-hex packs in [`src/lib/theme.ts`](src/lib/theme.ts).
 
@@ -68,5 +68,5 @@ Presets (“tried and true”) are built-in four-hex packs in [`src/lib/theme.ts
 
 1. New UI uses tokens only — no hard-coded surface hexes or `bg-white/20`.
 2. User color comes from the four seeds; do not invent a second accent family in components.
-3. Check light, dark, and a custom seed under Display options before shipping UI.
+3. Check light, dark, and a custom seed under Settings → Appearance before shipping UI.
 4. Keep browse density: compact rows, 45px tool headers.

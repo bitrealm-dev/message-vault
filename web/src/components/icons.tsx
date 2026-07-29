@@ -487,3 +487,40 @@ export function SearchIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export function HomeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4.5 10.5 12 4.25l7.5 6.25" />
+      <path d="M6.5 9.75V19.5h11V9.75" />
+      <path d="M10 19.5v-5h4v5" />
+    </svg>
+  );
+}
+
+export function SettingsIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="3.25" />
+      <path d="M12 3.5v2.25M12 18.25V20.5M4.93 6.43l1.6 1.6M17.47 16.97l1.6 1.6M3.5 12h2.25M18.25 12H20.5M4.93 17.57l1.6-1.6M17.47 7.03l1.6-1.6" />
+    </svg>
+  );
+}

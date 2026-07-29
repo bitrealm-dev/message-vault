@@ -7,13 +7,11 @@ import {
 } from "@/components/history";
 import { PaneSeparator } from "@/components/PaneSeparator";
 import { usePanelLayoutStorage } from "@/components/panelLayoutStorage";
-import { SettingsSidebar } from "@/components/SettingsSidebar";
 import {
   NAV_RAIL_PX,
   useNavCollapse,
   type NavAnimDirection,
 } from "@/components/useNavCollapse";
-import { usePathname } from "next/navigation";
 import { useCallback, useState, type ReactNode } from "react";
 import {
   Group,
@@ -46,8 +44,6 @@ export function AppShell({
   );
   const navAnimating = navAnim != null;
   const storage = usePanelLayoutStorage();
-  const pathname = usePathname();
-  const settingsMode = pathname.startsWith("/settings");
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "mv-nav",
@@ -82,24 +78,16 @@ export function AppShell({
             collapsedSize={NAV_RAIL_PX}
             className="min-h-0 overflow-hidden"
           >
-            {settingsMode ? (
-              <SettingsSidebar
-                collapsed={collapsed}
-                onHideNav={() => void collapse()}
-                onShowNav={() => void expand()}
-              />
-            ) : (
-              <AppSidebar
-                active={active}
-                labels={labels}
-                collapsed={collapsed}
-                animating={navAnim === "collapse"}
-                onHideNav={() => void collapse()}
-                onShowNav={() => void expand()}
-                onExpandLabels={onExpandLabels}
-                focusLabelsToken={focusLabelsToken}
-              />
-            )}
+            <AppSidebar
+              active={active}
+              labels={labels}
+              collapsed={collapsed}
+              animating={navAnim === "collapse"}
+              onHideNav={() => void collapse()}
+              onShowNav={() => void expand()}
+              onExpandLabels={onExpandLabels}
+              focusLabelsToken={focusLabelsToken}
+            />
           </Panel>
           <PaneSeparator orientation="vertical" disabled={navCollapsed || navAnimating} />
           <Panel id="main" minSize="30%" className="min-h-0 min-w-0">

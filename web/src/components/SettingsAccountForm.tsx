@@ -230,10 +230,13 @@ export function SettingsAccountForm() {
   const additionalEmails = emails.filter((entry) => !entry.isPrimary);
 
   return (
-    <div className="max-w-xl space-y-8">
+    <div className="max-w-xl space-y-10">
       <section>
-        <p className="text-[13px] text-muted">
-          Credentials for logging into Message Vault.
+        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+          Sign-in details
+        </h2>
+        <p className="mt-1 text-[13px] text-muted">
+          Credentials for logging into Message Vault in the browser.
         </p>
 
         <div className="mt-4 space-y-4">
@@ -291,23 +294,31 @@ export function SettingsAccountForm() {
               </button>
             </div>
           </div>
-
-          <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
-              checked={readOnly}
-              onChange={(e) => setReadOnly(e.target.checked)}
-              className="mt-0.5 size-4 rounded border-border accent-accent"
-            />
-            <span>
-              <span className="block text-[13px] text-text">Read-only mode</span>
-              <span className="block text-[12px] text-muted">
-                Prevent edits and destructive actions in the Web UI. Imports
-                through the API or CLI remain available.
-              </span>
-            </span>
-          </label>
         </div>
+      </section>
+
+      <section>
+        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+          Vault access
+        </h2>
+        <p className="mt-1 text-[13px] text-muted">
+          Control whether this browser session can change vault data.
+        </p>
+        <label className="mt-4 flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(e) => setReadOnly(e.target.checked)}
+            className="mt-0.5 size-4 rounded border-border accent-accent"
+          />
+          <span>
+            <span className="block text-[13px] text-text">Read-only mode</span>
+            <span className="block text-[12px] text-muted">
+              Prevent edits and destructive actions in the Web UI. Imports
+              through the API or CLI remain available.
+            </span>
+          </span>
+        </label>
       </section>
 
       <section>
@@ -346,8 +357,12 @@ export function SettingsAccountForm() {
       {data && (
         <section>
           <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-            Vault owner
+            Vault identity
           </h2>
+          <p className="mt-1 text-[13px] text-muted">
+            Name and phones used when matching your own messages. Reingest after
+            changing these values.
+          </p>
 
           <dl className="mt-4 space-y-3 text-[14px]">
             <div>
@@ -376,21 +391,21 @@ export function SettingsAccountForm() {
                 )}
               </dd>
               <p className="mt-1 text-[12px] text-muted">
-                Stored in E.164 format. Reingest after changing.
+                Stored in E.164 format.
               </p>
             </div>
           </dl>
         </section>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 border-t border-border pt-6">
         <button
           type="button"
           disabled={saving || deleting}
           onClick={() => void save()}
           className="rounded-md border border-border bg-elevated px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Saving…" : "Save changes"}
         </button>
         {saved && <span className="text-[13px] text-muted">Saved.</span>}
         {error && (

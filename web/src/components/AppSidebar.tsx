@@ -1,13 +1,16 @@
 "use client";
 
+import { isSettingsPath } from "@/lib/settingsNav";
 import { useEffect } from "react";
 import {
   AddressBookIcon,
   GroupMessagesOutlineIcon,
+  HomeIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
   PersonDetailIcon,
   ProhibitedIcon,
+  SettingsIcon,
   TrashIcon,
 } from "./icons";
 import { IconHoverTarget } from "./IconHoverLabel";
@@ -59,6 +62,7 @@ export function AppSidebar({
   const groupMessagesIcon = (
     <GroupMessagesOutlineIcon className="size-5 shrink-0 opacity-80" />
   );
+  const settingsActive = isSettingsPath(active);
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-sidebar">
@@ -108,13 +112,22 @@ export function AppSidebar({
       )}
 
       <nav className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto pb-2">
+        <SidebarNavLink
+          href="/"
+          label="Home"
+          active={active === "/"}
+          compact={collapsed}
+          icon={<HomeIcon className="size-5 shrink-0 opacity-80" />}
+        />
+
         {!collapsed && (
-          <div className={`flex h-8 items-center ${navHeadingClass}`}>
+          <div className={`mt-3 flex h-8 items-center ${navHeadingClass}`}>
             <span className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-              View
+              Messages
             </span>
           </div>
         )}
+        {collapsed && <div className="mt-3" aria-hidden />}
         <SidebarNavLink
           href="/all"
           label="All"
@@ -146,6 +159,15 @@ export function AppSidebar({
 
         <div className="mt-3" aria-hidden />
 
+        <LabelsNav
+          labels={labels}
+          compact={collapsed}
+          hideItems={collapsed || animating}
+          onExpandLabels={onExpandLabels}
+        />
+
+        <div className="mt-3" aria-hidden />
+
         <SidebarNavLink
           href="/trash"
           label="Trash"
@@ -153,12 +175,12 @@ export function AppSidebar({
           compact={collapsed}
           icon={<TrashIcon className="size-5 shrink-0 opacity-80" />}
         />
-
-        <LabelsNav
-          labels={labels}
+        <SidebarNavLink
+          href="/settings/account"
+          label="Settings"
+          active={settingsActive}
           compact={collapsed}
-          hideItems={collapsed || animating}
-          onExpandLabels={onExpandLabels}
+          icon={<SettingsIcon className="size-5 shrink-0 opacity-80" />}
         />
       </nav>
       {confirmDialog}

@@ -173,7 +173,7 @@ export function DateTimeSettings() {
   const showSyntax = activeSyntax != null;
 
   return (
-    <section className="mt-10">
+    <section>
       <div
         className={
           showSyntax
@@ -182,12 +182,14 @@ export function DateTimeSettings() {
         }
       >
         <div className="min-w-0 max-w-xl">
-          <h3 className="text-lg font-semibold tracking-wide text-muted uppercase">
-            Date
-          </h3>
-          <p className="mt-1 text-[14px] text-muted">
-            How dates appear in lists, headers, and message timestamps.
+          <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+            Date and time
+          </h2>
+          <p className="mt-1 text-[13px] text-muted">
+            How dates appear in lists, headers, and message timestamps. Changes
+            save automatically.
           </p>
+          <h3 className="mt-5 text-[13px] font-medium text-text">Date</h3>
 
           <div
             role="radiogroup"
@@ -243,10 +245,8 @@ export function DateTimeSettings() {
             Preview: <span className="text-text">{datePreview}</span>
           </p>
 
-          <h3 className="mt-8 text-lg font-semibold tracking-wide text-muted uppercase">
-            Time
-          </h3>
-          <p className="mt-1 text-[14px] text-muted">
+          <h3 className="mt-8 text-[13px] font-medium text-text">Time</h3>
+          <p className="mt-1 text-[13px] text-muted">
             How times appear on messages and other timestamps.
           </p>
 

@@ -17,11 +17,12 @@ export function MessageBadgeSettings() {
   return (
     <>
       <section className="max-w-xl">
-        <h3 className="text-lg font-semibold tracking-wide text-muted uppercase">
-          Messages
-        </h3>
-        <p className="mt-1 text-[14px] text-muted">
+        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+          List badges
+        </h2>
+        <p className="mt-1 text-[13px] text-muted">
           Choose which badges and indicators appear on contacts in the list.
+          Changes save automatically.
         </p>
 
         <div className="mt-4 space-y-3">
@@ -56,10 +57,10 @@ export function MessageBadgeSettings() {
       </section>
 
       <section className="mt-10 max-w-xl">
-        <h3 className="text-lg font-semibold tracking-wide text-muted uppercase">
-          Contacts
-        </h3>
-        <p className="mt-1 text-[14px] text-muted">
+        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+          Contact initials
+        </h2>
+        <p className="mt-1 text-[13px] text-muted">
           Colored circles with first and last name initials in the contact list.
         </p>
 

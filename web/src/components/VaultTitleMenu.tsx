@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { ChevronDownIcon } from "./icons";
 import { useDismissible } from "./useDismissible";
@@ -16,7 +15,6 @@ export function VaultTitleMenu({
   onResetDemo: () => void;
   onLogout: () => void;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(
     null,
@@ -77,28 +75,6 @@ export function VaultTitleMenu({
           className="fixed z-[100] min-w-[11rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
           style={{ top: menuPos.top, left: menuPos.left }}
         >
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => {
-              close();
-              router.push("/");
-            }}
-          >
-            Home
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => {
-              close();
-              router.push("/settings");
-            }}
-          >
-            User Settings
-          </button>
           <button
             type="button"
             role="menuitem"
