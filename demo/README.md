@@ -33,5 +33,5 @@ cd web && npm run process-assets
 - **Group Chats** — ~200 threads, many untitled, some phone-number-only participants, sizes up to 20
 - **Year threads** — message history from 2016 through present (10 years)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
-- **orphaned.json** — messages without a conversation header
+- **orphaned.jsonl** — messages without a conversation header
 - **exclude.csv** — short-code spam absent after import

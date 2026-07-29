@@ -470,6 +470,11 @@ fn import_file_to_staging(
         .and_then(|name| name.to_str())
         .unwrap_or("unknown.jsonl")
         .to_string();
+    // Demo (and docs) use orphaned.jsonl; older bundles used orphaned.json.
+    let is_orphaned = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("orphaned"));
 
     let records = jsonl::read_records(path)?;
     let mut stats = ImportStats::default();
@@ -506,7 +511,7 @@ fn import_file_to_staging(
                 ));
             }
             ExportRecord::Message(m) => {
-                if pending.is_none() && source_file != "orphaned.json" {
+                if pending.is_none() && !is_orphaned {
                     bail!(
                         "{} is missing a conversation header (expected before messages)",
                         path.display()
@@ -530,7 +535,7 @@ fn import_file_to_staging(
             asset_stats,
             source,
         )?);
-    } else if source_file == "orphaned.json" {
+    } else if is_orphaned {
         stats.merge_file(&import_conversation_to_staging(
             tx,
             stmts,

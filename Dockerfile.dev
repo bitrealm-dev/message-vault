@@ -21,9 +21,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY scripts/docker-entrypoint-dev.sh /usr/local/bin/docker-entrypoint-dev.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint-dev.sh
-
+# Use the bind-mounted script so entrypoint fixes apply without rebuilding the image.
 EXPOSE 3000 8080
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint-dev.sh"]
+ENTRYPOINT ["/bin/bash", "/app/scripts/docker-entrypoint-dev.sh"]

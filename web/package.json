@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "process-assets": "tsx scripts/process-assets.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "process-assets": "node ./node_modules/tsx/dist/cli.mjs scripts/process-assets.ts",
+    "test": "node ./node_modules/tsx/dist/cli.mjs --test src/**/*.test.ts"
   },
   "dependencies": {
     "@napi-rs/image": "^1.14.0",

@@ -17,6 +17,20 @@ ensure_docker_config() {
   cp "${CONFIG_DOCKER}" "${CONFIG}"
 }
 
+# Named volume mounts create an empty web/node_modules dir, so "-d" is not enough.
+# tsx is an npm dependency (web/package.json), not a system binary.
+web_deps_ready() {
+  [[ -f web/node_modules/tsx/dist/cli.mjs ]] && [[ -d web/node_modules/next ]]
+}
+
+install_web_deps() {
+  if web_deps_ready; then
+    return
+  fi
+  echo "Installing web dependencies…"
+  (cd web && npm ci)
+}
+
 seed_if_needed() {
   if [[ -f data/vault.db ]]; then
     echo "Vault DB present; skipping seed (VAULT_MODE=${VAULT_MODE})."
@@ -33,9 +47,10 @@ seed_if_needed() {
       cargo run --release -- reset-demo --config "${CONFIG}"
       # reset-demo installs demo config without [server]; restore docker bind.
       ensure_docker_config
-      if [[ ! -d web/node_modules ]]; then
-        echo "Installing web dependencies…"
-        (cd web && npm ci)
+      install_web_deps
+      if ! web_deps_ready; then
+        echo "error: web deps missing after npm ci (tsx/next not found)" >&2
+        exit 1
       fi
       echo "Converting demo media…"
       (cd web && npm run process-assets) || echo "warning: process-assets failed; UI still works"
@@ -50,15 +65,8 @@ seed_if_needed() {
   esac
 }
 
-install_web_deps() {
-  if [[ ! -d web/node_modules/.bin ]] || [[ ! -f web/node_modules/.package-lock.json ]]; then
-    echo "Installing web dependencies…"
-    (cd web && npm ci)
-  fi
-}
-
-seed_if_needed
 install_web_deps
+seed_if_needed
 
 echo "Starting import API (cargo run -- serve)…"
 cargo run --release -- serve --config "${CONFIG}" &
