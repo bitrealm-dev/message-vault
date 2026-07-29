@@ -1,6 +1,7 @@
 # Dev toolchain image: Rust + Node + FFmpeg.
 # Source is bind-mounted at runtime (see docker-compose.yml).
-FROM rust:1.85-bookworm
+# rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
+FROM rust:1.95-bookworm
 
 # Node 20 from the official image (avoids NodeSource apt scripts).
 COPY --from=node:20-bookworm /usr/local/bin/node /usr/local/bin/node

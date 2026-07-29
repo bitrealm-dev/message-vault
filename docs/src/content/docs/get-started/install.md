@@ -10,7 +10,7 @@ Message Vault has two local components:
 
 ## Requirements
 
-- Rust 1.85 or newer (edition 2024)
+- Rust 1.95 or newer (edition 2024; also required by `rusqlite` / `libsqlite3-sys`)
 - Node.js 20.9 or newer and npm
 - A native C/C++ build toolchain
 - Optional: FFmpeg for video/audio/HEIC conversion (`npm run process-assets`)

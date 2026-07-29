@@ -14,7 +14,7 @@ Commands below assume the repository root is the current directory unless noted.
 
 ## Requirements
 
-- Rust 1.85 or newer (the workspace uses Rust 2024 edition)
+- Rust 1.95 or newer (edition 2024; `rusqlite` 0.40 needs `cfg_select!`)
 - Node.js 20.9 or newer and npm
 - A native C/C++ build toolchain
 - Optional: FFmpeg for video/audio conversion and media format fallbacks
