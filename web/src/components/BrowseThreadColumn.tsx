@@ -41,6 +41,10 @@ export function BrowseThreadColumn({
   emptyFocusGuidance = "Choose a Direct or group conversation in the tree.",
   emptyIdleGuidance = "Select a person or conversation to read messages.",
   threadsReadyOverride,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
+  onEnsureYear,
 }: {
   paneStorageKey: string;
   detail: ContactDetail | null;
@@ -75,6 +79,10 @@ export function BrowseThreadColumn({
   emptyIdleGuidance?: string;
   /** When set, overrides the contact-based threadsReady check. */
   threadsReadyOverride?: boolean;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void | Promise<void>;
+  onEnsureYear?: (year: number) => void | Promise<void>;
 }) {
   const showReader =
     readerOnly
@@ -132,6 +140,10 @@ export function BrowseThreadColumn({
             conversationsPanelCollapsed={false}
             highlightTerms={highlightTerms}
             scrollToMessageId={scrollToMessageId}
+            hasOlder={hasOlder}
+            loadingOlder={loadingOlder}
+            onLoadOlder={onLoadOlder}
+            onEnsureYear={onEnsureYear}
           />
         </div>
       ) : (

@@ -7,7 +7,14 @@ import type {
   YearThread,
 } from "@/lib/types";
 import { formatSourceLabel } from "@/lib/sourceLabels";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   GroupParticipantChip,
 } from "./GroupParticipantChip";
@@ -39,6 +46,52 @@ export type BrowseGroupThreadMeta = {
   messageCount: number;
 };
 
+/** Isolated from scroll chrome so year-highlight updates do not rebuild bubbles. */
+const ThreadMessageSections = memo(function ThreadMessageSections({
+  messagesByYear,
+  highlightTerms,
+  hasOlder,
+  loadingOlder,
+}: {
+  messagesByYear: Array<{ year: number; messages: MessageRow[] }>;
+  highlightTerms: string[];
+  hasOlder: boolean;
+  loadingOlder: boolean;
+}) {
+  return (
+    <div className="mx-auto flex max-w-2xl flex-col gap-1">
+      {(loadingOlder || hasOlder) && (
+        <div className="py-2 text-center text-[12px] text-muted">
+          {loadingOlder
+            ? "Loading earlier messages…"
+            : hasOlder
+              ? "Scroll up for earlier messages"
+              : null}
+        </div>
+      )}
+      {messagesByYear.map((section) => (
+        <div
+          key={section.year}
+          id={`year-${section.year}`}
+          className="scroll-mt-3"
+        >
+          <div className="sticky top-0 z-10 -mx-1 mb-1.5 bg-bg/95 px-1 py-1 backdrop-blur-sm">
+            <div className="text-[12px] font-semibold tracking-wide text-muted tabular-nums">
+              {section.year || "Unknown"}
+            </div>
+          </div>
+          <div className="flex flex-col">
+            <MessageList
+              messages={section.messages}
+              highlightTerms={highlightTerms}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+});
+
 export function BrowseThreadPane({
   detail,
   sources,
@@ -57,6 +110,10 @@ export function BrowseThreadPane({
   conversationsPanelCollapsed = false,
   highlightTerms = [],
   scrollToMessageId = null,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
+  onEnsureYear,
 }: {
   detail: ContactDetail | null;
   sources: string[];
@@ -85,9 +142,16 @@ export function BrowseThreadPane({
   conversationsPanelCollapsed?: boolean;
   highlightTerms?: string[];
   scrollToMessageId?: number | null;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void | Promise<void>;
+  /** Ensure a calendar year is loaded before scrolling to its section. */
+  onEnsureYear?: (year: number) => void | Promise<void>;
 }) {
   const { formatDateRange } = useDateTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollAnchorRef = useRef<{ id: string; offset: number } | null>(null);
+  const nearTopLoadingRef = useRef(false);
   const [headerExpanded, setHeaderExpanded] = useState(() => {
     if (typeof window === "undefined") return true;
     try {
@@ -140,8 +204,28 @@ export function BrowseThreadPane({
   }, [groupThread, activeThread, yearly, messages]);
 
   const yearsInThread = useMemo(() => {
-    if (yearly.length > 0 && activeThread === "dm") {
+    // Prefer complete year metadata over partially loaded message pages.
+    if (yearly.length > 0 && (activeThread === "dm" || !groupThread)) {
       return [...yearly].sort((a, b) => a.year - b.year);
+    }
+    if (yearly.length > 0 && activeThread?.startsWith("gfull-")) {
+      // Group opens still receive contact yearly for DMs; derive from messages
+      // plus any years already represented in the loaded page.
+      const years = new Set<number>();
+      for (const m of messages) {
+        const y = yearFromTimestamp(m.timestamp);
+        if (y != null) years.add(y);
+      }
+      return [...years]
+        .sort((a, b) => a - b)
+        .map((year) => ({
+          year,
+          messageCount: 0,
+          attachmentCount: 0,
+          dateStart: "",
+          dateEnd: "",
+          conversationIds: [] as number[],
+        }));
     }
     const years = new Set<number>();
     for (const m of messages) {
@@ -158,7 +242,7 @@ export function BrowseThreadPane({
         dateEnd: "",
         conversationIds: [] as number[],
       }));
-  }, [yearly, messages, activeThread]);
+  }, [yearly, messages, activeThread, groupThread]);
 
   const visibleMessages = useMemo(
     () =>
@@ -169,9 +253,25 @@ export function BrowseThreadPane({
   );
 
   const messagesByYear = useMemo(() => {
-    const chronological = [...visibleMessages].sort((a, b) =>
-      a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0,
-    );
+    // Progressive pages arrive chronological; only sort when needed.
+    let chronological = visibleMessages;
+    for (let i = 1; i < chronological.length; i++) {
+      const prev = chronological[i - 1]!;
+      const cur = chronological[i]!;
+      if (
+        cur.timestamp < prev.timestamp ||
+        (cur.timestamp === prev.timestamp && cur.id < prev.id)
+      ) {
+        chronological = [...visibleMessages].sort((a, b) =>
+          a.timestamp < b.timestamp
+            ? -1
+            : a.timestamp > b.timestamp
+              ? 1
+              : a.id - b.id,
+        );
+        break;
+      }
+    }
     const sections: Array<{ year: number; messages: MessageRow[] }> = [];
     for (const m of chronological) {
       const y = yearFromTimestamp(m.timestamp) ?? 0;
@@ -246,19 +346,70 @@ export function BrowseThreadPane({
       const distance =
         root.scrollHeight - root.scrollTop - root.clientHeight;
       setAwayFromBottom(distance > NEAR_BOTTOM_PX);
+
+      if (
+        onLoadOlder &&
+        hasOlder &&
+        !loadingOlder &&
+        !loadingMessages &&
+        !nearTopLoadingRef.current &&
+        root.scrollTop < 120
+      ) {
+        nearTopLoadingRef.current = true;
+        const firstMsg = root.querySelector('[id^="msg-"]');
+        if (firstMsg) {
+          const rootRect = root.getBoundingClientRect();
+          const rect = firstMsg.getBoundingClientRect();
+          scrollAnchorRef.current = {
+            id: firstMsg.id,
+            offset: rect.top - rootRect.top,
+          };
+        }
+        void Promise.resolve(onLoadOlder()).finally(() => {
+          nearTopLoadingRef.current = false;
+        });
+      }
     };
     onScroll();
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => root.removeEventListener("scroll", onScroll);
-  }, [visibleMessages.length, loadingMessages, activeThread]);
+  }, [
+    visibleMessages.length,
+    loadingMessages,
+    activeThread,
+    onLoadOlder,
+    hasOlder,
+    loadingOlder,
+  ]);
+
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    const anchor = scrollAnchorRef.current;
+    if (!root || !anchor) return;
+    const el = root.querySelector(`#${CSS.escape(anchor.id)}`);
+    if (!el) return;
+    const rootRect = root.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    root.scrollTop += rect.top - rootRect.top - anchor.offset;
+    scrollAnchorRef.current = null;
+  }, [messages]);
 
   const jumpToYear = (year: number) => {
     setScrolledYear(year);
-    const el = scrollRef.current?.querySelector(`#year-${year}`);
-    el?.scrollIntoView({
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "start",
-    });
+    const scroll = () => {
+      const el = scrollRef.current?.querySelector(`#year-${year}`);
+      el?.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "start",
+      });
+    };
+    if (onEnsureYear) {
+      void Promise.resolve(onEnsureYear(year)).then(() => {
+        requestAnimationFrame(scroll);
+      });
+      return;
+    }
+    scroll();
   };
 
   const jumpToLatest = () => {
@@ -559,31 +710,12 @@ export function BrowseThreadPane({
             </p>
           )}
         {visibleMessages.length > 0 && (
-          <div
-            className={`mx-auto flex max-w-2xl flex-col gap-1 ${
-              loadingMessages ? "opacity-60" : ""
-            }`}
-          >
-            {messagesByYear.map((section) => (
-              <div
-                key={section.year}
-                id={`year-${section.year}`}
-                className="scroll-mt-3"
-              >
-                <div className="sticky top-0 z-10 -mx-1 mb-1.5 bg-bg/95 px-1 py-1 backdrop-blur-sm">
-                  <div className="text-[12px] font-semibold tracking-wide text-muted tabular-nums">
-                    {section.year || "Unknown"}
-                  </div>
-                </div>
-                <div className="flex flex-col">
-                  <MessageList
-                    messages={section.messages}
-                    highlightTerms={highlightTerms}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+          <ThreadMessageSections
+            messagesByYear={messagesByYear}
+            highlightTerms={highlightTerms}
+            hasOlder={hasOlder}
+            loadingOlder={loadingOlder}
+          />
         )}
       </div>
 

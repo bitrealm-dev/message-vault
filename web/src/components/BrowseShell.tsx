@@ -63,7 +63,7 @@ import { useCollapsedGroupChatList } from "./useCollapsedGroupChatList";
 import { useListSelection } from "./useListSelection";
 import { useParticipantContactForm } from "./useParticipantContactForm";
 import { useTrashActions } from "./useTrashActions";
-import { useThreadMessages } from "./useThreadMessages";
+import { useProgressiveThreadMessages } from "./useProgressiveThreadMessages";
 import { useDismissible } from "./useDismissible";
 import { usePersistedEnum } from "./usePersistedEnum";
 import { PaneSeparator } from "./PaneSeparator";
@@ -168,6 +168,10 @@ export function BrowseShell({
   const [mergePos, setMergePos] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [toolbarLabelsPos, setToolbarLabelsPos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
   const mergePanelRef = useRef<HTMLDivElement>(null);
   const pendingEditIdRef = useRef<number | null>(null);
@@ -388,7 +392,9 @@ export function BrowseShell({
         return;
       }
       setContactId(id);
-      setDetail(null);
+      // Keep prior detail only when it matches; inspector falls back to the
+      // lightweight contact-list row until the matching bundle arrives.
+      setDetail((prev) => (prev?.id === id ? prev : null));
       setYearly([]);
       setGroupChats([]);
       setMessageSources([]);
@@ -396,6 +402,8 @@ export function BrowseShell({
       setThreadConversationIds(null);
       setActiveThread(null);
       setSelectedGroupConversationId(null);
+      setScrollToMessageId(null);
+      setFocusedSearchHit(null);
       loadedContactIdRef.current = null;
       setThreadsLoadedFor(null);
       expandContact(id);
@@ -799,10 +807,7 @@ export function BrowseShell({
     selectedIds: selectedGroupIds,
     setSelectedIds: setSelectedGroupIds,
     hasSelection: hasGroupSelection,
-    allSelected: allGroupsSelected,
-    selectAllRef: groupSelectAllRef,
     clearSelection: clearGroupSelection,
-    toggleSelectAll: toggleSelectAllGroups,
     onSelectColumnClick: onGroupSelectColumnClick,
     onRowClick: onGroupRowClick,
   } = useListSelection<number>({
@@ -885,13 +890,41 @@ export function BrowseShell({
     openThread(dmIds, "dm");
   }, [yearly, openThread, clearGroupSelection]);
 
-  const { messages, loading: loadingMessages } = useThreadMessages({
+  const {
+    messages,
+    loading: loadingMessages,
+    loadingOlder,
+    hasOlder,
+    loadOlder,
+    ensureYearLoaded,
+    ensureMessageIdsLoaded,
+  } = useProgressiveThreadMessages({
     conversationIds: threadConversationIds,
     sourceQuery,
-    fullConversation: true,
     enabled: !hasGroupSelection,
     reloadToken: threadsEpoch,
   });
+
+  // Search hits / deep links may target messages outside the newest page.
+  useEffect(() => {
+    if (scrollToMessageId == null || threadConversationIds == null) return;
+    if (messages.some((m) => m.id === scrollToMessageId)) return;
+    const yearHint = focusedSearchHit?.topMatch?.timestamp
+      ? Number(focusedSearchHit.topMatch.timestamp.slice(0, 4))
+      : focusedSearchHit?.dateEnd
+        ? Number(focusedSearchHit.dateEnd.slice(0, 4))
+        : null;
+    void ensureMessageIdsLoaded(
+      [scrollToMessageId],
+      yearHint != null && Number.isFinite(yearHint) ? yearHint : null,
+    );
+  }, [
+    scrollToMessageId,
+    threadConversationIds,
+    messages,
+    focusedSearchHit,
+    ensureMessageIdsLoaded,
+  ]);
 
   const createDefaults = useMemo(() => {
     if (typeof contactSection === "object") {
@@ -909,7 +942,8 @@ export function BrowseShell({
     knownLabels: allLabels,
     createDefaults,
     setStatus: setStatusMsg,
-    shouldIgnoreEscape: () => ctxMenu != null || labelsPanelPos != null,
+    shouldIgnoreEscape: () =>
+      ctxMenu != null || labelsPanelPos != null || toolbarLabelsPos != null,
     onSaved: (result) => {
       if (result.kind === "edit") {
         if (result.contact && result.contactId === contactId) {
@@ -1638,19 +1672,14 @@ export function BrowseShell({
           }
           onImportVcf={vaultReadOnly ? undefined : onImportVcf}
           vaultReadOnly={vaultReadOnly}
-          labelsMenu={
-            <LabelsMenu
-              allLabels={menuLabels}
-              checks={labelChecks}
-              excludedCheck={excludedCheck}
-              disabled={!canEditLabels}
-              onToggle={toggleLabel}
-              onToggleExcluded={() => void toggleExcludedForSelection()}
-              onCreate={createAndAssignLabel}
-              onClearAll={() => void clearAllLabelsForSelection()}
-              onOpenChange={onSelectionMenuOpenChange}
-            />
-          }
+          onLabels={(el) => {
+            const rect = el.getBoundingClientRect();
+            setToolbarLabelsPos({
+              x: Math.max(8, rect.right - 256),
+              y: rect.bottom + 4,
+            });
+          }}
+          labelsDisabled={!canEditLabels}
           onEdit={(el) =>
             beginContactEdit(
               contactFormAnchorFromRect(el.getBoundingClientRect()),
@@ -1667,9 +1696,6 @@ export function BrowseShell({
           loadingThreads={loadingThreads}
           selectedConversationId={selectedGroupConversationId}
           selectedGroupIds={selectedGroupIds}
-          groupSelectAllRef={groupSelectAllRef}
-          allGroupsSelected={allGroupsSelected}
-          onToggleSelectAllGroups={toggleSelectAllGroups}
           onGroupSelectColumnClick={onGroupSelectColumnClick}
           onGroupRowClick={onGroupRowClick}
           onTrashMessages={() => void moveGroupsToTrash()}
@@ -1759,6 +1785,12 @@ export function BrowseShell({
           readerOnly
           hasSelection={hasSelection}
           hasGroupSelection={hasGroupSelection}
+          hasOlder={hasOlder}
+          loadingOlder={loadingOlder}
+          onLoadOlder={loadOlder}
+          onEnsureYear={(year) => {
+            void ensureYearLoaded(year);
+          }}
         />
       </Panel>
 
@@ -1902,6 +1934,23 @@ export function BrowseShell({
           }}
         />
       </div>
+    )}
+    {toolbarLabelsPos && (
+      <LabelsMenu
+        fixedPosition={toolbarLabelsPos}
+        allLabels={menuLabels}
+        checks={labelChecks}
+        excludedCheck={excludedCheck}
+        disabled={!canEditLabels}
+        onToggle={toggleLabel}
+        onToggleExcluded={() => void toggleExcludedForSelection()}
+        onCreate={createAndAssignLabel}
+        onClearAll={() => void clearAllLabelsForSelection()}
+        onOpenChange={(open) => {
+          onSelectionMenuOpenChange(open);
+          if (!open) setToolbarLabelsPos(null);
+        }}
+      />
     )}
     <ParticipantContactFormOverlay
       titleId="mv-contact-form-title"

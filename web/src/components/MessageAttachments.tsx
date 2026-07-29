@@ -104,6 +104,8 @@ export function MessageAttachments({
               key={a.id}
               src={url}
               alt={a.originalName ?? "attachment"}
+              loading="lazy"
+              decoding="async"
               className="max-h-64 max-w-full rounded-lg"
             />
           );

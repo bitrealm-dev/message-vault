@@ -1,4 +1,4 @@
-import { getContact, contactThreadsBundle } from "@/lib/db";
+import { loadContactThreadsPage } from "@/lib/db";
 import {
   unauthorizedResponse,
   withAccountHandler,
@@ -25,23 +25,21 @@ export async function GET(req: Request, { params }: Params) {
 
   try {
     return await withAccountHandler(async () => {
-      const contact = getContact(id);
-      if (!contact) {
-        return NextResponse.json({ error: "not found" }, { status: 404 });
-      }
       const url = new URL(req.url);
       const source = url.searchParams.get("source");
       const includeTrashed =
         url.searchParams.get("trashed") === "1" ||
         url.searchParams.get("trashed") === "true";
-      const { yearly, groupChats, messageSources, sourceCounts } =
-        contactThreadsBundle(id, source, { includeTrashed });
+      const page = loadContactThreadsPage(id, source, { includeTrashed });
+      if (!page) {
+        return NextResponse.json({ error: "not found" }, { status: 404 });
+      }
       return NextResponse.json({
-        contact,
-        yearly,
-        groupChats,
-        messageSources,
-        sourceCounts,
+        contact: page.contact,
+        yearly: page.yearly,
+        groupChats: page.groupChats,
+        messageSources: page.messageSources,
+        sourceCounts: page.sourceCounts,
       });
     });
   } catch (err) {

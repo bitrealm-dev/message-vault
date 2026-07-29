@@ -13,7 +13,6 @@ import {
   useState,
   type ChangeEvent,
   type MouseEvent,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { BrowseContactRow } from "./BrowseContactRow";
@@ -24,7 +23,12 @@ import {
 import { NewContactIcon } from "./BrowseContactList";
 import { ListHistoryMenu, type ListHistoryMenuItem } from "./history";
 import { IconHoverTarget } from "./IconHoverLabel";
-import { PencilIcon, TrashMessagesIcon, XIcon } from "./icons";
+import {
+  PencilIcon,
+  PeopleGroupIcon,
+  TrashMessagesIcon,
+  XIcon,
+} from "./icons";
 import { PaneSearchField } from "./PaneSearchField";
 import { SearchResultsList } from "./SearchResultsList";
 import {
@@ -62,7 +66,8 @@ export function BrowsePeopleTreePane({
   onNewContact,
   onImportVcf,
   vaultReadOnly = false,
-  labelsMenu,
+  onLabels,
+  labelsDisabled = false,
   onEdit,
   editDisabled = false,
   onTrashContact,
@@ -77,9 +82,6 @@ export function BrowsePeopleTreePane({
   // Shared groups / group selection
   selectedConversationId,
   selectedGroupIds,
-  groupSelectAllRef,
-  allGroupsSelected,
-  onToggleSelectAllGroups,
   onGroupSelectColumnClick,
   onGroupRowClick,
   onTrashMessages,
@@ -129,7 +131,8 @@ export function BrowsePeopleTreePane({
   onNewContact: (anchorEl: HTMLElement) => void;
   onImportVcf?: (file: File) => Promise<void>;
   vaultReadOnly?: boolean;
-  labelsMenu?: ReactNode;
+  onLabels?: (anchorEl: HTMLElement) => void;
+  labelsDisabled?: boolean;
   onEdit?: (anchorEl: HTMLElement) => void;
   editDisabled?: boolean;
   onTrashContact?: () => void;
@@ -142,9 +145,6 @@ export function BrowsePeopleTreePane({
   loadingThreads?: boolean;
   selectedConversationId: number | null;
   selectedGroupIds: Set<number>;
-  groupSelectAllRef: RefObject<HTMLInputElement | null>;
-  allGroupsSelected: boolean;
-  onToggleSelectAllGroups: () => void;
   onGroupSelectColumnClick: (id: number, e: MouseEvent) => void;
   onGroupRowClick: (
     id: number,
@@ -230,6 +230,34 @@ export function BrowsePeopleTreePane({
           } satisfies ListHistoryMenuItem,
         ]
       : []),
+    ...(onLabels
+      ? [
+          {
+            key: "labels",
+            label: "Labels",
+            icon: <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />,
+            disabled: labelsDisabled,
+            onClick: (triggerEl) => {
+              if (triggerEl) onLabels(triggerEl);
+            },
+          } satisfies ListHistoryMenuItem,
+        ]
+      : []),
+    ...(onTrashMessages &&
+    (hasContactSelection || expandedContactId != null)
+      ? [
+          {
+            key: "delete-group-messages",
+            label: "Delete group messages",
+            icon: (
+              <TrashMessagesIcon className="size-5 shrink-0 opacity-80" />
+            ),
+            disabled: trashDisabled,
+            danger: true,
+            onClick: () => onTrashMessages(),
+          } satisfies ListHistoryMenuItem,
+        ]
+      : []),
     ...(onTrashContact
       ? [
           {
@@ -302,7 +330,6 @@ export function BrowsePeopleTreePane({
               </span>
             </label>
             <div className="flex shrink-0 items-center gap-1.5 overflow-visible">
-              {!vaultReadOnly && labelsMenu}
               <SortByMenu
                 sort={contactSort}
                 order={contactSortOrder}
@@ -312,22 +339,6 @@ export function BrowsePeopleTreePane({
               />
               {(hasContactSelection || expandedContactId != null) && (
                 <>
-                  {hasContactSelection && (
-                    <IconHoverTarget
-                      label="Select all group messages"
-                      placement="bottom"
-                    >
-                      <input
-                        ref={groupSelectAllRef}
-                        type="checkbox"
-                        checked={allGroupsSelected}
-                        disabled={groupItems.length === 0}
-                        aria-label="Select all group messages"
-                        onChange={onToggleSelectAllGroups}
-                        className="checkbox-list"
-                      />
-                    </IconHoverTarget>
-                  )}
                   <YearFilterMenu
                     years={years}
                     value={filterYear}
@@ -341,22 +352,6 @@ export function BrowsePeopleTreePane({
                     scopeLabel="Chats"
                     scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
                   />
-                  {!vaultReadOnly && onTrashMessages && (
-                    <IconHoverTarget
-                      label="Delete group messages"
-                      placement="bottom"
-                    >
-                      <button
-                        type="button"
-                        aria-label="Delete group messages"
-                        disabled={trashDisabled}
-                        onClick={onTrashMessages}
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/15 hover:text-red-300 disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        <TrashMessagesIcon className="size-4" />
-                      </button>
-                    </IconHoverTarget>
-                  )}
                 </>
               )}
               <ListHistoryMenu items={vaultReadOnly ? [] : menuItems} />

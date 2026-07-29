@@ -130,6 +130,8 @@ export function ensureVaultSchema(db: Database.Database): void {
       UNIQUE(conversation_id, handle)
     );
 
+    CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);
+
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY,
       conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -331,7 +333,15 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
+  migrateParticipantsHandleIndex(db);
   ensureMessagesFts(db);
+}
+
+function migrateParticipantsHandleIndex(db: Database.Database): void {
+  if (!tableExists(db, "participants")) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);`,
+  );
 }
 
 /** Marker for the one-time FTS5 backfill of existing messages. */

@@ -1,7 +1,13 @@
+import { decodeMessageCursor } from "@/lib/messageCursor";
+import {
+  DEFAULT_MESSAGE_PAGE_SIZE,
+  MAX_MESSAGE_PAGE_SIZE,
+} from "@/lib/messagePageSize";
 import {
   messagesForConversationYear,
   messagesForConversations,
-} from "@/lib/db";
+  messagesPageForConversations,
+} from "@/lib/messagesRead";
 import {
   unauthorizedResponse,
   withAccountHandler,
@@ -23,6 +29,12 @@ export async function GET(req: Request) {
   const year =
     yearParam != null && yearParam !== "" ? Number(yearParam) : null;
   const source = url.searchParams.get("source");
+  const pageMode =
+    url.searchParams.get("page") === "1" ||
+    url.searchParams.get("page") === "true";
+  const beforeRaw = url.searchParams.get("before");
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam != null ? Number(limitParam) : DEFAULT_MESSAGE_PAGE_SIZE;
   const rawIds = url.searchParams.get("conversationIds") ?? "";
   const conversationIds = rawIds
     .split(",")
@@ -34,6 +46,40 @@ export async function GET(req: Request) {
       { error: "conversationIds required" },
       { status: 400 },
     );
+  }
+
+  if (pageMode) {
+    if (year != null) {
+      return NextResponse.json(
+        { error: "page mode does not accept year; omit year or page" },
+        { status: 400 },
+      );
+    }
+    if (!Number.isFinite(limit) || limit < 1) {
+      return NextResponse.json({ error: "invalid limit" }, { status: 400 });
+    }
+    let before = null;
+    if (beforeRaw) {
+      before = decodeMessageCursor(beforeRaw);
+      if (!before) {
+        return NextResponse.json({ error: "invalid before cursor" }, { status: 400 });
+      }
+    }
+    try {
+      return await withAccountHandler(async () => {
+        const page = messagesPageForConversations(conversationIds, {
+          source,
+          before,
+          limit: Math.min(limit, MAX_MESSAGE_PAGE_SIZE),
+        });
+        return NextResponse.json(page);
+      });
+    } catch (err) {
+      const auth = authError(err);
+      if (auth) return auth;
+      const message = err instanceof Error ? err.message : "load failed";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 
   if (year != null) {

@@ -575,8 +575,8 @@ export function contactThreadsBundle(
   messageSources: string[];
   sourceCounts: ContactSourceCounts;
 } {
-  const phones = contactPhones(contactId);
-  if (!phones.length) {
+  const page = loadContactThreadsPage(contactId, source, opts);
+  if (!page) {
     return {
       yearly: [],
       groupChats: [],
@@ -584,16 +584,104 @@ export function contactThreadsBundle(
       sourceCounts: { all: 0, bySource: {} },
     };
   }
-  const allConvIds = contactConversationIds(phones, opts);
+  return {
+    yearly: page.yearly,
+    groupChats: page.groupChats,
+    messageSources: page.messageSources,
+    sourceCounts: page.sourceCounts,
+  };
+}
+
+/**
+ * Contact detail + thread metadata in one pass.
+ * Phones, conversation IDs, and source counts are fetched once and reused.
+ */
+export function loadContactThreadsPage(
+  contactId: number,
+  source?: string | null,
+  opts?: { includeTrashed?: boolean },
+): {
+  contact: ContactDetail;
+  yearly: YearThread[];
+  groupChats: GroupChatThread[];
+  messageSources: string[];
+  sourceCounts: ContactSourceCounts;
+} | null {
+  const accountId = currentAccountId();
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT id, first_name, last_name, exclude, preferred_handle
+       FROM contacts WHERE id = ? AND account_id = ?`,
+    )
+    .get(contactId, accountId) as
+    | {
+        id: number;
+        first_name: string | null;
+        last_name: string | null;
+        exclude: number;
+        preferred_handle: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+
+  const phones = (
+    db
+      .prepare(
+        `SELECT handle FROM contact_handles WHERE contact_id = ? AND account_id = ? ORDER BY handle`,
+      )
+      .all(contactId, accountId) as Array<{ handle: string }>
+  ).map((p) => p.handle);
+
+  const labels = (
+    db
+      .prepare(
+        `SELECT cl.name FROM contact_label_members clm
+         JOIN contact_labels cl ON cl.id = clm.label_id
+         WHERE clm.contact_id = ? AND cl.account_id = ?
+         ORDER BY cl.name COLLATE NOCASE`,
+      )
+      .all(contactId, accountId) as Array<{ name: string }>
+  ).map((t) => t.name);
+
+  const dateRange = contactDateRange(phones);
   const individualIds = contactIndividualConversationIds(phones, opts);
   const sourceCounts =
     contactMessageSourceCountsForConversations(individualIds);
+  const allConvIds = phones.length
+    ? contactConversationIds(phones, opts)
+    : [];
   // Enable sources that appear in 1:1 or groups so group-only archives stay selectable.
   const anySourceCounts =
-    contactMessageSourceCountsForConversations(allConvIds);
+    allConvIds.length === individualIds.length
+      ? sourceCounts
+      : contactMessageSourceCountsForConversations(allConvIds);
+  const groupMessageCount =
+    contactGroupMessageCountsById([contactId]).get(contactId) ?? 0;
+  const sorts = sortFields(row);
+
   return {
-    yearly: contactYearlyThreadsForPhones(phones, source, opts),
-    groupChats: contactGroupChatThreadsForPhones(phones, source),
+    contact: {
+      id: row.id,
+      displayName: displayName(row),
+      preferredHandle: row.preferred_handle,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      exclude: row.exclude !== 0,
+      labels,
+      phones,
+      dateStart: dateRange?.start ?? null,
+      dateEnd: dateRange?.end ?? null,
+      messageCount: sourceCounts.all,
+      groupMessageCount,
+      ...sorts,
+    },
+    yearly: phones.length
+      ? contactYearlyThreadsForPhones(phones, source, opts)
+      : [],
+    groupChats: phones.length
+      ? contactGroupChatThreadsForPhones(phones, source)
+      : [],
     messageSources: Object.keys(anySourceCounts.bySource).sort(),
     sourceCounts,
   };

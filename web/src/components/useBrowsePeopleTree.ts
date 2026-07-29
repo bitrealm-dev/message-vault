@@ -31,9 +31,13 @@ export function useBrowsePeopleTree({
   reloadToken?: number;
 }) {
   const cacheRef = useRef(new Map<string, ContactThreadBundle>());
+  const inflightRef = useRef(
+    new Map<string, Promise<ContactThreadBundle | null>>(),
+  );
   const [expandedContactId, setExpandedContactId] = useState<number | null>(
     null,
   );
+  const expandedContactIdRef = useRef<number | null>(null);
   const [bundle, setBundle] = useState<ContactThreadBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,59 +54,91 @@ export function useBrowsePeopleTree({
       if (!options?.force) {
         const cached = cacheRef.current.get(key);
         if (cached) {
-          applyBundle(cached);
-          setError(null);
-          setLoading(false);
+          if (expandedContactIdRef.current === contactId) {
+            applyBundle(cached);
+            setError(null);
+            setLoading(false);
+          }
           return cached;
         }
-      }
-      const seq = ++seqRef.current;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(
-          `/api/contacts/${contactId}/threads${
-            sourceQuery ? `?${sourceQuery.slice(1)}` : ""
-          }`,
-        );
-        const data = (await res.json()) as {
-          error?: string;
-          contact?: ContactDetail;
-          yearly?: YearThread[];
-          groupChats?: GroupChatThread[];
-          messageSources?: string[];
-          sourceCounts?: { all: number; bySource: Record<string, number> };
-        };
-        if (seq !== seqRef.current) return null;
-        if (!res.ok || data.error || !data.contact) {
-          setError(data.error ?? "Failed to load threads");
-          applyBundle(null);
-          return null;
+        const inflight = inflightRef.current.get(key);
+        if (inflight) {
+          if (expandedContactIdRef.current === contactId) {
+            setLoading(true);
+            setError(null);
+          }
+          const result = await inflight;
+          if (expandedContactIdRef.current === contactId) {
+            applyBundle(result);
+            setLoading(false);
+          }
+          return result;
         }
-        const next: ContactThreadBundle = {
-          detail: data.contact,
-          yearly: data.yearly ?? [],
-          groupChats: data.groupChats ?? [],
-          messageSources: data.messageSources ?? [],
-          sourceCounts: data.sourceCounts ?? { all: 0, bySource: {} },
-        };
-        cacheRef.current.set(key, next);
-        applyBundle(next);
-        return next;
-      } catch (err) {
-        if (seq !== seqRef.current) return null;
-        setError(err instanceof Error ? err.message : "Failed to load threads");
-        applyBundle(null);
-        return null;
-      } finally {
-        if (seq === seqRef.current) setLoading(false);
       }
+
+      const seq = ++seqRef.current;
+      if (expandedContactIdRef.current === contactId) {
+        setLoading(true);
+        setError(null);
+      }
+
+      const request = (async (): Promise<ContactThreadBundle | null> => {
+        try {
+          const res = await fetch(
+            `/api/contacts/${contactId}/threads${
+              sourceQuery ? `?${sourceQuery.slice(1)}` : ""
+            }`,
+          );
+          const data = (await res.json()) as {
+            error?: string;
+            contact?: ContactDetail;
+            yearly?: YearThread[];
+            groupChats?: GroupChatThread[];
+            messageSources?: string[];
+            sourceCounts?: { all: number; bySource: Record<string, number> };
+          };
+          if (!res.ok || data.error || !data.contact) {
+            return null;
+          }
+          const next: ContactThreadBundle = {
+            detail: data.contact,
+            yearly: data.yearly ?? [],
+            groupChats: data.groupChats ?? [],
+            messageSources: data.messageSources ?? [],
+            sourceCounts: data.sourceCounts ?? { all: 0, bySource: {} },
+          };
+          cacheRef.current.set(key, next);
+          return next;
+        } catch {
+          return null;
+        } finally {
+          inflightRef.current.delete(key);
+        }
+      })();
+
+      inflightRef.current.set(key, request);
+      const result = await request;
+
+      if (seq !== seqRef.current) return result;
+      if (expandedContactIdRef.current !== contactId) return result;
+
+      if (!result) {
+        setError("Failed to load threads");
+        applyBundle(null);
+        setLoading(false);
+        return null;
+      }
+      setError(null);
+      applyBundle(result);
+      setLoading(false);
+      return result;
     },
     [applyBundle, sourceQuery],
   );
 
   const expandContact = useCallback(
     (contactId: number | null, options?: { force?: boolean }) => {
+      expandedContactIdRef.current = contactId;
       setExpandedContactId(contactId);
       if (contactId == null) {
         applyBundle(null);
@@ -120,15 +156,16 @@ export function useBrowsePeopleTree({
       setError(null);
       void loadContact(contactId, options);
     },
-    [loadContact],
+    [loadContact, applyBundle],
   );
 
   const invalidate = useCallback(() => {
     cacheRef.current.clear();
-    if (expandedContactId != null) {
-      void loadContact(expandedContactId, { force: true });
+    inflightRef.current.clear();
+    if (expandedContactIdRef.current != null) {
+      void loadContact(expandedContactIdRef.current, { force: true });
     }
-  }, [expandedContactId, loadContact]);
+  }, [loadContact]);
 
   const patchCachedDetail = useCallback(
     (contactId: number, patch: Partial<ContactDetail>) => {
@@ -140,11 +177,11 @@ export function useBrowsePeopleTree({
         });
       }
       setBundle((prev) => {
-        if (!prev || expandedContactId !== contactId) return prev;
+        if (!prev || expandedContactIdRef.current !== contactId) return prev;
         return { ...prev, detail: { ...prev.detail, ...patch } };
       });
     },
-    [expandedContactId],
+    [],
   );
 
   // Invalidate cache when caller bumps reloadToken (trash/undo/history).
@@ -152,16 +189,18 @@ export function useBrowsePeopleTree({
     if (prevReloadTokenRef.current === reloadToken) return;
     prevReloadTokenRef.current = reloadToken;
     cacheRef.current.clear();
-    if (expandedContactId != null) {
-      void loadContact(expandedContactId, { force: true });
+    inflightRef.current.clear();
+    if (expandedContactIdRef.current != null) {
+      void loadContact(expandedContactIdRef.current, { force: true });
     }
-  }, [reloadToken, expandedContactId, loadContact]);
+  }, [reloadToken, loadContact]);
 
-  // Resolve bundle when expansion or source filter changes.
+  // Source filter change: reload the expanded contact under the new key.
+  // Contact expansion itself is owned by expandContact (not this effect).
   useEffect(() => {
-    if (expandedContactId == null) return;
-    void loadContact(expandedContactId);
-  }, [expandedContactId, loadContact, sourceQuery]);
+    if (expandedContactIdRef.current == null) return;
+    void loadContact(expandedContactIdRef.current);
+  }, [sourceQuery, loadContact]);
 
   return {
     expandedContactId,

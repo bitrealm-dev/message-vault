@@ -24,6 +24,8 @@ CREATE TABLE participants (
     UNIQUE(conversation_id, handle)
 );
 
+CREATE INDEX ix_participants_handle ON participants (handle);
+
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -611,11 +613,13 @@ fn migrate_messages_dedupe_columns(conn: &Connection) -> Result<()> {
 
 fn migrate_delete_performance_indexes(conn: &Connection) -> Result<()> {
     // CASCADE deletes on messages are O(n²) without message_id indexes on child tables.
+    // Group discovery filters participants by handle.
     conn.execute_batch(
         r#"
         CREATE INDEX IF NOT EXISTS ix_attachments_message_id ON attachments (message_id);
         CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
         CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);
+        CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);
         "#,
     )?;
     Ok(())

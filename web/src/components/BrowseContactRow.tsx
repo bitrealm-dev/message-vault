@@ -6,13 +6,13 @@ import {
 } from "@/lib/contactInitials";
 import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
-import type { MouseEvent } from "react";
+import { memo, type MouseEvent } from "react";
 import { CountBadge } from "./CountBadge";
 import { ChevronDownIcon, GroupMessagesOutlineIcon } from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 import { useMessageBadgePrefs } from "./useMessageBadgePrefs";
 
-export function BrowseContactRow({
+export const BrowseContactRow = memo(function BrowseContactRow({
   contact: c,
   active,
   checked,
@@ -277,4 +277,4 @@ export function BrowseContactRow({
       )}
     </div>
   );
-}
+});
