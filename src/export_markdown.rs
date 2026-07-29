@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{Connection, params, params_from_iter};
 
 use crate::schema;
 use crate::vault_owner::{self, VaultOwner};
@@ -102,7 +102,10 @@ pub fn export_markdown(
         people_dir.join("index.md"),
         render_people_index(&person_index),
     )?;
-    fs::write(out_dir.join("index.md"), render_root_index(person_index.len()))?;
+    fs::write(
+        out_dir.join("index.md"),
+        render_root_index(person_index.len()),
+    )?;
 
     Ok(stats)
 }
@@ -222,8 +225,11 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
         if phones.is_empty() {
             continue;
         }
-        let display_name = display_name(first.as_deref(), last.as_deref(), preferred.as_deref()
-            .or(phones.first().map(|s| s.as_str())));
+        let display_name = display_name(
+            first.as_deref(),
+            last.as_deref(),
+            preferred.as_deref().or(phones.first().map(|s| s.as_str())),
+        );
         out.push(ExportContact {
             id,
             display_name,
@@ -276,7 +282,11 @@ fn contact_yearly_threads(
     );
     let mut params: Vec<rusqlite::types::Value> =
         vec![rusqlite::types::Value::Text(account_id.to_string())];
-    params.extend(phones.iter().map(|p| rusqlite::types::Value::Text(p.clone())));
+    params.extend(
+        phones
+            .iter()
+            .map(|p| rusqlite::types::Value::Text(p.clone())),
+    );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(params), |row| {
         Ok((
@@ -407,7 +417,11 @@ fn load_year_messages(
             if name == preferred_handle.as_deref().unwrap_or("")
                 || name == sender.as_deref().unwrap_or("")
             {
-                if let Some(hint) = name_hint.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(hint) = name_hint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     if !looks_like_phone(hint) {
                         name = hint.to_string();
                     }
@@ -461,7 +475,10 @@ fn looks_like_phone(value: &str) -> bool {
     if t.is_empty() {
         return false;
     }
-    if t.starts_with('+') && t.chars().all(|c| c.is_ascii_digit() || "+ ()-.".contains(c)) {
+    if t.starts_with('+')
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || "+ ()-.".contains(c))
+    {
         return true;
     }
     let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -510,10 +527,7 @@ fn render_year_page(
         escape_yaml(&contact.display_name)
     ));
     lines.push(format!("numbers: [{numbers_yaml}]"));
-    lines.push(format!(
-        "date_range: {} — {}",
-        yt.date_start, yt.date_end
-    ));
+    lines.push(format!("date_range: {} — {}", yt.date_start, yt.date_end));
     lines.push("---".into());
     lines.push(String::new());
     lines.push(format!(
@@ -623,9 +637,7 @@ fn render_message_html(
         inner.push_str("</div>");
     }
 
-    Ok(format!(
-        "<div class=\"message {css_class}\">{inner}</div>"
-    ))
+    Ok(format!("<div class=\"message {css_class}\">{inner}</div>"))
 }
 
 fn render_attachment_html(
@@ -638,10 +650,7 @@ fn render_attachment_html(
     stats: &mut ExportStats,
 ) -> Result<String> {
     let Some(rel) = att.assets_path.as_deref().filter(|s| !s.is_empty()) else {
-        let name = att
-            .original_name
-            .as_deref()
-            .unwrap_or("attachment");
+        let name = att.original_name.as_deref().unwrap_or("attachment");
         return Ok(format!(
             "<p class=\"attachment-link\">{}</p>",
             html_escape(name)
@@ -1020,12 +1029,11 @@ mod tests {
         assert!(hub.contains("[[2024]]"));
         assert!(hub.contains("message-vault-person"));
 
-        assert!(out
-            .join(".obsidian/snippets/message-vault-bubbles.css")
-            .is_file());
-        assert!(out
-            .join(format!("_assets/ab/{sha}.txt"))
-            .is_file());
+        assert!(
+            out.join(".obsidian/snippets/message-vault-bubbles.css")
+                .is_file()
+        );
+        assert!(out.join(format!("_assets/ab/{sha}.txt")).is_file());
 
         let _ = fs::remove_dir_all(tmp);
     }

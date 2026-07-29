@@ -4,15 +4,15 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Statement, Transaction};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params};
 use serde::Serialize;
 
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::contacts;
 use crate::exclude::ExcludeSet;
-use crate::models::{clean_body, AttachmentRecord, ExportRecord, MessageRecord};
-use crate::ndjson;
+use crate::jsonl;
+use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 use crate::schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ pub struct ImportOptions<'a> {
     pub db_path: &'a Path,
     /// Content-addressed asset store (SHA-named files under account/source).
     pub assets_dir: &'a Path,
-    /// Root for resolving relative attachment paths in NDJSON.
+    /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
     pub contacts_csv: &'a Path,
     pub exclude_csv: &'a Path,
@@ -96,7 +96,7 @@ struct PreparedAttachment {
     stored: Option<StoredAsset>,
 }
 
-/// Import every `*.json` NDJSON file under `export_dir` (CLI staging path).
+/// Import every `*.jsonl` file under `export_dir` (CLI staging path).
 pub fn import_export(
     export_dir: &Path,
     db_path: &Path,
@@ -119,12 +119,12 @@ pub fn import_export(
         .filter(|path| {
             path.extension()
                 .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
         })
         .collect();
     paths.sort();
 
-    import_ndjson_files(
+    import_jsonl_files(
         &paths,
         &ImportOptions {
             db_path,
@@ -140,8 +140,8 @@ pub fn import_export(
     )
 }
 
-/// Import one or more NDJSON files. Attachment relative paths resolve against `opts.asset_root`.
-pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
+/// Import one or more JSONL files. Attachment relative paths resolve against `opts.asset_root`.
+pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
     if opts.source.trim().is_empty() {
         bail!("import source id must not be empty");
     }
@@ -254,10 +254,7 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
 
         let n = idx + 1;
         if n == 1 || n == total_files || n % progress_every == 0 {
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?");
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
             println!(
                 "  import:   [{n}/{total_files}] {name}  msgs={} attachments={} assets_copied={} missing={}  ({:.0}s)",
                 stats.messages,
@@ -297,8 +294,7 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
 
     schema::clear_staging_for_account(&conn, opts.account_id)?;
 
-    let unknown =
-        contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
+    let unknown = contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
     stats.unknown_contacts = unknown;
     if unknown > 0 {
         println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
@@ -320,13 +316,13 @@ pub fn import_ndjson_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Resul
     Ok(stats)
 }
 
-/// Write NDJSON bytes to a temp file and import (HTTP body / single stream).
+/// Write JSONL bytes to a temp file and import (HTTP body / single stream).
 #[allow(dead_code)] // retained for callers/tests that pass an in-memory body
-pub fn import_ndjson_bytes(bytes: &[u8], opts: &ImportOptions<'_>) -> Result<ImportStats> {
-    let dir = tempfile::tempdir().context("failed to create temp dir for NDJSON import")?;
-    let path = dir.path().join("import.json");
-    fs::write(&path, bytes).context("failed to write temp NDJSON")?;
-    import_ndjson_files(&[path], opts)
+pub fn import_jsonl_bytes(bytes: &[u8], opts: &ImportOptions<'_>) -> Result<ImportStats> {
+    let dir = tempfile::tempdir().context("failed to create temp dir for JSONL import")?;
+    let path = dir.path().join("import.jsonl");
+    fs::write(&path, bytes).context("failed to write temp JSONL")?;
+    import_jsonl_files(&[path], opts)
 }
 
 fn prepare_attachments(
@@ -337,7 +333,11 @@ fn prepare_attachments(
 ) -> Result<Vec<PreparedAttachment>> {
     let mut prepared = Vec::with_capacity(attachments.len());
     for att in attachments {
-        let stored = if let Some(sha) = att.sha256.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        let stored = if let Some(sha) = att
+            .sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
                 asset_stats.deduped += 1;
@@ -348,12 +348,7 @@ fn prepare_attachments(
             } else if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 // Digest claimed but not pre-uploaded: fall back to path under asset_root.
                 let source = export_dir.join(rel);
-                match assets::store_verified(
-                    &source,
-                    sha,
-                    assets_dir,
-                    att.mime_type.as_deref(),
-                ) {
+                match assets::store_verified(&source, sha, assets_dir, att.mime_type.as_deref()) {
                     Ok((stored, already)) => {
                         if already {
                             asset_stats.deduped += 1;
@@ -469,10 +464,10 @@ fn import_file_to_staging(
     let source_file = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("unknown.json")
+        .unwrap_or("unknown.jsonl")
         .to_string();
 
-    let records = ndjson::read_records(path)?;
+    let records = jsonl::read_records(path)?;
     let mut stats = ImportStats::default();
     let mut pending: Option<ConversationHeader> = None;
     let mut messages: Vec<MessageRecord> = Vec::new();
@@ -657,8 +652,7 @@ fn import_conversation_to_staging(
 
     for (sort_order, (msg, attachments)) in prepared_messages.into_iter().enumerate() {
         let body = if msg.is_announcement {
-            clean_body(msg.announcement.as_deref())
-                .or_else(|| clean_body(msg.text.as_deref()))
+            clean_body(msg.announcement.as_deref()).or_else(|| clean_body(msg.text.as_deref()))
         } else {
             clean_body(msg.text.as_deref())
         };
@@ -799,9 +793,8 @@ fn promote_append(
     let _ = io::stdout().flush();
 
     let mut conv_map: HashMap<i64, i64> = HashMap::new();
-    let mut find_conv = tx.prepare(
-        "SELECT id FROM conversations WHERE account_id = ?1 AND chat_identifier = ?2",
-    )?;
+    let mut find_conv =
+        tx.prepare("SELECT id FROM conversations WHERE account_id = ?1 AND chat_identifier = ?2")?;
     let mut update_conv = tx.prepare(
         r#"
         UPDATE conversations SET
@@ -821,8 +814,15 @@ fn promote_append(
         "#,
     )?;
 
-    for (staging_id, chat_identifier, service, conversation_type, group_title, exported_at, source_file) in
-        staging_conv_rows
+    for (
+        staging_id,
+        chat_identifier,
+        service,
+        conversation_type,
+        group_title,
+        exported_at,
+        source_file,
+    ) in staging_conv_rows
     {
         let existing: Option<i64> = find_conv
             .query_row(params![account_id, chat_identifier], |row| row.get(0))
@@ -875,7 +875,9 @@ fn promote_append(
         "#,
     )?;
     let staging_part_rows: Vec<(i64, String, Option<String>)> = staging_parts
-        .query_map(params![account_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .query_map(params![account_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(staging_parts);
     println!(
@@ -917,9 +919,8 @@ fn promote_append(
         "#,
     )?;
     {
-        let mut ins = tx.prepare(
-            "INSERT INTO _promote_conv_map (staging_id, prod_id) VALUES (?1, ?2)",
-        )?;
+        let mut ins =
+            tx.prepare("INSERT INTO _promote_conv_map (staging_id, prod_id) VALUES (?1, ?2)")?;
         for (staging_id, prod_id) in &conv_map {
             ins.execute(params![staging_id, prod_id])?;
         }
@@ -987,7 +988,10 @@ fn promote_append(
                 prod_ids.len()
             );
         }
-        staging_ids.into_iter().zip(prod_ids).collect::<HashMap<_, _>>()
+        staging_ids
+            .into_iter()
+            .zip(prod_ids)
+            .collect::<HashMap<_, _>>()
     } else {
         // Append: insert only staging rows whose (source, guid) is not already in production,
         // then zip new ids in order (same mapping trick as replace).
@@ -1052,7 +1056,10 @@ fn promote_append(
                 prod_ids.len()
             );
         }
-        staging_ids.into_iter().zip(prod_ids).collect::<HashMap<_, _>>()
+        staging_ids
+            .into_iter()
+            .zip(prod_ids)
+            .collect::<HashMap<_, _>>()
     };
 
     println!(

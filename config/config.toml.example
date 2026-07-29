@@ -5,58 +5,27 @@
 #
 # Real config/contacts/exclude files are gitignored.
 #
-# Instance config: paths and import sources only. Vault owner profile and web login
-# accounts live in SQLite (`vault_owners`, `accounts`). CLI commands require `--account <uuid>`.
+# Instance config only: shared database path, per-account data root, and optional
+# HTTP import server. Vault owner profiles and web login accounts live in SQLite
+# (`vault_owners`, `accounts`). Create an account in the web UI, then import with
+# `--account <username>` (CLI) or your Import API token (Message Exporters).
 #
-# Optional legacy sections (used by `reset-demo` seeding when present):
-# [owner] — message / vault owner for demo seeding
-# [account] — web login account stub
+# Message Exporters writes JSONL + attachments and uploads with a source name.
+# Source folders are not listed here — each import registers its own source for
+# that account under data/<account_id>/<source_id>/.
 #
-# Staging (`export_dir`) is filled outside this repo (e.g. message-exporters).
-# Then run: cargo run --release -- ingest <source> --account <uuid>
-#
-# contacts.csv: phone numbers only (semicolon-separated). Set exclude=true to hide from
-# Contacts/groups (All still lists them). iMessage emails attach in the UI into
-# contact_handles (DB only) — never written to this CSV.
-# Older contact_phones / preferred_phone DBs are not upgraded — wipe vault.db and re-ingest.
-# exclude.csv: handles skipped entirely on import (short codes, banks, etc.).
-
-# [owner]
-# display_name = "Your Name"
-# phones = ["+15555550100"]
-# emails = ["you@backup.example.com"]
-#
-# [account]
-# username = "yourname"
-# login_email = "you@example.com"
-# read_only = false
+# contacts.csv / exclude.csv templates (optional): copy the examples if you want
+# starter files; runtime imports use data/<account_id>/contacts.csv and
+# exclude.csv (created with empty headers on first use).
+# Older contact_phones / preferred_phone DBs are not upgraded — wipe vault.db and re-import.
 
 [paths]
 db = "data/vault.db"
 data_dir = "data"
 assets_dir = "assets"
 assets_converted_dir = "assets_converted"
-# Templates used to seed per-account files under data/<account_id>/ on first use.
-contacts_csv = "config/contacts.csv"
-exclude_csv = "config/exclude.csv"
 
-# HTTP NDJSON import API (`cargo run --release -- serve`).
-# [server]
-# bind = "127.0.0.1:8080"
-# api_token = "change-me"
-
-[[sources]]
-id = "imessage"
-export_dir = "staging/imessage"
-
-[[sources]]
-id = "sms-backup-plus"
-export_dir = "staging/sms-backup-plus-eml"
-
-[[sources]]
-id = "go-sms-pro"
-export_dir = "staging/go-sms-pro"
-
-[[sources]]
-id = "sms-backup-restore"
-export_dir = "staging/sms-backup-restore"
+# HTTP JSONL import API (`cargo run --release -- serve`).
+# Auth uses per-account Import API tokens from the web Settings UI (not a host secret).
+[server]
+bind = "127.0.0.1:8080"

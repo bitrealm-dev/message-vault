@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
 /// Collapse whitespace so minor text differences do not split the same SMS.
@@ -20,7 +20,10 @@ pub fn normalize_body(body: Option<&str>) -> String {
 ///
 /// 1:1 chats use `chat_identifier`. Groups use sorted participant handles so the same
 /// people across exporters (different `chat_identifier`s) share one fingerprint.
-pub fn chat_identity_for_content_key(chat_identifier: &str, group_handles: Option<&[String]>) -> String {
+pub fn chat_identity_for_content_key(
+    chat_identifier: &str,
+    group_handles: Option<&[String]>,
+) -> String {
     match group_handles {
         Some(handles) if !handles.is_empty() => {
             let mut sorted: Vec<&str> = handles
@@ -101,17 +104,48 @@ pub struct DedupeStats {
     pub near_flagged: u64,
 }
 
+/// Source preference for survivors: first imported source (min message id), then name.
+pub fn source_priority_from_db(conn: &Connection, account_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT m.source, MIN(m.id) AS first_id
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = ?1
+          AND m.source IS NOT NULL
+          AND TRIM(m.source) != ''
+        GROUP BY m.source
+        ORDER BY first_id ASC, m.source ASC
+        "#,
+    )?;
+    let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 /// Recompute every content key, clear prior flags, then soft-hide cross-source duplicates.
 ///
-/// `source_priority` is config `[[sources]]` order (earlier = preferred when choosing the survivor).
+/// Survivor preference: source imported first (min message id), then source name.
+/// Optional `source_priority` overrides (tests); `None` loads order from the DB.
 pub fn dedupe_cross_source(
     conn: &mut Connection,
     account_id: &str,
-    source_priority: &[String],
+    source_priority: Option<&[String]>,
     near_window_secs: i64,
 ) -> Result<DedupeStats> {
+    let owned_priority;
+    let priority = match source_priority {
+        Some(p) => p,
+        None => {
+            owned_priority = source_priority_from_db(conn, account_id)?;
+            owned_priority.as_slice()
+        }
+    };
     let mut stats = DedupeStats::default();
-    let prio: HashMap<&str, usize> = source_priority
+    let prio: HashMap<&str, usize> = priority
         .iter()
         .enumerate()
         .map(|(i, s)| (s.as_str(), i))
@@ -183,11 +217,7 @@ pub fn recompute_all_content_keys(conn: &Connection, account_id: &str) -> Result
     recompute_content_keys(conn, false, account_id)
 }
 
-fn recompute_content_keys(
-    conn: &Connection,
-    missing_only: bool,
-    account_id: &str,
-) -> Result<u64> {
+fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &str) -> Result<u64> {
     let filter = if missing_only {
         "WHERE (m.content_key IS NULL OR m.content_key = '') AND c.account_id = ?1"
     } else {
@@ -417,8 +447,7 @@ fn flag_exact_content_key_dupes(
         "#,
     )?;
     {
-        let mut ins =
-            conn.prepare("INSERT INTO _pass_a_flags (id, winner) VALUES (?1, ?2)")?;
+        let mut ins = conn.prepare("INSERT INTO _pass_a_flags (id, winner) VALUES (?1, ?2)")?;
         for (id, winner) in &flags {
             ins.execute(params![id, winner])?;
         }
@@ -499,9 +528,15 @@ fn parse_offset_secs(rest: &str) -> Option<i64> {
     let body = &rest[1..];
     // HH:MM or HHMM
     let (oh, om) = if body.len() >= 5 && body.as_bytes().get(2) == Some(&b':') {
-        (body.get(0..2)?.parse::<i64>().ok()?, body.get(3..5)?.parse::<i64>().ok()?)
+        (
+            body.get(0..2)?.parse::<i64>().ok()?,
+            body.get(3..5)?.parse::<i64>().ok()?,
+        )
     } else if body.len() >= 4 {
-        (body.get(0..2)?.parse::<i64>().ok()?, body.get(2..4)?.parse::<i64>().ok()?)
+        (
+            body.get(0..2)?.parse::<i64>().ok()?,
+            body.get(2..4)?.parse::<i64>().ok()?,
+        )
     } else {
         return None;
     };
@@ -645,8 +680,7 @@ fn flag_near_time_dupes(
                 }
                 let body_match =
                     !rows[i].body_norm.is_empty() && rows[j].body_norm == rows[i].body_norm;
-                let att_match =
-                    !rows[i].att_fp.is_empty() && rows[j].att_fp == rows[i].att_fp;
+                let att_match = !rows[i].att_fp.is_empty() && rows[j].att_fp == rows[i].att_fp;
                 if !body_match && !att_match {
                     continue;
                 }
@@ -690,8 +724,7 @@ fn flag_near_time_dupes(
         "#,
     )?;
     {
-        let mut ins =
-            conn.prepare("INSERT INTO _pass_b_flags (id, winner) VALUES (?1, ?2)")?;
+        let mut ins = conn.prepare("INSERT INTO _pass_b_flags (id, winner) VALUES (?1, ?2)")?;
         for (id, winner) in &flags {
             ins.execute(params![id, winner])?;
         }
@@ -714,14 +747,13 @@ fn flag_near_time_dupes(
 pub fn run_dedupe(
     db_path: &std::path::Path,
     account_id: &str,
-    source_priority: &[String],
     near_window_secs: i64,
 ) -> Result<DedupeStats> {
     let mut conn = Connection::open(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     crate::schema::ensure_messages_schema(&conn)?;
-    dedupe_cross_source(&mut conn, account_id, source_priority, near_window_secs)
+    dedupe_cross_source(&mut conn, account_id, None, near_window_secs)
 }
 
 #[cfg(test)]
@@ -745,10 +777,7 @@ mod tests {
             chat_identity_for_content_key("chat999", Some(&handles)),
             "group:+14075550001|+14075550002"
         );
-        assert_eq!(
-            chat_identity_for_content_key("chat999", None),
-            "chat999"
-        );
+        assert_eq!(chat_identity_for_content_key("chat999", None), "chat999");
     }
 
     #[test]
@@ -838,7 +867,16 @@ mod tests {
                 sender, subject, body, sort_order
             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
             "#,
-            params![TEST_ACCOUNT_ID, source, guid, local, utc, from_me, body, sort_order],
+            params![
+                TEST_ACCOUNT_ID,
+                source,
+                guid,
+                local,
+                utc,
+                from_me,
+                body,
+                sort_order
+            ],
         )
         .unwrap();
         conn.last_insert_rowid()
@@ -867,13 +905,8 @@ mod tests {
             "Running late",
             0,
         );
-        let stats = dedupe_cross_source(
-            &mut conn,
-            TEST_ACCOUNT_ID,
-            &["go-sms-pro".into(), "sms-backup-plus".into()],
-            2,
-        )
-        .unwrap();
+        let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_groups, 1);
         assert_eq!(stats.exact_flagged, 1);
         let dup: Option<i64> = conn
@@ -917,13 +950,8 @@ mod tests {
             "On my way",
             1,
         );
-        let stats = dedupe_cross_source(
-            &mut conn,
-            TEST_ACCOUNT_ID,
-            &["go-sms-pro".into(), "sms-backup-plus".into()],
-            2,
-        )
-        .unwrap();
+        let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_flagged, 0);
         assert_eq!(stats.near_flagged, 1);
         let dup: Option<i64> = conn
@@ -959,13 +987,8 @@ mod tests {
             "On my way",
             1,
         );
-        let stats = dedupe_cross_source(
-            &mut conn,
-            TEST_ACCOUNT_ID,
-            &["go-sms-pro".into(), "sms-backup-plus".into()],
-            2,
-        )
-        .unwrap();
+        let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
+        let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_flagged, 0);
         assert_eq!(stats.near_flagged, 0);
         let hidden: i64 = conn
@@ -979,9 +1002,10 @@ mod tests {
     }
 
     #[test]
-    fn integration_priority_prefers_earlier_source() {
+    fn integration_priority_prefers_first_imported_source() {
         let mut conn = setup_db();
-        let later_priority = insert_msg(
+        // First row wins when priority is derived from min(message id) per source.
+        let first_imported = insert_msg(
             &conn,
             "sms-backup-plus",
             "g1",
@@ -991,7 +1015,7 @@ mod tests {
             "Hello",
             0,
         );
-        let earlier_priority = insert_msg(
+        let second_imported = insert_msg(
             &conn,
             "go-sms-pro",
             "g2",
@@ -1001,28 +1025,22 @@ mod tests {
             "Hello",
             1,
         );
-        dedupe_cross_source(
-            &mut conn,
-            TEST_ACCOUNT_ID,
-            &["go-sms-pro".into(), "sms-backup-plus".into()],
-            2,
-        )
-        .unwrap();
-        let dup_later: Option<i64> = conn
+        dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2).unwrap();
+        let dup_first: Option<i64> = conn
             .query_row(
                 "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![later_priority],
+                params![first_imported],
                 |row| row.get(0),
             )
             .unwrap();
-        let dup_earlier: Option<i64> = conn
+        let dup_second: Option<i64> = conn
             .query_row(
                 "SELECT duplicate_of FROM messages WHERE id = ?1",
-                params![earlier_priority],
+                params![second_imported],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(dup_earlier, None);
-        assert_eq!(dup_later, Some(earlier_priority));
+        assert_eq!(dup_first, None);
+        assert_eq!(dup_second, Some(first_imported));
     }
 }

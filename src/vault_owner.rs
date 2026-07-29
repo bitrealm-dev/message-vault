@@ -1,5 +1,5 @@
-use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::schema;
 
@@ -31,16 +31,14 @@ pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwne
         )
         .unwrap_or_else(|_| (String::new(), String::new(), "Me".to_string()));
 
-    let mut phone_stmt = conn.prepare(
-        "SELECT phone FROM vault_owner_phones WHERE account_id = ?1 ORDER BY phone",
-    )?;
+    let mut phone_stmt =
+        conn.prepare("SELECT phone FROM vault_owner_phones WHERE account_id = ?1 ORDER BY phone")?;
     let phones: Vec<String> = phone_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut email_stmt = conn.prepare(
-        "SELECT email FROM vault_owner_emails WHERE account_id = ?1 ORDER BY email",
-    )?;
+    let mut email_stmt =
+        conn.prepare("SELECT email FROM vault_owner_emails WHERE account_id = ?1 ORDER BY email")?;
     let emails: Vec<String> = email_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -203,7 +201,9 @@ mod tests {
     #[test]
     fn unknown_username_errors() {
         let conn = setup();
-        let err = resolve_account_ref(&conn, "nobody").unwrap_err().to_string();
+        let err = resolve_account_ref(&conn, "nobody")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not found"), "{err}");
     }
 

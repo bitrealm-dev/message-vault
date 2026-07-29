@@ -95,6 +95,7 @@ type LoadedConfig = {
   dataDir: string;
   assetsName: string;
   convertedName: string;
+  sourceFilter?: string;
   sourceTemplates: Array<{
     id: string;
     assetsDir?: string;
@@ -112,13 +113,7 @@ function loadConfig(flags: Flags): LoadedConfig {
       data_dir?: string;
       assets_dir?: string;
       assets_converted_dir?: string;
-      export_dir?: string;
     };
-    sources?: Array<{
-      id?: string;
-      assets_dir?: string;
-      assets_converted_dir?: string;
-    }>;
   };
   const resolve = (rel: string | undefined, fallback: string) => {
     const value = (rel?.trim() || fallback).trim();
@@ -128,53 +123,65 @@ function loadConfig(flags: Flags): LoadedConfig {
   const assetsName = cfg.paths?.assets_dir?.trim() || "assets";
   const convertedName = cfg.paths?.assets_converted_dir?.trim() || "assets_converted";
 
-  let sourceTemplates: LoadedConfig["sourceTemplates"] = (cfg.sources ?? [])
-    .filter((s) => s.id?.trim())
-    .map((s) => ({
-      id: s.id!.trim(),
-      assetsDir: s.assets_dir?.trim() || undefined,
-      assetsConvertedDir: s.assets_converted_dir?.trim() || undefined,
-    }));
-
-  if (!sourceTemplates.length && cfg.paths?.export_dir) {
-    sourceTemplates = [{ id: "default" }];
-  }
-
-  if (flags.source) {
-    sourceTemplates = sourceTemplates.filter((s) => s.id === flags.source);
-    if (!sourceTemplates.length) {
-      throw new Error(`unknown source '${flags.source}'`);
-    }
-  }
-
   return {
     db: flags.db ? path.resolve(flags.db) : resolve(cfg.paths?.db, "data/vault.db"),
     dataDir,
     assetsName,
     convertedName,
-    sourceTemplates,
+    sourceFilter: flags.source?.trim() || undefined,
+    sourceTemplates: [],
   };
+}
+
+function discoverSourceIds(
+  db: Database.Database,
+  accountId: string,
+  dataDir: string,
+  assetsName: string,
+): string[] {
+  const ids = new Set<string>();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT m.source AS source
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.account_id = ?
+           AND m.source IS NOT NULL
+           AND TRIM(m.source) != ''
+         ORDER BY m.source`,
+      )
+      .all(accountId) as Array<{ source: string }>;
+    for (const row of rows) {
+      if (row.source?.trim()) ids.add(row.source.trim());
+    }
+  } catch {
+    // Table may be missing on fresh DBs.
+  }
+  const accountRoot = path.join(dataDir, accountId);
+  if (fs.existsSync(accountRoot)) {
+    for (const entry of fs.readdirSync(accountRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const assets = path.join(accountRoot, entry.name, assetsName);
+      if (fs.existsSync(assets)) ids.add(entry.name);
+    }
+  }
+  return [...ids].sort();
 }
 
 function resolveSourcePaths(
   cfg: LoadedConfig,
   accountId: string,
+  sourceIds: string[],
 ): SourcePaths[] {
-  const root = repoRoot();
-  const resolveOptional = (p: string | undefined, fallback: string) => {
-    if (!p?.trim()) return fallback;
-    return path.isAbsolute(p) ? p : path.join(root, p);
-  };
-
-  return cfg.sourceTemplates.map((s) => ({
-    id: s.id,
-    assetsDir: resolveOptional(
-      s.assetsDir,
-      path.join(cfg.dataDir, accountId, s.id, cfg.assetsName),
-    ),
-    assetsConvertedDir: resolveOptional(
-      s.assetsConvertedDir,
-      path.join(cfg.dataDir, accountId, s.id, cfg.convertedName),
+  return sourceIds.map((id) => ({
+    id,
+    assetsDir: path.join(cfg.dataDir, accountId, id, cfg.assetsName),
+    assetsConvertedDir: path.join(
+      cfg.dataDir,
+      accountId,
+      id,
+      cfg.convertedName,
     ),
   }));
 }
@@ -442,10 +449,6 @@ async function main() {
   if (!fs.existsSync(dbPath)) {
     throw new Error(`database not found: ${dbPath}`);
   }
-  if (!cfg.sourceTemplates.length) {
-    throw new Error("no sources configured in config.toml");
-  }
-
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
 
@@ -506,7 +509,20 @@ async function main() {
 
   try {
     for (const accountId of accountIds) {
-      const sources = resolveSourcePaths(cfg, accountId);
+      let sourceIds = discoverSourceIds(db, accountId, cfg.dataDir, cfg.assetsName);
+      if (cfg.sourceFilter) {
+        sourceIds = sourceIds.filter((id) => id === cfg.sourceFilter);
+        if (!sourceIds.length) {
+          throw new Error(
+            `unknown source '${cfg.sourceFilter}' for account ${accountId}`,
+          );
+        }
+      }
+      if (!sourceIds.length) {
+        console.warn(`account ${accountId}: no sources found — skip`);
+        continue;
+      }
+      const sources = resolveSourcePaths(cfg, accountId, sourceIds);
       for (const src of sources) {
         console.log(`account ${accountId} source ${src.id}: assets=${src.assetsDir}`);
         if (!fs.existsSync(src.assetsDir)) {

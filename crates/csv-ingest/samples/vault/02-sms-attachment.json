@@ -1,2 +1,0 @@
-{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075551234","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075551234","name_hint":"Alice"}],"exported_at":"2024-01-01T00:00:00Z"}
-{"record":"message","guid":"sample-sms-att-001","timestamp":"2021-01-01T00:05:00Z","timestamp_utc":"2021-01-01T00:05:00Z","is_from_me":false,"sender":"+14075551234","service":"SMS","attachments":[{"path":"attachments/photo.jpg","original_name":"photo.jpg","mime_type":"image/jpeg"}]}

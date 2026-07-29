@@ -1,5 +1,5 @@
-use anyhow::{bail, Result};
-use rusqlite::{params, Connection};
+use anyhow::{Result, bail};
+use rusqlite::{Connection, params};
 
 const MESSAGE_TABLES_DDL: &str = r#"
 CREATE TABLE conversations (
@@ -569,8 +569,7 @@ pub fn contacts_schema_ready(conn: &Connection) -> Result<bool> {
     let cols: Vec<String> = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(cols.iter().any(|c| c == "account_id")
-        && cols.iter().any(|c| c == "preferred_handle"))
+    Ok(cols.iter().any(|c| c == "account_id") && cols.iter().any(|c| c == "preferred_handle"))
 }
 
 /// Create contacts tables if they do not already exist.

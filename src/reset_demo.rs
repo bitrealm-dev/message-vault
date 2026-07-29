@@ -3,8 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, params};
+use serde::Deserialize;
 
 use crate::config::Config;
 use crate::dedupe;
@@ -15,10 +16,33 @@ use crate::vault_owner;
 /// Stable demo account id used when `reset-demo` runs without `--account`.
 pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
 
+const DEMO_SOURCE: &str = "imessage";
+
 #[derive(Debug)]
 pub struct ResetDemoStats {
     pub import: import::ImportStats,
     pub dedupe_keys_filled: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DemoSeed {
+    owner: DemoOwner,
+    account: DemoAccount,
+}
+
+#[derive(Debug, Deserialize)]
+struct DemoOwner {
+    display_name: String,
+    phones: Vec<String>,
+    #[serde(default)]
+    emails: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DemoAccount {
+    username: String,
+    login_email: String,
+    read_only: bool,
 }
 
 pub fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
@@ -37,10 +61,17 @@ pub fn run_reset_demo_for_account(
     };
 
     let demo_config = bundle.join("config/config.toml");
+    let demo_seed = bundle.join("config/seed.toml");
     if !demo_config.is_file() {
         bail!(
             "demo bundle missing {} (run: cargo run -p demo-seed)",
             demo_config.display()
+        );
+    }
+    if !demo_seed.is_file() {
+        bail!(
+            "demo bundle missing {} (run: cargo run -p demo-seed)",
+            demo_seed.display()
         );
     }
 
@@ -50,21 +81,23 @@ pub fn run_reset_demo_for_account(
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("config")),
     )?;
-    fs::copy(&demo_config, config_dest).with_context(|| {
-        format!(
-            "copy {} → {}",
-            demo_config.display(),
-            config_dest.display()
-        )
-    })?;
+    fs::copy(&demo_config, config_dest)
+        .with_context(|| format!("copy {} → {}", demo_config.display(), config_dest.display()))?;
 
     let cfg = Config::load(config_dest)?;
+    let seed = load_demo_seed(&demo_seed)?;
+    let export_dir = bundle.join("staging/imessage");
+    if !export_dir.is_dir() {
+        bail!(
+            "demo staging missing {} (run: cargo run -p demo-seed)",
+            export_dir.display()
+        );
+    }
+
     wipe_vault(&cfg, account_id)?;
     restore_demo_csvs(&bundle, &cfg, account_id)?;
 
-    let src = cfg.source("imessage")?;
-    let export_dir = src.export_dir.clone();
-    let assets_dir = src.resolved_assets_dir_for_account(&cfg.paths, account_id);
+    let assets_dir = cfg.paths.assets_dir_for_account(account_id, DEMO_SOURCE);
     let db = cfg.paths.db.clone();
     let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(account_id)?;
 
@@ -75,7 +108,7 @@ pub fn run_reset_demo_for_account(
     println!("  export_dir:   {}", export_dir.display());
     println!("  db:           {}", db.display());
 
-    seed_demo_account(&db, account_id, &cfg)?;
+    seed_demo_account(&db, account_id, &seed)?;
 
     let import_stats = import::import_export(
         &export_dir,
@@ -85,12 +118,11 @@ pub fn run_reset_demo_for_account(
         &exclude_csv,
         true,
         ImportMode::Replace,
-        "imessage",
+        DEMO_SOURCE,
         account_id,
     )?;
 
-    let priority: Vec<String> = cfg.sources.iter().map(|s| s.id.clone()).collect();
-    let dedupe_stats = dedupe::run_dedupe(&db, account_id, &priority, 2)?;
+    let dedupe_stats = dedupe::run_dedupe(&db, account_id, 2)?;
 
     Ok(ResetDemoStats {
         import: import_stats,
@@ -98,69 +130,75 @@ pub fn run_reset_demo_for_account(
     })
 }
 
-fn seed_demo_account(db_path: &Path, account_id: &str, cfg: &Config) -> Result<()> {
+fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read demo seed {}", path.display()))?;
+    toml::from_str(&text).with_context(|| format!("failed to parse demo seed {}", path.display()))
+}
+
+fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     schema::ensure_vault_schema(&conn)?;
     vault_owner::ensure_account_row(&conn, account_id)?;
 
-    if let Some(acct) = &cfg.account {
-        conn.execute(
-            r#"
-            INSERT INTO accounts (id, username, read_only)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(id) DO UPDATE SET
-                username = excluded.username,
-                read_only = excluded.read_only
-            "#,
-            params![account_id, acct.username, acct.read_only as i64],
-        )?;
-        conn.execute(
-            "DELETE FROM account_emails WHERE account_id = ?1",
-            params![account_id],
-        )?;
-        conn.execute(
-            r#"
-            INSERT INTO account_emails (account_id, email, is_primary)
-            VALUES (?1, ?2, 1)
-            "#,
-            params![account_id, acct.login_email],
-        )?;
-        crate::api_tokens::ensure_account_api_token(&conn, account_id)?;
-    }
+    conn.execute(
+        r#"
+        INSERT INTO accounts (id, username, read_only)
+        VALUES (?1, ?2, ?3)
+        ON CONFLICT(id) DO UPDATE SET
+            username = excluded.username,
+            read_only = excluded.read_only
+        "#,
+        params![
+            account_id,
+            seed.account.username,
+            seed.account.read_only as i64
+        ],
+    )?;
+    conn.execute(
+        "DELETE FROM account_emails WHERE account_id = ?1",
+        params![account_id],
+    )?;
+    conn.execute(
+        r#"
+        INSERT INTO account_emails (account_id, email, is_primary)
+        VALUES (?1, ?2, 1)
+        "#,
+        params![account_id, seed.account.login_email],
+    )?;
+    crate::api_tokens::ensure_account_api_token(&conn, account_id)?;
 
-    if let Some(owner) = &cfg.owner {
+    conn.execute(
+        r#"
+        INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
+        VALUES (?1, ?2, '', ?2)
+        ON CONFLICT(account_id) DO UPDATE SET
+          first_name = excluded.first_name,
+          last_name = excluded.last_name,
+          display_name = excluded.display_name
+        "#,
+        params![account_id, seed.owner.display_name],
+    )?;
+    conn.execute(
+        "DELETE FROM vault_owner_phones WHERE account_id = ?1",
+        params![account_id],
+    )?;
+    for phone in &seed.owner.phones {
         conn.execute(
-            r#"
-            INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
-            VALUES (?1, ?2, '', ?2)
-            ON CONFLICT(account_id) DO UPDATE SET
-              first_name = excluded.first_name,
-              last_name = excluded.last_name,
-              display_name = excluded.display_name
-            "#,
-            params![account_id, owner.display_name],
+            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, ?2)",
+            params![account_id, phone],
         )?;
+    }
+    conn.execute(
+        "DELETE FROM vault_owner_emails WHERE account_id = ?1",
+        params![account_id],
+    )?;
+    for email in &seed.owner.emails {
         conn.execute(
-            "DELETE FROM vault_owner_phones WHERE account_id = ?1",
-            params![account_id],
+            "INSERT INTO vault_owner_emails (account_id, email) VALUES (?1, ?2)",
+            params![account_id, email],
         )?;
-        for phone in &owner.phones {
-            conn.execute(
-                "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, ?2)",
-                params![account_id, phone],
-            )?;
-        }
-        conn.execute(
-            "DELETE FROM vault_owner_emails WHERE account_id = ?1",
-            params![account_id],
-        )?;
-        for email in &owner.emails {
-            conn.execute(
-                "INSERT INTO vault_owner_emails (account_id, email) VALUES (?1, ?2)",
-                params![account_id, email],
-            )?;
-        }
     }
 
     Ok(())
@@ -169,9 +207,6 @@ fn seed_demo_account(db_path: &Path, account_id: &str, cfg: &Config) -> Result<(
 fn restore_demo_csvs(bundle: &Path, cfg: &Config, account_id: &str) -> Result<()> {
     let demo_contacts = bundle.join("config/contacts.csv");
     let demo_exclude = bundle.join("config/exclude.csv");
-    // Keep legacy template paths for seed fallback, and write per-account copies.
-    copy_if_exists(&demo_contacts, &cfg.paths.contacts_csv)?;
-    copy_if_exists(&demo_exclude, &cfg.paths.exclude_csv)?;
     let (contacts, exclude) = cfg.paths.ensure_account_csvs(account_id)?;
     copy_if_exists(&demo_contacts, &contacts)?;
     copy_if_exists(&demo_exclude, &exclude)?;
@@ -188,10 +223,10 @@ fn copy_if_exists(from: &Path, to: &Path) -> Result<()> {
     if fs::canonicalize(from).ok() == fs::canonicalize(to).ok() {
         return Ok(());
     }
-    if let Some(parent) = to.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = to.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     fs::copy(from, to).with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
     Ok(())
@@ -199,20 +234,19 @@ fn copy_if_exists(from: &Path, to: &Path) -> Result<()> {
 
 fn wipe_vault(cfg: &Config, account_id: &str) -> Result<()> {
     remove_db_files(&cfg.paths.db)?;
-    for src in &cfg.sources {
-        let assets = src.resolved_assets_dir_for_account(&cfg.paths, account_id);
-        let converted = src.resolved_assets_converted_dir_for_account(&cfg.paths, account_id);
-        remove_tree_if_exists(&assets)?;
-        remove_tree_if_exists(&converted)?;
-    }
+    let account_root = cfg.paths.data_dir.join(account_id);
+    remove_tree_if_exists(&account_root)?;
     Ok(())
 }
 
 fn remove_db_files(db: &Path) -> Result<()> {
-    for path in [db.to_path_buf(), db.with_extension("db-wal"), db.with_extension("db-shm")] {
+    for path in [
+        db.to_path_buf(),
+        db.with_extension("db-wal"),
+        db.with_extension("db-shm"),
+    ] {
         if path.is_file() {
-            fs::remove_file(&path)
-                .with_context(|| format!("remove {}", path.display()))?;
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
         }
     }
     Ok(())

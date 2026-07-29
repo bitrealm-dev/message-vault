@@ -1,3 +1,4 @@
+import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { parse } from "smol-toml";
@@ -37,6 +38,7 @@ function resolveConfiguredPath(
 
 export type SourcePaths = {
   id: string;
+  /** Staging is no longer configured; kept for callers that expect a path. */
   exportDir: string;
   assetsDir: string;
   assetsConvertedDir: string;
@@ -48,14 +50,7 @@ type RawConfig = {
     data_dir?: string;
     assets_dir?: string;
     assets_converted_dir?: string;
-    export_dir?: string;
   };
-  sources?: Array<{
-    id?: string;
-    export_dir?: string;
-    assets_dir?: string;
-    assets_converted_dir?: string;
-  }>;
 };
 
 function loadRawConfig(): RawConfig {
@@ -96,49 +91,65 @@ export function assetsConvertedDirName(): string {
   );
 }
 
-/** Configured import sources with resolved asset roots for the current account. */
-export function loadSources(): SourcePaths[] {
-  const accountId = currentAccountId();
-  const cfg = loadRawConfig();
-  const root = repoRoot();
+function sourceIdsForAccount(accountId: string): string[] {
+  const ids = new Set<string>();
+  const dbFile = dbPath();
+  if (fs.existsSync(dbFile)) {
+    try {
+      const db = new Database(dbFile, { readonly: true });
+      try {
+        const rows = db
+          .prepare(
+            `SELECT DISTINCT m.source AS source
+             FROM messages m
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE c.account_id = ?
+               AND m.source IS NOT NULL
+               AND TRIM(m.source) != ''
+             ORDER BY m.source`,
+          )
+          .all(accountId) as Array<{ source: string }>;
+        for (const row of rows) {
+          if (row.source?.trim()) ids.add(row.source.trim());
+        }
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to filesystem discovery.
+    }
+  }
+
+  const accountRoot = accountDataDir(accountId);
+  if (fs.existsSync(accountRoot)) {
+    for (const entry of fs.readdirSync(accountRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const id = entry.name;
+      if (id === "." || id === ".." || id.includes("/") || id.includes("\\")) {
+        continue;
+      }
+      const assets = path.join(accountRoot, id, assetsDirName());
+      if (fs.existsSync(assets)) {
+        ids.add(id);
+      }
+    }
+  }
+
+  return [...ids].sort();
+}
+
+/** Per-account import sources with resolved asset roots (from DB + on-disk folders). */
+export function loadSources(accountId = currentAccountId()): SourcePaths[] {
   const data = dataDir();
   const assetsName = assetsDirName();
   const convertedName = assetsConvertedDirName();
 
-  const raw = cfg.sources ?? [];
-  if (!raw.length && cfg.paths?.export_dir) {
-    const id = "default";
-    return [
-      {
-        id,
-        exportDir: resolveConfiguredPath(cfg.paths.export_dir, "staging/default"),
-        assetsDir: path.join(data, accountId, id, assetsName),
-        assetsConvertedDir: path.join(data, accountId, id, convertedName),
-      },
-    ];
-  }
-
-  return raw
-    .filter((s) => s.id?.trim())
-    .map((s) => {
-      const id = s.id!.trim();
-      const resolveOptional = (p: string | undefined, fallback: string) => {
-        if (!p?.trim()) return fallback;
-        return path.isAbsolute(p) ? p : path.join(root, p);
-      };
-      return {
-        id,
-        exportDir: resolveConfiguredPath(s.export_dir, `staging/${id}`),
-        assetsDir: resolveOptional(
-          s.assets_dir,
-          path.join(data, accountId, id, assetsName),
-        ),
-        assetsConvertedDir: resolveOptional(
-          s.assets_converted_dir,
-          path.join(data, accountId, id, convertedName),
-        ),
-      };
-    });
+  return sourceIdsForAccount(accountId).map((id) => ({
+    id,
+    exportDir: path.join(data, accountId, id, "staging"),
+    assetsDir: path.join(data, accountId, id, assetsName),
+    assetsConvertedDir: path.join(data, accountId, id, convertedName),
+  }));
 }
 
 export function sourceById(id: string): SourcePaths | undefined {

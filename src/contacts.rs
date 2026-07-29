@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 
 #[derive(Debug, Default)]

@@ -127,10 +127,13 @@ cp config/exclude.csv.example config/exclude.csv
 
 Edit `config/config.toml`:
 
-1. Adjust the paths and `[[sources]]` entries for the local machine.
-2. Uncomment `[server]`.
+1. Adjust `[paths]` for the local machine.
+2. Uncomment `[server]` (or keep it if already present).
 3. Leave `bind = "127.0.0.1:8080"` for local-only access.
-4. Replace the example `api_token` with a strong random admin token.
+4. Create a web account and use its Import API token from Settings for `vault-push`.
+
+Source names are not listed in TOML — each import/upload supplies its own
+source id (asset folders under `data/<account_id>/<source_id>/`).
 
 Start the import API from the repository root:
 
@@ -148,14 +151,7 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, create an account, and copy its Import API token
-from **Settings**. Keep the import API running while using `vault-push` or the
-graphical importer:
-
-```text
-cargo run -p csv-ingest --bin vault-push-gui --features gui --release
-```
-
-Phone backup conversion is provided separately by
+from **Settings**. Keep the import API running while pushing JSONL from
 [message-exporters](https://github.com/bitrealm-dev/message-exporters).
 
 ## Common checks

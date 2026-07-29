@@ -4,7 +4,7 @@
 
 ## Terms
 
-- **Source** — one configured archive, such as `go-sms-pro` or `sms-backup-plus`.
+- **Source** — one import archive slug, such as `go-sms-pro` or `sms-backup-plus` (not listed in TOML).
 - **Guid** — a message id string written by the exporter. Guids are only unique *inside* one source.
 - **Content key** — a hash built from chat + UTC time + direction + text + attachment hashes. Used to find the same SMS across sources.
 - **Soft-hide** — set `duplicate_of` to point at the kept message. The copy stays in the database but the combined view skips it.
@@ -16,7 +16,7 @@ Android and EML backups often contain the same texts. Example: Mom’s “Runnin
 ```mermaid
 flowchart TB
   subgraph perSource [Per-source import]
-    staging["staging/go-sms-pro/*.json"]
+    staging["staging/go-sms-pro/*.jsonl"]
     importCmd[import]
     guidCheck["skip if same source + guid already exists"]
     staging --> importCmd --> guidCheck
@@ -89,7 +89,7 @@ Group messages that share a content key and come from **two or more** sources. K
 Survivor rules (in order):
 
 1. Prefer the row with more hashed attachments.
-2. Else prefer earlier order in `config.toml` `[[sources]]`.
+2. Else prefer the source imported first for that account (lowest message id), then source name.
 3. Else prefer the lower message id.
 
 ### Pass B — near time

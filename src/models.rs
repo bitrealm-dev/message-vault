@@ -1,6 +1,6 @@
 //! Import helpers around shared NDJSON schemas.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 #[allow(unused_imports)] // re-exported for callers
@@ -69,7 +69,11 @@ fn conversation_from_sms(c: message_json::sms::ConversationRecord) -> Conversati
         service: c.service,
         conversation_type: c.conversation_type,
         group_title: c.group_title,
-        participants: c.participants.into_iter().map(participant_from_sms).collect(),
+        participants: c
+            .participants
+            .into_iter()
+            .map(participant_from_sms)
+            .collect(),
         exported_at: c.exported_at,
         export_source: None,
         export_tool: None,
@@ -132,10 +136,7 @@ pub fn parse_export_lines(lines: impl IntoIterator<Item = String>) -> Result<Vec
 
 fn parse_export_line(line: &str, active_schema: &mut Option<WireSchema>) -> Result<ExportRecord> {
     let value: Value = serde_json::from_str(line).context("invalid JSON")?;
-    let record = value
-        .get("record")
-        .and_then(|r| r.as_str())
-        .unwrap_or("");
+    let record = value.get("record").and_then(|r| r.as_str()).unwrap_or("");
 
     match record {
         "conversation" => {
@@ -150,7 +151,9 @@ fn parse_export_line(line: &str, active_schema: &mut Option<WireSchema>) -> Resu
                 WireSchema::Vault | WireSchema::Imessage => {
                     let c: ConversationRecord =
                         serde_json::from_value(value).context("conversation")?;
-                    Ok(ExportRecord::Conversation(normalize_to_vault_conversation(c)))
+                    Ok(ExportRecord::Conversation(normalize_to_vault_conversation(
+                        c,
+                    )))
                 }
             }
         }
@@ -163,8 +166,7 @@ fn parse_export_line(line: &str, active_schema: &mut Option<WireSchema>) -> Resu
                     Ok(ExportRecord::Message(message_from_sms(m)))
                 }
                 WireSchema::Vault | WireSchema::Imessage => {
-                    let m: MessageRecord =
-                        serde_json::from_value(value).context("message")?;
+                    let m: MessageRecord = serde_json::from_value(value).context("message")?;
                     Ok(ExportRecord::Message(m))
                 }
             }

@@ -141,7 +141,7 @@ One row = the import API token for a web account (`vault-push` / `Authorization:
 | `token` | Plaintext token shown in Settings (v1; regenerate replaces it) |
 | `created_at` | When the current token was issued |
 
-Created on signup (and backfilled on Settings load). Distinct from the host-wide `[server] api_token` admin secret in `config.toml`.
+Created on signup (and backfilled on Settings load). This is the only Bearer credential accepted by `serve` import/auth endpoints.
 
 ### `vault_owners`
 

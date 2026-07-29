@@ -49,7 +49,6 @@ target
 /config/config.toml
 /config/contacts.csv
 /config/exclude.csv
-/config/name-mapping.csv
 /config/contacts.xlsx
 
 # Python

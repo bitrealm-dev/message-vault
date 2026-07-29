@@ -1,21 +1,12 @@
-[owner]
-display_name = "Demo User"
-phones = ["+14155559000"]
-emails = ["demo.ingest@example.com"]
-
-[account]
-username = "demo"
-login_email = "demo@example.com"
-read_only = false
+# Instance config restored by `reset-demo`.
+# Demo account identity lives in demo/config/seed.toml.
 
 [paths]
 db = "data/vault.db"
 data_dir = "data"
 assets_dir = "assets"
 assets_converted_dir = "assets_converted"
-contacts_csv = "demo/config/contacts.csv"
-exclude_csv = "demo/config/exclude.csv"
 
-[[sources]]
-id = "imessage"
-export_dir = "demo/staging/imessage"
+# Optional HTTP import API for local development.
+# [server]
+# bind = "127.0.0.1:8080"

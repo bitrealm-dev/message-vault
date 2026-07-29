@@ -1,9 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { parse } from "smol-toml";
 import { currentAccountId } from "./accountScope";
 import { phoneHandlesOnly } from "./handleKind";
-import { accountDataDir, configTomlPath, repoRoot } from "./paths";
+import { accountDataDir, repoRoot } from "./paths";
 
 const DEFAULT_CONTACTS_CSV_HEADER =
   "phones,first_name,last_name,exclude,label_1,label_2,label_3,label_4,label_5\n";
@@ -23,18 +22,16 @@ function contactsCsvPath(accountId = currentAccountId()): string {
   return dest;
 }
 
-/** Legacy/template path from config (seed source only). */
+/** Optional seed/template contacts.csv (demo bundle or repo template). */
 function legacyContactsCsvPath(): string | null {
-  try {
-    const text = fs.readFileSync(configTomlPath(), "utf8");
-    const cfg = parse(text) as {
-      paths?: { contacts_csv?: string };
-    };
-    const rel = cfg.paths?.contacts_csv ?? "config/contacts.csv";
-    return path.isAbsolute(rel) ? rel : path.join(repoRoot(), rel);
-  } catch {
-    return null;
+  const candidates = [
+    path.join(repoRoot(), "demo", "config", "contacts.csv"),
+    path.join(repoRoot(), "config", "contacts.csv"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
   }
+  return null;
 }
 
 function parseCsvLine(line: string): string[] {

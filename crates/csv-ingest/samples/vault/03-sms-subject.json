@@ -1,2 +1,0 @@
-{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+15555550101","service":"SMS","conversation_type":"individual","participants":[{"handle":"+15555550101","name_hint":"Bob"}],"exported_at":"2024-01-01T00:00:00Z"}
-{"record":"message","guid":"sample-sms-subject-001","timestamp":"2021-01-01T00:10:00Z","timestamp_utc":"2021-01-01T00:10:00Z","is_from_me":false,"sender":"+15555550101","service":"SMS","subject":"Invoice","text":"Please see the attached receipt."}

@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# import-staging.sh — import NDJSON from staging/ into the vault DB
+# import-staging.sh — import JSONL from staging/ into the vault DB
 #
 # Usage:
-#   ./scripts/import-staging.sh                 # all sources, replace
-#   ./scripts/import-staging.sh --append        # all sources, append
-#   ./scripts/import-staging.sh imessage        # one source, replace
-#   ./scripts/import-staging.sh --append go-sms-pro
-#   ./scripts/import-staging.sh --overwrite-contacts
+#   ./scripts/import-staging.sh --account <username> --source imessage
+#   ./scripts/import-staging.sh --account <username> --append --source go-sms-pro
+#   ./scripts/import-staging.sh --account <username> --overwrite-contacts --source imessage
 #
 # Modes:
 #   replace (default) — delete that source's messages, then import
 #   --append          — keep existing; dedupe by (source, guid)
 #
 # After import, runs `dedupe-cross-source` to soft-hide the same SMS across sources.
-#
-# Source ids must match [[sources]] in config/config.toml
-# (imessage, sms-backup-plus, go-sms-pro, sms-backup-restore, …).
+# Default staging path: staging/<source_id>/
 
 set -euo pipefail
 
@@ -25,25 +21,40 @@ CONFIG="${REPO_ROOT}/config/config.toml"
 
 MODE="replace"
 OVERWRITE_CONTACTS=0
+ACCOUNT=""
 SOURCES=()
 
 usage() {
   cat <<'EOF'
-Usage: import-staging.sh [OPTIONS] [SOURCE_ID…]
+Usage: import-staging.sh --account <username> --source <id> [OPTIONS] [--source <id>…]
 
 Options:
+  --account <username>   Vault account username or UUID (required)
+  --source <id>          Source slug to import (required; repeatable)
   --append               Import mode append (default: replace)
   --overwrite-contacts   Reload contacts CSV on the first import
   -h, --help             Show this help
-
-SOURCE_ID:
-  Omit to import all configured sources (--all).
-  Otherwise pass one or more ids from config.toml [[sources]].
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --account)
+      ACCOUNT="${2:-}"
+      if [[ -z "${ACCOUNT}" ]]; then
+        echo "error: --account requires a username or uuid" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --source)
+      SOURCES+=("${2:-}")
+      if [[ -z "${SOURCES[-1]}" ]]; then
+        echo "error: --source requires an id" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
     --append)
       MODE="append"
       shift
@@ -62,44 +73,55 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      SOURCES+=("$1")
-      shift
+      echo "error: unexpected argument '$1' (use --source <id>)" >&2
+      usage >&2
+      exit 1
       ;;
   esac
 done
 
+if [[ -z "${ACCOUNT}" ]]; then
+  echo "error: --account <username> is required" >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ ${#SOURCES[@]} -eq 0 ]]; then
+  echo "error: at least one --source <id> is required" >&2
+  usage >&2
+  exit 1
+fi
+
 cd "${REPO_ROOT}"
 
-run_import() {
-  local -a cmd=(
+for id in "${SOURCES[@]}"; do
+  staging="${REPO_ROOT}/staging/${id}"
+  if [[ ! -d "${staging}" ]]; then
+    echo "error: staging directory missing: ${staging}" >&2
+    exit 1
+  fi
+  cmd=(
     cargo run --release -- import
     --config "${CONFIG}"
+    --account "${ACCOUNT}"
+    --source "${id}"
+    --export-dir "${staging}"
     --mode "${MODE}"
   )
   if [[ "${OVERWRITE_CONTACTS}" -eq 1 ]]; then
     cmd+=(--overwrite-contacts)
   fi
-  cmd+=("$@")
-
   echo "+" "${cmd[@]}"
   "${cmd[@]}"
-}
-
-if [[ ${#SOURCES[@]} -eq 0 ]]; then
-  run_import --all
-else
-  # --overwrite-contacts only on the first cargo invocation (matches CLI batch behavior).
-  for id in "${SOURCES[@]}"; do
-    run_import --source "${id}"
-    OVERWRITE_CONTACTS=0
-  done
-fi
+  OVERWRITE_CONTACTS=0
+done
 
 echo "Import finished (mode=${MODE})."
 
 dedupe_cmd=(
   cargo run --release -- dedupe-cross-source
   --config "${CONFIG}"
+  --account "${ACCOUNT}"
 )
 echo "+" "${dedupe_cmd[@]}"
 "${dedupe_cmd[@]}"

@@ -488,10 +488,7 @@ fn assign_activity_patterns(contacts: &mut [Contact]) {
         .filter(|(_, c)| {
             c.has_messages
                 && !c.exclude
-                && matches!(
-                    c.message_scope,
-                    MessageScope::OneToOne | MessageScope::Both
-                )
+                && matches!(c.message_scope, MessageScope::OneToOne | MessageScope::Both)
         })
         .map(|(i, _)| i)
         .collect();

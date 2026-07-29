@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use message_json::imessage::{
     AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, ParticipantRecord,
-    TapbackRecord, RECORD_MESSAGE,
+    RECORD_MESSAGE, TapbackRecord,
 };
 use rand::Rng;
 use rand::seq::IndexedRandom;
@@ -14,8 +14,8 @@ use serde_json;
 
 use crate::assets::{JPG_PHOTOS, OTHER_ATTACHMENTS};
 use crate::personas::{
-    phone_only_handles, Activity, Contact, EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER,
-    Roster, Unassigned,
+    Activity, Contact, EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, Roster, Unassigned,
+    phone_only_handles,
 };
 
 const GROUP_COUNT: usize = 200;
@@ -97,11 +97,14 @@ pub fn write_all(
         ..Default::default()
     };
 
-    // Clear existing json files
+    // Clear existing JSONL conversation files
     for entry in fs::read_dir(staging)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "json") {
+        if path
+            .extension()
+            .is_some_and(|e| e == "jsonl" || e == "json")
+        {
             fs::remove_file(&path)?;
         }
     }
@@ -145,7 +148,7 @@ pub fn write_all(
         write_spam(staging, handle, idx, rng, &mut stats)?;
     }
 
-    // orphaned.json
+    // orphaned.jsonl
     write_orphaned(staging, rng, &mut stats)?;
 
     // Header-only conversations (2)
@@ -173,8 +176,8 @@ fn write_individual(
         handle: chat_id.into(),
         name_hint: Some(contact.display_hint()),
     }];
-    let path = staging.join(sanitize_filename(chat_id) + ".json");
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join(sanitize_filename(chat_id) + ".jsonl");
+    let mut file = open_jsonl(&path)?;
     write_conversation_header(&mut file, chat_id, "individual", None, participants)?;
 
     let mut messages = Vec::new();
@@ -233,12 +236,12 @@ fn write_unassigned(
         name_hint: ua.name_hint.clone(),
     }];
     let fname = if ua.email_only {
-        format!("email-{}.json", chat_id.replace('@', "_at_"))
+        format!("email-{}.jsonl", chat_id.replace('@', "_at_"))
     } else {
-        sanitize_filename(chat_id) + ".json"
+        sanitize_filename(chat_id) + ".jsonl"
     };
     let path = staging.join(fname);
-    let mut file = open_ndjson(&path)?;
+    let mut file = open_jsonl(&path)?;
     write_conversation_header(&mut file, chat_id, "individual", None, participants)?;
 
     for i in 0..msg_count {
@@ -305,11 +308,7 @@ fn write_group(
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
-    let mut members: Vec<&Contact> = roster
-        .contacts
-        .iter()
-        .filter(|c| c.has_group())
-        .collect();
+    let mut members: Vec<&Contact> = roster.contacts.iter().filter(|c| c.has_group()).collect();
     let size = group_participant_size(rng, members.len());
     members.shuffle(rng);
     if let Some(a) = anchor {
@@ -329,8 +328,8 @@ fn write_group(
         })
         .collect();
 
-    let path = staging.join(format!("group-{index:03}.json"));
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join(format!("group-{index:03}.jsonl"));
+    let mut file = open_jsonl(&path)?;
     write_conversation_header(&mut file, &chat_id, "group", title.clone(), participants)?;
 
     if index == 0 {
@@ -387,11 +386,7 @@ fn write_group(
             )),
             is_from_me: from_me,
             sender,
-            text: Some(format!(
-                "{} {}",
-                label,
-                CHAT_SNIPPETS.choose(rng).unwrap()
-            )),
+            text: Some(format!("{} {}", label, CHAT_SNIPPETS.choose(rng).unwrap())),
             service: if i % 11 == 0 {
                 Some("SMS".into())
             } else {
@@ -402,11 +397,7 @@ fn write_group(
         if should_attach_jpg(i, msg_count) {
             add_jpg_attachment(&mut msg, i + index, stats);
             if i > 0 && i % 12 == 0 {
-                msg.text = Some(format!(
-                    "{} {}",
-                    label,
-                    PHOTO_CAPTIONS.choose(rng).unwrap()
-                ));
+                msg.text = Some(format!("{} {}", label, PHOTO_CAPTIONS.choose(rng).unwrap()));
             }
         } else if should_attach_other(i, msg_count) {
             add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
@@ -454,8 +445,8 @@ fn write_phone_only_group(
         })
         .collect();
 
-    let path = staging.join(format!("group-{index:03}.json"));
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join(format!("group-{index:03}.jsonl"));
+    let mut file = open_jsonl(&path)?;
     write_conversation_header(&mut file, &chat_id, "group", title, participants)?;
 
     let msg_count = group_message_count(rng);
@@ -507,8 +498,8 @@ fn write_spam(
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
-    let path = staging.join(format!("spam-{index}.json"));
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join(format!("spam-{index}.jsonl"));
+    let mut file = open_jsonl(&path)?;
     write_conversation_header(
         &mut file,
         handle,
@@ -530,12 +521,21 @@ fn write_spam(
 }
 
 fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> Result<()> {
-    let path = staging.join("orphaned.json");
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join("orphaned.jsonl");
+    let mut file = open_jsonl(&path)?;
     for i in 0..6 {
         let guid = format!("orphan-{i}");
-        let mut msg = text_message(&guid, (2022 + (i % 3)) as i32, i, i % 2 == 0, ORPHAN_SENDER, rng);
-        msg.text = Some(format!("Orphaned message #{i} (no conversation association)"));
+        let mut msg = text_message(
+            &guid,
+            (2022 + (i % 3)) as i32,
+            i,
+            i % 2 == 0,
+            ORPHAN_SENDER,
+            rng,
+        );
+        msg.text = Some(format!(
+            "Orphaned message #{i} (no conversation association)"
+        ));
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
@@ -549,8 +549,8 @@ fn write_header_only(
     conv_type: &str,
     member_phones: &[&str],
 ) -> Result<()> {
-    let path = staging.join(format!("empty-{}.json", sanitize_filename(chat_id)));
-    let mut file = open_ndjson(&path)?;
+    let path = staging.join(format!("empty-{}.jsonl", sanitize_filename(chat_id)));
+    let mut file = open_jsonl(&path)?;
     let participants: Vec<ParticipantRecord> = member_phones
         .iter()
         .map(|h| ParticipantRecord {
@@ -562,7 +562,7 @@ fn write_header_only(
     Ok(())
 }
 
-fn open_ndjson(path: &Path) -> Result<BufWriter<File>> {
+fn open_jsonl(path: &Path) -> Result<BufWriter<File>> {
     let f = File::create(path).with_context(|| format!("create {}", path.display()))?;
     Ok(BufWriter::new(f))
 }
@@ -589,7 +589,10 @@ fn write_conversation_header(
 fn write_message(file: &mut BufWriter<File>, msg: MessageRecord) -> Result<()> {
     let mut value = serde_json::to_value(&msg)?;
     if let serde_json::Value::Object(ref mut map) = value {
-        map.insert("record".into(), serde_json::Value::String(RECORD_MESSAGE.into()));
+        map.insert(
+            "record".into(),
+            serde_json::Value::String(RECORD_MESSAGE.into()),
+        );
     }
     writeln!(file, "{}", serde_json::to_string(&value)?)?;
     Ok(())
@@ -794,12 +797,7 @@ fn year_span(i: usize, total: usize, start: i32, end: i32) -> i32 {
 }
 
 /// 10-year window (2016–2026) with activity-biased density.
-fn year_for_activity(
-    i: usize,
-    total: usize,
-    activity: Activity,
-    rng: &mut impl Rng,
-) -> i32 {
+fn year_for_activity(i: usize, total: usize, activity: Activity, rng: &mut impl Rng) -> i32 {
     match activity {
         Activity::Frequent => {
             // ~80% in past 3 years; remainder older history.
@@ -822,9 +820,7 @@ fn year_for_activity(
 }
 
 fn ts_local(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> String {
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:00-04:00"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:00-04:00")
 }
 
 fn ts_utc(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> String {

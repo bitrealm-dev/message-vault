@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
-# ingest-staging.sh — import pre-filled staging + optional csv-ingest + dedupe
+# ingest-staging.sh — import Message Exporters JSONL staging folders + dedupe
 #
-# Staging must already contain exporter output (CSV and/or vault NDJSON).
-# Fill it with message-exporters (or another tool), then run this script.
+# Each source folder must already contain `*.jsonl` (+ attachments).
+# Default staging path: staging/<source_id>/
 #
 # Usage:
-#   ./scripts/ingest-staging.sh --account <username>                     # all known sources
-#   ./scripts/ingest-staging.sh --account <username> go-sms-pro
-#   ./scripts/ingest-staging.sh --account <username> imessage go-sms-pro sms-backup-plus
-#   ./scripts/ingest-staging.sh --account <username> --append sms-backup-plus
-#   ./scripts/ingest-staging.sh --account <username> --overwrite-contacts imessage
-#   ./scripts/ingest-staging.sh --account <username> --skip-dedupe go-sms-pro
+#   ./scripts/ingest-staging.sh --account <username> --source imessage
+#   ./scripts/ingest-staging.sh --account <username> --source imessage --staging-dir /path
+#   ./scripts/ingest-staging.sh --account <username> --source imessage --source go-sms-pro
+#   ./scripts/ingest-staging.sh --account <username> --append --source sms-backup-plus
 #
 # Runs:
-#   cargo run --release -- ingest <id> --account <username> …
-#
-# When multiple sources run, cross-source dedupe runs once after the last ingest
-# (unless --skip-dedupe).
+#   cargo run --release -- ingest <id> --account <username> --staging-dir … …
 
 set -euo pipefail
 
@@ -29,29 +24,20 @@ OVERWRITE_CONTACTS=0
 SKIP_DEDUPE=0
 ACCOUNT=""
 SOURCES=()
-
-# Default order when no SOURCE_ID args are given.
-ALL_SOURCES=(imessage go-sms-pro sms-backup-restore sms-backup-plus)
+STAGING_DIR=""
 
 usage() {
   cat <<'EOF'
-Usage: ingest-staging.sh --account <username> [OPTIONS] [SOURCE_ID…]
-
-Staging must already be populated (message-exporters → staging/<source>/).
-With no SOURCE_ID, ingests all known sources that have staging content.
+Usage: ingest-staging.sh --account <username> --source <id> [OPTIONS] [--source <id>…]
 
 Options:
-  --account <username>   Vault account username or UUID (required)
-  --append               Import mode append (default: replace)
-  --overwrite-contacts   Reload contacts CSV on import
-  --skip-dedupe          Skip cross-source soft-dedupe after import
-  -h, --help             Show this help
-
-SOURCE_ID:
-  imessage
-  go-sms-pro
-  sms-backup-restore
-  sms-backup-plus
+  --account <username>     Vault account username or UUID (required)
+  --source <id>            Source slug to import (required; repeatable)
+  --staging-dir <path>     Override staging for a single --source
+  --append                 Import mode append (default: replace)
+  --overwrite-contacts     Reload contacts CSV on import
+  --skip-dedupe            Skip cross-source soft-dedupe after import
+  -h, --help               Show this help
 EOF
 }
 
@@ -61,6 +47,22 @@ while [[ $# -gt 0 ]]; do
       ACCOUNT="${2:-}"
       if [[ -z "${ACCOUNT}" ]]; then
         echo "error: --account requires a username or uuid" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --source)
+      SOURCES+=("${2:-}")
+      if [[ -z "${SOURCES[-1]}" ]]; then
+        echo "error: --source requires an id" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --staging-dir)
+      STAGING_DIR="${2:-}"
+      if [[ -z "${STAGING_DIR}" ]]; then
+        echo "error: --staging-dir requires a path" >&2
         exit 1
       fi
       shift 2
@@ -87,8 +89,9 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      SOURCES+=("$1")
-      shift
+      echo "error: unexpected argument '$1' (use --source <id>)" >&2
+      usage >&2
+      exit 1
       ;;
   esac
 done
@@ -100,7 +103,14 @@ if [[ -z "${ACCOUNT}" ]]; then
 fi
 
 if [[ ${#SOURCES[@]} -eq 0 ]]; then
-  SOURCES=("${ALL_SOURCES[@]}")
+  echo "error: at least one --source <id> is required" >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ -n "${STAGING_DIR}" && ${#SOURCES[@]} -ne 1 ]]; then
+  echo "error: --staging-dir only applies with a single --source" >&2
+  exit 1
 fi
 
 cd "${REPO_ROOT}"
@@ -114,10 +124,21 @@ for i in "${!SOURCES[@]}"; do
   n=$((i + 1))
   echo "==> [${n}/${#SOURCES[@]}] ${id}"
 
+  if [[ -n "${STAGING_DIR}" ]]; then
+    staging="${STAGING_DIR}"
+  else
+    staging="${REPO_ROOT}/staging/${id}"
+  fi
+  if [[ ! -d "${staging}" ]]; then
+    echo "error: staging directory missing: ${staging}" >&2
+    exit 1
+  fi
+
   cmd=(
     cargo run --release -- ingest "${id}"
     --config "${CONFIG}"
     --account "${ACCOUNT}"
+    --staging-dir "${staging}"
     --mode "${MODE}"
   )
   if [[ "${OVERWRITE_CONTACTS}" -eq 1 ]]; then

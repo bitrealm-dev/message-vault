@@ -93,8 +93,6 @@ cargo run -p message-vault-client --bin vault-push --features cli --release -- \
   --key "$VAULT_KEY"
 ```
 
-The old `csv-ingest` `vault-push` / `vault-push-gui` binaries remain buildable for CSV workflows but are **deprecated**.
-
 ### 4. Browse
 
 Refresh the website. Use the **Source** control in the sidebar to look at one backup type or **All (combined)**. Under contacts you will see **Contacts**, **All**, and **Excluded**—see [`web/README.md`](web/README.md) for details.
@@ -105,10 +103,13 @@ If the export folder already lives on the vault machine next to your config, you
 
 ```bash
 # One source (username from your web account)
-cargo run --release -- ingest go-sms-pro --account yourusername
+cargo run --release -- ingest go-sms-pro \
+  --account yourusername \
+  --staging-dir staging/go-sms-pro
 
 # Or several sources that already have folders under staging/
-./scripts/ingest-staging.sh --account yourusername
+./scripts/ingest-staging.sh --account yourusername \
+  --source imessage --source go-sms-pro
 ```
 
 Then convert media for the web UI if needed: `cd web && npm run process-assets`.
@@ -134,8 +135,7 @@ troubleshooting, see the [developer setup guide](docs/development.md).
 
 ```text
 crates/
-  message-json/     # vault NDJSON schemas
-  csv-ingest/       # CSV → vault convert + vault-push / vault-push-gui
+  message-json/     # vault JSONL schemas
   demo-seed/        # regenerate committed demo data
 config/             # config.toml.example and related examples
 scripts/            # setup-demo, ingest-staging, smoke tests
@@ -143,23 +143,23 @@ web/                # Next.js UI
 docs/               # schema, dedupe
 ```
 
-Backup → CSV converters live in [message-exporters](https://github.com/bitrealm-dev/message-exporters), not in this repo. Fill each source’s `export_dir` (staging) before local `ingest`.
+Backup → JSONL exporters live in [message-exporters](https://github.com/bitrealm-dev/message-exporters). Local `ingest` takes `--staging-dir` with `*.jsonl` files; remote clients push over the HTTP import API. Asset files land under `data/<account_id>/<source_id>/…`.
 
-### Config sources
+### Config
 
-See [`config/config.toml.example`](config/config.toml.example). Each `[[sources]]` entry has an `id` and `export_dir`. Asset files default under `data/<account_id>/<source_id>/…`.
+See [`config/config.toml.example`](config/config.toml.example). Runtime config is instance paths plus optional `[server]`. Source names are not listed in TOML — each import registers its own source for that account. Owner/login identity lives in SQLite (demo seed identity: `demo/config/seed.toml`).
 
-Ingest contract (CSV columns → vault NDJSON): [`crates/message-json/docs/CSV_INGEST.md`](crates/message-json/docs/CSV_INGEST.md).
+Vault JSONL contract: [`crates/message-json`](crates/message-json).
 
 ### HTTP import API
 
-`serve` reads `[server]` in config (`bind`, `api_token`). Prefer Message Exporters **vault-push** / Vault tab:
+`serve` reads `[server]` in config (`bind`). Prefer Message Exporters **vault-push** / Vault tab:
 
-1. `GET /v1/auth/check` — verify username + Import API token  
+1. `GET /v1/auth/check` — verify username + Import API token (from web Settings)  
 2. `PUT /v1/assets/{sha256}?source=&account=` — upload each attachment by digest  
-3. `POST /v1/import?source=&account=&mode=` — vault NDJSON (`application/x-ndjson`), with attachment `sha256` fields resolving to uploaded assets  
+3. `POST /v1/import?source=&account=&mode=` — vault JSONL (`application/jsonl`), with attachment `sha256` fields resolving to uploaded assets  
 
-Per-account tokens come from web Settings; `[server] api_token` is an admin secret for ops/smoke. Legacy csv-ingest clients still use multipart `ndjson` + `file` parts.
+Auth is per-account only (no host-wide admin token). Multipart uploads use field `jsonl` plus `file` parts.
 
 ```bash
 curl -sS "http://127.0.0.1:8080/v1/auth/check" \
@@ -177,7 +177,11 @@ Cross-source soft-dedupe (exact / near-time matches): [docs/dedupe.md](docs/dedu
 Database tables: [docs/schema.md](docs/schema.md).
 
 ```bash
-cargo run --release -- import --source imessage --mode replace --account yourusername
+cargo run --release -- import \
+  --source imessage \
+  --export-dir staging/imessage \
+  --mode replace \
+  --account yourusername
 cargo run --release -- dedupe-cross-source --account yourusername
 ```
 
@@ -196,7 +200,3 @@ cargo run -p demo-seed -- --out demo --seed 42
 ```
 
 See [`demo/README.md`](demo/README.md).
-
-### csv-ingest CLI details
-
-[`crates/csv-ingest/README.md`](crates/csv-ingest/README.md) — vault-push flags, checkpoints, GUI notes.

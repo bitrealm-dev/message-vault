@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::phone;
@@ -271,7 +271,13 @@ fn write_csv(path: &Path, contacts: &[ContactOut]) -> Result<()> {
         }
         let phones = c.phones.join(";");
         let exclude = if c.exclude { "true" } else { "false" };
-        let mut label_cols = [String::new(), String::new(), String::new(), String::new(), String::new()];
+        let mut label_cols = [
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ];
         for (i, tag) in c.tags.iter().take(5).enumerate() {
             label_cols[i] = tag.clone();
         }

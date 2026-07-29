@@ -1,6 +1,6 @@
 //! Standard vault NDJSON schema for **all** message sources.
 //!
-//! This is not iMessage-specific. Exporters and `csv-ingest` map into this
+//! This is not iMessage-specific. Message Exporters map into this
 //! shape; optional rich fields (tapbacks, replies, parts, …) are omitted when unused.
 //!
 //! Wire: `"schema": "vault"`, `schema_version` 1.

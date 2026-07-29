@@ -1,2 +1,0 @@
-{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"chat123456","service":"iMessage","conversation_type":"group","group_title":"Weekend plans","participants":[{"handle":"+15551212","name_hint":"Ada"},{"handle":"+15559876","name_hint":"Sam"}],"exported_at":"2024-01-01T00:00:00Z"}
-{"record":"message","guid":"sample-group-msg-001","timestamp":"2019-11-21T13:01:00-05:00","timestamp_utc":"2019-11-21T18:01:00Z","is_from_me":false,"sender":"+15559876","service":"iMessage","text":"Who is bringing snacks?"}

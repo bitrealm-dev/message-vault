@@ -7,8 +7,8 @@ mod exclude;
 mod export_markdown;
 mod import;
 mod ingest;
+mod jsonl;
 mod models;
-mod ndjson;
 mod phone;
 mod reset_demo;
 mod schema;
@@ -17,12 +17,13 @@ mod vault_owner;
 mod vcf;
 mod vcf_to_contacts;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::config::Config;
+use crate::config::{Config, validate_source_id};
 
 #[derive(Parser)]
 #[command(name = "message-vault-rs")]
@@ -34,19 +35,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import staging for a source (optional CSV→vault NDJSON), then soft-dedupe.
-    /// Fill `export_dir` / staging via message-exporters first.
+    /// Import a Message Exporters JSONL staging folder for one source, then soft-dedupe.
     Ingest {
-        /// Configured source id (imessage, go-sms-pro, sms-backup-plus, sms-backup-restore, …)
+        /// Source id (lowercase slug; becomes messages.source and asset folder name)
         source: String,
 
         /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Override staging dir (defaults to the source's export_dir)
+        /// Folder of `*.jsonl` conversation files (+ attachments)
         #[arg(long)]
-        staging_dir: Option<PathBuf>,
+        staging_dir: PathBuf,
 
         /// Import mode: replace (wipe this source's messages) or append
         #[arg(long, default_value = "replace")]
@@ -69,37 +69,33 @@ enum Commands {
         account: String,
     },
 
-    /// Import NDJSON export(s) into SQLite
+    /// Import JSONL export(s) into SQLite
     Import {
         /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Import one configured source by id
+        /// Source id (lowercase slug)
         #[arg(long)]
-        source: Option<String>,
+        source: String,
 
-        /// Import every configured source
+        /// Directory containing `*.jsonl` conversation files
         #[arg(long)]
-        all: bool,
-
-        /// Directory containing NDJSON conversation files (overrides selected source export_dir)
-        #[arg(long)]
-        export_dir: Option<PathBuf>,
+        export_dir: PathBuf,
 
         /// Output SQLite database path (overrides config)
         #[arg(long)]
         db: Option<PathBuf>,
 
-        /// Originals asset store directory (overrides selected source assets dir)
+        /// Originals asset store directory (overrides account/source default)
         #[arg(long)]
         assets_dir: Option<PathBuf>,
 
-        /// Contacts CSV path (overrides config; default config/contacts.csv)
+        /// Contacts CSV path (overrides per-account default)
         #[arg(long)]
         contacts_csv: Option<PathBuf>,
 
-        /// Exclude CSV path (overrides config; handles skipped on import)
+        /// Exclude CSV path (overrides per-account default)
         #[arg(long = "exclude-csv")]
         exclude_csv: Option<PathBuf>,
 
@@ -139,7 +135,7 @@ enum Commands {
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Contacts CSV path (overrides config; default config/contacts.csv)
+        /// Contacts CSV path (overrides per-account default)
         #[arg(long)]
         contacts_csv: Option<PathBuf>,
 
@@ -173,7 +169,7 @@ enum Commands {
         account: String,
     },
     VcfToContacts {
-        /// Path to config.toml (used for default --out / --exclude)
+        /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
@@ -181,13 +177,17 @@ enum Commands {
         #[arg(long)]
         vcf: PathBuf,
 
-        /// Output contacts.csv (defaults to paths.contacts_csv from config)
+        /// Output contacts.csv (defaults to data/<account>/contacts.csv when --account is set)
         #[arg(long)]
         out: Option<PathBuf>,
 
-        /// Optional exclude.csv (sets exclude=true; defaults to paths.exclude_csv)
+        /// Optional exclude.csv (defaults to data/<account>/exclude.csv when --account is set)
         #[arg(long = "exclude")]
         exclude: Option<PathBuf>,
+
+        /// Account username or UUID (used for default --out / --exclude paths)
+        #[arg(long)]
+        account: Option<String>,
 
         /// Overwrite --out if it already exists
         #[arg(long)]
@@ -205,9 +205,9 @@ enum Commands {
         config: PathBuf,
     },
 
-    /// Run HTTP ingest API (`POST /v1/import` with vault NDJSON)
+    /// Run HTTP ingest API (`POST /v1/import` with vault JSONL)
     Serve {
-        /// Path to config.toml (must include `[server]` with `api_token`)
+        /// Path to config.toml (must include `[server]` with `bind`)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
     },
@@ -232,7 +232,7 @@ fn main() -> Result<()> {
                 bail!("--window-secs must be >= 0");
             }
             let mode = import::ImportMode::parse(&mode)?;
-            let _ = cfg.source(&source)?;
+            validate_source_id(&source)?;
             let account = vault_owner::resolve_account_ref_at(&cfg.paths.db, &account)?;
 
             let stats = ingest::ingest(
@@ -275,7 +275,6 @@ fn main() -> Result<()> {
         Commands::Import {
             config,
             source,
-            all,
             export_dir,
             db,
             assets_dir,
@@ -286,103 +285,63 @@ fn main() -> Result<()> {
             account,
         } => {
             let cfg = Config::load(&config)?;
+            validate_source_id(&source)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
             let (default_contacts, default_exclude) = cfg.paths.ensure_account_csvs(&account)?;
             let contacts_csv = contacts_csv.unwrap_or(default_contacts);
             let exclude_csv = exclude_csv.unwrap_or(default_exclude);
             let mode = import::ImportMode::parse(&mode)?;
-
-            if all && source.is_some() {
-                bail!("use either --source <id> or --all, not both");
-            }
-
-            let sources: Vec<&config::SourceConfig> = if all {
-                cfg.sources.iter().collect()
-            } else if let Some(id) = source.as_deref() {
-                vec![cfg.source(id)?]
-            } else if cfg.sources.len() == 1 {
-                vec![&cfg.sources[0]]
-            } else {
-                bail!(
-                    "multiple sources configured; pass --source <id> or --all (ids: {})",
-                    cfg.sources
-                        .iter()
-                        .map(|s| s.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            };
-
-            if sources.len() > 1 && (export_dir.is_some() || assets_dir.is_some()) {
-                bail!("--export-dir / --assets-dir only apply when importing a single source");
-            }
+            let assets =
+                assets_dir.unwrap_or_else(|| cfg.paths.assets_dir_for_account(&account, &source));
 
             println!("Importing into {}", db.display());
             println!("  config:        {}", config.display());
             println!("  account:       {}", account);
+            println!("  source:        {}", source);
             println!("  mode:          {}", mode.as_str());
-            if let Some(owner) = &cfg.owner {
-                println!(
-                    "  owner (legacy):{} ({})",
-                    owner.display_name,
-                    owner.phones.join(", ")
-                );
-            }
             println!("  contacts csv:  {}", contacts_csv.display());
             println!("  exclude csv:   {}", exclude_csv.display());
 
-            let mut overwrite = overwrite_contacts;
-            for src in sources {
-                let export = export_dir
-                    .clone()
-                    .unwrap_or_else(|| src.export_dir.clone());
-                let assets = assets_dir.clone().unwrap_or_else(|| {
-                    src.resolved_assets_dir_for_account(&cfg.paths, &account)
-                });
+            let stats = import::import_export(
+                &export_dir,
+                &db,
+                &assets,
+                &contacts_csv,
+                &exclude_csv,
+                overwrite_contacts,
+                mode,
+                &source,
+                &account,
+            )?;
 
-                let stats = import::import_export(
-                    &export,
-                    &db,
-                    &assets,
-                    &contacts_csv,
-                    &exclude_csv,
-                    overwrite,
-                    mode,
-                    &src.id,
-                    &account,
-                )?;
-                // Only overwrite contacts on the first source of a batch.
-                overwrite = false;
-
-                println!();
-                println!("Source '{}'", src.id);
-                println!("  export_dir:    {}", export.display());
-                println!("  assets:        {}", assets.display());
-                if stats.contacts_skipped {
-                    println!("  contacts:      (skipped — already loaded; use --overwrite-contacts)");
-                } else {
-                    println!("  contacts:      {}", stats.contacts);
-                    println!("  contact handles:{}", stats.contact_handles);
-                    println!("  contact labels:{}", stats.contact_label_links);
-                }
-                println!("  files:         {}", stats.files);
-                println!("  conversations: {}", stats.conversations);
-                println!("  participants:  {}", stats.participants);
-                println!("  messages:      {}", stats.messages);
-                println!("  messages deduped: {}", stats.messages_deduped);
-                if stats.mode == "append" {
-                    println!("  messages appended: {}", stats.messages_appended);
-                }
-                println!("  attachments:   {}", stats.attachments);
-                println!("  tapbacks:      {}", stats.tapbacks);
-                println!("  excl. convos:  {}", stats.conversations_excluded);
-                println!("  excl. msgs:    {}", stats.messages_excluded);
-                println!("  excl. parts:   {}", stats.participants_excluded);
-                println!("  assets copied: {}", stats.assets_copied);
-                println!("  assets deduped:{}", stats.assets_deduped);
-                println!("  assets missing:{}", stats.assets_missing);
+            println!();
+            println!("Source '{}'", source);
+            println!("  export_dir:    {}", export_dir.display());
+            println!("  assets:        {}", assets.display());
+            if stats.contacts_skipped {
+                println!("  contacts:      (skipped — already loaded; use --overwrite-contacts)");
+            } else {
+                println!("  contacts:      {}", stats.contacts);
+                println!("  contact handles:{}", stats.contact_handles);
+                println!("  contact labels:{}", stats.contact_label_links);
             }
+            println!("  files:         {}", stats.files);
+            println!("  conversations: {}", stats.conversations);
+            println!("  participants:  {}", stats.participants);
+            println!("  messages:      {}", stats.messages);
+            println!("  messages deduped: {}", stats.messages_deduped);
+            if stats.mode == "append" {
+                println!("  messages appended: {}", stats.messages_appended);
+            }
+            println!("  attachments:   {}", stats.attachments);
+            println!("  tapbacks:      {}", stats.tapbacks);
+            println!("  excl. convos:  {}", stats.conversations_excluded);
+            println!("  excl. msgs:    {}", stats.messages_excluded);
+            println!("  excl. parts:   {}", stats.participants_excluded);
+            println!("  assets copied: {}", stats.assets_copied);
+            println!("  assets deduped:{}", stats.assets_deduped);
+            println!("  assets missing:{}", stats.assets_missing);
         }
 
         Commands::DedupeCrossSource {
@@ -394,18 +353,30 @@ fn main() -> Result<()> {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let priority: Vec<String> = cfg.sources.iter().map(|s| s.id.clone()).collect();
             if window_secs < 0 {
                 bail!("--window-secs must be >= 0");
             }
+
+            let priority = {
+                let conn = rusqlite::Connection::open(&db)?;
+                conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+                dedupe::source_priority_from_db(&conn, &account)?
+            };
 
             println!("Cross-source dedupe on {}", db.display());
             println!("  config:       {}", config.display());
             println!("  account:      {}", account);
             println!("  window_secs:  {}", window_secs);
-            println!("  priority:     {}", priority.join(", "));
+            println!(
+                "  priority:     {}",
+                if priority.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    priority.join(", ")
+                }
+            );
 
-            let stats = dedupe::run_dedupe(&db, &account, &priority, window_secs)?;
+            let stats = dedupe::run_dedupe(&db, &account, window_secs)?;
             println!("  keys filled:  {}", stats.keys_filled);
             println!("  exact groups: {}", stats.exact_groups);
             println!("  exact flagged:{}", stats.exact_flagged);
@@ -424,10 +395,10 @@ fn main() -> Result<()> {
             let (default_contacts, _) = cfg.paths.ensure_account_csvs(&account)?;
             let contacts_csv = contacts_csv.unwrap_or(default_contacts);
 
-            if let Some(parent) = db.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = db.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
             }
 
             let mut conn = rusqlite::Connection::open(&db)?;
@@ -454,9 +425,8 @@ fn main() -> Result<()> {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let snippet_css = snippet_css.unwrap_or_else(|| {
-                PathBuf::from("config/obsidian-message-vault.css")
-            });
+            let snippet_css =
+                snippet_css.unwrap_or_else(|| PathBuf::from("config/obsidian-message-vault.css"));
             if !snippet_css.is_file() {
                 bail!(
                     "CSS snippet not found at {} (pass --snippet-css)",
@@ -464,12 +434,15 @@ fn main() -> Result<()> {
                 );
             }
 
-            let mut assets_by_source = std::collections::HashMap::new();
-            for src in &cfg.sources {
-                assets_by_source.insert(
-                    src.id.clone(),
-                    src.resolved_assets_dir_for_account(&cfg.paths, &account),
-                );
+            let sources = {
+                let conn = rusqlite::Connection::open(&db)?;
+                conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+                list_message_sources(&conn, &account)?
+            };
+            let mut assets_by_source = HashMap::new();
+            for src in &sources {
+                assets_by_source
+                    .insert(src.clone(), cfg.paths.assets_dir_for_account(&account, src));
             }
 
             println!("Export markdown → {}", out.display());
@@ -478,13 +451,8 @@ fn main() -> Result<()> {
             println!("  db:      {}", db.display());
             println!("  snippet: {}", snippet_css.display());
 
-            let stats = export_markdown::run_export(
-                &db,
-                &account,
-                &assets_by_source,
-                &out,
-                &snippet_css,
-            )?;
+            let stats =
+                export_markdown::run_export(&db, &account, &assets_by_source, &out, &snippet_css)?;
             println!("  people:        {}", stats.people);
             println!("  year pages:    {}", stats.year_pages);
             println!("  messages:      {}", stats.messages);
@@ -500,18 +468,24 @@ fn main() -> Result<()> {
             vcf,
             out,
             exclude,
+            account,
             force,
         } => {
             let cfg = Config::load(&config)?;
-            let out = out.unwrap_or(cfg.paths.contacts_csv);
-            let exclude = exclude.or(Some(cfg.paths.exclude_csv));
+            let (out, exclude) = match (out, account.as_deref()) {
+                (Some(out), _) => (out, exclude),
+                (None, Some(account_ref)) => {
+                    let account_id =
+                        vault_owner::resolve_account_ref_at(&cfg.paths.db, account_ref)?;
+                    let (contacts, excl) = cfg.paths.ensure_account_csvs(&account_id)?;
+                    (contacts, exclude.or(Some(excl)))
+                }
+                (None, None) => {
+                    bail!("pass --out <contacts.csv> or --account <username|uuid>");
+                }
+            };
 
-            let stats = vcf_to_contacts::convert(
-                &vcf,
-                &out,
-                exclude.as_deref(),
-                force,
-            )?;
+            let stats = vcf_to_contacts::convert(&vcf, &out, exclude.as_deref(), force)?;
             println!("Wrote {}", out.display());
             println!("  vcf cards:        {}", stats.cards_total);
             println!("  skipped (no TEL): {}", stats.cards_skipped_no_tel);
@@ -542,4 +516,24 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn list_message_sources(conn: &rusqlite::Connection, account_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT DISTINCT m.source
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = ?1
+          AND m.source IS NOT NULL
+          AND TRIM(m.source) != ''
+        ORDER BY m.source
+        "#,
+    )?;
+    let rows = stmt.query_map(rusqlite::params![account_id], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }

@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 use crate::api_tokens;
 use crate::assets;
-use crate::config::Config;
+use crate::config::{Config, validate_source_id};
 use crate::dedupe;
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::schema;
@@ -24,13 +24,10 @@ use crate::vault_owner;
 
 const MAX_BODY_BYTES: usize = 512 * 1024 * 1024; // 512 MiB (multipart uploads)
 
-/// Who the Bearer token authenticated as.
+/// Authenticated vault account from a per-account Import API token.
 #[derive(Debug, Clone)]
-enum AuthIdentity {
-    /// Per-account import token from `account_api_tokens`.
-    User { account_id: String },
-    /// Config `[server] api_token` — may target any account via query param.
-    Admin,
+struct AuthIdentity {
+    account_id: String,
 }
 
 #[derive(Clone)]
@@ -44,7 +41,7 @@ struct AppState {
 #[derive(Debug, Deserialize)]
 struct ImportQuery {
     source: String,
-    /// Username or UUID. Required for admin token; optional for user tokens (derived from Bearer).
+    /// Username or UUID. Optional; when set must match the Bearer token's account.
     #[serde(default)]
     account: Option<String>,
     #[serde(default = "default_import_mode")]
@@ -129,18 +126,12 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-rs serve listening on http://{bind}");
     eprintln!("  GET  /health");
-    eprintln!("  GET  /v1/auth/check   (Bearer user or admin token)");
-    eprintln!(
-        "  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)"
-    );
-    eprintln!(
-        "  POST /v1/import?source=&account=&mode=append|replace&dedupe=false"
-    );
-    eprintln!("       account= optional for user tokens (bound to token); required for admin");
-    eprintln!("       Content-Type: application/x-ndjson  (body only; assets by sha256 or export_dir)");
-    eprintln!(
-        "       Content-Type: multipart/form-data   (field ndjson + file parts; remote push)"
-    );
+    eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
+    eprintln!("  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)");
+    eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false");
+    eprintln!("       account= optional (must match token); derived from Bearer when omitted");
+    eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
+    eprintln!("       Content-Type: multipart/form-data   (field jsonl + file parts; remote push)");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -181,78 +172,58 @@ async fn auth_check(
     headers: HeaderMap,
     Query(query): Query<AuthCheckQuery>,
 ) -> Result<Json<AuthCheckResponse>, ApiError> {
-    let server = state
-        .cfg
-        .require_server()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let auth = resolve_auth(&headers, &server.api_token, &state.cfg.paths.db).await?;
-    let sources: Vec<String> = state.cfg.sources.iter().map(|s| s.id.clone()).collect();
+    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
+    let account_id = auth.account_id;
 
-    match auth {
-        AuthIdentity::User { account_id } => {
-            if let Some(q) = query.account.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
-                if let Some(resolved) = resolved {
-                    if resolved != account_id {
-                        return Err(ApiError::Forbidden(
-                            "account query does not match token's account".into(),
-                        ));
-                    }
-                } else if q != account_id {
-                    return Err(ApiError::Forbidden(
-                        "account query does not match token's account".into(),
-                    ));
-                }
+    if let Some(q) = query
+        .account
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
+        if let Some(resolved) = resolved {
+            if resolved != account_id {
+                return Err(ApiError::Forbidden(
+                    "account query does not match token's account".into(),
+                ));
             }
-            let username = load_username(&state.cfg.paths.db, &account_id).await?;
-            Ok(Json(AuthCheckResponse {
-                ok: true,
-                sources,
-                account_id: Some(account_id),
-                username,
-                account_ok: Some(true),
-                admin: None,
-            }))
-        }
-        AuthIdentity::Admin => {
-            let (account_id, username, account_ok) =
-                if let Some(account) = query.account.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                {
-                    let db = state.cfg.paths.db.clone();
-                    let account_query = account.to_string();
-                    let looked_up = tokio::task::spawn_blocking(move || {
-                        let conn = Connection::open(&db)?;
-                        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-                        let id = vault_owner::lookup_account_ref(&conn, &account_query)?;
-                        let username = match &id {
-                            Some(id) => vault_owner::username_for_account(&conn, id)?,
-                            None => None,
-                        };
-                        Ok::<_, anyhow::Error>((id, username, account_query))
-                    })
-                    .await
-                    .map_err(|e| ApiError::Internal(format!("auth check task: {e}")))?
-                    .map_err(|e| ApiError::Internal(e.to_string()))?;
-                    match looked_up {
-                        (Some(id), username, _) => (Some(id), username, Some(true)),
-                        (None, _, raw) => (Some(raw), None, Some(false)),
-                    }
-                } else {
-                    (None, None, None)
-                };
-            Ok(Json(AuthCheckResponse {
-                ok: true,
-                sources,
-                account_id,
-                username,
-                account_ok,
-                admin: Some(true),
-            }))
+        } else if q != account_id {
+            return Err(ApiError::Forbidden(
+                "account query does not match token's account".into(),
+            ));
         }
     }
+    let username = load_username(&state.cfg.paths.db, &account_id).await?;
+    let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
+    Ok(Json(AuthCheckResponse {
+        ok: true,
+        sources,
+        account_id: Some(account_id),
+        username,
+        account_ok: Some(true),
+        admin: None,
+    }))
 }
 
-async fn lookup_or_resolve_query(db_path: &Path, account_ref: &str) -> Result<Option<String>, ApiError> {
+async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
+    let db = db_path.to_path_buf();
+    let account_id = account_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let conn = Connection::open(&db)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        schema::ensure_messages_schema(&conn)?;
+        dedupe::source_priority_from_db(&conn, &account_id)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("sources list task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+async fn lookup_or_resolve_query(
+    db_path: &Path,
+    account_ref: &str,
+) -> Result<Option<String>, ApiError> {
     let db = db_path.to_path_buf();
     let account_ref = account_ref.to_string();
     tokio::task::spawn_blocking(move || {
@@ -308,29 +279,8 @@ fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_string())
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    if ab.len() != bb.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in ab.iter().zip(bb.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
-async fn resolve_auth(
-    headers: &HeaderMap,
-    admin_token: &str,
-    db_path: &Path,
-) -> Result<AuthIdentity, ApiError> {
+async fn resolve_auth(headers: &HeaderMap, db_path: &Path) -> Result<AuthIdentity, ApiError> {
     let token = bearer_token(headers)?;
-    if constant_time_eq(&token, admin_token) {
-        return Ok(AuthIdentity::Admin);
-    }
-
     let db = db_path.to_path_buf();
     let token_owned = token.clone();
     let account_id = tokio::task::spawn_blocking(move || {
@@ -344,41 +294,28 @@ async fn resolve_auth(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     match account_id {
-        Some(account_id) => Ok(AuthIdentity::User { account_id }),
+        Some(account_id) => Ok(AuthIdentity { account_id }),
         None => Err(ApiError::Unauthorized("invalid API token".into())),
     }
 }
 
-/// Resolve the account id for an import: user tokens bind; admin requires query.
-/// Query may be username or UUID; always returns `accounts.id`.
+/// Resolve the account id for an import: Bearer token binds the account.
+/// Optional query may be username or UUID and must match the token.
 async fn resolve_import_account(
     auth: &AuthIdentity,
     query_account: Option<&str>,
     db_path: &Path,
 ) -> Result<String, ApiError> {
     let query = query_account.map(str::trim).filter(|s| !s.is_empty());
-    match auth {
-        AuthIdentity::User { account_id } => {
-            if let Some(q) = query {
-                let resolved = resolve_account_ref_async(db_path, q).await?;
-                if resolved != *account_id {
-                    return Err(ApiError::Forbidden(
-                        "account query does not match token's account".into(),
-                    ));
-                }
-            }
-            Ok(account_id.clone())
-        }
-        AuthIdentity::Admin => {
-            let q = query.ok_or_else(|| {
-                ApiError::BadRequest(
-                    "query param account is required when using the admin API token (username or UUID)"
-                        .into(),
-                )
-            })?;
-            resolve_account_ref_async(db_path, q).await
+    if let Some(q) = query {
+        let resolved = resolve_account_ref_async(db_path, q).await?;
+        if resolved != auth.account_id {
+            return Err(ApiError::Forbidden(
+                "account query does not match token's account".into(),
+            ));
         }
     }
+    Ok(auth.account_id.clone())
 }
 
 fn content_type_base(headers: &HeaderMap) -> Option<&str> {
@@ -386,8 +323,9 @@ fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     Some(ct.split(';').next().unwrap_or(ct).trim())
 }
 
-fn is_ndjson_content_type(base: &str) -> bool {
-    base.eq_ignore_ascii_case("application/x-ndjson")
+fn is_jsonl_content_type(base: &str) -> bool {
+    base.eq_ignore_ascii_case("application/jsonl")
+        || base.eq_ignore_ascii_case("application/x-ndjson")
         || base.eq_ignore_ascii_case("application/ndjson")
 }
 
@@ -433,22 +371,22 @@ async fn import_handler(
     Query(mut query): Query<ImportQuery>,
     request: Request,
 ) -> Result<Json<ImportResponse>, ApiError> {
-    let server = state
-        .cfg
-        .require_server()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let auth = resolve_auth(&headers, &server.api_token, &state.cfg.paths.db).await?;
+    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
-            "Content-Type required (application/x-ndjson or multipart/form-data)".into(),
+            "Content-Type required (application/jsonl or multipart/form-data)".into(),
         ));
     };
 
     if query.source.trim().is_empty() {
-        return Err(ApiError::BadRequest("query param source is required".into()));
+        return Err(ApiError::BadRequest(
+            "query param source is required".into(),
+        ));
     }
-    let account = resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     query.account = Some(account);
 
     if is_multipart_content_type(ct) {
@@ -458,21 +396,20 @@ async fn import_handler(
         return import_multipart(state, query, multipart).await;
     }
 
-    if is_ndjson_content_type(ct) {
-        let temp = tempfile::tempdir()
-            .map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-        let ndjson_path = temp.path().join("_import.ndjson");
-        let n = stream_body_to_file(request.into_body(), &ndjson_path).await?;
+    if is_jsonl_content_type(ct) {
+        let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+        let jsonl_path = temp.path().join("_import.jsonl");
+        let n = stream_body_to_file(request.into_body(), &jsonl_path).await?;
         if n == 0 {
             return Err(ApiError::BadRequest("request body is empty".into()));
         }
-        let response = run_import_path(state, query, ndjson_path, None).await;
+        let response = run_import_path(state, query, jsonl_path, None).await;
         drop(temp);
         return response;
     }
 
     Err(ApiError::BadRequest(
-        "Content-Type must be application/x-ndjson or multipart/form-data".into(),
+        "Content-Type must be application/jsonl or multipart/form-data".into(),
     ))
 }
 
@@ -498,23 +435,18 @@ async fn asset_put_handler(
     Query(query): Query<AssetPutQuery>,
     request: Request,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
-    let server = state
-        .cfg
-        .require_server()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let auth = resolve_auth(&headers, &server.api_token, &state.cfg.paths.db).await?;
+    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
     if query.source.trim().is_empty() {
-        return Err(ApiError::BadRequest("query param source is required".into()));
+        return Err(ApiError::BadRequest(
+            "query param source is required".into(),
+        ));
     }
-    let _source = state
-        .cfg
-        .source(&query.source)
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?
-        .clone();
-    let account = resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let source_id = query.source.clone();
 
-    let temp = tempfile::tempdir()
-        .map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
     let tmp_path = temp.path().join("upload.bin");
     let n = stream_body_to_file(request.into_body(), &tmp_path).await?;
     if n == 0 {
@@ -530,14 +462,9 @@ async fn asset_put_handler(
     let cfg = Arc::clone(&state.cfg);
     let sha = sha256.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = _source.resolved_assets_dir_for_account(&cfg.paths, &account);
+        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
         std::fs::create_dir_all(&assets_dir)?;
-        assets::store_verified(
-            &tmp_path,
-            &sha,
-            &assets_dir,
-            mime.as_deref(),
-        )
+        assets::store_verified(&tmp_path, &sha, &assets_dir, mime.as_deref())
     })
     .await
     .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?
@@ -553,14 +480,11 @@ async fn asset_put_handler(
     }))
 }
 
-async fn stream_body_to_file(
-    body: axum::body::Body,
-    dest: &Path,
-) -> Result<u64, ApiError> {
+async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64, ApiError> {
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
     let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
         .await
@@ -577,9 +501,9 @@ async fn stream_field_to_file(
     dest: &Path,
 ) -> Result<u64, ApiError> {
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            ApiError::Internal(format!("mkdir {}: {e}", parent.display()))
-        })?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
     let mut file = tokio::fs::File::create(dest)
         .await
@@ -606,11 +530,10 @@ async fn import_multipart(
     query: ImportQuery,
     mut multipart: Multipart,
 ) -> Result<Json<ImportResponse>, ApiError> {
-    let temp = tempfile::tempdir()
-        .map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
     let asset_root = temp.path().to_path_buf();
-    let ndjson_path = asset_root.join("_import.ndjson");
-    let mut have_ndjson = false;
+    let jsonl_path = asset_root.join("_import.jsonl");
+    let mut have_jsonl = false;
     let mut file_count = 0u64;
 
     while let Some(mut field) = multipart
@@ -620,12 +543,12 @@ async fn import_multipart(
     {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
-            "ndjson" => {
-                let n = stream_field_to_file(field, &ndjson_path).await?;
+            "jsonl" => {
+                let n = stream_field_to_file(field, &jsonl_path).await?;
                 if n == 0 {
-                    return Err(ApiError::BadRequest("ndjson part is empty".into()));
+                    return Err(ApiError::BadRequest("jsonl part is empty".into()));
                 }
-                have_ndjson = true;
+                have_jsonl = true;
             }
             "file" => {
                 let filename = field
@@ -656,14 +579,14 @@ async fn import_multipart(
         }
     }
 
-    if !have_ndjson {
+    if !have_jsonl {
         return Err(ApiError::BadRequest(
-            "multipart missing required field 'ndjson'".into(),
+            "multipart missing required field 'jsonl'".into(),
         ));
     }
-    eprintln!("import: multipart ndjson + {file_count} file(s)");
+    eprintln!("import: multipart jsonl + {file_count} file(s)");
 
-    let response = run_import_path(state, query, ndjson_path, Some(asset_root)).await;
+    let response = run_import_path(state, query, jsonl_path, Some(asset_root)).await;
     drop(temp);
     response
 }
@@ -671,22 +594,18 @@ async fn import_multipart(
 async fn run_import_path(
     state: AppState,
     query: ImportQuery,
-    ndjson_path: PathBuf,
+    jsonl_path: PathBuf,
     asset_root_override: Option<PathBuf>,
 ) -> Result<Json<ImportResponse>, ApiError> {
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let source = state
-        .cfg
-        .source(&query.source)
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?
-        .clone();
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let cfg = Arc::clone(&state.cfg);
     let account = query
         .account
         .clone()
         .ok_or_else(|| ApiError::BadRequest("account is required".into()))?;
-    let source_id = source.id.clone();
+    let source_id = query.source.clone();
     let do_dedupe = query.dedupe;
 
     let account_lock = {
@@ -698,15 +617,15 @@ async fn run_import_path(
     let _guard = account_lock.lock().await;
 
     let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = source.resolved_assets_dir_for_account(&cfg.paths, &account);
-        let asset_root = asset_root_override
-            .as_deref()
-            .unwrap_or(source.export_dir.as_path());
+        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
+        // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
+        // Multipart supplies a temp asset_root for relative file parts.
+        let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
         let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&account)?;
         let opts = ImportOptions {
             db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
-            asset_root,
+            asset_root: &asset_root_owned,
             contacts_csv: &contacts_csv,
             exclude_csv: &exclude_csv,
             overwrite_contacts: false,
@@ -714,10 +633,9 @@ async fn run_import_path(
             source: &source_id,
             account_id: &account,
         };
-        let stats = import::import_ndjson_files(&[ndjson_path], &opts)?;
+        let stats = import::import_jsonl_files(&[jsonl_path], &opts)?;
         let dedupe_stats = if do_dedupe {
-            let priority: Vec<String> = cfg.sources.iter().map(|s| s.id.clone()).collect();
-            Some(dedupe::run_dedupe(&cfg.paths.db, &account, &priority, 2)?)
+            Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
         } else {
             None
         };

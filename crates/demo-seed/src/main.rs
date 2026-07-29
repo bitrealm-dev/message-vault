@@ -1,4 +1,4 @@
-//! Synthetic iMessage NDJSON demo dataset for Message Vault.
+//! Synthetic iMessage JSONL demo dataset for Message Vault.
 
 mod assets;
 mod contacts;
@@ -43,6 +43,7 @@ pub fn main() -> Result<()> {
     let roster = personas::build_roster();
     contacts::write_csvs(&config_dir, &roster)?;
     contacts::write_config_toml(&config_dir)?;
+    contacts::write_seed_toml(&config_dir)?;
 
     let stats = conversations::write_all(&staging, &attachments, &roster, &mut rng)?;
 
@@ -61,7 +62,7 @@ fn write_readme(out: &Path, stats: &conversations::GenStats) -> Result<()> {
     let body = format!(
         r#"# Message Vault demo dataset
 
-Committed iMessage NDJSON bundle for local browsing without a real iPhone backup.
+Committed iMessage JSONL bundle for local browsing without a real iPhone backup.
 
 Regenerate with:
 
@@ -94,7 +95,7 @@ cd web && npm run process-assets
 - **Group Chats** — ~200 threads, many untitled, some phone-number-only participants, sizes up to 20
 - **Year threads** — message history from 2016 through present (10 years)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
-- **orphaned.json** — messages without a conversation header
+- **orphaned.jsonl** — messages without a conversation header
 - **exclude.csv** — short-code spam absent after import
 "#,
         contact_count = stats.contacts,

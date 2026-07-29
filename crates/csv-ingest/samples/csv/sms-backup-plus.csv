@@ -1,5 +1,0 @@
-chat_identifier,conversation_type,group_title,guid,timestamp,timestamp_utc,timestamp_display,direction,service,sender_handle,sender_display_name,text,attachments_json,export_source,export_tool,export_tool_version,source_kind,smssync_id,date_ms,contact_name,android_type,eml_path
-+14075551234,individual,,ea6cc07ad2a12cf489ac90471f44e020f45ae404462bd0c475554ae6f7db8489,2020-01-01T12:00:00-05:00,2020-01-01T17:00:00Z,"Jan  1, 2020 12:00:00 PM",outgoing,SMS,,,Check this,[],sms-backup-plus,SMS Backup+,1.5.11,archive,,1577898000000,Alice,,archive.eml
-+14075551234,individual,,d07d2c9e8a74d64f8294dcbdf9127a5cd04e7a4fc6e862dbe3dc532fc249975f,2020-01-01T12:01:00-05:00,2020-01-01T17:01:00Z,"Jan  1, 2020 12:01:00 PM",incoming,SMS,+14075551234,Alice,Thanks,[],sms-backup-plus,SMS Backup+,1.5.11,archive,,1577898060000,Alice,,archive.eml
-+14075551234,individual,,a286efa2c200982fb2cbccb8c4c358b22435fe08a66d239478cdc7100f5805e9,2020-12-31T19:00:00-05:00,2021-01-01T00:00:00Z,"Dec 31, 2020 07:00:00 PM",incoming,SMS,+14075551234,Alice,"Hello from Alice
-",[],sms-backup-plus,SMS Backup+,1.5.11,flat,,1609459200000,Alice,1,flat_received.eml

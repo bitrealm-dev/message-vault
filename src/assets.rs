@@ -45,8 +45,8 @@ pub fn store_verified(
     if !source.is_file() {
         anyhow::bail!("asset source is not a file: {}", source.display());
     }
-    let actual = hash_file(source)
-        .with_context(|| format!("failed to hash {}", source.display()))?;
+    let actual =
+        hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
     if actual != claimed {
         anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
     }
@@ -68,13 +68,8 @@ pub fn store_verified(
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    fs::copy(source, &dest).with_context(|| {
-        format!(
-            "failed to copy {} → {}",
-            source.display(),
-            dest.display()
-        )
-    })?;
+    fs::copy(source, &dest)
+        .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
     Ok((
         StoredAsset {
             sha256: claimed,
@@ -98,8 +93,7 @@ pub fn hash_and_store(
         return Ok(None);
     }
 
-    let sha = hash_file(source)
-        .with_context(|| format!("failed to hash {}", source.display()))?;
+    let sha = hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
     let (stored, already) = store_verified(source, &sha, assets_root, export_mime)?;
     if already {
         stats.deduped += 1;
