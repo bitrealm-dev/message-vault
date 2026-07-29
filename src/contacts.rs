@@ -4,7 +4,6 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Deserialize;
 
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
@@ -15,36 +14,13 @@ pub struct ContactLoadStats {
     pub skipped: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 struct ContactCsvRow {
     phones: String,
-    #[serde(default)]
     first_name: String,
-    #[serde(default)]
     last_name: String,
-    #[serde(default)]
     exclude: String,
-    #[serde(default)]
-    label_1: String,
-    #[serde(default)]
-    label_2: String,
-    #[serde(default)]
-    label_3: String,
-    #[serde(default)]
-    label_4: String,
-    #[serde(default)]
-    label_5: String,
-    /// Legacy CSV columns (read when label_* empty).
-    #[serde(default)]
-    group_1: String,
-    #[serde(default)]
-    group_2: String,
-    #[serde(default)]
-    group_3: String,
-    #[serde(default)]
-    group_4: String,
-    #[serde(default)]
-    group_5: String,
+    labels: Vec<String>,
 }
 
 /// iMessage-style: any handle containing `@` is treated as email.
@@ -241,20 +217,54 @@ fn load_from_csv(
 ) -> Result<ContactLoadStats> {
     let file = File::open(csv_path)
         .with_context(|| format!("failed to open contacts CSV {}", csv_path.display()))?;
-    let mut reader = csv::Reader::from_reader(file);
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(file);
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read contacts CSV header in {}", csv_path.display()))?
+        .clone();
+    let col = |name: &str| -> Option<usize> {
+        headers.iter().position(|h| h == name)
+    };
+    let phones_i = col("phones").ok_or_else(|| {
+        anyhow::anyhow!("contacts CSV missing phones column ({})", csv_path.display())
+    })?;
+    let first_i = col("first_name");
+    let last_i = col("last_name");
+    let exclude_i = col("exclude").ok_or_else(|| {
+        anyhow::anyhow!("contacts CSV missing exclude column ({})", csv_path.display())
+    })?;
+    let label_slots = label_column_slots(&headers);
+    if label_slots.is_empty() {
+        bail!(
+            "contacts CSV missing label_N (or legacy group_N) columns ({})",
+            csv_path.display()
+        );
+    }
 
     let mut stats = ContactLoadStats::default();
     let mut seen_phones: HashSet<String> = HashSet::new();
     let tx = conn.transaction()?;
 
-    for (row_no, result) in reader.deserialize().enumerate() {
+    for (row_no, result) in reader.records().enumerate() {
         let row_no = row_no + 2; // header is line 1
-        let row: ContactCsvRow = result.with_context(|| {
+        let record = result.with_context(|| {
             format!(
                 "failed to parse contacts CSV row {row_no} in {}",
                 csv_path.display()
             )
         })?;
+        let field = |i: usize| -> String {
+            record.get(i).unwrap_or("").trim().to_string()
+        };
+        let row = ContactCsvRow {
+            phones: field(phones_i),
+            first_name: first_i.map(field).unwrap_or_default(),
+            last_name: last_i.map(field).unwrap_or_default(),
+            exclude: field(exclude_i),
+            labels: row_labels_from_slots(&record, &label_slots),
+        };
 
         let raw_handles = split_list(&row.phones);
         for h in &raw_handles {
@@ -306,8 +316,8 @@ fn load_from_csv(
             stats.phones += 1;
         }
 
-        for label_name in row_labels(&row) {
-            let label_id = ensure_label(&tx, account_id, &label_name)?;
+        for label_name in &row.labels {
+            let label_id = ensure_label(&tx, account_id, label_name)?;
             tx.execute(
                 "INSERT OR IGNORE INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
                 params![contact_id, label_id],
@@ -649,23 +659,58 @@ fn append_contact_csv_row(
     Ok(())
 }
 
-fn row_labels(row: &ContactCsvRow) -> Vec<String> {
-    // Import is capped at five CSV columns; SQLite may hold more after edits.
-    // Prefer label_* over legacy group_* per slot.
+/// Ordered label slots: prefer `label_N` over legacy `group_N` for each index.
+fn label_column_slots(headers: &csv::StringRecord) -> Vec<(Option<usize>, Option<usize>)> {
+    let mut max_n = 0usize;
+    for h in headers.iter() {
+        if let Some(n) = parse_numbered_column(h, "label_") {
+            max_n = max_n.max(n);
+        } else if let Some(n) = parse_numbered_column(h, "group_") {
+            max_n = max_n.max(n);
+        }
+    }
+    if max_n == 0 {
+        return Vec::new();
+    }
+    (1..=max_n)
+        .map(|n| {
+            let label = headers
+                .iter()
+                .position(|h| h == format!("label_{n}"));
+            let group = headers
+                .iter()
+                .position(|h| h == format!("group_{n}"));
+            (label, group)
+        })
+        .filter(|(label, group)| label.is_some() || group.is_some())
+        .collect()
+}
+
+fn parse_numbered_column(header: &str, prefix: &str) -> Option<usize> {
+    let rest = header.strip_prefix(prefix)?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let n: usize = rest.parse().ok()?;
+    (n >= 1).then_some(n)
+}
+
+fn row_labels_from_slots(
+    record: &csv::StringRecord,
+    slots: &[(Option<usize>, Option<usize>)],
+) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for (label, group) in [
-        (&row.label_1, &row.group_1),
-        (&row.label_2, &row.group_2),
-        (&row.label_3, &row.group_3),
-        (&row.label_4, &row.group_4),
-        (&row.label_5, &row.group_5),
-    ] {
-        let raw = if !label.trim().is_empty() {
-            label.trim()
-        } else {
-            group.trim()
-        };
+    for (label_i, group_i) in slots {
+        let label = label_i
+            .and_then(|i| record.get(i))
+            .unwrap_or("")
+            .trim();
+        let group = group_i
+            .and_then(|i| record.get(i))
+            .unwrap_or("")
+            .trim();
+        let raw = if !label.is_empty() { label } else { group };
         if raw.is_empty() {
             continue;
         }

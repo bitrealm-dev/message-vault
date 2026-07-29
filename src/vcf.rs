@@ -11,6 +11,8 @@ pub struct VcfCard {
     pub n_middle: String,
     pub phones: Vec<String>,
     pub email: Option<String>,
+    /// Values from `CATEGORIES` (and repeated CATEGORIES lines), already unescaped.
+    pub categories: Vec<String>,
 }
 
 /// Parse a VCF 3.0 file into cards (unfolded lines).
@@ -91,8 +93,51 @@ fn apply_line(card: &mut VcfCard, line: &str) {
                 }
             }
         }
+        "CATEGORIES" => {
+            for category in split_categories(value) {
+                if !card
+                    .categories
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&category))
+                {
+                    card.categories.push(category);
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// Split a CATEGORIES value on unescaped commas, then unescape each token.
+pub fn split_categories(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                cur.push('\\');
+                cur.push(next);
+            } else {
+                cur.push('\\');
+            }
+            continue;
+        }
+        if ch == ',' {
+            let token = unescape(&cur);
+            if !token.is_empty() {
+                out.push(token);
+            }
+            cur.clear();
+            continue;
+        }
+        cur.push(ch);
+    }
+    let token = unescape(&cur);
+    if !token.is_empty() {
+        out.push(token);
+    }
+    out
 }
 
 fn unescape(s: &str) -> String {
@@ -132,4 +177,38 @@ pub fn extract_tags(raw: &str) -> (String, Vec<String>) {
 
 pub fn strip_tags(raw: &str) -> String {
     extract_tags(raw).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn split_categories_handles_escaped_commas() {
+        assert_eq!(
+            split_categories(r"Family,Work\,Inc,Friends"),
+            vec!["Family", "Work,Inc", "Friends"]
+        );
+        assert_eq!(split_categories("  Family  ,  "), vec!["Family"]);
+        assert!(split_categories("").is_empty());
+    }
+
+    #[test]
+    fn parse_vcf_collects_repeated_categories() {
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp");
+        write!(
+            tmp,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\n\
+             TEL:+15551234567\nCATEGORIES:Family,Friends\nCATEGORIES:Work\n\
+             CATEGORIES:family\nEND:VCARD\n"
+        )
+        .unwrap();
+        let cards = parse_vcf(tmp.path()).unwrap();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(
+            cards[0].categories,
+            vec!["Family", "Friends", "Work"]
+        );
+    }
 }

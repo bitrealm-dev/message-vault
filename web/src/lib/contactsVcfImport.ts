@@ -5,15 +5,86 @@ import { getContact } from "./contactsRead";
 import { dbPath } from "./paths";
 import { toPhoneE164 } from "./phoneE164";
 import { assertVaultWritable } from "./owner";
+import { isReservedLabelName, reservedLabelError } from "./reservedLabels";
 import { cardToDraft, parseVcfText } from "./vcfParse";
+
+export type VcfCategoryMapping = {
+  /** Category name as found in the VCF. */
+  source: string;
+  /** Destination vault label name (defaults to source). */
+  target: string;
+  /** When false, this category is not copied into vault labels. */
+  enabled: boolean;
+};
+
+export type VcfCategoryPreview = {
+  source: string;
+  /** Matched contacts that carry this category. */
+  matchedCount: number;
+};
+
+export type VcfImportPreview = {
+  cardsTotal: number;
+  matched: number;
+  unmatched: number;
+  skippedNoPhone: number;
+  categories: VcfCategoryPreview[];
+};
 
 export type VcfImportSummary = {
   cardsTotal: number;
+  matched: number;
+  unmatched: number;
   created: number;
   updated: number;
   skipped: number;
   errors: string[];
 };
+
+function normalizePhones(raw: string[]): string[] {
+  const out: string[] = [];
+  for (const p of raw) {
+    const e164 = toPhoneE164(p);
+    if (!e164) continue;
+    if (!out.includes(e164)) out.push(e164);
+  }
+  return out;
+}
+
+/** Phone handles that appear on conversations with messages for this account. */
+export function messagePhoneHandles(accountId: string): Set<string> {
+  const db = new Database(dbPath(), { readonly: true });
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT handle FROM (
+           SELECT c.chat_identifier AS handle
+           FROM conversations c
+           JOIN messages m ON m.conversation_id = c.id
+           WHERE c.account_id = ?
+           UNION
+           SELECT p.handle
+           FROM participants p
+           JOIN conversations c ON c.id = p.conversation_id
+           JOIN messages m ON m.conversation_id = c.id
+           WHERE c.account_id = ?
+         )`,
+      )
+      .all(accountId, accountId) as Array<{ handle: string }>;
+
+    const out = new Set<string>();
+    for (const row of rows) {
+      const handle = row.handle?.trim();
+      if (!handle || handle.includes("@")) continue;
+      const e164 = toPhoneE164(handle);
+      if (e164) out.add(e164);
+      else out.add(handle);
+    }
+    return out;
+  } finally {
+    db.close();
+  }
+}
 
 function findContactIdByPhone(phone: string, accountId: string): number | null {
   const db = new Database(dbPath(), { readonly: true });
@@ -29,39 +100,38 @@ function findContactIdByPhone(phone: string, accountId: string): number | null {
   }
 }
 
-function normalizePhones(raw: string[]): string[] {
-  const out: string[] = [];
-  for (const p of raw) {
-    const e164 = toPhoneE164(p);
-    if (!e164) continue;
-    if (!out.includes(e164)) out.push(e164);
-  }
-  return out;
-}
+type MatchedCard = {
+  index: number;
+  firstName: string;
+  lastName: string;
+  phones: string[];
+  labels: string[];
+};
 
-/**
- * Import contacts from a VCF document into the current account.
- * Cards without usable phones are skipped. Existing phones merge into that contact.
- */
-export function importContactsFromVcf(text: string): VcfImportSummary {
-  assertVaultWritable();
-  const accountId = currentAccountId();
+function collectMatchedCards(
+  text: string,
+  messagePhones: Set<string>,
+): {
+  cardsTotal: number;
+  skippedNoPhone: number;
+  unmatched: number;
+  matched: MatchedCard[];
+} {
   const cards = parseVcfText(text);
-
-  const summary: VcfImportSummary = {
-    cardsTotal: cards.length,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-    errors: [],
-  };
+  let skippedNoPhone = 0;
+  let unmatched = 0;
+  const matched: MatchedCard[] = [];
 
   for (let i = 0; i < cards.length; i++) {
     const card = cards[i]!;
     const draft = cardToDraft(card);
     const phones = normalizePhones(draft.phones);
     if (phones.length === 0) {
-      summary.skipped += 1;
+      skippedNoPhone += 1;
+      continue;
+    }
+    if (!phones.some((p) => messagePhones.has(p))) {
+      unmatched += 1;
       continue;
     }
 
@@ -71,55 +141,185 @@ export function importContactsFromVcf(text: string): VcfImportSummary {
       firstName = card.fnRaw.trim() || phones[0]!;
     }
 
+    matched.push({
+      index: i,
+      firstName,
+      lastName,
+      phones,
+      labels: draft.labels,
+    });
+  }
+
+  return {
+    cardsTotal: cards.length,
+    skippedNoPhone,
+    unmatched,
+    matched,
+  };
+}
+
+/**
+ * Preview a VCF import: only cards whose phones appear in vault messages.
+ * Does not write anything.
+ */
+export function previewContactsFromVcf(text: string): VcfImportPreview {
+  const accountId = currentAccountId();
+  const messagePhones = messagePhoneHandles(accountId);
+  const collected = collectMatchedCards(text, messagePhones);
+
+  const categoryCounts = new Map<string, { source: string; count: number }>();
+  for (const card of collected.matched) {
+    for (const label of card.labels) {
+      const key = label.toLowerCase();
+      const existing = categoryCounts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        categoryCounts.set(key, { source: label, count: 1 });
+      }
+    }
+  }
+
+  const categories = [...categoryCounts.values()]
+    .sort((a, b) =>
+      a.source.localeCompare(b.source, undefined, { sensitivity: "base" }),
+    )
+    .map((c) => ({ source: c.source, matchedCount: c.count }));
+
+  return {
+    cardsTotal: collected.cardsTotal,
+    matched: collected.matched.length,
+    unmatched: collected.unmatched,
+    skippedNoPhone: collected.skippedNoPhone,
+    categories,
+  };
+}
+
+function resolveMappedLabels(
+  sourceLabels: string[],
+  mappings: VcfCategoryMapping[],
+): string[] {
+  const bySource = new Map<string, VcfCategoryMapping>();
+  for (const m of mappings) {
+    bySource.set(m.source.trim().toLowerCase(), m);
+  }
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const source of sourceLabels) {
+    const mapping = bySource.get(source.trim().toLowerCase());
+    if (!mapping || !mapping.enabled) continue;
+    const target = mapping.target.trim();
+    if (!target) continue;
+    if (isReservedLabelName(target)) {
+      throw new Error(reservedLabelError(target));
+    }
+    const key = target.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(target);
+  }
+  return out;
+}
+
+function validateMappings(mappings: VcfCategoryMapping[]): void {
+  const enabledTargets = new Map<string, string>();
+  for (const m of mappings) {
+    if (!m.enabled) continue;
+    const target = m.target.trim();
+    if (!target) {
+      throw new Error(`Destination label required for category "${m.source}"`);
+    }
+    if (isReservedLabelName(target)) {
+      throw new Error(reservedLabelError(target));
+    }
+    const key = target.toLowerCase();
+    const prev = enabledTargets.get(key);
+    if (prev && prev.toLowerCase() !== m.source.trim().toLowerCase()) {
+      throw new Error(
+        `Multiple categories map to the same label "${target}"`,
+      );
+    }
+    enabledTargets.set(key, m.source);
+  }
+}
+
+/**
+ * Commit a VCF import for message-matched contacts only.
+ * Re-parses the uploaded text server-side; applies only confirmed category mappings.
+ * Merges without overwriting existing names. Additive / idempotent for labels.
+ */
+export function commitContactsFromVcf(
+  text: string,
+  mappings: VcfCategoryMapping[],
+): VcfImportSummary {
+  assertVaultWritable();
+  validateMappings(mappings);
+
+  const accountId = currentAccountId();
+  const messagePhones = messagePhoneHandles(accountId);
+  const collected = collectMatchedCards(text, messagePhones);
+
+  const summary: VcfImportSummary = {
+    cardsTotal: collected.cardsTotal,
+    matched: collected.matched.length,
+    unmatched: collected.unmatched,
+    created: 0,
+    updated: 0,
+    skipped: collected.skippedNoPhone + collected.unmatched,
+    errors: [],
+  };
+
+  for (const card of collected.matched) {
     try {
-      const owners = phones
+      const mappedLabels = resolveMappedLabels(card.labels, mappings);
+      const owners = card.phones
         .map((p) => findContactIdByPhone(p, accountId))
         .filter((id): id is number => id != null);
       const uniqueOwners = [...new Set(owners)];
 
       if (uniqueOwners.length === 0) {
         createContact({
-          firstName: firstName || null,
-          lastName: lastName || null,
-          phones,
-          labels: draft.labels,
+          firstName: card.firstName || null,
+          lastName: card.lastName || null,
+          phones: card.phones,
+          labels: mappedLabels,
         });
         summary.created += 1;
         continue;
       }
 
-      // Merge into the first matching contact; add phones that are free.
       const intoId = uniqueOwners[0]!;
       if (uniqueOwners.length > 1) {
         summary.errors.push(
-          `Card ${i + 1}: phones belong to multiple contacts; updated contact ${intoId} only`,
+          `Card ${card.index + 1}: phones belong to multiple contacts; updated contact ${intoId} only`,
         );
       }
 
       const existing = getContact(intoId);
       if (!existing) {
-        summary.errors.push(`Card ${i + 1}: contact ${intoId} missing`);
+        summary.errors.push(`Card ${card.index + 1}: contact ${intoId} missing`);
         summary.skipped += 1;
         continue;
       }
 
       const mergedPhones = [...existing.phones];
-      for (const p of phones) {
+      for (const p of card.phones) {
         const owner = findContactIdByPhone(p, accountId);
         if (owner == null) {
           mergedPhones.push(p);
-        } else if (owner !== intoId) {
-          // Owned by another contact — leave alone
-          continue;
         }
       }
 
+      // Never overwrite names the user (or prior import) already set.
       const nextFirst =
-        existing.firstName?.trim() || firstName || null;
-      const nextLast = existing.lastName?.trim() || lastName || null;
+        existing.firstName?.trim() || card.firstName || null;
+      const nextLast = existing.lastName?.trim() || card.lastName || null;
       const nextLabels = [
-        ...new Set([...existing.labels, ...draft.labels]),
-      ];
+        ...new Set([...existing.labels, ...mappedLabels]),
+      ].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
 
       const phonesChanged =
         mergedPhones.length !== existing.phones.length ||
@@ -144,10 +344,24 @@ export function importContactsFromVcf(text: string): VcfImportSummary {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`Card ${i + 1}: ${message}`);
+      summary.errors.push(`Card ${card.index + 1}: ${message}`);
       summary.skipped += 1;
     }
   }
 
   return summary;
+}
+
+/**
+ * @deprecated Prefer previewContactsFromVcf + commitContactsFromVcf.
+ * Legacy path: preview-equivalent match filter with all categories enabled.
+ */
+export function importContactsFromVcf(text: string): VcfImportSummary {
+  const preview = previewContactsFromVcf(text);
+  const mappings: VcfCategoryMapping[] = preview.categories.map((c) => ({
+    source: c.source,
+    target: c.source,
+    enabled: true,
+  }));
+  return commitContactsFromVcf(text, mappings);
 }

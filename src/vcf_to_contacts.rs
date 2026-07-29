@@ -169,6 +169,13 @@ fn card_to_contact(card: &VcfCard) -> ContactOut {
         }
         push_tag(&mut tags, &normalized);
     }
+    for category in &card.categories {
+        let normalized = normalize_tag(category);
+        if normalized.eq_ignore_ascii_case("People") {
+            continue;
+        }
+        push_tag(&mut tags, &normalized);
+    }
 
     ContactOut {
         phones: card.phones.clone(),
@@ -250,55 +257,37 @@ fn write_csv(path: &Path, contacts: &[ContactOut]) -> Result<()> {
         }
     }
 
+    let max_labels = contacts.iter().map(|c| c.tags.len()).max().unwrap_or(0);
+    let label_count = max_labels.max(5);
+
     let mut writer = csv::Writer::from_path(path)
         .with_context(|| format!("failed to write {}", path.display()))?;
-    writer.write_record([
-        "phones",
-        "first_name",
-        "last_name",
-        "exclude",
-        "label_1",
-        "label_2",
-        "label_3",
-        "label_4",
-        "label_5",
-    ])?;
+    let mut header = vec![
+        "phones".to_string(),
+        "first_name".to_string(),
+        "last_name".to_string(),
+        "exclude".to_string(),
+    ];
+    for i in 1..=label_count {
+        header.push(format!("label_{i}"));
+    }
+    writer.write_record(&header)?;
 
-    let mut truncated = 0u64;
     for c in contacts {
-        if c.tags.len() > 5 {
-            truncated += 1;
-        }
         let phones = c.phones.join(";");
         let exclude = if c.exclude { "true" } else { "false" };
-        let mut label_cols = [
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ];
-        for (i, tag) in c.tags.iter().take(5).enumerate() {
-            label_cols[i] = tag.clone();
-        }
-        writer.write_record([
+        let mut row = vec![
             phones,
             c.first_name.clone(),
             c.last_name.clone(),
             exclude.to_string(),
-            label_cols[0].clone(),
-            label_cols[1].clone(),
-            label_cols[2].clone(),
-            label_cols[3].clone(),
-            label_cols[4].clone(),
-        ])?;
+        ];
+        for i in 0..label_count {
+            row.push(c.tags.get(i).cloned().unwrap_or_default());
+        }
+        writer.write_record(&row)?;
     }
 
     writer.flush()?;
-    if truncated > 0 {
-        eprintln!(
-            "warning: truncated labels to label_1..label_5 for {truncated} contact(s) in CSV export"
-        );
-    }
     Ok(())
 }

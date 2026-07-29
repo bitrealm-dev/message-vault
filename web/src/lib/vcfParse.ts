@@ -7,6 +7,8 @@ export type VcfCard = {
   nMiddle: string;
   phones: string[];
   email: string | null;
+  /** Values from CATEGORIES (and repeated CATEGORIES lines), already unescaped. */
+  categories: string[];
 };
 
 function unescape(s: string): string {
@@ -16,6 +18,35 @@ function unescape(s: string): string {
     .replace(/\\;/g, ";")
     .replace(/\\\\/g, "\\")
     .trim();
+}
+
+/** Split a CATEGORIES value on unescaped commas, then unescape each token. */
+export function splitCategories(raw: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (ch === "\\") {
+      const next = raw[i + 1];
+      if (next !== undefined) {
+        cur += "\\" + next;
+        i++;
+      } else {
+        cur += "\\";
+      }
+      continue;
+    }
+    if (ch === ",") {
+      const token = unescape(cur);
+      if (token) out.push(token);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  const token = unescape(cur);
+  if (token) out.push(token);
+  return out;
 }
 
 function unfoldLines(text: string): string[] {
@@ -30,6 +61,14 @@ function unfoldLines(text: string): string[] {
     out.push(line);
   }
   return out;
+}
+
+function pushCategory(card: VcfCard, category: string): void {
+  if (!category) return;
+  if (card.categories.some((c) => c.toLowerCase() === category.toLowerCase())) {
+    return;
+  }
+  card.categories.push(category);
 }
 
 function applyLine(card: VcfCard, line: string): void {
@@ -69,6 +108,12 @@ function applyLine(card: VcfCard, line: string): void {
       }
       break;
     }
+    case "CATEGORIES": {
+      for (const category of splitCategories(value)) {
+        pushCategory(card, category);
+      }
+      break;
+    }
     default:
       break;
   }
@@ -89,6 +134,7 @@ export function parseVcfText(text: string): VcfCard[] {
         nMiddle: "",
         phones: [],
         email: null,
+        categories: [],
       };
       continue;
     }
@@ -138,6 +184,13 @@ export type VcfContactDraft = {
   labels: string[];
 };
 
+function pushLabel(labels: string[], name: string): void {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.toLowerCase() === "people") return;
+  if (labels.some((l) => l.toLowerCase() === trimmed.toLowerCase())) return;
+  labels.push(trimmed);
+}
+
 /** Map a VCF card to a contact draft (names + raw phones; normalize later). */
 export function cardToDraft(card: VcfCard): VcfContactDraft {
   const { text: fnStripped, tags: fnTags } = extractTags(card.fnRaw);
@@ -155,14 +208,14 @@ export function cardToDraft(card: VcfCard): VcfContactDraft {
   const firstName = nickname || first;
   const lastName = nickname ? "" : last;
 
-  const labels = fnTags
-    .map((t) => t.trim())
-    .filter((t) => t && t.toLowerCase() !== "people");
+  const labels: string[] = [];
+  for (const tag of fnTags) pushLabel(labels, tag);
+  for (const category of card.categories) pushLabel(labels, category);
 
   return {
     firstName,
     lastName,
     phones: [...card.phones],
-    labels: [...new Set(labels)],
+    labels,
   };
 }

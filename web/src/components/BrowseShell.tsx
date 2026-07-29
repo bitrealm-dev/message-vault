@@ -48,6 +48,11 @@ import { LabelsMenu } from "./LabelsMenu";
 import { useHistory } from "./history";
 import { trashContactsLabel } from "./history/historyTypes";
 import { ParticipantContactFormOverlay } from "./ParticipantContactFormOverlay";
+import { VcfImportPreviewDialog } from "./VcfImportPreviewDialog";
+import type {
+  VcfCategoryMapping,
+  VcfImportPreview,
+} from "@/lib/contactsVcfImport";
 import {
   type BrowseGroupChatSortBy,
   type SortMode,
@@ -1494,11 +1499,57 @@ export function BrowseShell({
     ],
   );
 
+  const [vcfPreview, setVcfPreview] = useState<{
+    file: File;
+    preview: VcfImportPreview;
+  } | null>(null);
+  const [vcfCommitting, setVcfCommitting] = useState(false);
+
   const onImportVcf = useCallback(
     async (file: File) => {
       if (vaultReadOnly) return;
       const body = new FormData();
       body.set("file", file);
+      body.set("mode", "preview");
+      try {
+        const res = await fetch("/api/contacts/import-vcf", {
+          method: "POST",
+          body,
+        });
+        const data = (await res.json()) as VcfImportPreview & {
+          error?: string;
+        };
+        if (!res.ok) throw new Error(data.error ?? "VCF preview failed");
+        setVcfPreview({ file, preview: data });
+      } catch (err) {
+        console.error(err);
+        queueStatusMessage(
+          err instanceof Error ? err.message : "VCF preview failed",
+        );
+      }
+    },
+    [vaultReadOnly, queueStatusMessage],
+  );
+
+  const onExportContactsCsv = useCallback(() => {
+    const a = document.createElement("a");
+    a.href = "/api/contacts/export-csv";
+    a.download = "contacts.csv";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    queueStatusMessage("Downloading contacts.csv");
+  }, [queueStatusMessage]);
+
+  const onConfirmVcfImport = useCallback(
+    async (mappings: VcfCategoryMapping[]) => {
+      if (!vcfPreview || vaultReadOnly) return;
+      setVcfCommitting(true);
+      const body = new FormData();
+      body.set("file", vcfPreview.file);
+      body.set("mode", "commit");
+      body.set("mappings", JSON.stringify(mappings));
       try {
         const res = await fetch("/api/contacts/import-vcf", {
           method: "POST",
@@ -1509,6 +1560,7 @@ export function BrowseShell({
           created?: number;
           updated?: number;
           skipped?: number;
+          matched?: number;
           errors?: string[];
         };
         if (!res.ok) throw new Error(data.error ?? "VCF import failed");
@@ -1521,20 +1573,25 @@ export function BrowseShell({
           `updated ${updated}`,
           `skipped ${skipped}`,
         ];
-        if (errCount > 0) parts.push(`${errCount} note${errCount === 1 ? "" : "s"}`);
+        if (errCount > 0) {
+          parts.push(`${errCount} note${errCount === 1 ? "" : "s"}`);
+        }
         queueStatusMessage(`VCF import: ${parts.join(", ")}`);
         if (errCount > 0 && data.errors) {
           console.warn("VCF import notes:", data.errors);
         }
+        setVcfPreview(null);
         router.refresh();
       } catch (err) {
         console.error(err);
         queueStatusMessage(
           err instanceof Error ? err.message : "VCF import failed",
         );
+      } finally {
+        setVcfCommitting(false);
       }
     },
-    [vaultReadOnly, queueStatusMessage, router],
+    [vcfPreview, vaultReadOnly, queueStatusMessage, router],
   );
 
   const groupTrashTargets = useCallback(
@@ -1671,6 +1728,7 @@ export function BrowseShell({
             )
           }
           onImportVcf={vaultReadOnly ? undefined : onImportVcf}
+          onExportContactsCsv={onExportContactsCsv}
           vaultReadOnly={vaultReadOnly}
           onLabels={(el) => {
             const rect = el.getBoundingClientRect();
@@ -1957,6 +2015,17 @@ export function BrowseShell({
       phonesView={detail?.phones ?? []}
       form={participantForm}
     />
+    {vcfPreview && (
+      <VcfImportPreviewDialog
+        fileName={vcfPreview.file.name}
+        preview={vcfPreview.preview}
+        busy={vcfCommitting}
+        onDismiss={() => {
+          if (!vcfCommitting) setVcfPreview(null);
+        }}
+        onConfirm={(mappings) => void onConfirmVcfImport(mappings)}
+      />
+    )}
     {groupTrashConfirmDialog}
     </>
   );

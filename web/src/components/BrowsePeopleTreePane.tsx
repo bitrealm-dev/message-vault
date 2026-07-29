@@ -65,6 +65,7 @@ export function BrowsePeopleTreePane({
   // Contact toolbar
   onNewContact,
   onImportVcf,
+  onExportContactsCsv,
   vaultReadOnly = false,
   onLabels,
   labelsDisabled = false,
@@ -130,6 +131,7 @@ export function BrowsePeopleTreePane({
   expandedContactId: number | null;
   onNewContact: (anchorEl: HTMLElement) => void;
   onImportVcf?: (file: File) => Promise<void>;
+  onExportContactsCsv?: () => void;
   vaultReadOnly?: boolean;
   onLabels?: (anchorEl: HTMLElement) => void;
   labelsDisabled?: boolean;
@@ -196,54 +198,69 @@ export function BrowsePeopleTreePane({
   };
 
   const menuItems: ListHistoryMenuItem[] = [
-    {
-      key: "new-contact",
-      label: "New",
-      icon: <NewContactIcon className="size-5 shrink-0 opacity-80" />,
-      onClick: (triggerEl) => {
-        if (triggerEl) onNewContact(triggerEl);
-      },
-    },
-    ...(onImportVcf
+    ...(!vaultReadOnly
+      ? [
+          {
+            key: "new-contact",
+            label: "New",
+            icon: <NewContactIcon className="size-5 shrink-0 opacity-80" />,
+            onClick: (triggerEl: HTMLElement | null) => {
+              if (triggerEl) onNewContact(triggerEl);
+            },
+          } satisfies ListHistoryMenuItem,
+        ]
+      : []),
+    ...(!vaultReadOnly && onImportVcf
       ? [
           {
             key: "import-vcf",
             label: vcfImporting ? "Importing…" : "Import VCF",
             icon: <ImportVcfIcon className="size-5 shrink-0 opacity-80" />,
             disabled: vcfImporting,
-            onClick: () => {
+            onClick: (_triggerEl: HTMLElement | null) => {
               vcfInputRef.current?.click();
             },
           } satisfies ListHistoryMenuItem,
         ]
       : []),
-    ...(onEdit
+    ...(onExportContactsCsv
+      ? [
+          {
+            key: "export-contacts-csv",
+            label: "Export contacts CSV",
+            icon: <ExportCsvIcon className="size-5 shrink-0 opacity-80" />,
+            onClick: (_triggerEl: HTMLElement | null) => onExportContactsCsv(),
+          } satisfies ListHistoryMenuItem,
+        ]
+      : []),
+    ...(!vaultReadOnly && onEdit
       ? [
           {
             key: "edit",
             label: "Edit",
             icon: <PencilIcon className="size-5 shrink-0 opacity-80" />,
             disabled: editDisabled,
-            onClick: (triggerEl) => {
+            onClick: (triggerEl: HTMLElement | null) => {
               if (triggerEl) onEdit(triggerEl);
             },
           } satisfies ListHistoryMenuItem,
         ]
       : []),
-    ...(onLabels
+    ...(!vaultReadOnly && onLabels
       ? [
           {
             key: "labels",
             label: "Labels",
             icon: <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />,
             disabled: labelsDisabled,
-            onClick: (triggerEl) => {
+            onClick: (triggerEl: HTMLElement | null) => {
               if (triggerEl) onLabels(triggerEl);
             },
           } satisfies ListHistoryMenuItem,
         ]
       : []),
-    ...(onTrashMessages &&
+    ...(!vaultReadOnly &&
+    onTrashMessages &&
     (hasContactSelection || expandedContactId != null)
       ? [
           {
@@ -254,11 +271,11 @@ export function BrowsePeopleTreePane({
             ),
             disabled: trashDisabled,
             danger: true,
-            onClick: () => onTrashMessages(),
+            onClick: (_triggerEl: HTMLElement | null) => onTrashMessages(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),
-    ...(onTrashContact
+    ...(!vaultReadOnly && onTrashContact
       ? [
           {
             key: "delete",
@@ -266,7 +283,7 @@ export function BrowsePeopleTreePane({
             icon: <XIcon className="size-5 shrink-0 opacity-80" />,
             disabled: deleteDisabled,
             danger: true,
-            onClick: () => onTrashContact(),
+            onClick: (_triggerEl: HTMLElement | null) => onTrashContact(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),
@@ -354,7 +371,7 @@ export function BrowsePeopleTreePane({
                   />
                 </>
               )}
-              <ListHistoryMenu items={vaultReadOnly ? [] : menuItems} />
+              <ListHistoryMenu items={menuItems} />
             </div>
           </div>
         </>
@@ -513,6 +530,25 @@ function ImportVcfIcon({ className }: { className?: string }) {
       <path d="M12 3v12" />
       <path d="m7 10 5 5 5-5" />
       <path d="M5 19h14" />
+    </svg>
+  );
+}
+
+function ExportCsvIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 21V9" />
+      <path d="m7 14 5 5 5-5" />
+      <path d="M5 5h14" />
     </svg>
   );
 }
