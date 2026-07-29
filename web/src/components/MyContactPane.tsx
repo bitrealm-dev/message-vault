@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { VaultOwner } from "@/lib/vaultOwner";
 import { IconHoverTarget } from "./IconHoverLabel";
 import { ListHistoryMenu } from "./history";
@@ -9,7 +10,9 @@ import { PaneSearchField } from "./PaneSearchField";
 /** Contact-list chrome for vault owner — matches Panel 2; most controls inert. */
 export function MyContactPane({ owner }: { owner: VaultOwner }) {
   const displayName = owner.display_name || "Me";
-  const preferredHandle = owner.phones[0] ?? "";
+  const preferredHandle = owner.phones[0]
+    ? formatPhoneDisplay(owner.phones[0])
+    : "";
   const letter = (displayName.trim().charAt(0) || "#").toUpperCase();
 
   const toolbarBtn =

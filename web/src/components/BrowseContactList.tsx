@@ -4,6 +4,7 @@ import {
   contactAvatarColor,
   contactInitials,
 } from "@/lib/contactInitials";
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
 import {
   useRef,
@@ -334,9 +335,12 @@ export function BrowseContactList({
                         {c.displayName}
                       </span>
                       {(() => {
+                        const formattedHandle = c.preferredHandle
+                          ? formatPhoneDisplay(c.preferredHandle)
+                          : "";
                         const showHandle =
-                          !!c.preferredHandle &&
-                          c.preferredHandle !== c.displayName;
+                          !!formattedHandle &&
+                          formattedHandle !== c.displayName;
                         const dateLabel =
                           showContactDateRange && c.dateStart && c.dateEnd
                             ? formatDateRange(c.dateStart, c.dateEnd, " – ")
@@ -352,7 +356,7 @@ export function BrowseContactList({
                           <>
                             {showHandle ? (
                               <span className="block truncate text-[12px] text-muted">
-                                {c.preferredHandle}
+                                {formattedHandle}
                               </span>
                             ) : null}
                             {hasBottomLine ? (

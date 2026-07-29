@@ -61,7 +61,8 @@ fn default_schema_version() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantRecord {
     pub handle: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Display name for this handle (Message Exporters IR uses `display_name`).
+    #[serde(default, alias = "display_name", skip_serializing_if = "Option::is_none")]
     pub name_hint: Option<String>,
 }
 
@@ -234,6 +235,14 @@ mod tests {
             }
             _ => panic!("expected conversation"),
         }
+    }
+
+    #[test]
+    fn participant_accepts_display_name_alias() {
+        let raw = r#"{"handle":"+19124011522","display_name":"Annette Gubert"}"#;
+        let p: ParticipantRecord = serde_json::from_str(raw).unwrap();
+        assert_eq!(p.handle, "+19124011522");
+        assert_eq!(p.name_hint.as_deref(), Some("Annette Gubert"));
     }
 
     #[test]

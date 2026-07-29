@@ -51,7 +51,7 @@ fn default_schema_version() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantRecord {
     pub handle: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "display_name", skip_serializing_if = "Option::is_none")]
     pub name_hint: Option<String>,
 }
 

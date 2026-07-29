@@ -9,6 +9,7 @@ import {
   resetDb,
   usefulNameHint,
 } from "./dbCore";
+import { formatPhoneDisplay } from "./phoneE164";
 import type { GroupChatThread, GroupParticipant, GroupYearRow } from "./types";
 
 const MAX_VISIBLE_NAMES = 8;
@@ -47,7 +48,7 @@ function participantLabel(row: {
   if (full) return { name: full, unknown: false };
   const hint = usefulNameHint(row.name_hint, row.handle);
   if (hint) return { name: hint, unknown: false };
-  return { name: row.handle, unknown: true };
+  return { name: formatPhoneDisplay(row.handle), unknown: true };
 }
 
 function formatPeopleTitle(

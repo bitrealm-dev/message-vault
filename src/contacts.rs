@@ -333,7 +333,8 @@ fn ensure_label(conn: &Connection, account_id: &str, name: &str) -> Result<i64> 
     Ok(id)
 }
 
-/// Create nameless contacts for 1:1 handles that have messages but no contact_handles row.
+/// Create contacts for 1:1 handles that have messages but no contact_handles row.
+/// Names come from participant `name_hint` / exporter `display_name` when present.
 /// Phone handles are appended to `contacts.csv`; emails stay DB-only.
 pub fn ensure_unknown_contacts(
     conn: &mut Connection,
@@ -389,16 +390,19 @@ pub fn ensure_unknown_contacts(
     }
 
     let mut created = 0u64;
+    let mut created_named: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     let tx = conn.transaction()?;
     for handle in &handles {
         let preferred = handle.clone();
+        let hint = best_name_hint_for_handle(&tx, account_id, handle)?;
+        let (first_name, last_name) = split_display_name(hint.as_deref());
         tx.execute(
             r#"
             INSERT INTO contacts (
                 account_id, first_name, last_name, exclude, preferred_handle
-            ) VALUES (?1, NULL, NULL, 0, ?2)
+            ) VALUES (?1, ?2, ?3, 0, ?4)
             "#,
-            params![account_id, preferred],
+            params![account_id, first_name, last_name, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         tx.execute(
@@ -406,15 +410,21 @@ pub fn ensure_unknown_contacts(
             params![account_id, handle, contact_id],
         )?;
         created += 1;
+        created_named.push((handle.clone(), first_name, last_name));
     }
     tx.commit()?;
 
-    for handle in &handles {
+    for (handle, first_name, last_name) in &created_named {
         if is_email_handle(handle) {
             continue;
         }
         let csv_phone = crate::phone::to_e164(handle).unwrap_or_else(|| handle.clone());
-        if let Err(err) = append_contact_csv_row(contacts_csv, &csv_phone) {
+        if let Err(err) = append_contact_csv_row(
+            contacts_csv,
+            &csv_phone,
+            first_name.as_deref(),
+            last_name.as_deref(),
+        ) {
             eprintln!(
                 "warning: could not append {csv_phone} to {}: {err}",
                 contacts_csv.display()
@@ -425,7 +435,167 @@ pub fn ensure_unknown_contacts(
     Ok(created)
 }
 
-fn append_contact_csv_row(csv_path: &Path, phone: &str) -> Result<()> {
+/// Fill empty contact first/last names from participant name hints (exporter display names).
+///
+/// Does not overwrite names the user (or contacts CSV) already set.
+pub fn fill_empty_contact_names_from_participants(
+    conn: &mut Connection,
+    account_id: &str,
+) -> Result<u64> {
+    crate::schema::ensure_contacts_schema(conn)?;
+
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT c.id, ch.handle
+            FROM contacts c
+            JOIN contact_handles ch
+              ON ch.contact_id = c.id AND ch.account_id = c.account_id
+            WHERE c.account_id = ?1
+              AND (c.first_name IS NULL OR TRIM(c.first_name) = '')
+              AND (c.last_name IS NULL OR TRIM(c.last_name) = '')
+            ORDER BY c.id, ch.handle
+            "#,
+        )?;
+        let mapped = stmt.query_map(params![account_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in mapped {
+            out.push(row?);
+        }
+        out
+    };
+
+    // One best hint per contact (prefer longer useful hint across its handles).
+    let mut best: HashMap<i64, String> = HashMap::new();
+    for (contact_id, handle) in rows {
+        let Some(hint) = best_name_hint_for_handle(conn, account_id, &handle)? else {
+            continue;
+        };
+        best.entry(contact_id)
+            .and_modify(|existing| {
+                if hint.len() > existing.len() {
+                    *existing = hint.clone();
+                }
+            })
+            .or_insert(hint);
+    }
+
+    if best.is_empty() {
+        return Ok(0);
+    }
+
+    let mut filled = 0u64;
+    let tx = conn.transaction()?;
+    for (contact_id, hint) in best {
+        let (first_name, last_name) = split_display_name(Some(&hint));
+        if first_name.is_none() && last_name.is_none() {
+            continue;
+        }
+        let n = tx.execute(
+            r#"
+            UPDATE contacts
+            SET first_name = ?2, last_name = ?3
+            WHERE id = ?1
+              AND account_id = ?4
+              AND (first_name IS NULL OR TRIM(first_name) = '')
+              AND (last_name IS NULL OR TRIM(last_name) = '')
+            "#,
+            params![contact_id, first_name, last_name, account_id],
+        )?;
+        filled += n as u64;
+    }
+    tx.commit()?;
+    Ok(filled)
+}
+
+fn best_name_hint_for_handle(
+    conn: &Connection,
+    account_id: &str,
+    handle: &str,
+) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT p.name_hint
+        FROM participants p
+        JOIN conversations c ON c.id = p.conversation_id
+        WHERE c.account_id = ?1
+          AND p.handle = ?2
+          AND p.name_hint IS NOT NULL
+          AND TRIM(p.name_hint) != ''
+        ORDER BY LENGTH(TRIM(p.name_hint)) DESC, p.name_hint ASC
+        "#,
+    )?;
+    let hints = stmt.query_map(params![account_id, handle], |row| {
+        row.get::<_, String>(0)
+    })?;
+    for hint in hints {
+        let hint = hint?;
+        if let Some(useful) = useful_name_hint(&hint, handle) {
+            return Ok(Some(useful));
+        }
+    }
+    Ok(None)
+}
+
+/// Prefer a real display hint; ignore phones and placeholder "(Unknown)" labels.
+fn useful_name_hint(hint: &str, handle: &str) -> Option<String> {
+    let t = hint.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if looks_like_phone(t) {
+        return None;
+    }
+    if t.eq_ignore_ascii_case(handle) {
+        return None;
+    }
+    if matches!(t.to_ascii_lowercase().as_str(), "unknown" | "(unknown)") {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+fn looks_like_phone(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with('+') && t.chars().all(|c| c.is_ascii_digit() || "+ ().-".contains(c)) {
+        return true;
+    }
+    let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
+    let stripped: String = t
+        .chars()
+        .filter(|c| !c.is_whitespace() && !"()+-.".contains(*c))
+        .collect();
+    digits.len() >= 7 && digits.len() == stripped.len()
+}
+
+/// Split `"Annette Gubert"` → (`Annette`, `Gubert`); single token → first only.
+fn split_display_name(hint: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(raw) = hint.map(str::trim).filter(|s| !s.is_empty()) else {
+        return (None, None);
+    };
+    let mut parts = raw.split_whitespace();
+    let Some(first) = parts.next() else {
+        return (None, None);
+    };
+    let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        (Some(first.to_string()), None)
+    } else {
+        (Some(first.to_string()), Some(rest.join(" ")))
+    }
+}
+
+fn append_contact_csv_row(
+    csv_path: &Path,
+    phone: &str,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+) -> Result<()> {
     use std::io::Write;
 
     if !csv_path.exists() {
@@ -443,10 +613,18 @@ fn append_contact_csv_row(csv_path: &Path, phone: &str) -> Result<()> {
         .iter()
         .position(|h| *h == "exclude")
         .ok_or_else(|| anyhow::anyhow!("contacts CSV missing exclude column"))?;
+    let first_i = header.iter().position(|h| *h == "first_name");
+    let last_i = header.iter().position(|h| *h == "last_name");
 
     let mut cols: Vec<String> = header.iter().map(|_| String::new()).collect();
     cols[phones_i] = phone.to_string();
     cols[exclude_i] = "false".to_string();
+    if let (Some(i), Some(name)) = (first_i, first_name) {
+        cols[i] = name.to_string();
+    }
+    if let (Some(i), Some(name)) = (last_i, last_name) {
+        cols[i] = name.to_string();
+    }
 
     let line = cols
         .iter()
@@ -540,5 +718,32 @@ mod tests {
             ]),
             vec!["+15551234567", "+15559876543"]
         );
+    }
+
+    #[test]
+    fn split_display_name_parts() {
+        assert_eq!(
+            split_display_name(Some("Annette Gubert")),
+            (Some("Annette".into()), Some("Gubert".into()))
+        );
+        assert_eq!(
+            split_display_name(Some("Madonna")),
+            (Some("Madonna".into()), None)
+        );
+        assert_eq!(
+            split_display_name(Some("  Mary Ann  Smith ")),
+            (Some("Mary".into()), Some("Ann Smith".into()))
+        );
+        assert_eq!(split_display_name(None), (None, None));
+    }
+
+    #[test]
+    fn useful_name_hint_filters_phones() {
+        assert_eq!(
+            useful_name_hint("Annette Gubert", "+19124011522").as_deref(),
+            Some("Annette Gubert")
+        );
+        assert_eq!(useful_name_hint("+19124011522", "+19124011522"), None);
+        assert_eq!(useful_name_hint("(Unknown)", "+19124011522"), None);
     }
 }

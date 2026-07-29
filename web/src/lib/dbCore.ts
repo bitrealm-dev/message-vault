@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { formatPhoneDisplay } from "./phoneE164";
 import { dbPath } from "./paths";
 
 const g = globalThis as unknown as {
@@ -55,7 +56,10 @@ export function displayName(row: {
     .map((p) => p?.trim())
     .filter(Boolean) as string[];
   if (parts.length) return parts.join(" ");
-  return row.preferred_handle ?? "Unknown";
+  if (row.preferred_handle?.trim()) {
+    return formatPhoneDisplay(row.preferred_handle);
+  }
+  return "Unknown";
 }
 
 export function sortFields(row: {

@@ -50,6 +50,13 @@ target
 /config/contacts.csv
 /config/exclude.csv
 /config/contacts.xlsx
+/config/eml-contacts.csv
+
+# Local Next.js runtime data and duplicate generated demo bundle
+/web/config/
+/web/data/
+/web/demo/
+/web/docs/
 
 # Python
 **/__pycache__/

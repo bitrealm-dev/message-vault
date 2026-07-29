@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
 import type { RefObject } from "react";
 import { NewContactIcon } from "./BrowseContactList";
@@ -174,7 +175,7 @@ export function BrowseMergeIntoPanel({
               </span>
               {c.preferredHandle && (
                 <span className="truncate text-[11px] text-muted">
-                  {c.preferredHandle}
+                  {formatPhoneDisplay(c.preferredHandle)}
                 </span>
               )}
             </button>

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import {
   type TrashListItem,
   type TrashTab,
@@ -105,9 +106,12 @@ export function TrashUnifiedList({
                   if (item.category !== "contacts") return null;
                   const active = item.key === focusedKey;
                   const checked = selectedKeys.has(item.key);
+                  const formattedHandle = item.handle
+                    ? formatPhoneDisplay(item.handle)
+                    : "";
                   const phone =
-                    item.handle && item.handle !== item.displayName
-                      ? item.handle
+                    formattedHandle && formattedHandle !== item.displayName
+                      ? formattedHandle
                       : null;
                   return (
                     <div

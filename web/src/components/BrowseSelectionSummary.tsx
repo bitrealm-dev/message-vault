@@ -1,6 +1,7 @@
 "use client";
 
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactDetail, ContactListItem } from "@/lib/types";
 import {
   collapsedParticipantLabels,
@@ -121,7 +122,9 @@ export function BrowseSelectionSummary({
               {c.displayName}
             </span>
             <span className="shrink-0 text-[13px] text-muted tabular-nums">
-              {c.preferredHandle ?? ""}
+              {c.preferredHandle
+                ? formatPhoneDisplay(c.preferredHandle)
+                : ""}
             </span>
             {i < selectedContacts.length - 1 && (
               <span
@@ -156,7 +159,9 @@ export function BrowseSelectionSummary({
               {focusedContact.displayName}
             </span>
             <span className="shrink-0 text-[13px] text-muted tabular-nums">
-              {focusedContact.preferredHandle ?? ""}
+              {focusedContact.preferredHandle
+                ? formatPhoneDisplay(focusedContact.preferredHandle)
+                : ""}
             </span>
           </li>
         </ul>

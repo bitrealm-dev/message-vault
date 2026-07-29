@@ -1,4 +1,10 @@
 import type { KeyboardEvent } from "react";
+import { parsePhoneNumberFromString } from "libphonenumber-js/core";
+import metadataJson from "libphonenumber-js/metadata.min.json";
+
+/** Unwrap CJS/ESM interop so metadata always has `.countries`. */
+const phoneMetadata =
+  (metadataJson as { default?: typeof metadataJson }).default ?? metadataJson;
 
 /** Strip non-digits; drop leading US country code 1 when 11 digits. */
 export function sanitizePhoneDigits(input: string): string {
@@ -144,6 +150,24 @@ export function toPhoneE164(input: string): string | null {
 
 export function formatOwnerName(firstName: string, lastName: string): string {
   return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ");
+}
+
+/**
+ * Format a stored handle for display. Emails and unparseable values pass through.
+ * Phones use international spacing from libphonenumber (`+1 941 266 0605`).
+ * Storage/matching stays E.164 — call this only at UI boundaries.
+ */
+export function formatPhoneDisplay(handle: string | null | undefined): string {
+  const raw = handle?.trim() ?? "";
+  if (!raw) return "";
+  if (raw.includes("@")) return raw;
+  try {
+    const parsed = parsePhoneNumberFromString(raw, phoneMetadata);
+    if (!parsed) return raw;
+    return parsed.formatInternational();
+  } catch {
+    return raw;
+  }
 }
 
 export function parsePhoneE164(input: string): string {

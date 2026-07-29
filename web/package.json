@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "process-assets": "tsx scripts/process-assets.ts"
+    "process-assets": "tsx scripts/process-assets.ts",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@napi-rs/image": "^1.14.0",
     "better-sqlite3": "^12.11.1",
     "fuse.js": "^7.4.2",
+    "libphonenumber-js": "^1.13.9",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",

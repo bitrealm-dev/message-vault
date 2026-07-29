@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ReactNode } from "react";
 import {
   ContactPhoneList,
@@ -170,7 +171,7 @@ export function ContactDetailsCard({
                       key={phone}
                       className="truncate text-[13px] leading-5 text-text"
                     >
-                      {phone}
+                      {formatPhoneDisplay(phone)}
                     </span>
                   ))}
                 </div>

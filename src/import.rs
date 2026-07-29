@@ -299,6 +299,10 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
     if unknown > 0 {
         println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
     }
+    let named = contacts::fill_empty_contact_names_from_participants(&mut conn, opts.account_id)?;
+    if named > 0 {
+        println!("  sql:      filled names on {named} contact(s) from participant display names");
+    }
 
     stats.assets_copied = asset_stats.copied;
     stats.assets_deduped = asset_stats.deduped;

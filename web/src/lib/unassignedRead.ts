@@ -6,6 +6,7 @@ import {
   resetDb,
   usefulNameHint,
 } from "./dbCore";
+import { formatPhoneDisplay } from "./phoneE164";
 import {
   contactMessageSourceCountsForConversations,
   contactYearlyThreadsForPhones,
@@ -89,7 +90,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
   return rows
     .map((r) => {
       const hintUseful = usefulNameHint(r.name_hint, r.handle);
-      const displayName = hintUseful ?? r.handle;
+      const displayName = hintUseful ?? formatPhoneDisplay(r.handle);
       const sortKey = hintUseful ? `${hintUseful}\0${r.handle}` : r.handle;
       const ch = (hintUseful ?? r.handle).charAt(0).toUpperCase();
       const letter = ch >= "A" && ch <= "Z" ? ch : "#";

@@ -150,12 +150,15 @@ function loadConversationMessages(
     if (isFromMe) {
       senderName = owner.display_name;
     } else {
+      const hasContactName = Boolean(
+        r.first_name?.trim() || r.last_name?.trim(),
+      );
       senderName = displayName({
         first_name: r.first_name,
         last_name: r.last_name,
         preferred_handle: r.preferred_handle ?? r.sender,
       });
-      if (senderName === (r.preferred_handle ?? r.sender)) {
+      if (!hasContactName) {
         const hint = usefulNameHint(r.name_hint, r.sender);
         if (hint) senderName = hint;
       }

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatPhoneDisplay } from "@/lib/phoneE164";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
@@ -42,6 +43,7 @@ export function SettingsAccountForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deletingMessages, setDeletingMessages] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +194,23 @@ export function SettingsAccountForm() {
     }
   };
 
+  const deleteAllMessages = async () => {
+    setDeletingMessages(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings/messages", { method: "DELETE" });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error ?? "Delete messages failed");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete messages failed");
+    } finally {
+      setDeletingMessages(false);
+    }
+  };
+
   if (loading) {
     return <p className="text-[14px] text-muted">Loading…</p>;
   }
@@ -336,7 +355,7 @@ export function SettingsAccountForm() {
                 {data.vaultOwner.phones.length > 0 ? (
                   <ul className="list-disc list-outside pl-4">
                     {data.vaultOwner.phones.map((phone) => (
-                      <li key={phone}>{phone}</li>
+                      <li key={phone}>{formatPhoneDisplay(phone)}</li>
                     ))}
                   </ul>
                 ) : (
@@ -368,7 +387,7 @@ export function SettingsAccountForm() {
         )}
       </div>
 
-      {!data?.isDemo && (
+      {data && (
         <section className="border-t border-border pt-8">
           <button
             type="button"
@@ -387,18 +406,37 @@ export function SettingsAccountForm() {
           </button>
 
           {dangerZoneOpen && (
-            <div className="mt-4 flex items-center justify-between gap-4 pl-6">
-              <p className="min-w-0 flex-1 text-[13px] text-muted">
-                Permanently delete this account and all vault data tied to it.
-              </p>
-              <button
-                type="button"
-                disabled={saving || deleting}
-                onClick={() => setDeleteDialogOpen(true)}
-                className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
-              >
-                Delete account
-              </button>
+            <div className="mt-4 space-y-4 pl-6">
+              <div className="flex items-center justify-between gap-4">
+                <p className="min-w-0 flex-1 text-[13px] text-muted">
+                  Permanently delete every conversation and message for this account. Contacts,
+                  labels, and login details remain.
+                </p>
+                <button
+                  type="button"
+                  disabled={saving || deleting || deletingMessages}
+                  onClick={() => void deleteAllMessages()}
+                  className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                >
+                  {deletingMessages ? "Deleting…" : "Delete all messages"}
+                </button>
+              </div>
+
+              {!data.isDemo ? (
+                <div className="flex items-center justify-between gap-4">
+                  <p className="min-w-0 flex-1 text-[13px] text-muted">
+                    Permanently delete this account and all vault data tied to it.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={saving || deleting || deletingMessages}
+                    onClick={() => setDeleteDialogOpen(true)}
+                    className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                  >
+                    Delete account
+                  </button>
+                </div>
+              ) : null}
             </div>
           )}
         </section>
