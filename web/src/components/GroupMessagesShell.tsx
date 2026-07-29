@@ -1,7 +1,6 @@
 "use client";
 
 import type { GroupYearRow, YearThread } from "@/lib/types";
-import type { VaultOwner } from "@/lib/vaultOwner";
 import {
   GROUP_CHAT_SORT_ALLOWED,
   GROUP_CHAT_SORT_KEY,
@@ -14,6 +13,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,19 +21,16 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Group, Panel, useDefaultLayout, usePanelRef } from "react-resizable-panels";
+import { BrowseDetailsInspector } from "./BrowseDetailsInspector";
 import { BrowseGroupChatsPane } from "./BrowseGroupChatsPane";
-import { BrowseThreadPane } from "./BrowseThreadPane";
+import { BrowseThreadColumn } from "./BrowseThreadColumn";
 import {
   createGroupChatTrashOptions,
   groupChatToastTitle,
 } from "./groupChatTrash";
-import { MyContactPane } from "./MyContactPane";
 import { PaneSeparator } from "./PaneSeparator";
 import { ParticipantContactFormOverlay } from "./ParticipantContactFormOverlay";
 import { usePanelLayoutStorage } from "./panelLayoutStorage";
-import { usePanelCollapse } from "./usePanelCollapse";
-
-const GROUPS_PANEL_COLLAPSED_KEY = "mv-groups-panel-collapsed";
 import {
   type BrowseGroupChatSortBy,
   type SortOrder,
@@ -50,13 +47,13 @@ import { useVaultReadOnly } from "./useVaultReadOnly";
 import { useVaultSearch } from "./useVaultSearch";
 import type { SearchConversationHit } from "@/lib/search";
 
+const INSPECTOR_PANEL_COLLAPSED_KEY = "mv-group-messages-inspector-collapsed";
+
 export function GroupMessagesShell({
-  owner,
   groupChats: initialGroupChats,
   initialConversationId,
   initialYear,
 }: {
-  owner: VaultOwner;
   groupChats: GroupYearRow[];
   initialConversationId: number | null;
   initialYear: number | null;
@@ -107,21 +104,31 @@ export function GroupMessagesShell({
 
   const storage = usePanelLayoutStorage();
   const mainLayout = useDefaultLayout({
-    id: "mv-group-messages-main",
-    panelIds: ["list", "groups", "thread"],
+    id: "mv-group-messages-main-v2",
+    panelIds: ["groups", "thread", "inspector"],
     storage,
   });
-  const listPanelRef = usePanelRef();
-  const groupsPanelRef = usePanelRef();
-  const {
-    onGroupsResize: onGroupsPanelResize,
-    onListResize: onListPanelResize,
-    groupsCollapsed,
-  } = usePanelCollapse(
-    groupsPanelRef,
-    listPanelRef,
-    GROUPS_PANEL_COLLAPSED_KEY,
-  );
+  const inspectorPanelRef = usePanelRef();
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(INSPECTOR_PANEL_COLLAPSED_KEY) === "1";
+  });
+  const persistInspectorCollapsed = useCallback(() => {
+    const panel = inspectorPanelRef.current;
+    if (!panel) return;
+    const collapsed = panel.isCollapsed();
+    window.localStorage.setItem(
+      INSPECTOR_PANEL_COLLAPSED_KEY,
+      collapsed ? "1" : "0",
+    );
+    setInspectorCollapsed(collapsed);
+  }, [inspectorPanelRef]);
+  useLayoutEffect(() => {
+    const panel = inspectorPanelRef.current;
+    if (!panel) return;
+    if (inspectorCollapsed && !panel.isCollapsed()) panel.collapse();
+    if (!inspectorCollapsed && panel.isCollapsed()) panel.expand();
+  }, [inspectorCollapsed, inspectorPanelRef]);
 
   const pendingScrollYearRef = useRef<number | null>(initialYear);
 
@@ -168,6 +175,7 @@ export function GroupMessagesShell({
   const {
     selectedIds,
     setSelectedIds,
+    clearSelection: clearGroupSelection,
     hasSelection: hasGroupSelection,
     allSelected,
     selectAllRef,
@@ -360,10 +368,24 @@ export function GroupMessagesShell({
     };
   }, [hasGroupSelection, selectedGroup, activeThread]);
 
+  const groupThreadMeta = useMemo(() => {
+    if (!groupThread || !selectedGroup) return null;
+    return {
+      ...groupThread,
+      title: selectedGroup.title,
+      namedTitle: selectedGroup.namedTitle,
+    };
+  }, [groupThread, selectedGroup]);
+
   const yearly: YearThread[] = useMemo(() => {
     if (conversationId == null) return [];
+    const ids = new Set(
+      selectedGroup?.conversationIds?.length
+        ? selectedGroup.conversationIds
+        : [conversationId],
+    );
     return groupChats
-      .filter((g) => g.id === conversationId)
+      .filter((g) => ids.has(g.id))
       .map((g) => ({
         year: g.year,
         messageCount: g.messageCount,
@@ -373,7 +395,7 @@ export function GroupMessagesShell({
         conversationIds: [g.id],
       }))
       .sort((a, b) => a.year - b.year);
-  }, [groupChats, conversationId]);
+  }, [groupChats, conversationId, selectedGroup]);
 
   const messageSources = useMemo(() => {
     const set = new Set<string>();
@@ -423,37 +445,19 @@ export function GroupMessagesShell({
   return (
     <>
       <Group
-        id="mv-group-messages-main"
+        id="mv-group-messages-main-v2"
         orientation="horizontal"
         className="h-full w-full"
         defaultLayout={mainLayout.defaultLayout}
         onLayoutChanged={mainLayout.onLayoutChanged}
       >
         <Panel
-          id="list"
-          panelRef={listPanelRef}
-          defaultSize={280}
-          minSize={200}
-          maxSize={420}
-          groupResizeBehavior="preserve-pixel-size"
-          onResize={onListPanelResize}
-          className="min-h-0"
-        >
-          <MyContactPane owner={owner} />
-        </Panel>
-
-        <PaneSeparator orientation="vertical" />
-
-        <Panel
           id="groups"
-          panelRef={groupsPanelRef}
-          defaultSize={360}
-          minSize={180}
-          maxSize={520}
-          collapsible
-          collapsedSize={0}
-          onResize={onGroupsPanelResize}
-          className="min-h-0 overflow-hidden"
+          defaultSize={320}
+          minSize={220}
+          maxSize={560}
+          groupResizeBehavior="preserve-pixel-size"
+          className="min-h-0"
         >
           <BrowseGroupChatsPane
             items={collapsedGroupChats}
@@ -515,61 +519,71 @@ export function GroupMessagesShell({
         <PaneSeparator orientation="vertical" />
 
         <Panel id="thread" minSize="30%" className="min-h-0 min-w-0">
-          <div className="flex h-full min-h-0 min-w-0 flex-col">
-            <div className="flex h-[45px] shrink-0 items-center gap-2 border-b border-border px-5">
-              <div className="flex min-w-0 flex-1 items-center justify-center" />
-              {status && (
-                <span className="shrink-0 truncate text-[12px] text-muted">
-                  {status}
-                </span>
-              )}
-            </div>
-            {hasGroupSelection ? (
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-bg px-5 pt-8 pb-5">
-                <div className="rounded-xl border border-border bg-popover p-4">
-                  <h2 className="text-[15px] font-semibold text-text">
-                    {selectedGroupRows.length} group messages selected
-                  </h2>
-                  <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto text-[13px] text-muted">
-                    {selectedGroupRows.map((g) => (
-                      <li key={g.conversationId} className="truncate">
-                        {g.title}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : conversationId == null ? (
-              <p className="pt-16 text-center text-[13px] text-muted">
-                Choose a group message
-              </p>
-            ) : (
-              <div className="min-h-0 flex-1">
-                <BrowseThreadPane
-                  detail={null}
-                  sources={sources}
-                  messageSources={messageSources}
-                  sourceCounts={sourceCounts}
-                  source={source}
-                  onSourceChange={setSource}
-                  yearly={yearly}
-                  messages={messages}
-                  loadingMessages={loadingMessages}
-                  threadsReady
-                  activeThread={activeThread}
-                  groupThread={groupThread}
-                  onParticipantClick={
-                    vaultReadOnly
-                      ? undefined
-                      : participantForm.onParticipantClick
-                  }
-                  conversationsPanelCollapsed={groupsCollapsed}
-                  highlightTerms={vaultSearch.highlightTerms}
-                  scrollToMessageId={scrollToMessageId}
-                />
-              </div>
-            )}
-          </div>
+          <BrowseThreadColumn
+            paneStorageKey="group-messages"
+            detail={null}
+            groupThread={groupThread}
+            vaultReadOnly={vaultReadOnly}
+            statusMsg={status}
+            contactId={null}
+            activeThread={activeThread}
+            sources={sources}
+            messageSources={messageSources}
+            sourceCounts={sourceCounts}
+            source={source}
+            onSourceChange={setSource}
+            yearly={yearly}
+            messages={messages}
+            loadingMessages={loadingMessages}
+            threadsLoadedFor={null}
+            threadsReadyOverride
+            hasConversationChoices={false}
+            highlightTerms={vaultSearch.highlightTerms}
+            scrollToMessageId={scrollToMessageId}
+            onGroupParticipantClick={participantForm.onParticipantClick}
+            readerOnly
+            hasSelection={false}
+            hasGroupSelection={hasGroupSelection}
+            emptySelectionGuidance="Selection details are shown in the inspector on the right."
+            emptyIdleGuidance="Select a group message to read the conversation."
+          />
+        </Panel>
+
+        <PaneSeparator orientation="vertical" />
+
+        <Panel
+          id="inspector"
+          panelRef={inspectorPanelRef}
+          defaultSize={280}
+          minSize={200}
+          maxSize={420}
+          collapsible
+          collapsedSize={0}
+          onResize={persistInspectorCollapsed}
+          className="min-h-0 overflow-hidden"
+        >
+          <BrowseDetailsInspector
+            hasContactSelection={false}
+            hasGroupSelection={hasGroupSelection}
+            selectedContacts={[]}
+            selectedGroupRows={selectedGroupRows}
+            focusedContact={null}
+            detail={null}
+            yearly={[]}
+            conversationYearly={yearly}
+            groupChats={[]}
+            activeThread={activeThread}
+            groupThreadMeta={groupThreadMeta}
+            openConversation={
+              !hasGroupSelection && conversationId != null
+                ? selectedGroup
+                : null
+            }
+            onClearContactSelection={() => {}}
+            onClearGroupSelection={clearGroupSelection}
+            vaultReadOnly={vaultReadOnly}
+            emptyGuidance="Select a group message to see conversation details."
+          />
         </Panel>
       </Group>
 

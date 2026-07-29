@@ -37,6 +37,10 @@ export function BrowseThreadColumn({
   readerOnly = false,
   hasSelection = false,
   hasGroupSelection = false,
+  emptySelectionGuidance = "Selection details are shown in the inspector on the right.",
+  emptyFocusGuidance = "Choose a Direct or group conversation in the tree.",
+  emptyIdleGuidance = "Select a person or conversation to read messages.",
+  threadsReadyOverride,
 }: {
   paneStorageKey: string;
   detail: ContactDetail | null;
@@ -57,7 +61,7 @@ export function BrowseThreadColumn({
   hasConversationChoices?: boolean;
   highlightTerms?: string[];
   scrollToMessageId?: number | null;
-  onContactNameClick: (anchorRect: DOMRect) => void;
+  onContactNameClick?: (anchorRect: DOMRect) => void;
   onGroupParticipantClick: (
     participant: GroupParticipant,
     anchorRect: DOMRect,
@@ -66,11 +70,18 @@ export function BrowseThreadColumn({
   readerOnly?: boolean;
   hasSelection?: boolean;
   hasGroupSelection?: boolean;
+  emptySelectionGuidance?: string;
+  emptyFocusGuidance?: string;
+  emptyIdleGuidance?: string;
+  /** When set, overrides the contact-based threadsReady check. */
+  threadsReadyOverride?: boolean;
 }) {
   const showReader =
     readerOnly
       ? !hasSelection && !hasGroupSelection && activeThread != null
       : activeThread != null;
+  const threadsReady =
+    threadsReadyOverride ?? threadsLoadedFor === contactId;
 
   return (
     <div
@@ -81,7 +92,7 @@ export function BrowseThreadColumn({
         <div className="flex min-w-0 flex-1 items-center justify-center">
           {!hasSelection && detail && !groupThread ? (
             <h1 className="truncate text-lg font-semibold tracking-tight text-text">
-              {!vaultReadOnly ? (
+              {!vaultReadOnly && onContactNameClick ? (
                 <GroupParticipantChip
                   label={detail.displayName || "Contact"}
                   onClick={onContactNameClick}
@@ -111,7 +122,7 @@ export function BrowseThreadColumn({
             yearly={yearly}
             messages={messages}
             loadingMessages={loadingMessages}
-            threadsReady={threadsLoadedFor === contactId}
+            threadsReady={threadsReady}
             activeThread={activeThread}
             groupThread={groupThread}
             onParticipantClick={
@@ -127,10 +138,10 @@ export function BrowseThreadColumn({
         <div className="flex min-h-0 flex-1 items-start justify-center px-5 pt-8">
           <p className="max-w-sm text-center text-[13px] text-muted">
             {hasSelection || hasGroupSelection
-              ? "Selection details are shown in the inspector on the right."
+              ? emptySelectionGuidance
               : contactId != null
-                ? "Choose a Direct or group conversation in the tree."
-                : "Select a person or conversation to read messages."}
+                ? emptyFocusGuidance
+                : emptyIdleGuidance}
           </p>
         </div>
       )}

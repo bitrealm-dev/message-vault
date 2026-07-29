@@ -61,6 +61,7 @@ export function BrowseDetailsInspector({
   focusedContact,
   detail,
   yearly,
+  conversationYearly = [],
   groupChats,
   activeThread,
   groupThreadMeta,
@@ -69,6 +70,7 @@ export function BrowseDetailsInspector({
   onClearGroupSelection,
   onEditContact,
   vaultReadOnly = false,
+  emptyGuidance = "Select a person or conversation to see contact details, conversation stats, and selection summaries here.",
 }: {
   hasContactSelection: boolean;
   hasGroupSelection: boolean;
@@ -81,6 +83,8 @@ export function BrowseDetailsInspector({
   } | null;
   detail: ContactDetail | null;
   yearly: YearThread[];
+  /** Per-year activity for the open group conversation (not contact DM years). */
+  conversationYearly?: YearThread[];
   groupChats: GroupChatThread[];
   activeThread: string | null;
   groupThreadMeta: {
@@ -96,6 +100,7 @@ export function BrowseDetailsInspector({
   onClearGroupSelection: () => void;
   onEditContact?: () => void;
   vaultReadOnly?: boolean;
+  emptyGuidance?: string;
 }) {
   const { formatDateRange } = useDateTimeFormat();
 
@@ -223,6 +228,7 @@ export function BrowseDetailsInspector({
             <StatRow label="Participants" value={g.participantCount} />
           )}
         </div>
+        <YearBreakdown yearly={conversationYearly} />
       </InspectorShell>
     );
   }
@@ -346,10 +352,7 @@ export function BrowseDetailsInspector({
 
   return (
     <InspectorShell title="Details">
-      <p className="text-[13px] leading-relaxed text-muted">
-        Select a person or conversation to see contact details, conversation
-        stats, and selection summaries here.
-      </p>
+      <p className="text-[13px] leading-relaxed text-muted">{emptyGuidance}</p>
     </InspectorShell>
   );
 }

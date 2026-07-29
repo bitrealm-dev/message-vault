@@ -20,10 +20,16 @@ import {
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const HEADER_EXPANDED_KEY = "mv-browse-thread-header-expanded";
+const NEAR_BOTTOM_PX = 120;
 
 function yearFromTimestamp(ts: string): number | null {
   const y = Number(ts.slice(0, 4));
   return Number.isFinite(y) ? y : null;
+}
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export type BrowseGroupThreadMeta = {
@@ -82,23 +88,22 @@ export function BrowseThreadPane({
 }) {
   const { formatDateRange } = useDateTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [headerExpanded, setHeaderExpanded] = useState(true);
-  const [activeYear, setActiveYear] = useState<number | null>(null);
-  const [attachmentsOnly, setAttachmentsOnly] = useState(false);
-
-  useEffect(() => {
-    setAttachmentsOnly(false);
-  }, [activeThread]);
-
-  useEffect(() => {
+  const [headerExpanded, setHeaderExpanded] = useState(() => {
+    if (typeof window === "undefined") return true;
     try {
-      if (sessionStorage.getItem(HEADER_EXPANDED_KEY) === "0") {
-        setHeaderExpanded(false);
-      }
+      return sessionStorage.getItem(HEADER_EXPANDED_KEY) !== "0";
     } catch {
-      /* ignore */
+      return true;
     }
-  }, []);
+  });
+  const [scrolledYear, setScrolledYear] = useState<number | null>(null);
+  /** Thread key for which attachment-only filter is active (resets on thread change). */
+  const [attachmentsFilterThread, setAttachmentsFilterThread] = useState<
+    string | null
+  >(null);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const attachmentsOnly =
+    attachmentsFilterThread != null && attachmentsFilterThread === activeThread;
 
   const toggleHeaderExpanded = () => {
     setHeaderExpanded((prev) => {
@@ -180,10 +185,15 @@ export function BrowseThreadPane({
     return sections;
   }, [visibleMessages]);
 
-  useEffect(() => {
-    const first = messagesByYear[0]?.year;
-    setActiveYear(first ?? null);
-  }, [messagesByYear]);
+  const yearIds = useMemo(
+    () => new Set(messagesByYear.map((s) => s.year)),
+    [messagesByYear],
+  );
+  const firstYear = messagesByYear[0]?.year ?? null;
+  const activeYear =
+    scrolledYear != null && yearIds.has(scrolledYear)
+      ? scrolledYear
+      : firstYear;
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -215,7 +225,7 @@ export function BrowseThreadPane({
             bestYear = year;
           }
         }
-        if (bestYear != null) setActiveYear(bestYear);
+        if (bestYear != null) setScrolledYear(bestYear);
       },
       {
         root,
@@ -229,10 +239,35 @@ export function BrowseThreadPane({
     return () => observer.disconnect();
   }, [messagesByYear]);
 
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const onScroll = () => {
+      const distance =
+        root.scrollHeight - root.scrollTop - root.clientHeight;
+      setAwayFromBottom(distance > NEAR_BOTTOM_PX);
+    };
+    onScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [visibleMessages.length, loadingMessages, activeThread]);
+
   const jumpToYear = (year: number) => {
-    setActiveYear(year);
+    setScrolledYear(year);
     const el = scrollRef.current?.querySelector(`#year-${year}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "start",
+    });
+  };
+
+  const jumpToLatest = () => {
+    const root = scrollRef.current;
+    if (!root) return;
+    root.scrollTo({
+      top: root.scrollHeight,
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
   };
 
   useEffect(() => {
@@ -241,7 +276,10 @@ export function BrowseThreadPane({
     if (!root) return;
     const el = root.querySelector(`#msg-${scrollToMessageId}`);
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "center",
+    });
   }, [scrollToMessageId, loadingMessages, visibleMessages]);
 
   const sourceOptions = [
@@ -302,14 +340,17 @@ export function BrowseThreadPane({
     (groupThread.participants.length > 0 || !!dateLabel);
   const hasMessages = messages.length > 0;
   const showYearJump = hasMessages && yearItems.length > 0;
-  const showHeader = showGroupIdentity || showYearJump;
+  const showSourceRow = stripItems.length > 0 && sourceCounts.all > 0;
+  const showStats = threadStats != null;
+  const showUtility = showSourceRow || showStats;
+  const showHeader = showGroupIdentity || showYearJump || showUtility;
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-bg">
+    <section className="relative flex h-full min-h-0 flex-col bg-bg">
       {showHeader && (
-        <div className="shrink-0 border-b border-border px-5 py-2 text-center">
+        <div className="shrink-0 border-b border-border px-5 py-2">
           {(headerExpanded || !showYearJump) && showGroupIdentity && (
-            <>
+            <div className="text-center">
               {groupThread && groupThread.participants.length > 0 ? (
                 <div className="flex flex-wrap items-center justify-center gap-y-0 text-[14px] font-medium leading-snug text-text">
                   {groupThread.participants.map((p, idx) => (
@@ -337,7 +378,7 @@ export function BrowseThreadPane({
                   {dateLabel}
                 </div>
               )}
-            </>
+            </div>
           )}
 
           {showYearJump && (
@@ -347,7 +388,7 @@ export function BrowseThreadPane({
               }`}
             >
               <div
-                className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 ${
+                className={`flex max-w-full flex-wrap items-center justify-center gap-x-1 gap-y-0.5 ${
                   showGroupIdentity ? "pr-8" : ""
                 }`}
               >
@@ -357,9 +398,9 @@ export function BrowseThreadPane({
                     type="button"
                     title={item.title}
                     onClick={item.onClick}
-                    className={`text-[13px] font-medium tabular-nums ${
+                    className={`rounded-md px-1.5 py-0.5 text-[13px] font-medium tabular-nums transition-colors ${
                       item.active
-                        ? "text-accent"
+                        ? "text-accent underline decoration-accent decoration-2 underline-offset-[5px]"
                         : "text-text hover:text-accent"
                     }`}
                   >
@@ -389,86 +430,113 @@ export function BrowseThreadPane({
               )}
             </div>
           )}
+
+          {showUtility && (
+            <div
+              className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 ${
+                showYearJump || showGroupIdentity ? "mt-1.5" : ""
+              }`}
+            >
+              {showSourceRow && (
+                <div className="flex max-w-full flex-wrap items-center justify-center gap-y-0.5">
+                  {stripItems.map((item, i) => (
+                    <span key={item.key} className="flex items-center">
+                      {i > 0 && (
+                        <span
+                          className="mx-1.5 text-[12px] text-muted/45"
+                          aria-hidden
+                        >
+                          ·
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        disabled={item.disabled}
+                        title={item.title}
+                        onClick={item.onClick}
+                        className={`text-[12px] font-medium ${
+                          item.disabled
+                            ? "cursor-default text-muted/40"
+                            : item.active
+                              ? "text-accent"
+                              : "text-muted hover:text-text"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {showSourceRow && showStats ? (
+                <span className="hidden text-muted/40 sm:inline" aria-hidden>
+                  |
+                </span>
+              ) : null}
+              {threadStats && (
+                <div className="flex items-center gap-x-2 text-[12px] text-muted">
+                  <button
+                    type="button"
+                    title="Show all messages"
+                    aria-pressed={!attachmentsOnly}
+                    onClick={() => setAttachmentsFilterThread(null)}
+                    className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
+                      !attachmentsOnly
+                        ? "font-medium text-text"
+                        : "hover:text-text"
+                    }`}
+                  >
+                    <MessageIcon className="size-3.5 shrink-0 opacity-80" />
+                    {threadStats.messageCount.toLocaleString()}
+                  </button>
+                  <span className="opacity-45">·</span>
+                  <button
+                    type="button"
+                    title={
+                      attachmentsOnly
+                        ? "Show all messages"
+                        : "Show only messages with photos or files"
+                    }
+                    aria-label={
+                      attachmentsOnly
+                        ? "Show all messages"
+                        : "Filter to photos and files"
+                    }
+                    aria-pressed={attachmentsOnly}
+                    disabled={threadStats.attachmentCount === 0}
+                    onClick={() =>
+                      setAttachmentsFilterThread((prev) =>
+                        prev === activeThread ? null : activeThread,
+                      )
+                    }
+                    className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
+                      threadStats.attachmentCount === 0
+                        ? "cursor-default opacity-40"
+                        : attachmentsOnly
+                          ? "font-medium text-accent"
+                          : "hover:text-accent"
+                    }`}
+                  >
+                    <PaperclipIcon className="size-3.5 shrink-0 opacity-80" />
+                    <span className="hidden sm:inline">Photos &amp; files</span>
+                    <span className="sm:hidden">
+                      {threadStats.attachmentCount.toLocaleString()}
+                    </span>
+                    <span className="hidden sm:inline tabular-nums">
+                      {threadStats.attachmentCount.toLocaleString()}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-4 pt-2.5 pb-4"
+        className="min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-4"
       >
-        {stripItems.length > 0 && sourceCounts.all > 0 && (
-          <div className="mb-1.5 flex flex-wrap items-center justify-center gap-y-1">
-            {stripItems.map((item, i) => (
-              <span key={item.key} className="flex items-center">
-                {i > 0 && (
-                  <span
-                    className="mx-2 text-[13px] text-muted/50"
-                    aria-hidden
-                  >
-                    |
-                  </span>
-                )}
-                <button
-                  type="button"
-                  disabled={item.disabled}
-                  title={item.title}
-                  onClick={item.onClick}
-                  className={`text-[13px] font-medium ${
-                    item.disabled
-                      ? "cursor-default text-muted/40"
-                      : item.active
-                        ? "text-accent"
-                        : "text-text hover:text-accent"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {threadStats && (
-          <div className="mb-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[12px] text-muted">
-            <button
-              type="button"
-              title="Show all messages"
-              aria-pressed={!attachmentsOnly}
-              onClick={() => setAttachmentsOnly(false)}
-              className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
-                !attachmentsOnly
-                  ? "font-medium text-text"
-                  : "hover:text-text"
-              }`}
-            >
-              <MessageIcon className="size-3.5 shrink-0 opacity-80" />
-              {threadStats.messageCount.toLocaleString()}
-            </button>
-            <span className="opacity-50">·</span>
-            <button
-              type="button"
-              title={
-                attachmentsOnly
-                  ? "Show all messages"
-                  : "Show only messages with attachments"
-              }
-              aria-pressed={attachmentsOnly}
-              disabled={threadStats.attachmentCount === 0}
-              onClick={() => setAttachmentsOnly((v) => !v)}
-              className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
-                threadStats.attachmentCount === 0
-                  ? "cursor-default opacity-40"
-                  : attachmentsOnly
-                    ? "font-medium text-accent"
-                    : "hover:text-accent"
-              }`}
-            >
-              <PaperclipIcon className="size-3.5 shrink-0 opacity-80" />
-              {threadStats.attachmentCount.toLocaleString()}
-            </button>
-          </div>
-        )}
-
         {!activeThread && !loadingMessages && detail && (
           <p className="pt-8 text-center text-[13px] text-muted">
             {!threadsReady
@@ -487,12 +555,12 @@ export function BrowseThreadPane({
           attachmentsOnly &&
           visibleMessages.length === 0 && (
             <p className="pt-8 text-center text-[13px] text-muted">
-              No messages with attachments
+              No messages with photos or files
             </p>
           )}
         {visibleMessages.length > 0 && (
           <div
-            className={`mx-auto flex max-w-2xl flex-col gap-2 ${
+            className={`mx-auto flex max-w-2xl flex-col gap-1 ${
               loadingMessages ? "opacity-60" : ""
             }`}
           >
@@ -502,12 +570,12 @@ export function BrowseThreadPane({
                 id={`year-${section.year}`}
                 className="scroll-mt-3"
               >
-                <div className="sticky top-0 z-10 -mx-1 mb-2 bg-bg/95 px-1 py-1.5 backdrop-blur-sm">
-                  <div className="text-[13px] font-semibold text-text">
+                <div className="sticky top-0 z-10 -mx-1 mb-1.5 bg-bg/95 px-1 py-1 backdrop-blur-sm">
+                  <div className="text-[12px] font-semibold tracking-wide text-muted tabular-nums">
                     {section.year || "Unknown"}
                   </div>
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col">
                   <MessageList
                     messages={section.messages}
                     highlightTerms={highlightTerms}
@@ -518,6 +586,17 @@ export function BrowseThreadPane({
           </div>
         )}
       </div>
+
+      {awayFromBottom && visibleMessages.length > 0 && (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          className="absolute right-4 bottom-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-elevated/95 px-3 py-1.5 text-[12px] font-medium text-text shadow-[0_4px_16px_rgba(0,0,0,0.28)] backdrop-blur-sm transition-colors hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          Jump to latest
+          <ChevronDownIcon className="size-3.5 opacity-80" />
+        </button>
+      )}
     </section>
   );
 }
