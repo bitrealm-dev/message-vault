@@ -3,7 +3,10 @@
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type { SearchConversationHit } from "@/lib/search";
 import type { MouseEvent, RefObject } from "react";
-import { GroupConversationRowBody } from "./GroupConversationRow";
+import {
+  DirectConversationRow,
+  GroupConversationRow,
+} from "./BrowseConversationRows";
 import { IconHoverTarget } from "./IconHoverLabel";
 import { TrashMessagesIcon } from "./icons";
 import { SearchResultsList } from "./SearchResultsList";
@@ -12,7 +15,6 @@ import {
   type BrowseGroupChatSortBy,
   type SortOrder,
 } from "./SortByMenu";
-import { useDateTimeFormat } from "./useDateTimeFormat";
 import { VaultSearchField } from "./VaultSearchField";
 import { YearFilterMenu } from "./YearFilterMenu";
 
@@ -92,12 +94,7 @@ export function BrowseGroupChatsPane({
   directDateEnd?: string | null;
   onDirectClick?: () => void;
 }) {
-  const { formatDateRange } = useDateTimeFormat();
   const selectionActive = selectedIds.size >= 1;
-  const directDateLabel =
-    directDateStart && directDateEnd
-      ? formatDateRange(directDateStart, directDateEnd, " – ")
-      : null;
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-sidebar">
@@ -170,145 +167,35 @@ export function BrowseGroupChatsPane({
           emptyLabel="No matches"
         />
       ) : (
-      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-        {directAvailable && onDirectClick && (
-          <button
-            type="button"
-            onClick={onDirectClick}
-            aria-pressed={directActive}
-            className={`group relative flex w-full items-start gap-1.5 border-b border-border/40 py-2.5 pr-3 pl-0 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
-              directActive
-                ? "bg-accent/20 hover:bg-accent/25"
-                : "hover:bg-hover-strong"
-            }`}
-          >
-            {directActive && (
-              <span
-                aria-hidden
-                className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
-              />
-            )}
-            <span className="w-10 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-medium leading-snug text-text">
-                1-1 messages
-              </span>
-              {directDateLabel ? (
-                <span className="mt-0.5 block text-right text-[11px] text-muted tabular-nums">
-                  {directDateLabel}
-                </span>
-              ) : null}
-            </span>
-          </button>
-        )}
-        <div className="sticky top-0 z-10 border-b border-border bg-sidebar px-3 py-1 text-[11px] font-semibold text-muted">
-          Group Messages
-        </div>
-        {items.length === 0 ? (
-          <p className="px-3 py-4 text-[12px] text-muted">{emptyLabel}</p>
-        ) : (
-          items.map((g, i) => {
-            const active = g.conversationId === selectedConversationId;
-            const checked = selectedIds.has(g.conversationId);
-            return (
-              <div
+        <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+          {directAvailable && onDirectClick && (
+            <DirectConversationRow
+              active={directActive}
+              dateStart={directDateStart}
+              dateEnd={directDateEnd}
+              onClick={onDirectClick}
+            />
+          )}
+          <div className="sticky top-0 z-10 border-b border-border bg-sidebar px-3 py-1 text-[11px] font-semibold text-muted">
+            Group Messages
+          </div>
+          {items.length === 0 ? (
+            <p className="px-3 py-4 text-[12px] text-muted">{emptyLabel}</p>
+          ) : (
+            items.map((g, i) => (
+              <GroupConversationRow
                 key={g.conversationId}
-                role={selectionActive ? "button" : undefined}
-                tabIndex={selectionActive ? 0 : undefined}
-                title={g.titleFull}
-                onClick={
-                  selectionActive
-                    ? (e) => onRowClick(g.conversationId, e)
-                    : undefined
-                }
-                onKeyDown={
-                  selectionActive
-                    ? (e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          onRowClick(g.conversationId, {
-                            shiftKey: e.shiftKey,
-                            metaKey: e.metaKey,
-                            ctrlKey: e.ctrlKey,
-                          });
-                        }
-                      }
-                    : undefined
-                }
-                onMouseDown={(e) => {
-                  if (e.shiftKey) e.preventDefault();
-                }}
-                className={`group relative flex w-full items-start gap-1.5 py-2.5 pr-3 pl-0 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
-                  selectionActive ? "cursor-pointer" : ""
-                } ${
-                  checked
-                    ? "bg-accent/40 hover:bg-accent/50"
-                    : active
-                      ? "bg-accent/20 hover:bg-accent/25"
-                      : "hover:bg-hover-strong"
-                } ${i < items.length - 1 ? "border-b border-border/40" : ""}`}
-              >
-                {active && !checked && (
-                  <span
-                    aria-hidden
-                    className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
-                  />
-                )}
-                {checked && (
-                  <span
-                    aria-hidden
-                    className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent"
-                  />
-                )}
-                <button
-                  type="button"
-                  aria-pressed={checked}
-                  aria-label={`Select ${g.namedTitle || g.title || "group message"}`}
-                  onClick={(e) => onSelectColumnClick(g.conversationId, e)}
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    if (e.shiftKey) e.preventDefault();
-                  }}
-                  className="flex w-10 shrink-0 cursor-pointer items-center justify-center self-stretch -my-2.5 outline-none focus:outline-none focus-visible:outline-none"
-                >
-                  <span
-                    className={
-                      checked
-                        ? "inline-flex"
-                        : "hidden group-hover:inline-flex"
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      readOnly
-                      tabIndex={-1}
-                      aria-hidden
-                      className="checkbox-list pointer-events-none"
-                    />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRowClick(g.conversationId, e);
-                  }}
-                  onMouseDown={(e) => {
-                    if (e.shiftKey) e.preventDefault();
-                  }}
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left outline-none focus:outline-none focus-visible:outline-none"
-                >
-                  <GroupConversationRowBody
-                    conversation={g}
-                    variant="browse"
-                  />
-                </button>
-              </div>
-            );
-          })
-        )}
-      </div>
+                conversation={g}
+                active={g.conversationId === selectedConversationId}
+                checked={selectedIds.has(g.conversationId)}
+                selectionActive={selectionActive}
+                showBorder={i < items.length - 1}
+                onSelectColumnClick={onSelectColumnClick}
+                onRowClick={onRowClick}
+              />
+            ))
+          )}
+        </div>
       )}
     </aside>
   );

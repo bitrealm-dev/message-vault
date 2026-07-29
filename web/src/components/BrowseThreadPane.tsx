@@ -294,7 +294,8 @@ export function BrowseThreadPane({
     ? formatDateRange(groupThread.dateStart, groupThread.dateEnd)
     : null;
 
-  // Group identity lives in panel 3 rows; only repeat it when that panel is collapsed.
+  // Group identity lives in the tree/inspector; only repeat it when the
+  // conversations list panel is collapsed (Group Messages layout).
   const showGroupIdentity =
     conversationsPanelCollapsed &&
     !!groupThread &&

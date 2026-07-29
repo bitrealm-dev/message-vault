@@ -31,10 +31,11 @@ import {
   BrowseContactCtxMenu,
   BrowseMergeIntoPanel,
 } from "./BrowseContactCtxMenu";
-import { BrowseContactList } from "./BrowseContactList";
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
-import { BrowseGroupChatsPane } from "./BrowseGroupChatsPane";
+import { BrowseDetailsInspector } from "./BrowseDetailsInspector";
+import { BrowsePeopleTreePane } from "./BrowsePeopleTreePane";
 import { BrowseThreadColumn } from "./BrowseThreadColumn";
+import { useBrowsePeopleTree } from "./useBrowsePeopleTree";
 import {
   contactFormAnchorFromRect,
   type ContactFormAnchor,
@@ -67,10 +68,9 @@ import { useDismissible } from "./useDismissible";
 import { usePersistedEnum } from "./usePersistedEnum";
 import { PaneSeparator } from "./PaneSeparator";
 import { usePanelLayoutStorage } from "./panelLayoutStorage";
-import { usePanelCollapse } from "./usePanelCollapse";
 import { Group, Panel, useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
-const GROUPS_PANEL_COLLAPSED_KEY = "mv-groups-panel-collapsed";
+const INSPECTOR_PANEL_COLLAPSED_KEY = "mv-browse-inspector-collapsed";
 
 const SORT_MODE_KEY = "mv-contact-sort";
 const SORT_ORDER_KEY = "mv-contact-sort-order";
@@ -175,21 +175,31 @@ export function BrowseShell({
   const statusClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const storage = usePanelLayoutStorage();
   const mainLayout = useDefaultLayout({
-    id: "mv-browse-main-v2",
-    panelIds: ["list", "groups", "thread"],
+    id: "mv-browse-main-v3",
+    panelIds: ["tree", "thread", "inspector"],
     storage,
   });
-  const listPanelRef = usePanelRef();
-  const groupsPanelRef = usePanelRef();
-  const {
-    onGroupsResize: onGroupsPanelResize,
-    onListResize: onListPanelResize,
-    groupsCollapsed,
-  } = usePanelCollapse(
-    groupsPanelRef,
-    listPanelRef,
-    GROUPS_PANEL_COLLAPSED_KEY,
-  );
+  const inspectorPanelRef = usePanelRef();
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(INSPECTOR_PANEL_COLLAPSED_KEY) === "1";
+  });
+  const persistInspectorCollapsed = useCallback(() => {
+    const panel = inspectorPanelRef.current;
+    if (!panel) return;
+    const collapsed = panel.isCollapsed();
+    window.localStorage.setItem(
+      INSPECTOR_PANEL_COLLAPSED_KEY,
+      collapsed ? "1" : "0",
+    );
+    setInspectorCollapsed(collapsed);
+  }, [inspectorPanelRef]);
+  useLayoutEffect(() => {
+    const panel = inspectorPanelRef.current;
+    if (!panel) return;
+    if (inspectorCollapsed && !panel.isCollapsed()) panel.collapse();
+    if (!inspectorCollapsed && panel.isCollapsed()) panel.expand();
+  }, [inspectorCollapsed, inspectorPanelRef]);
   const [groupChatSortBy, setGroupChatSortBy] = usePersistedEnum(
     GROUP_CHAT_SORT_KEY,
     GROUP_CHAT_SORT_ALLOWED,
@@ -215,12 +225,34 @@ export function BrowseShell({
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(
     null,
   );
+  const [focusedSearchHit, setFocusedSearchHit] =
+    useState<SearchConversationHit | null>(null);
   const [selectedGroupConversationId, setSelectedGroupConversationId] =
     useState<number | null>(null);
   const [selectionGroupChats, setSelectionGroupChats] = useState<
     GroupChatThread[]
   >([]);
   const [loadingSelectionGroups, setLoadingSelectionGroups] = useState(false);
+  const pendingConvIdRef = useRef<number | null>(
+    (() => {
+      const raw = searchParams.get("conv");
+      if (!raw) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    })(),
+  );
+  const peopleTree = useBrowsePeopleTree({
+    sourceQuery,
+    reloadToken: threadsEpoch,
+  });
+  const {
+    expandContact,
+    bundle: peopleTreeBundle,
+    expandedContactId: peopleTreeExpandedId,
+    loading: peopleTreeLoading,
+    patchCachedDetail: _patchCachedDetail,
+  } = peopleTree;
+  void _patchCachedDetail;
 
   const saveContactPatch = useCallback(
     async (
@@ -328,22 +360,37 @@ export function BrowseShell({
     });
   }, [sorted]);
 
+  const syncConvUrl = useCallback(
+    (conversationId: number | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (conversationId != null) params.set("conv", String(conversationId));
+      else params.delete("conv");
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
   const selectContact = useCallback(
     (id: number) => {
       allowAutoOpenThreadRef.current = true;
       setSelectedGroupConversationId(null);
       setGroupChatFilterYear(null);
       cancelContactFormRef.current();
+      pendingConvIdRef.current = null;
       if (id === contactId) {
         // Re-focus: reload and let the threads effect apply Direct-only auto-open.
         setThreadConversationIds(null);
         setActiveThread(null);
+        syncConvUrl(null);
+        expandContact(id, { force: true });
         setThreadsEpoch((e) => e + 1);
         return;
       }
       setContactId(id);
       setThreadConversationIds(null);
       setActiveThread(null);
+      expandContact(id);
       const params = new URLSearchParams(searchParams.toString());
       params.set("c", String(id));
       params.delete("h");
@@ -351,7 +398,7 @@ export function BrowseShell({
       params.delete("conv");
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
-    [contactId, pathname, router, searchParams],
+    [contactId, expandContact, pathname, router, searchParams, syncConvUrl],
   );
   selectContactRef.current = selectContact;
 
@@ -361,6 +408,8 @@ export function BrowseShell({
     setThreadConversationIds(null);
     setActiveThread(null);
     setSelectedGroupConversationId(null);
+    expandContact(null);
+    pendingConvIdRef.current = null;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("c");
     params.delete("h");
@@ -368,7 +417,7 @@ export function BrowseShell({
     params.delete("conv");
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [pathname, router, searchParams]);
+  }, [expandContact, pathname, router, searchParams]);
 
   useEffect(() => {
     if (selectedIds.size === 0 || contactId == null) return;
@@ -396,6 +445,18 @@ export function BrowseShell({
     }, 300);
   }, []);
 
+  // Expand/collapse the people-tree cache when focus changes.
+  useEffect(() => {
+    if (contactId == null) {
+      expandContact(null);
+      return;
+    }
+    if (peopleTreeExpandedId !== contactId) {
+      expandContact(contactId);
+    }
+  }, [contactId, expandContact, peopleTreeExpandedId]);
+
+  // Apply cached/fetched thread bundles into BrowseShell state.
   useEffect(() => {
     if (!contactId) {
       loadedContactIdRef.current = null;
@@ -409,168 +470,188 @@ export function BrowseShell({
       setThreadConversationIds(null);
       setActiveThread(null);
       setSelectedGroupConversationId(null);
+      setLoadingThreads(false);
       return;
     }
-    let cancelled = false;
-    // Keep the existing cards mounted while the next contact loads (swap data in place).
-    // Only show a blank "Loading…" state when there is nothing to display yet.
-    const switchingContact = loadedContactIdRef.current !== contactId;
-    // URL/hydration restore: load contact metadata for Panel 2/3, but leave Panel 4
-    // empty until the user clicks the contact or a group.
-    const hydrateOnly =
-      !allowAutoOpenThreadRef.current && activeThreadRef.current == null;
-    if (switchingContact && loadedContactIdRef.current == null) {
-      setLoadingThreads(true);
+
+    setLoadingThreads(peopleTreeLoading);
+    const data = peopleTreeBundle;
+    if (!data || peopleTreeExpandedId !== contactId) {
+      if (!peopleTreeLoading && peopleTreeExpandedId === contactId) {
+        setDetail(null);
+        setYearly([]);
+        setGroupChats([]);
+        setMessageSources([]);
+        setSourceCounts({ all: 0, bySource: {} });
+        setThreadConversationIds(null);
+        setActiveThread(null);
+      }
+      return;
     }
-    fetch(
-      `/api/contacts/${contactId}/threads${
-        sourceQuery ? `?${sourceQuery.slice(1)}` : ""
-      }`,
-    )
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (data.error) {
-          if (switchingContact) {
-            setDetail(null);
-            setYearly([]);
-            setGroupChats([]);
-            setMessageSources([]);
-            setSourceCounts({ all: 0, bySource: {} });
-            setThreadConversationIds(null);
-            setActiveThread(null);
-          }
-          return;
-        }
-        // Contact fields don't depend on source — only replace detail when the person changes
-        // so the top card shell/content don't flash on source filter updates.
-        if (switchingContact) {
-          const contact = data.contact as ContactDetail;
-          const ov = labelOverridesRef.current.get(contact.id);
-          setDetail(ov ? { ...contact, labels: ov } : contact);
-        }
-        const nextYearly: YearThread[] = data.yearly ?? [];
-        const nextGroupChats: GroupChatThread[] = data.groupChats ?? [];
-        setYearly(nextYearly);
-        setGroupChats(nextGroupChats);
-        setMessageSources(data.messageSources ?? []);
-        setSourceCounts(
-          data.sourceCounts ?? { all: 0, bySource: {} },
-        );
-        loadedContactIdRef.current = contactId;
-        setThreadsLoadedFor(contactId);
 
-        const available: string[] = data.messageSources ?? [];
-        const selected = activeSourceRef.current;
-        if (selected && !available.includes(selected)) {
-          setSource(null);
-        }
+    const switchingContact = loadedContactIdRef.current !== contactId;
+    const hydrateOnly =
+      !allowAutoOpenThreadRef.current &&
+      activeThreadRef.current == null &&
+      pendingConvIdRef.current == null;
 
-        if (hydrateOnly) {
-          setThreadConversationIds(null);
-          setActiveThread(null);
-          setSelectedGroupConversationId(null);
-          return;
-        }
+    if (switchingContact) {
+      const contact = data.detail;
+      const ov = labelOverridesRef.current.get(contact.id);
+      setDetail(ov ? { ...contact, labels: ov } : contact);
+    }
+    const nextYearly = data.yearly;
+    const nextGroupChats = data.groupChats;
+    setYearly(nextYearly);
+    setGroupChats(nextGroupChats);
+    setMessageSources(data.messageSources);
+    setSourceCounts(data.sourceCounts);
+    loadedContactIdRef.current = contactId;
+    setThreadsLoadedFor(contactId);
 
-        // Keep a valid already-open thread on the same contact; reset when switching.
-        setActiveThread((prev) => {
-          if (switchingContact) return null;
-          if (prev === "dm") return prev;
-          if (prev?.startsWith("gfull-")) {
-            const stillThere = nextGroupChats.some((t) => {
-              const ids =
-                t.conversationIds?.length > 0
-                  ? t.conversationIds
-                  : [t.conversationId];
-              return `gfull-${ids.join("-")}` === prev;
-            });
-            return stillThere ? prev : null;
-          }
-          return null;
-        });
+    const available = data.messageSources;
+    const selected = activeSourceRef.current;
+    if (selected && !available.includes(selected)) {
+      setSource(null);
+    }
 
-        // Keep a valid already-open group; auto-open Direct only when there are no groups.
-        let key = switchingContact ? null : activeThreadRef.current;
-        if (key?.startsWith("gfull-")) {
-          const stillThere = nextGroupChats.some((t) => {
-            const ids =
-              t.conversationIds?.length > 0
-                ? t.conversationIds
-                : [t.conversationId];
-            return `gfull-${ids.join("-")}` === key;
-          });
-          if (!stillThere) key = null;
-        } else if (key !== "dm") {
-          key = null;
-        }
+    const dmIds = [...new Set(nextYearly.flatMap((y) => y.conversationIds))];
+    const hasGroups = nextGroupChats.length > 0;
+    const pendingConv = pendingConvIdRef.current;
 
-        const dmIds = [
-          ...new Set(nextYearly.flatMap((y) => y.conversationIds)),
-        ];
-        const hasGroups = nextGroupChats.length > 0;
-
-        if (switchingContact) {
-          setSelectedGroupConversationId(null);
-          if (dmIds.length > 0 && !hasGroups) {
-            key = "dm";
-            setActiveThread("dm");
-          } else {
-            setActiveThread(null);
-            setThreadConversationIds(null);
-            return;
-          }
-        } else if (!key) {
-          if (dmIds.length > 0 && !hasGroups) {
-            key = "dm";
-            setActiveThread("dm");
-          } else {
-            setThreadConversationIds(null);
-            return;
-          }
-        } else if (key === "dm" && dmIds.length === 0) {
-          setActiveThread(null);
-          setThreadConversationIds(null);
-          return;
-        }
-
-        let convIds: number[] | null = null;
-        if (key === "dm") {
-          convIds = dmIds;
-        } else if (key.startsWith("gfull-")) {
-          const g = nextGroupChats.find((t) => {
-            const ids =
-              t.conversationIds?.length > 0
-                ? t.conversationIds
-                : [t.conversationId];
-            return `gfull-${ids.join("-")}` === key;
-          });
-          if (g) {
-            convIds =
-              g.conversationIds?.length > 0
-                ? g.conversationIds
-                : [g.conversationId];
-          }
-        }
-        if (!convIds?.length) {
-          setThreadConversationIds(null);
-          return;
-        }
-        setThreadConversationIds(convIds);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingThreads(false);
+    if (pendingConv != null) {
+      pendingConvIdRef.current = null;
+      allowAutoOpenThreadRef.current = true;
+      const group = nextGroupChats.find((t) => {
+        const ids =
+          t.conversationIds?.length > 0
+            ? t.conversationIds
+            : [t.conversationId];
+        return ids.includes(pendingConv) || t.conversationId === pendingConv;
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [contactId, sourceQuery, setSource, threadsEpoch]);
+      if (group) {
+        const ids =
+          group.conversationIds?.length > 0
+            ? group.conversationIds
+            : [group.conversationId];
+        setSelectedGroupConversationId(group.conversationId);
+        setActiveThread(`gfull-${ids.join("-")}`);
+        setThreadConversationIds(ids);
+        return;
+      }
+      if (dmIds.includes(pendingConv)) {
+        setSelectedGroupConversationId(null);
+        setActiveThread("dm");
+        setThreadConversationIds(dmIds);
+        return;
+      }
+    }
 
-  const openThread = useCallback((conversationIds: number[], key: string) => {
-    allowAutoOpenThreadRef.current = true;
-    setActiveThread(key);
-    setThreadConversationIds(conversationIds);
-  }, []);
+    if (hydrateOnly) {
+      setThreadConversationIds(null);
+      setActiveThread(null);
+      setSelectedGroupConversationId(null);
+      return;
+    }
+
+    setActiveThread((prev) => {
+      if (switchingContact) return null;
+      if (prev === "dm") return prev;
+      if (prev?.startsWith("gfull-")) {
+        const stillThere = nextGroupChats.some((t) => {
+          const ids =
+            t.conversationIds?.length > 0
+              ? t.conversationIds
+              : [t.conversationId];
+          return `gfull-${ids.join("-")}` === prev;
+        });
+        return stillThere ? prev : null;
+      }
+      return null;
+    });
+
+    let key = switchingContact ? null : activeThreadRef.current;
+    if (key?.startsWith("gfull-")) {
+      const stillThere = nextGroupChats.some((t) => {
+        const ids =
+          t.conversationIds?.length > 0
+            ? t.conversationIds
+            : [t.conversationId];
+        return `gfull-${ids.join("-")}` === key;
+      });
+      if (!stillThere) key = null;
+    } else if (key !== "dm") {
+      key = null;
+    }
+
+    if (switchingContact) {
+      setSelectedGroupConversationId(null);
+      if (dmIds.length > 0 && !hasGroups) {
+        key = "dm";
+        setActiveThread("dm");
+      } else {
+        setActiveThread(null);
+        setThreadConversationIds(null);
+        return;
+      }
+    } else if (!key) {
+      if (dmIds.length > 0 && !hasGroups) {
+        key = "dm";
+        setActiveThread("dm");
+      } else {
+        setThreadConversationIds(null);
+        return;
+      }
+    } else if (key === "dm" && dmIds.length === 0) {
+      setActiveThread(null);
+      setThreadConversationIds(null);
+      return;
+    }
+
+    let convIds: number[] | null = null;
+    if (key === "dm") {
+      convIds = dmIds;
+    } else if (key.startsWith("gfull-")) {
+      const g = nextGroupChats.find((t) => {
+        const ids =
+          t.conversationIds?.length > 0
+            ? t.conversationIds
+            : [t.conversationId];
+        return `gfull-${ids.join("-")}` === key;
+      });
+      if (g) {
+        convIds =
+          g.conversationIds?.length > 0
+            ? g.conversationIds
+            : [g.conversationId];
+      }
+    }
+    if (!convIds?.length) {
+      setThreadConversationIds(null);
+      return;
+    }
+    setThreadConversationIds(convIds);
+  }, [
+    contactId,
+    peopleTreeBundle,
+    peopleTreeExpandedId,
+    peopleTreeLoading,
+    setSource,
+  ]);
+
+  const openThread = useCallback(
+    (conversationIds: number[], key: string) => {
+      allowAutoOpenThreadRef.current = true;
+      setActiveThread(key);
+      setThreadConversationIds(conversationIds);
+      const convId =
+        key === "dm"
+          ? (conversationIds[0] ?? null)
+          : (conversationIds[0] ?? null);
+      syncConvUrl(convId);
+    },
+    [syncConvUrl],
+  );
 
   const selectedContacts = useMemo(() => {
     const selected = new Set(selectedIds);
@@ -716,8 +797,11 @@ export function BrowseShell({
         setSelectedGroupConversationId(null);
         setActiveThread(null);
         setThreadConversationIds(null);
+        setFocusedSearchHit(null);
+        syncConvUrl(null);
         return;
       }
+      setFocusedSearchHit(null);
       setSelectedGroupConversationId(g.conversationId);
       const key = `gfull-${g.conversationIds.join("-")}`;
       openThread(g.conversationIds, key);
@@ -727,6 +811,7 @@ export function BrowseShell({
       hasSelection,
       selectedGroupConversationId,
       openThread,
+      syncConvUrl,
     ],
   );
 
@@ -765,6 +850,7 @@ export function BrowseShell({
     if (dmIds.length === 0) return;
     clearGroupSelection();
     setSelectedGroupConversationId(null);
+    setFocusedSearchHit(null);
     openThread(dmIds, "dm");
   }, [yearly, openThread, clearGroupSelection]);
 
@@ -1291,18 +1377,37 @@ export function BrowseShell({
     const g = collapsedGroupChats.find(
       (t) => `gfull-${t.conversationIds.join("-")}` === activeThread,
     );
-    if (!g) return null;
-    return {
-      participants: injectSelectedParticipants([...(g.participants ?? [])]),
-      dateStart: g.dateStart,
-      dateEnd: g.dateEnd,
-      messageCount: g.messageCount,
-    };
+    if (g) {
+      return {
+        participants: injectSelectedParticipants([...(g.participants ?? [])]),
+        dateStart: g.dateStart,
+        dateEnd: g.dateEnd,
+        messageCount: g.messageCount,
+        title: g.title,
+        namedTitle: g.namedTitle,
+      };
+    }
+    if (
+      focusedSearchHit &&
+      focusedSearchHit.conversationType === "group" &&
+      `gfull-${focusedSearchHit.conversationId}` === activeThread
+    ) {
+      return {
+        participants: [],
+        dateStart: focusedSearchHit.dateStart ?? "",
+        dateEnd: focusedSearchHit.dateEnd ?? "",
+        messageCount: focusedSearchHit.matchCount,
+        title: focusedSearchHit.title,
+        namedTitle: null as string | null,
+      };
+    }
+    return null;
   }, [
     hasGroupSelection,
     collapsedGroupChats,
     activeThread,
     injectSelectedParticipants,
+    focusedSearchHit,
   ]);
 
   const selectedGroupRows = useMemo(
@@ -1459,31 +1564,41 @@ export function BrowseShell({
   return (
     <>
     <Group
-      id="mv-browse-main-v2"
+      id="mv-browse-main-v3"
       orientation="horizontal"
       className="h-full w-full"
       defaultLayout={mainLayout.defaultLayout}
       onLayoutChanged={mainLayout.onLayoutChanged}
     >
       <Panel
-        id="list"
-        panelRef={listPanelRef}
-        defaultSize={240}
-        minSize={100}
-        maxSize={480}
+        id="tree"
+        defaultSize={320}
+        minSize={220}
+        maxSize={560}
         groupResizeBehavior="preserve-pixel-size"
-        onResize={onListPanelResize}
         className="min-h-0"
       >
-        <BrowseContactList
+        <BrowsePeopleTreePane
           sectionLabel={sectionLabel}
-          selectAllRef={selectAllRef}
-          allGroupSelected={allGroupSelected}
-          visibleCount={visibleContacts.length}
+          contactQuery={query}
+          onContactQueryChange={setQuery}
+          grouped={grouped}
           sortedCount={sorted.length}
-          query={query}
-          onQueryChange={setQuery}
-          onToggleSelectAll={toggleSelectAllInGroup}
+          visibleCount={visibleContacts.length}
+          contactId={contactId}
+          contextMenuId={ctxMenu?.id ?? null}
+          selectedContactIds={selectedIds}
+          contactSelectAllRef={selectAllRef}
+          allContactsSelected={allGroupSelected}
+          onToggleSelectAllContacts={toggleSelectAllInGroup}
+          onContactSelectColumnClick={onSelectColumnClick}
+          onContactNamePhoneClick={onNamePhoneClick}
+          onContactContextMenu={openContactCtxMenu}
+          onToggleExpandContact={(id) => {
+            if (contactId === id) clearContactFocus();
+            else selectContact(id);
+          }}
+          expandedContactId={hasSelection ? null : contactId}
           onNewContact={(el) =>
             openCreateContactInPlace(
               "",
@@ -1513,50 +1628,27 @@ export function BrowseShell({
           editDisabled={!detail || hasSelection || formOpen}
           onTrashContact={() => requestTrash()}
           deleteDisabled={!canDelete || saving || groupTrashSaving}
-          sort={sort}
-          sortOrder={sortOrder}
-          onSortChange={setSort}
-          grouped={grouped}
-          contactId={contactId}
-          contextMenuId={ctxMenu?.id ?? null}
-          selectedIds={selectedIds}
-          onSelectColumnClick={onSelectColumnClick}
-          onNamePhoneClick={onNamePhoneClick}
-          onContextMenu={openContactCtxMenu}
-        />
-      </Panel>
-
-      <PaneSeparator orientation="vertical" />
-
-      <Panel
-        id="groups"
-        panelRef={groupsPanelRef}
-        defaultSize={360}
-        minSize={180}
-        maxSize={520}
-        collapsible
-        collapsedSize={0}
-        onResize={onGroupsPanelResize}
-        className="min-h-0 overflow-hidden"
-      >
-        <BrowseGroupChatsPane
-          items={collapsedGroupChats}
+          contactSort={sort}
+          contactSortOrder={sortOrder}
+          onContactSortChange={setSort}
+          yearly={yearly}
+          groupItems={collapsedGroupChats}
+          loadingThreads={loadingThreads}
           selectedConversationId={selectedGroupConversationId}
-          selectedIds={selectedGroupIds}
-          selectAllRef={groupSelectAllRef}
-          allSelected={allGroupsSelected}
-          onToggleSelectAll={toggleSelectAllGroups}
-          onSelectColumnClick={onGroupSelectColumnClick}
-          onRowClick={onGroupRowClick}
+          selectedGroupIds={selectedGroupIds}
+          groupSelectAllRef={groupSelectAllRef}
+          allGroupsSelected={allGroupsSelected}
+          onToggleSelectAllGroups={toggleSelectAllGroups}
+          onGroupSelectColumnClick={onGroupSelectColumnClick}
+          onGroupRowClick={onGroupRowClick}
           onTrashMessages={() => void moveGroupsToTrash()}
           trashDisabled={!canTrashGroups || saving || groupTrashSaving}
-          vaultReadOnly={vaultReadOnly}
           years={groupChatYears}
           filterYear={groupChatFilterYear}
           onFilterYearChange={setGroupChatFilterYear}
-          sortBy={groupChatSortBy}
-          sortOrder={groupChatSortOrder}
-          onSortChange={setGroupChatSort}
+          groupSortBy={groupChatSortBy}
+          groupSortOrder={groupChatSortOrder}
+          onGroupSortChange={setGroupChatSort}
           searchQuery={vaultSearch.draft}
           onSearchQueryChange={vaultSearch.setDraft}
           onSearchSubmit={(q) => {
@@ -1577,6 +1669,7 @@ export function BrowseShell({
           searchLoading={vaultSearch.loading}
           onSelectSearchHit={(hit: SearchConversationHit) => {
             clearGroupSelection();
+            setFocusedSearchHit(hit);
             setSelectedGroupConversationId(hit.conversationId);
             setScrollToMessageId(hit.topMatch?.id ?? null);
             openThread(
@@ -1586,7 +1679,9 @@ export function BrowseShell({
                 : "dm",
             );
           }}
-          emptyLabel={
+          onDirectClick={openDirectThread}
+          directActive={activeThread === "dm"}
+          emptyGroupsLabel={
             hasSelection
               ? loadingSelectionGroups
                 ? "Loading…"
@@ -1597,29 +1692,6 @@ export function BrowseShell({
                 ? "Loading…"
                 : "No group messages"
           }
-          directAvailable={
-            !hasSelection &&
-            contactId != null &&
-            yearly.some((y) => y.conversationIds.length > 0)
-          }
-          directActive={activeThread === "dm"}
-          directDateStart={
-            yearly.length > 0
-              ? yearly.reduce(
-                  (min, y) => (y.dateStart < min ? y.dateStart : min),
-                  yearly[0].dateStart,
-                )
-              : null
-          }
-          directDateEnd={
-            yearly.length > 0
-              ? yearly.reduce(
-                  (max, y) => (y.dateEnd > max ? y.dateEnd : max),
-                  yearly[0].dateEnd,
-                )
-              : null
-          }
-          onDirectClick={openDirectThread}
         />
       </Panel>
 
@@ -1628,18 +1700,11 @@ export function BrowseShell({
       <Panel id="thread" minSize="30%" className="min-h-0 min-w-0">
         <BrowseThreadColumn
           paneStorageKey={paneStorageKey}
-          selectedIds={selectedIds}
-          selectedContacts={selectedContacts}
-          hasSelection={hasSelection}
-          hasGroupSelection={hasGroupSelection}
-          selectedGroupIds={selectedGroupIds}
-          selectedGroupRows={selectedGroupRows}
           detail={detail}
           groupThread={groupThread}
           vaultReadOnly={vaultReadOnly}
           statusMsg={statusMsg}
           contactId={contactId}
-          contacts={contacts}
           activeThread={activeThread}
           sources={sources}
           messageSources={messageSources}
@@ -1649,21 +1714,91 @@ export function BrowseShell({
           yearly={yearly}
           messages={messages}
           loadingMessages={loadingMessages}
-          loadingSelectionGroups={loadingSelectionGroups}
           threadsLoadedFor={threadsLoadedFor}
           hasConversationChoices={
             !hasSelection &&
+            !hasGroupSelection &&
             (yearly.some((y) => y.conversationIds.length > 0) ||
               groupChats.length > 0)
           }
-          conversationsPanelCollapsed={groupsCollapsed}
           highlightTerms={vaultSearch.highlightTerms}
           scrollToMessageId={scrollToMessageId}
           onContactNameClick={onContactNameClick}
           onGroupParticipantClick={onGroupParticipantClick}
+          readerOnly
+          hasSelection={hasSelection}
+          hasGroupSelection={hasGroupSelection}
+        />
+      </Panel>
+
+      <PaneSeparator orientation="vertical" />
+
+      <Panel
+        id="inspector"
+        panelRef={inspectorPanelRef}
+        defaultSize={280}
+        minSize={200}
+        maxSize={420}
+        collapsible
+        collapsedSize={0}
+        onResize={persistInspectorCollapsed}
+        className="min-h-0 overflow-hidden"
+      >
+        <BrowseDetailsInspector
+          hasContactSelection={hasSelection}
+          hasGroupSelection={hasGroupSelection}
+          selectedContacts={selectedContacts}
+          selectedGroupRows={selectedGroupRows}
+          focusedContact={
+            contactId != null
+              ? detail?.id === contactId
+                ? detail
+                : (contacts.find((c) => c.id === contactId) ?? null)
+              : null
+          }
+          detail={detail}
+          yearly={yearly}
+          groupChats={groupChats}
+          activeThread={activeThread}
+          groupThreadMeta={groupThread}
+          openConversation={
+            selectedGroupConversationId != null
+              ? (collapsedById.get(selectedGroupConversationId) ??
+                (focusedSearchHit &&
+                focusedSearchHit.conversationId === selectedGroupConversationId
+                  ? ({
+                      conversationId: focusedSearchHit.conversationId,
+                      conversationIds: [focusedSearchHit.conversationId],
+                      title: focusedSearchHit.title,
+                      titleFull: focusedSearchHit.title,
+                      namedTitle: null,
+                      participantCount: 0,
+                      participantNames: [],
+                      participantHandles: [],
+                      participants: [],
+                      messageCount: focusedSearchHit.matchCount,
+                      dateStart: focusedSearchHit.dateStart ?? "",
+                      dateEnd: focusedSearchHit.dateEnd ?? "",
+                      newestYear: focusedSearchHit.dateEnd
+                        ? Number(focusedSearchHit.dateEnd.slice(0, 4)) || 0
+                        : 0,
+                    } satisfies CollapsedGroupConversation)
+                  : null))
+              : null
+          }
           onClearContactSelection={clearSelection}
           onClearGroupSelection={clearGroupSelection}
-          onClearContactFocus={clearContactFocus}
+          onEditContact={
+            detail && !hasSelection && !formOpen
+              ? () =>
+                  beginContactEdit(
+                    contactFormAnchorFromRect(
+                      new DOMRect(window.innerWidth - 320, 80, 0, 0),
+                    ),
+                  )
+              : undefined
+          }
+          vaultReadOnly={vaultReadOnly}
         />
       </Panel>
     </Group>

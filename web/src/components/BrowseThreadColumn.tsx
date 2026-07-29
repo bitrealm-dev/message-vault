@@ -1,18 +1,12 @@
 "use client";
 
-import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type {
   ContactDetail,
-  ContactListItem,
   GroupParticipant,
   MessageRow,
   YearThread,
 } from "@/lib/types";
 import { GroupParticipantChip } from "./GroupParticipantChip";
-import {
-  browseSelectionSummaryFlags,
-  BrowseSelectionSummary,
-} from "./BrowseSelectionSummary";
 import {
   BrowseThreadPane,
   type BrowseGroupThreadMeta,
@@ -20,18 +14,11 @@ import {
 
 export function BrowseThreadColumn({
   paneStorageKey,
-  selectedIds,
-  selectedContacts,
-  hasSelection,
-  hasGroupSelection,
-  selectedGroupIds,
-  selectedGroupRows,
   detail,
   groupThread,
   vaultReadOnly,
   statusMsg,
   contactId,
-  contacts,
   activeThread,
   sources,
   messageSources,
@@ -41,31 +28,22 @@ export function BrowseThreadColumn({
   yearly,
   messages,
   loadingMessages,
-  loadingSelectionGroups,
   threadsLoadedFor,
   hasConversationChoices = false,
-  conversationsPanelCollapsed = false,
   highlightTerms = [],
   scrollToMessageId = null,
   onContactNameClick,
   onGroupParticipantClick,
-  onClearContactSelection,
-  onClearGroupSelection,
-  onClearContactFocus,
+  readerOnly = false,
+  hasSelection = false,
+  hasGroupSelection = false,
 }: {
   paneStorageKey: string;
-  selectedIds: ReadonlySet<number>;
-  selectedContacts: ContactListItem[];
-  hasSelection: boolean;
-  hasGroupSelection: boolean;
-  selectedGroupIds: ReadonlySet<number>;
-  selectedGroupRows: CollapsedGroupConversation[];
   detail: ContactDetail | null;
   groupThread: BrowseGroupThreadMeta | null;
   vaultReadOnly: boolean;
   statusMsg: string | null;
   contactId: number | null;
-  contacts: ContactListItem[];
   activeThread: string | null;
   sources: string[];
   messageSources: string[];
@@ -75,10 +53,8 @@ export function BrowseThreadColumn({
   yearly: YearThread[];
   messages: MessageRow[];
   loadingMessages: boolean;
-  loadingSelectionGroups: boolean;
   threadsLoadedFor: number | null;
   hasConversationChoices?: boolean;
-  conversationsPanelCollapsed?: boolean;
   highlightTerms?: string[];
   scrollToMessageId?: number | null;
   onContactNameClick: (anchorRect: DOMRect) => void;
@@ -86,24 +62,15 @@ export function BrowseThreadColumn({
     participant: GroupParticipant,
     anchorRect: DOMRect,
   ) => void;
-  onClearContactSelection: () => void;
-  onClearGroupSelection: () => void;
-  onClearContactFocus: () => void;
+  /** When true, always prefer the message reader over empty/selection states. */
+  readerOnly?: boolean;
+  hasSelection?: boolean;
+  hasGroupSelection?: boolean;
 }) {
-  const {
-    showContactsCard,
-    showGroupsCard,
-    showFocusContactCard,
-    showThreadPane,
-    focusedContact,
-  } = browseSelectionSummaryFlags({
-    hasSelection,
-    hasGroupSelection,
-    activeThread,
-    contactId,
-    detail,
-    contacts,
-  });
+  const showReader =
+    readerOnly
+      ? !hasSelection && !hasGroupSelection && activeThread != null
+      : activeThread != null;
 
   return (
     <div
@@ -112,11 +79,7 @@ export function BrowseThreadColumn({
     >
       <div className="flex h-[45px] shrink-0 items-center gap-2 border-b border-border px-5">
         <div className="flex min-w-0 flex-1 items-center justify-center">
-          {selectedIds.size === 1 && selectedContacts[0] ? (
-            <h1 className="truncate text-lg font-semibold tracking-tight text-text">
-              {selectedContacts[0].displayName}
-            </h1>
-          ) : !hasSelection && detail && !groupThread ? (
+          {!hasSelection && detail && !groupThread ? (
             <h1 className="truncate text-lg font-semibold tracking-tight text-text">
               {!vaultReadOnly ? (
                 <GroupParticipantChip
@@ -136,21 +99,7 @@ export function BrowseThreadColumn({
         )}
       </div>
 
-      {showContactsCard || showGroupsCard || showFocusContactCard ? (
-        <BrowseSelectionSummary
-          showContactsCard={showContactsCard}
-          showGroupsCard={showGroupsCard}
-          showFocusContactCard={showFocusContactCard}
-          selectedContactCount={selectedIds.size}
-          selectedGroupCount={selectedGroupIds.size}
-          selectedContacts={selectedContacts}
-          selectedGroupRows={selectedGroupRows}
-          focusedContact={focusedContact}
-          onClearContactSelection={onClearContactSelection}
-          onClearGroupSelection={onClearGroupSelection}
-          onClearContactFocus={onClearContactFocus}
-        />
-      ) : showThreadPane ? (
+      {showReader ? (
         <div className="min-h-0 flex-1">
           <BrowseThreadPane
             detail={detail}
@@ -162,23 +111,29 @@ export function BrowseThreadColumn({
             yearly={yearly}
             messages={messages}
             loadingMessages={loadingMessages}
-            threadsReady={
-              hasSelection
-                ? !loadingSelectionGroups
-                : threadsLoadedFor === contactId
-            }
+            threadsReady={threadsLoadedFor === contactId}
             activeThread={activeThread}
             groupThread={groupThread}
             onParticipantClick={
               vaultReadOnly ? undefined : onGroupParticipantClick
             }
             hasConversationChoices={hasConversationChoices}
-            conversationsPanelCollapsed={conversationsPanelCollapsed}
+            conversationsPanelCollapsed={false}
             highlightTerms={highlightTerms}
             scrollToMessageId={scrollToMessageId}
           />
         </div>
-      ) : null}
+      ) : (
+        <div className="flex min-h-0 flex-1 items-start justify-center px-5 pt-8">
+          <p className="max-w-sm text-center text-[13px] text-muted">
+            {hasSelection || hasGroupSelection
+              ? "Selection details are shown in the inspector on the right."
+              : contactId != null
+                ? "Choose a Direct or group conversation in the tree."
+                : "Select a person or conversation to read messages."}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
