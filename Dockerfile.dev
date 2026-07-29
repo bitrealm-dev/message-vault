@@ -1,0 +1,28 @@
+# Dev toolchain image: Rust + Node + FFmpeg.
+# Source is bind-mounted at runtime (see docker-compose.yml).
+FROM rust:1.85-bookworm
+
+# Node 20 from the official image (avoids NodeSource apt scripts).
+COPY --from=node:20-bookworm /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:20-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+  && ln -sf /usr/local/lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    ffmpeg \
+    python3 \
+    build-essential \
+    pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY scripts/docker-entrypoint-dev.sh /usr/local/bin/docker-entrypoint-dev.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-dev.sh
+
+EXPOSE 3000 8080
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-dev.sh"]

@@ -1,0 +1,82 @@
+# Multi-stage release image built from the current checkout (no published binaries).
+# Usage: docker compose --profile release up --build
+
+# -----------------------------------------------------------------------------
+# Stage 1: Rust binary
+# -----------------------------------------------------------------------------
+FROM rust:1.85-bookworm AS rust-builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY crates ./crates
+
+RUN cargo build --release --bin message-vault-rs
+
+# -----------------------------------------------------------------------------
+# Stage 2: Next.js production build
+# -----------------------------------------------------------------------------
+FROM node:20-bookworm AS web-builder
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3 \
+    build-essential \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 3: slim runtime
+# -----------------------------------------------------------------------------
+FROM node:20-bookworm-slim AS runtime
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    ffmpeg \
+    tini \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Rust CLI / serve binary
+COPY --from=rust-builder /src/target/release/message-vault-rs /usr/local/bin/message-vault-rs
+
+# Demo bundle (seeded on first start when VAULT_MODE=demo)
+COPY demo ./demo
+
+# Container config template
+COPY config/config.docker.toml ./config/config.docker.toml
+
+# Next.js standalone (built from web/ → server.js at standalone root)
+COPY --from=web-builder /src/web/.next/standalone ./
+COPY --from=web-builder /src/web/.next/static ./.next/static
+
+# Web tooling for process-assets after demo seed / imports (tsx, better-sqlite3, ffmpeg codecs)
+COPY --from=web-builder /src/web/scripts ./web/scripts
+COPY --from=web-builder /src/web/package.json ./web/package.json
+COPY --from=web-builder /src/web/node_modules ./web/node_modules
+
+COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
+  && mkdir -p /app/data \
+  && chown -R node:node /app
+
+USER node
+
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000 \
+    VAULT_DB=/app/data/vault.db \
+    VAULT_DATA_DIR=/app/data
+
+EXPOSE 3000 8080
+VOLUME ["/app/data"]
+
+ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint-release.sh"]

@@ -24,7 +24,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | Script | Purpose |
 |--------|---------|
 | `npm run dev` | Next.js dev server |
-| `npm run build` / `start` | Production build / serve |
+| `npm run build` / `start` | Production build / serve (`output: "standalone"` for Docker release) |
 | `npm run lint` | ESLint |
 | `npm test` | `tsx --test src/**/*.test.ts` |
 | `npm run process-assets` | Convert media for the browser |

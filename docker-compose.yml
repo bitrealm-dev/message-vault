@@ -1,0 +1,53 @@
+# Message Vault — Option C: two profiles
+#
+# Dev (default via committed .env COMPOSE_PROFILES=dev):
+#   docker compose up
+#   docker compose up --build   # when Dockerfile.dev / base deps change
+#
+# Release (slim image from current checkout — do not enable both profiles):
+#   COMPOSE_PROFILES=release docker compose up --build
+#
+# Personal data (empty vault; create an account in the UI):
+#   VAULT_MODE=personal docker compose up
+
+services:
+  vault:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+      NODE_ENV: development
+      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-false}
+    volumes:
+      - .:/app
+      # Persist build caches across container recreates (bind mount would hide host dirs)
+      - cargo-target:/app/target
+      - cargo-registry:/usr/local/cargo/registry
+      - web-node-modules:/app/web/node_modules
+      - vault-data:/app/data
+    stdin_open: true
+    tty: true
+
+  vault-release:
+    profiles: [release]
+    build:
+      context: .
+      dockerfile: Dockerfile.release
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+    volumes:
+      - vault-data:/app/data
+
+volumes:
+  cargo-target:
+  cargo-registry:
+  web-node-modules:
+  vault-data:

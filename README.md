@@ -25,16 +25,25 @@ Contributor setup and troubleshooting:
 
 ## Quick start (demo)
 
+**Native:**
+
 ```bash
 ./scripts/setup-demo.sh
 cd web && npm ci && npm run process-assets && npm run dev
+```
+
+**Docker** (no host Rust/Node toolchain; pulls/builds from your checkout):
+
+```bash
+docker compose up
 ```
 
 Open <http://localhost:3000/login> and sign in as **`demo`** (or create another
 account).
 
 Windows PowerShell steps and full prerequisites are in the
-[developer setup guide](docs/maintainers/development.md).
+[developer setup guide](docs/maintainers/development.md). Docker profiles
+(dev + release): [Docker guide](https://bitrealm-dev.github.io/message-vault-rs/get-started/docker/).
 
 ## Import your own messages
 
@@ -54,8 +63,11 @@ crates/
   message-json/     # vault JSONL schemas
   demo-seed/        # regenerate committed demo data
 demo/               # committed demo bundle
-config/             # config.toml.example and CSV/VCF examples
-scripts/            # setup-demo, ingest helpers, smoke tests
+config/             # config.toml.example, config.docker.toml, CSV/VCF examples
+scripts/            # setup-demo, docker entrypoints, smoke tests
 web/                # Next.js UI
 docs/               # Starlight site + maintainers/
+Dockerfile.dev      # Compose default profile (toolchain + bind mount)
+Dockerfile.release  # Compose --profile release (slim multi-stage image)
+docker-compose.yml
 ```

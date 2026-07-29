@@ -29,6 +29,7 @@ export default defineConfig({
           label: 'Get started',
           items: [
             'get-started/install',
+            'get-started/docker',
             'get-started/try-the-demo',
             'get-started/first-personal-import',
           ],
