@@ -12,14 +12,29 @@ export function phoneDigits(handle: string): string {
   return digits;
 }
 
+export const VAULT_READ_ONLY_MESSAGE = "Vault is in read-only mode";
+
 export function isVaultReadOnly(): boolean {
   return loadAccount(currentAccountId()).read_only;
 }
 
 export function assertVaultWritable(): void {
   if (isVaultReadOnly()) {
-    throw new Error("Vault is in read-only mode");
+    throw new Error(VAULT_READ_ONLY_MESSAGE);
   }
+}
+
+/** True when an error message indicates the vault is locked for Web UI writes. */
+export function isReadOnlyErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("read-only");
+}
+
+/** Prefer 403 for read-only vault errors over a route's usual fallback status. */
+export function mutationErrorStatus(
+  message: string,
+  fallback: number = 500,
+): number {
+  return isReadOnlyErrorMessage(message) ? 403 : fallback;
 }
 
 /** True when handle belongs to the vault owner or web account email. */

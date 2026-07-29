@@ -4,6 +4,7 @@ import {
 } from "@/lib/accountContext";
 import { deleteAllMessagesForAccount } from "@/lib/messagesWrite";
 import { NextResponse } from "next/server";
+import { mutationErrorStatus } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,9 @@ export async function DELETE() {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "delete messages failed";
-    const status = message.includes("read-only") ? 403 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: mutationErrorStatus(message, 500) },
+    );
   }
 }

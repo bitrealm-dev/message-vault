@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
+import { assertVaultWritable } from "./owner";
 import { dbPath } from "./paths";
 import { resetDb } from "./db";
 
@@ -52,6 +53,7 @@ export function trashHandlesInDb(
 
 /** Move a handle into Trash (may still belong to a contact). */
 export function trashHandle(handle: string): void {
+  assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");
@@ -67,6 +69,7 @@ export function trashHandle(handle: string): void {
 
 /** Restore a handle from Trash. */
 export function restoreHandle(handle: string): void {
+  assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");
@@ -89,6 +92,7 @@ export function restoreHandle(handle: string): void {
  * (messages-only trash for a live contact).
  */
 export function permanentlyDeleteHandle(handle: string): void {
+  assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");

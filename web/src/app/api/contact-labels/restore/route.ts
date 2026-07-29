@@ -5,6 +5,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
+import { mutationErrorStatus } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -43,7 +44,10 @@ export async function POST(req: Request) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "restore failed";
-    const status = message.includes("already exists") ? 409 : 400;
+    const status = mutationErrorStatus(
+      message,
+      message.includes("already exists") ? 409 : 400,
+    );
     return NextResponse.json({ error: message }, { status });
   }
 }

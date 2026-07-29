@@ -270,7 +270,7 @@ export function createAccount(input: {
 
     try {
       db.prepare(
-        `INSERT INTO accounts (id, username, read_only) VALUES (?, ?, 0)`,
+        `INSERT INTO accounts (id, username, read_only) VALUES (?, ?, 1)`,
       ).run(id, username);
       writeAccountEmails(db, id, emails);
       createVaultOwner(db, id, {
@@ -287,7 +287,7 @@ export function createAccount(input: {
       id,
       username,
       emails,
-      read_only: false,
+      read_only: true,
     };
   } finally {
     db.close();

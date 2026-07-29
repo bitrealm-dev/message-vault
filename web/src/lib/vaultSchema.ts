@@ -59,7 +59,12 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 0
+      read_only INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS account_emails (
@@ -325,6 +330,26 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateContactGroupsToLabels(db);
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
+  migrateAccountsDefaultReadOnly(db);
+}
+
+/** Marker for the one-time migration that locks existing accounts by default. */
+export const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY =
+  "accounts_default_read_only_v1";
+
+/** One-time: lock every existing account. Later unlocks are preserved. */
+function migrateAccountsDefaultReadOnly(db: Database.Database): void {
+  if (!tableExists(db, "accounts") || !tableExists(db, "schema_meta")) {
+    return;
+  }
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(ACCOUNTS_DEFAULT_READ_ONLY_META_KEY) as { n: number };
+  if (already.n > 0) return;
+  db.prepare(`UPDATE accounts SET read_only = 1`).run();
+  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+    ACCOUNTS_DEFAULT_READ_ONLY_META_KEY,
+  );
 }
 
 /** Denormalize account_id onto messages; scope GUID uniqueness per account. */
@@ -519,7 +544,7 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
     CREATE TABLE accounts_new (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 0
+      read_only INTEGER NOT NULL DEFAULT 1
     );
     INSERT INTO accounts_new (id, username, read_only)
       SELECT id, username, read_only FROM accounts;

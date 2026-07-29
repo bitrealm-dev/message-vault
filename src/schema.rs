@@ -582,13 +582,16 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
 }
 
 /// Web login accounts and per-account vault owner profile tables.
+/// Marker for the one-time migration that locks existing accounts by default.
+pub const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY: &str = "accounts_default_read_only_v1";
+
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 0
+            read_only INTEGER NOT NULL DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS account_emails (
@@ -633,10 +636,34 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL,
             PRIMARY KEY (account_id, key)
         );
+
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         "#,
     )?;
     migrate_legacy_accounts_email(conn)?;
     migrate_vault_owner_name_columns(conn)?;
+    migrate_accounts_default_read_only(conn)?;
+    Ok(())
+}
+
+/// One-time: lock every existing account. Later unlocks are preserved.
+fn migrate_accounts_default_read_only(conn: &Connection) -> Result<()> {
+    let already: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+        params![ACCOUNTS_DEFAULT_READ_ONLY_META_KEY],
+        |row| row.get(0),
+    )?;
+    if already {
+        return Ok(());
+    }
+    conn.execute("UPDATE accounts SET read_only = 1", [])?;
+    conn.execute(
+        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
+        params![ACCOUNTS_DEFAULT_READ_ONLY_META_KEY],
+    )?;
     Ok(())
 }
 
@@ -684,7 +711,7 @@ fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
         CREATE TABLE accounts_new (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 0
+            read_only INTEGER NOT NULL DEFAULT 1
         );
         INSERT INTO accounts_new (id, username, read_only)
             SELECT id, username, read_only FROM accounts;
@@ -837,5 +864,69 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM staging_messages", [], |r| r.get(0))
             .unwrap();
         assert_eq!(msgs, 1);
+    }
+
+    #[test]
+    fn new_accounts_default_to_read_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_accounts_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES (?1, 'fresh')",
+            params![A1],
+        )
+        .unwrap();
+        let read_only: i64 = conn
+            .query_row(
+                "SELECT read_only FROM accounts WHERE id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(read_only, 1);
+    }
+
+    #[test]
+    fn migrate_locks_existing_accounts_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                read_only INTEGER NOT NULL DEFAULT 0
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
+            params![A1],
+        )
+        .unwrap();
+
+        ensure_accounts_schema(&conn).unwrap();
+        let locked: i64 = conn
+            .query_row(
+                "SELECT read_only FROM accounts WHERE id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(locked, 1);
+
+        conn.execute(
+            "UPDATE accounts SET read_only = 0 WHERE id = ?1",
+            params![A1],
+        )
+        .unwrap();
+        ensure_accounts_schema(&conn).unwrap();
+        let still_unlocked: i64 = conn
+            .query_row(
+                "SELECT read_only FROM accounts WHERE id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_unlocked, 0);
     }
 }

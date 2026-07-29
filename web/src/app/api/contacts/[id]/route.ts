@@ -5,6 +5,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
+import { mutationErrorStatus } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -102,7 +103,10 @@ export async function PATCH(req: Request, { params }: Params) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "update failed";
-    const status = message.includes("not found") ? 404 : 500;
+    const status = mutationErrorStatus(
+      message,
+      message.includes("not found") ? 404 : 500,
+    );
     return NextResponse.json({ error: message }, { status });
   }
 }

@@ -176,6 +176,10 @@ export function SettingsAccountForm() {
   };
 
   const performDelete = async () => {
+    if (data?.readOnly) {
+      setError("Turn off Read-only mode and save before deleting this account.");
+      return;
+    }
     setDeleting(true);
     setError(null);
     try {
@@ -195,6 +199,12 @@ export function SettingsAccountForm() {
   };
 
   const deleteAllMessages = async () => {
+    if (data?.readOnly) {
+      setError(
+        "Turn off Read-only mode and save before deleting all messages.",
+      );
+      return;
+    }
     setDeletingMessages(true);
     setError(null);
     try {
@@ -215,6 +225,8 @@ export function SettingsAccountForm() {
     return <p className="text-[14px] text-muted">Loading…</p>;
   }
 
+  /** Saved vault lock — ignore unsaved checkbox toggles for destructive actions. */
+  const vaultLocked = data?.readOnly === true;
   const additionalEmails = emails.filter((entry) => !entry.isPrimary);
 
   return (
@@ -290,7 +302,8 @@ export function SettingsAccountForm() {
             <span>
               <span className="block text-[13px] text-text">Read-only mode</span>
               <span className="block text-[12px] text-muted">
-                Prevent accidental edits to contacts, groups, and messages.
+                Prevent edits and destructive actions in the Web UI. Imports
+                through the API or CLI remain available.
               </span>
             </span>
           </label>
@@ -407,6 +420,12 @@ export function SettingsAccountForm() {
 
           {dangerZoneOpen && (
             <div className="mt-4 space-y-4 pl-6">
+              {vaultLocked ? (
+                <p className="text-[13px] text-muted">
+                  Turn off Read-only mode above and save before using these
+                  destructive actions.
+                </p>
+              ) : null}
               <div className="flex items-center justify-between gap-4">
                 <p className="min-w-0 flex-1 text-[13px] text-muted">
                   Permanently delete every conversation and message for this account. Contacts,
@@ -414,7 +433,7 @@ export function SettingsAccountForm() {
                 </p>
                 <button
                   type="button"
-                  disabled={saving || deleting || deletingMessages}
+                  disabled={vaultLocked || saving || deleting || deletingMessages}
                   onClick={() => void deleteAllMessages()}
                   className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                 >
@@ -429,7 +448,7 @@ export function SettingsAccountForm() {
                   </p>
                   <button
                     type="button"
-                    disabled={saving || deleting || deletingMessages}
+                    disabled={vaultLocked || saving || deleting || deletingMessages}
                     onClick={() => setDeleteDialogOpen(true)}
                     className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                   >

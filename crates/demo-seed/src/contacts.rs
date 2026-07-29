@@ -79,7 +79,7 @@ emails = ["demo.ingest@example.com"]
 [account]
 username = "demo"
 login_email = "demo@example.com"
-read_only = false
+read_only = true
 "#
     );
     fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;

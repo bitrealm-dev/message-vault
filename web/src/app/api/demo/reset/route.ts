@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { unauthorizedResponse, withAccountHandler } from "@/lib/accountContext";
-import { assertVaultWritable } from "@/lib/owner";
+import { assertVaultWritable, mutationErrorStatus } from "@/lib/owner";
 import { configTomlPath, repoRoot } from "@/lib/paths";
 import { NextResponse } from "next/server";
 import { parse } from "smol-toml";
@@ -56,7 +56,9 @@ export async function POST() {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "read-only";
-    const status = message.includes("read-only") ? 403 : 500;
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: mutationErrorStatus(message, 500) },
+    );
   }
 }

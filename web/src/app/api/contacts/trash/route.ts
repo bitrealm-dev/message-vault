@@ -13,6 +13,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
+import { mutationErrorStatus } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -67,7 +68,10 @@ export async function POST(req: Request) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "trash failed";
-    const status = message.includes("not found") ? 404 : 400;
+    const status = mutationErrorStatus(
+      message,
+      message.includes("not found") ? 404 : 400,
+    );
     return NextResponse.json({ error: message }, { status });
   }
 }
@@ -104,7 +108,10 @@ export async function DELETE(req: Request) {
           : permanent
             ? "delete forever failed"
             : "restore failed";
-      return NextResponse.json({ error: message }, { status: 400 });
+      return NextResponse.json(
+        { error: message },
+        { status: mutationErrorStatus(message, 400) },
+      );
     }
   }
 
@@ -133,7 +140,10 @@ export async function DELETE(req: Request) {
         : permanent
           ? "delete forever failed"
           : "restore failed";
-    const status = message.includes("not in trash") ? 400 : 500;
+    const status = mutationErrorStatus(
+      message,
+      message.includes("not in trash") ? 400 : 500,
+    );
     return NextResponse.json({ error: message }, { status });
   }
 }

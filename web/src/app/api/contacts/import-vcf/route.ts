@@ -4,6 +4,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
+import { mutationErrorStatus } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -66,10 +67,9 @@ export async function POST(req: Request) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "import failed";
-    const status =
-      message.includes("read-only") || message.includes("Read-only")
-        ? 403
-        : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: mutationErrorStatus(message, 500) },
+    );
   }
 }

@@ -12,7 +12,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { isDemoAccount } from "@/lib/demoAccount";
-import { assertVaultWritable } from "@/lib/owner";
+import { assertVaultWritable, mutationErrorStatus } from "@/lib/owner";
 import { loadVaultOwner, saveVaultOwner } from "@/lib/vaultOwner";
 import { clearAccountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
@@ -198,14 +198,17 @@ export async function PATCH(req: Request) {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "update failed";
-    const status = message.includes("read-only") ? 403 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: mutationErrorStatus(message, 500) },
+    );
   }
 }
 
 export async function DELETE() {
   try {
     return await withAccountHandler(async (accountId) => {
+      assertVaultWritable();
       deleteAccount(accountId);
       const store = await cookies();
       store.set(clearAccountCookieOptions());
@@ -215,6 +218,9 @@ export async function DELETE() {
     const auth = authError(err);
     if (auth) return auth;
     const message = err instanceof Error ? err.message : "delete failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message },
+      { status: mutationErrorStatus(message, 500) },
+    );
   }
 }

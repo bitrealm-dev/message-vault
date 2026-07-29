@@ -67,11 +67,19 @@ function loadRawConfig(): RawConfig {
 }
 
 export function dbPath(): string {
+  const fromEnv = process.env.VAULT_DB?.trim();
+  if (fromEnv) {
+    return path.isAbsolute(fromEnv) ? fromEnv : path.join(repoRoot(), fromEnv);
+  }
   const cfg = loadRawConfig();
   return resolveConfiguredPath(cfg.paths?.db, DEFAULT_DB);
 }
 
 export function dataDir(): string {
+  const fromEnv = process.env.VAULT_DATA_DIR?.trim();
+  if (fromEnv) {
+    return path.isAbsolute(fromEnv) ? fromEnv : path.join(repoRoot(), fromEnv);
+  }
   const cfg = loadRawConfig();
   return resolveConfiguredPath(cfg.paths?.data_dir, DEFAULT_DATA_DIR);
 }
