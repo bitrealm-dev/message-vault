@@ -62,8 +62,13 @@ npm run process-assets
 npm run dev
 ```
 
-Open <http://localhost:3000>. Keep the final PowerShell window running while
+Open <http://localhost:3000/login>. Sign in as the seeded **`demo`** account
+(or create another account). Keep the final PowerShell window running while
 using the application.
+
+`reset-demo` overwrites `config/config.toml` with the demo config, which has
+`[server]` commented out. Before running `cargo run --release -- serve` for
+remote import, restore `config/config.toml.example` (or uncomment `[server]`).
 
 The repository's `.cargo/config.toml` gives Windows release binaries a larger
 stack. This is needed because the default Windows stack can overflow while
@@ -102,8 +107,11 @@ npm run process-assets
 npm run dev
 ```
 
-Open <http://localhost:3000>. Keep the development server running while using
-the application.
+Open <http://localhost:3000/login>. Sign in as **`demo`** (or create another
+account). Keep the development server running while using the application.
+
+`setup-demo.sh` runs `reset-demo`, which overwrites `config/config.toml` and
+leaves `[server]` disabled until you restore the example config.
 
 ## Run with personal data
 
@@ -128,12 +136,16 @@ cp config/exclude.csv.example config/exclude.csv
 Edit `config/config.toml`:
 
 1. Adjust `[paths]` for the local machine.
-2. Uncomment `[server]` (or keep it if already present).
+2. Ensure `[server]` is present (the example file enables it).
 3. Leave `bind = "127.0.0.1:8080"` for local-only access.
-4. Create a web account and use its Import API token from Settings for `vault-push`.
+4. Create a web account and use its Import API token from
+   **Settings → Account** for `vault-push`.
 
 Source names are not listed in TOML — each import/upload supplies its own
-source id (asset folders under `data/<account_id>/<source_id>/`).
+source id (asset folders under `data/<account_id>/<source_id>/`). Runtime
+contacts live at `data/<account_id>/contacts.csv` and `exclude.csv` (created
+with empty headers on first use). The files under `config/` are optional
+templates only.
 
 Start the import API from the repository root:
 
@@ -151,8 +163,12 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, create an account, and copy its Import API token
-from **Settings**. Keep the import API running while pushing JSONL from
-[message-exporters](https://github.com/bitrealm-dev/message-exporters).
+from **Settings → Account**. Keep the import API running while pushing JSONL
+from [message-exporters](https://github.com/bitrealm-dev/message-exporters).
+
+New accounts start in read-only mode for the web UI. Turn that off in Settings
+when you need to edit contacts or trash items. CLI and HTTP imports still work
+while read-only is enabled.
 
 ## Common checks
 
@@ -168,6 +184,7 @@ Check the web application:
 ```text
 cd web
 npm run lint
+npm test
 npm run build
 ```
 
@@ -203,6 +220,12 @@ mkdir -p data
 ```
 
 Then rerun `cargo run --release -- reset-demo`.
+
+### `serve` fails with missing `[server]`
+
+`reset-demo` installs the demo config, which comments out `[server]`. Copy
+`config/config.toml.example` again (or uncomment `[server]` and set `bind`),
+then rerun `cargo run --release -- serve`.
 
 ### Media conversion is skipped or fails
 

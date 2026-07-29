@@ -26,8 +26,8 @@ cd web && npm run process-assets
 
 ## Exercises
 
-- **Contacts / All / Excluded / No Messages** — CSV `exclude` and zero-message rows
-- **Unassigned** — handles with messages but no CSV row (phone + email-only)
+- **Active / All / Inactive / No Messages** — CSV `exclude` and zero-message rows
+- **Unassigned handles** — messages with no CSV contact row (phone + email-only; Trash APIs)
 - **Frequent / lapsed** — ~15 contacts busy in the past 3 years; ~10 mostly older history
 - **High volume** — a couple 1:1 threads with 1000+ messages
 - **Group Chats** — ~200 threads, many untitled, some phone-number-only participants, sizes up to 20
