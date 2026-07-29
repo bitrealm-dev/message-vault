@@ -61,3 +61,8 @@ target
 # Python
 **/__pycache__/
 *.py[cod]
+
+# Starlight documentation output
+/docs/.astro/
+/docs/dist/
+/docs/node_modules/

@@ -1,0 +1,61 @@
+---
+title: Message Vault
+description: Keep your text-message history in a local SQLite vault and browse it on a computer you control.
+template: splash
+hero:
+  title: Your messages, on your machine
+  tagline: Import phone backup exports into SQLite and browse them in a local website—search conversations, open attachments, and combine iPhone and Android archives.
+  actions:
+    - text: Try the demo
+      link: /get-started/try-the-demo/
+      icon: right-arrow
+      variant: primary
+    - text: Install
+      link: /get-started/install/
+      icon: download
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+## How it works
+
+```text
+1. Export     Phone backup → JSONL + attachments/
+              (Message Exporters)
+
+2. Import     Push or ingest that folder into the vault
+
+3. Browse     Open the website on your computer
+```
+
+Turning a phone backup into JSONL is a separate project:
+[Message Exporters](https://bitrealm-dev.github.io/message-exporters/).
+This site covers the vault: storage, import, and the browser UI.
+
+Your messages stay in a SQLite database on a machine you control. They are not
+uploaded to a cloud service by this project.
+
+<CardGrid>
+  <Card title="Try sample data" icon="rocket">
+    Load the committed demo vault and click through contacts without a real
+    backup. [Try the demo](/get-started/try-the-demo/).
+  </Card>
+  <Card title="Import your archive" icon="document">
+    Create an account, copy your Import API token, and push JSONL from Message
+    Exporters. [First personal import](/get-started/first-personal-import/).
+  </Card>
+  <Card title="Browse the vault" icon="open-book">
+    Use Active / Inactive contacts, Group Messages, Message Sources, Trash, and
+    Settings. [Navigation and sources](/browse/navigation-and-sources/).
+  </Card>
+  <Card title="Export to Obsidian" icon="puzzle">
+    Write bubble-style markdown for 1:1 threads.
+    [Obsidian export](/export-elsewhere/obsidian/).
+  </Card>
+</CardGrid>
+
+<Aside type="tip" title="Two processes for remote import">
+  Browsing only needs the Next.js web UI. Remote import also needs the Rust
+  import API (`cargo run --release -- serve`). Same-machine `ingest` does not
+  require `serve`.
+</Aside>
