@@ -6,6 +6,7 @@ import type { RefObject } from "react";
 import { NewContactIcon } from "./BrowseContactList";
 import {
   ChevronRightIcon,
+  LockIcon,
   PencilIcon,
   PeopleGroupIcon,
   XIcon,
@@ -34,6 +35,7 @@ export function BrowseContactCtxMenu({
   onLabelsEnter,
   onLabelsLeave,
   onDelete,
+  onUnlockVault,
 }: {
   menuRef: RefObject<HTMLDivElement | null>;
   ctxMenu: BrowseContactCtxMenuState;
@@ -51,6 +53,7 @@ export function BrowseContactCtxMenu({
   onLabelsEnter: (anchor: DOMRect) => void;
   onLabelsLeave: () => void;
   onDelete: () => void;
+  onUnlockVault?: () => void;
 }) {
   return (
     <div
@@ -58,67 +61,79 @@ export function BrowseContactCtxMenu({
       className="fixed z-[100] min-w-[180px] rounded-lg border border-border bg-popover py-1 shadow-xl"
       style={{ left: ctxMenu.x, top: ctxMenu.y }}
     >
-      {!vaultReadOnly && (
+      {vaultReadOnly ? (
         <button
           type="button"
-          disabled={saving || contactCreating || contactEditing}
-          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
+          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong"
           onMouseEnter={onMouseEnterItem}
-          onClick={(e) => onNewContact(e.currentTarget)}
+          onClick={() => onUnlockVault?.()}
         >
-          <NewContactIcon className="size-5 shrink-0 opacity-80" />
-          New contact
+          <LockIcon className="size-5 shrink-0 opacity-80" />
+          Unlock vault to edit
         </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={saving || contactCreating || contactEditing}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
+            onMouseEnter={onMouseEnterItem}
+            onClick={(e) => onNewContact(e.currentTarget)}
+          >
+            <NewContactIcon className="size-5 shrink-0 opacity-80" />
+            New contact
+          </button>
+          <button
+            type="button"
+            disabled={
+              saving || hasSelection || contactCreating || contactEditing
+            }
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
+            onMouseEnter={onMouseEnterItem}
+            onClick={(e) => onEdit(e.currentTarget)}
+          >
+            <PencilIcon className="size-5 shrink-0 opacity-80" />
+            Edit
+          </button>
+          {isNameless && !hasSelection && (
+            <button
+              type="button"
+              disabled={saving || contactCreating || contactEditing}
+              className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
+              onMouseEnter={onMouseEnterItem}
+              onClick={onMergeInto}
+            >
+              <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />
+              Merge into…
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={saving || contactCreating || contactEditing}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
+            onMouseEnter={(e) => {
+              if (saving || contactCreating || contactEditing) return;
+              onLabelsEnter(e.currentTarget.getBoundingClientRect());
+            }}
+            onMouseLeave={onLabelsLeave}
+          >
+            <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />
+            <span className="min-w-0 flex-1">Labels</span>
+            <ChevronRightIcon className="size-3.5 shrink-0 opacity-70" />
+          </button>
+          <div className="my-1 border-t border-border/60" />
+          <button
+            type="button"
+            disabled={saving || groupTrashSaving}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-red-500/15 hover:text-red-300 disabled:opacity-50"
+            onMouseEnter={onMouseEnterItem}
+            onClick={onDelete}
+          >
+            <XIcon className="size-5 shrink-0 opacity-80" />
+            Delete contact
+          </button>
+        </>
       )}
-      <button
-        type="button"
-        disabled={
-          saving || hasSelection || contactCreating || contactEditing
-        }
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
-        onMouseEnter={onMouseEnterItem}
-        onClick={(e) => onEdit(e.currentTarget)}
-      >
-        <PencilIcon className="size-5 shrink-0 opacity-80" />
-        Edit
-      </button>
-      {!vaultReadOnly && isNameless && !hasSelection && (
-        <button
-          type="button"
-          disabled={saving || contactCreating || contactEditing}
-          className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
-          onMouseEnter={onMouseEnterItem}
-          onClick={onMergeInto}
-        >
-          <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />
-          Merge into…
-        </button>
-      )}
-      <button
-        type="button"
-        disabled={saving || contactCreating || contactEditing}
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
-        onMouseEnter={(e) => {
-          if (saving || contactCreating || contactEditing) return;
-          onLabelsEnter(e.currentTarget.getBoundingClientRect());
-        }}
-        onMouseLeave={onLabelsLeave}
-      >
-        <PeopleGroupIcon className="size-5 shrink-0 opacity-80" />
-        <span className="min-w-0 flex-1">Labels</span>
-        <ChevronRightIcon className="size-3.5 shrink-0 opacity-70" />
-      </button>
-      <div className="my-1 border-t border-border/60" />
-      <button
-        type="button"
-        disabled={saving || groupTrashSaving}
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-red-500/15 hover:text-red-300 disabled:opacity-50"
-        onMouseEnter={onMouseEnterItem}
-        onClick={onDelete}
-      >
-        <XIcon className="size-5 shrink-0 opacity-80" />
-        Delete contact
-      </button>
     </div>
   );
 }

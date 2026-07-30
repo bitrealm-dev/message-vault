@@ -297,6 +297,122 @@ export function updateContactsCsv(
   fs.writeFileSync(csvPath, body, "utf8");
 }
 
+/** Add or remove one label for many contacts while rewriting contacts.csv once. */
+export function updateContactsCsvLabelMembership(
+  targets: Array<{
+    phones: string[];
+    firstName: string | null;
+    lastName: string | null;
+  }>,
+  label: string,
+  enable: boolean,
+): void {
+  if (targets.length === 0) return;
+
+  const csvPath = contactsCsvPath();
+  const raw = fs.readFileSync(csvPath, "utf8");
+  let lines = raw.split(/\r?\n/);
+  if (lines.length === 0) throw new Error("contacts CSV is empty");
+
+  let header = parseCsvLine(lines[0] ?? "");
+  const initialLabelIdx = requireLabelColumns(header);
+  const idx = {
+    phones: header.indexOf("phones"),
+    firstName: header.indexOf("first_name"),
+    lastName: header.indexOf("last_name"),
+  };
+  if (idx.phones < 0) {
+    throw new Error("contacts CSV missing required columns");
+  }
+
+  const targetPhones = new Set(
+    targets.flatMap((target) => phoneHandlesOnly(target.phones)),
+  );
+  const targetNames = new Set(
+    targets
+      .filter((target) => phoneHandlesOnly(target.phones).length === 0)
+      .map(
+        (target) =>
+          `${(target.firstName ?? "").trim().toLowerCase()}\0${(
+            target.lastName ?? ""
+          )
+            .trim()
+            .toLowerCase()}`,
+      ),
+  );
+  const rowMatches = (cols: string[]) => {
+    const phones = (cols[idx.phones] ?? "")
+      .split(";")
+      .map((phone) => phone.trim())
+      .filter(Boolean);
+    if (phones.some((phone) => targetPhones.has(phone))) return true;
+    if (phones.length > 0 || targetNames.size === 0) return false;
+    const first =
+      idx.firstName >= 0
+        ? (cols[idx.firstName] ?? "").trim().toLowerCase()
+        : "";
+    const last =
+      idx.lastName >= 0
+        ? (cols[idx.lastName] ?? "").trim().toLowerCase()
+        : "";
+    return targetNames.has(`${first}\0${last}`);
+  };
+
+  let neededLabelColumns = initialLabelIdx.length;
+  if (enable) {
+    for (let lineNo = 1; lineNo < lines.length; lineNo++) {
+      const line = lines[lineNo] ?? "";
+      if (!line.trim()) continue;
+      const cols = parseCsvLine(line);
+      if (!rowMatches(cols)) continue;
+      const labels = readCsvLabels(cols, header);
+      const hasLabel = labels.some(
+        (current) => current.toLowerCase() === label.toLowerCase(),
+      );
+      neededLabelColumns = Math.max(
+        neededLabelColumns,
+        labels.length + (hasLabel ? 0 : 1),
+      );
+    }
+  }
+
+  const expanded = ensureLabelColumnCapacity(
+    lines,
+    header,
+    neededLabelColumns,
+  );
+  header = expanded.header;
+  lines = expanded.lines;
+  const labelIdx = expanded.labelIdx;
+
+  let matched = 0;
+  const out = lines.map((line, lineNo) => {
+    if (lineNo === 0 || !line.trim()) return line;
+    const cols = parseCsvLine(line);
+    while (cols.length < header.length) cols.push("");
+    if (!rowMatches(cols)) return line;
+    matched++;
+    const current = readCsvLabels(cols, header);
+    const labels = enable
+      ? current.some((name) => name.toLowerCase() === label.toLowerCase())
+        ? current
+        : [...current, label]
+      : current.filter(
+          (name) => name.toLowerCase() !== label.toLowerCase(),
+        );
+    writeCsvLabels(cols, labelIdx, labels);
+    return cols.map(escapeCsvField).join(",");
+  });
+
+  if (matched === 0) {
+    throw new Error("contacts not found in contacts.csv");
+  }
+  const endsWithNewline = /\r?\n$/.test(raw);
+  let body = out.join("\n");
+  if (endsWithNewline && !body.endsWith("\n")) body += "\n";
+  fs.writeFileSync(csvPath, body, "utf8");
+}
+
 export function appendContactsCsv(row: {
   phones: string[];
   firstName: string | null;

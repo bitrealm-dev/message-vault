@@ -24,6 +24,7 @@ import { NewContactIcon } from "./BrowseContactList";
 import { ListHistoryMenu, type ListHistoryMenuItem } from "./history";
 import { IconHoverTarget } from "./IconHoverLabel";
 import {
+  LockIcon,
   PencilIcon,
   PeopleGroupIcon,
   TrashMessagesIcon,
@@ -103,7 +104,13 @@ export function BrowsePeopleTreePane({
   searchHits = [],
   searchTotal = 0,
   searchLoading = false,
+  searchContactIds = [],
+  allSearchContactsSelected = false,
+  onToggleSelectAllSearchContacts,
+  onToggleSearchContact,
   onSelectSearchHit,
+  onSearchContactContextMenu,
+  onUnlockVault,
   // Direct
   onDirectClick,
   directActive = false,
@@ -133,6 +140,7 @@ export function BrowsePeopleTreePane({
   onImportVcf?: (file: File) => Promise<void>;
   onExportContactsCsv?: () => void;
   vaultReadOnly?: boolean;
+  onUnlockVault?: () => void;
   onLabels?: (anchorEl: HTMLElement) => void;
   labelsDisabled?: boolean;
   onEdit?: (anchorEl: HTMLElement) => void;
@@ -172,7 +180,15 @@ export function BrowsePeopleTreePane({
   searchHits?: SearchConversationHit[];
   searchTotal?: number;
   searchLoading?: boolean;
+  searchContactIds?: number[];
+  allSearchContactsSelected?: boolean;
+  onToggleSelectAllSearchContacts?: () => void;
+  onToggleSearchContact?: (
+    contactId: number,
+    mods?: { shiftKey: boolean },
+  ) => void;
   onSelectSearchHit?: (hit: SearchConversationHit) => void;
+  onSearchContactContextMenu?: (id: number, x: number, y: number) => void;
   onDirectClick?: () => void;
   directActive?: boolean;
   emptyGroupsLabel?: string;
@@ -198,6 +214,16 @@ export function BrowsePeopleTreePane({
   };
 
   const menuItems: ListHistoryMenuItem[] = [
+    ...(vaultReadOnly && onUnlockVault
+      ? [
+          {
+            key: "unlock-vault",
+            label: "Unlock vault to edit",
+            icon: <LockIcon className="size-5 shrink-0 opacity-80" />,
+            onClick: (_triggerEl: HTMLElement | null) => onUnlockVault(),
+          } satisfies ListHistoryMenuItem,
+        ]
+      : []),
     ...(!vaultReadOnly
       ? [
           {
@@ -293,6 +319,10 @@ export function BrowsePeopleTreePane({
   const hasDirect = yearly.some((y) => y.conversationIds.length > 0);
   const groupSelectionActive = selectedGroupIds.size >= 1;
   const contactSelectionActive = selectedContactIds.size >= 1;
+  const selectedSearchContactCount = searchContactIds.reduce(
+    (count, id) => count + (selectedContactIds.has(id) ? 1 : 0),
+    0,
+  );
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-sidebar">
@@ -317,8 +347,29 @@ export function BrowsePeopleTreePane({
       </div>
 
       {mode === "search" ? (
-        <div className="flex h-[45px] shrink-0 items-center border-b border-border px-3">
-          <span className="text-[13px] text-muted">Search results</span>
+        <div className="flex h-[45px] shrink-0 items-center justify-between border-b border-border px-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <IconHoverTarget
+              label="Select all matching people"
+              placement="bottom"
+            >
+              <input
+                type="checkbox"
+                checked={allSearchContactsSelected}
+                disabled={searchContactIds.length === 0}
+                aria-label="Select all matching people"
+                onChange={onToggleSelectAllSearchContacts}
+                className="checkbox-list"
+              />
+            </IconHoverTarget>
+            <span className="text-[13px] text-muted">Search results</span>
+            <span className="text-[13px] text-muted tabular-nums">
+              {selectedSearchContactCount > 0
+                ? selectedSearchContactCount.toLocaleString()
+                : ""}
+            </span>
+          </div>
+          <ListHistoryMenu items={menuItems} />
         </div>
       ) : (
         <>
@@ -383,7 +434,16 @@ export function BrowsePeopleTreePane({
           total={searchTotal}
           loading={searchLoading}
           selectedConversationId={selectedConversationId}
-          onSelect={(hit) => onSelectSearchHit?.(hit)}
+          selectedContactIds={selectedContactIds}
+          onToggleContact={(id, mods) => onToggleSearchContact?.(id, mods)}
+          onSelect={(hit, mods) => {
+            if (mods?.shiftKey && hit.contactId != null) {
+              onToggleSearchContact?.(hit.contactId, { shiftKey: true });
+              return;
+            }
+            onSelectSearchHit?.(hit);
+          }}
+          onContactContextMenu={onSearchContactContextMenu}
           emptyLabel="No matches"
         />
       ) : (

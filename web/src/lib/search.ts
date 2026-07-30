@@ -22,6 +22,8 @@ export type SearchHitMessage = {
 export type SearchConversationHit = {
   conversationId: number;
   conversationType: "group" | "individual";
+  /** Contact represented by a direct conversation, when its handle is assigned. */
+  contactId: number | null;
   title: string;
   chatIdentifier: string;
   matchCount: number;
@@ -35,6 +37,8 @@ export type SearchResult = {
   query: string;
   parsed: ParsedSearchQuery;
   totalConversations: number;
+  /** Every distinct contact represented by matching direct conversations. */
+  contactIds: number[];
   hits: SearchConversationHit[];
 };
 
@@ -98,6 +102,7 @@ export function searchVault(
       query: rawQuery,
       parsed,
       totalConversations: 0,
+      contactIds: [],
       hits: [],
     };
   }
@@ -246,6 +251,14 @@ export function searchVault(
          c.conversation_type AS conversation_type,
          c.group_title AS group_title,
          c.chat_identifier AS chat_identifier,
+         (
+           SELECT ch.contact_id
+           FROM contact_handles ch
+           WHERE ch.account_id = c.account_id
+             AND ch.handle = c.chat_identifier
+             AND c.conversation_type = 'individual'
+           LIMIT 1
+         ) AS contact_id,
          COUNT(DISTINCT m.id) AS match_count,
          MIN(m.timestamp) AS date_start,
          MAX(m.timestamp) AS date_end,
@@ -263,11 +276,32 @@ export function searchVault(
     conversation_type: string;
     group_title: string | null;
     chat_identifier: string;
+    contact_id: number | null;
     match_count: number;
     date_start: string | null;
     date_end: string | null;
     sample_message_id: number;
   }>;
+
+  const contactRows = db
+    .prepare(
+      `SELECT DISTINCT contact_id
+       FROM (
+         SELECT ch.contact_id AS contact_id
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         JOIN contact_handles ch
+           ON ch.account_id = c.account_id
+          AND ch.handle = c.chat_identifier
+         WHERE ${whereSql}${dedupe}
+           AND c.conversation_type = 'individual'
+         GROUP BY c.id, ch.contact_id
+         ${havingSql}
+       )
+       ORDER BY contact_id`,
+    )
+    .all(...params, ...havingParams) as Array<{ contact_id: number }>;
+  const contactIds = contactRows.map((row) => row.contact_id);
 
   const highlightTerms = [
     ...parsed.terms,
@@ -339,6 +373,7 @@ export function searchVault(
       conversationId: row.conversation_id,
       conversationType:
         row.conversation_type === "group" ? "group" : "individual",
+      contactId: row.contact_id,
       title: conversationTitle(
         row.conversation_type,
         row.group_title,
@@ -357,6 +392,7 @@ export function searchVault(
     query: rawQuery,
     parsed,
     totalConversations: countRow.n,
+    contactIds,
     hits,
   };
 }

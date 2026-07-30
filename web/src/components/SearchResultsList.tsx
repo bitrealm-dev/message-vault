@@ -4,19 +4,33 @@ import type { SearchConversationHit } from "@/lib/search";
 import { CountBadge } from "./CountBadge";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
+const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
+
 export function SearchResultsList({
   hits,
   total,
   loading,
   selectedConversationId,
+  selectedContactIds = EMPTY_SELECTED_CONTACT_IDS,
+  onToggleContact,
   onSelect,
+  onContactContextMenu,
   emptyLabel = "No matches",
 }: {
   hits: SearchConversationHit[];
   total: number;
   loading: boolean;
   selectedConversationId: number | null;
-  onSelect: (hit: SearchConversationHit) => void;
+  selectedContactIds?: ReadonlySet<number>;
+  onToggleContact?: (
+    contactId: number,
+    mods?: { shiftKey: boolean },
+  ) => void;
+  onSelect: (
+    hit: SearchConversationHit,
+    mods?: { shiftKey: boolean },
+  ) => void;
+  onContactContextMenu?: (contactId: number, x: number, y: number) => void;
   emptyLabel?: string;
 }) {
   const { formatDateRange } = useDateTimeFormat();
@@ -40,20 +54,25 @@ export function SearchResultsList({
       </div>
       {hits.map((hit) => {
         const active = selectedConversationId === hit.conversationId;
+        const checked =
+          hit.contactId != null && selectedContactIds.has(hit.contactId);
         const dateLabel =
           hit.dateStart && hit.dateEnd
             ? formatDateRange(hit.dateStart, hit.dateEnd, " – ")
             : null;
         return (
-          <button
+          <div
             key={hit.conversationId}
-            type="button"
-            onClick={() => onSelect(hit)}
-            className={`relative flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors ${
-              active
+            className={`relative flex w-full items-start transition-colors ${
+              active || checked
                 ? "bg-accent/20 hover:bg-accent/25"
                 : "hover:bg-hover"
             }`}
+            onContextMenu={(e) => {
+              if (hit.contactId == null || !onContactContextMenu) return;
+              e.preventDefault();
+              onContactContextMenu(hit.contactId, e.clientX, e.clientY);
+            }}
           >
             {active ? (
               <span
@@ -61,29 +80,52 @@ export function SearchResultsList({
                 className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
               />
             ) : null}
-            <span className="flex min-w-0 items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-[13px] font-medium text-text">
-                {hit.title}
-              </span>
-              <CountBadge
-                count={hit.matchCount}
-                title={`${hit.matchCount} matching messages`}
-              />
-            </span>
-            {hit.topMatch?.snippet ? (
-              <span className="line-clamp-2 text-[12px] text-muted">
-                {hit.topMatch.snippet}
-              </span>
+            {hit.contactId != null && onToggleContact ? (
+              <label className="flex min-h-9 shrink-0 cursor-pointer items-start px-3 pt-2.5">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  aria-label={`Select ${hit.title}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onToggleContact(hit.contactId!, { shiftKey: e.shiftKey });
+                  }}
+                  onChange={() => {}}
+                  className="checkbox-list"
+                />
+              </label>
             ) : null}
-            <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
-              <span className="truncate capitalize">
-                {hit.conversationType === "group" ? "Group" : "1-1"}
+            <button
+              type="button"
+              onClick={(e) => onSelect(hit, { shiftKey: e.shiftKey })}
+              className={`flex min-w-0 flex-1 flex-col gap-0.5 py-2 text-left ${
+                hit.contactId == null || !onToggleContact ? "px-3" : "pr-3"
+              }`}
+            >
+              <span className="flex min-w-0 items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[13px] font-medium text-text">
+                  {hit.title}
+                </span>
+                <CountBadge
+                  count={hit.matchCount}
+                  title={`${hit.matchCount} matching messages`}
+                />
               </span>
-              {dateLabel ? (
-                <span className="tabular-nums">{dateLabel}</span>
+              {hit.topMatch?.snippet ? (
+                <span className="line-clamp-2 text-[12px] text-muted">
+                  {hit.topMatch.snippet}
+                </span>
               ) : null}
-            </span>
-          </button>
+              <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
+                <span className="truncate capitalize">
+                  {hit.conversationType === "group" ? "Group" : "1-1"}
+                </span>
+                {dateLabel ? (
+                  <span className="tabular-nums">{dateLabel}</span>
+                ) : null}
+              </span>
+            </button>
+          </div>
         );
       })}
     </div>

@@ -51,6 +51,22 @@ describe("vault search + FTS", () => {
            is_from_me, sort_order, body, subject
          ) VALUES (?, ?, 'imessage', ?, ?, 0, 0, ?, NULL)`,
       );
+      const insertContact = db.prepare(
+        `INSERT INTO contacts (
+           account_id, first_name, last_name, exclude, preferred_handle
+         ) VALUES (?, ?, NULL, 0, ?)`,
+      );
+      const insertHandle = db.prepare(
+        `INSERT INTO contact_handles (account_id, handle, contact_id)
+         VALUES (?, ?, ?)`,
+      );
+      const assignContact = (handle: string, name: string) => {
+        const contactId = Number(
+          insertContact.run(accountId, name, handle).lastInsertRowid,
+        );
+        insertHandle.run(accountId, handle, contactId);
+        return contactId;
+      };
 
       const daysAgo = (days: number) =>
         new Date(Date.now() - days * 86_400_000).toISOString();
@@ -70,6 +86,7 @@ describe("vault search + FTS", () => {
       const activeConvId = Number(
         insertConv.run(accountId, "+15555551001").lastInsertRowid,
       );
+      assignContact("+15555551001", "Active");
       insertMsg.run(
         activeConvId,
         accountId,
@@ -89,6 +106,7 @@ describe("vault search + FTS", () => {
       const staleConvId = Number(
         insertConv.run(accountId, "+15555551002").lastInsertRowid,
       );
+      assignContact("+15555551002", "Stale");
       insertMsg.run(
         staleConvId,
         accountId,
@@ -108,6 +126,7 @@ describe("vault search + FTS", () => {
       const recentConvId = Number(
         insertConv.run(accountId, "+15555551003").lastInsertRowid,
       );
+      assignContact("+15555551003", "Recent");
       insertMsg.run(
         recentConvId,
         accountId,
@@ -158,7 +177,12 @@ describe("vault search + FTS", () => {
         .slice(0, 10);
       const result = searchVault(`last-contact:${cutoff}`);
       const handles = result.hits.map((h) => h.chatIdentifier);
+      const selectedHit = result.hits.find(
+        (h) => h.chatIdentifier === "+15555551002",
+      );
       assert.ok(handles.includes("+15555551002"));
+      assert.ok(selectedHit?.contactId != null);
+      assert.ok(result.contactIds.includes(selectedHit.contactId));
       assert.ok(!handles.includes("+15555551001"));
       assert.ok(!handles.includes("+15555551003"));
     });

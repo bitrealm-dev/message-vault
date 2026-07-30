@@ -26,6 +26,10 @@ import { useVaultReadOnly } from "./useVaultReadOnly";
 import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SearchConversationHit } from "@/lib/search";
+import {
+  applySearchRangeSelect,
+  orderedSearchContactIds,
+} from "@/lib/searchSelection";
 import { seedContactEditDraft } from "./contactEdit";
 import {
   BrowseContactCtxMenu,
@@ -320,6 +324,12 @@ export function BrowseShell({
   const selectContactRef = useRef<(id: number) => void>(() => {});
 
   const validIds = useMemo(() => contacts.map((c) => c.id), [contacts]);
+  const validIdSet = useMemo(() => new Set(validIds), [validIds]);
+  const searchContactIds = useMemo(
+    () =>
+      [...new Set(vaultSearch.contactIds)].filter((id) => validIdSet.has(id)),
+    [vaultSearch.contactIds, validIdSet],
+  );
   const [listOrderIds, setListOrderIds] = useState<number[]>([]);
 
   const {
@@ -346,6 +356,62 @@ export function BrowseShell({
     selectAllSetsAnchor: false,
     onOpen: (id) => selectContactRef.current(id),
   });
+
+  const allSearchContactsSelected =
+    searchContactIds.length > 0 &&
+    searchContactIds.every((id) => selectedIds.has(id));
+  const orderedVisibleSearchContactIds = useMemo(
+    () =>
+      orderedSearchContactIds(vaultSearch.hits).filter((id) =>
+        validIdSet.has(id),
+      ),
+    [vaultSearch.hits, validIdSet],
+  );
+  const searchSelectionAnchorRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    searchSelectionAnchorRef.current = null;
+  }, [vaultSearch.committed]);
+
+  const toggleSearchContact = useCallback(
+    (id: number, mods?: { shiftKey: boolean }) => {
+      if (!validIdSet.has(id)) return;
+      if (mods?.shiftKey) {
+        setSelectedIds(
+          applySearchRangeSelect(
+            orderedVisibleSearchContactIds,
+            id,
+            searchSelectionAnchorRef.current,
+          ),
+        );
+        return;
+      }
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      searchSelectionAnchorRef.current = id;
+    },
+    [orderedVisibleSearchContactIds, setSelectedIds, validIdSet],
+  );
+  const toggleSelectAllSearchContacts = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (searchContactIds.every((id) => prev.has(id))) {
+        searchSelectionAnchorRef.current = null;
+        return new Set();
+      }
+      searchSelectionAnchorRef.current =
+        orderedVisibleSearchContactIds[0] ?? searchContactIds[0] ?? null;
+      return new Set(searchContactIds);
+    });
+  }, [orderedVisibleSearchContactIds, searchContactIds, setSelectedIds]);
+
+  const unlockVaultToEdit = useCallback(() => {
+    setCtxMenu(null);
+    router.push("/settings/account");
+  }, [router]);
 
   const { sorted, grouped } = useBrowseContactListView({
     sortedRaw,
@@ -732,7 +798,9 @@ export function BrowseShell({
   );
 
   useEffect(() => {
-    if (!selectionIdsKey) {
+    // Search selection is used for bulk contact actions. Shared-group lookup
+    // is hidden in search mode and can exceed URL limits for large result sets.
+    if (vaultSearch.resultsMode || !selectionIdsKey) {
       setSelectionGroupChats([]);
       setLoadingSelectionGroups(false);
       return;
@@ -773,7 +841,7 @@ export function BrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [selectionIdsKey, source, threadsEpoch]);
+  }, [selectionIdsKey, source, threadsEpoch, vaultSearch.resultsMode]);
 
   // Undo/redo restores server state but Panel 3 uses client-fetched lists.
   useEffect(() => {
@@ -1782,6 +1850,10 @@ export function BrowseShell({
           searchHits={vaultSearch.hits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
+          searchContactIds={searchContactIds}
+          allSearchContactsSelected={allSearchContactsSelected}
+          onToggleSelectAllSearchContacts={toggleSelectAllSearchContacts}
+          onToggleSearchContact={toggleSearchContact}
           onSelectSearchHit={(hit: SearchConversationHit) => {
             clearGroupSelection();
             setFocusedSearchHit(hit);
@@ -1794,6 +1866,8 @@ export function BrowseShell({
                 : "dm",
             );
           }}
+          onSearchContactContextMenu={openContactCtxMenu}
+          onUnlockVault={unlockVaultToEdit}
           onDirectClick={openDirectThread}
           directActive={activeThread === "dm"}
           emptyGroupsLabel={
@@ -1952,6 +2026,7 @@ export function BrowseShell({
         onLabelsEnter={openCtxLabels}
         onLabelsLeave={scheduleCloseLabelsPanel}
         onDelete={onCtxDelete}
+        onUnlockVault={unlockVaultToEdit}
       />
     )}
     {mergeFromId != null && mergePos && (

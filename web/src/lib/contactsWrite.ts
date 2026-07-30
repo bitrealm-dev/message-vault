@@ -7,6 +7,7 @@ import {
   removeContactsCsv,
   rewriteCsvLabels,
   updateContactsCsv,
+  updateContactsCsvLabelMembership,
 } from "./contactsCsv";
 import {
   isEmailHandle,
@@ -154,6 +155,76 @@ function findLabelId(
     .prepare(`SELECT id FROM contact_labels WHERE account_id = ? AND name = ?`)
     .get(accountId, name) as { id: number } | undefined;
   return row?.id ?? null;
+}
+
+/** Add or remove one label for many contacts in one database transaction. */
+export function setContactsLabelMembership(
+  contactIds: number[],
+  name: string,
+  enable: boolean,
+): number {
+  assertVaultWritable();
+  const accountId = currentAccountId();
+  const ids = [
+    ...new Set(contactIds.filter((id) => Number.isFinite(id) && id > 0)),
+  ];
+  if (ids.length === 0) throw new Error("contact ids required");
+  const label = name.trim();
+  if (!label) throw new Error("label name required");
+  assertAllowedLabelName(label);
+
+  const contacts = ids.map((id) => {
+    const contact = getContact(id);
+    if (!contact) throw new Error(`contact ${id} not found`);
+    return contact;
+  });
+  const changedIds = new Set<number>();
+  const writeDb = new Database(dbPath());
+  try {
+    const tx = writeDb.transaction(() => {
+      const labelId = enable
+        ? ensureLabelId(writeDb, label, accountId)
+        : findLabelId(writeDb, label, accountId);
+      if (labelId == null) return;
+      const insert = writeDb.prepare(
+        `INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
+         SELECT id, ? FROM contacts WHERE id = ? AND account_id = ?`,
+      );
+      const remove = writeDb.prepare(
+        `DELETE FROM contact_label_members
+         WHERE contact_id = ? AND label_id = ?
+           AND EXISTS (
+             SELECT 1 FROM contacts
+             WHERE contacts.id = contact_label_members.contact_id
+               AND contacts.account_id = ?
+           )`,
+      );
+      for (const id of ids) {
+        const result = enable
+          ? insert.run(labelId, id, accountId)
+          : remove.run(id, labelId, accountId);
+        if (result.changes > 0) changedIds.add(id);
+      }
+    });
+    tx();
+  } finally {
+    writeDb.close();
+  }
+
+  if (changedIds.size === 0) return 0;
+  resetDb();
+  updateContactsCsvLabelMembership(
+    contacts
+      .filter((contact) => changedIds.has(contact.id))
+      .map((contact) => ({
+        phones: contact.phones,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+      })),
+    label,
+    enable,
+  );
+  return changedIds.size;
 }
 
 

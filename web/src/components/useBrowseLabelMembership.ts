@@ -290,30 +290,16 @@ export function useBrowseLabelMembership(
       );
 
       try {
-        for (const person of targets) {
-          const has = person.labels.includes(name);
-          if (enable === has) continue;
-          const labels =
-            nextLabelsById.get(person.id) ??
-            (enable
-              ? [...person.labels, name].sort((a, b) =>
-                  a.localeCompare(b, undefined, { sensitivity: "base" }),
-                )
-              : person.labels.filter((l) => l !== name));
-
-          const res = await fetch(`/api/contacts/${person.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ labels }),
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? "save failed");
-          if (data.contact) {
-            setDetail((prev) =>
-              prev && prev.id === data.contact.id ? data.contact : prev,
-            );
-          }
-        }
+        const ids = targets
+          .filter((person) => person.labels.includes(name) !== enable)
+          .map((person) => person.id);
+        const res = await fetch("/api/contacts/labels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids, name, enable }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "save failed");
       } catch (err) {
         console.error(err);
         // Re-sync from server on failure.

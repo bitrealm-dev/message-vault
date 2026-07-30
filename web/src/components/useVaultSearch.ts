@@ -10,6 +10,7 @@ export function useVaultSearch(initialQuery = "") {
   const [draft, setDraft] = useState(initialQuery);
   const [committed, setCommitted] = useState(initialQuery.trim());
   const [hits, setHits] = useState<SearchConversationHit[]>([]);
+  const [contactIds, setContactIds] = useState<number[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +35,7 @@ export function useVaultSearch(initialQuery = "") {
   useEffect(() => {
     if (!committed) {
       setHits([]);
+      setContactIds([]);
       setTotal(0);
       setLoading(false);
       setError(null);
@@ -50,16 +52,19 @@ export function useVaultSearch(initialQuery = "") {
           if (!res.ok) {
             setError(json.error ?? "Search failed");
             setHits([]);
+            setContactIds([]);
             setTotal(0);
             return;
           }
           setHits(json.hits ?? []);
+          setContactIds(json.contactIds ?? []);
           setTotal(json.totalConversations ?? 0);
         })
         .catch((err: unknown) => {
           if (seq !== seqRef.current) return;
           setError(err instanceof Error ? err.message : "Search failed");
           setHits([]);
+          setContactIds([]);
           setTotal(0);
         })
         .finally(() => {
@@ -76,6 +81,7 @@ export function useVaultSearch(initialQuery = "") {
     submit,
     resultsMode,
     hits,
+    contactIds,
     total,
     loading,
     error,
