@@ -2,11 +2,12 @@
 
 import {
   composeSearchQuery,
+  formFromSearchQuery,
   type AdvancedSearchForm as FormState,
   type DateFilterInput,
   type DateFilterMode,
 } from "@/lib/searchQuery";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 const inputClass =
   "w-full rounded-md border border-border bg-elevated px-2.5 py-1.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent";
@@ -30,26 +31,27 @@ export function AdvancedSearchForm({
   onSearch: (query: string) => void;
   onCancel: () => void;
 }) {
-  const [within, setWithin] = useState("");
-  const [withPerson, setWithPerson] = useState("");
-  const [hasWords, setHasWords] = useState("");
-  const [doesntHave, setDoesntHave] = useState("");
-  const [date, setDate] = useState<DateFilterInput>(NO_DATES);
-  const [firstContact, setFirstContact] = useState<DateFilterInput>(NO_DATES);
-  const [lastContact, setLastContact] = useState<DateFilterInput>(NO_DATES);
-  const [showContact, setShowContact] = useState(false);
+  // Panel remounts each open; hydrate once from the query bar string.
+  const seed = formFromSearchQuery(initialQuery);
+  const [within, setWithin] = useState(seed.within ?? "");
+  const [withPerson, setWithPerson] = useState(seed.withPerson ?? "");
+  const [hasWords, setHasWords] = useState(seed.hasWords ?? "");
+  const [doesntHave, setDoesntHave] = useState(seed.doesntHave ?? "");
+  const [date, setDate] = useState<DateFilterInput>(seed.date ?? NO_DATES);
+  const [firstContact, setFirstContact] = useState<DateFilterInput>(
+    seed.firstContact ?? NO_DATES,
+  );
+  const [lastContact, setLastContact] = useState<DateFilterInput>(
+    seed.lastContact ?? NO_DATES,
+  );
+  const [showContact, setShowContact] = useState(
+    showContactOption && !!seed.showContact,
+  );
   const [conversationType, setConversationType] = useState<
     "any" | "group" | "individual"
-  >("any");
-  const [source, setSource] = useState("");
-  const [hasAttachment, setHasAttachment] = useState(false);
-
-  useEffect(() => {
-    // Seed free-text into Has the words when opening with a plain query.
-    if (initialQuery.trim() && !/[a-z]+:/i.test(initialQuery)) {
-      setHasWords(initialQuery.trim());
-    }
-  }, [initialQuery]);
+  >(seed.conversationType ?? "any");
+  const [source, setSource] = useState(seed.source ?? "");
+  const [hasAttachment, setHasAttachment] = useState(!!seed.hasAttachment);
 
   const submit = () => {
     const form: FormState = {

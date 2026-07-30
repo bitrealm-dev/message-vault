@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   composeSearchQuery,
+  formFromSearchQuery,
   hasSearchCriteria,
   parseSearchQuery,
   toFtsMatch,
@@ -168,6 +169,82 @@ describe("composeSearchQuery", () => {
       }),
       "",
     );
+  });
+});
+
+describe("formFromSearchQuery", () => {
+  it("hydrates Date and First contact from the query bar", () => {
+    const form = formFromSearchQuery(
+      "after:2000-01-01 first-contact:<2020-10-10",
+    );
+    assert.deepEqual(form.date, {
+      mode: "on-or-after",
+      from: "2000-01-01",
+      to: "",
+    });
+    assert.deepEqual(form.firstContact, {
+      mode: "before",
+      from: "",
+      to: "2020-10-10",
+    });
+    assert.deepEqual(form.lastContact, { mode: "any", from: "", to: "" });
+  });
+
+  it("round-trips compose → form for advanced fields", () => {
+    const composed = composeSearchQuery({
+      within: "Family",
+      withPerson: "Ann Lee",
+      hasWords: 'birthday "exact phrase"',
+      doesntHave: "spam",
+      conversationType: "group",
+      hasAttachment: true,
+      showContact: true,
+      source: "imessage",
+      date: { mode: "between", from: "2020-01-01", to: "2020-03-01" },
+      firstContact: { mode: "on-or-after", from: "2019-06-01" },
+      lastContact: {
+        mode: "between",
+        from: "2021-01-01",
+        to: "2022-01-01",
+      },
+    });
+    const form = formFromSearchQuery(composed);
+    assert.equal(form.within, "Family");
+    assert.equal(form.withPerson, "Ann Lee");
+    assert.equal(form.hasWords, 'birthday "exact phrase"');
+    assert.equal(form.doesntHave, "spam");
+    assert.equal(form.conversationType, "group");
+    assert.equal(form.hasAttachment, true);
+    assert.equal(form.showContact, true);
+    assert.equal(form.source, "imessage");
+    assert.deepEqual(form.date, {
+      mode: "between",
+      from: "2020-01-01",
+      to: "2020-03-01",
+    });
+    assert.deepEqual(form.firstContact, {
+      mode: "on-or-after",
+      from: "2019-06-01",
+      to: "",
+    });
+    assert.deepEqual(form.lastContact, {
+      mode: "between",
+      from: "2021-01-01",
+      to: "2022-01-01",
+    });
+  });
+
+  it("maps is:direct and plain free text", () => {
+    const form = formFromSearchQuery('hello is:direct -"bad word"');
+    assert.equal(form.hasWords, "hello");
+    assert.equal(form.doesntHave, '"bad word"');
+    assert.equal(form.conversationType, "individual");
+  });
+
+  it("ignores from: and subject:", () => {
+    const form = formFromSearchQuery("from:alice subject:hi with:bob");
+    assert.equal(form.withPerson, "bob");
+    assert.equal(form.hasWords, undefined);
   });
 });
 

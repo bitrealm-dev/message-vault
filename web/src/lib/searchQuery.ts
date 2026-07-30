@@ -296,6 +296,52 @@ function composeDateBounds(input: DateFilterInput | undefined): string | null {
   return null;
 }
 
+function quoteToken(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+}
+
+/** Inverse of composeDateBounds / after+before pairing. */
+function dateFilterFromBounds(from: string | null, to: string | null): DateFilterInput {
+  if (from && to) return { mode: "between", from, to };
+  if (from) return { mode: "on-or-after", from, to: "" };
+  if (to) return { mode: "before", from: "", to };
+  return { mode: "any", from: "", to: "" };
+}
+
+/**
+ * Reverse-parse a vault search string into advanced-form fields so reopening
+ * the dropdown can restore Date / First contact / etc. from the query bar.
+ * Operators the form does not expose (`from:`, `subject:`) are ignored.
+ */
+export function formFromSearchQuery(query: string): AdvancedSearchForm {
+  const parsed = parseSearchQuery(query);
+  const hasWords = [
+    ...parsed.terms,
+    ...parsed.phrases.map((p) => quoteToken(p)),
+  ].join(" ");
+  const doesntHave = parsed.exclude.map((e) => quoteToken(e)).join(" ");
+
+  return {
+    within: parsed.within ?? undefined,
+    withPerson: parsed.to ?? undefined,
+    hasWords: hasWords || undefined,
+    doesntHave: doesntHave || undefined,
+    date: dateFilterFromBounds(parsed.after, parsed.before),
+    firstContact: dateFilterFromBounds(
+      parsed.firstContact.from,
+      parsed.firstContact.to,
+    ),
+    lastContact: dateFilterFromBounds(
+      parsed.lastContact.from,
+      parsed.lastContact.to,
+    ),
+    showContact: parsed.showContact,
+    conversationType: parsed.conversationType ?? "any",
+    source: parsed.source ?? undefined,
+    hasAttachment: parsed.hasAttachment,
+  };
+}
+
 /** Build a shareable query string from the advanced form fields. */
 export function composeSearchQuery(form: AdvancedSearchForm): string {
   const parts: string[] = [];
