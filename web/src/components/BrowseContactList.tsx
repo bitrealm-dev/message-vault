@@ -130,7 +130,8 @@ export function BrowseContactList({
       ? [
           {
             key: "delete",
-            label: "Delete",
+            label:
+              selectedIds.size > 1 ? "Delete contacts" : "Delete contact",
             icon: <XIcon className="size-5 shrink-0 opacity-80" />,
             disabled: deleteDisabled,
             danger: true,

@@ -25,6 +25,8 @@ export function BrowseContactCtxMenu({
   saving,
   groupTrashSaving,
   hasSelection,
+  /** How many contacts delete will remove (1 when only the row under the cursor). */
+  deleteCount = 1,
   contactCreating,
   contactEditing,
   isNameless,
@@ -43,6 +45,7 @@ export function BrowseContactCtxMenu({
   saving: boolean;
   groupTrashSaving: boolean;
   hasSelection: boolean;
+  deleteCount?: number;
   contactCreating: boolean;
   contactEditing: boolean;
   isNameless: boolean;
@@ -55,6 +58,9 @@ export function BrowseContactCtxMenu({
   onDelete: () => void;
   onUnlockVault?: () => void;
 }) {
+  const deleteLabel =
+    deleteCount > 1 ? "Delete contacts" : "Delete contact";
+
   return (
     <div
       ref={menuRef}
@@ -130,7 +136,7 @@ export function BrowseContactCtxMenu({
             onClick={onDelete}
           >
             <XIcon className="size-5 shrink-0 opacity-80" />
-            Delete contact
+            {deleteLabel}
           </button>
         </>
       )}

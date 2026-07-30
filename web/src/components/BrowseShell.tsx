@@ -304,11 +304,68 @@ export function BrowseShell({
     [contacts, searchContactsById],
   );
   const validIdSet = useMemo(() => new Set(validIds), [validIds]);
-  const searchContactIds = useMemo(
-    () =>
-      [...new Set(vaultSearch.contactIds)].filter((id) => validIdSet.has(id)),
-    [vaultSearch.contactIds, validIdSet],
-  );
+
+  /** Apply the People sort menu to Show-contact search results. */
+  const sortedSearchContactHits = useMemo(() => {
+    const hits = [...vaultSearch.contactHits];
+    hits.sort((a, b) => compareContacts(a.contact, b.contact));
+    return hits;
+  }, [vaultSearch.contactHits, compareContacts]);
+
+  /** Flat hits: use contact sort when linked, else title / match count / handle. */
+  const sortedSearchHits = useMemo(() => {
+    const hits = [...vaultSearch.hits];
+    const dir = sortOrder === "desc" ? -1 : 1;
+    hits.sort((a, b) => {
+      const aContact =
+        a.contactId != null ? searchContactsById.get(a.contactId) : undefined;
+      const bContact =
+        b.contactId != null ? searchContactsById.get(b.contactId) : undefined;
+      if (aContact && bContact) return compareContacts(aContact, bContact);
+      if (aContact && !bContact) return -1;
+      if (!aContact && bContact) return 1;
+
+      let cmp = 0;
+      if (sort === "messages" || sort === "group-messages") {
+        cmp = a.matchCount - b.matchCount;
+      } else if (sort === "phone") {
+        cmp = a.chatIdentifier.localeCompare(b.chatIdentifier, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      } else {
+        cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      }
+      if (cmp !== 0) return cmp * dir;
+      return (
+        (b.dateEnd ?? "").localeCompare(a.dateEnd ?? "") ||
+        a.conversationId - b.conversationId
+      );
+    });
+    return hits;
+  }, [
+    vaultSearch.hits,
+    searchContactsById,
+    compareContacts,
+    sort,
+    sortOrder,
+  ]);
+
+  const searchContactIds = useMemo(() => {
+    if (vaultSearch.showContact) {
+      return sortedSearchContactHits
+        .map((hit) => hit.contact.id)
+        .filter((id) => validIdSet.has(id));
+    }
+    return [...new Set(vaultSearch.contactIds)].filter((id) =>
+      validIdSet.has(id),
+    );
+  }, [
+    vaultSearch.showContact,
+    sortedSearchContactHits,
+    vaultSearch.contactIds,
+    validIdSet,
+  ]);
   const [listOrderIds, setListOrderIds] = useState<number[]>([]);
 
   const {
@@ -342,13 +399,13 @@ export function BrowseShell({
   const orderedVisibleSearchContactIds = useMemo(
     () =>
       (vaultSearch.showContact
-        ? vaultSearch.contactHits.map((hit) => hit.contact.id)
-        : orderedSearchContactIds(vaultSearch.hits)
+        ? sortedSearchContactHits.map((hit) => hit.contact.id)
+        : orderedSearchContactIds(sortedSearchHits)
       ).filter((id) => validIdSet.has(id)),
     [
       vaultSearch.showContact,
-      vaultSearch.contactHits,
-      vaultSearch.hits,
+      sortedSearchContactHits,
+      sortedSearchHits,
       validIdSet,
     ],
   );
@@ -1833,8 +1890,8 @@ export function BrowseShell({
           searchLabels={allLabels}
           resultsMode={vaultSearch.resultsMode}
           searchShowContact={vaultSearch.showContact}
-          searchHits={vaultSearch.hits}
-          searchContactHits={vaultSearch.contactHits}
+          searchHits={sortedSearchHits}
+          searchContactHits={sortedSearchContactHits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
           searchContactIds={searchContactIds}
@@ -1992,6 +2049,7 @@ export function BrowseShell({
         saving={saving}
         groupTrashSaving={groupTrashSaving}
         hasSelection={hasSelection}
+        deleteCount={trashIdsForContext(ctxMenu.id).length}
         contactCreating={contactCreating}
         contactEditing={contactEditing}
         isNameless={ctxMenuIsNameless}

@@ -311,7 +311,10 @@ export function BrowsePeopleTreePane({
       ? [
           {
             key: "delete",
-            label: "Delete",
+            label:
+              selectedContactIds.size > 1
+                ? "Delete contacts"
+                : "Delete contact",
             icon: <XIcon className="size-5 shrink-0 opacity-80" />,
             disabled: deleteDisabled,
             danger: true,
@@ -353,7 +356,7 @@ export function BrowsePeopleTreePane({
       </div>
 
       {mode === "search" ? (
-        <div className="flex h-[45px] shrink-0 items-center justify-between border-b border-border px-3">
+        <div className="@container/tree-tools flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
           <div className="flex min-w-0 items-center gap-2">
             <IconHoverTarget
               label="Select all matching people"
@@ -375,7 +378,16 @@ export function BrowsePeopleTreePane({
                 : ""}
             </span>
           </div>
-          <ListHistoryMenu items={menuItems} />
+          <div className="flex shrink-0 items-center gap-1.5 overflow-visible">
+            <SortByMenu
+              sort={contactSort}
+              order={contactSortOrder}
+              onChange={onContactSortChange}
+              scopeLabel="People"
+              scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
+            />
+            <ListHistoryMenu items={menuItems} />
+          </div>
         </div>
       ) : (
         <>

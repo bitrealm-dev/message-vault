@@ -52,6 +52,26 @@ function joinSubjects(subjects: string[], fallback: string): string {
   return cleaned.length > 0 ? cleaned.join(", ") : fallback;
 }
 
+/**
+ * Join names for toast copy, stopping before the string gets long and appending
+ * an ellipsis when more subjects remain (matches the snackbar's truncated look).
+ */
+function joinSubjectsPreview(
+  subjects: string[],
+  fallback: string,
+  maxChars = 48,
+): string {
+  const cleaned = subjects.map((s) => s.trim()).filter(Boolean);
+  if (cleaned.length === 0) return fallback;
+  let out = cleaned[0]!;
+  for (let i = 1; i < cleaned.length; i++) {
+    const next = `${out}, ${cleaned[i]}`;
+    if (next.length > maxChars) return `${out}…`;
+    out = next;
+  }
+  return out;
+}
+
 /** Past-tense snackbar copy for a just-pushed command. */
 export function toastTextForCommand(cmd: HistoryCommand): string {
   switch (cmd.type) {
@@ -62,10 +82,12 @@ export function toastTextForCommand(cmd: HistoryCommand): string {
     case "deleteLabel":
       return `Deleted label ${cmd.name.trim() || "label"}`;
     case "trashContacts": {
-      const names = joinSubjects(cmd.names, "contact");
-      return cmd.contactIds.length === 1
-        ? `Deleted contact ${names}`
-        : `Deleted contacts ${names}`;
+      const n = cmd.contactIds.length;
+      if (n === 1) {
+        return `Deleted contact ${joinSubjects(cmd.names, "contact")}`;
+      }
+      const preview = joinSubjectsPreview(cmd.names, "contacts");
+      return `Deleted ${n} contacts ${preview}`;
     }
     case "trashGroupThread": {
       const n = cmd.conversationIds.length;
@@ -80,7 +102,24 @@ export function toastTextForCommand(cmd: HistoryCommand): string {
 
 /** Snackbar after a successful undo (no nested Undo control). */
 export function undoToastTextForCommand(cmd: HistoryCommand): string {
-  return `Undid — ${toastTextForCommand(cmd)}`;
+  switch (cmd.type) {
+    case "trashContacts": {
+      const n = cmd.contactIds.length;
+      if (n === 1) {
+        return `Undeleted contact ${joinSubjects(cmd.names, "contact")}`;
+      }
+      return `Undeleted ${n} contacts ${joinSubjectsPreview(cmd.names, "contacts")}`;
+    }
+    case "trashGroupThread": {
+      const n = cmd.conversationIds.length;
+      if (n === 1) {
+        return `Undeleted group message ${joinSubjects(cmd.titles, "group message")}`;
+      }
+      return `Undeleted ${n} group messages`;
+    }
+    default:
+      return `Undid — ${toastTextForCommand(cmd)}`;
+  }
 }
 
 /** Snackbar after a successful redo (no nested Undo control). */
@@ -90,10 +129,10 @@ export function redoToastTextForCommand(cmd: HistoryCommand): string {
 
 /** Undo/Redo menu tooltip for a command with named subjects. */
 export function trashContactsLabel(names: string[]): string {
-  const joined = joinSubjects(names, "contact");
-  return names.length <= 1
-    ? `Delete contact ${joined}`
-    : `Delete contacts ${joined}`;
+  if (names.length <= 1) {
+    return `Delete contact ${joinSubjects(names, "contact")}`;
+  }
+  return `Delete ${names.length} contacts ${joinSubjectsPreview(names, "contacts")}`;
 }
 
 export function trashGroupThreadLabel(titles: string[]): string {

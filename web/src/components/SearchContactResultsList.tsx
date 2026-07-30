@@ -40,13 +40,13 @@ export function SearchContactResultsList({
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
   emptyLabel?: string;
 }) {
-  // Matches start open: the point of Show contact is seeing both at once.
-  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(
+  // Start collapsed so the list stays scannable; expand one contact at a time.
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(
     EMPTY_SELECTED_CONTACT_IDS,
   );
 
   const toggleExpand = (id: number) => {
-    setCollapsedIds((prev) => {
+    setExpandedIds((prev) => {
       const next = new Set(prev);
       if (!next.delete(id)) next.add(id);
       return next;
@@ -75,7 +75,7 @@ export function SearchContactResultsList({
         Results · {total.toLocaleString()}
       </div>
       {contacts.map(({ contact, hits }, index) => {
-        const expanded = !collapsedIds.has(contact.id);
+        const expanded = expandedIds.has(contact.id);
         const checked = selectedContactIds.has(contact.id);
         const active = checked || expanded || contact.id === contactId;
         return (
