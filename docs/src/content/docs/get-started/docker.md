@@ -110,6 +110,34 @@ Import API token from **Settings → Account** with
 
 If a `vault.db` already exists on the volume, seeding is skipped.
 
+### Staging drop folder
+
+Compose always bind-mounts the host directory `./staging` to `/app/staging`
+inside the container (dev and release). Copy a JSONL export onto the host —
+no `docker cp` required:
+
+```bash
+mkdir -p staging/imessage
+cp -a /path/to/your-export/. staging/imessage/
+```
+
+Then ingest from inside the container:
+
+```bash
+# Dev profile
+docker compose exec vault cargo run --release -- ingest imessage \
+  --account yourusername \
+  --staging-dir staging/imessage
+
+# Release profile
+docker compose exec vault-release message-vault-rs ingest imessage \
+  --account yourusername \
+  --staging-dir staging/imessage
+```
+
+Contents of `staging/` are gitignored; only the empty directory placeholder is
+tracked.
+
 ## Release profile
 
 Builds release artifacts from the current checkout into a smaller image (no
@@ -182,6 +210,7 @@ For the release profile (`COMPOSE_PROFILES=release`), replace `vault` with
 /app/
   config/config.toml     # from config.docker.toml ([server] on 0.0.0.0:8080)
   data/                  # named volume vault-data
+  staging/               # bind mount of host ./staging (JSONL drop folder)
   demo/                  # committed demo bundle
   web/                   # Next.js app (dev) or standalone + tooling (release)
 ```

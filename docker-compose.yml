@@ -9,6 +9,9 @@
 #
 # Personal data (empty vault; create an account in the UI):
 #   VAULT_MODE=personal docker compose up
+#
+# Drop JSONL exports into ./staging on the host (mounted at /app/staging):
+#   mkdir -p staging/imessage && cp -a /path/to/export/. staging/imessage/
 
 services:
   vault:
@@ -25,6 +28,8 @@ services:
       WATCHPACK_POLLING: ${WATCHPACK_POLLING:-false}
     volumes:
       - .:/app
+      # Host drop folder for JSONL imports (also covered by .:/app in dev)
+      - ./staging:/app/staging
       # Persist build caches across container recreates (bind mount would hide host dirs)
       - cargo-target:/app/target
       - cargo-registry:/usr/local/cargo/registry
@@ -45,6 +50,8 @@ services:
       VAULT_MODE: ${VAULT_MODE:-demo}
     volumes:
       - vault-data:/app/data
+      # Host drop folder for JSONL imports
+      - ./staging:/app/staging
 
 volumes:
   cargo-target:
