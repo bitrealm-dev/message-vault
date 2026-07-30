@@ -45,16 +45,31 @@ describe("parseSearchQuery", () => {
     assert.equal(q.conversationType, "individual");
   });
 
-  it("parses last-contact: and first-contact: durations", () => {
-    assert.equal(parseSearchQuery("last-contact:1y").lastContactDays, 365);
-    assert.equal(parseSearchQuery("last-contact:6m").lastContactDays, 180);
-    assert.equal(parseSearchQuery("last-contact:400d").lastContactDays, 400);
-    assert.equal(parseSearchQuery("last-contact:45").lastContactDays, 45);
-    assert.equal(parseSearchQuery("last-contact:abc").lastContactDays, null);
-    assert.equal(parseSearchQuery("first-contact:5y").firstContactDays, 1825);
-    assert.equal(parseSearchQuery("first-contact:30d").firstContactDays, 30);
-    assert.equal(hasSearchCriteria(parseSearchQuery("last-contact:1y")), true);
-    assert.equal(hasSearchCriteria(parseSearchQuery("first-contact:5y")), true);
+  it("parses last-contact: and first-contact: dates", () => {
+    assert.equal(
+      parseSearchQuery("last-contact:2024-01-15").lastContact,
+      "2024-01-15",
+    );
+    assert.equal(
+      parseSearchQuery("last-contact:2020").lastContact,
+      "2020-01-01",
+    );
+    assert.equal(
+      parseSearchQuery("first-contact:2019-06-01").firstContact,
+      "2019-06-01",
+    );
+    assert.equal(
+      parseSearchQuery("first-contact:2015").firstContact,
+      "2015-01-01",
+    );
+    assert.equal(
+      hasSearchCriteria(parseSearchQuery("last-contact:2024-01-01")),
+      true,
+    );
+    assert.equal(
+      hasSearchCriteria(parseSearchQuery("first-contact:2019-06-01")),
+      true,
+    );
   });
 });
 
@@ -67,8 +82,8 @@ describe("composeSearchQuery", () => {
       conversationType: "group",
       hasAttachment: true,
       includeTrash: true,
-      lastContact: "1y",
-      firstContact: "5y",
+      lastContact: "2024-01-15",
+      firstContact: "2019-06-01",
     });
     assert.match(s, /with:"Ann Lee"/);
     assert.match(s, /birthday/);
@@ -76,8 +91,8 @@ describe("composeSearchQuery", () => {
     assert.match(s, /is:group/);
     assert.match(s, /has:attachment/);
     assert.match(s, /in:trash/);
-    assert.match(s, /last-contact:1y/);
-    assert.match(s, /first-contact:5y/);
+    assert.match(s, /last-contact:2024-01-15/);
+    assert.match(s, /first-contact:2019-06-01/);
     assert.doesNotMatch(s, /subject:/);
     assert.doesNotMatch(s, /from:/);
     const parsed = parseSearchQuery(s);
@@ -87,8 +102,8 @@ describe("composeSearchQuery", () => {
     assert.equal(parsed.conversationType, "group");
     assert.equal(parsed.hasAttachment, true);
     assert.equal(parsed.includeTrash, true);
-    assert.equal(parsed.lastContactDays, 365);
-    assert.equal(parsed.firstContactDays, 1825);
+    assert.equal(parsed.lastContact, "2024-01-15");
+    assert.equal(parsed.firstContact, "2019-06-01");
   });
 });
 

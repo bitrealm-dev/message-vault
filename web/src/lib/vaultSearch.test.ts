@@ -151,9 +151,12 @@ describe("vault search + FTS", () => {
     });
   });
 
-  it("filters by last-contact: (last message age)", () => {
+  it("filters by last-contact: (last message on or before date)", () => {
     runWithAccount(accountId, () => {
-      const result = searchVault("last-contact:365d");
+      const cutoff = new Date(Date.now() - 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const result = searchVault(`last-contact:${cutoff}`);
       const handles = result.hits.map((h) => h.chatIdentifier);
       assert.ok(handles.includes("+15555551002"));
       assert.ok(!handles.includes("+15555551001"));
@@ -161,9 +164,12 @@ describe("vault search + FTS", () => {
     });
   });
 
-  it("filters by first-contact: (first message age)", () => {
+  it("filters by first-contact: (first message on or before date)", () => {
     runWithAccount(accountId, () => {
-      const result = searchVault("first-contact:5y");
+      const cutoff = new Date(Date.now() - 5 * 365 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const result = searchVault(`first-contact:${cutoff}`);
       const handles = result.hits.map((h) => h.chatIdentifier);
       assert.ok(handles.includes("+15555551001"));
       assert.ok(handles.includes("+15555551002"));
@@ -173,7 +179,15 @@ describe("vault search + FTS", () => {
 
   it("combines last-contact: and first-contact:", () => {
     runWithAccount(accountId, () => {
-      const result = searchVault("last-contact:365d first-contact:5y");
+      const lastCutoff = new Date(Date.now() - 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const firstCutoff = new Date(Date.now() - 5 * 365 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const result = searchVault(
+        `last-contact:${lastCutoff} first-contact:${firstCutoff}`,
+      );
       const handles = result.hits.map((h) => h.chatIdentifier);
       assert.ok(handles.includes("+15555551002"));
       assert.ok(!handles.includes("+15555551001"));

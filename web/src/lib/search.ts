@@ -209,21 +209,19 @@ export function searchVault(
 
   const whereSql = where.join(" AND ");
 
+  /** Date-only bounds include the full day, matching `before:`. */
+  const endOfDayBound = (raw: string) =>
+    raw.length === 10 ? `${raw}T23:59:59.999Z` : raw;
+
   const having: string[] = [];
   const havingParams: unknown[] = [];
-  if (parsed.lastContactDays) {
-    const cutoff = new Date(
-      Date.now() - parsed.lastContactDays * 86_400_000,
-    ).toISOString();
+  if (parsed.lastContact) {
     having.push(`MAX(m.timestamp) < ?`);
-    havingParams.push(cutoff);
+    havingParams.push(endOfDayBound(parsed.lastContact));
   }
-  if (parsed.firstContactDays) {
-    const cutoff = new Date(
-      Date.now() - parsed.firstContactDays * 86_400_000,
-    ).toISOString();
+  if (parsed.firstContact) {
     having.push(`MIN(m.timestamp) < ?`);
-    havingParams.push(cutoff);
+    havingParams.push(endOfDayBound(parsed.firstContact));
   }
   const havingSql =
     having.length > 0 ? `HAVING ${having.join(" AND ")}` : "";

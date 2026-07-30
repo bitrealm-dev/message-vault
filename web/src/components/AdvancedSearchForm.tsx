@@ -106,20 +106,18 @@ export function AdvancedSearchForm({
         </Field>
         <Field label="Last contact">
           <input
+            type="date"
             className={inputClass}
             value={lastContact}
             onChange={(e) => setLastContact(e.target.value)}
-            placeholder="e.g. 1y — no messages for at least this long"
-            spellCheck={false}
           />
         </Field>
         <Field label="First contact">
           <input
+            type="date"
             className={inputClass}
             value={firstContact}
             onChange={(e) => setFirstContact(e.target.value)}
-            placeholder="e.g. 5y — first message at least this long ago"
-            spellCheck={false}
           />
         </Field>
         <Field label="In">
