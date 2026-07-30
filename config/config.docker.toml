@@ -9,7 +9,7 @@ assets_dir = "assets"
 assets_converted_dir = "assets_converted"
 
 # Bind all interfaces so Docker port publishing works.
-# Map host ports to localhost for local-only access, e.g.:
-#   ports: ["127.0.0.1:3000:3000", "127.0.0.1:8080:8080"]
+# Compose publishes 0.0.0.0:3000/8080 for LAN access; restrict with the host
+# firewall to your trusted subnet (do not port-forward on the router).
 [server]
 bind = "0.0.0.0:8080"

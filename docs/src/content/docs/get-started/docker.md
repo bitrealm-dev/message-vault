@@ -16,8 +16,56 @@ A committed [`.env`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/
 `COMPOSE_PROFILES=dev` so bare `docker compose up` starts the toolchain service.
 Enable only one profile at a time — both publish ports `3000` and `8080`.
 
-Requirements: [Docker Engine](https://docs.docker.com/engine/install/) (or Docker
-Desktop) with Compose v2.
+## Install Docker
+
+Message Vault’s images are **Linux containers**. You need Docker Engine or
+Docker Desktop with the Compose v2 plugin (`docker compose`).
+
+### Windows
+
+1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/).
+2. Leave **Linux containers** and the **WSL 2** engine enabled (Docker Desktop’s
+   default). Docker Desktop runs Linux images in a small WSL 2 (or Hyper-V) VM;
+   you do not need a separate Linux install or a Windows-container image.
+3. Start Docker Desktop and wait until it reports that the engine is running.
+4. In PowerShell, verify:
+
+```powershell
+docker version
+docker compose version
+```
+
+PowerShell environment variables for this repo (set in the same session before
+`docker compose`):
+
+```powershell
+# Prefer the slim release image (optional; default profile is "dev")
+$env:COMPOSE_PROFILES = "release"
+
+# Empty personal vault instead of the demo seed (optional)
+$env:VAULT_MODE = "personal"
+
+docker compose up --build
+```
+
+### Linux
+
+1. Install Docker Engine and the Compose plugin for your distribution:
+   [Install Docker Engine](https://docs.docker.com/engine/install/).
+2. Follow Docker’s
+   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/)
+   so your user can run `docker` without `sudo` (typically membership in the
+   `docker` group, then a new login session).
+3. Verify:
+
+```bash
+docker version
+docker compose version
+```
+
+[Docker Desktop for Linux](https://docs.docker.com/desktop/setup/install/linux/)
+is an alternative if you prefer a GUI; Engine + Compose is enough for this
+project.
 
 ## Dev profile (default)
 
@@ -77,15 +125,35 @@ or web dependencies change.
 
 ## Ports and security
 
-Compose maps ports to localhost only:
+Compose publishes both services on all host interfaces:
 
 | Port | Service |
 |------|---------|
 | `3000` | Web UI |
 | `8080` | Import API (`serve`) |
 
-Widen the publish address only if you intend LAN access. Import auth uses
-per-account tokens, not a host-wide secret.
+On the host machine use <http://localhost:3000/login> and
+<http://127.0.0.1:8080/health>. From another device on the same LAN, use the
+host’s LAN IP instead, for example:
+
+```text
+http://192.168.50.100:3000/login
+http://192.168.50.100:8080/health
+```
+
+Import auth uses per-account tokens, not a host-wide secret. Limit inbound
+TCP `3000` and `8080` on the host firewall to your trusted LAN/VPN subnet, and
+do **not** add router port-forwarding unless you intentionally expose the
+stack beyond the LAN. Example with `ufw` (adjust the subnet to match yours):
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 3000 proto tcp
+sudo ufw allow from 192.168.50.0/24 to any port 8080 proto tcp
+```
+
+If `ufw` is inactive and other host services already rely on a different
+firewall or network isolation, keep those controls in place rather than
+enabling `ufw` globally without reviewing existing rules.
 
 ## Useful commands
 
@@ -118,9 +186,8 @@ For the release profile (`COMPOSE_PROFILES=release`), replace `vault` with
   web/                   # Next.js app (dev) or standalone + tooling (release)
 ```
 
-Host security and persistence live in Compose volumes and the
-`127.0.0.1:…` port bindings — the processes inside still bind `0.0.0.0` so
-Docker can publish them.
+Host security and persistence live in Compose volumes and the host firewall —
+the processes inside bind `0.0.0.0` so Docker can publish them on the LAN.
 
 ## Next steps
 

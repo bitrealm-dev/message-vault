@@ -42,19 +42,21 @@ npm ci
 
 ## Docker (optional)
 
-Prefer not to install Rust and Node on the host? Use Compose instead:
+Prefer not to install Rust and Node on the host? Use Compose instead. Install
+Docker Desktop (Windows) or Docker Engine (Linux), then:
 
 ```bash
 docker compose up
 ```
 
-See [Docker](/get-started/docker/) for the default **dev** profile (pull `main`,
-bind-mounted source) and the optional **release** profile.
+See [Docker](/get-started/docker/) for Windows and Linux install steps, the
+default **dev** profile (pull `main`, bind-mounted source), and the optional
+**release** profile.
 
 ## Next steps
 
 - No real backup yet? [Try the demo](/get-started/try-the-demo/).
-- Prefer containers? [Docker](/get-started/docker/).
+- Prefer containers? [Docker](/get-started/docker/) (includes Windows/Linux setup).
 - Ready to import your own messages? [First personal import](/get-started/first-personal-import/).
 
 Full Windows and Linux prerequisite install steps (Visual Studio workloads,
