@@ -306,7 +306,10 @@ export function contactGroupChatThreadsForPhoneSets(
 
   // Combined view: collapse the same people across exporters into one row.
   if (source) {
-    return mapped.map(({ fingerprint: _fp, ...rest }) => rest);
+    return mapped.map(({ fingerprint, ...rest }) => {
+      void fingerprint;
+      return rest;
+    });
   }
 
   const byKey = new Map<string, (typeof mapped)[number]>();
@@ -338,7 +341,8 @@ export function contactGroupChatThreadsForPhoneSets(
 
   // Recount soft-deduped messages across merged conversation ids so we don't
   // sum pre-dedupe copies when duplicate_of is not yet set / partially set.
-  const merged = [...byKey.values()].map(({ fingerprint: _fp, ...rest }) => {
+  const merged = [...byKey.values()].map(({ fingerprint, ...rest }) => {
+    void fingerprint;
     if (rest.conversationIds.length === 1) return rest;
     const stats = groupYearStatsForConversations(
       rest.conversationIds,

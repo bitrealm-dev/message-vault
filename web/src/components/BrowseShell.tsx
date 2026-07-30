@@ -267,40 +267,6 @@ export function BrowseShell({
   } = peopleTree;
   void _patchCachedDetail;
 
-  const saveContactPatch = useCallback(
-    async (
-      patch: {
-        exclude?: boolean;
-        labels?: string[];
-        firstName?: string | null;
-        lastName?: string | null;
-        phones?: string[];
-      },
-      id?: number,
-    ): Promise<boolean> => {
-      const targetId = id ?? contactId;
-      if (targetId == null) return false;
-      setSaving(true);
-      try {
-        const res = await fetch(`/api/contacts/${targetId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "save failed");
-        if (data.contact && targetId === contactId) setDetail(data.contact);
-        return true;
-      } catch (err) {
-        console.error(err);
-        return false;
-      } finally {
-        setSaving(false);
-      }
-    },
-    [contactId],
-  );
-
   const isContactExcluded = useCallback(
     (c: { id: number; exclude: boolean }) =>
       excludeOverrides.get(c.id) ?? c.exclude,

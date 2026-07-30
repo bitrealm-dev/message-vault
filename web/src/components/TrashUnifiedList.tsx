@@ -102,7 +102,7 @@ export function TrashUnifiedList({
               {stickyLabel}
             </div>
             {tab === "contacts"
-              ? items.map((item, i) => {
+              ? items.map((item) => {
                   if (item.category !== "contacts") return null;
                   const active = item.key === focusedKey;
                   const checked = selectedKeys.has(item.key);

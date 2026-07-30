@@ -80,6 +80,7 @@ export function usePanelCollapse(
 
   const onGroupsResize = useCallback(
     (_size: PanelSize) => {
+      void _size;
       if (collapseInsteadOfShrinkingList()) return;
       const list = listPanelRef.current;
       if (list) prevListPxRef.current = list.getSize().inPixels;

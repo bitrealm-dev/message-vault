@@ -136,7 +136,7 @@ function collectMatchedCards(
     }
 
     let firstName = draft.firstName.trim();
-    let lastName = draft.lastName.trim();
+    const lastName = draft.lastName.trim();
     if (!firstName && !lastName) {
       firstName = card.fnRaw.trim() || phones[0]!;
     }

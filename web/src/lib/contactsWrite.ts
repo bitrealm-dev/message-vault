@@ -22,6 +22,7 @@ import {
   reservedLabelError,
 } from "./reservedLabels";
 import { assertNotOwnerHandle, assertVaultWritable } from "./owner";
+import { listUnassignedHandles } from "./unassignedRead";
 
 export type ContactPatch = {
   exclude?: boolean;
@@ -642,10 +643,6 @@ export function ensureUnknownContacts(): number {
     return 0;
   }
   const accountId = currentAccountId();
-  // Dynamic import avoids circular deps with unassignedRead ↔ contactsRead.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { listUnassignedHandles } =
-    require("./unassignedRead") as typeof import("./unassignedRead");
   const handles = listUnassignedHandles();
   if (handles.length === 0) return 0;
 

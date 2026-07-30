@@ -220,7 +220,7 @@ export function BrowsePeopleTreePane({
             key: "unlock-vault",
             label: "Unlock vault to edit",
             icon: <LockIcon className="size-5 shrink-0 opacity-80" />,
-            onClick: (_triggerEl: HTMLElement | null) => onUnlockVault(),
+            onClick: () => onUnlockVault(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),
@@ -243,7 +243,7 @@ export function BrowsePeopleTreePane({
             label: vcfImporting ? "Importing…" : "Import VCF",
             icon: <ImportVcfIcon className="size-5 shrink-0 opacity-80" />,
             disabled: vcfImporting,
-            onClick: (_triggerEl: HTMLElement | null) => {
+            onClick: () => {
               vcfInputRef.current?.click();
             },
           } satisfies ListHistoryMenuItem,
@@ -255,7 +255,7 @@ export function BrowsePeopleTreePane({
             key: "export-contacts-csv",
             label: "Export contacts CSV",
             icon: <ExportCsvIcon className="size-5 shrink-0 opacity-80" />,
-            onClick: (_triggerEl: HTMLElement | null) => onExportContactsCsv(),
+            onClick: () => onExportContactsCsv(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),
@@ -297,7 +297,7 @@ export function BrowsePeopleTreePane({
             ),
             disabled: trashDisabled,
             danger: true,
-            onClick: (_triggerEl: HTMLElement | null) => onTrashMessages(),
+            onClick: () => onTrashMessages(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),
@@ -309,7 +309,7 @@ export function BrowsePeopleTreePane({
             icon: <XIcon className="size-5 shrink-0 opacity-80" />,
             disabled: deleteDisabled,
             danger: true,
-            onClick: (_triggerEl: HTMLElement | null) => onTrashContact(),
+            onClick: () => onTrashContact(),
           } satisfies ListHistoryMenuItem,
         ]
       : []),

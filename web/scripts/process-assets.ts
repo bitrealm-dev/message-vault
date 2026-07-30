@@ -20,7 +20,6 @@ import { parse } from "smol-toml";
 const JPEG_MIN_BYTES = 500 * 1024;
 const MP3_MIN_BYTES = 100 * 1024;
 const MP4_MIN_BYTES = 10 * 1024 * 1024;
-const GIF_MIN_BYTES = 200 * 1024;
 const JPEG_QUALITY = 85;
 
 const IMAGE_EXTS = new Set([
@@ -485,7 +484,7 @@ async function main() {
       `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'accounts'`,
     )
     .get() as { n: number };
-  let accountIds: string[] = hasAccounts.n
+  const accountIds: string[] = hasAccounts.n
     ? (
         db.prepare(`SELECT id FROM accounts ORDER BY id`).all() as Array<{ id: string }>
       ).map((r) => r.id)

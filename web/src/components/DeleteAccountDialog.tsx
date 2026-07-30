@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { XIcon } from "./icons";
 
 export function DeleteAccountDialog({
@@ -17,10 +17,11 @@ export function DeleteAccountDialog({
   onConfirm: () => void;
 }) {
   const [typedUsername, setTypedUsername] = useState("");
-
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setTypedUsername("");
-  }, [open]);
+  }
 
   if (!open) return null;
 

@@ -17,6 +17,7 @@ const browserStorage: LayoutStorage = {
 
 /** localStorage does not emit to this subscribe; server/client snapshot switch is enough. */
 function subscribe(_onStoreChange: () => void) {
+  void _onStoreChange;
   return () => {};
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { normalizeHex, type ThemeSeeds } from "@/lib/theme";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTheme } from "./useTheme";
 
 const SEED_FIELDS: {
@@ -24,10 +24,11 @@ function ColorRow({
   onChange: (hex: string) => void;
 }) {
   const [text, setText] = useState(value);
-
-  useEffect(() => {
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
     setText(value);
-  }, [value]);
+  }
 
   return (
     <div className="flex items-center gap-3">
@@ -74,13 +75,15 @@ export function ThemeSettings() {
   } = useTheme();
 
   const [shareDraft, setShareDraft] = useState(shareString);
+  const [prevShareString, setPrevShareString] = useState(shareString);
   const [shareError, setShareError] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
+  if (shareString !== prevShareString) {
+    setPrevShareString(shareString);
     setShareDraft(shareString);
     setShareError(false);
-  }, [shareString]);
+  }
 
   const matchSystem = mode === "system";
 
