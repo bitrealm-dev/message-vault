@@ -1,7 +1,7 @@
 "use client";
 
 import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
-import { useState, type MouseEvent } from "react";
+import type { MouseEvent } from "react";
 import { BrowseContactRow } from "./BrowseContactRow";
 import { SearchHitSummary } from "./SearchResultsList";
 
@@ -19,8 +19,10 @@ export function SearchContactResultsList({
   loading,
   selectedConversationId,
   selectedContactIds = EMPTY_SELECTED_CONTACT_IDS,
+  expandedContactIds = EMPTY_SELECTED_CONTACT_IDS,
   contactId = null,
   onToggleContact,
+  onToggleExpand,
   onSelectHit,
   onContactContextMenu,
   emptyLabel = "No matches",
@@ -30,29 +32,18 @@ export function SearchContactResultsList({
   loading: boolean;
   selectedConversationId: number | null;
   selectedContactIds?: ReadonlySet<number>;
+  expandedContactIds?: ReadonlySet<number>;
   /** Contact open in the detail pane. */
   contactId?: number | null;
   onToggleContact?: (
     contactId: number,
     mods?: { shiftKey: boolean },
   ) => void;
+  onToggleExpand?: (contactId: number) => void;
   onSelectHit?: (hit: SearchConversationHit) => void;
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
   emptyLabel?: string;
 }) {
-  // Start collapsed so the list stays scannable; expand one contact at a time.
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(
-    EMPTY_SELECTED_CONTACT_IDS,
-  );
-
-  const toggleExpand = (id: number) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
-  };
-
   if (loading) {
     return (
       <p className="px-3 py-8 text-center text-[13px] text-muted">Searching…</p>
@@ -75,7 +66,7 @@ export function SearchContactResultsList({
         Results · {total.toLocaleString()}
       </div>
       {contacts.map(({ contact, hits }, index) => {
-        const expanded = expandedIds.has(contact.id);
+        const expanded = expandedContactIds.has(contact.id);
         const checked = selectedContactIds.has(contact.id);
         const active = checked || expanded || contact.id === contactId;
         return (
@@ -95,7 +86,7 @@ export function SearchContactResultsList({
                 onToggleContact?.(id, { shiftKey: e.shiftKey })
               }
               onContextMenu={(id, x, y) => onContactContextMenu?.(id, x, y)}
-              onToggleExpand={toggleExpand}
+              onToggleExpand={onToggleExpand}
             />
             {expanded ? (
               <div className="border-b border-border/40">

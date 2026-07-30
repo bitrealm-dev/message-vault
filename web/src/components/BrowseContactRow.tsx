@@ -125,7 +125,11 @@ export const BrowseContactRow = memo(function BrowseContactRow({
         type="button"
         aria-pressed={checked}
         aria-label={`Select ${c.displayName}`}
-        onClick={(e) => onSelectColumnClick(c.id, e)}
+        onClick={(e) => {
+          // Row also toggles when selectionActive; don't double-fire.
+          e.stopPropagation();
+          onSelectColumnClick(c.id, e);
+        }}
         onMouseDown={(e) => {
           e.stopPropagation();
           if (e.shiftKey) e.preventDefault();

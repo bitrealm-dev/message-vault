@@ -24,6 +24,7 @@ import { NewContactIcon } from "./BrowseContactList";
 import { ListHistoryMenu, type ListHistoryMenuItem } from "./history";
 import { IconHoverTarget } from "./IconHoverLabel";
 import {
+  ChevronDownIcon,
   LockIcon,
   PencilIcon,
   PeopleGroupIcon,
@@ -44,6 +45,7 @@ import { VaultSearchField } from "./VaultSearchField";
 import { YearFilterMenu } from "./YearFilterMenu";
 
 const CHILD_INDENT_PX = 20;
+const EMPTY_SEARCH_EXPANSION: ReadonlySet<number> = new Set();
 
 export function BrowsePeopleTreePane({
   sectionLabel,
@@ -201,6 +203,35 @@ export function BrowsePeopleTreePane({
 }) {
   const vcfInputRef = useRef<HTMLInputElement>(null);
   const [vcfImporting, setVcfImporting] = useState(false);
+  const [searchExpansion, setSearchExpansion] = useState<{
+    query: string;
+    ids: ReadonlySet<number>;
+  }>({ query: "", ids: EMPTY_SEARCH_EXPANSION });
+  const expandedSearchContactIds =
+    searchExpansion.query === searchQuery
+      ? searchExpansion.ids
+      : EMPTY_SEARCH_EXPANSION;
+  const allSearchContactsExpanded =
+    searchContactHits.length > 0 &&
+    searchContactHits.every(({ contact }) =>
+      expandedSearchContactIds.has(contact.id),
+    );
+  const toggleSearchContactExpanded = (id: number) => {
+    setSearchExpansion((prev) => {
+      const next =
+        prev.query === searchQuery ? new Set(prev.ids) : new Set<number>();
+      if (!next.delete(id)) next.add(id);
+      return { query: searchQuery, ids: next };
+    });
+  };
+  const toggleAllSearchContactsExpanded = () => {
+    setSearchExpansion({
+      query: searchQuery,
+      ids: allSearchContactsExpanded
+        ? EMPTY_SEARCH_EXPANSION
+        : new Set(searchContactHits.map(({ contact }) => contact.id)),
+    });
+  };
   const hasContactSelection = selectedContactIds.size >= 1;
   const mode: BrowseTreeMode = browseTreeMode({
     resultsMode,
@@ -379,6 +410,30 @@ export function BrowsePeopleTreePane({
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 overflow-visible">
+            {searchShowContact ? (
+              <IconHoverTarget
+                label={
+                  allSearchContactsExpanded ? "Collapse all" : "Expand all"
+                }
+                placement="bottom"
+              >
+                <button
+                  type="button"
+                  disabled={searchContactHits.length === 0}
+                  aria-label={
+                    allSearchContactsExpanded ? "Collapse all" : "Expand all"
+                  }
+                  onClick={toggleAllSearchContactsExpanded}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted transition-colors hover:bg-hover hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <ChevronDownIcon
+                    className={`size-4 ${
+                      allSearchContactsExpanded ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+              </IconHoverTarget>
+            ) : null}
             <SortByMenu
               sort={contactSort}
               order={contactSortOrder}
@@ -453,8 +508,10 @@ export function BrowsePeopleTreePane({
           loading={searchLoading}
           selectedConversationId={selectedConversationId}
           selectedContactIds={selectedContactIds}
+          expandedContactIds={expandedSearchContactIds}
           contactId={contactId}
           onToggleContact={(id, mods) => onToggleSearchContact?.(id, mods)}
+          onToggleExpand={toggleSearchContactExpanded}
           onSelectHit={(hit) => onSelectSearchHit?.(hit)}
           onContactContextMenu={onSearchContactContextMenu}
         />
