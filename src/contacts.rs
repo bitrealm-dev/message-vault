@@ -343,7 +343,17 @@ fn ensure_label(conn: &Connection, account_id: &str, name: &str) -> Result<i64> 
     Ok(id)
 }
 
-/// Create contacts for 1:1 handles that have messages but no contact_handles row.
+/// Normalized comparison key for owner-handle matching (E.164 phone / lowercased email).
+fn handle_match_key(handle: &str) -> String {
+    let trimmed = handle.trim();
+    if is_email_handle(trimmed) {
+        return trimmed.to_lowercase();
+    }
+    crate::phone::to_e164(trimmed).unwrap_or_else(|| trimmed.to_string())
+}
+
+/// Create contacts for handles that have messages but no contact_handles row:
+/// 1:1 handles, plus group participants who never had a 1:1 conversation.
 /// Names come from participant `name_hint` / exporter `display_name` when present.
 /// Phone handles are appended to `contacts.csv`; emails stay DB-only.
 pub fn ensure_unknown_contacts(
@@ -356,6 +366,15 @@ pub fn ensure_unknown_contacts(
     let has_trash: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'trashed_handles'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    let has_trashed_conversations: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'trashed_conversations'",
             [],
             |row| row.get::<_, i64>(0),
         )
@@ -385,7 +404,7 @@ pub fn ensure_unknown_contacts(
          ORDER BY c.chat_identifier"
     );
 
-    let handles: Vec<String> = {
+    let mut handles: Vec<String> = {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![account_id], |row| row.get(0))?;
         let mut out = Vec::new();
@@ -394,6 +413,69 @@ pub fn ensure_unknown_contacts(
         }
         out
     };
+
+    // Group participants with no 1:1 thread are never reached by the query above,
+    // so their group messages would belong to no contact.
+    let group_trash_handle_sql = if has_trash {
+        "AND NOT EXISTS (
+           SELECT 1 FROM trashed_handles th
+           WHERE th.handle = p.handle AND th.account_id = c.account_id
+         )"
+    } else {
+        ""
+    };
+    let group_trash_conv_sql = if has_trashed_conversations {
+        "AND NOT EXISTS (
+           SELECT 1 FROM trashed_conversations tc
+           WHERE tc.conversation_id = c.id AND tc.account_id = c.account_id
+         )"
+    } else {
+        ""
+    };
+    let group_sql = format!(
+        "SELECT DISTINCT p.handle
+         FROM participants p
+         JOIN conversations c ON c.id = p.conversation_id
+         WHERE c.account_id = ?1
+           AND c.conversation_type = 'group'
+           AND trim(coalesce(p.handle, '')) <> ''
+           AND NOT EXISTS (
+             SELECT 1 FROM contact_handles cp
+             WHERE cp.handle = p.handle AND cp.account_id = c.account_id
+           )
+           AND EXISTS (
+             SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+           )
+           {group_trash_handle_sql}
+           {group_trash_conv_sql}
+         ORDER BY p.handle"
+    );
+    {
+        let mut stmt = conn.prepare(&group_sql)?;
+        let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
+        let mut seen: HashSet<String> = handles.iter().cloned().collect();
+        for row in rows {
+            let handle = row?;
+            if seen.insert(handle.clone()) {
+                handles.push(handle);
+            }
+        }
+    }
+
+    // The vault owner is a participant in their own groups.
+    let owner_keys: HashSet<String> = crate::vault_owner::load_vault_owner(conn, account_id)
+        .map(|owner| {
+            owner
+                .phones
+                .iter()
+                .chain(owner.emails.iter())
+                .map(|h| handle_match_key(h))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !owner_keys.is_empty() {
+        handles.retain(|handle| !owner_keys.contains(&handle_match_key(handle)));
+    }
 
     if handles.is_empty() {
         return Ok(0);
@@ -790,5 +872,121 @@ mod tests {
         );
         assert_eq!(useful_name_hint("+19124011522", "+19124011522"), None);
         assert_eq!(useful_name_hint("(Unknown)", "+19124011522"), None);
+    }
+
+    const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000042";
+    const OWNER_PHONE: &str = "+15555550100";
+    const GROUP_ONLY_PHONE: &str = "+15555550111";
+    const DIRECT_PHONE: &str = "+15555550222";
+
+    /// Group with the owner, a group-only participant, and a 1:1 participant.
+    fn seed_group_vault(db_path: &Path) -> Connection {
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::schema::ensure_vault_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'test', 0)",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
+             VALUES (?1, 'Vault', 'Owner', 'Vault Owner')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, ?2)",
+            params![TEST_ACCOUNT_ID, OWNER_PHONE],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO conversations (
+                 account_id, chat_identifier, service, conversation_type,
+                 group_title, exported_at, source_file
+             ) VALUES (?1, 'chat-1', 'SMS', 'group', 'Crew', NULL, 't.json')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+        let group_id = conn.last_insert_rowid();
+        for (handle, hint) in [
+            (OWNER_PHONE, "Vault Owner"),
+            (GROUP_ONLY_PHONE, "Group Only"),
+            (DIRECT_PHONE, "Direct Friend"),
+        ] {
+            conn.execute(
+                "INSERT INTO participants (conversation_id, handle, name_hint)
+                 VALUES (?1, ?2, ?3)",
+                params![group_id, handle, hint],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO messages (
+                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
+             ) VALUES (?1, ?2, 'imessage', 'g-group', '2023-06-01T10:00:00Z', 0, 0, 'hi crew')",
+            params![group_id, TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO conversations (
+                 account_id, chat_identifier, service, conversation_type,
+                 group_title, exported_at, source_file
+             ) VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')",
+            params![TEST_ACCOUNT_ID, DIRECT_PHONE],
+        )
+        .unwrap();
+        let direct_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO messages (
+                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
+             ) VALUES (?1, ?2, 'imessage', 'g-direct', '2023-06-02T10:00:00Z', 0, 0, 'hi there')",
+            params![direct_id, TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        conn
+    }
+
+    #[test]
+    fn ensure_unknown_contacts_covers_group_only_participants() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("vault.db");
+        let csv_path = dir.join("contacts.csv");
+
+        let mut conn = seed_group_vault(&db_path);
+        let created = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID, &csv_path).unwrap();
+        assert_eq!(created, 2, "group-only and 1:1 handles both get contacts");
+
+        let handles: Vec<String> = conn
+            .prepare("SELECT handle FROM contact_handles WHERE account_id = ?1 ORDER BY handle")
+            .unwrap()
+            .query_map(params![TEST_ACCOUNT_ID], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(handles.iter().any(|h| h == GROUP_ONLY_PHONE));
+        assert!(handles.iter().any(|h| h == DIRECT_PHONE));
+        assert!(
+            !handles.iter().any(|h| h == OWNER_PHONE),
+            "the vault owner must not become a contact: {handles:?}"
+        );
+
+        // Second run is a no-op now that every handle has a contact.
+        let again = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID, &csv_path).unwrap();
+        assert_eq!(again, 0);
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

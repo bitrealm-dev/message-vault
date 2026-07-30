@@ -21,8 +21,15 @@ import {
   RESERVED_LABEL_NAMES,
   reservedLabelError,
 } from "./reservedLabels";
-import { assertNotOwnerHandle, assertVaultWritable } from "./owner";
-import { listUnassignedHandles } from "./unassignedRead";
+import {
+  assertNotOwnerHandle,
+  assertVaultWritable,
+  ownerHandleMatcher,
+} from "./owner";
+import {
+  listUnassignedGroupParticipantHandles,
+  listUnassignedHandles,
+} from "./unassignedRead";
 
 export type ContactPatch = {
   exclude?: boolean;
@@ -633,8 +640,9 @@ export function restoreLabel(
 }
 
 /**
- * Create nameless contacts for 1:1 handles that still appear as Unassigned.
- * Returns how many contacts were created. No-op when the vault is read-only.
+ * Create nameless contacts for handles with messages but no contact: 1:1 handles
+ * that still appear as Unassigned, plus group participants who never had a 1:1
+ * thread. Returns how many contacts were created. No-op when read-only.
  */
 export function ensureUnknownContacts(): number {
   try {
@@ -643,7 +651,17 @@ export function ensureUnknownContacts(): number {
     return 0;
   }
   const accountId = currentAccountId();
-  const handles = listUnassignedHandles();
+  // Owner handles are resolved up front: the matcher opens its own connection,
+  // which would deadlock against the write transaction below.
+  const isOwner = ownerHandleMatcher();
+  const handles = [
+    ...listUnassignedHandles().map((row) => row.handle),
+    ...listUnassignedGroupParticipantHandles().map((row) => row.handle),
+  ]
+    .map((handle) => handle.trim())
+    .filter((handle) => handle.length > 0)
+    // The vault owner is a participant in their own group chats.
+    .filter((handle) => !isOwner(handle));
   if (handles.length === 0) return 0;
 
   const csvRows: string[][] = [];
@@ -651,9 +669,7 @@ export function ensureUnknownContacts(): number {
   const writeDb = new Database(dbPath());
   try {
     const tx = writeDb.transaction(() => {
-      for (const row of handles) {
-        const handle = row.handle.trim();
-        if (!handle) continue;
+      for (const handle of handles) {
         const owner = phoneOwner(writeDb, handle, accountId);
         if (owner != null) continue;
 

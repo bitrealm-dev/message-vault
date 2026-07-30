@@ -6,7 +6,7 @@ import {
   type BrowseTreeMode,
 } from "@/lib/browseTree";
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
-import type { SearchConversationHit } from "@/lib/search";
+import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
 import type { ContactListItem, YearThread } from "@/lib/types";
 import {
   useRef,
@@ -31,6 +31,7 @@ import {
   XIcon,
 } from "./icons";
 import { PaneSearchField } from "./PaneSearchField";
+import { SearchContactResultsList } from "./SearchContactResultsList";
 import { SearchResultsList } from "./SearchResultsList";
 import {
   BrowseGroupChatSortMenu,
@@ -101,7 +102,9 @@ export function BrowsePeopleTreePane({
   searchSources = [],
   searchLabels = [],
   resultsMode = false,
+  searchShowContact = false,
   searchHits = [],
+  searchContactHits = [],
   searchTotal = 0,
   searchLoading = false,
   searchContactIds = [],
@@ -177,7 +180,10 @@ export function BrowsePeopleTreePane({
   searchSources?: string[];
   searchLabels?: string[];
   resultsMode?: boolean;
+  /** Results grouped under each matching contact. */
+  searchShowContact?: boolean;
   searchHits?: SearchConversationHit[];
+  searchContactHits?: SearchContactHit[];
   searchTotal?: number;
   searchLoading?: boolean;
   searchContactIds?: number[];
@@ -428,7 +434,19 @@ export function BrowsePeopleTreePane({
         </>
       )}
 
-      {mode === "search" ? (
+      {mode === "search" && searchShowContact ? (
+        <SearchContactResultsList
+          contacts={searchContactHits}
+          total={searchTotal}
+          loading={searchLoading}
+          selectedConversationId={selectedConversationId}
+          selectedContactIds={selectedContactIds}
+          contactId={contactId}
+          onToggleContact={(id, mods) => onToggleSearchContact?.(id, mods)}
+          onSelectHit={(hit) => onSelectSearchHit?.(hit)}
+          onContactContextMenu={onSearchContactContextMenu}
+        />
+      ) : mode === "search" ? (
         <SearchResultsList
           hits={searchHits}
           total={searchTotal}

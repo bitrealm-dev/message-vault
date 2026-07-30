@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 
 import { runWithAccount } from "./accountScope";
 import { createAccount, saveAccount } from "./accounts";
-import { searchVault } from "./search";
+import { searchVault, searchVaultByContact } from "./search";
 import { dbPath } from "./paths";
 import { ensureVaultSchema, MESSAGES_FTS_BACKFILL_META_KEY } from "./vaultSchema";
 
@@ -60,12 +60,39 @@ describe("vault search + FTS", () => {
         `INSERT INTO contact_handles (account_id, handle, contact_id)
          VALUES (?, ?, ?)`,
       );
-      const assignContact = (handle: string, name: string) => {
+      const assignContact = (
+        handle: string,
+        name: string,
+        opts: { exclude?: boolean } = {},
+      ) => {
         const contactId = Number(
           insertContact.run(accountId, name, handle).lastInsertRowid,
         );
+        if (opts.exclude) {
+          db.prepare(`UPDATE contacts SET exclude = 1 WHERE id = ?`).run(
+            contactId,
+          );
+        }
         insertHandle.run(accountId, handle, contactId);
         return contactId;
+      };
+      const addToLabel = (contactId: number, label: string) => {
+        db.prepare(
+          `INSERT OR IGNORE INTO contact_labels (account_id, name) VALUES (?, ?)`,
+        ).run(accountId, label);
+        const labelId = Number(
+          (
+            db
+              .prepare(
+                `SELECT id FROM contact_labels WHERE account_id = ? AND name = ?`,
+              )
+              .get(accountId, label) as { id: number }
+          ).id,
+        );
+        db.prepare(
+          `INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
+           VALUES (?, ?)`,
+        ).run(contactId, labelId);
       };
 
       const daysAgo = (days: number) =>
@@ -140,6 +167,59 @@ describe("vault search + FTS", () => {
         "g-recent-2",
         daysAgo(1),
         "just messaged yesterday",
+      );
+
+      // Two labeled contacts, one of them inactive, sharing a group chat.
+      const labeledConvId = Number(
+        insertConv.run(accountId, "+15555551004").lastInsertRowid,
+      );
+      const labeledId = assignContact("+15555551004", "Labeled");
+      addToLabel(labeledId, "Family");
+      insertMsg.run(
+        labeledConvId,
+        accountId,
+        "g-labeled-1",
+        "2022-03-01T12:00:00Z",
+        "labeled kumquat note",
+      );
+
+      const inactiveConvId = Number(
+        insertConv.run(accountId, "+15555551005").lastInsertRowid,
+      );
+      const inactiveId = assignContact("+15555551005", "Inactive", {
+        exclude: true,
+      });
+      addToLabel(inactiveId, "Family");
+      insertMsg.run(
+        inactiveConvId,
+        accountId,
+        "g-inactive-1",
+        "2022-03-02T12:00:00Z",
+        "inactive kumquat note",
+      );
+
+      const groupConvId = Number(
+        db
+          .prepare(
+            `INSERT INTO conversations (
+               account_id, chat_identifier, service, conversation_type,
+               group_title, exported_at, source_file
+             ) VALUES (?, 'chat-kumquat', 'iMessage', 'group', 'Kumquat Crew', NULL, 't.json')`,
+          )
+          .run(accountId).lastInsertRowid,
+      );
+      const insertParticipant = db.prepare(
+        `INSERT INTO participants (conversation_id, handle, name_hint)
+         VALUES (?, ?, ?)`,
+      );
+      insertParticipant.run(groupConvId, "+15555551004", "Labeled");
+      insertParticipant.run(groupConvId, "+15555551005", "Inactive");
+      insertMsg.run(
+        groupConvId,
+        accountId,
+        "g-group-1",
+        "2022-04-01T12:00:00Z",
+        "group kumquat plans",
       );
     } finally {
       db.close();
@@ -216,6 +296,101 @@ describe("vault search + FTS", () => {
       assert.ok(handles.includes("+15555551002"));
       assert.ok(!handles.includes("+15555551001"));
       assert.ok(!handles.includes("+15555551003"));
+    });
+  });
+
+  it("filters by an on-or-after last-contact bound", () => {
+    runWithAccount(accountId, () => {
+      const cutoff = new Date(Date.now() - 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const handles = searchVault(`last-contact:>=${cutoff}`).hits.map(
+        (h) => h.chatIdentifier,
+      );
+      assert.ok(handles.includes("+15555551001"));
+      assert.ok(handles.includes("+15555551003"));
+      assert.ok(!handles.includes("+15555551002"));
+    });
+  });
+
+  it("filters by a first-contact range", () => {
+    runWithAccount(accountId, () => {
+      const handles = searchVault(
+        "first-contact:2022-02-01..2022-03-02",
+      ).hits.map((h) => h.chatIdentifier);
+      assert.ok(handles.includes("+15555551004"));
+      assert.ok(!handles.includes("+15555551005"));
+      assert.ok(!handles.includes("+15555551001"));
+    });
+  });
+
+  it("within: searches a label's contacts including inactive ones", () => {
+    runWithAccount(accountId, () => {
+      const handles = searchVault("kumquat within:Family").hits.map(
+        (h) => h.chatIdentifier,
+      );
+      assert.ok(handles.includes("+15555551004"));
+      assert.ok(handles.includes("+15555551005"));
+      assert.ok(handles.includes("chat-kumquat"));
+
+      const other = searchVault("kumquat within:Nobody").hits;
+      assert.equal(other.length, 0);
+    });
+  });
+
+  it("groups results by contact, nesting shared group chats", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVaultByContact("kumquat");
+      const names = result.contacts?.map((c) => c.contact.displayName) ?? [];
+      assert.deepEqual([...names].sort(), ["Inactive", "Labeled"]);
+      assert.equal(result.totalContacts, 2);
+
+      for (const hit of result.contacts ?? []) {
+        const titles = hit.hits.map((h) => h.title);
+        assert.ok(
+          titles.includes("Kumquat Crew"),
+          `${hit.contact.displayName} should include the shared group chat`,
+        );
+        assert.equal(hit.hits.length, 2);
+        assert.equal(hit.matchCount, 2);
+      }
+    });
+  });
+
+  it("groups group-only matches under every participating contact", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVaultByContact('"group kumquat plans" is:group');
+      const names = (result.contacts ?? []).map((c) => c.contact.displayName);
+      assert.deepEqual([...names].sort(), ["Inactive", "Labeled"]);
+      for (const hit of result.contacts ?? []) {
+        assert.deepEqual(
+          hit.hits.map((h) => h.title),
+          ["Kumquat Crew"],
+        );
+      }
+    });
+  });
+
+  it("only heads contact groups with contacts that passed the filters", () => {
+    runWithAccount(accountId, () => {
+      // Both share the group chat, but only one is first contacted in March.
+      const result = searchVaultByContact(
+        "kumquat first-contact:2022-02-28..2022-03-02",
+      );
+      assert.deepEqual(
+        (result.contacts ?? []).map((c) => c.contact.displayName),
+        ["Labeled"],
+      );
+      const titles = result.contacts?.[0]?.hits.map((h) => h.title) ?? [];
+      assert.ok(titles.includes("Kumquat Crew"));
+    });
+  });
+
+  it("returns no contacts when nothing matches", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVaultByContact("hapaxlegomenonxyz");
+      assert.deepEqual(result.contacts, []);
+      assert.equal(result.totalContacts, 0);
     });
   });
 });

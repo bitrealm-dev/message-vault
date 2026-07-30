@@ -151,6 +151,7 @@ describe("flattenBrowseTree", () => {
         {
           conversationId: 5,
           conversationType: "group",
+          contactId: null,
           title: "Hit",
           chatIdentifier: "chat-5",
           matchCount: 1,

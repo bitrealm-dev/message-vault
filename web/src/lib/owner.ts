@@ -37,23 +37,32 @@ export function mutationErrorStatus(
   return isReadOnlyErrorMessage(message) ? 403 : fallback;
 }
 
+/**
+ * Owner-handle predicate that loads the account and owner profile once.
+ * Prefer this over calling {@link isOwnerHandle} in a loop: each account read
+ * opens its own connection and runs the schema migration check.
+ */
+export function ownerHandleMatcher(): (handle: string) => boolean {
+  const accountId = currentAccountId();
+  const emails = new Set(
+    loadAccount(accountId).emails.map((entry) => entry.email.toLowerCase()),
+  );
+  const phones = new Set(
+    loadVaultOwner(accountId).phones.map(phoneDigits).filter(Boolean),
+  );
+
+  return (handle: string) => {
+    const trimmed = handle.trim();
+    if (!trimmed) return false;
+    if (isEmailHandle(trimmed)) return emails.has(trimmed.toLowerCase());
+    const digits = phoneDigits(trimmed);
+    return digits ? phones.has(digits) : false;
+  };
+}
+
 /** True when handle belongs to the vault owner or web account email. */
 export function isOwnerHandle(handle: string): boolean {
-  const trimmed = handle.trim();
-  if (!trimmed) return false;
-
-  const accountId = currentAccountId();
-  const account = loadAccount(accountId);
-  if (isEmailHandle(trimmed)) {
-    return account.emails.some(
-      (entry) => entry.email.toLowerCase() === trimmed.toLowerCase(),
-    );
-  }
-
-  const digits = phoneDigits(trimmed);
-  if (!digits) return false;
-  const owner = loadVaultOwner(accountId);
-  return owner.phones.some((p) => phoneDigits(p) === digits);
+  return ownerHandleMatcher()(handle);
 }
 
 export function assertNotOwnerHandle(handle: string): void {

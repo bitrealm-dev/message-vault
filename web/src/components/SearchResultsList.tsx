@@ -6,6 +6,40 @@ import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
 
+/** Title, match count, snippet, type and date range for one matching conversation. */
+export function SearchHitSummary({ hit }: { hit: SearchConversationHit }) {
+  const { formatDateRange } = useDateTimeFormat();
+  const dateLabel =
+    hit.dateStart && hit.dateEnd
+      ? formatDateRange(hit.dateStart, hit.dateEnd, " – ")
+      : null;
+
+  return (
+    <>
+      <span className="flex min-w-0 items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-[13px] font-medium text-text">
+          {hit.title}
+        </span>
+        <CountBadge
+          count={hit.matchCount}
+          title={`${hit.matchCount} matching messages`}
+        />
+      </span>
+      {hit.topMatch?.snippet ? (
+        <span className="line-clamp-2 text-[12px] text-muted">
+          {hit.topMatch.snippet}
+        </span>
+      ) : null}
+      <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
+        <span className="truncate capitalize">
+          {hit.conversationType === "group" ? "Group" : "1-1"}
+        </span>
+        {dateLabel ? <span className="tabular-nums">{dateLabel}</span> : null}
+      </span>
+    </>
+  );
+}
+
 export function SearchResultsList({
   hits,
   total,
@@ -33,8 +67,6 @@ export function SearchResultsList({
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
   emptyLabel?: string;
 }) {
-  const { formatDateRange } = useDateTimeFormat();
-
   if (loading) {
     return (
       <p className="px-3 py-8 text-center text-[13px] text-muted">Searching…</p>
@@ -56,10 +88,6 @@ export function SearchResultsList({
         const active = selectedConversationId === hit.conversationId;
         const checked =
           hit.contactId != null && selectedContactIds.has(hit.contactId);
-        const dateLabel =
-          hit.dateStart && hit.dateEnd
-            ? formatDateRange(hit.dateStart, hit.dateEnd, " – ")
-            : null;
         return (
           <div
             key={hit.conversationId}
@@ -102,28 +130,7 @@ export function SearchResultsList({
                 hit.contactId == null || !onToggleContact ? "px-3" : "pr-3"
               }`}
             >
-              <span className="flex min-w-0 items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-[13px] font-medium text-text">
-                  {hit.title}
-                </span>
-                <CountBadge
-                  count={hit.matchCount}
-                  title={`${hit.matchCount} matching messages`}
-                />
-              </span>
-              {hit.topMatch?.snippet ? (
-                <span className="line-clamp-2 text-[12px] text-muted">
-                  {hit.topMatch.snippet}
-                </span>
-              ) : null}
-              <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
-                <span className="truncate capitalize">
-                  {hit.conversationType === "group" ? "Group" : "1-1"}
-                </span>
-                {dateLabel ? (
-                  <span className="tabular-nums">{dateLabel}</span>
-                ) : null}
-              </span>
+              <SearchHitSummary hit={hit} />
             </button>
           </div>
         );

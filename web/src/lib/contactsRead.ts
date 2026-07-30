@@ -220,17 +220,47 @@ function sectionSql(section: ContactSection): { sql: string; params: unknown[] }
   };
 }
 
+type ContactRow = {
+  id: number;
+  first_name: string | null;
+  last_name: string | null;
+  preferred_handle: string | null;
+  exclude: number;
+};
+
 export function listContacts(section: ContactSection): ContactListItem[] {
-  const accountId = currentAccountId();
   const db = getDb();
   const { sql, params } = sectionSql(section);
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: number;
-    first_name: string | null;
-    last_name: string | null;
-    preferred_handle: string | null;
-    exclude: number;
-  }>;
+  const rows = db.prepare(sql).all(...params) as ContactRow[];
+  return contactListItems(rows);
+}
+
+/**
+ * Contact list items for specific ids, in the given order.
+ * Used by search when results are grouped by contact.
+ */
+export function listContactsByIds(contactIds: number[]): ContactListItem[] {
+  if (contactIds.length === 0) return [];
+  const accountId = currentAccountId();
+  const db = getDb();
+  const placeholders = contactIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT id, first_name, last_name, preferred_handle, exclude
+       FROM contacts
+       WHERE account_id = ? AND id IN (${placeholders})`,
+    )
+    .all(accountId, ...contactIds) as ContactRow[];
+
+  const byId = new Map(contactListItems(rows).map((item) => [item.id, item]));
+  return contactIds
+    .map((id) => byId.get(id))
+    .filter((item): item is ContactListItem => item != null);
+}
+
+function contactListItems(rows: ContactRow[]): ContactListItem[] {
+  const accountId = currentAccountId();
+  const db = getDb();
 
   const groupRows = db
     .prepare(

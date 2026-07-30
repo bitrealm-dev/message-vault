@@ -2,6 +2,7 @@ import { currentAccountId } from "./accountScope";
 import {
   getDb,
   hasDuplicateOfColumn,
+  hasTrashedConversationsTable,
   hasTrashedHandlesTable,
   resetDb,
   usefulNameHint,
@@ -24,6 +25,63 @@ export function listUnassignedHandles(): UnassignedHandle[] {
 export function listTrashedHandles(): UnassignedHandle[] {
   resetDb();
   return listHandleSection("trash");
+}
+
+export type GroupParticipantHandle = {
+  handle: string;
+  nameHint: string | null;
+};
+
+/**
+ * Group participants with no contact of their own.
+ *
+ * Kept separate from {@link listUnassignedHandles} because that drives the
+ * Unassigned and Trash views, which only ever list 1:1 handles. These handles
+ * have no 1:1 conversation at all, so the 1:1 backfill never reaches them and
+ * their group messages would otherwise belong to no contact.
+ */
+export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[] {
+  const accountId = currentAccountId();
+  const db = getDb();
+  const trashHandleFilter = hasTrashedHandlesTable(db)
+    ? `AND NOT EXISTS (
+         SELECT 1 FROM trashed_handles th
+         WHERE th.handle = p.handle AND th.account_id = c.account_id
+       )`
+    : "";
+  const trashConvFilter = hasTrashedConversationsTable(db)
+    ? `AND NOT EXISTS (
+         SELECT 1 FROM trashed_conversations tc
+         WHERE tc.conversation_id = c.id AND tc.account_id = c.account_id
+       )`
+    : "";
+
+  const rows = db
+    .prepare(
+      `SELECT p.handle AS handle, MAX(p.name_hint) AS name_hint
+       FROM participants p
+       JOIN conversations c ON c.id = p.conversation_id
+       WHERE c.account_id = ?
+         AND c.conversation_type = 'group'
+         AND trim(coalesce(p.handle, '')) <> ''
+         AND NOT EXISTS (
+           SELECT 1 FROM contact_handles cp
+           WHERE cp.handle = p.handle AND cp.account_id = c.account_id
+         )
+         AND EXISTS (
+           SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+         )
+         ${trashHandleFilter}
+         ${trashConvFilter}
+       GROUP BY p.handle
+       ORDER BY p.handle COLLATE NOCASE`,
+    )
+    .all(accountId) as Array<{ handle: string; name_hint: string | null }>;
+
+  return rows.map((r) => ({
+    handle: r.handle.trim(),
+    nameHint: usefulNameHint(r.name_hint, r.handle),
+  }));
 }
 
 

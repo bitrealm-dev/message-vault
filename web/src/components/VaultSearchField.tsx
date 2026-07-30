@@ -11,12 +11,15 @@ export function VaultSearchField({
   onSubmit,
   sources,
   labels,
+  showContactOption = true,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   sources: string[];
   labels: string[];
+  /** Offer contact-grouped results (only where contacts are listed). */
+  showContactOption?: boolean;
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -75,6 +78,7 @@ export function VaultSearchField({
             sources={sources}
             labels={labels}
             initialQuery={value}
+            showContactOption={showContactOption}
             onCancel={() => setAdvancedOpen(false)}
             onSearch={(q) => {
               onChange(q);

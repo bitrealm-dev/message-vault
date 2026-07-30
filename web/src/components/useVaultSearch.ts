@@ -1,6 +1,10 @@
 "use client";
 
-import type { SearchConversationHit, SearchResult } from "@/lib/search";
+import type {
+  SearchContactHit,
+  SearchConversationHit,
+  SearchResult,
+} from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -10,6 +14,7 @@ export function useVaultSearch(initialQuery = "") {
   const [draft, setDraft] = useState(initialQuery);
   const [committed, setCommitted] = useState(initialQuery.trim());
   const [hits, setHits] = useState<SearchConversationHit[]>([]);
+  const [contactHits, setContactHits] = useState<SearchContactHit[]>([]);
   const [contactIds, setContactIds] = useState<number[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -18,14 +23,17 @@ export function useVaultSearch(initialQuery = "") {
 
   const resultsMode = committed.length > 0;
 
-  const highlightTerms = useMemo(() => {
-    const parsed = parseSearchQuery(committed);
-    return [
+  const parsed = useMemo(() => parseSearchQuery(committed), [committed]);
+  const showContact = parsed.showContact;
+
+  const highlightTerms = useMemo(
+    () => [
       ...parsed.terms,
       ...parsed.phrases,
       ...(parsed.subject ? [parsed.subject] : []),
-    ];
-  }, [committed]);
+    ],
+    [parsed],
+  );
 
   const submit = useCallback((q: string) => {
     setDraft(q);
@@ -33,10 +41,14 @@ export function useVaultSearch(initialQuery = "") {
   }, []);
 
   useEffect(() => {
-    if (!committed) {
+    const clear = () => {
       setHits([]);
+      setContactHits([]);
       setContactIds([]);
       setTotal(0);
+    };
+    if (!committed) {
+      clear();
       setLoading(false);
       setError(null);
       return;
@@ -51,21 +63,22 @@ export function useVaultSearch(initialQuery = "") {
           if (seq !== seqRef.current) return;
           if (!res.ok) {
             setError(json.error ?? "Search failed");
-            setHits([]);
-            setContactIds([]);
-            setTotal(0);
+            clear();
             return;
           }
           setHits(json.hits ?? []);
+          setContactHits(json.contacts ?? []);
           setContactIds(json.contactIds ?? []);
-          setTotal(json.totalConversations ?? 0);
+          setTotal(
+            json.contacts
+              ? (json.totalContacts ?? 0)
+              : (json.totalConversations ?? 0),
+          );
         })
         .catch((err: unknown) => {
           if (seq !== seqRef.current) return;
           setError(err instanceof Error ? err.message : "Search failed");
-          setHits([]);
-          setContactIds([]);
-          setTotal(0);
+          clear();
         })
         .finally(() => {
           if (seq === seqRef.current) setLoading(false);
@@ -80,7 +93,9 @@ export function useVaultSearch(initialQuery = "") {
     committed,
     submit,
     resultsMode,
+    showContact,
     hits,
+    contactHits,
     contactIds,
     total,
     loading,

@@ -3,19 +3,36 @@
  *
  * Supported operators:
  *   with:  from:  to:  has:attachment  after:  before:
- *   source:  is:group  is:direct  label:  in:trash
+ *   source:  is:group  is:direct  within:  show:contact
  *   last-contact:  first-contact:
  *   "quoted phrases"  -term
  *
  * `with:` and `to:` both mean “conversation includes this person”.
  * `from:` still means they sent the message. `subject:` is accepted for
  * typed queries but is not offered in the advanced form (rare for SMS).
- * `last-contact:` matches conversations whose last message is on or before
- * that date (e.g. last-contact:2024-01-01). `first-contact:` matches
- * conversations whose first message is on or before that date
- * (e.g. first-contact:2019-06-01). Dates use the same YYYY / YYYY-MM-DD
- * forms as after: and before:.
+ *
+ * `within:` limits the search to contacts on one label, ignoring whether those
+ * contacts are active or inactive. `label:` is kept as an alias for older URLs.
+ *
+ * `first-contact:` and `last-contact:` bound a contact's overall first / last
+ * message date and accept three forms:
+ *   first-contact:>=2020-01-01   on or after
+ *   first-contact:<2020-01-01    before
+ *   first-contact:2020-01-01..2020-06-30   between
+ * A bare `first-contact:2020-01-01` means “before”, matching older URLs.
+ * Dates use the same YYYY / YYYY-MM-DD forms as after: and before:.
+ *
+ * `show:contact` renders each matching contact with their matching
+ * conversations nested underneath instead of a flat conversation list.
+ *
+ * Trash is always excluded; a legacy `in:trash` operator is ignored.
  */
+
+/** Inclusive lower bound / upper bound, both `YYYY-MM-DD`. */
+export type DateBounds = {
+  from: string | null;
+  to: string | null;
+};
 
 export type ParsedSearchQuery = {
   /** Free-text terms (AND) searched via FTS. */
@@ -32,31 +49,45 @@ export type ParsedSearchQuery = {
   before: string | null;
   source: string | null;
   conversationType: "group" | "individual" | null;
-  label: string | null;
-  includeTrash: boolean;
-  /** Last message on or before this date (YYYY-MM-DD). */
-  lastContact: string | null;
-  /** First message on or before this date (YYYY-MM-DD). */
-  firstContact: string | null;
+  /** Label whose contacts to search, active or not. */
+  within: string | null;
+  /** Bounds on each contact's overall last message date. */
+  lastContact: DateBounds;
+  /** Bounds on each contact's overall first message date. */
+  firstContact: DateBounds;
+  /** Group results by contact instead of listing conversations flat. */
+  showContact: boolean;
+};
+
+/** Which bound(s) a date field contributes. */
+export type DateFilterMode = "any" | "on-or-after" | "before" | "between";
+
+export type DateFilterInput = {
+  mode: DateFilterMode;
+  from?: string;
+  to?: string;
 };
 
 export type AdvancedSearchForm = {
+  /** Label to search within; empty means all contacts. */
+  within?: string;
   /** Name or number of a conversation participant. */
   withPerson?: string;
   hasWords?: string;
   doesntHave?: string;
-  after?: string;
-  before?: string;
-  source?: string;
+  /** Message timestamp bounds. */
+  date?: DateFilterInput;
+  /** Contact's first message date bounds. */
+  firstContact?: DateFilterInput;
+  /** Contact's last message date bounds. */
+  lastContact?: DateFilterInput;
+  showContact?: boolean;
   conversationType?: "any" | "group" | "individual";
+  source?: string;
   hasAttachment?: boolean;
-  label?: string;
-  includeTrash?: boolean;
-  /** Last message on or before this date → last-contact: */
-  lastContact?: string;
-  /** First message on or before this date → first-contact: */
-  firstContact?: string;
 };
+
+const NO_BOUNDS: DateBounds = { from: null, to: null };
 
 const EMPTY: ParsedSearchQuery = {
   terms: [],
@@ -70,14 +101,14 @@ const EMPTY: ParsedSearchQuery = {
   before: null,
   source: null,
   conversationType: null,
-  label: null,
-  includeTrash: false,
-  lastContact: null,
-  firstContact: null,
+  within: null,
+  lastContact: NO_BOUNDS,
+  firstContact: NO_BOUNDS,
+  showContact: false,
 };
 
 const OPERATOR_RE =
-  /^(with|from|to|subject|has|after|before|source|is|label|in|last-contact|first-contact):(.*)$/i;
+  /^(with|from|to|subject|has|after|before|source|is|within|label|in|show|last-contact|first-contact):(.*)$/i;
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -139,12 +170,34 @@ function normalizeDate(raw: string): string | null {
   return t || null;
 }
 
+/** Read `>=D`, `<D`, `D1..D2`, or a bare `D` (which means “before D”). */
+function parseDateBounds(raw: string): DateBounds {
+  const t = raw.trim();
+  if (!t) return NO_BOUNDS;
+
+  const range = t.match(/^(.+?)\.\.(.+)$/);
+  if (range) {
+    return { from: normalizeDate(range[1]!), to: normalizeDate(range[2]!) };
+  }
+  if (t.startsWith(">=")) return { from: normalizeDate(t.slice(2)), to: null };
+  if (t.startsWith(">")) return { from: normalizeDate(t.slice(1)), to: null };
+  if (t.startsWith("<=")) return { from: null, to: normalizeDate(t.slice(2)) };
+  if (t.startsWith("<")) return { from: null, to: normalizeDate(t.slice(1)) };
+  return { from: null, to: normalizeDate(t) };
+}
+
+export function hasDateBounds(bounds: DateBounds): boolean {
+  return !!bounds.from || !!bounds.to;
+}
+
 export function parseSearchQuery(input: string): ParsedSearchQuery {
   const out: ParsedSearchQuery = {
     ...EMPTY,
     terms: [],
     phrases: [],
     exclude: [],
+    lastContact: { ...NO_BOUNDS },
+    firstContact: { ...NO_BOUNDS },
   };
   if (!input.trim()) return out;
 
@@ -200,17 +253,21 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
           }
           break;
         }
+        case "within":
         case "label":
-          out.label = value;
+          out.within = value;
           break;
         case "in":
-          if (value.toLowerCase() === "trash") out.includeTrash = true;
+          // Legacy in:trash — trash is always excluded now.
+          break;
+        case "show":
+          if (value.toLowerCase() === "contact") out.showContact = true;
           break;
         case "last-contact":
-          out.lastContact = normalizeDate(value);
+          out.lastContact = parseDateBounds(value);
           break;
         case "first-contact":
-          out.firstContact = normalizeDate(value);
+          out.firstContact = parseDateBounds(value);
           break;
         default:
           break;
@@ -225,12 +282,29 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
   return out;
 }
 
+/** Serialize a date field back to its operator value (`>=D`, `<D`, `D1..D2`). */
+function composeDateBounds(input: DateFilterInput | undefined): string | null {
+  if (!input || input.mode === "any") return null;
+  const from = input.from?.trim() || "";
+  const to = input.to?.trim() || "";
+  if (input.mode === "on-or-after") return from ? `>=${from}` : null;
+  if (input.mode === "before") return to ? `<${to}` : null;
+  if (from && to) return `${from}..${to}`;
+  // Partly filled "between" still narrows on the side that has a date.
+  if (from) return `>=${from}`;
+  if (to) return `<${to}`;
+  return null;
+}
+
 /** Build a shareable query string from the advanced form fields. */
 export function composeSearchQuery(form: AdvancedSearchForm): string {
   const parts: string[] = [];
   const quoteIfNeeded = (v: string) =>
     /\s/.test(v) ? `"${v.replace(/"/g, "")}"` : v;
 
+  if (form.within?.trim()) {
+    parts.push(`within:${quoteIfNeeded(form.within.trim())}`);
+  }
   if (form.withPerson?.trim()) {
     parts.push(`with:${quoteIfNeeded(form.withPerson.trim())}`);
   }
@@ -241,22 +315,25 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
       else parts.push(`-${t.replace(/^-/, "")}`);
     }
   }
-  if (form.after?.trim()) parts.push(`after:${form.after.trim()}`);
-  if (form.before?.trim()) parts.push(`before:${form.before.trim()}`);
-  if (form.lastContact?.trim()) {
-    parts.push(`last-contact:${form.lastContact.trim()}`);
+
+  const date = form.date;
+  if (date && date.mode !== "any") {
+    const from = date.from?.trim();
+    const to = date.to?.trim();
+    if (date.mode !== "before" && from) parts.push(`after:${from}`);
+    if (date.mode !== "on-or-after" && to) parts.push(`before:${to}`);
   }
-  if (form.firstContact?.trim()) {
-    parts.push(`first-contact:${form.firstContact.trim()}`);
-  }
-  if (form.source?.trim()) parts.push(`source:${form.source.trim()}`);
+
+  const firstContact = composeDateBounds(form.firstContact);
+  if (firstContact) parts.push(`first-contact:${firstContact}`);
+  const lastContact = composeDateBounds(form.lastContact);
+  if (lastContact) parts.push(`last-contact:${lastContact}`);
+
   if (form.conversationType === "group") parts.push("is:group");
   if (form.conversationType === "individual") parts.push("is:direct");
+  if (form.source?.trim()) parts.push(`source:${form.source.trim()}`);
   if (form.hasAttachment) parts.push("has:attachment");
-  if (form.label?.trim()) {
-    parts.push(`label:${quoteIfNeeded(form.label.trim())}`);
-  }
-  if (form.includeTrash) parts.push("in:trash");
+  if (form.showContact) parts.push("show:contact");
   return parts.join(" ");
 }
 
@@ -273,9 +350,9 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
     !!q.before ||
     !!q.source ||
     !!q.conversationType ||
-    !!q.label ||
-    !!q.lastContact ||
-    !!q.firstContact
+    !!q.within ||
+    hasDateBounds(q.lastContact) ||
+    hasDateBounds(q.firstContact)
   );
 }
 

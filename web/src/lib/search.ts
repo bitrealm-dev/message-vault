@@ -1,14 +1,19 @@
 import Database from "better-sqlite3";
 
 import { currentAccountId } from "./accountScope";
-import { combinedDedupeSql, getDb, resetDb } from "./dbCore";
+import { listContactsByIds, listLabelMemberContactIds } from "./contactsRead";
+import { combinedDedupeSql, getDb, hasDuplicateOfColumn, resetDb } from "./dbCore";
+import { ownerHandleMatcher } from "./owner";
 import { dbPath } from "./paths";
 import {
+  hasDateBounds,
   hasSearchCriteria,
   parseSearchQuery,
   toFtsMatch,
+  type DateBounds,
   type ParsedSearchQuery,
 } from "./searchQuery";
+import type { ContactListItem } from "./types";
 import { ensureVaultSchema } from "./vaultSchema";
 
 export type SearchHitMessage = {
@@ -40,6 +45,18 @@ export type SearchResult = {
   /** Every distinct contact represented by matching direct conversations. */
   contactIds: number[];
   hits: SearchConversationHit[];
+  /** Present when `show:contact` groups results under each contact. */
+  contacts?: SearchContactHit[];
+  totalContacts?: number;
+};
+
+/** One contact plus the conversations of theirs that matched. */
+export type SearchContactHit = {
+  contact: ContactListItem;
+  /** Matching conversations this contact takes part in. */
+  hits: SearchConversationHit[];
+  /** Total matching messages across those conversations. */
+  matchCount: number;
 };
 
 const DEFAULT_LIMIT = 50;
@@ -85,34 +102,88 @@ function conversationTitle(
   return chatIdentifier || "Conversation";
 }
 
-export function searchVault(
-  rawQuery: string,
-  opts: { limit?: number; offset?: number; source?: string | null } = {},
-): SearchResult {
+/**
+ * A contact is linked to a conversation by being its 1:1 handle or one of its
+ * participants, so group filters reach every member.
+ */
+const CONTACT_LINKED_SQL = `(
+  ch.handle = c.chat_identifier
+  OR EXISTS (
+    SELECT 1 FROM participants p_link
+    WHERE p_link.conversation_id = c.id AND p_link.handle = ch.handle
+  )
+)`;
+
+/**
+ * Contacts whose overall first / last 1:1 message day falls within bounds,
+ * independent of the query's other filters. Mirrors the date range shown in the
+ * contact list. Resolved in one pass rather than per candidate conversation.
+ */
+function contactIdsWithinDayBounds(
+  db: Database.Database,
+  bound: "first" | "last",
+  bounds: DateBounds,
+): number[] {
   const accountId = currentAccountId();
-  const parsed = parseSearchQuery(rawQuery);
-  const limit = Math.min(
-    Math.max(1, opts.limit ?? DEFAULT_LIMIT),
-    MAX_LIMIT,
-  );
-  const offset = Math.max(0, opts.offset ?? 0);
+  const hideDupes = hasDuplicateOfColumn() ? " AND m.duplicate_of IS NULL" : "";
+  const day = bound === "first" ? "MIN" : "MAX";
+  const having: string[] = [];
+  const params: unknown[] = [accountId];
+  if (bounds.from) having.push(`${day}(substr(m.timestamp, 1, 10)) >= ?`);
+  if (bounds.to) having.push(`${day}(substr(m.timestamp, 1, 10)) < ?`);
+  if (bounds.from) params.push(bounds.from);
+  if (bounds.to) params.push(bounds.to);
+  if (having.length === 0) return [];
 
-  if (!hasSearchCriteria(parsed) && !rawQuery.trim()) {
-    return {
-      query: rawQuery,
-      parsed,
-      totalConversations: 0,
-      contactIds: [],
-      hits: [],
-    };
-  }
+  const rows = db
+    .prepare(
+      `SELECT cp.contact_id AS contact_id
+       FROM contact_handles cp
+       JOIN conversations cv
+         ON cv.chat_identifier = cp.handle
+        AND cv.conversation_type = 'individual'
+        AND cv.account_id = cp.account_id
+       JOIN messages m ON m.conversation_id = cv.id
+       WHERE cp.account_id = ?${hideDupes}
+       GROUP BY cp.contact_id
+       HAVING ${having.join(" AND ")}`,
+    )
+    .all(...params) as Array<{ contact_id: number }>;
+  return rows.map((row) => row.contact_id);
+}
 
-  // Ensure FTS exists even if the readonly connection opened before migration.
-  const writeDb = openWritable();
-  writeDb.close();
-  resetDb();
+/** Restrict conversations to those involving one of these contacts. */
+function involvesContactsSql(contactIds: number[]): string {
+  const ids = contactIds.filter((id) => Number.isInteger(id));
+  if (ids.length === 0) return "1=0";
+  return `EXISTS (
+    SELECT 1 FROM contact_handles ch
+    WHERE ch.account_id = c.account_id
+      AND ch.contact_id IN (${ids.join(",")})
+      AND ${CONTACT_LINKED_SQL}
+  )`;
+}
 
-  const db = getDb();
+type SearchFilters = {
+  fts: string | null;
+  whereSql: string;
+  params: unknown[];
+  dedupe: string;
+  sourceFilter: string | null;
+  /**
+   * Contact id sets from contact-level filters (`within:`, first/last contact).
+   * Conversations only need to involve one such contact, but contact-grouped
+   * results must also drop the contacts that failed the filter themselves.
+   */
+  contactScopes: number[][];
+};
+
+/** Shared WHERE clause for both the flat and contact-grouped queries. */
+function buildSearchFilters(
+  parsed: ParsedSearchQuery,
+  sourceOverride?: string | null,
+): SearchFilters {
+  const accountId = currentAccountId();
   const fts = toFtsMatch(parsed);
   const params: unknown[] = [accountId];
   const where: string[] = ["c.account_id = ?"];
@@ -161,7 +232,7 @@ export function searchVault(
     params.push(before);
   }
 
-  const sourceFilter = opts.source ?? parsed.source;
+  const sourceFilter = sourceOverride ?? parsed.source;
   if (sourceFilter) {
     where.push(`m.source = ?`);
     params.push(sourceFilter);
@@ -178,59 +249,85 @@ export function searchVault(
     );
   }
 
-  if (parsed.label) {
-    where.push(
-      `EXISTS (
-         SELECT 1
-         FROM contact_handles ch
-         JOIN contact_label_members clm ON clm.contact_id = ch.contact_id
-         JOIN contact_labels cl ON cl.id = clm.label_id
-         JOIN participants p ON p.handle = ch.handle AND p.conversation_id = c.id
-         WHERE ch.account_id = c.account_id
-           AND cl.account_id = c.account_id
-           AND cl.name = ?
-       )`,
-    );
-    params.push(parsed.label);
+  const contactScopes: number[][] = [];
+  const scopeToContacts = (contactIds: number[]) => {
+    contactScopes.push(contactIds);
+    where.push(involvesContactsSql(contactIds));
+  };
+
+  // Scoped to a label's contacts whether or not they are marked inactive.
+  if (parsed.within) {
+    scopeToContacts(listLabelMemberContactIds(parsed.within));
   }
 
-  if (!parsed.includeTrash) {
-    where.push(
-      `NOT EXISTS (
-         SELECT 1 FROM trashed_conversations tc
-         WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-       )`,
-    );
-    where.push(
-      `NOT EXISTS (
-         SELECT 1 FROM trashed_handles th
-         WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
-       )`,
-    );
+  const db = getDb();
+  if (hasDateBounds(parsed.firstContact)) {
+    scopeToContacts(contactIdsWithinDayBounds(db, "first", parsed.firstContact));
   }
+  if (hasDateBounds(parsed.lastContact)) {
+    scopeToContacts(contactIdsWithinDayBounds(db, "last", parsed.lastContact));
+  }
+
+  where.push(
+    `NOT EXISTS (
+       SELECT 1 FROM trashed_conversations tc
+       WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+     )`,
+  );
+  where.push(
+    `NOT EXISTS (
+       SELECT 1 FROM trashed_handles th
+       WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+     )`,
+  );
 
   where.push("1=1"); // keep join shape stable
-  const dedupe = combinedDedupeSql(sourceFilter, "m");
 
-  const whereSql = where.join(" AND ");
+  return {
+    fts,
+    whereSql: where.join(" AND "),
+    params,
+    dedupe: combinedDedupeSql(sourceFilter, "m"),
+    sourceFilter: sourceFilter ?? null,
+    contactScopes,
+  };
+}
 
-  /** Date-only bounds include the full day, matching `before:`. */
-  const endOfDayBound = (raw: string) =>
-    raw.length === 10 ? `${raw}T23:59:59.999Z` : raw;
+/** Create FTS if the readonly connection opened before the migration ran. */
+function ensureFtsReady(): void {
+  const writeDb = openWritable();
+  writeDb.close();
+  resetDb();
+}
 
-  const having: string[] = [];
-  const havingParams: unknown[] = [];
-  if (parsed.lastContact) {
-    having.push(`MAX(m.timestamp) < ?`);
-    havingParams.push(endOfDayBound(parsed.lastContact));
+export function searchVault(
+  rawQuery: string,
+  opts: { limit?: number; offset?: number; source?: string | null } = {},
+): SearchResult {
+  const parsed = parseSearchQuery(rawQuery);
+  const limit = Math.min(
+    Math.max(1, opts.limit ?? DEFAULT_LIMIT),
+    MAX_LIMIT,
+  );
+  const offset = Math.max(0, opts.offset ?? 0);
+
+  if (!hasSearchCriteria(parsed) && !rawQuery.trim()) {
+    return {
+      query: rawQuery,
+      parsed,
+      totalConversations: 0,
+      contactIds: [],
+      hits: [],
+    };
   }
-  if (parsed.firstContact) {
-    having.push(`MIN(m.timestamp) < ?`);
-    havingParams.push(endOfDayBound(parsed.firstContact));
-  }
-  const havingSql =
-    having.length > 0 ? `HAVING ${having.join(" AND ")}` : "";
 
+  ensureFtsReady();
+
+  const db = getDb();
+  const { fts, whereSql, params, dedupe } = buildSearchFilters(
+    parsed,
+    opts.source,
+  );
   const countRow = db
     .prepare(
       `SELECT COUNT(*) AS n FROM (
@@ -239,49 +336,21 @@ export function searchVault(
          JOIN conversations c ON c.id = m.conversation_id
          WHERE ${whereSql}${dedupe}
          GROUP BY c.id
-         ${havingSql}
        )`,
     )
-    .get(...params, ...havingParams) as { n: number };
+    .get(...params) as { n: number };
 
   const convRows = db
     .prepare(
-      `SELECT
-         c.id AS conversation_id,
-         c.conversation_type AS conversation_type,
-         c.group_title AS group_title,
-         c.chat_identifier AS chat_identifier,
-         (
-           SELECT ch.contact_id
-           FROM contact_handles ch
-           WHERE ch.account_id = c.account_id
-             AND ch.handle = c.chat_identifier
-             AND c.conversation_type = 'individual'
-           LIMIT 1
-         ) AS contact_id,
-         COUNT(DISTINCT m.id) AS match_count,
-         MIN(m.timestamp) AS date_start,
-         MAX(m.timestamp) AS date_end,
-         MIN(m.id) AS sample_message_id
+      `SELECT ${CONVERSATION_HIT_COLUMNS}
        FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
        WHERE ${whereSql}${dedupe}
        GROUP BY c.id
-       ${havingSql}
        ORDER BY MAX(m.timestamp) DESC
        LIMIT ? OFFSET ?`,
     )
-    .all(...params, ...havingParams, limit, offset) as Array<{
-    conversation_id: number;
-    conversation_type: string;
-    group_title: string | null;
-    chat_identifier: string;
-    contact_id: number | null;
-    match_count: number;
-    date_start: string | null;
-    date_end: string | null;
-    sample_message_id: number;
-  }>;
+    .all(...params, limit, offset) as ConversationRow[];
 
   const contactRows = db
     .prepare(
@@ -296,20 +365,66 @@ export function searchVault(
          WHERE ${whereSql}${dedupe}
            AND c.conversation_type = 'individual'
          GROUP BY c.id, ch.contact_id
-         ${havingSql}
        )
        ORDER BY contact_id`,
     )
-    .all(...params, ...havingParams) as Array<{ contact_id: number }>;
+    .all(...params) as Array<{ contact_id: number }>;
   const contactIds = contactRows.map((row) => row.contact_id);
 
+  const hits = buildHits(db, convRows, parsed, fts);
+
+  return {
+    query: rawQuery,
+    parsed,
+    totalConversations: countRow.n,
+    contactIds,
+    hits,
+  };
+}
+
+type ConversationRow = {
+  conversation_id: number;
+  conversation_type: string;
+  group_title: string | null;
+  chat_identifier: string;
+  contact_id: number | null;
+  match_count: number;
+  date_start: string | null;
+  date_end: string | null;
+  sample_message_id: number;
+};
+
+const CONVERSATION_HIT_COLUMNS = `
+  c.id AS conversation_id,
+  c.conversation_type AS conversation_type,
+  c.group_title AS group_title,
+  c.chat_identifier AS chat_identifier,
+  (
+    SELECT ch.contact_id
+    FROM contact_handles ch
+    WHERE ch.account_id = c.account_id
+      AND ch.handle = c.chat_identifier
+      AND c.conversation_type = 'individual'
+    LIMIT 1
+  ) AS contact_id,
+  COUNT(DISTINCT m.id) AS match_count,
+  MIN(m.timestamp) AS date_start,
+  MAX(m.timestamp) AS date_end,
+  MIN(m.id) AS sample_message_id`;
+
+function buildHits(
+  db: Database.Database,
+  convRows: ConversationRow[],
+  parsed: ParsedSearchQuery,
+  fts: string | null,
+): SearchConversationHit[] {
   const highlightTerms = [
     ...parsed.terms,
     ...parsed.phrases,
     ...(parsed.subject ? [parsed.subject] : []),
   ];
 
-  const hits: SearchConversationHit[] = convRows.map((row) => {
+  return convRows.map((row) => {
     const participants = db
       .prepare(
         `SELECT handle, name_hint FROM participants WHERE conversation_id = ? ORDER BY id`,
@@ -387,12 +502,166 @@ export function searchVault(
       topMatch,
     };
   });
+}
+
+/** Contacts allowed to head a result group; null when unfiltered. */
+function intersectContactScopes(scopes: number[][]): Set<number> | null {
+  const [first, ...rest] = scopes;
+  if (!first) return null;
+  let allowed = new Set<number>(first);
+  for (const scope of rest) {
+    const scopeSet = new Set<number>(scope);
+    allowed = new Set([...allowed].filter((id) => scopeSet.has(id)));
+  }
+  return allowed;
+}
+
+/** Contacts holding a vault-owner handle, so search can skip them. */
+function ownerContactIds(db: Database.Database): Set<number> {
+  const accountId = currentAccountId();
+  const rows = db
+    .prepare(
+      `SELECT handle, contact_id FROM contact_handles WHERE account_id = ?`,
+    )
+    .all(accountId) as Array<{ handle: string; contact_id: number }>;
+  const isOwner = ownerHandleMatcher();
+  const ids = new Set<number>();
+  for (const row of rows) {
+    if (isOwner(row.handle)) ids.add(row.contact_id);
+  }
+  return ids;
+}
+
+/**
+ * Same filters as {@link searchVault}, but grouped under each contact who takes
+ * part in a matching conversation. A group conversation appears under every
+ * participating contact. Contacts are paginated, not conversations.
+ */
+export function searchVaultByContact(
+  rawQuery: string,
+  opts: { limit?: number; offset?: number; source?: string | null } = {},
+): SearchResult {
+  const parsed = parseSearchQuery(rawQuery);
+  const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+  const offset = Math.max(0, opts.offset ?? 0);
+
+  const empty: SearchResult = {
+    query: rawQuery,
+    parsed,
+    totalConversations: 0,
+    contactIds: [],
+    hits: [],
+    contacts: [],
+    totalContacts: 0,
+  };
+  if (!hasSearchCriteria(parsed) && !rawQuery.trim()) return empty;
+
+  ensureFtsReady();
+
+  const db = getDb();
+  const { fts, whereSql, params, dedupe, contactScopes } = buildSearchFilters(
+    parsed,
+    opts.source,
+  );
+
+  // Every (contact, conversation) pair that matched, newest conversation first.
+  // Conversations are collapsed before fanning out to contacts, so the handle
+  // lookups run per conversation rather than per matching message.
+  const accountId = currentAccountId();
+  const pairRows = db
+    .prepare(
+      `WITH matched AS (
+         SELECT c.id AS conversation_id,
+                c.chat_identifier AS chat_identifier,
+                MAX(m.timestamp) AS last_ts
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE ${whereSql}${dedupe}
+         GROUP BY c.id
+       )
+       SELECT ch.contact_id AS contact_id, mt.conversation_id, mt.last_ts
+       FROM matched mt
+       JOIN contact_handles ch
+         ON ch.account_id = ? AND ch.handle = mt.chat_identifier
+       UNION
+       SELECT ch.contact_id AS contact_id, mt.conversation_id, mt.last_ts
+       FROM matched mt
+       JOIN participants p ON p.conversation_id = mt.conversation_id
+       JOIN contact_handles ch
+         ON ch.account_id = ? AND ch.handle = p.handle
+       ORDER BY last_ts DESC`,
+    )
+    .all(...params, accountId, accountId) as Array<{
+    contact_id: number;
+    conversation_id: number;
+    last_ts: string | null;
+  }>;
+
+  if (pairRows.length === 0) return empty;
+
+  // Older vaults may have a contact holding an owner handle; the owner is a
+  // participant in their own groups and should not be listed as a match.
+  const skipContactIds = ownerContactIds(db);
+  // A contact-level filter also decides who may head a result group: sharing a
+  // group chat with a match is not the same as being one.
+  const allowedContactIds = intersectContactScopes(contactScopes);
+
+  const conversationIdsByContact = new Map<number, number[]>();
+  for (const row of pairRows) {
+    if (skipContactIds.has(row.contact_id)) continue;
+    if (allowedContactIds && !allowedContactIds.has(row.contact_id)) continue;
+    const list = conversationIdsByContact.get(row.contact_id);
+    if (list) list.push(row.conversation_id);
+    else conversationIdsByContact.set(row.contact_id, [row.conversation_id]);
+  }
+  if (conversationIdsByContact.size === 0) return empty;
+
+  // Contacts ordered by their most recent matching message.
+  const orderedContactIds = [...conversationIdsByContact.keys()];
+  const pageContactIds = orderedContactIds.slice(offset, offset + limit);
+  const conversationIds = [
+    ...new Set(pageContactIds.flatMap((id) => conversationIdsByContact.get(id) ?? [])),
+  ];
+
+  const convRows =
+    conversationIds.length === 0
+      ? []
+      : (db
+          .prepare(
+            `SELECT ${CONVERSATION_HIT_COLUMNS}
+             FROM messages m
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE ${whereSql}${dedupe}
+               AND c.id IN (${conversationIds.map(() => "?").join(",")})
+             GROUP BY c.id
+             ORDER BY MAX(m.timestamp) DESC`,
+          )
+          .all(...params, ...conversationIds) as ConversationRow[]);
+
+  const hits = buildHits(db, convRows, parsed, fts);
+  const hitsById = new Map(hits.map((hit) => [hit.conversationId, hit]));
+
+  const contactItems = listContactsByIds(pageContactIds);
+  const contacts: SearchContactHit[] = [];
+  for (const contact of contactItems) {
+    const contactHits = (conversationIdsByContact.get(contact.id) ?? [])
+      .map((id) => hitsById.get(id))
+      .filter((hit): hit is SearchConversationHit => hit != null);
+    if (contactHits.length === 0) continue;
+    contacts.push({
+      contact,
+      hits: contactHits,
+      matchCount: contactHits.reduce((n, hit) => n + hit.matchCount, 0),
+    });
+  }
 
   return {
     query: rawQuery,
     parsed,
-    totalConversations: countRow.n,
-    contactIds,
+    totalConversations: new Set(pairRows.map((r) => r.conversation_id)).size,
+    contactIds: orderedContactIds,
     hits,
+    contacts,
+    totalContacts: orderedContactIds.length,
   };
 }

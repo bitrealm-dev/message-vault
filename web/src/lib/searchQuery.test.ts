@@ -16,7 +16,7 @@ describe("parseSearchQuery", () => {
 
   it("parses operators", () => {
     const q = parseSearchQuery(
-      'from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group label:Family in:trash',
+      'from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group within:Family show:contact',
     );
     assert.equal(q.from, "alice");
     assert.equal(q.to, "bob");
@@ -25,8 +25,14 @@ describe("parseSearchQuery", () => {
     assert.equal(q.before, "2021-01-01");
     assert.equal(q.source, "imessage");
     assert.equal(q.conversationType, "group");
-    assert.equal(q.label, "Family");
-    assert.equal(q.includeTrash, true);
+    assert.equal(q.within, "Family");
+    assert.equal(q.showContact, true);
+  });
+
+  it("treats label: as an alias for within: and ignores in:trash", () => {
+    assert.equal(parseSearchQuery("label:Work").within, "Work");
+    const q = parseSearchQuery("in:trash hello");
+    assert.deepEqual(q.terms, ["hello"]);
   });
 
   it("treats with: and to: as the same participant filter", () => {
@@ -45,23 +51,34 @@ describe("parseSearchQuery", () => {
     assert.equal(q.conversationType, "individual");
   });
 
-  it("parses last-contact: and first-contact: dates", () => {
-    assert.equal(
-      parseSearchQuery("last-contact:2024-01-15").lastContact,
-      "2024-01-15",
+  it("reads the three first-contact / last-contact bound forms", () => {
+    assert.deepEqual(parseSearchQuery("first-contact:>=2020-01-01").firstContact, {
+      from: "2020-01-01",
+      to: null,
+    });
+    assert.deepEqual(parseSearchQuery("first-contact:<2020-01-01").firstContact, {
+      from: null,
+      to: "2020-01-01",
+    });
+    assert.deepEqual(
+      parseSearchQuery("first-contact:2020-01-01..2020-06-30").firstContact,
+      { from: "2020-01-01", to: "2020-06-30" },
     );
-    assert.equal(
-      parseSearchQuery("last-contact:2020").lastContact,
-      "2020-01-01",
-    );
-    assert.equal(
-      parseSearchQuery("first-contact:2019-06-01").firstContact,
-      "2019-06-01",
-    );
-    assert.equal(
-      parseSearchQuery("first-contact:2015").firstContact,
-      "2015-01-01",
-    );
+    assert.deepEqual(parseSearchQuery("last-contact:>=2024-01-15").lastContact, {
+      from: "2024-01-15",
+      to: null,
+    });
+  });
+
+  it("keeps bare dates meaning 'before' for older URLs", () => {
+    assert.deepEqual(parseSearchQuery("last-contact:2024-01-15").lastContact, {
+      from: null,
+      to: "2024-01-15",
+    });
+    assert.deepEqual(parseSearchQuery("first-contact:2015").firstContact, {
+      from: null,
+      to: "2015-01-01",
+    });
     assert.equal(
       hasSearchCriteria(parseSearchQuery("last-contact:2024-01-01")),
       true,
@@ -71,39 +88,86 @@ describe("parseSearchQuery", () => {
       true,
     );
   });
+
+  it("does not treat show:contact alone as search criteria", () => {
+    assert.equal(hasSearchCriteria(parseSearchQuery("show:contact")), false);
+  });
 });
 
 describe("composeSearchQuery", () => {
   it("round-trips advanced form fields into operators", () => {
     const s = composeSearchQuery({
+      within: "Family",
       withPerson: "Ann Lee",
       hasWords: "birthday",
       doesntHave: "spam",
       conversationType: "group",
       hasAttachment: true,
-      includeTrash: true,
-      lastContact: "2024-01-15",
-      firstContact: "2019-06-01",
+      showContact: true,
+      lastContact: { mode: "before", to: "2024-01-15" },
+      firstContact: { mode: "on-or-after", from: "2019-06-01" },
     });
+    assert.match(s, /within:Family/);
     assert.match(s, /with:"Ann Lee"/);
     assert.match(s, /birthday/);
     assert.match(s, /-spam/);
     assert.match(s, /is:group/);
     assert.match(s, /has:attachment/);
-    assert.match(s, /in:trash/);
-    assert.match(s, /last-contact:2024-01-15/);
-    assert.match(s, /first-contact:2019-06-01/);
+    assert.match(s, /show:contact/);
+    assert.match(s, /last-contact:<2024-01-15/);
+    assert.match(s, /first-contact:>=2019-06-01/);
+    assert.doesNotMatch(s, /in:trash/);
     assert.doesNotMatch(s, /subject:/);
     assert.doesNotMatch(s, /from:/);
+
     const parsed = parseSearchQuery(s);
+    assert.equal(parsed.within, "Family");
     assert.equal(parsed.to, "Ann Lee");
     assert.deepEqual(parsed.terms, ["birthday"]);
     assert.deepEqual(parsed.exclude, ["spam"]);
     assert.equal(parsed.conversationType, "group");
     assert.equal(parsed.hasAttachment, true);
-    assert.equal(parsed.includeTrash, true);
-    assert.equal(parsed.lastContact, "2024-01-15");
-    assert.equal(parsed.firstContact, "2019-06-01");
+    assert.equal(parsed.showContact, true);
+    assert.deepEqual(parsed.lastContact, { from: null, to: "2024-01-15" });
+    assert.deepEqual(parsed.firstContact, { from: "2019-06-01", to: null });
+  });
+
+  it("turns a Date range into after: plus before:", () => {
+    const s = composeSearchQuery({
+      date: { mode: "between", from: "2020-01-01", to: "2020-03-01" },
+    });
+    assert.equal(s, "after:2020-01-01 before:2020-03-01");
+    const parsed = parseSearchQuery(s);
+    assert.equal(parsed.after, "2020-01-01");
+    assert.equal(parsed.before, "2020-03-01");
+  });
+
+  it("emits only the filled side of a date range", () => {
+    assert.equal(
+      composeSearchQuery({ date: { mode: "on-or-after", from: "2020-01-01" } }),
+      "after:2020-01-01",
+    );
+    assert.equal(
+      composeSearchQuery({ date: { mode: "before", to: "2020-01-01" } }),
+      "before:2020-01-01",
+    );
+    assert.equal(
+      composeSearchQuery({
+        firstContact: { mode: "between", from: "2020-01-01" },
+      }),
+      "first-contact:>=2020-01-01",
+    );
+  });
+
+  it("omits date fields left on Any time", () => {
+    assert.equal(
+      composeSearchQuery({
+        date: { mode: "any", from: "2020-01-01", to: "2020-03-01" },
+        firstContact: { mode: "any" },
+        lastContact: { mode: "any" },
+      }),
+      "",
+    );
   });
 });
 

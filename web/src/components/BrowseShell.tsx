@@ -289,7 +289,20 @@ export function BrowseShell({
 
   const selectContactRef = useRef<(id: number) => void>(() => {});
 
-  const validIds = useMemo(() => contacts.map((c) => c.id), [contacts]);
+  // Search spans every contact, so matches outside this section still need to be
+  // selectable (and labelable) even though the list never loaded them.
+  const searchContactsById = useMemo(() => {
+    const map = new Map<number, ContactListItem>();
+    for (const hit of vaultSearch.contactHits) {
+      map.set(hit.contact.id, hit.contact);
+    }
+    return map;
+  }, [vaultSearch.contactHits]);
+
+  const validIds = useMemo(
+    () => [...new Set([...contacts.map((c) => c.id), ...searchContactsById.keys()])],
+    [contacts, searchContactsById],
+  );
   const validIdSet = useMemo(() => new Set(validIds), [validIds]);
   const searchContactIds = useMemo(
     () =>
@@ -328,10 +341,16 @@ export function BrowseShell({
     searchContactIds.every((id) => selectedIds.has(id));
   const orderedVisibleSearchContactIds = useMemo(
     () =>
-      orderedSearchContactIds(vaultSearch.hits).filter((id) =>
-        validIdSet.has(id),
-      ),
-    [vaultSearch.hits, validIdSet],
+      (vaultSearch.showContact
+        ? vaultSearch.contactHits.map((hit) => hit.contact.id)
+        : orderedSearchContactIds(vaultSearch.hits)
+      ).filter((id) => validIdSet.has(id)),
+    [
+      vaultSearch.showContact,
+      vaultSearch.contactHits,
+      vaultSearch.hits,
+      validIdSet,
+    ],
   );
   const searchSelectionAnchorRef = useRef<number | null>(null);
 
@@ -739,11 +758,11 @@ export function BrowseShell({
     const extras: ContactListItem[] = [];
     for (const id of selectedIds) {
       if (have.has(id)) continue;
-      const c = byId.get(id);
+      const c = byId.get(id) ?? searchContactsById.get(id);
       if (c) extras.push(c);
     }
     return [...fromSorted, ...extras];
-  }, [sorted, selectedIds, contacts]);
+  }, [sorted, selectedIds, contacts, searchContactsById]);
 
   const trashIdsForContext = useCallback(
     (ctxId: number): number[] => {
@@ -1813,7 +1832,9 @@ export function BrowseShell({
           searchSources={sources}
           searchLabels={allLabels}
           resultsMode={vaultSearch.resultsMode}
+          searchShowContact={vaultSearch.showContact}
           searchHits={vaultSearch.hits}
+          searchContactHits={vaultSearch.contactHits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
           searchContactIds={searchContactIds}
