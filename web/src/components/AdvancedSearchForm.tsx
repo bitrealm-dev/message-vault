@@ -28,6 +28,8 @@ export function AdvancedSearchForm({
   const [doesntHave, setDoesntHave] = useState("");
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
+  const [lastContact, setLastContact] = useState("");
+  const [firstContact, setFirstContact] = useState("");
   const [source, setSource] = useState("");
   const [conversationType, setConversationType] = useState<
     "any" | "group" | "individual"
@@ -50,6 +52,8 @@ export function AdvancedSearchForm({
       doesntHave,
       after,
       before,
+      lastContact,
+      firstContact,
       source: source || undefined,
       conversationType,
       hasAttachment,
@@ -98,6 +102,24 @@ export function AdvancedSearchForm({
             className={inputClass}
             value={before}
             onChange={(e) => setBefore(e.target.value)}
+          />
+        </Field>
+        <Field label="Last contact">
+          <input
+            className={inputClass}
+            value={lastContact}
+            onChange={(e) => setLastContact(e.target.value)}
+            placeholder="e.g. 1y — no messages for at least this long"
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="First contact">
+          <input
+            className={inputClass}
+            value={firstContact}
+            onChange={(e) => setFirstContact(e.target.value)}
+            placeholder="e.g. 5y — first message at least this long ago"
+            spellCheck={false}
           />
         </Field>
         <Field label="In">

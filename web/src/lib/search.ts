@@ -209,14 +209,37 @@ export function searchVault(
 
   const whereSql = where.join(" AND ");
 
+  const having: string[] = [];
+  const havingParams: unknown[] = [];
+  if (parsed.lastContactDays) {
+    const cutoff = new Date(
+      Date.now() - parsed.lastContactDays * 86_400_000,
+    ).toISOString();
+    having.push(`MAX(m.timestamp) < ?`);
+    havingParams.push(cutoff);
+  }
+  if (parsed.firstContactDays) {
+    const cutoff = new Date(
+      Date.now() - parsed.firstContactDays * 86_400_000,
+    ).toISOString();
+    having.push(`MIN(m.timestamp) < ?`);
+    havingParams.push(cutoff);
+  }
+  const havingSql =
+    having.length > 0 ? `HAVING ${having.join(" AND ")}` : "";
+
   const countRow = db
     .prepare(
-      `SELECT COUNT(DISTINCT c.id) AS n
-       FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id
-       WHERE ${whereSql}${dedupe}`,
+      `SELECT COUNT(*) AS n FROM (
+         SELECT c.id
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE ${whereSql}${dedupe}
+         GROUP BY c.id
+         ${havingSql}
+       )`,
     )
-    .get(...params) as { n: number };
+    .get(...params, ...havingParams) as { n: number };
 
   const convRows = db
     .prepare(
@@ -233,10 +256,11 @@ export function searchVault(
        JOIN conversations c ON c.id = m.conversation_id
        WHERE ${whereSql}${dedupe}
        GROUP BY c.id
+       ${havingSql}
        ORDER BY MAX(m.timestamp) DESC
        LIMIT ? OFFSET ?`,
     )
-    .all(...params, limit, offset) as Array<{
+    .all(...params, ...havingParams, limit, offset) as Array<{
     conversation_id: number;
     conversation_type: string;
     group_title: string | null;

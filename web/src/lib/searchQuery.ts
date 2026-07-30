@@ -4,11 +4,16 @@
  * Supported operators:
  *   with:  from:  to:  has:attachment  after:  before:
  *   source:  is:group  is:direct  label:  in:trash
+ *   last-contact:<n>[d|w|m|y]  first-contact:<n>[d|w|m|y]
  *   "quoted phrases"  -term
  *
  * `with:` and `to:` both mean “conversation includes this person”.
  * `from:` still means they sent the message. `subject:` is accepted for
  * typed queries but is not offered in the advanced form (rare for SMS).
+ * `last-contact:` matches conversations whose last message is at least that
+ * old (e.g. last-contact:1y). `first-contact:` matches conversations whose
+ * first message is at least that old (e.g. first-contact:5y). Bare numbers
+ * are days.
  */
 
 export type ParsedSearchQuery = {
@@ -28,6 +33,10 @@ export type ParsedSearchQuery = {
   conversationType: "group" | "individual" | null;
   label: string | null;
   includeTrash: boolean;
+  /** Minimum days since the conversation's last message. */
+  lastContactDays: number | null;
+  /** Minimum days since the conversation's first message. */
+  firstContactDays: number | null;
 };
 
 export type AdvancedSearchForm = {
@@ -42,6 +51,10 @@ export type AdvancedSearchForm = {
   hasAttachment?: boolean;
   label?: string;
   includeTrash?: boolean;
+  /** Duration since last message, e.g. "1y" or "180d" → last-contact: */
+  lastContact?: string;
+  /** Duration since first message, e.g. "5y" → first-contact: */
+  firstContact?: string;
 };
 
 const EMPTY: ParsedSearchQuery = {
@@ -58,10 +71,29 @@ const EMPTY: ParsedSearchQuery = {
   conversationType: null,
   label: null,
   includeTrash: false,
+  lastContactDays: null,
+  firstContactDays: null,
 };
 
 const OPERATOR_RE =
-  /^(with|from|to|subject|has|after|before|source|is|label|in):(.*)$/i;
+  /^(with|from|to|subject|has|after|before|source|is|label|in|last-contact|first-contact):(.*)$/i;
+
+const DURATION_RE = /^(\d+)\s*(d|w|m|y)?$/i;
+const DURATION_UNIT_DAYS: Record<string, number> = {
+  d: 1,
+  w: 7,
+  m: 30,
+  y: 365,
+};
+
+function parseDurationDays(raw: string): number | null {
+  const match = raw.trim().match(DURATION_RE);
+  if (!match) return null;
+  const n = Number(match[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = (match[2] ?? "d").toLowerCase();
+  return n * (DURATION_UNIT_DAYS[unit] ?? 1);
+}
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -190,6 +222,12 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
         case "in":
           if (value.toLowerCase() === "trash") out.includeTrash = true;
           break;
+        case "last-contact":
+          out.lastContactDays = parseDurationDays(value);
+          break;
+        case "first-contact":
+          out.firstContactDays = parseDurationDays(value);
+          break;
         default:
           break;
       }
@@ -221,6 +259,12 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
   }
   if (form.after?.trim()) parts.push(`after:${form.after.trim()}`);
   if (form.before?.trim()) parts.push(`before:${form.before.trim()}`);
+  if (form.lastContact?.trim()) {
+    parts.push(`last-contact:${form.lastContact.trim()}`);
+  }
+  if (form.firstContact?.trim()) {
+    parts.push(`first-contact:${form.firstContact.trim()}`);
+  }
   if (form.source?.trim()) parts.push(`source:${form.source.trim()}`);
   if (form.conversationType === "group") parts.push("is:group");
   if (form.conversationType === "individual") parts.push("is:direct");
@@ -245,7 +289,9 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
     !!q.before ||
     !!q.source ||
     !!q.conversationType ||
-    !!q.label
+    !!q.label ||
+    !!q.lastContactDays ||
+    !!q.firstContactDays
   );
 }
 

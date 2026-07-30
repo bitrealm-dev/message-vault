@@ -39,21 +39,89 @@ describe("vault search + FTS", () => {
         .get(MESSAGES_FTS_BACKFILL_META_KEY) as { value: string } | undefined;
       assert.equal(marker?.value, "1");
 
-      const conv = db
-        .prepare(
-          `INSERT INTO conversations (
-             account_id, chat_identifier, service, conversation_type,
-             group_title, exported_at, source_file
-           ) VALUES (?, '+15555550999', 'iMessage', 'individual', NULL, NULL, 't.json')`,
-        )
-        .run(accountId);
-      const conversationId = Number(conv.lastInsertRowid);
-      db.prepare(
+      const insertConv = db.prepare(
+        `INSERT INTO conversations (
+           account_id, chat_identifier, service, conversation_type,
+           group_title, exported_at, source_file
+         ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 't.json')`,
+      );
+      const insertMsg = db.prepare(
         `INSERT INTO messages (
            conversation_id, account_id, source, guid, timestamp,
            is_from_me, sort_order, body, subject
-         ) VALUES (?, ?, 'imessage', 'g-search-1', '2021-06-01T12:00:00Z', 0, 0, ?, NULL)`,
-      ).run(conversationId, accountId, "unique zebra pineapple vault");
+         ) VALUES (?, ?, 'imessage', ?, ?, 0, 0, ?, NULL)`,
+      );
+
+      const daysAgo = (days: number) =>
+        new Date(Date.now() - days * 86_400_000).toISOString();
+
+      const ftsConvId = Number(
+        insertConv.run(accountId, "+15555550999").lastInsertRowid,
+      );
+      insertMsg.run(
+        ftsConvId,
+        accountId,
+        "g-search-1",
+        "2021-06-01T12:00:00Z",
+        "unique zebra pineapple vault",
+      );
+
+      // Long-known + still active: first ~10y ago, last ~5d ago.
+      const activeConvId = Number(
+        insertConv.run(accountId, "+15555551001").lastInsertRowid,
+      );
+      insertMsg.run(
+        activeConvId,
+        accountId,
+        "g-active-1",
+        daysAgo(3650),
+        "hello from long ago",
+      );
+      insertMsg.run(
+        activeConvId,
+        accountId,
+        "g-active-2",
+        daysAgo(5),
+        "still chatting recently",
+      );
+
+      // Stale + old: first ~10y ago, last ~400d ago.
+      const staleConvId = Number(
+        insertConv.run(accountId, "+15555551002").lastInsertRowid,
+      );
+      insertMsg.run(
+        staleConvId,
+        accountId,
+        "g-stale-1",
+        daysAgo(3650),
+        "old friendship start",
+      );
+      insertMsg.run(
+        staleConvId,
+        accountId,
+        "g-stale-2",
+        daysAgo(400),
+        "last contact a while back",
+      );
+
+      // Entirely recent: first and last within the last week.
+      const recentConvId = Number(
+        insertConv.run(accountId, "+15555551003").lastInsertRowid,
+      );
+      insertMsg.run(
+        recentConvId,
+        accountId,
+        "g-recent-1",
+        daysAgo(6),
+        "brand new contact",
+      );
+      insertMsg.run(
+        recentConvId,
+        accountId,
+        "g-recent-2",
+        daysAgo(1),
+        "just messaged yesterday",
+      );
     } finally {
       db.close();
     }
@@ -80,6 +148,36 @@ describe("vault search + FTS", () => {
     runWithAccount(accountId, () => {
       const result = searchVault("pineapple");
       assert.ok(result.totalConversations >= 1);
+    });
+  });
+
+  it("filters by last-contact: (last message age)", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVault("last-contact:365d");
+      const handles = result.hits.map((h) => h.chatIdentifier);
+      assert.ok(handles.includes("+15555551002"));
+      assert.ok(!handles.includes("+15555551001"));
+      assert.ok(!handles.includes("+15555551003"));
+    });
+  });
+
+  it("filters by first-contact: (first message age)", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVault("first-contact:5y");
+      const handles = result.hits.map((h) => h.chatIdentifier);
+      assert.ok(handles.includes("+15555551001"));
+      assert.ok(handles.includes("+15555551002"));
+      assert.ok(!handles.includes("+15555551003"));
+    });
+  });
+
+  it("combines last-contact: and first-contact:", () => {
+    runWithAccount(accountId, () => {
+      const result = searchVault("last-contact:365d first-contact:5y");
+      const handles = result.hits.map((h) => h.chatIdentifier);
+      assert.ok(handles.includes("+15555551002"));
+      assert.ok(!handles.includes("+15555551001"));
+      assert.ok(!handles.includes("+15555551003"));
     });
   });
 });
