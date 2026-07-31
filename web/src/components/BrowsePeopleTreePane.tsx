@@ -7,6 +7,7 @@ import {
 } from "@/lib/browseTree";
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
+import type { SearchResultKey } from "@/lib/searchSelection";
 import type { ContactListItem, YearThread } from "@/lib/types";
 import {
   useRef,
@@ -104,7 +105,7 @@ export function BrowsePeopleTreePane({
   searchSources = [],
   searchLabels = [],
   resultsMode = false,
-  searchShowContact = false,
+  searchMode = "messages",
   searchHits = [],
   searchContactHits = [],
   searchTotal = 0,
@@ -113,8 +114,14 @@ export function BrowsePeopleTreePane({
   allSearchContactsSelected = false,
   onToggleSelectAllSearchContacts,
   onToggleSearchContact,
+  selectedSearchResultKeys,
+  allSearchResultsSelected = false,
+  onToggleSelectAllSearchResults,
+  onToggleSearchResult,
   onSelectSearchHit,
   onSearchContactContextMenu,
+  onSearchResultContextMenu,
+  onDeleteSearchResults,
   onUnlockVault,
   // Direct
   onDirectClick,
@@ -182,8 +189,7 @@ export function BrowsePeopleTreePane({
   searchSources?: string[];
   searchLabels?: string[];
   resultsMode?: boolean;
-  /** Results grouped under each matching contact. */
-  searchShowContact?: boolean;
+  searchMode?: "contacts" | "messages";
   searchHits?: SearchConversationHit[];
   searchContactHits?: SearchContactHit[];
   searchTotal?: number;
@@ -195,8 +201,34 @@ export function BrowsePeopleTreePane({
     contactId: number,
     mods?: { shiftKey: boolean },
   ) => void;
-  onSelectSearchHit?: (hit: SearchConversationHit) => void;
+  selectedSearchResultKeys?: ReadonlySet<SearchResultKey>;
+  allSearchResultsSelected?: boolean;
+  onToggleSelectAllSearchResults?: () => void;
+  onToggleSearchResult?: (
+    hit: SearchConversationHit,
+    mods: {
+      shiftKey: boolean;
+      altKey: boolean;
+      metaKey: boolean;
+      ctrlKey: boolean;
+    },
+  ) => void;
+  onSelectSearchHit?: (
+    hit: SearchConversationHit,
+    mods?: {
+      shiftKey: boolean;
+      altKey: boolean;
+      metaKey: boolean;
+      ctrlKey: boolean;
+    },
+  ) => void;
   onSearchContactContextMenu?: (id: number, x: number, y: number) => void;
+  onSearchResultContextMenu?: (
+    hit: SearchConversationHit,
+    x: number,
+    y: number,
+  ) => void;
+  onDeleteSearchResults?: () => void;
   onDirectClick?: () => void;
   directActive?: boolean;
   emptyGroupsLabel?: string;
@@ -363,6 +395,37 @@ export function BrowsePeopleTreePane({
     (count, id) => count + (selectedContactIds.has(id) ? 1 : 0),
     0,
   );
+  const selectedSearchResultCount = selectedSearchResultKeys?.size ?? 0;
+  const searchMenuItems: ListHistoryMenuItem[] =
+    searchMode === "messages"
+      ? [
+          ...(vaultReadOnly && onUnlockVault
+            ? [
+                {
+                  key: "unlock-vault",
+                  label: "Unlock vault to edit",
+                  icon: <LockIcon className="size-5 shrink-0 opacity-80" />,
+                  onClick: () => onUnlockVault(),
+                } satisfies ListHistoryMenuItem,
+              ]
+            : []),
+          ...(!vaultReadOnly && onDeleteSearchResults
+            ? [
+                {
+                  key: "delete-search-messages",
+                  label:
+                    selectedSearchResultCount === 1
+                      ? "Delete message"
+                      : "Delete messages",
+                  icon: <TrashMessagesIcon className="size-5 shrink-0 opacity-80" />,
+                  disabled: selectedSearchResultCount === 0,
+                  danger: true,
+                  onClick: () => onDeleteSearchResults(),
+                } satisfies ListHistoryMenuItem,
+              ]
+            : []),
+        ]
+      : menuItems;
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-sidebar">
@@ -390,27 +453,52 @@ export function BrowsePeopleTreePane({
         <div className="@container/tree-tools flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
           <div className="flex min-w-0 items-center gap-2">
             <IconHoverTarget
-              label="Select all matching people"
+              label={
+                searchMode === "contacts"
+                  ? "Select all matching people"
+                  : "Select all matching messages"
+              }
               placement="bottom"
             >
               <input
                 type="checkbox"
-                checked={allSearchContactsSelected}
-                disabled={searchContactIds.length === 0}
-                aria-label="Select all matching people"
-                onChange={onToggleSelectAllSearchContacts}
+                checked={
+                  searchMode === "contacts"
+                    ? allSearchContactsSelected
+                    : allSearchResultsSelected
+                }
+                disabled={
+                  searchMode === "contacts"
+                    ? searchContactIds.length === 0
+                    : searchHits.length === 0
+                }
+                aria-label={
+                  searchMode === "contacts"
+                    ? "Select all matching people"
+                    : "Select all matching messages"
+                }
+                onChange={
+                  searchMode === "contacts"
+                    ? onToggleSelectAllSearchContacts
+                    : onToggleSelectAllSearchResults
+                }
                 className="checkbox-list"
               />
             </IconHoverTarget>
             <span className="text-[13px] text-muted">Search results</span>
             <span className="text-[13px] text-muted tabular-nums">
-              {selectedSearchContactCount > 0
-                ? selectedSearchContactCount.toLocaleString()
+              {(searchMode === "contacts"
+                ? selectedSearchContactCount
+                : selectedSearchResultCount) > 0
+                ? (searchMode === "contacts"
+                    ? selectedSearchContactCount
+                    : selectedSearchResultCount
+                  ).toLocaleString()
                 : ""}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 overflow-visible">
-            {searchShowContact ? (
+            {searchMode === "contacts" ? (
               <IconHoverTarget
                 label={
                   allSearchContactsExpanded ? "Collapse all" : "Expand all"
@@ -441,7 +529,7 @@ export function BrowsePeopleTreePane({
               scopeLabel="People"
               scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
             />
-            <ListHistoryMenu items={menuItems} />
+            <ListHistoryMenu items={searchMenuItems} />
           </div>
         </div>
       ) : (
@@ -501,7 +589,7 @@ export function BrowsePeopleTreePane({
         </>
       )}
 
-      {mode === "search" && searchShowContact ? (
+      {mode === "search" && searchMode === "contacts" ? (
         <SearchContactResultsList
           contacts={searchContactHits}
           total={searchTotal}
@@ -521,16 +609,10 @@ export function BrowsePeopleTreePane({
           total={searchTotal}
           loading={searchLoading}
           selectedConversationId={selectedConversationId}
-          selectedContactIds={selectedContactIds}
-          onToggleContact={(id, mods) => onToggleSearchContact?.(id, mods)}
-          onSelect={(hit, mods) => {
-            if (mods?.shiftKey && hit.contactId != null) {
-              onToggleSearchContact?.(hit.contactId, { shiftKey: true });
-              return;
-            }
-            onSelectSearchHit?.(hit);
-          }}
-          onContactContextMenu={onSearchContactContextMenu}
+          selectedResultKeys={selectedSearchResultKeys}
+          onToggleResult={onToggleSearchResult}
+          onSelect={(hit, mods) => onSelectSearchHit?.(hit, mods)}
+          onResultContextMenu={onSearchResultContextMenu}
           emptyLabel="No matches"
         />
       ) : (

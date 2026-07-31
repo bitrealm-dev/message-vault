@@ -17,7 +17,7 @@ describe("parseSearchQuery", () => {
 
   it("parses operators", () => {
     const q = parseSearchQuery(
-      'from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group within:Family show:contact',
+      "from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group",
     );
     assert.equal(q.from, "alice");
     assert.equal(q.to, "bob");
@@ -26,8 +26,7 @@ describe("parseSearchQuery", () => {
     assert.equal(q.before, "2021-01-01");
     assert.equal(q.source, "imessage");
     assert.equal(q.conversationType, "group");
-    assert.equal(q.within, "Family");
-    assert.equal(q.showContact, true);
+    assert.equal(q.mode, "messages");
   });
 
   it("treats label: as an alias for within: and ignores in:trash", () => {
@@ -90,47 +89,60 @@ describe("parseSearchQuery", () => {
     );
   });
 
-  it("does not treat show:contact alone as search criteria", () => {
+  it("defaults legacy queries to messages and retires show:contact", () => {
+    assert.equal(parseSearchQuery("hello").mode, "messages");
+    assert.equal(parseSearchQuery("show:contact").mode, "messages");
+    assert.equal(parseSearchQuery("show:contact").showContact, false);
     assert.equal(hasSearchCriteria(parseSearchQuery("show:contact")), false);
+  });
+
+  it("parses explicit contact mode and contact operators", () => {
+    const q = parseSearchQuery(
+      'search:contacts within:"Close Friends" handle:"Ann Lee" group-count:>=2 message-count:<100',
+    );
+    assert.equal(q.mode, "contacts");
+    assert.equal(q.within, "Close Friends");
+    assert.equal(q.handle, "Ann Lee");
+    assert.deepEqual(q.groupCount, { comparator: ">=", value: 2 });
+    assert.deepEqual(q.messageCount, { comparator: "<", value: 100 });
+    assert.equal(hasSearchCriteria(q), true);
+  });
+
+  it("ignores invalid count comparisons", () => {
+    assert.equal(parseSearchQuery("group-count:2").groupCount, null);
+    assert.equal(parseSearchQuery("message-count:>=-1").messageCount, null);
+    assert.equal(parseSearchQuery("message-count:>1.5").messageCount, null);
   });
 });
 
 describe("composeSearchQuery", () => {
-  it("round-trips advanced form fields into operators", () => {
+  it("round-trips message form fields into operators", () => {
     const s = composeSearchQuery({
-      within: "Family",
+      mode: "messages",
+      within: "Close Friends",
       withPerson: "Ann Lee",
       hasWords: "birthday",
       doesntHave: "spam",
       conversationType: "group",
       hasAttachment: true,
-      showContact: true,
-      lastContact: { mode: "before", to: "2024-01-15" },
-      firstContact: { mode: "on-or-after", from: "2019-06-01" },
     });
-    assert.match(s, /within:Family/);
     assert.match(s, /with:"Ann Lee"/);
+    assert.match(s, /within:"Close Friends"/);
     assert.match(s, /birthday/);
     assert.match(s, /-spam/);
     assert.match(s, /is:group/);
     assert.match(s, /has:attachment/);
-    assert.match(s, /show:contact/);
-    assert.match(s, /last-contact:<2024-01-15/);
-    assert.match(s, /first-contact:>=2019-06-01/);
     assert.doesNotMatch(s, /in:trash/);
     assert.doesNotMatch(s, /subject:/);
     assert.doesNotMatch(s, /from:/);
 
     const parsed = parseSearchQuery(s);
-    assert.equal(parsed.within, "Family");
     assert.equal(parsed.to, "Ann Lee");
+    assert.equal(parsed.within, "Close Friends");
     assert.deepEqual(parsed.terms, ["birthday"]);
     assert.deepEqual(parsed.exclude, ["spam"]);
     assert.equal(parsed.conversationType, "group");
     assert.equal(parsed.hasAttachment, true);
-    assert.equal(parsed.showContact, true);
-    assert.deepEqual(parsed.lastContact, { from: null, to: "2024-01-15" });
-    assert.deepEqual(parsed.firstContact, { from: "2019-06-01", to: null });
   });
 
   it("turns a Date range into after: plus before:", () => {
@@ -154,9 +166,10 @@ describe("composeSearchQuery", () => {
     );
     assert.equal(
       composeSearchQuery({
+        mode: "contacts",
         firstContact: { mode: "between", from: "2020-01-01" },
       }),
-      "first-contact:>=2020-01-01",
+      "search:contacts first-contact:>=2020-01-01",
     );
   });
 
@@ -168,6 +181,38 @@ describe("composeSearchQuery", () => {
         lastContact: { mode: "any" },
       }),
       "",
+    );
+  });
+
+  it("composes only contact fields in contact mode", () => {
+    const s = composeSearchQuery({
+      mode: "contacts",
+      within: "Close Friends",
+      handle: "Ann Lee",
+      firstContact: { mode: "on-or-after", from: "2019-06-01" },
+      lastContact: { mode: "before", to: "2024-01-15" },
+      groupCount: { comparator: ">=", value: "2" },
+      messageCount: { comparator: "<", value: "100" },
+      withPerson: "ignored",
+      hasWords: "ignored",
+      hasAttachment: true,
+    });
+    assert.equal(
+      s,
+      'search:contacts within:"Close Friends" handle:"Ann Lee" first-contact:>=2019-06-01 last-contact:<2024-01-15 group-count:>=2 message-count:<100',
+    );
+  });
+
+  it("emits shared Within but not contact-only fields in message mode", () => {
+    assert.equal(
+      composeSearchQuery({
+        mode: "messages",
+        within: "Family",
+        handle: "Ann",
+        groupCount: { comparator: ">", value: "2" },
+        hasWords: "hello",
+      }),
+      "within:Family hello",
     );
   });
 });
@@ -190,47 +235,29 @@ describe("formFromSearchQuery", () => {
     assert.deepEqual(form.lastContact, { mode: "any", from: "", to: "" });
   });
 
-  it("round-trips compose → form for advanced fields", () => {
+  it("round-trips compose → form for message fields", () => {
     const composed = composeSearchQuery({
-      within: "Family",
+      mode: "messages",
       withPerson: "Ann Lee",
       hasWords: 'birthday "exact phrase"',
       doesntHave: "spam",
       conversationType: "group",
       hasAttachment: true,
-      showContact: true,
       source: "imessage",
       date: { mode: "between", from: "2020-01-01", to: "2020-03-01" },
-      firstContact: { mode: "on-or-after", from: "2019-06-01" },
-      lastContact: {
-        mode: "between",
-        from: "2021-01-01",
-        to: "2022-01-01",
-      },
     });
     const form = formFromSearchQuery(composed);
-    assert.equal(form.within, "Family");
+    assert.equal(form.mode, "messages");
     assert.equal(form.withPerson, "Ann Lee");
     assert.equal(form.hasWords, 'birthday "exact phrase"');
     assert.equal(form.doesntHave, "spam");
     assert.equal(form.conversationType, "group");
     assert.equal(form.hasAttachment, true);
-    assert.equal(form.showContact, true);
     assert.equal(form.source, "imessage");
     assert.deepEqual(form.date, {
       mode: "between",
       from: "2020-01-01",
       to: "2020-03-01",
-    });
-    assert.deepEqual(form.firstContact, {
-      mode: "on-or-after",
-      from: "2019-06-01",
-      to: "",
-    });
-    assert.deepEqual(form.lastContact, {
-      mode: "between",
-      from: "2021-01-01",
-      to: "2022-01-01",
     });
   });
 
@@ -239,6 +266,16 @@ describe("formFromSearchQuery", () => {
     assert.equal(form.hasWords, "hello");
     assert.equal(form.doesntHave, '"bad word"');
     assert.equal(form.conversationType, "individual");
+  });
+
+  it("hydrates contact form mode and count fields", () => {
+    const form = formFromSearchQuery(
+      'search:contacts handle:"Ann Lee" group-count:>=2 message-count:=12',
+    );
+    assert.equal(form.mode, "contacts");
+    assert.equal(form.handle, "Ann Lee");
+    assert.deepEqual(form.groupCount, { comparator: ">=", value: "2" });
+    assert.deepEqual(form.messageCount, { comparator: "=", value: "12" });
   });
 
   it("ignores from: and subject:", () => {

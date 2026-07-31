@@ -27,8 +27,13 @@ import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SearchConversationHit } from "@/lib/search";
 import {
+  applySearchResultRangeSelect,
   applySearchRangeSelect,
   orderedSearchContactIds,
+  orderedSearchResultKeys,
+  searchResultKey,
+  selectedSearchResultGroups,
+  type SearchResultKey,
 } from "@/lib/searchSelection";
 import { seedContactEditDraft } from "./contactEdit";
 import {
@@ -39,6 +44,7 @@ import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import { BrowseDetailsInspector } from "./BrowseDetailsInspector";
 import { BrowsePeopleTreePane } from "./BrowsePeopleTreePane";
 import { BrowseThreadColumn } from "./BrowseThreadColumn";
+import { SearchMessageCtxMenu } from "./SearchMessageCtxMenu";
 import { useBrowsePeopleTree } from "./useBrowsePeopleTree";
 import {
   contactFormAnchorFromRect,
@@ -50,7 +56,10 @@ import {
 } from "./groupChatTrash";
 import { LabelsMenu } from "./LabelsMenu";
 import { useHistory } from "./history";
-import { trashContactsLabel } from "./history/historyTypes";
+import {
+  trashContactsLabel,
+  trashMessageThreadsLabel,
+} from "./history/historyTypes";
 import { ParticipantContactFormOverlay } from "./ParticipantContactFormOverlay";
 import { VcfImportPreviewDialog } from "./VcfImportPreviewDialog";
 import type {
@@ -182,6 +191,7 @@ export function BrowseShell({
     y: number;
   } | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
+  const searchResultCtxMenuRef = useRef<HTMLDivElement>(null);
   const mergePanelRef = useRef<HTMLDivElement>(null);
   const pendingEditIdRef = useRef<number | null>(null);
   const statusShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -240,6 +250,15 @@ export function BrowseShell({
   );
   const [focusedSearchHit, setFocusedSearchHit] =
     useState<SearchConversationHit | null>(null);
+  const [selectedSearchResultKeys, setSelectedSearchResultKeys] = useState<
+    Set<SearchResultKey>
+  >(() => new Set());
+  const searchResultAnchorRef = useRef<SearchResultKey | null>(null);
+  const [searchResultCtxMenu, setSearchResultCtxMenu] = useState<{
+    hit: SearchConversationHit;
+    x: number;
+    y: number;
+  } | null>(null);
   const [selectedGroupConversationId, setSelectedGroupConversationId] =
     useState<number | null>(null);
   const [selectionGroupChats, setSelectionGroupChats] = useState<
@@ -350,9 +369,21 @@ export function BrowseShell({
     sort,
     sortOrder,
   ]);
+  const orderedSearchResultIds = useMemo(
+    () => orderedSearchResultKeys(sortedSearchHits),
+    [sortedSearchHits],
+  );
+  const selectedSearchGroups = useMemo(
+    () =>
+      selectedSearchResultGroups(sortedSearchHits, selectedSearchResultKeys),
+    [selectedSearchResultKeys, sortedSearchHits],
+  );
+  const allSearchResultsSelected =
+    orderedSearchResultIds.length > 0 &&
+    orderedSearchResultIds.every((key) => selectedSearchResultKeys.has(key));
 
   const searchContactIds = useMemo(() => {
-    if (vaultSearch.showContact) {
+    if (vaultSearch.mode === "contacts") {
       return sortedSearchContactHits
         .map((hit) => hit.contact.id)
         .filter((id) => validIdSet.has(id));
@@ -361,7 +392,7 @@ export function BrowseShell({
       validIdSet.has(id),
     );
   }, [
-    vaultSearch.showContact,
+    vaultSearch.mode,
     sortedSearchContactHits,
     vaultSearch.contactIds,
     validIdSet,
@@ -398,12 +429,12 @@ export function BrowseShell({
     searchContactIds.every((id) => selectedIds.has(id));
   const orderedVisibleSearchContactIds = useMemo(
     () =>
-      (vaultSearch.showContact
+      (vaultSearch.mode === "contacts"
         ? sortedSearchContactHits.map((hit) => hit.contact.id)
         : orderedSearchContactIds(sortedSearchHits)
       ).filter((id) => validIdSet.has(id)),
     [
-      vaultSearch.showContact,
+      vaultSearch.mode,
       sortedSearchContactHits,
       sortedSearchHits,
       validIdSet,
@@ -413,7 +444,11 @@ export function BrowseShell({
 
   useEffect(() => {
     searchSelectionAnchorRef.current = null;
-  }, [vaultSearch.committed]);
+    searchResultAnchorRef.current = null;
+    setSelectedIds(new Set());
+    setSelectedSearchResultKeys(new Set());
+    setSearchResultCtxMenu(null);
+  }, [vaultSearch.committed, setSelectedIds]);
 
   const toggleSearchContact = useCallback(
     (id: number, mods?: { shiftKey: boolean }) => {
@@ -449,6 +484,66 @@ export function BrowseShell({
       return new Set(searchContactIds);
     });
   }, [orderedVisibleSearchContactIds, searchContactIds, setSelectedIds]);
+  const toggleSearchResult = useCallback(
+    (
+      hit: SearchConversationHit,
+      mods: {
+        shiftKey: boolean;
+        altKey: boolean;
+        metaKey: boolean;
+        ctrlKey: boolean;
+      },
+    ) => {
+      const key = searchResultKey(hit);
+      if (mods.shiftKey) {
+        setSelectedSearchResultKeys(
+          applySearchResultRangeSelect(
+            orderedSearchResultIds,
+            key,
+            searchResultAnchorRef.current,
+          ),
+        );
+      } else {
+        setSelectedSearchResultKeys((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+        searchResultAnchorRef.current = key;
+      }
+    },
+    [orderedSearchResultIds],
+  );
+  const toggleSelectAllSearchResults = useCallback(() => {
+    setSelectedSearchResultKeys((prev) => {
+      if (orderedSearchResultIds.every((key) => prev.has(key))) {
+        searchResultAnchorRef.current = null;
+        return new Set();
+      }
+      searchResultAnchorRef.current = orderedSearchResultIds[0] ?? null;
+      return new Set(orderedSearchResultIds);
+    });
+  }, [orderedSearchResultIds]);
+  const searchConversationSections = useMemo(
+    () =>
+      selectedSearchGroups.map((group) => ({
+        conversationIds: group.conversationIds,
+        title: group.title,
+        conversationType: group.conversationType,
+      })),
+    [selectedSearchGroups],
+  );
+  useEffect(() => {
+    if (selectedSearchGroups.length === 0) return;
+    setFocusedSearchHit(null);
+    setSelectedGroupConversationId(null);
+    setScrollToMessageId(null);
+    setThreadConversationIds(
+      [...new Set(selectedSearchGroups.flatMap((group) => group.conversationIds))],
+    );
+    setActiveThread("search-selection");
+  }, [selectedSearchGroups]);
 
   const unlockVaultToEdit = useCallback(() => {
     setCtxMenu(null);
@@ -889,7 +984,8 @@ export function BrowseShell({
   useEffect(() => {
     if (historyRevision === 0) return;
     setThreadsEpoch((n) => n + 1);
-  }, [historyRevision]);
+    if (vaultSearch.resultsMode) vaultSearch.refresh();
+  }, [historyRevision, vaultSearch.resultsMode, vaultSearch.refresh]);
 
   const panelGroupChats = hasSelection ? selectionGroupChats : groupChats;
 
@@ -1133,6 +1229,19 @@ export function BrowseShell({
     trashIdsForContext,
     queueStatusMessage,
   });
+  const openSearchResultCtxMenu = useCallback(
+    (hit: SearchConversationHit, x: number, y: number) => {
+      closeLabelsPanel();
+      const key = searchResultKey(hit);
+      setSelectedSearchResultKeys((prev) =>
+        prev.has(key) ? prev : new Set([key]),
+      );
+      searchResultAnchorRef.current = key;
+      setSearchResultCtxMenu({ hit, x, y });
+      setCtxMenu(null);
+    },
+    [closeLabelsPanel],
+  );
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -1156,18 +1265,31 @@ export function BrowseShell({
   }, [clearSelectionBase, router, selectionDirtyRef]);
 
   useEffect(() => {
-    if (!hasSelection) return;
+    if (!hasSelection && selectedSearchResultKeys.size === 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (ctxMenu != null || labelsPanelPos != null) return;
+      if (
+        ctxMenu != null ||
+        searchResultCtxMenu != null ||
+        labelsPanelPos != null
+      ) return;
       e.preventDefault();
       clearSelection();
+      setSelectedSearchResultKeys(new Set());
+      searchResultAnchorRef.current = null;
       const el = document.activeElement;
       if (el instanceof HTMLElement) el.blur();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [hasSelection, clearSelection, ctxMenu, labelsPanelPos]);
+  }, [
+    hasSelection,
+    selectedSearchResultKeys.size,
+    clearSelection,
+    ctxMenu,
+    searchResultCtxMenu,
+    labelsPanelPos,
+  ]);
 
   useEffect(() => {
     if (!hasSelection) return;
@@ -1247,6 +1369,77 @@ export function BrowseShell({
 
   const canDelete =
     !contactCreating && (hasSelection || contactId != null);
+
+  const executeSearchMessageTrash = useCallback(async () => {
+    if (selectedSearchGroups.length === 0 || vaultReadOnly) return;
+    const directGroups = selectedSearchGroups.filter(
+      (group) => group.conversationType === "individual",
+    );
+    const groupGroups = selectedSearchGroups.filter(
+      (group) => group.conversationType === "group",
+    );
+    const handles = [
+      ...new Set(
+        directGroups.map((group) => group.chatIdentifier).filter(Boolean),
+      ),
+    ];
+    const conversationIds = [
+      ...new Set(groupGroups.flatMap((group) => group.conversationIds)),
+    ];
+    const subjects = [
+      ...handles.map(
+        (handle) =>
+          directGroups.find((group) => group.chatIdentifier === handle)?.title ??
+          handle,
+      ),
+      ...conversationIds.map(
+        (id) =>
+          groupGroups.find((group) => group.conversationIds.includes(id))
+            ?.title ??
+          "group message",
+      ),
+    ];
+    setSearchResultCtxMenu(null);
+    setSaving(true);
+    try {
+      const response = await fetch("/api/messages/trash", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handles, conversationIds }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "delete failed");
+      pushHistory({
+        type: "trashMessageThreads",
+        handles,
+        conversationIds,
+        subjects,
+        label: trashMessageThreadsLabel(subjects),
+      });
+      setSelectedSearchResultKeys(new Set());
+      searchResultAnchorRef.current = null;
+      setFocusedSearchHit(null);
+      setSelectedGroupConversationId(null);
+      setThreadConversationIds(null);
+      setActiveThread(null);
+      vaultSearch.refresh();
+      router.refresh();
+    } catch (error) {
+      console.error(error);
+      queueStatusMessage(
+        error instanceof Error ? error.message : "delete failed",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    selectedSearchGroups,
+    vaultReadOnly,
+    pushHistory,
+    vaultSearch,
+    router,
+    queueStatusMessage,
+  ]);
 
   const deleteTargetIds = useCallback((): number[] => {
     if (hasSelection) return selectedContacts.map((c) => c.id);
@@ -1381,16 +1574,23 @@ export function BrowseShell({
   }, [ctxMenu, trashIdsForContext, requestTrash]);
 
   useDismissible({
-    open: ctxMenu != null || mergeFromId != null,
+    open:
+      ctxMenu != null || searchResultCtxMenu != null || mergeFromId != null,
     onDismiss: () => {
       setCtxMenu(null);
+      setSearchResultCtxMenu(null);
       setMergeFromId(null);
       setMergeQuery("");
       setMergePos(null);
       closeLabelsPanel();
       flushSelectionDirty();
     },
-    refs: [ctxMenuRef, labelsPanelWrapRef, mergePanelRef],
+    refs: [
+      ctxMenuRef,
+      searchResultCtxMenuRef,
+      labelsPanelWrapRef,
+      mergePanelRef,
+    ],
     onEscape: (e) => {
       if (mergeFromId != null) {
         e.preventDefault();
@@ -1482,10 +1682,19 @@ export function BrowseShell({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
-      if (ctxMenu != null || labelsPanelPos != null) {
+      if (
+        ctxMenu != null ||
+        searchResultCtxMenu != null ||
+        labelsPanelPos != null
+      ) {
         return;
       }
       if (formOpen) return;
+      if (selectedSearchResultKeys.size > 0) {
+        e.preventDefault();
+        void executeSearchMessageTrash();
+        return;
+      }
       if (!canDelete) return;
       const t = e.target;
       if (t instanceof HTMLElement) {
@@ -1508,8 +1717,11 @@ export function BrowseShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [
     ctxMenu,
+    searchResultCtxMenu,
     labelsPanelPos,
     formOpen,
+    selectedSearchResultKeys.size,
+    executeSearchMessageTrash,
     canDelete,
     deleteTargetIds,
     requestTrash,
@@ -1808,7 +2020,7 @@ export function BrowseShell({
         minSize={220}
         maxSize={560}
         groupResizeBehavior="preserve-pixel-size"
-        className="min-h-0"
+        className="relative z-40 min-h-0 overflow-visible"
       >
         <BrowsePeopleTreePane
           sectionLabel={sectionLabel}
@@ -1889,7 +2101,7 @@ export function BrowseShell({
           searchSources={sources}
           searchLabels={allLabels}
           resultsMode={vaultSearch.resultsMode}
-          searchShowContact={vaultSearch.showContact}
+          searchMode={vaultSearch.mode}
           searchHits={sortedSearchHits}
           searchContactHits={sortedSearchContactHits}
           searchTotal={vaultSearch.total}
@@ -1898,7 +2110,25 @@ export function BrowseShell({
           allSearchContactsSelected={allSearchContactsSelected}
           onToggleSelectAllSearchContacts={toggleSelectAllSearchContacts}
           onToggleSearchContact={toggleSearchContact}
-          onSelectSearchHit={(hit: SearchConversationHit) => {
+          selectedSearchResultKeys={selectedSearchResultKeys}
+          allSearchResultsSelected={allSearchResultsSelected}
+          onToggleSelectAllSearchResults={toggleSelectAllSearchResults}
+          onToggleSearchResult={toggleSearchResult}
+          onSelectSearchHit={(hit: SearchConversationHit, mods) => {
+            if (
+              mods?.shiftKey ||
+              mods?.altKey ||
+              mods?.metaKey ||
+              mods?.ctrlKey
+            ) {
+              toggleSearchResult(hit, {
+                shiftKey: Boolean(mods.shiftKey),
+                altKey: Boolean(mods.altKey),
+                metaKey: Boolean(mods.metaKey),
+                ctrlKey: Boolean(mods.ctrlKey),
+              });
+              return;
+            }
             clearGroupSelection();
             setFocusedSearchHit(hit);
             setSelectedGroupConversationId(hit.conversationId);
@@ -1911,6 +2141,8 @@ export function BrowseShell({
             );
           }}
           onSearchContactContextMenu={openContactCtxMenu}
+          onSearchResultContextMenu={openSearchResultCtxMenu}
+          onDeleteSearchResults={() => void executeSearchMessageTrash()}
           onUnlockVault={unlockVaultToEdit}
           onDirectClick={openDirectThread}
           directActive={activeThread === "dm"}
@@ -1967,6 +2199,7 @@ export function BrowseShell({
           onEnsureYear={(year) => {
             void ensureYearLoaded(year);
           }}
+          searchConversationSections={searchConversationSections}
         />
       </Panel>
 
@@ -2071,6 +2304,18 @@ export function BrowseShell({
         onLabelsEnter={openCtxLabels}
         onLabelsLeave={scheduleCloseLabelsPanel}
         onDelete={onCtxDelete}
+        onUnlockVault={unlockVaultToEdit}
+      />
+    )}
+    {searchResultCtxMenu && (
+      <SearchMessageCtxMenu
+        menuRef={searchResultCtxMenuRef}
+        x={searchResultCtxMenu.x}
+        y={searchResultCtxMenu.y}
+        count={selectedSearchResultKeys.size}
+        vaultReadOnly={vaultReadOnly}
+        saving={saving}
+        onDelete={() => void executeSearchMessageTrash()}
         onUnlockVault={unlockVaultToEdit}
       />
     )}

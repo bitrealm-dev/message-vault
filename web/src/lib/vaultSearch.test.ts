@@ -7,7 +7,11 @@ import Database from "better-sqlite3";
 
 import { runWithAccount } from "./accountScope";
 import { createAccount, saveAccount } from "./accounts";
-import { searchVault, searchVaultByContact } from "./search";
+import {
+  searchVault,
+  searchVaultByContact,
+  searchVaultContacts,
+} from "./search";
 import { dbPath } from "./paths";
 import { ensureVaultSchema, MESSAGES_FTS_BACKFILL_META_KEY } from "./vaultSchema";
 
@@ -247,6 +251,50 @@ describe("vault search + FTS", () => {
     runWithAccount(accountId, () => {
       const result = searchVault("pineapple");
       assert.ok(result.totalConversations >= 1);
+    });
+  });
+
+  it("searches contacts by name or phone handle", () => {
+    runWithAccount(accountId, () => {
+      const byName = searchVaultContacts("search:contacts handle:Recent");
+      assert.deepEqual(
+        byName.contacts?.map((hit) => hit.contact.displayName),
+        ["Recent"],
+      );
+      const byPhone = searchVaultContacts(
+        "search:contacts handle:+15555551004",
+      );
+      assert.deepEqual(
+        byPhone.contacts?.map((hit) => hit.contact.displayName),
+        ["Labeled"],
+      );
+    });
+  });
+
+  it("filters contacts by label and direct/group counts", () => {
+    runWithAccount(accountId, () => {
+      const grouped = searchVaultContacts(
+        'search:contacts within:Family group-count:=1 message-count:=1',
+      );
+      assert.deepEqual(
+        grouped.contacts
+          ?.map((hit) => hit.contact.displayName)
+          .sort((a, b) => a.localeCompare(b)),
+        ["Inactive", "Labeled"],
+      );
+      const direct = searchVaultContacts(
+        "search:contacts group-count:=0 message-count:>1",
+      );
+      assert.ok(
+        direct.contacts?.some((hit) => hit.contact.displayName === "Active"),
+      );
+      assert.ok(
+        direct.contacts?.every(
+          (hit) =>
+            hit.contact.groupMessageCount === 0 &&
+            hit.contact.messageCount > 1,
+        ),
+      );
     });
   });
 

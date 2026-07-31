@@ -24,6 +24,14 @@ export type HistoryCommand =
       label: string;
     }
   | {
+      type: "trashMessageThreads";
+      handles: string[];
+      conversationIds: number[];
+      /** Direct-thread names followed by group titles. */
+      subjects: string[];
+      label: string;
+    }
+  | {
       type: "createContact";
       contactId: number;
       name: string;
@@ -97,6 +105,13 @@ export function toastTextForCommand(cmd: HistoryCommand): string {
       }
       return `Deleted ${n} group messages`;
     }
+    case "trashMessageThreads": {
+      const n = cmd.handles.length + cmd.conversationIds.length;
+      if (n === 1) {
+        return `Deleted message ${joinSubjects(cmd.subjects, "message")}`;
+      }
+      return `Deleted ${n} messages ${joinSubjectsPreview(cmd.subjects, "messages")}`;
+    }
   }
 }
 
@@ -116,6 +131,13 @@ export function undoToastTextForCommand(cmd: HistoryCommand): string {
         return `Undeleted group message ${joinSubjects(cmd.titles, "group message")}`;
       }
       return `Undeleted ${n} group messages`;
+    }
+    case "trashMessageThreads": {
+      const n = cmd.handles.length + cmd.conversationIds.length;
+      if (n === 1) {
+        return `Undeleted message ${joinSubjects(cmd.subjects, "message")}`;
+      }
+      return `Undeleted ${n} messages ${joinSubjectsPreview(cmd.subjects, "messages")}`;
     }
     default:
       return `Undid — ${toastTextForCommand(cmd)}`;
@@ -141,4 +163,11 @@ export function trashGroupThreadLabel(titles: string[]): string {
     return `Delete group message ${joined}`;
   }
   return `Delete ${titles.length} group messages`;
+}
+
+export function trashMessageThreadsLabel(subjects: string[]): string {
+  if (subjects.length <= 1) {
+    return `Delete message ${joinSubjects(subjects, "message")}`;
+  }
+  return `Delete ${subjects.length} messages`;
 }

@@ -19,12 +19,13 @@ export function useVaultSearch(initialQuery = "") {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
   const seqRef = useRef(0);
 
   const resultsMode = committed.length > 0;
 
   const parsed = useMemo(() => parseSearchQuery(committed), [committed]);
-  const showContact = parsed.showContact;
+  const mode = parsed.mode;
 
   const highlightTerms = useMemo(
     () => [
@@ -38,6 +39,9 @@ export function useVaultSearch(initialQuery = "") {
   const submit = useCallback((q: string) => {
     setDraft(q);
     setCommitted(q.trim());
+  }, []);
+  const refresh = useCallback(() => {
+    setRefreshToken((value) => value + 1);
   }, []);
 
   useEffect(() => {
@@ -85,7 +89,7 @@ export function useVaultSearch(initialQuery = "") {
         });
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [committed]);
+  }, [committed, refreshToken]);
 
   return {
     draft,
@@ -93,7 +97,7 @@ export function useVaultSearch(initialQuery = "") {
     committed,
     submit,
     resultsMode,
-    showContact,
+    mode,
     hits,
     contactHits,
     contactIds,
@@ -101,5 +105,6 @@ export function useVaultSearch(initialQuery = "") {
     loading,
     error,
     highlightTerms,
+    refresh,
   };
 }

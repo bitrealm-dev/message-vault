@@ -46,6 +46,12 @@ export type BrowseGroupThreadMeta = {
   messageCount: number;
 };
 
+export type SearchConversationSection = {
+  conversationIds: number[];
+  title: string;
+  conversationType: "group" | "individual";
+};
+
 /** Isolated from scroll chrome so year-highlight updates do not rebuild bubbles. */
 const ThreadMessageSections = memo(function ThreadMessageSections({
   messagesByYear,
@@ -92,6 +98,52 @@ const ThreadMessageSections = memo(function ThreadMessageSections({
   );
 });
 
+const SearchConversationMessageSections = memo(
+  function SearchConversationMessageSections({
+    sections,
+    messages,
+    highlightTerms,
+  }: {
+    sections: SearchConversationSection[];
+    messages: MessageRow[];
+    highlightTerms: string[];
+  }) {
+    return (
+      <div className="mx-auto flex max-w-2xl flex-col gap-5">
+        {sections.map((section) => {
+          const sectionMessages = messages
+            .filter(
+              (message) =>
+                message.conversationId != null &&
+                section.conversationIds.includes(message.conversationId),
+            )
+            .sort(
+              (a, b) =>
+                a.timestamp.localeCompare(b.timestamp) || a.id - b.id,
+            );
+          return (
+            <section key={section.conversationIds.join(",")}>
+              <div className="sticky top-0 z-10 mb-2 border-b border-border bg-bg/95 py-2 backdrop-blur-sm">
+                <div className="truncate text-[13px] font-semibold text-text">
+                  {section.title}
+                </div>
+                <div className="text-[11px] text-muted">
+                  {section.conversationType === "group" ? "Group" : "1-1"} ·{" "}
+                  {sectionMessages.length.toLocaleString()} messages
+                </div>
+              </div>
+              <MessageList
+                messages={sectionMessages}
+                highlightTerms={highlightTerms}
+              />
+            </section>
+          );
+        })}
+      </div>
+    );
+  },
+);
+
 export function BrowseThreadPane({
   detail,
   sources,
@@ -114,6 +166,7 @@ export function BrowseThreadPane({
   loadingOlder = false,
   onLoadOlder,
   onEnsureYear,
+  searchConversationSections = [],
 }: {
   detail: ContactDetail | null;
   sources: string[];
@@ -147,6 +200,7 @@ export function BrowseThreadPane({
   onLoadOlder?: () => void | Promise<void>;
   /** Ensure a calendar year is loaded before scrolling to its section. */
   onEnsureYear?: (year: number) => void | Promise<void>;
+  searchConversationSections?: SearchConversationSection[];
 }) {
   const { formatDateRange } = useDateTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -709,14 +763,21 @@ export function BrowseThreadPane({
               No messages with photos or files
             </p>
           )}
-        {visibleMessages.length > 0 && (
-          <ThreadMessageSections
-            messagesByYear={messagesByYear}
-            highlightTerms={highlightTerms}
-            hasOlder={hasOlder}
-            loadingOlder={loadingOlder}
-          />
-        )}
+        {visibleMessages.length > 0 &&
+          (searchConversationSections.length > 1 ? (
+            <SearchConversationMessageSections
+              sections={searchConversationSections}
+              messages={visibleMessages}
+              highlightTerms={highlightTerms}
+            />
+          ) : (
+            <ThreadMessageSections
+              messagesByYear={messagesByYear}
+              highlightTerms={highlightTerms}
+              hasOlder={hasOlder}
+              loadingOlder={loadingOlder}
+            />
+          ))}
       </div>
 
       {awayFromBottom && visibleMessages.length > 0 && (

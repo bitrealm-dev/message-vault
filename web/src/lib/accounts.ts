@@ -3,7 +3,7 @@ import fs from "node:fs";
 
 import Database from "better-sqlite3";
 
-import { accountDataDir, dbPath } from "./paths";
+import { accountDataDir, ensureDbParentDir } from "./paths";
 import { createVaultOwner } from "./vaultOwner";
 import { ensureVaultSchema } from "./vaultSchema";
 
@@ -67,7 +67,7 @@ function rowToAccount(row: AccountRow, emails: AccountEmailRow[]): Account {
 }
 
 function openDb(): Database.Database {
-  const db = new Database(dbPath());
+  const db = new Database(ensureDbParentDir());
   ensureVaultSchema(db);
   return db;
 }

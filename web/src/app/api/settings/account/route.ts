@@ -208,7 +208,6 @@ export async function PATCH(req: Request) {
 export async function DELETE() {
   try {
     return await withAccountHandler(async (accountId) => {
-      assertVaultWritable();
       deleteAccount(accountId);
       const store = await cookies();
       store.set(clearAccountCookieOptions());

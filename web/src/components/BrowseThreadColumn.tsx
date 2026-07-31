@@ -10,6 +10,7 @@ import { GroupParticipantChip } from "./GroupParticipantChip";
 import {
   BrowseThreadPane,
   type BrowseGroupThreadMeta,
+  type SearchConversationSection,
 } from "./BrowseThreadPane";
 
 export function BrowseThreadColumn({
@@ -45,6 +46,7 @@ export function BrowseThreadColumn({
   loadingOlder = false,
   onLoadOlder,
   onEnsureYear,
+  searchConversationSections = [],
 }: {
   paneStorageKey: string;
   detail: ContactDetail | null;
@@ -83,6 +85,7 @@ export function BrowseThreadColumn({
   loadingOlder?: boolean;
   onLoadOlder?: () => void | Promise<void>;
   onEnsureYear?: (year: number) => void | Promise<void>;
+  searchConversationSections?: SearchConversationSection[];
 }) {
   const showReader =
     readerOnly
@@ -144,6 +147,7 @@ export function BrowseThreadColumn({
             loadingOlder={loadingOlder}
             onLoadOlder={onLoadOlder}
             onEnsureYear={onEnsureYear}
+            searchConversationSections={searchConversationSections}
           />
         </div>
       ) : (

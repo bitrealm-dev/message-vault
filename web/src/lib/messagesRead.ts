@@ -92,6 +92,7 @@ export function messagesPageForConversations(
 
 type RawMessageRow = {
   id: number;
+  conversation_id: number;
   source: string;
   timestamp: string;
   sort_order: number;
@@ -170,7 +171,7 @@ function loadConversationMessages(
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.source, m.timestamp, m.sort_order, m.is_from_me, m.sender, m.body, m.is_announcement,
+      `SELECT m.id, m.conversation_id, m.source, m.timestamp, m.sort_order, m.is_from_me, m.sender, m.body, m.is_announcement,
               c.first_name, c.last_name, c.preferred_handle,
               p.name_hint
        FROM messages m
@@ -261,6 +262,7 @@ function loadConversationMessages(
 
     return {
       id: r.id,
+      conversationId: r.conversation_id,
       source: r.source,
       timestamp: r.timestamp,
       isFromMe,

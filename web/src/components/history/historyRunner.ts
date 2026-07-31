@@ -66,6 +66,19 @@ export async function undoCommand(cmd: HistoryCommand): Promise<void> {
         );
       }
       return;
+    case "trashMessageThreads":
+      await jsonFetch(
+        "/api/messages/trash",
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            handles: cmd.handles,
+            conversationIds: cmd.conversationIds,
+          }),
+        },
+        "restore failed",
+      );
+      return;
     case "createContact":
       await jsonFetch(
         "/api/contacts/trash",
@@ -146,6 +159,19 @@ export async function redoCommand(cmd: HistoryCommand): Promise<void> {
           "trash failed",
         );
       }
+      return;
+    case "trashMessageThreads":
+      await jsonFetch(
+        "/api/messages/trash",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            handles: cmd.handles,
+            conversationIds: cmd.conversationIds,
+          }),
+        },
+        "trash failed",
+      );
       return;
     case "createContact":
       await jsonFetch(

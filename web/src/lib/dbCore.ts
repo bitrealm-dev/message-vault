@@ -1,6 +1,8 @@
+import fs from "fs";
+
 import Database from "better-sqlite3";
 import { formatPhoneDisplay } from "./phoneE164";
-import { dbPath } from "./paths";
+import { ensureDbParentDir } from "./paths";
 
 const g = globalThis as unknown as {
   __mvReadonlyDb?: Database.Database | null;
@@ -9,7 +11,13 @@ const g = globalThis as unknown as {
 
 export function getDb(): Database.Database {
   if (!g.__mvReadonlyDb) {
-    g.__mvReadonlyDb = new Database(dbPath(), {
+    const file = ensureDbParentDir();
+    if (!fs.existsSync(file)) {
+      throw new Error(
+        `Vault database not found at ${file}. From the repo root run: ./scripts/setup-demo.sh (or create an account at /login).`,
+      );
+    }
+    g.__mvReadonlyDb = new Database(file, {
       readonly: true,
       fileMustExist: true,
     });

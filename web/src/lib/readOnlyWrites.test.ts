@@ -68,7 +68,7 @@ describe("read-only web vault mutations", () => {
     }
   }
 
-  it("rejects contact, handle, conversation, and message writes while locked", () => {
+  it("rejects ordinary writes but allows deleting all messages while locked", () => {
     runWithAccount(accountId, () => {
       assert.throws(
         () =>
@@ -91,11 +91,8 @@ describe("read-only web vault mutations", () => {
         (err: unknown) =>
           err instanceof Error && err.message === VAULT_READ_ONLY_MESSAGE,
       );
-      assert.throws(
-        () => deleteAllMessagesForAccount(accountId),
-        (err: unknown) =>
-          err instanceof Error && err.message === VAULT_READ_ONLY_MESSAGE,
-      );
+      const deleted = deleteAllMessagesForAccount(accountId);
+      assert.ok(deleted.conversations >= 1);
     });
   });
 

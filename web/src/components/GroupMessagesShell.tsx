@@ -457,7 +457,7 @@ export function GroupMessagesShell({
           minSize={220}
           maxSize={560}
           groupResizeBehavior="preserve-pixel-size"
-          className="min-h-0"
+          className="relative z-40 min-h-0 overflow-visible"
         >
           <BrowseGroupChatsPane
             items={collapsedGroupChats}

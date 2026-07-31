@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SearchConversationHit } from "@/lib/search";
 import {
+  applySearchResultRangeSelect,
   applySearchRangeSelect,
   orderedSearchContactIds,
+  orderedSearchResultKeys,
+  searchResultKey,
+  selectedSearchResultGroups,
 } from "./searchSelection";
 
 function hit(
@@ -59,5 +63,65 @@ describe("applySearchRangeSelect", () => {
 
   it("returns empty when the click is not in the ordered list", () => {
     assert.deepEqual([...applySearchRangeSelect(ordered, 99, 20)], []);
+  });
+});
+
+describe("message search result selection", () => {
+  const hits = [
+    hit({ conversationId: 1, chatIdentifier: "+15550001" }),
+    hit({
+      conversationId: 2,
+      conversationType: "group",
+      chatIdentifier: "group-a",
+    }),
+    hit({ conversationId: 3, chatIdentifier: "+15550001" }),
+    hit({ conversationId: 4, chatIdentifier: "+15550002" }),
+  ];
+
+  it("keys direct threads by handle and groups by conversation", () => {
+    assert.equal(searchResultKey(hits[0]!), "direct:+15550001");
+    assert.equal(searchResultKey(hits[1]!), "group:2");
+    assert.deepEqual(orderedSearchResultKeys(hits), [
+      "direct:+15550001",
+      "group:2",
+      "direct:+15550002",
+    ]);
+  });
+
+  it("selects a mixed contiguous range", () => {
+    const ordered = orderedSearchResultKeys(hits);
+    assert.deepEqual(
+      [
+        ...applySearchResultRangeSelect(
+          ordered,
+          "direct:+15550002",
+          "direct:+15550001",
+        ),
+      ],
+      ["direct:+15550001", "group:2", "direct:+15550002"],
+    );
+  });
+
+  it("groups duplicate direct rows into one selected thread", () => {
+    const groups = selectedSearchResultGroups(
+      hits,
+      new Set(["direct:+15550001", "group:2"]),
+    );
+    assert.deepEqual(groups, [
+      {
+        key: "direct:+15550001",
+        conversationType: "individual",
+        chatIdentifier: "+15550001",
+        title: "t",
+        conversationIds: [1, 3],
+      },
+      {
+        key: "group:2",
+        conversationType: "group",
+        chatIdentifier: "group-a",
+        title: "t",
+        conversationIds: [2],
+      },
+    ]);
   });
 });

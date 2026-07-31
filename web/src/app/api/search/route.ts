@@ -2,7 +2,7 @@ import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
-import { searchVault, searchVaultByContact } from "@/lib/search";
+import { searchVault, searchVaultContacts } from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
 import { NextResponse } from "next/server";
 
@@ -28,9 +28,10 @@ export async function GET(req: Request) {
 
   try {
     return await withAccountHandler(async () => {
-      const run = parseSearchQuery(q).showContact
-        ? searchVaultByContact
-        : searchVault;
+      const run =
+        parseSearchQuery(q).mode === "contacts"
+          ? searchVaultContacts
+          : searchVault;
       const result = run(q, {
         limit: Number.isFinite(limit) ? limit : undefined,
         offset: Number.isFinite(offset) ? offset : undefined,

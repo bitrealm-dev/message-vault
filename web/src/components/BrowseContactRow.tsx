@@ -8,7 +8,11 @@ import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
 import { memo, type MouseEvent } from "react";
 import { CountBadge } from "./CountBadge";
-import { ChevronDownIcon, GroupMessagesOutlineIcon } from "./icons";
+import {
+  ChevronDownIcon,
+  GroupMessagesOutlineIcon,
+  MessageIcon,
+} from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 import { useMessageBadgePrefs } from "./useMessageBadgePrefs";
 
@@ -239,27 +243,24 @@ export const BrowseContactRow = memo(function BrowseContactRow({
                 ) : null}
                 {dateLabel || showGroupIcon || showCountBadge ? (
                   <span className="mt-0.5 flex min-w-0 items-center justify-between gap-2">
-                    <span className="inline-flex shrink-0 items-center gap-1.5">
-                      {showGroupMessageBadge && (
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      {showGroupIcon ? (
                         <span
-                          title={
-                            showGroupIcon ? "In group messages" : undefined
-                          }
+                          title="In group messages"
                           className="inline-flex items-center"
                         >
-                          <GroupMessagesOutlineIcon
-                            className={`size-3.5 shrink-0 text-muted opacity-80 ${
-                              showGroupIcon ? "" : "invisible"
-                            }`}
-                          />
+                          <GroupMessagesOutlineIcon className="size-3.5 shrink-0 text-muted opacity-80" />
                         </span>
-                      )}
-                      {showCountBadge && (
-                        <CountBadge
-                          count={c.messageCount}
-                          title="1:1 messages"
-                        />
-                      )}
+                      ) : null}
+                      {showCountBadge ? (
+                        <>
+                          <CountBadge
+                            count={c.messageCount}
+                            title="1:1 messages"
+                          />
+                          <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
+                        </>
+                      ) : null}
                     </span>
                     {dateLabel ? (
                       <span className="min-w-0 truncate text-right text-[11px] text-muted tabular-nums">

@@ -105,7 +105,6 @@ export function BrowseGroupChatsPane({
           onSubmit={onSearchSubmit}
           sources={searchSources}
           labels={searchLabels}
-          showContactOption={false}
         />
       </div>
       {!resultsMode ? (

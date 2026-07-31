@@ -1,10 +1,21 @@
 "use client";
 
 import type { SearchConversationHit } from "@/lib/search";
+import {
+  searchResultKey,
+  type SearchResultKey,
+} from "@/lib/searchSelection";
 import { CountBadge } from "./CountBadge";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
+const EMPTY_SELECTED_RESULT_KEYS: ReadonlySet<SearchResultKey> = new Set();
+export type SearchSelectionModifiers = {
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+};
 
 /** Title, match count, snippet, type and date range for one matching conversation. */
 export function SearchHitSummary({ hit }: { hit: SearchConversationHit }) {
@@ -46,9 +57,12 @@ export function SearchResultsList({
   loading,
   selectedConversationId,
   selectedContactIds = EMPTY_SELECTED_CONTACT_IDS,
+  selectedResultKeys = EMPTY_SELECTED_RESULT_KEYS,
   onToggleContact,
+  onToggleResult,
   onSelect,
   onContactContextMenu,
+  onResultContextMenu,
   emptyLabel = "No matches",
 }: {
   hits: SearchConversationHit[];
@@ -56,15 +70,25 @@ export function SearchResultsList({
   loading: boolean;
   selectedConversationId: number | null;
   selectedContactIds?: ReadonlySet<number>;
+  selectedResultKeys?: ReadonlySet<SearchResultKey>;
   onToggleContact?: (
     contactId: number,
     mods?: { shiftKey: boolean },
   ) => void;
+  onToggleResult?: (
+    hit: SearchConversationHit,
+    mods: SearchSelectionModifiers,
+  ) => void;
   onSelect: (
     hit: SearchConversationHit,
-    mods?: { shiftKey: boolean },
+    mods?: SearchSelectionModifiers,
   ) => void;
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
+  onResultContextMenu?: (
+    hit: SearchConversationHit,
+    x: number,
+    y: number,
+  ) => void;
   emptyLabel?: string;
 }) {
   if (loading) {
@@ -86,8 +110,10 @@ export function SearchResultsList({
       </div>
       {hits.map((hit) => {
         const active = selectedConversationId === hit.conversationId;
-        const checked =
-          hit.contactId != null && selectedContactIds.has(hit.contactId);
+        const resultChecked = selectedResultKeys.has(searchResultKey(hit));
+        const checked = onToggleResult
+          ? resultChecked
+          : hit.contactId != null && selectedContactIds.has(hit.contactId);
         return (
           <div
             key={hit.conversationId}
@@ -97,6 +123,11 @@ export function SearchResultsList({
                 : "hover:bg-hover"
             }`}
             onContextMenu={(e) => {
+              if (onResultContextMenu) {
+                e.preventDefault();
+                onResultContextMenu(hit, e.clientX, e.clientY);
+                return;
+              }
               if (hit.contactId == null || !onContactContextMenu) return;
               e.preventDefault();
               onContactContextMenu(hit.contactId, e.clientX, e.clientY);
@@ -108,7 +139,7 @@ export function SearchResultsList({
                 className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
               />
             ) : null}
-            {hit.contactId != null && onToggleContact ? (
+            {onToggleResult || (hit.contactId != null && onToggleContact) ? (
               <label className="flex min-h-9 shrink-0 cursor-pointer items-start px-3 pt-2.5">
                 <input
                   type="checkbox"
@@ -116,7 +147,19 @@ export function SearchResultsList({
                   aria-label={`Select ${hit.title}`}
                   onClick={(e) => {
                     e.preventDefault();
-                    onToggleContact(hit.contactId!, { shiftKey: e.shiftKey });
+                    e.stopPropagation();
+                    if (onToggleResult) {
+                      onToggleResult(hit, {
+                        shiftKey: e.shiftKey,
+                        altKey: e.altKey,
+                        metaKey: e.metaKey,
+                        ctrlKey: e.ctrlKey,
+                      });
+                    } else {
+                      onToggleContact?.(hit.contactId!, {
+                        shiftKey: e.shiftKey,
+                      });
+                    }
                   }}
                   onChange={() => {}}
                   className="checkbox-list"
@@ -125,9 +168,18 @@ export function SearchResultsList({
             ) : null}
             <button
               type="button"
-              onClick={(e) => onSelect(hit, { shiftKey: e.shiftKey })}
+              onClick={(e) =>
+                onSelect(hit, {
+                  shiftKey: e.shiftKey,
+                  altKey: e.altKey,
+                  metaKey: e.metaKey,
+                  ctrlKey: e.ctrlKey,
+                })
+              }
               className={`flex min-w-0 flex-1 flex-col gap-0.5 py-2 text-left ${
-                hit.contactId == null || !onToggleContact ? "px-3" : "pr-3"
+                !onToggleResult && (hit.contactId == null || !onToggleContact)
+                  ? "px-3"
+                  : "pr-3"
               }`}
             >
               <SearchHitSummary hit={hit} />

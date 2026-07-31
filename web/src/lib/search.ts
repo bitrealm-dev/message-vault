@@ -532,6 +532,211 @@ function ownerContactIds(db: Database.Database): Set<number> {
   return ids;
 }
 
+function countMatches(
+  actual: number,
+  comparison: ParsedSearchQuery["messageCount"],
+): boolean {
+  if (!comparison) return true;
+  switch (comparison.comparator) {
+    case "=":
+      return actual === comparison.value;
+    case ">":
+      return actual > comparison.value;
+    case ">=":
+      return actual >= comparison.value;
+    case "<":
+      return actual < comparison.value;
+    case "<=":
+      return actual <= comparison.value;
+  }
+}
+
+function dateMatches(value: string | null, bounds: DateBounds): boolean {
+  if (!hasDateBounds(bounds)) return true;
+  if (!value) return false;
+  const day = value.slice(0, 10);
+  return (!bounds.from || day >= bounds.from) && (!bounds.to || day < bounds.to);
+}
+
+/**
+ * Contact-primary search. Unlike message search, this includes contacts with no
+ * messages and applies message/group counts to the contact as a whole.
+ */
+export function searchVaultContacts(
+  rawQuery: string,
+  opts: { limit?: number; offset?: number } = {},
+): SearchResult {
+  const parsed = parseSearchQuery(rawQuery);
+  const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+  const offset = Math.max(0, opts.offset ?? 0);
+  const empty: SearchResult = {
+    query: rawQuery,
+    parsed,
+    totalConversations: 0,
+    contactIds: [],
+    hits: [],
+    contacts: [],
+    totalContacts: 0,
+  };
+  if (parsed.mode !== "contacts") return empty;
+
+  const db = getDb();
+  const accountId = currentAccountId();
+  const candidateRows = db
+    .prepare(
+      `SELECT c.id
+       FROM contacts c
+       WHERE c.account_id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM trashed_contacts tc
+           WHERE tc.account_id = c.account_id AND tc.contact_id = c.id
+         )
+       ORDER BY c.id`,
+    )
+    .all(accountId) as Array<{ id: number }>;
+  const skipIds = ownerContactIds(db);
+  const candidateIds = candidateRows
+    .map((row) => row.id)
+    .filter((id) => !skipIds.has(id));
+  const allItems = listContactsByIds(candidateIds);
+
+  const handleRows = db
+    .prepare(
+      `SELECT contact_id, handle
+       FROM contact_handles
+       WHERE account_id = ?
+       ORDER BY contact_id, handle`,
+    )
+    .all(accountId) as Array<{ contact_id: number; handle: string }>;
+  const handlesByContact = new Map<number, string[]>();
+  for (const row of handleRows) {
+    const handles = handlesByContact.get(row.contact_id);
+    if (handles) handles.push(row.handle);
+    else handlesByContact.set(row.contact_id, [row.handle]);
+  }
+  const withinIds = parsed.within
+    ? new Set(listLabelMemberContactIds(parsed.within))
+    : null;
+  const handleNeedle = parsed.handle?.trim().toLocaleLowerCase() ?? "";
+  const matchingItems = allItems
+    .filter((contact) => {
+      if (withinIds && !withinIds.has(contact.id)) return false;
+      if (
+        handleNeedle &&
+        ![
+          contact.displayName,
+          contact.preferredHandle ?? "",
+          ...(handlesByContact.get(contact.id) ?? []),
+        ].some((value) => value.toLocaleLowerCase().includes(handleNeedle))
+      ) {
+        return false;
+      }
+      return (
+        dateMatches(contact.dateStart, parsed.firstContact) &&
+        dateMatches(contact.dateEnd, parsed.lastContact) &&
+        countMatches(contact.groupMessageCount, parsed.groupCount) &&
+        countMatches(contact.messageCount, parsed.messageCount)
+      );
+    })
+    .sort(
+      (a, b) =>
+        (b.dateEnd ?? "").localeCompare(a.dateEnd ?? "") ||
+        a.sortLast.localeCompare(b.sortLast, undefined, {
+          sensitivity: "base",
+        }) ||
+        a.id - b.id,
+    );
+  const pageItems = matchingItems.slice(offset, offset + limit);
+  const pageIds = pageItems.map((contact) => contact.id);
+  if (pageIds.length === 0) {
+    return {
+      ...empty,
+      contactIds: matchingItems.map((contact) => contact.id),
+      totalContacts: matchingItems.length,
+    };
+  }
+
+  const placeholders = pageIds.map(() => "?").join(",");
+  const pairRows = db
+    .prepare(
+      `SELECT DISTINCT ch.contact_id, c.id AS conversation_id
+       FROM contact_handles ch
+       JOIN conversations c
+         ON c.account_id = ch.account_id
+        AND (
+          (c.conversation_type = 'individual' AND c.chat_identifier = ch.handle)
+          OR (
+            c.conversation_type = 'group'
+            AND EXISTS (
+              SELECT 1 FROM participants p
+              WHERE p.conversation_id = c.id AND p.handle = ch.handle
+            )
+          )
+        )
+       WHERE ch.account_id = ?
+         AND ch.contact_id IN (${placeholders})
+         AND NOT EXISTS (
+           SELECT 1 FROM trashed_conversations tc
+           WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM trashed_handles th
+           WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+         )`,
+    )
+    .all(accountId, ...pageIds) as Array<{
+    contact_id: number;
+    conversation_id: number;
+  }>;
+  const conversationIds = [
+    ...new Set(pairRows.map((row) => row.conversation_id)),
+  ];
+  const convRows =
+    conversationIds.length === 0
+      ? []
+      : (db
+          .prepare(
+            `SELECT ${CONVERSATION_HIT_COLUMNS}
+             FROM messages m
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE c.account_id = ?
+               AND c.id IN (${conversationIds.map(() => "?").join(",")})
+               ${combinedDedupeSql(null, "m")}
+             GROUP BY c.id
+             ORDER BY MAX(m.timestamp) DESC`,
+          )
+          .all(accountId, ...conversationIds) as ConversationRow[]);
+  const hits = buildHits(db, convRows, parsed, null);
+  const hitsById = new Map(hits.map((hit) => [hit.conversationId, hit]));
+  const hitIdsByContact = new Map<number, number[]>();
+  for (const row of pairRows) {
+    const ids = hitIdsByContact.get(row.contact_id);
+    if (ids) ids.push(row.conversation_id);
+    else hitIdsByContact.set(row.contact_id, [row.conversation_id]);
+  }
+  const contacts: SearchContactHit[] = pageItems.map((contact) => {
+    const contactHits = (hitIdsByContact.get(contact.id) ?? [])
+      .map((id) => hitsById.get(id))
+      .filter((hit): hit is SearchConversationHit => hit != null)
+      .sort((a, b) => (b.dateEnd ?? "").localeCompare(a.dateEnd ?? ""));
+    return {
+      contact,
+      hits: contactHits,
+      matchCount: contactHits.reduce((sum, hit) => sum + hit.matchCount, 0),
+    };
+  });
+
+  return {
+    query: rawQuery,
+    parsed,
+    totalConversations: conversationIds.length,
+    contactIds: matchingItems.map((contact) => contact.id),
+    hits,
+    contacts,
+    totalContacts: matchingItems.length,
+  };
+}
+
 /**
  * Same filters as {@link searchVault}, but grouped under each contact who takes
  * part in a matching conversation. A group conversation appears under every

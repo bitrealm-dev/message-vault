@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
-import Script from "next/script";
 import { SourceFilterProvider } from "@/components/SourceFilter";
+import { ThemeBootScript } from "@/components/ThemeBootScript";
 import { DateTimeFormatProvider } from "@/components/useDateTimeFormat";
 import { MessageBadgePrefsProvider } from "@/components/useMessageBadgePrefs";
 import { ThemeProvider } from "@/components/useTheme";
@@ -31,9 +31,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="h-full overflow-hidden bg-bg text-text antialiased">
-        <Script id="mv-theme-boot" strategy="beforeInteractive">
-          {THEME_BOOT_SCRIPT}
-        </Script>
+        <ThemeBootScript script={THEME_BOOT_SCRIPT} />
         <ThemeProvider>
           <DateTimeFormatProvider>
             <MessageBadgePrefsProvider>

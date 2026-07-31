@@ -99,6 +99,8 @@ export type AttachmentRow = {
 
 export type MessageRow = {
   id: number;
+  /** Present when messages from multiple conversations are loaded together. */
+  conversationId?: number;
   source: string;
   timestamp: string;
   isFromMe: boolean;

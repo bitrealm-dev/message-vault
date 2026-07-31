@@ -75,6 +75,14 @@ export function dbPath(): string {
   return resolveConfiguredPath(cfg.paths?.db, DEFAULT_DB);
 }
 
+/** Parent of vault.db — better-sqlite3 fails if this directory is missing. */
+export function ensureDbParentDir(): string {
+  const file = dbPath();
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  return file;
+}
+
 export function dataDir(): string {
   const fromEnv = process.env.VAULT_DATA_DIR?.trim();
   if (fromEnv) {
