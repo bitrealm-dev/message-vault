@@ -8,16 +8,15 @@ description: Sidebar sections, Message Sources filter, and the Combined view.
 | Label | Route | Meaning |
 |-------|-------|---------|
 | **Home** | `/` | Dashboard stats |
-| **All** | `/all` | Every contact with messages (including inactive) |
-| **Active** | `/contacts` | Non-excluded contacts with messages |
-| **Inactive** | `/excluded` | Contacts with `exclude=true` |
+| **All** | `/all` | Every non-trashed contact |
 | **Group Messages** | `/group-messages` | Multi-party threads |
 | **Trash** | `/trash` | Soft-deleted contacts and group chats |
 | **Settings** | `/settings/account` | Account, Import API token, appearance |
 
 Additional contact views: **No Messages** (`/no-messages`), **No label**
-(`/no-label`), and per-label pages under `/label/[slug]`. Labels appear in the
-sidebar when you create them.
+(`/no-label`), and per-label pages under `/label/[slug]`. Labels (including
+ordinary **Active** / **Inactive** labels after migration) appear in the
+sidebar when present. Legacy `/contacts` and `/excluded` redirect to **All**.
 
 Contact pages use a multi-panel layout (list → threads → messages / details).
 

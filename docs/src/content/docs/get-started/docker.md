@@ -105,8 +105,9 @@ VAULT_MODE=personal docker compose up
 
 Creates an empty `data/` volume. Create an account in the UI, then use the
 Import API token from **Settings → Account** with
-[Message Exporters](https://bitrealm-dev.github.io/message-exporters/) /
-`vault-push` against <http://127.0.0.1:8080>.
+[Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
+(`message-exporter` Vault tab or `cli/vault-push`) against
+<http://127.0.0.1:8080>.
 
 If a `vault.db` already exists on the volume, seeding is skipped.
 

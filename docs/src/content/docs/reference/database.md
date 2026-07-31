@@ -59,8 +59,9 @@ Per-account “you” identity for matching outbound messages.
 
 ### `contacts` / `contact_handles`
 
-Address book rows and phone/email handles. `exclude` drives Active vs Inactive
-in the UI.
+Address book rows and phone/email handles. Legacy `exclude` is migrated into
+ordinary **Active** / **Inactive** labels; the column is kept cleared for
+compatibility.
 
 ### `contact_labels` / `contact_label_members`
 

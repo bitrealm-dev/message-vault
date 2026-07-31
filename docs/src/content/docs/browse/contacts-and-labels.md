@@ -1,18 +1,22 @@
 ---
 title: Contacts and labels
-description: Active vs Inactive visibility, contacts CSV, VCF import, and sidebar labels.
+description: Contacts CSV, VCF import, and sidebar labels (including Active / Inactive).
 ---
 
-## Active / Inactive
+## Contact sections
 
 | Section | Meaning |
 |---------|---------|
-| **Active** | Non-excluded contacts with messages |
-| **All** | Every contact with messages, including inactive |
-| **Inactive** | `exclude=true` |
+| **All** | Every non-trashed contact |
+| **No Messages** | Contacts with no visible 1:1 or group messages |
+| **No label** | Contacts with no label memberships |
+| **Per-label** | Contacts that belong to that label (`/label/[slug]`) |
 
-Visibility is driven by the `exclude` column in the **per-account** contacts
-CSV:
+**Active** and **Inactive** are ordinary labels (not special sidebar sections).
+A one-time migration assigns them from the legacy `exclude` flag; after that
+they behave like any other label.
+
+Contact data is mirrored in the **per-account** contacts CSV:
 
 `data/<account_id>/contacts.csv`
 
@@ -27,8 +31,7 @@ needs:
 
 - Normalized phone handles (E.164 where possible)
 - Display names
-- Inactive (`exclude`) flag
-- Vault-owned labels
+- Vault-owned labels (including Active / Inactive when present)
 
 Uploaded VCF files are **transient**. The vault does not store the raw VCF,
 emails, notes, photos, UIDs, or category provenance. After you confirm an
@@ -40,7 +43,8 @@ edit independently of your address book.
 `contacts.csv` is **phone-only**. SQLite `contact_handles` holds phones plus
 optional iMessage emails for thread linking; emails are not written to the CSV.
 
-Header columns include `phones`, `first_name`, `last_name`, `exclude`, and
+Header columns include `phones`, `first_name`, `last_name`, `exclude` (kept for
+compatibility; new writes leave it `false` and encode status as labels), and
 ordered `label_1`…`label_N` (as many as needed). Legacy `group_1`…`group_N`
 aliases are still accepted on import.
 
@@ -48,8 +52,8 @@ aliases are still accepted on import.
 
 In the contacts ⋯ menu, **Export contacts CSV** downloads a vault-owned
 projection built from SQLite for the signed-in account (`GET
-/api/contacts/export-csv`). It includes sanitized phones, names, inactive
-state, and **every** current vault label. It is not a raw VCF re-export.
+/api/contacts/export-csv`). It includes sanitized phones, names, and **every**
+current vault label. It is not a raw VCF re-export.
 
 ### CLI: VCF → CSV
 
@@ -63,7 +67,8 @@ cargo run --release -- vcf-to-contacts \
 ```
 
 The converter reads `CATEGORIES` and legacy `[Tag]` markers in `FN`, then
-writes dynamic `label_N` columns.
+writes dynamic `label_N` columns (and maps legacy exclude status into Active /
+Inactive labels).
 
 ## Import VCF (web)
 
@@ -83,8 +88,7 @@ Unmatched address-book cards and non-vault VCF fields are ignored.
 
 Create and manage labels in the sidebar. Membership is stored in SQLite
 (`contact_labels`). The contacts CSV mirror expands `label_N` columns as
-needed when UI edits add more labels. Labels list non-excluded contacts by
-default.
+needed when UI edits add more labels. Open a label page to browse its members.
 
 ## Unmapped handles
 

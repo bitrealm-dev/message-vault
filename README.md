@@ -7,9 +7,10 @@ iPhone and Android backups side by side.
 You run it on a computer you control. Your messages stay in a SQLite database on
 that machine; they are not uploaded to a cloud service by this project.
 
-Turning a phone backup into files the vault understands is done by a separate
-project, [message-exporters](https://bitrealm-dev.github.io/message-exporters/).
-This repository is the vault itself: storage, import, and the browser UI.
+Turning a phone backup into a **message-ir** JSONL export is done by a separate
+project, [message-exporters](https://bitrealm-dev.github.io/message-exporters/)
+(desktop binary `message-exporter`). Push projects that export into vault JSONL
+for this repository—the vault itself: storage, import, and the browser UI.
 
 ## Docs
 
@@ -50,8 +51,9 @@ Windows PowerShell steps and full prerequisites are in the
 1. Copy `config/config.toml.example` → `config/config.toml` (ensure `[server]`).
 2. `cargo run --release -- serve` and `cd web && npm ci && npm run dev`.
 3. Create an account; copy the Import API token from **Settings → Account**.
-4. Export JSONL with [Message Exporters](https://bitrealm-dev.github.io/message-exporters/),
-   then push via the Vault tab or `vault-push`.
+4. Export message-ir JSONL with
+   [Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
+   (`message-exporter`), then push via the Vault tab or `cli/vault-push`.
 
 Details: [First personal import](https://bitrealm-dev.github.io/message-vault-rs/get-started/first-personal-import/).
 
@@ -60,7 +62,7 @@ Details: [First personal import](https://bitrealm-dev.github.io/message-vault-rs
 ```text
 src/                # CLI binary: import, ingest, serve, export, demo reset
 crates/
-  message-json/     # vault JSONL schemas
+  message-json/     # vault JSONL schemas (ingest wire; not message-ir)
   demo-seed/        # regenerate committed demo data
 demo/               # committed demo bundle
 config/             # config.toml.example, config.docker.toml, CSV/VCF examples

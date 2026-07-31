@@ -1,6 +1,7 @@
 # Message Vault demo dataset
 
-Committed iMessage NDJSON bundle for local browsing without a real iPhone backup.
+Committed iMessage JSONL (NDJSON) bundle for local browsing without a real
+iPhone backup.
 
 Regenerate with:
 
@@ -26,7 +27,7 @@ cd web && npm run process-assets
 
 ## Exercises
 
-- **Active / All / Inactive / No Messages** — CSV `exclude` and zero-message rows
+- **All / labels / No Messages** — contact sections and zero-message rows
 - **Unassigned handles** — messages with no CSV contact row (phone + email-only; Trash APIs)
 - **Frequent / lapsed** — ~15 contacts busy in the past 3 years; ~10 mostly older history
 - **High volume** — a couple 1:1 threads with 1000+ messages

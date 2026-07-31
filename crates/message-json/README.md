@@ -1,8 +1,22 @@
 # message-json
 
-Shared **JSONL interchange** schemas for message archives.
+Shared **JSONL / NDJSON interchange** schemas for message archives the vault
+imports.
 
-Message Exporters produce these records; the vault binary imports them.
+Message Exporters produce **message-ir** JSONL export folders. Their
+`vault-push` tool **projects** that IR into **vault JSONL** (`schema: "vault"`);
+this crate defines the vault (and legacy) wire the vault binary accepts.
+
+## Schema boundary
+
+| Layer | Role |
+|-------|------|
+| **message-ir** (exporters) | Common export representation (IR v3) across backup converters |
+| **vault JSONL** (`message_json::vault`) | Stable vault ingest API; `"schema": "vault"`, `schema_version` 1 |
+| **vault-push** (exporters) | Projects message-ir → vault JSONL, then `POST /v1/import` |
+
+Vault-NDJSON is not message-ir. Projection is owned by exporters; this crate
+does not depend on `message-ir`.
 
 ## Wire schemas
 
@@ -11,8 +25,8 @@ Conversation headers carry a `"schema"` discriminator and `schema_version`:
 | Wire schema | Rust module | Who writes it | Discriminator |
 |-------------|-------------|---------------|---------------|
 | **Vault JSONL** | [`message_json::vault`](src/vault.rs) | Message Exporters `vault-push`; `POST /v1/import` body | `"schema": "vault"`, `schema_version` 1 |
-| **iMessage JSONL** | [`message_json::imessage`](src/imessage.rs) | `imessage-exporter-json` (legacy wire) | `"schema": "imessage"`, `schema_version` 4 (headers without `schema` still default to imessage) |
-| **SMS JSONL** | [`message_json::sms`](src/sms.rs) | SMS Backup+ exporter | `"schema": "sms"`, `schema_version` 2 |
+| **iMessage JSONL** | [`message_json::imessage`](src/imessage.rs) | Legacy iOS exporter wire | `"schema": "imessage"`, `schema_version` 4 (headers without `schema` still default to imessage) |
+| **SMS JSONL** | [`message_json::sms`](src/sms.rs) | Legacy SMS Backup+ exporter | `"schema": "sms"`, `schema_version` 2 |
 
 `vault` is the one standard message shape for every source. It holds every field the vault understands (text, attachments, tapbacks, replies, announcements, …). Sources leave unused fields empty or omit them. `service` is the channel (`SMS`, `iMessage`, …), not the wire schema name. Attachment records may include `sha256` so remote clients can `PUT /v1/assets/{sha256}` first, then import without multipart file parts.
 
@@ -59,9 +73,11 @@ serde_json::to_writer(stdout, &ExportRecord::Conversation(header))?;
 
 ## Exporters
 
-Phone backup → JSONL conversion lives in
-[message-exporters](https://github.com/bitrealm-dev/message-exporters).
-Historical CSV→vault notes: [`docs/CSV_INGEST.md`](docs/CSV_INGEST.md).
+Phone backup → **message-ir** JSONL lives in
+[message-exporters](https://github.com/bitrealm-dev/message-exporters)
+(desktop binary `message-exporter`; release tree keeps `lib/` and `cli/`
+together, including `cli/vault-push`). Historical CSV notes:
+[`docs/CSV_INGEST.md`](docs/CSV_INGEST.md).
 
 ## Out of scope
 

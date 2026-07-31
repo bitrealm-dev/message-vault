@@ -45,13 +45,17 @@ Keep `serve` running while you import remotely.
 ## 4. Export from Message Exporters
 
 On the machine that has your backup files, use
-[Message Exporters](https://bitrealm-dev.github.io/message-exporters/).
-Prefer a **JSONL** export folder (plus `attachments/`).
+[Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
+(`message-exporter` from a
+[release archive](https://bitrealm-dev.github.io/message-exporters/get-started/install/),
+or build from source). Prefer a **message-ir JSONL** export folder (plus
+`attachments/`).
 
 ## 5. Push into the vault
 
 See [Import from Message Exporters](/import/from-message-exporters/) for the
-Vault tab and `vault-push` CLI. Then refresh the website and
+Vault tab (`message-exporter`) and `cli/vault-push`. Push projects message-ir
+into vault JSONL for the import API. Then refresh the website and
 [browse](/browse/navigation-and-sources/).
 
 If the export folder already lives on the vault machine, you can skip the

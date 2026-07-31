@@ -171,8 +171,10 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, create an account, and copy its Import API token
-from **Settings → Account**. Keep the import API running while pushing JSONL
-from [message-exporters](https://bitrealm-dev.github.io/message-exporters/).
+from **Settings → Account**. Keep the import API running while pushing a
+message-ir export from
+[message-exporters](https://bitrealm-dev.github.io/message-exporters/)
+(`message-exporter` Vault tab or `cli/vault-push`).
 
 New accounts start in read-only mode for the web UI. Turn that off in Settings
 when you need to edit contacts or trash items. CLI and HTTP imports still work

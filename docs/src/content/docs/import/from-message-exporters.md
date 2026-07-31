@@ -1,39 +1,61 @@
 ---
 title: From Message Exporters
-description: Push a JSONL export folder into Message Vault with the Vault tab or vault-push CLI.
+description: Push a message-ir JSONL export folder into Message Vault with the Vault tab or vault-push CLI.
 ---
 
-Prefer **Message Exporters** for remote import. Export with **JSONL** in the
-Message tab, then import that folder through the Vault tab or `vault-push`.
+Prefer **Message Exporters** for remote import. Export a **message-ir JSONL**
+folder (one `*.jsonl` per conversation, plus `attachments/`), then push that
+folder through the Vault tab or `vault-push`. Push **projects** message-ir into
+[vault JSONL](/reference/vault-jsonl/) before `POST /v1/import`.
 
 Full exporter docs: <https://bitrealm-dev.github.io/message-exporters/>
+
+Release layout (`message-exporter`, `lib/`, `cli/`):
+[Install Message Exporters](https://bitrealm-dev.github.io/message-exporters/get-started/install/).
 
 ## Prerequisites
 
 - Vault `serve` running with `[server]` enabled in `config/config.toml`
 - Web account created; **Import API token** copied from Settings → Account
-- A JSONL export folder (one `*.jsonl` per conversation, plus `attachments/`)
+- A message-ir JSONL export folder (one `*.jsonl` per conversation, plus
+  `attachments/`)
 
 ## Desktop app (Vault tab)
 
-In the [message-exporters](https://github.com/bitrealm-dev/message-exporters)
-repo:
+Prefer a [release archive](https://github.com/bitrealm-dev/message-exporters/releases).
+Keep the extracted tree together (`message-exporter`, `lib/`, `cli/`,
+`licenses/`), then run **`message-exporter`** and open the **Vault** tab.
+
+From source in the
+[message-exporters](https://github.com/bitrealm-dev/message-exporters) repo:
 
 ```bash
-cargo run -p message-exporters-gui --release
+cargo run --release -p message-exporter-gui
 ```
 
-Open the **Vault** tab and fill in:
+Fill in:
 
 - URL (for example `http://127.0.0.1:8080`)
 - Username
 - Vault key (Import API token)
-- Input directory (your JSONL export folder)
+- Input directory (your message-ir JSONL export folder)
 
 ## CLI (`vault-push`)
 
+From a release archive, use the binary under `cli/`:
+
 ```bash
-cargo run -p message-vault-client --bin vault-push --features cli --release -- \
+./cli/vault-push \
+  --input ./path/to/your-jsonl-export \
+  --url http://vault-host:8080 \
+  --username yourusername \
+  --key "$VAULT_KEY"
+```
+
+From source:
+
+```bash
+cargo run --release -p vault-push --features cli -- \
   --input ./path/to/your-jsonl-export \
   --url http://vault-host:8080 \
   --username yourusername \
@@ -41,6 +63,10 @@ cargo run -p message-vault-client --bin vault-push --features cli --release -- \
 ```
 
 The token identifies your account; you do not need an account UUID.
+
+`vault-push` reads message-ir JSONL, uploads attachments by SHA-256, and sends
+vault JSONL batches to the import API. See
+[Vault JSONL](/reference/vault-jsonl/) for the wire the vault accepts.
 
 ## After import
 

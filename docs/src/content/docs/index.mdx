@@ -20,15 +20,15 @@ import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 ## How it works
 
 ```text
-1. Export     Phone backup → JSONL + attachments/
-              (Message Exporters)
+1. Export     Phone backup → message-ir JSONL + attachments/
+              (Message Exporters / message-exporter)
 
-2. Import     Push or ingest that folder into the vault
+2. Import     Push (projects to vault JSONL) or ingest into the vault
 
 3. Browse     Open the website on your computer
 ```
 
-Turning a phone backup into JSONL is a separate project:
+Turning a phone backup into message-ir JSONL is a separate project:
 [Message Exporters](https://bitrealm-dev.github.io/message-exporters/).
 This site covers the vault: storage, import, and the browser UI.
 
@@ -41,11 +41,11 @@ uploaded to a cloud service by this project.
     backup. [Try the demo](/get-started/try-the-demo/).
   </Card>
   <Card title="Import your archive" icon="document">
-    Create an account, copy your Import API token, and push JSONL from Message
-    Exporters. [First personal import](/get-started/first-personal-import/).
+    Create an account, copy your Import API token, and push a message-ir export
+    from Message Exporters. [First personal import](/get-started/first-personal-import/).
   </Card>
   <Card title="Browse the vault" icon="open-book">
-    Use Active / Inactive contacts, Group Messages, Message Sources, Trash, and
+    Use All contacts, labels, Group Messages, Message Sources, Trash, and
     Settings. [Navigation and sources](/browse/navigation-and-sources/).
   </Card>
   <Card title="Export to Obsidian" icon="puzzle">
