@@ -1,4 +1,4 @@
-//! Standard vault NDJSON schema for **all** message sources.
+//! Standard vault JSONL schema for **all** message sources.
 //!
 //! This is not iMessage-specific. Message Exporters map into this
 //! shape; optional rich fields (tapbacks, replies, parts, …) are omitted when unused.
@@ -14,7 +14,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const RECORD_CONVERSATION: &str = "conversation";
 pub const RECORD_MESSAGE: &str = "message";
 
-/// Top-level NDJSON line: tagged on `"record"`.
+/// Top-level JSONL line: tagged on `"record"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 pub enum ExportRecord {
@@ -181,7 +181,7 @@ pub struct EditEventRecord {
 }
 
 impl ConversationRecord {
-    /// Conversation header for vault ingest NDJSON.
+    /// Conversation header for vault ingest JSONL.
     pub fn header(
         chat_identifier: impl Into<String>,
         conversation_type: impl Into<String>,

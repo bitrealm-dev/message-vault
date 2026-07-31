@@ -1,4 +1,4 @@
-//! iMessage / iOS NDJSON schema (`schema_version` 4; historically imessage-exporter-json v3).
+//! iMessage / iOS JSONL schema (`schema_version` 4; historically imessage-exporter-json v3).
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ pub const RECORD_CONVERSATION: &str = "conversation";
 pub const RECORD_MESSAGE: &str = "message";
 pub const SERVICE_IMESSAGE: &str = "iMessage";
 
-/// Top-level NDJSON line: tagged on `"record"`.
+/// Top-level JSONL line: tagged on `"record"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 pub enum ExportRecord {

@@ -1,7 +1,6 @@
 # message-json
 
-Shared **JSONL / NDJSON interchange** schemas for message archives the vault
-imports.
+Shared **JSONL interchange** schemas for message archives the vault imports.
 
 Message Exporters produce **message-ir** JSONL export folders. Their
 `vault-push` tool **projects** that IR into **vault JSONL** (`schema: "vault"`);
@@ -15,7 +14,7 @@ this crate defines the vault (and legacy) wire the vault binary accepts.
 | **vault JSONL** (`message_json::vault`) | Stable vault ingest API; `"schema": "vault"`, `schema_version` 1 |
 | **vault-push** (exporters) | Projects message-ir → vault JSONL, then `POST /v1/import` |
 
-Vault-NDJSON is not message-ir. Projection is owned by exporters; this crate
+Vault JSONL is not message-ir. Projection is owned by exporters; this crate
 does not depend on `message-ir`.
 
 ## Wire schemas

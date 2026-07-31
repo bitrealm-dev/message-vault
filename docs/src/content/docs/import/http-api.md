@@ -23,8 +23,8 @@ Auth is per-account only (no host-wide admin token). Tokens come from
 
 ## Import body formats
 
-- `Content-Type: application/jsonl` (or `application/x-ndjson`) — body only;
-  attachments pre-uploaded by SHA256
+- `Content-Type: application/jsonl` — body only; attachments pre-uploaded by
+  SHA256
 - `Content-Type: multipart/form-data` — field `jsonl` plus `file` parts
   (relative paths such as `attachments/photo.jpg`)
 

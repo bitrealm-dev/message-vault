@@ -367,8 +367,6 @@ fn content_type_base(headers: &HeaderMap) -> Option<&str> {
 
 fn is_jsonl_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("application/jsonl")
-        || base.eq_ignore_ascii_case("application/x-ndjson")
-        || base.eq_ignore_ascii_case("application/ndjson")
 }
 
 fn is_multipart_content_type(base: &str) -> bool {

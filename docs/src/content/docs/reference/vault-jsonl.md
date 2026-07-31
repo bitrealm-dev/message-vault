@@ -5,8 +5,7 @@ description: Wire schemas for conversation JSONL that Message Vault imports.
 
 Shared Rust types live in
 [`crates/message-json`](https://github.com/bitrealm-dev/message-vault-rs/tree/main/crates/message-json).
-Docs and code may say **JSONL** or **NDJSON**; both mean one JSON object per
-line.
+The vault uses **JSONL** (one JSON object per line).
 
 ## Schema boundary
 
@@ -16,12 +15,12 @@ That split is intentional.
 | Layer | Owned by | What it is |
 |-------|----------|------------|
 | **message-ir** | [Message Exporters](https://bitrealm-dev.github.io/message-exporters/) (`message-ir` crate) | Common export folder shape (IR schema v3): one `*.jsonl` per conversation plus `attachments/` |
-| **Vault JSONL** (“vault NDJSON”) | This repo (`message_json::vault`) | Vault ingest wire: `"schema": "vault"`, `schema_version` 1 |
+| **Vault JSONL** | This repo (`message_json::vault`) | Vault ingest wire: `"schema": "vault"`, `schema_version` 1 |
 | **Projection** | Exporters `vault-push` | Projects message-ir → vault JSONL, then calls `POST /v1/import` |
 
 Current happy path: **backup → message-ir JSONL → vault-push → vault JSONL → SQLite**.
 
-Vault-NDJSON is **not** message-ir. Same conversation content after a deliberate
+Vault JSONL is **not** message-ir. Same conversation content after a deliberate
 projection; different envelope, versioning, and field shape. The vault binary
 does not depend on the exporters IR crate.
 

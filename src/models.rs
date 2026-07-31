@@ -1,4 +1,4 @@
-//! Import helpers around shared NDJSON schemas.
+//! Import helpers around shared JSONL schemas.
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -17,11 +17,11 @@ pub fn clean_body(text: Option<&str>) -> Option<String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WireSchema {
-    /// Standard vault NDJSON (`schema: "vault"`), also used for CSV ingest.
+    /// Standard vault JSONL (`schema: "vault"`), also used for CSV ingest.
     Vault,
     /// Legacy iOS exporter (`schema: "imessage"`). Same field layout as vault.
     Imessage,
-    /// Legacy SMS Backup+ NDJSON (`schema: "sms"`).
+    /// Legacy SMS Backup+ JSONL (`schema: "sms"`).
     Sms,
 }
 
@@ -115,7 +115,7 @@ fn normalize_to_vault_conversation(mut c: ConversationRecord) -> ConversationRec
     c
 }
 
-/// Parse NDJSON lines from one file into vault records.
+/// Parse JSONL lines from one file into vault records.
 ///
 /// Conversation `schema` selects sms vs vault/imessage parsing for following messages.
 /// Missing `schema` with schema_version ≠ 2 is treated as imessage-shaped layout.
@@ -171,6 +171,6 @@ fn parse_export_line(line: &str, active_schema: &mut Option<WireSchema>) -> Resu
                 }
             }
         }
-        other => bail!("unknown NDJSON record type '{other}'"),
+        other => bail!("unknown JSONL record type '{other}'"),
     }
 }

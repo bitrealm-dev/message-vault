@@ -1,4 +1,4 @@
-//! Common SMS/MMS NDJSON schema for Android backup exporters
+//! Common SMS/MMS JSONL schema for Android backup exporters
 //! (SMS Backup+).
 //!
 //! Field names match [`crate::imessage`] where overlapping; this module only
@@ -14,7 +14,7 @@ pub const RECORD_CONVERSATION: &str = "conversation";
 pub const RECORD_MESSAGE: &str = "message";
 pub const SERVICE_SMS: &str = "SMS";
 
-/// Top-level NDJSON line: tagged on `"record"`.
+/// Top-level JSONL line: tagged on `"record"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 pub enum ExportRecord {

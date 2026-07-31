@@ -241,7 +241,7 @@ pub fn import_jsonl_files_on_conn(
 
     let total_files = paths.len();
     println!(
-        "  import:   {} NDJSON file{}",
+        "  import:   {} JSONL file{}",
         total_files,
         if total_files == 1 { "" } else { "s" }
     );

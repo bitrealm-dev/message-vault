@@ -1,7 +1,7 @@
 # Message Vault demo dataset
 
-Committed iMessage JSONL (NDJSON) bundle for local browsing without a real
-iPhone backup.
+Committed iMessage JSONL bundle for local browsing without a real iPhone
+backup.
 
 Regenerate with:
 
