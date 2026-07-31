@@ -64,9 +64,10 @@ cargo build --workspace --release
 New-Item -ItemType Directory -Force .\data | Out-Null
 cargo run --release -- reset-demo
 
+cargo run --release -- process-assets
+
 Set-Location .\web
 npm ci
-npm run process-assets
 npm run dev
 ```
 
@@ -111,7 +112,6 @@ that is too old for Next.js 16.
 ./scripts/setup-demo.sh
 cd web
 npm ci
-npm run process-assets
 npm run dev
 ```
 
@@ -164,9 +164,9 @@ cargo run --release -- serve
 In a second terminal, start the web application:
 
 ```text
+cargo run --release -- process-assets
 cd web
 npm ci
-npm run process-assets
 npm run dev
 ```
 
@@ -242,8 +242,7 @@ then rerun `cargo run --release -- serve`.
 Confirm FFmpeg is available with `ffmpeg -version`, then rerun:
 
 ```text
-cd web
-npm run process-assets -- --force
+cargo run --release -- process-assets --force
 ```
 
 The web UI still works without derived media, but some video, audio, or HEIC

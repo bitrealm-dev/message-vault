@@ -33,9 +33,7 @@ pub struct PathsConfig {
     #[serde(default = "default_assets_dir_name")]
     pub assets_dir: String,
     /// Directory name for converted media under each account source.
-    /// Used by web `process-assets` and path helpers (not the CLI binary itself).
     #[serde(default = "default_assets_converted_dir_name")]
-    #[allow(dead_code)]
     pub assets_converted_dir: String,
 }
 
@@ -96,7 +94,6 @@ impl PathsConfig {
     }
 
     /// Converted media: `data_dir/<account_id>/<source_id>/<assets_converted_dir>`.
-    #[allow(dead_code)]
     pub fn assets_converted_dir_for_account(&self, account_id: &str, source_id: &str) -> PathBuf {
         self.data_dir
             .join(account_id)

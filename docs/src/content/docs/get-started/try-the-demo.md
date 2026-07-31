@@ -10,7 +10,7 @@ bundle you can import in one step.
 
 ```bash
 ./scripts/setup-demo.sh
-cd web && npm ci && npm run process-assets && npm run dev
+cd web && npm ci && npm run dev
 ```
 
 ## Windows (PowerShell)
@@ -19,10 +19,10 @@ cd web && npm ci && npm run process-assets && npm run dev
 cargo build --workspace --release
 New-Item -ItemType Directory -Force .\data | Out-Null
 cargo run --release -- reset-demo
+cargo run --release -- process-assets
 
 Set-Location .\web
 npm ci
-npm run process-assets
 npm run dev
 ```
 

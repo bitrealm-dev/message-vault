@@ -59,11 +59,6 @@ COPY config/config.docker.toml ./config/config.docker.toml
 COPY --from=web-builder /src/web/.next/standalone ./
 COPY --from=web-builder /src/web/.next/static ./.next/static
 
-# Web tooling for process-assets after demo seed / imports (tsx, better-sqlite3, ffmpeg codecs)
-COPY --from=web-builder /src/web/scripts ./web/scripts
-COPY --from=web-builder /src/web/package.json ./web/package.json
-COPY --from=web-builder /src/web/node_modules ./web/node_modules
-
 COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
   && mkdir -p /app/data \

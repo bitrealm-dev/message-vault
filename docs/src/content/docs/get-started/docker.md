@@ -193,10 +193,10 @@ curl -sS http://127.0.0.1:8080/health
 # Reset demo data (dev profile)
 docker compose exec vault cargo run --release -- reset-demo
 docker compose exec vault bash -lc 'cp config/config.docker.toml config/config.toml'
-docker compose exec vault bash -lc 'cd web && npm run process-assets'
+docker compose exec vault cargo run --release -- process-assets
 
 # Convert media after an import (dev)
-docker compose exec vault bash -lc 'cd web && npm run process-assets'
+docker compose exec vault cargo run --release -- process-assets
 
 # Shell in the running container
 docker compose exec vault bash

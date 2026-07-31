@@ -74,7 +74,7 @@ Then import:
 
 ```bash
 cargo run --release -- reset-demo
-cd web && npm run process-assets
+cargo run --release -- process-assets
 ```
 
 ## Contents

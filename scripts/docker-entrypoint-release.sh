@@ -30,13 +30,9 @@ seed_if_needed() {
       echo "Seeding demo vault…"
       message-vault-rs reset-demo --config "${CONFIG}"
       ensure_docker_config
-      if [[ -x web/node_modules/.bin/tsx ]]; then
-        echo "Converting demo media…"
-        (cd web && ./node_modules/.bin/tsx scripts/process-assets.ts) \
-          || echo "warning: process-assets failed; UI still works"
-      else
-        echo "warning: web tooling missing; skip process-assets"
-      fi
+      echo "Converting demo media…"
+      message-vault-rs process-assets --config "${CONFIG}" \
+        || echo "warning: process-assets failed; UI still works"
       ;;
     personal)
       echo "Personal mode: empty data/ (create an account in the web UI)."

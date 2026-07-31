@@ -10,6 +10,7 @@ mod ingest;
 mod jsonl;
 mod models;
 mod phone;
+mod process_assets;
 mod reset_demo;
 mod schema;
 mod server;
@@ -210,6 +211,41 @@ enum Commands {
         /// Path to config.toml (must include `[server]` with `bind`)
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
+    },
+
+    /// Generate browser-friendly derived media under assets_converted/
+    ProcessAssets {
+        /// Path to config.toml
+        #[arg(long, default_value = "config/config.toml")]
+        config: PathBuf,
+
+        /// Re-derive even when a derived file already exists
+        #[arg(long)]
+        force: bool,
+
+        /// Convert and log without writing files or updating the DB
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip image conversion
+        #[arg(long)]
+        skip_image: bool,
+
+        /// Skip video conversion
+        #[arg(long)]
+        skip_video: bool,
+
+        /// Skip audio conversion
+        #[arg(long)]
+        skip_audio: bool,
+
+        /// Override SQLite database path from config
+        #[arg(long)]
+        db: Option<PathBuf>,
+
+        /// Only process this source id
+        #[arg(long)]
+        source: Option<String>,
     },
 }
 
@@ -512,6 +548,34 @@ fn main() -> Result<()> {
             let _ = cfg.require_server()?;
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(server::run(cfg))?;
+        }
+
+        Commands::ProcessAssets {
+            config,
+            force,
+            dry_run,
+            skip_image,
+            skip_video,
+            skip_audio,
+            db,
+            source,
+        } => {
+            let cfg = Config::load(&config)?;
+            if let Some(ref source) = source {
+                validate_source_id(source)?;
+            }
+            let _stats = process_assets::run(
+                &cfg,
+                &process_assets::ProcessAssetsOptions {
+                    force,
+                    dry_run,
+                    skip_image,
+                    skip_video,
+                    skip_audio,
+                    db,
+                    source,
+                },
+            )?;
         }
     }
 

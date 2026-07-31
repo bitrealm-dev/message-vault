@@ -22,11 +22,7 @@ cargo build --release
 echo "Resetting demo vault…"
 cargo run --release -- reset-demo
 
-if [[ -d web/node_modules ]]; then
-  echo "Converting demo media for web…"
-  (cd web && npm run process-assets)
-else
-  echo "Skip process-assets (run: cd web && npm install && npm run process-assets)"
-fi
+echo "Converting demo media for web…"
+cargo run --release -- process-assets
 
 echo "Demo ready. Start the UI: cd web && npm run dev"

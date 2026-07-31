@@ -7,11 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "process-assets": "node ./node_modules/tsx/dist/cli.mjs scripts/process-assets.ts",
     "test": "node ./node_modules/tsx/dist/cli.mjs --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@napi-rs/image": "^1.14.0",
     "better-sqlite3": "^12.11.1",
     "libphonenumber-js": "^1.13.9",
     "next": "16.2.12",

@@ -18,9 +18,8 @@ ensure_docker_config() {
 }
 
 # Named volume mounts create an empty web/node_modules dir, so "-d" is not enough.
-# tsx is an npm dependency (web/package.json), not a system binary.
 web_deps_ready() {
-  [[ -f web/node_modules/tsx/dist/cli.mjs ]] && [[ -d web/node_modules/next ]]
+  [[ -d web/node_modules/next ]]
 }
 
 install_web_deps() {
@@ -47,13 +46,9 @@ seed_if_needed() {
       cargo run --release -- reset-demo --config "${CONFIG}"
       # reset-demo installs demo config without [server]; restore docker bind.
       ensure_docker_config
-      install_web_deps
-      if ! web_deps_ready; then
-        echo "error: web deps missing after npm ci (tsx/next not found)" >&2
-        exit 1
-      fi
       echo "Converting demo media…"
-      (cd web && npm run process-assets) || echo "warning: process-assets failed; UI still works"
+      cargo run --release -- process-assets --config "${CONFIG}" \
+        || echo "warning: process-assets failed; UI still works"
       ;;
     personal)
       echo "Personal mode: empty data/ (create an account in the web UI)."

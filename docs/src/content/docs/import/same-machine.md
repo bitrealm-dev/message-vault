@@ -44,5 +44,5 @@ Helpers: `./scripts/ingest-staging.sh`, `./scripts/import-staging.sh`.
 ## Media for the browser
 
 ```bash
-cd web && npm run process-assets
+cargo run --release -- process-assets
 ```

@@ -12,8 +12,11 @@ From the repo root, import or reset demo data first (see the
 [root README](../README.md)), then:
 
 ```bash
+# From repo root — convert media for the browser (requires ffmpeg)
+cargo run --release -- process-assets
+
+cd web
 npm ci
-npm run process-assets
 npm run dev
 ```
 
@@ -27,10 +30,10 @@ Open [http://localhost:3000](http://localhost:3000).
 | `npm run build` / `start` | Production build / serve (`output: "standalone"` for Docker release) |
 | `npm run lint` | ESLint |
 | `npm test` | `tsx --test src/**/*.test.ts` |
-| `npm run process-assets` | Convert media for the browser |
 
-`process-assets` flags: `--force`, `--dry-run`, `--skip-image`, `--skip-video`,
-`--skip-audio`.
+Derived media: from the repo root, run
+`cargo run --release -- process-assets` with optional flags `--force`,
+`--dry-run`, `--skip-image`, `--skip-video`, `--skip-audio`, `--db`, `--source`.
 
 ### Notes
 

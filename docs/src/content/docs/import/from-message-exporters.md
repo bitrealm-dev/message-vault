@@ -74,7 +74,7 @@ Refresh the Message Vault website. Use **Message Sources** to view one archive
 or **Combined**. Optionally run media conversion:
 
 ```bash
-cd web && npm run process-assets
+cargo run --release -- process-assets
 ```
 
 See also [HTTP import API](/import/http-api/) and

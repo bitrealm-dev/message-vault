@@ -30,7 +30,7 @@ Contributor setup and troubleshooting:
 
 ```bash
 ./scripts/setup-demo.sh
-cd web && npm ci && npm run process-assets && npm run dev
+cd web && npm ci && npm run dev
 ```
 
 **Docker** (no host Rust/Node toolchain; pulls/builds from your checkout):

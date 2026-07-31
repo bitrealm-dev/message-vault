@@ -27,7 +27,7 @@ cargo run --release -- serve
 Terminal 2:
 
 ```bash
-cd web && npm ci && npm run process-assets && npm run dev
+cd web && npm ci && npm run dev
 ```
 
 ## 3. Create an account and copy your token
