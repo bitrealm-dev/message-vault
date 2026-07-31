@@ -33,12 +33,16 @@ pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset>
 
 /// Store `source` under `assets_root` using a caller-claimed SHA-256 (verified).
 ///
+/// When `consume_source` is true (HTTP upload temps), prefers `rename` into place.
+/// When false (export/import sources), always copies so the original file remains.
+///
 /// Returns `(stored, already_present)`.
 pub fn store_verified(
     source: &Path,
     claimed_sha256: &str,
     assets_root: &Path,
     export_mime: Option<&str>,
+    consume_source: bool,
 ) -> Result<(StoredAsset, bool)> {
     let claimed = normalize_sha256(claimed_sha256)
         .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))?;
@@ -70,16 +74,44 @@ pub fn store_verified(
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    fs::copy(source, &dest)
-        .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
+    let already = install_blob(source, &dest, consume_source)?;
     Ok((
         StoredAsset {
             sha256: claimed,
             assets_path: rel,
             mime_type: resolve_mime(export_mime, source),
         },
-        false,
+        already,
     ))
+}
+
+/// Install `source` at `dest`. Returns `true` when `dest` already existed.
+fn install_blob(source: &Path, dest: &Path, consume_source: bool) -> Result<bool> {
+    if dest.exists() {
+        return Ok(true);
+    }
+    if !consume_source {
+        fs::copy(source, dest)
+            .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
+        return Ok(false);
+    }
+    match fs::rename(source, dest) {
+        Ok(()) => Ok(false),
+        Err(err) => {
+            if dest.exists() {
+                return Ok(true);
+            }
+            fs::copy(source, dest).with_context(|| {
+                format!(
+                    "failed to install {} → {} (rename: {err})",
+                    source.display(),
+                    dest.display()
+                )
+            })?;
+            let _ = fs::remove_file(source);
+            Ok(false)
+        }
+    }
 }
 
 /// Hash `source` and store under `assets_root/<sha[0:2]>/<sha><ext>`.
@@ -96,7 +128,7 @@ pub fn hash_and_store(
     }
 
     let sha = hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
-    let (stored, already) = store_verified(source, &sha, assets_root, export_mime)?;
+    let (stored, already) = store_verified(source, &sha, assets_root, export_mime, false)?;
     if already {
         stats.deduped += 1;
     } else {
@@ -217,9 +249,11 @@ mod tests {
         src.flush().unwrap();
 
         let sha = hash_file(src.path()).unwrap();
-        let (first, present) = store_verified(src.path(), &sha, root, Some("text/plain")).unwrap();
+        let (first, present) =
+            store_verified(src.path(), &sha, root, Some("text/plain"), false).unwrap();
         assert!(!present);
         assert_eq!(first.sha256, sha);
+        assert!(src.path().is_file(), "non-consuming store must keep source");
 
         // Second store with a throwaway source file: existence short-circuit must win
         // without requiring the new bytes to match (lookup is by claimed SHA).
@@ -227,10 +261,31 @@ mod tests {
         other.write_all(b"different-bytes").unwrap();
         other.flush().unwrap();
         let (second, present_again) =
-            store_verified(other.path(), &sha, root, Some("text/plain")).unwrap();
+            store_verified(other.path(), &sha, root, Some("text/plain"), false).unwrap();
         assert!(present_again);
         assert_eq!(second.sha256, sha);
         assert_eq!(second.assets_path, first.assets_path);
         assert!(lookup_by_sha256(root, &sha).is_some());
+    }
+
+    #[test]
+    fn store_verified_renames_same_filesystem_temp() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let incoming = root.join(".incoming");
+        fs::create_dir_all(&incoming).unwrap();
+        let tmp = incoming.join("upload.part");
+        fs::write(&tmp, b"rename-me").unwrap();
+        let sha = hash_file(&tmp).unwrap();
+
+        let (stored, present) =
+            store_verified(&tmp, &sha, root, Some("application/octet-stream"), true).unwrap();
+        assert!(!present);
+        assert!(!tmp.exists(), "rename should consume the temp file");
+        assert!(root.join(&stored.assets_path).is_file());
+        assert_eq!(
+            fs::read(root.join(&stored.assets_path)).unwrap(),
+            b"rename-me"
+        );
     }
 }

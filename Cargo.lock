@@ -688,6 +688,7 @@ dependencies = [
  "axum",
  "clap",
  "csv",
+ "futures-util",
  "message_json",
  "rusqlite",
  "serde",

@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -505,26 +506,47 @@ async fn asset_put_handler(
         }));
     }
 
-    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-    let tmp_path = temp.path().join("upload.bin");
-    let n = stream_body_to_file(request.into_body(), &tmp_path).await?;
+    // Write the upload into the account assets tree so verify can rename into place
+    // instead of copying across filesystems (tempfile often lives on another mount).
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let incoming_dir = assets_dir.join(".incoming");
+    tokio::fs::create_dir_all(&incoming_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", incoming_dir.display())))?;
+    let tmp_path = incoming_dir.join(format!(
+        "{sha256}-{}.part",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let n = match stream_body_to_file(request.into_body(), &tmp_path).await {
+        Ok(n) => n,
+        Err(err) => {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(err);
+        }
+    };
     if n == 0 {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(ApiError::BadRequest("request body is empty".into()));
     }
 
-    let cfg = Arc::clone(&state.cfg);
     let sha = sha256.clone();
+    let tmp_for_store = tmp_path.clone();
+    let assets_dir_store = assets_dir.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
-        std::fs::create_dir_all(&assets_dir)?;
-        assets::store_verified(&tmp_path, &sha, &assets_dir, mime.as_deref())
+        std::fs::create_dir_all(&assets_dir_store)?;
+        assets::store_verified(&tmp_for_store, &sha, &assets_dir_store, mime.as_deref(), true)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?;
 
-    drop(temp);
-    let (stored, already_present) = result;
+    // Rename consumes the temp file; remove leftovers after errors / already_present races.
+    let _ = tokio::fs::remove_file(&tmp_path).await;
+
+    let (stored, already_present) =
+        result.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetPutResponse {
         ok: true,
         sha256: stored.sha256,
@@ -533,11 +555,18 @@ async fn asset_put_handler(
     }))
 }
 
-/// Drain request body without writing to disk (used when asset already exists).
+/// Drain request body without retaining it (used when asset already exists).
 async fn discard_body(body: axum::body::Body) -> Result<(), ApiError> {
-    let _ = axum::body::to_bytes(body, MAX_BODY_BYTES)
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+    let mut stream = body.into_data_stream();
+    let mut seen = 0usize;
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+        seen = seen.saturating_add(chunk.len());
+        if seen > MAX_BODY_BYTES {
+            return Err(ApiError::BadRequest("request body too large".into()));
+        }
+    }
     Ok(())
 }
 
@@ -547,14 +576,26 @@ async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64,
             .await
             .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
-    let bytes = axum::body::to_bytes(body, MAX_BODY_BYTES)
+    let mut file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
-    let n = bytes.len() as u64;
-    tokio::fs::write(dest, &bytes)
+        .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))?;
+    let mut written = 0u64;
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+        written = written.saturating_add(chunk.len() as u64);
+        if written > MAX_BODY_BYTES as u64 {
+            return Err(ApiError::BadRequest("request body too large".into()));
+        }
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
+    }
+    file.flush()
         .await
-        .map_err(|e| ApiError::Internal(format!("write {}: {e}", dest.display())))?;
-    Ok(n)
+        .map_err(|e| ApiError::Internal(format!("flush {}: {e}", dest.display())))?;
+    Ok(written)
 }
 
 async fn stream_field_to_file(

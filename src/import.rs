@@ -365,7 +365,13 @@ fn prepare_attachments(
             } else if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 // Digest claimed but not pre-uploaded: fall back to path under asset_root.
                 let source = export_dir.join(rel);
-                match assets::store_verified(&source, sha, assets_dir, att.mime_type.as_deref()) {
+                match assets::store_verified(
+                    &source,
+                    sha,
+                    assets_dir,
+                    att.mime_type.as_deref(),
+                    false,
+                ) {
                     Ok((stored, already)) => {
                         if already {
                             asset_stats.deduped += 1;
