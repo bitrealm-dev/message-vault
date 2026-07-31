@@ -1,6 +1,35 @@
 use anyhow::{Result, bail};
 use rusqlite::{Connection, params};
 
+/// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
+///
+/// Busy timeout is applied first. WAL is best-effort: a hot rollback journal or another
+/// process holding the DB (e.g. Next.js) can make `journal_mode=WAL` fail; callers still
+/// get a usable connection.
+pub fn configure_connection(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        PRAGMA busy_timeout = 15000;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA temp_store = MEMORY;
+        PRAGMA cache_size = -200000;
+        PRAGMA foreign_keys = ON;
+        "#,
+    )?;
+    // journal_mode returns a row; may fail if another connection holds a lock.
+    match conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0)) {
+        Ok(mode) => {
+            if !mode.eq_ignore_ascii_case("wal") {
+                eprintln!("warning: journal_mode is {mode} (wanted wal)");
+            }
+        }
+        Err(err) => {
+            eprintln!("warning: could not enable WAL ({err}); continuing with current journal mode");
+        }
+    }
+    Ok(())
+}
+
 const MESSAGE_TABLES_DDL: &str = r#"
 CREATE TABLE conversations (
     id INTEGER PRIMARY KEY,
@@ -326,6 +355,8 @@ fn migrate_contact_groups_to_labels(conn: &Connection) -> Result<()> {
 /// Migrates older schemas that lack `messages.source` / cross-source dedupe columns.
 /// Marker for the one-time FTS5 backfill of existing messages.
 pub const MESSAGES_FTS_BACKFILL_META_KEY: &str = "messages_fts_backfill_v1";
+/// Marker that current FTS sync trigger definitions are installed.
+pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
 pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
     ensure_vault_schema(conn)?;
@@ -366,133 +397,144 @@ fn ensure_messages_fts(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
-    // Recreate sync triggers so definition updates apply cleanly.
-    conn.execute_batch(
-        r#"
-        DROP TRIGGER IF EXISTS messages_fts_ai;
-        DROP TRIGGER IF EXISTS messages_fts_ad;
-        DROP TRIGGER IF EXISTS messages_fts_au;
-        DROP TRIGGER IF EXISTS attachments_fts_ai;
-        DROP TRIGGER IF EXISTS attachments_fts_ad;
-        DROP TRIGGER IF EXISTS attachments_fts_au;
-
-        CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-            VALUES (
-                new.id,
-                coalesce(new.body, ''),
-                coalesce(new.subject, ''),
-                (
-                    SELECT coalesce(
-                        group_concat(
-                            trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
-                            ' '
-                        ),
-                        ''
-                    )
-                    FROM attachments
-                    WHERE message_id = new.id
-                )
-            );
-        END;
-
-        CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-            VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
-        END;
-
-        CREATE TRIGGER messages_fts_au AFTER UPDATE OF body, subject ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-            VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
-            INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-            VALUES (
-                new.id,
-                coalesce(new.body, ''),
-                coalesce(new.subject, ''),
-                (
-                    SELECT coalesce(
-                        group_concat(
-                            trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
-                            ' '
-                        ),
-                        ''
-                    )
-                    FROM attachments
-                    WHERE message_id = new.id
-                )
-            );
-        END;
-
-        CREATE TRIGGER attachments_fts_ai AFTER INSERT ON attachments BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-            SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-            FROM messages m WHERE m.id = new.message_id;
-            INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-            SELECT
-                m.id,
-                coalesce(m.body, ''),
-                coalesce(m.subject, ''),
-                (
-                    SELECT coalesce(
-                        group_concat(
-                            trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                            ' '
-                        ),
-                        ''
-                    )
-                    FROM attachments a
-                    WHERE a.message_id = m.id
-                )
-            FROM messages m WHERE m.id = new.message_id;
-        END;
-
-        CREATE TRIGGER attachments_fts_ad AFTER DELETE ON attachments BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-            SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-            FROM messages m WHERE m.id = old.message_id;
-            INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-            SELECT
-                m.id,
-                coalesce(m.body, ''),
-                coalesce(m.subject, ''),
-                (
-                    SELECT coalesce(
-                        group_concat(
-                            trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                            ' '
-                        ),
-                        ''
-                    )
-                    FROM attachments a
-                    WHERE a.message_id = m.id
-                )
-            FROM messages m WHERE m.id = old.message_id;
-        END;
-
-        CREATE TRIGGER attachments_fts_au AFTER UPDATE OF original_name, transcription ON attachments BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-            SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-            FROM messages m WHERE m.id = new.message_id;
-            INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-            SELECT
-                m.id,
-                coalesce(m.body, ''),
-                coalesce(m.subject, ''),
-                (
-                    SELECT coalesce(
-                        group_concat(
-                            trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                            ' '
-                        ),
-                        ''
-                    )
-                    FROM attachments a
-                    WHERE a.message_id = m.id
-                )
-            FROM messages m WHERE m.id = new.message_id;
-        END;
-        "#,
+    let triggers_ready: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+        params![MESSAGES_FTS_TRIGGERS_META_KEY],
+        |row| row.get(0),
     )?;
+    if !triggers_ready {
+        // Install (or refresh) sync triggers once per definition version.
+        conn.execute_batch(
+            r#"
+            DROP TRIGGER IF EXISTS messages_fts_ai;
+            DROP TRIGGER IF EXISTS messages_fts_ad;
+            DROP TRIGGER IF EXISTS messages_fts_au;
+            DROP TRIGGER IF EXISTS attachments_fts_ai;
+            DROP TRIGGER IF EXISTS attachments_fts_ad;
+            DROP TRIGGER IF EXISTS attachments_fts_au;
+
+            CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+                VALUES (
+                    new.id,
+                    coalesce(new.body, ''),
+                    coalesce(new.subject, ''),
+                    (
+                        SELECT coalesce(
+                            group_concat(
+                                trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
+                                ' '
+                            ),
+                            ''
+                        )
+                        FROM attachments
+                        WHERE message_id = new.id
+                    )
+                );
+            END;
+
+            CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+                VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
+            END;
+
+            CREATE TRIGGER messages_fts_au AFTER UPDATE OF body, subject ON messages BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+                VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
+                INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+                VALUES (
+                    new.id,
+                    coalesce(new.body, ''),
+                    coalesce(new.subject, ''),
+                    (
+                        SELECT coalesce(
+                            group_concat(
+                                trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
+                                ' '
+                            ),
+                            ''
+                        )
+                        FROM attachments
+                        WHERE message_id = new.id
+                    )
+                );
+            END;
+
+            CREATE TRIGGER attachments_fts_ai AFTER INSERT ON attachments BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+                SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+                FROM messages m WHERE m.id = new.message_id;
+                INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+                SELECT
+                    m.id,
+                    coalesce(m.body, ''),
+                    coalesce(m.subject, ''),
+                    (
+                        SELECT coalesce(
+                            group_concat(
+                                trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+                                ' '
+                            ),
+                            ''
+                        )
+                        FROM attachments a
+                        WHERE a.message_id = m.id
+                    )
+                FROM messages m WHERE m.id = new.message_id;
+            END;
+
+            CREATE TRIGGER attachments_fts_ad AFTER DELETE ON attachments BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+                SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+                FROM messages m WHERE m.id = old.message_id;
+                INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+                SELECT
+                    m.id,
+                    coalesce(m.body, ''),
+                    coalesce(m.subject, ''),
+                    (
+                        SELECT coalesce(
+                            group_concat(
+                                trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+                                ' '
+                            ),
+                            ''
+                        )
+                        FROM attachments a
+                        WHERE a.message_id = m.id
+                    )
+                FROM messages m WHERE m.id = old.message_id;
+            END;
+
+            CREATE TRIGGER attachments_fts_au AFTER UPDATE OF original_name, transcription ON attachments BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
+                SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
+                FROM messages m WHERE m.id = new.message_id;
+                INSERT INTO messages_fts(rowid, body, subject, attachment_text)
+                SELECT
+                    m.id,
+                    coalesce(m.body, ''),
+                    coalesce(m.subject, ''),
+                    (
+                        SELECT coalesce(
+                            group_concat(
+                                trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
+                                ' '
+                            ),
+                            ''
+                        )
+                        FROM attachments a
+                        WHERE a.message_id = m.id
+                    )
+                FROM messages m WHERE m.id = new.message_id;
+            END;
+            "#,
+        )?;
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?1, '1')",
+            params![MESSAGES_FTS_TRIGGERS_META_KEY],
+        )?;
+    }
 
     backfill_messages_fts(conn)?;
     Ok(())
@@ -1175,6 +1217,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(still_unlocked, 0);
+    }
+
+    #[test]
+    fn messages_fts_triggers_installed_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        ensure_messages_schema(&conn).unwrap();
+        let marker: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
+                params![MESSAGES_FTS_TRIGGERS_META_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, 1);
+        let triggers: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(triggers, 6);
+
+        // Second ensure must not drop/recreate (marker stays; triggers still present).
+        ensure_messages_schema(&conn).unwrap();
+        let triggers_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(triggers_after, 6);
     }
 
     #[test]

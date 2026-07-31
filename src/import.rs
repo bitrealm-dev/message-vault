@@ -51,6 +51,10 @@ pub struct ImportOptions<'a> {
     pub mode: ImportMode,
     pub source: &'a str,
     pub account_id: &'a str,
+    /// Fill missing `content_key` values during promote (needed before cross-source dedupe).
+    pub fill_content_keys: bool,
+    /// Create unknown contacts / fill empty names after promote.
+    pub backfill_contacts: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -136,6 +140,8 @@ pub fn import_export(
             mode,
             source,
             account_id,
+            fill_content_keys: true,
+            backfill_contacts: true,
         },
     )
 }
@@ -157,7 +163,7 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
 
     let mut conn = Connection::open(opts.db_path)
         .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    schema::configure_connection(&conn)?;
     println!("  sql:      opened {}", opts.db_path.display());
     let _ = io::stdout().flush();
 
@@ -281,7 +287,8 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
         started.elapsed().as_secs_f64()
     );
     let _ = io::stdout().flush();
-    let promote_stats = promote_append(&mut conn, opts.mode, opts.account_id)?;
+    let promote_stats =
+        promote_append(&mut conn, opts.mode, opts.account_id, opts.fill_content_keys)?;
     stats.messages_deduped += promote_stats.messages_deduped;
     stats.messages_appended = promote_stats.messages_appended;
     if opts.mode == ImportMode::Append {
@@ -294,14 +301,20 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
 
     schema::clear_staging_for_account(&conn, opts.account_id)?;
 
-    let unknown = contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
-    stats.unknown_contacts = unknown;
-    if unknown > 0 {
-        println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
-    }
-    let named = contacts::fill_empty_contact_names_from_participants(&mut conn, opts.account_id)?;
-    if named > 0 {
-        println!("  sql:      filled names on {named} contact(s) from participant display names");
+    if opts.backfill_contacts {
+        let unknown =
+            contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
+        stats.unknown_contacts = unknown;
+        if unknown > 0 {
+            println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
+        }
+        let named =
+            contacts::fill_empty_contact_names_from_participants(&mut conn, opts.account_id)?;
+        if named > 0 {
+            println!(
+                "  sql:      filled names on {named} contact(s) from participant display names"
+            );
+        }
     }
 
     stats.assets_copied = asset_stats.copied;
@@ -748,17 +761,10 @@ fn promote_append(
     conn: &mut Connection,
     mode: ImportMode,
     account_id: &str,
+    fill_content_keys: bool,
 ) -> Result<PromoteStats> {
     let mut stats = PromoteStats::default();
     let started = Instant::now();
-
-    // Bulk promote is much faster with a larger page cache and memory temp tables.
-    conn.execute_batch(
-        r#"
-        PRAGMA temp_store = MEMORY;
-        PRAGMA cache_size = -200000;
-        "#,
-    )?;
 
     let tx = conn.transaction()?;
 
@@ -1002,57 +1008,93 @@ fn promote_append(
             .zip(prod_ids)
             .collect::<HashMap<_, _>>()
     } else {
-        // Append: insert only staging rows whose (source, guid) is not already in production,
-        // then zip new ids in order (same mapping trick as replace).
+        // Append: rely on partial unique index ix_messages_account_source_guid via
+        // INSERT OR IGNORE. Correlated NOT EXISTS / JOIN anti-joins mis-plan onto
+        // ix_messages_source and scan the whole source (~10s+ at 50k+ rows).
         let max_before: i64 =
             tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
 
-        let new_filter = r#"
-            (sm.guid IS NULL OR sm.guid = '')
-            OR NOT EXISTS (
-                SELECT 1 FROM messages m
-                WHERE m.account_id = sm.account_id
-                  AND m.source = sm.source
-                  AND m.guid = sm.guid
+        let inserted_guided = tx.execute(
+            r#"
+            INSERT OR IGNORE INTO messages (
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
+                subject, body, is_announcement, is_reply, thread_originator_guid,
+                thread_originator_part, num_replies, sort_order
             )
-            "#;
+            SELECT
+                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = ?1
+              AND sm.guid IS NOT NULL
+              AND sm.guid != ''
+            ORDER BY sm.id
+            "#,
+            params![account_id],
+        )?;
 
-        let staging_ids: Vec<i64> = tx
-            .prepare(&format!(
+        // Null/empty guids are outside the partial unique index — always insert.
+        let inserted_empty = tx.execute(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
+                subject, body, is_announcement, is_reply, thread_originator_guid,
+                thread_originator_part, num_replies, sort_order
+            )
+            SELECT
+                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = ?1
+              AND (sm.guid IS NULL OR sm.guid = '')
+            ORDER BY sm.id
+            "#,
+            params![account_id],
+        )?;
+
+        let inserted = inserted_guided + inserted_empty;
+        stats.messages = inserted as u64;
+        stats.messages_appended = inserted as u64;
+        stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted as u64);
+
+        // New production rows were inserted in order: guided (by sm.id) then empty (by sm.id).
+        let mut staging_ids: Vec<i64> = tx
+            .prepare(
+                r#"
+                SELECT sm.id
+                FROM messages m
+                JOIN staging_messages sm
+                  ON sm.account_id = m.account_id
+                 AND sm.source = m.source
+                 AND sm.guid = m.guid
+                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+                WHERE m.id > ?1
+                  AND m.account_id = ?2
+                  AND m.guid IS NOT NULL
+                  AND m.guid != ''
+                ORDER BY m.id
+                "#,
+            )?
+            .query_map(params![max_before, account_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let empty_staging_ids: Vec<i64> = tx
+            .prepare(
                 r#"
                 SELECT sm.id
                 FROM staging_messages sm
                 JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE sm.account_id = ?1 AND ({new_filter})
+                WHERE sm.account_id = ?1
+                  AND (sm.guid IS NULL OR sm.guid = '')
                 ORDER BY sm.id
-                "#
-            ))?
+                "#,
+            )?
             .query_map(params![account_id], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
-
-        let inserted = tx.execute(
-            &format!(
-                r#"
-                INSERT INTO messages (
-                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
-                    subject, body, is_announcement, is_reply, thread_originator_guid,
-                    thread_originator_part, num_replies, sort_order
-                )
-                SELECT
-                    cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                    sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                    sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
-                FROM staging_messages sm
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE sm.account_id = ?1 AND ({new_filter})
-                ORDER BY sm.id
-                "#
-            ),
-            params![account_id],
-        )?;
-        stats.messages = inserted as u64;
-        stats.messages_appended = inserted as u64;
-        stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted as u64);
+        staging_ids.extend(empty_staging_ids);
 
         let prod_ids: Vec<i64> = tx
             .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
@@ -1139,13 +1181,15 @@ fn promote_append(
         started.elapsed().as_secs_f64()
     );
 
-    println!("  sql:      promote: filling content keys…");
-    let _ = io::stdout().flush();
-    let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
-    println!(
-        "  sql:      promote: content keys filled={keys}  ({:.1}s)",
-        started.elapsed().as_secs_f64()
-    );
+    if fill_content_keys {
+        println!("  sql:      promote: filling content keys…");
+        let _ = io::stdout().flush();
+        let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
+        println!(
+            "  sql:      promote: content keys filled={keys}  ({:.1}s)",
+            started.elapsed().as_secs_f64()
+        );
+    }
 
     println!("  sql:      promote: committing transaction…");
     let _ = io::stdout().flush();
@@ -1161,4 +1205,108 @@ fn promote_append(
     );
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    fn write_jsonl(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn empty_csv(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        let body = if name.contains("contact") {
+            "phones,first_name,last_name,exclude,label_1\n"
+        } else {
+            "phones\n"
+        };
+        fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn append_skips_existing_guids_and_keeps_id_map() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let contacts = empty_csv(tmp.path(), "contacts.csv");
+        let exclude = empty_csv(tmp.path(), "exclude.csv");
+
+        let first = write_jsonl(
+            tmp.path(),
+            "a.jsonl",
+            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075551234","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075551234"}]}
+{"record":"message","guid":"g-keep","timestamp":"2015-03-12T14:04:22-04:00","timestamp_utc":"2015-03-12T18:04:22Z","is_from_me":false,"text":"one","attachments":[]}
+{"record":"message","guid":"g-dup","timestamp":"2015-03-12T14:05:22-04:00","timestamp_utc":"2015-03-12T18:05:22Z","is_from_me":true,"text":"two","attachments":[]}
+"#,
+        );
+        let first_stats = import_jsonl_files(
+            &[first],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts_csv: &contacts,
+                exclude_csv: &exclude,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: true,
+                backfill_contacts: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(first_stats.messages, 2);
+
+        let second = write_jsonl(
+            tmp.path(),
+            "b.jsonl",
+            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075551234","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075551234"}]}
+{"record":"message","guid":"g-dup","timestamp":"2015-03-12T14:05:22-04:00","timestamp_utc":"2015-03-12T18:05:22Z","is_from_me":true,"text":"two again","attachments":[]}
+{"record":"message","guid":"g-new","timestamp":"2015-03-12T14:06:22-04:00","timestamp_utc":"2015-03-12T18:06:22Z","is_from_me":false,"text":"three","attachments":[]}
+{"record":"message","guid":"","timestamp":"2015-03-12T14:07:22-04:00","timestamp_utc":"2015-03-12T18:07:22Z","is_from_me":false,"text":"empty guid always inserts","attachments":[]}
+"#,
+        );
+        let second_stats = import_jsonl_files(
+            &[second],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts_csv: &contacts,
+                exclude_csv: &exclude,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                backfill_contacts: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(second_stats.messages_appended, 2);
+        assert_eq!(second_stats.messages_deduped, 1);
+
+        let conn = Connection::open(&db).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 4);
+        let dup_body: String = conn
+            .query_row(
+                "SELECT body FROM messages WHERE guid = 'g-dup'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dup_body, "two");
+    }
 }

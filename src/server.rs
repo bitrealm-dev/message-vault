@@ -36,6 +36,8 @@ struct AppState {
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows for that tenant are not wiped mid-run. Different accounts may overlap.
     account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// Process-local Import API token → account_id cache (avoids DB open per asset PUT).
+    token_cache: Arc<Mutex<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,9 +112,22 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
 
+    // Apply pragmas (and recover a hot rollback journal if present) before serving.
+    {
+        let conn = Connection::open(&cfg.paths.db)?;
+        schema::configure_connection(&conn)?;
+        // Touch a read to force hot-journal rollback when we hold the only writer.
+        let _: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap_or_else(|_| "unknown".into());
+        eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
+    }
+
     let state = AppState {
         cfg: Arc::new(cfg),
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
+        token_cache: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
@@ -172,7 +187,7 @@ async fn auth_check(
     headers: HeaderMap,
     Query(query): Query<AuthCheckQuery>,
 ) -> Result<Json<AuthCheckResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
+    let auth = resolve_auth(&headers, &state).await?;
     let account_id = auth.account_id;
 
     if let Some(q) = query
@@ -211,8 +226,8 @@ async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<St
     let account_id = account_id.to_string();
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-        schema::ensure_messages_schema(&conn)?;
+        schema::configure_connection(&conn)?;
+        // Read-only: do not run ensure_messages_schema (avoids write locks on auth).
         dedupe::source_priority_from_db(&conn, &account_id)
     })
     .await
@@ -228,7 +243,7 @@ async fn lookup_or_resolve_query(
     let account_ref = account_ref.to_string();
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        schema::configure_connection(&conn)?;
         vault_owner::lookup_account_ref(&conn, &account_ref)
     })
     .await
@@ -241,7 +256,7 @@ async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String
     let account_id = account_id.to_string();
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        schema::configure_connection(&conn)?;
         vault_owner::username_for_account(&conn, &account_id)
     })
     .await
@@ -279,13 +294,22 @@ fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_string())
 }
 
-async fn resolve_auth(headers: &HeaderMap, db_path: &Path) -> Result<AuthIdentity, ApiError> {
+async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdentity, ApiError> {
     let token = bearer_token(headers)?;
-    let db = db_path.to_path_buf();
+    {
+        let cache = state.token_cache.lock().await;
+        if let Some(account_id) = cache.get(&token) {
+            return Ok(AuthIdentity {
+                account_id: account_id.clone(),
+            });
+        }
+    }
+
+    let db = state.cfg.paths.db.clone();
     let token_owned = token.clone();
     let account_id = tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        schema::configure_connection(&conn)?;
         schema::ensure_accounts_schema(&conn)?;
         api_tokens::lookup_account_for_token(&conn, &token_owned)
     })
@@ -294,7 +318,14 @@ async fn resolve_auth(headers: &HeaderMap, db_path: &Path) -> Result<AuthIdentit
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     match account_id {
-        Some(account_id) => Ok(AuthIdentity { account_id }),
+        Some(account_id) => {
+            state
+                .token_cache
+                .lock()
+                .await
+                .insert(token, account_id.clone());
+            Ok(AuthIdentity { account_id })
+        }
         None => Err(ApiError::Unauthorized("invalid API token".into())),
     }
 }
@@ -371,7 +402,7 @@ async fn import_handler(
     Query(mut query): Query<ImportQuery>,
     request: Request,
 ) -> Result<Json<ImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
+    let auth = resolve_auth(&headers, &state).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
@@ -435,7 +466,7 @@ async fn asset_put_handler(
     Query(query): Query<AssetPutQuery>,
     request: Request,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state.cfg.paths.db).await?;
+    let auth = resolve_auth(&headers, &state).await?;
     if query.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "query param source is required".into(),
@@ -446,18 +477,40 @@ async fn asset_put_handler(
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let source_id = query.source.clone();
 
+    let mime = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
+
+    // Short-circuit when the claimed SHA is already on disk (skip hash + temp write).
+    let cfg = Arc::clone(&state.cfg);
+    let sha_lookup = sha256.clone();
+    let account_lookup = account.clone();
+    let source_lookup = source_id.clone();
+    let existing = tokio::task::spawn_blocking(move || {
+        let assets_dir = cfg.paths.assets_dir_for_account(&account_lookup, &source_lookup);
+        assets::lookup_by_sha256(&assets_dir, &sha_lookup)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
+
+    if let Some(stored) = existing {
+        discard_body(request.into_body()).await?;
+        return Ok(Json(AssetPutResponse {
+            ok: true,
+            sha256: stored.sha256,
+            assets_path: stored.assets_path,
+            already_present: true,
+        }));
+    }
+
     let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
     let tmp_path = temp.path().join("upload.bin");
     let n = stream_body_to_file(request.into_body(), &tmp_path).await?;
     if n == 0 {
         return Err(ApiError::BadRequest("request body is empty".into()));
     }
-
-    let mime = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
 
     let cfg = Arc::clone(&state.cfg);
     let sha = sha256.clone();
@@ -478,6 +531,14 @@ async fn asset_put_handler(
         assets_path: stored.assets_path,
         already_present,
     }))
+}
+
+/// Drain request body without writing to disk (used when asset already exists).
+async fn discard_body(body: axum::body::Body) -> Result<(), ApiError> {
+    let _ = axum::body::to_bytes(body, MAX_BODY_BYTES)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+    Ok(())
 }
 
 async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64, ApiError> {
@@ -632,6 +693,9 @@ async fn run_import_path(
             mode,
             source: &source_id,
             account_id: &account,
+            // Content keys are only required when the optional post-import dedupe pass runs.
+            fill_content_keys: do_dedupe,
+            backfill_contacts: false,
         };
         let stats = import::import_jsonl_files(&[jsonl_path], &opts)?;
         let dedupe_stats = if do_dedupe {

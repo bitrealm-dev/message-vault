@@ -155,7 +155,7 @@ pub fn username_for_account(conn: &Connection, account_id: &str) -> Result<Optio
 pub fn resolve_account_ref_at(db_path: &std::path::Path, account_ref: &str) -> Result<String> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("open database {}", db_path.display()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    crate::schema::configure_connection(&conn)?;
     resolve_account_ref(&conn, account_ref)
 }
 

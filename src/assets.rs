@@ -45,12 +45,8 @@ pub fn store_verified(
     if !source.is_file() {
         anyhow::bail!("asset source is not a file: {}", source.display());
     }
-    let actual =
-        hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
-    if actual != claimed {
-        anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
-    }
 
+    // Prefer existence check before hashing — duplicate PUTs skip a full SHA pass.
     if let Some(existing) = lookup_by_sha256(assets_root, &claimed) {
         return Ok((
             StoredAsset {
@@ -59,6 +55,12 @@ pub fn store_verified(
             },
             true,
         ));
+    }
+
+    let actual =
+        hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
+    if actual != claimed {
+        anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
     }
 
     let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
@@ -198,4 +200,37 @@ fn guess_mime(ext: Option<&str>) -> Option<String> {
         _ => return None,
     };
     Some(mime.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn store_verified_skips_hash_when_already_present() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let mut src = tempfile::NamedTempFile::new().unwrap();
+        src.write_all(b"hello-asset").unwrap();
+        src.flush().unwrap();
+
+        let sha = hash_file(src.path()).unwrap();
+        let (first, present) = store_verified(src.path(), &sha, root, Some("text/plain")).unwrap();
+        assert!(!present);
+        assert_eq!(first.sha256, sha);
+
+        // Second store with a throwaway source file: existence short-circuit must win
+        // without requiring the new bytes to match (lookup is by claimed SHA).
+        let mut other = tempfile::NamedTempFile::new().unwrap();
+        other.write_all(b"different-bytes").unwrap();
+        other.flush().unwrap();
+        let (second, present_again) =
+            store_verified(other.path(), &sha, root, Some("text/plain")).unwrap();
+        assert!(present_again);
+        assert_eq!(second.sha256, sha);
+        assert_eq!(second.assets_path, first.assets_path);
+        assert!(lookup_by_sha256(root, &sha).is_some());
+    }
 }

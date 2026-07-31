@@ -20,7 +20,15 @@ export function getDb(): Database.Database {
     g.__mvReadonlyDb = new Database(file, {
       readonly: true,
       fileMustExist: true,
+      timeout: 15000,
     });
+    // Prefer WAL when the writer (serve/import) has enabled it; ignore if readonly open can't set it.
+    try {
+      g.__mvReadonlyDb.pragma("journal_mode = WAL");
+    } catch {
+      /* readonly connection may not change journal mode */
+    }
+    g.__mvReadonlyDb.pragma("busy_timeout = 15000");
     g.__mvReadonlyDb.pragma("foreign_keys = ON");
     g.__mvHasDuplicateOf = null;
   }

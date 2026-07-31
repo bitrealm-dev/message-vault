@@ -67,7 +67,10 @@ function rowToAccount(row: AccountRow, emails: AccountEmailRow[]): Account {
 }
 
 function openDb(): Database.Database {
-  const db = new Database(ensureDbParentDir());
+  const db = new Database(ensureDbParentDir(), { timeout: 15000 });
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 15000");
+  db.pragma("foreign_keys = ON");
   ensureVaultSchema(db);
   return db;
 }
