@@ -4,7 +4,6 @@ export type ContactEditDraft = {
   firstName: string;
   lastName: string;
   phones: string[];
-  exclude: boolean;
   labels: string[];
 };
 
@@ -12,27 +11,23 @@ export function seedContactEditDraft(contact: {
   firstName: string | null;
   lastName: string | null;
   phones: string[];
-  exclude: boolean;
   labels?: string[];
 }): ContactEditDraft {
   return {
     firstName: contact.firstName ?? "",
     lastName: contact.lastName ?? "",
     phones: [...contact.phones, ""],
-    exclude: contact.exclude,
     labels: contact.labels ? [...contact.labels] : [],
   };
 }
 
 export function emptyContactEditDraft(defaults?: {
-  exclude?: boolean;
   labels?: string[];
 }): ContactEditDraft {
   return {
     firstName: "",
     lastName: "",
     phones: [""],
-    exclude: defaults?.exclude ?? false,
     labels: defaults?.labels ? [...defaults.labels] : [],
   };
 }
@@ -41,13 +36,8 @@ export function draftHasName(draft: ContactEditDraft): boolean {
   return draft.firstName.trim() !== "" || draft.lastName.trim() !== "";
 }
 
-/** Labels list for the contact card: Inactive first when set. */
-export function displayLabelNames(
-  labels: string[],
-  excluded: boolean,
-): string[] {
-  const rest = labels.filter((g) => g.toLowerCase() !== "excluded");
-  return excluded ? ["Inactive", ...rest] : rest;
+export function displayLabelNames(labels: string[]): string[] {
+  return labels;
 }
 
 /** Drop empty non-trailing rows; ensure exactly one trailing empty row. */

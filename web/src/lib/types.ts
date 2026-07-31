@@ -1,7 +1,5 @@
 export type ContactSection =
-  | "contacts"
   | "all"
-  | "excluded"
   | "no-messages"
   | "no-label"
   | { label: string };
@@ -168,11 +166,8 @@ export type TrashedContactMessagesItem = {
 };
 
 export type HomeStats = {
-  /** Non-excluded contacts with messages (`/contacts`). */
-  included: number;
-  /** Contacts ∪ Excluded (`/all`). */
+  /** Every non-trashed contact. */
   all: number;
-  excluded: number;
   noMessages: number;
   groupChats: number;
   /** Soft-deduped messages (`duplicate_of IS NULL`). */

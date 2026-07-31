@@ -330,6 +330,7 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateLegacyAccountsEmailColumn(db);
   migrateVaultOwnerNameColumns(db);
   migrateContactGroupsToLabels(db);
+  migrateContactStatusesToLabels(db);
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
@@ -526,6 +527,58 @@ function backfillMessagesFts(db: Database.Database): void {
 /** Marker for the one-time migration that locks existing accounts by default. */
 export const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY =
   "accounts_default_read_only_v1";
+export const CONTACT_STATUS_LABELS_META_KEY = "contact_status_labels_v1";
+
+/**
+ * One-time conversion of the legacy exclude flag into ordinary labels.
+ * Future code no longer gives either label special behavior.
+ */
+function migrateContactStatusesToLabels(db: Database.Database): void {
+  if (
+    !tableExists(db, "contacts") ||
+    !tableExists(db, "contact_labels") ||
+    !tableExists(db, "contact_label_members") ||
+    !tableExists(db, "schema_meta")
+  ) {
+    return;
+  }
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(CONTACT_STATUS_LABELS_META_KEY) as { n: number };
+  if (already.n > 0) return;
+
+  db.transaction(() => {
+    db.exec(`
+      INSERT INTO contact_labels (account_id, name)
+      SELECT DISTINCT c.account_id, 'Active'
+      FROM contacts c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM contact_labels cl
+        WHERE cl.account_id = c.account_id AND cl.name = 'Active' COLLATE NOCASE
+      );
+      INSERT INTO contact_labels (account_id, name)
+      SELECT DISTINCT c.account_id, 'Inactive'
+      FROM contacts c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM contact_labels cl
+        WHERE cl.account_id = c.account_id AND cl.name = 'Inactive' COLLATE NOCASE
+      );
+
+      INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
+      SELECT c.id, cl.id
+      FROM contacts c
+      JOIN contact_labels cl
+        ON cl.account_id = c.account_id
+       AND cl.name = CASE WHEN c.exclude != 0 THEN 'Inactive' ELSE 'Active' END
+           COLLATE NOCASE;
+
+      UPDATE contacts SET exclude = 0 WHERE exclude != 0;
+    `);
+    db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+      CONTACT_STATUS_LABELS_META_KEY,
+    );
+  })();
+}
 
 /** One-time: lock every existing account. Later unlocks are preserved. */
 function migrateAccountsDefaultReadOnly(db: Database.Database): void {

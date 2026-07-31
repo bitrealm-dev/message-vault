@@ -69,12 +69,17 @@ export function createContact(input: ContactCreate): ContactDetail {
       "at least one phone number required (emails alone cannot create a contact)",
     );
   }
-  const exclude = input.exclude ?? false;
   const preferredHandle = preferredPhoneHandle(phones);
-  const labels = (input.labels ?? [])
+  let labels = (input.labels ?? [])
     .map((t) => t.trim())
     .filter(Boolean)
     .filter((t) => !RESERVED_LABEL_NAMES.has(t.toLowerCase()));
+  if (input.exclude !== undefined) {
+    labels = labels.filter(
+      (label) => !["active", "inactive"].includes(label.toLowerCase()),
+    );
+    labels.push(input.exclude ? "Inactive" : "Active");
+  }
 
   for (const phone of phones) {
     assertNotOwnerHandle(phone);
@@ -96,7 +101,7 @@ export function createContact(input: ContactCreate): ContactDetail {
           `INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
            VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(accountId, firstName, lastName, exclude ? 1 : 0, preferredHandle);
+        .run(accountId, firstName, lastName, 0, preferredHandle);
       newId = Number(result.lastInsertRowid);
 
       const insertPhone = writeDb.prepare(
@@ -127,7 +132,7 @@ export function createContact(input: ContactCreate): ContactDetail {
     phones: csvPhones,
     firstName,
     lastName,
-    exclude,
+    exclude: false,
     groups: labels,
   });
 
@@ -430,8 +435,13 @@ export function patchContact(
     throw new Error("contact not found");
   }
 
-  const exclude = patch.exclude ?? existing.exclude;
-  const labels = patch.labels ?? existing.labels;
+  let labels = patch.labels ?? existing.labels;
+  if (patch.exclude !== undefined) {
+    labels = labels.filter(
+      (label) => !["active", "inactive"].includes(label.toLowerCase()),
+    );
+    labels.push(patch.exclude ? "Inactive" : "Active");
+  }
   const firstName =
     patch.firstName !== undefined
       ? patch.firstName?.trim() || null
@@ -477,9 +487,9 @@ export function patchContact(
            SET first_name = ?, last_name = ?, exclude = ?, preferred_handle = ?
            WHERE id = ? AND account_id = ?`,
         )
-        .run(firstName, lastName, exclude ? 1 : 0, preferredHandle, id, accountId);
+        .run(firstName, lastName, 0, preferredHandle, id, accountId);
 
-      if (patch.labels) {
+      if (patch.labels || patch.exclude !== undefined) {
         writeDb
           .prepare(`DELETE FROM contact_label_members WHERE contact_id = ?`)
           .run(id);
@@ -502,7 +512,7 @@ export function patchContact(
     existingCsvPhones,
     { firstName: existing.firstName, lastName: existing.lastName },
     {
-      exclude,
+      exclude: false,
       groups: labels,
       firstName: patch.firstName !== undefined ? firstName : undefined,
       lastName: patch.lastName !== undefined ? lastName : undefined,

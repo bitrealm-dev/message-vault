@@ -257,7 +257,7 @@ fn write_csv(path: &Path, contacts: &[ContactOut]) -> Result<()> {
         }
     }
 
-    let max_labels = contacts.iter().map(|c| c.tags.len()).max().unwrap_or(0);
+    let max_labels = contacts.iter().map(|c| c.tags.len() + 1).max().unwrap_or(0);
     let label_count = max_labels.max(5);
 
     let mut writer = csv::Writer::from_path(path)
@@ -275,15 +275,27 @@ fn write_csv(path: &Path, contacts: &[ContactOut]) -> Result<()> {
 
     for c in contacts {
         let phones = c.phones.join(";");
-        let exclude = if c.exclude { "true" } else { "false" };
         let mut row = vec![
             phones,
             c.first_name.clone(),
             c.last_name.clone(),
-            exclude.to_string(),
+            "false".to_string(),
         ];
+        let mut labels: Vec<String> = c
+            .tags
+            .iter()
+            .filter(|label| {
+                !label.eq_ignore_ascii_case("Active") && !label.eq_ignore_ascii_case("Inactive")
+            })
+            .cloned()
+            .collect();
+        labels.push(if c.exclude {
+            "Inactive".to_string()
+        } else {
+            "Active".to_string()
+        });
         for i in 0..label_count {
-            row.push(c.tags.get(i).cloned().unwrap_or_default());
+            row.push(labels.get(i).cloned().unwrap_or_default());
         }
         writer.write_record(&row)?;
     }

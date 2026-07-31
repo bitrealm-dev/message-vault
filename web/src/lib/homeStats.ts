@@ -43,9 +43,7 @@ export function homeStats(): HomeStats {
   }
 
   return {
-    included: countContacts("contacts"),
     all: countContacts("all"),
-    excluded: countContacts("excluded"),
     noMessages: countContacts("no-messages"),
     groupChats: countGroupChats(),
     messages,

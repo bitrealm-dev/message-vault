@@ -20,12 +20,10 @@ export type ParticipantContactFormView = {
   canSaveForm: boolean;
   draftMenuLabels: string[];
   draftLabelChecks: Record<string, LabelCheckState>;
-  draftExcludedCheck: LabelCheckState;
   cancelContactForm: () => void;
   saveContactEdit: () => Promise<void>;
   saveContactCreate: () => Promise<void>;
   toggleDraftLabel: (name: string) => void;
-  toggleDraftExcluded: () => void;
   createAndAssignDraftLabel: (name: string) => void;
   clearDraftLabels: () => void;
 };
@@ -49,12 +47,10 @@ export function ParticipantContactFormOverlay({
     canSaveForm,
     draftMenuLabels,
     draftLabelChecks,
-    draftExcludedCheck,
     cancelContactForm,
     saveContactCreate,
     saveContactEdit,
     toggleDraftLabel,
-    toggleDraftExcluded,
     createAndAssignDraftLabel,
     clearDraftLabels,
   } = form;
@@ -97,17 +93,14 @@ export function ParticipantContactFormOverlay({
         draft={editDraft}
         onDraftChange={setEditDraft}
         labels={editDraft.labels}
-        excluded={editDraft.exclude}
         phonesView={phonesView}
         labelsEditor={
           <LabelsMenu
             labeled
             allLabels={draftMenuLabels}
             checks={draftLabelChecks}
-            excludedCheck={draftExcludedCheck}
             disabled={contactSaving}
             onToggle={toggleDraftLabel}
-            onToggleExcluded={toggleDraftExcluded}
             onCreate={createAndAssignDraftLabel}
             onClearAll={clearDraftLabels}
           />

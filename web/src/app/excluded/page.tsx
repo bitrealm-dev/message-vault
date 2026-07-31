@@ -1,4 +1,4 @@
-import { ContactBrowsePage, parseContactId } from "@/components/ContactBrowsePage";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -8,12 +8,6 @@ export default async function ExcludedPage({
   searchParams: Promise<{ c?: string }>;
 }) {
   const sp = await searchParams;
-  return (
-    <ContactBrowsePage
-      section="excluded"
-      label="Inactive"
-      nav="/excluded"
-      contactId={parseContactId(sp.c)}
-    />
-  );
+  const query = sp.c ? `?c=${encodeURIComponent(sp.c)}` : "";
+  redirect(`/all${query}`);
 }

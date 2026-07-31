@@ -45,7 +45,6 @@ export function VaultOwnerEditOverlay({
         firstName: owner.first_name,
         lastName: owner.last_name,
         phones: owner.phones,
-        exclude: false,
         labels: [],
       }),
     );
@@ -135,7 +134,6 @@ export function VaultOwnerEditOverlay({
         draft={draft}
         onDraftChange={setDraft}
         labels={[]}
-        excluded={false}
         phonesView={owner.phones}
       />
       {error && (

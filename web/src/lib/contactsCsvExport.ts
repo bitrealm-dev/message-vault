@@ -21,7 +21,7 @@ export function exportContactsCsvFromDb(
   try {
     const contacts = db
       .prepare(
-        `SELECT id, first_name, last_name, exclude
+        `SELECT id, first_name, last_name
          FROM contacts
          WHERE account_id = ?
          ORDER BY
@@ -34,7 +34,6 @@ export function exportContactsCsvFromDb(
       id: number;
       first_name: string | null;
       last_name: string | null;
-      exclude: number;
     }>;
 
     const handleStmt = db.prepare(
@@ -65,7 +64,7 @@ export function exportContactsCsvFromDb(
         phones,
         firstName: c.first_name,
         lastName: c.last_name,
-        exclude: c.exclude !== 0,
+        exclude: false,
         labels,
       });
     }

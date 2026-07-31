@@ -199,7 +199,7 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
         r#"
         SELECT id, first_name, last_name, preferred_handle
         FROM contacts
-        WHERE account_id = ?1 AND exclude = 0
+        WHERE account_id = ?1
         ORDER BY
           LOWER(COALESCE(NULLIF(TRIM(last_name), ''), first_name, preferred_handle, '')),
           LOWER(COALESCE(NULLIF(TRIM(first_name), ''), preferred_handle, ''))

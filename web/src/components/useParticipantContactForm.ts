@@ -36,7 +36,7 @@ export type UseParticipantContactFormOptions = {
   /** Extra label names always listed in the draft Labels menu (e.g. browse allLabels). */
   knownLabels?: string[];
   /** Defaults applied when creating a contact from a handle. */
-  createDefaults?: { labels: string[]; exclude: boolean };
+  createDefaults?: { labels: string[] };
   /** Return true to ignore Escape (e.g. another modal is open). */
   shouldIgnoreEscape?: () => boolean;
   /** After successful create/edit (default: router.refresh). */
@@ -54,12 +54,10 @@ export type ParticipantContactFormState = {
   canSaveForm: boolean;
   draftMenuLabels: string[];
   draftLabelChecks: Record<string, LabelCheckState>;
-  draftExcludedCheck: LabelCheckState;
   cancelContactForm: () => void;
   saveContactEdit: () => Promise<void>;
   saveContactCreate: () => Promise<void>;
   toggleDraftLabel: (name: string) => void;
-  toggleDraftExcluded: () => void;
   createAndAssignDraftLabel: (name: string) => void;
   clearDraftLabels: () => void;
   openEditContact: (id: number, anchor: ContactFormAnchor) => Promise<void>;
@@ -122,10 +120,6 @@ export function useParticipantContactForm(
     return result;
   }, [draftMenuLabels, editDraft?.labels]);
 
-  const draftExcludedCheck = useMemo((): LabelCheckState => {
-    return editDraft?.exclude ? "on" : "off";
-  }, [editDraft?.exclude]);
-
   const cancelContactForm = useCallback(() => {
     setEditContactId(null);
     setContactCreating(false);
@@ -175,16 +169,8 @@ export function useParticipantContactForm(
     });
   }, []);
 
-  const toggleDraftExcluded = useCallback(() => {
-    setEditDraft((prev) =>
-      prev ? { ...prev, exclude: !prev.exclude } : prev,
-    );
-  }, []);
-
   const clearDraftLabels = useCallback(() => {
-    setEditDraft((prev) =>
-      prev ? { ...prev, labels: [], exclude: false } : prev,
-    );
+    setEditDraft((prev) => (prev ? { ...prev, labels: [] } : prev));
   }, []);
 
   const finishSaved = useCallback(
@@ -279,7 +265,6 @@ export function useParticipantContactForm(
           firstName: editDraft.firstName.trim() || null,
           lastName: editDraft.lastName.trim() || null,
           phones: phonesForSave(editDraft.phones),
-          exclude: editDraft.exclude,
           labels: editDraft.labels,
         }),
       });
@@ -309,7 +294,6 @@ export function useParticipantContactForm(
           firstName: editDraft.firstName.trim() || null,
           lastName: editDraft.lastName.trim() || null,
           phones: phonesForSave(editDraft.phones),
-          exclude: editDraft.exclude,
           labels: editDraft.labels,
         }),
       });
@@ -340,12 +324,10 @@ export function useParticipantContactForm(
     canSaveForm,
     draftMenuLabels,
     draftLabelChecks,
-    draftExcludedCheck,
     cancelContactForm,
     saveContactEdit,
     saveContactCreate,
     toggleDraftLabel,
-    toggleDraftExcluded,
     createAndAssignDraftLabel,
     clearDraftLabels,
     openEditContact,

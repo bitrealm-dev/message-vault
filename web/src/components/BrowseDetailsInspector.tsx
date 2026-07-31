@@ -304,11 +304,6 @@ export function BrowseDetailsInspector({
             </button>
           )}
         </div>
-        {c?.exclude ? (
-          <p className="mb-2 text-[12px] font-medium text-amber-400/90">
-            Inactive
-          </p>
-        ) : null}
         {phones.length > 0 && (
           <div className="mb-3">
             <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">

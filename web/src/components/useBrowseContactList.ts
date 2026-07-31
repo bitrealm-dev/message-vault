@@ -1,7 +1,7 @@
 "use client";
 
 import { searchContacts } from "@/lib/contactSearch";
-import type { ContactListItem, ContactSection } from "@/lib/types";
+import type { ContactListItem } from "@/lib/types";
 import { useCallback, useMemo } from "react";
 import type { SortMode, SortOrder } from "./SortByMenu";
 
@@ -14,8 +14,6 @@ import type { SortMode, SortOrder } from "./SortByMenu";
  */
 export function useBrowseContactListBase(options: {
   contacts: ContactListItem[];
-  contactSection: ContactSection;
-  isContactExcluded: (c: { id: number; exclude: boolean }) => boolean;
   sort: SortMode;
   sortOrder: SortOrder;
   query: string;
@@ -27,23 +25,12 @@ export function useBrowseContactListBase(options: {
 } {
   const {
     contacts,
-    contactSection,
-    isContactExcluded,
     sort,
     sortOrder,
     query,
   } = options;
 
-  /** Excluded stay out of Contacts / groups; All and No messages may include them. */
-  const visibleContacts = useMemo(() => {
-    if (contactSection === "excluded") {
-      return contacts.filter((c) => isContactExcluded(c));
-    }
-    if (contactSection === "all" || contactSection === "no-messages") {
-      return contacts;
-    }
-    return contacts.filter((c) => !isContactExcluded(c));
-  }, [contacts, contactSection, isContactExcluded]);
+  const visibleContacts = contacts;
 
   const compareContacts = useCallback(
     (a: ContactListItem, b: ContactListItem) => {

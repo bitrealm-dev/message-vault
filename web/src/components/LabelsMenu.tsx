@@ -16,9 +16,7 @@ export type LabelCheckState = "on" | "off" | "mixed";
 export function LabelsMenu({
   allLabels,
   checks,
-  excludedCheck = "off",
   onToggle,
-  onToggleExcluded,
   onCreate,
   onClearAll,
   onOpenChange,
@@ -34,13 +32,10 @@ export function LabelsMenu({
   allLabels: string[];
   /** Per-label membership across the current contact or selection. */
   checks: Record<string, LabelCheckState>;
-  /** Implicit Inactive (backed by exclude column, not contact labels). */
-  excludedCheck?: LabelCheckState;
   onToggle?: (name: string) => void;
-  onToggleExcluded?: () => void;
   /** Called when a new label is created; should add it to the current target(s). */
   onCreate?: (name: string) => void;
-  /** Remove all label memberships (and Inactive) from the current target(s). */
+  /** Remove all label memberships from the current target(s). */
   onClearAll?: () => void;
   onOpenChange?: (open: boolean) => void;
   /** Fired when switching between the label list and the create form. */
@@ -182,11 +177,7 @@ export function LabelsMenu({
       if (!el) continue;
       el.indeterminate = checks[name] === "mixed";
     }
-    const excludedEl = checkRefs.current.get("__excluded__");
-    if (excludedEl) {
-      excludedEl.indeterminate = excludedCheck === "mixed";
-    }
-  }, [checks, excludedCheck, localLabels, open, filtered]);
+  }, [checks, localLabels, open, filtered]);
 
   const toggle = (name: string) => {
     if (disabled || !onToggle) return;
@@ -217,9 +208,9 @@ export function LabelsMenu({
     setMenuMode("list");
   };
 
-  const hasAnyMembership =
-    excludedCheck !== "off" ||
-    Object.values(checks).some((state) => state === "on" || state === "mixed");
+  const hasAnyMembership = Object.values(checks).some(
+    (state) => state === "on" || state === "mixed",
+  );
 
   const clearAll = () => {
     if (disabled || !onClearAll || !hasAnyMembership) return;
@@ -337,23 +328,6 @@ export function LabelsMenu({
           </div>
 
           <div className="max-h-56 overflow-y-auto py-1">
-            <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-[13px] text-text hover:bg-hover-strong">
-              <input
-                ref={(el) => {
-                  if (el) checkRefs.current.set("__excluded__", el);
-                  else checkRefs.current.delete("__excluded__");
-                }}
-                type="checkbox"
-                checked={excludedCheck === "on"}
-                disabled={disabled}
-                onChange={() => {
-                  if (!disabled) onToggleExcluded?.();
-                }}
-                className="size-3.5 rounded border-border accent-accent"
-              />
-              <span className="truncate">Inactive</span>
-            </label>
-            <div className="mx-3 my-1 border-t border-border/60" />
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-[12px] text-muted">No labels</p>
             ) : (

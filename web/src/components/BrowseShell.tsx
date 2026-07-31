@@ -169,9 +169,6 @@ export function BrowseShell({
   const [labelOverrides, setLabelOverrides] = useState<Map<number, string[]>>(
     () => new Map(),
   );
-  const [excludeOverrides, setExcludeOverrides] = useState<Map<number, boolean>>(
-    () => new Map(),
-  );
   const labelOverridesRef = useRef(labelOverrides);
   labelOverridesRef.current = labelOverrides;
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -286,12 +283,6 @@ export function BrowseShell({
   } = peopleTree;
   void _patchCachedDetail;
 
-  const isContactExcluded = useCallback(
-    (c: { id: number; exclude: boolean }) =>
-      excludeOverrides.get(c.id) ?? c.exclude,
-    [excludeOverrides],
-  );
-
   const {
     visibleContacts,
     sortedRaw,
@@ -299,8 +290,6 @@ export function BrowseShell({
     compareContacts,
   } = useBrowseContactListBase({
     contacts,
-    contactSection,
-    isContactExcluded,
     sort,
     sortOrder,
     query,
@@ -1139,13 +1128,9 @@ export function BrowseShell({
 
   const createDefaults = useMemo(() => {
     if (typeof contactSection === "object") {
-      return { labels: [contactSection.label], exclude: false };
+      return { labels: [contactSection.label] };
     }
-    if (contactSection === "excluded") {
-      return { labels: [] as string[], exclude: true };
-    }
-    // all, no-label
-    return { labels: [] as string[], exclude: false };
+    return { labels: [] as string[] };
   }, [contactSection]);
 
   const participantForm = useParticipantContactForm({
@@ -1200,11 +1185,9 @@ export function BrowseShell({
     canEditLabels,
     menuLabels,
     labelChecks,
-    excludedCheck,
     toggleLabel,
     createAndAssignLabel,
     clearAllLabelsForSelection,
-    toggleExcludedForSelection,
     onSelectionMenuOpenChange,
     openCtxLabels,
     closeLabelsPanel,
@@ -1218,13 +1201,10 @@ export function BrowseShell({
     hasSelection,
     detail,
     setDetail,
-    contactId,
     setThreadsEpoch,
     formOpen,
     labelOverrides,
     setLabelOverrides,
-    excludeOverrides,
-    setExcludeOverrides,
     ctxMenu,
     trashIdsForContext,
     queueStatusMessage,
@@ -1246,7 +1226,6 @@ export function BrowseShell({
   useEffect(() => {
     setSelectedIds(new Set());
     setLabelOverrides(new Map());
-    setExcludeOverrides(new Map());
     selectionDirtyRef.current = false;
     cancelContactFormRef.current();
   }, [paneStorageKey, setSelectedIds, selectionDirtyRef]);
@@ -1256,11 +1235,9 @@ export function BrowseShell({
     if (selectionDirtyRef.current) {
       selectionDirtyRef.current = false;
       setLabelOverrides(new Map());
-      setExcludeOverrides(new Map());
       router.refresh();
     } else {
       setLabelOverrides(new Map());
-      setExcludeOverrides(new Map());
     }
   }, [clearSelectionBase, router, selectionDirtyRef]);
 
@@ -1305,7 +1282,6 @@ export function BrowseShell({
           ...detail,
           labels:
             labelOverrides.get(detail.id) ?? detail.labels,
-          exclude: excludeOverrides.get(detail.id) ?? detail.exclude,
         }),
         anchor ?? null,
       );
@@ -1315,7 +1291,6 @@ export function BrowseShell({
       hasSelection,
       contactCreating,
       labelOverrides,
-      excludeOverrides,
       participantForm.openEditFromDraft,
     ],
   );
@@ -1346,7 +1321,6 @@ export function BrowseShell({
         ...detail,
         labels:
           labelOverrides.get(detail.id) ?? detail.labels,
-        exclude: excludeOverrides.get(detail.id) ?? detail.exclude,
       }),
       null,
     );
@@ -1355,7 +1329,6 @@ export function BrowseShell({
     hasSelection,
     contactCreating,
     labelOverrides,
-    excludeOverrides,
     participantForm.openEditFromDraft,
   ]);
 
@@ -1481,7 +1454,6 @@ export function BrowseShell({
         setSelectedIds(new Set());
         setSelectedGroupIds(new Set());
         setLabelOverrides(new Map());
-        setExcludeOverrides(new Map());
         selectionDirtyRef.current = false;
         cancelContactFormRef.current();
 
@@ -2341,10 +2313,8 @@ export function BrowseShell({
           fixedPosition={labelsPanelPos}
           allLabels={menuLabels}
           checks={labelChecks}
-          excludedCheck={excludedCheck}
           disabled={formOpen}
           onToggle={toggleLabel}
-          onToggleExcluded={() => void toggleExcludedForSelection()}
           onCreate={createAndAssignLabel}
           onClearAll={() => void clearAllLabelsForSelection()}
           onModeChange={(mode) => {
@@ -2363,10 +2333,8 @@ export function BrowseShell({
         fixedPosition={toolbarLabelsPos}
         allLabels={menuLabels}
         checks={labelChecks}
-        excludedCheck={excludedCheck}
         disabled={!canEditLabels}
         onToggle={toggleLabel}
-        onToggleExcluded={() => void toggleExcludedForSelection()}
         onCreate={createAndAssignLabel}
         onClearAll={() => void clearAllLabelsForSelection()}
         onOpenChange={(open) => {

@@ -29,9 +29,7 @@ export function HomePageClient({
 }: {
   labels: string[];
   stats: {
-    included: number;
     all: number;
-    excluded: number;
     noMessages: number;
     groupChats: number;
     messages: number;
@@ -51,18 +49,8 @@ export function HomePageClient({
           <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
             Contacts
           </h2>
-          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
             <StatCard href="/all" label="All" value={stats.all} />
-            <StatCard
-              href="/contacts"
-              label="Active"
-              value={stats.included}
-            />
-            <StatCard
-              href="/excluded"
-              label="Inactive"
-              value={stats.excluded}
-            />
             <StatCard
               href="/no-messages"
               label="No Messages"

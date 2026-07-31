@@ -3,13 +3,11 @@
 import { isSettingsPath } from "@/lib/settingsNav";
 import { useEffect } from "react";
 import {
-  AddressBookIcon,
   GroupMessagesOutlineIcon,
   HomeIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
   PersonDetailIcon,
-  ProhibitedIcon,
   SettingsIcon,
   TrashIcon,
 } from "./icons";
@@ -134,20 +132,6 @@ export function AppSidebar({
           active={active === "/all"}
           compact={collapsed}
           icon={<PersonDetailIcon className="size-5 shrink-0 opacity-80" />}
-        />
-        <SidebarNavLink
-          href="/contacts"
-          label="Active"
-          active={active === "/contacts"}
-          compact={collapsed}
-          icon={<AddressBookIcon className="size-5 shrink-0 opacity-80" />}
-        />
-        <SidebarNavLink
-          href="/excluded"
-          label="Inactive"
-          active={active === "/excluded"}
-          compact={collapsed}
-          icon={<ProhibitedIcon className="size-5 shrink-0 opacity-80" />}
         />
         <SidebarNavLink
           href="/group-messages"

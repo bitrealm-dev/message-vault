@@ -778,6 +778,53 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "contacts")? {
         conn.execute_batch(CONTACTS_TABLES_DDL)?;
     }
+    migrate_contact_statuses_to_labels(conn)?;
+    Ok(())
+}
+
+pub const CONTACT_STATUS_LABELS_META_KEY: &str = "contact_status_labels_v1";
+
+fn migrate_contact_statuses_to_labels(conn: &Connection) -> Result<()> {
+    let already: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+        params![CONTACT_STATUS_LABELS_META_KEY],
+        |row| row.get(0),
+    )?;
+    if already {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        INSERT INTO contact_labels (account_id, name)
+        SELECT DISTINCT c.account_id, 'Active'
+        FROM contacts c
+        WHERE NOT EXISTS (
+          SELECT 1 FROM contact_labels cl
+          WHERE cl.account_id = c.account_id AND cl.name = 'Active' COLLATE NOCASE
+        );
+        INSERT INTO contact_labels (account_id, name)
+        SELECT DISTINCT c.account_id, 'Inactive'
+        FROM contacts c
+        WHERE NOT EXISTS (
+          SELECT 1 FROM contact_labels cl
+          WHERE cl.account_id = c.account_id AND cl.name = 'Inactive' COLLATE NOCASE
+        );
+
+        INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
+        SELECT c.id, cl.id
+        FROM contacts c
+        JOIN contact_labels cl
+          ON cl.account_id = c.account_id
+         AND cl.name = CASE WHEN c.exclude != 0 THEN 'Inactive' ELSE 'Active' END
+             COLLATE NOCASE;
+
+        UPDATE contacts SET exclude = 0 WHERE exclude != 0;
+        "#,
+    )?;
+    conn.execute(
+        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
+        params![CONTACT_STATUS_LABELS_META_KEY],
+    )?;
     Ok(())
 }
 

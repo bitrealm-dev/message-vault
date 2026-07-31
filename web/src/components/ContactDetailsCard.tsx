@@ -26,11 +26,7 @@ function LabelNamesList({ names }: { names: string[] }) {
       {names.map((name) => (
         <span
           key={name}
-          className={
-            name === "Inactive"
-              ? "truncate text-[13px] font-semibold leading-5 text-amber-400/90"
-              : "truncate text-[13px] leading-5 text-text"
-          }
+          className="truncate text-[13px] leading-5 text-text"
         >
           {name}
         </span>
@@ -44,7 +40,6 @@ export function ContactDetailsCard({
   draft,
   onDraftChange,
   labels,
-  excluded,
   phonesView,
   framed = true,
   labelsEditor,
@@ -54,7 +49,6 @@ export function ContactDetailsCard({
   draft: ContactEditDraft | null;
   onDraftChange?: (draft: ContactEditDraft) => void;
   labels: string[];
-  excluded: boolean;
   /** Phones shown in view mode (when form is closed). */
   phonesView: string[];
   /** When false, skip outer card chrome and "Contact details" heading (for dialogs). */
@@ -64,7 +58,7 @@ export function ContactDetailsCard({
   /** Hide labels column (e.g. vault owner “Me” edit). */
   hideLabels?: boolean;
 }) {
-  const shownLabels = displayLabelNames(labels, excluded);
+  const shownLabels = displayLabelNames(labels);
   const phoneCount =
     formOpen && draft
       ? draft.phones.filter((p) => p.trim()).length

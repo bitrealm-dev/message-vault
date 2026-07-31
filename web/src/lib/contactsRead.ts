@@ -133,58 +133,28 @@ function sectionQueryBody(
   const hasMsgs = contactHasMessagesSql();
   const notTrashed = notTrashedContactSql("c");
   if (typeof section === "object" && "label" in section) {
-    // Exclude and no-messages override labels: those contacts only appear under
-    // their implicit sections.
     return {
       fromWhere: `
         FROM contacts c
         JOIN contact_label_members clm ON clm.contact_id = c.id
         JOIN contact_labels cl ON cl.id = clm.label_id AND cl.name = ?
         WHERE c.account_id = ?
-          AND c.exclude = 0
           ${notTrashed}
-          AND ${hasMsgs}
       `,
       params: [section.label, accountId],
     };
   }
   switch (section) {
-    case "contacts":
-      // Innate set: All − Excluded (manage exclude only; this is derived).
-      return {
-        fromWhere: `
-          FROM contacts c
-          WHERE c.account_id = ?
-            AND c.exclude = 0
-            ${notTrashed}
-            AND ${hasMsgs}
-        `,
-        params: [accountId],
-      };
     case "all":
-      // Contacts ∪ Excluded (excluded always included, even with no messages).
       return {
         fromWhere: `
           FROM contacts c
           WHERE c.account_id = ?
-            AND (c.exclude = 1 OR (${hasMsgs}))
-            ${notTrashed}
-        `,
-        params: [accountId],
-      };
-    case "excluded":
-      // Excluded overrides no-messages: all excluded contacts live here.
-      return {
-        fromWhere: `
-          FROM contacts c
-          WHERE c.account_id = ?
-            AND c.exclude = 1
             ${notTrashed}
         `,
         params: [accountId],
       };
     case "no-messages":
-      // Includes excluded contacts with no messages (they also appear under Excluded).
       return {
         fromWhere: `
           FROM contacts c
@@ -199,12 +169,10 @@ function sectionQueryBody(
         fromWhere: `
           FROM contacts c
           WHERE c.account_id = ?
-            AND c.exclude = 0
             ${notTrashed}
             AND NOT EXISTS (
               SELECT 1 FROM contact_label_members clm WHERE clm.contact_id = c.id
             )
-            AND ${hasMsgs}
         `,
         params: [accountId],
       };

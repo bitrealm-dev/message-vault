@@ -293,7 +293,7 @@ fn load_from_csv(
         }
 
         let preferred = phones[0].clone();
-        let exclude = parse_bool(&row.exclude);
+        let legacy_inactive = parse_bool(&row.exclude);
         let first_name = empty_to_none(&row.first_name);
         let last_name = empty_to_none(&row.last_name);
 
@@ -303,7 +303,7 @@ fn load_from_csv(
                 account_id, first_name, last_name, exclude, preferred_handle
             ) VALUES (?1, ?2, ?3, ?4, ?5)
             "#,
-            params![account_id, first_name, last_name, exclude as i64, preferred],
+            params![account_id, first_name, last_name, 0, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
@@ -316,7 +316,17 @@ fn load_from_csv(
             stats.phones += 1;
         }
 
-        for label_name in &row.labels {
+        let mut labels = row.labels.clone();
+        labels.retain(|label| {
+            !label.eq_ignore_ascii_case("Active") && !label.eq_ignore_ascii_case("Inactive")
+        });
+        let status_label = if legacy_inactive {
+            "Inactive"
+        } else {
+            "Active"
+        };
+        labels.push(status_label.to_string());
+        for label_name in &labels {
             let label_id = ensure_label(&tx, account_id, label_name)?;
             tx.execute(
                 "INSERT OR IGNORE INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
