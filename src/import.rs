@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params};
+use rusqlite::{Connection, Statement, Transaction, params};
 use serde::Serialize;
 
 use crate::assets::{self, AssetStats, StoredAsset};
@@ -146,6 +146,15 @@ pub fn import_export(
     )
 }
 
+/// Whether import should run DDL/schema ensure on the connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportSchemaMode {
+    /// CLI / one-shot: ensure vault + messages schema.
+    Ensure,
+    /// HTTP serve hot path: schema already ensured on the warm connection.
+    AssumeReady,
+}
+
 /// Import one or more JSONL files. Attachment relative paths resolve against `opts.asset_root`.
 pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
     if opts.source.trim().is_empty() {
@@ -158,17 +167,32 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
     }
-    fs::create_dir_all(opts.assets_dir)
-        .with_context(|| format!("failed to create {}", opts.assets_dir.display()))?;
 
     let mut conn = Connection::open(opts.db_path)
         .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
     schema::configure_connection(&conn)?;
     println!("  sql:      opened {}", opts.db_path.display());
     let _ = io::stdout().flush();
+    import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
+}
 
-    schema::ensure_vault_schema(&conn)?;
-    crate::vault_owner::ensure_account_row(&conn, opts.account_id)?;
+/// Import onto an existing connection (warm serve path or tests).
+pub fn import_jsonl_files_on_conn(
+    mut conn: &mut Connection,
+    paths: &[PathBuf],
+    opts: &ImportOptions<'_>,
+    schema_mode: ImportSchemaMode,
+) -> Result<ImportStats> {
+    if opts.source.trim().is_empty() {
+        bail!("import source id must not be empty");
+    }
+    fs::create_dir_all(opts.assets_dir)
+        .with_context(|| format!("failed to create {}", opts.assets_dir.display()))?;
+
+    if schema_mode == ImportSchemaMode::Ensure {
+        schema::ensure_vault_schema(conn)?;
+    }
+    crate::vault_owner::ensure_account_row(conn, opts.account_id)?;
 
     println!(
         "  sql:      loading contacts from {}…",
@@ -176,7 +200,7 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
     );
     let _ = io::stdout().flush();
     let contact_stats = contacts::load_contacts_if_needed(
-        &mut conn,
+        conn,
         opts.contacts_csv,
         opts.overwrite_contacts,
         opts.account_id,
@@ -195,10 +219,15 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
         opts.exclude_csv.display()
     );
 
-    println!("  sql:      ensuring schema + resetting staging for account…");
-    let _ = io::stdout().flush();
-    schema::ensure_messages_schema(&conn)?;
-    schema::reset_staging_for_account(&conn, opts.account_id)?;
+    if schema_mode == ImportSchemaMode::Ensure {
+        println!("  sql:      ensuring schema + resetting staging for account…");
+        let _ = io::stdout().flush();
+        schema::ensure_messages_schema(conn)?;
+    } else {
+        println!("  sql:      resetting staging for account…");
+        let _ = io::stdout().flush();
+    }
+    schema::reset_staging_for_account(conn, opts.account_id)?;
     if opts.mode == ImportMode::Replace {
         println!(
             "  sql:      deleting existing messages for source '{}'…",
@@ -774,161 +803,6 @@ fn promote_append(
 
     let tx = conn.transaction()?;
 
-    println!("  sql:      promote: reading staging conversations…");
-    let _ = io::stdout().flush();
-    let mut staging_convs = tx.prepare(
-        r#"
-        SELECT id, chat_identifier, service, conversation_type, group_title, exported_at, source_file
-        FROM staging_conversations
-        WHERE account_id = ?1
-        ORDER BY id
-        "#,
-    )?;
-
-    let staging_conv_rows: Vec<(
-        i64,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = staging_convs
-        .query_map(params![account_id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(staging_convs);
-    println!(
-        "  sql:      promote: {} staging conversations → production…",
-        staging_conv_rows.len()
-    );
-    let _ = io::stdout().flush();
-
-    let mut conv_map: HashMap<i64, i64> = HashMap::new();
-    let mut find_conv =
-        tx.prepare("SELECT id FROM conversations WHERE account_id = ?1 AND chat_identifier = ?2")?;
-    let mut update_conv = tx.prepare(
-        r#"
-        UPDATE conversations SET
-            service = COALESCE(?2, service),
-            conversation_type = ?3,
-            group_title = COALESCE(?4, group_title),
-            exported_at = COALESCE(?5, exported_at),
-            source_file = ?6
-        WHERE id = ?1
-        "#,
-    )?;
-    let mut insert_conv = tx.prepare(
-        r#"
-        INSERT INTO conversations (
-            account_id, chat_identifier, service, conversation_type, group_title, exported_at, source_file
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#,
-    )?;
-
-    for (
-        staging_id,
-        chat_identifier,
-        service,
-        conversation_type,
-        group_title,
-        exported_at,
-        source_file,
-    ) in staging_conv_rows
-    {
-        let existing: Option<i64> = find_conv
-            .query_row(params![account_id, chat_identifier], |row| row.get(0))
-            .optional()?;
-
-        let prod_id = if let Some(id) = existing {
-            update_conv.execute(params![
-                id,
-                service,
-                conversation_type,
-                group_title,
-                exported_at,
-                source_file
-            ])?;
-            id
-        } else {
-            insert_conv.execute(params![
-                account_id,
-                chat_identifier,
-                service,
-                conversation_type,
-                group_title,
-                exported_at,
-                source_file,
-            ])?;
-            stats.conversations += 1;
-            tx.last_insert_rowid()
-        };
-        conv_map.insert(staging_id, prod_id);
-    }
-    drop(find_conv);
-    drop(update_conv);
-    drop(insert_conv);
-    println!(
-        "  sql:      promote: conversations done (new={})  ({:.1}s)",
-        stats.conversations,
-        started.elapsed().as_secs_f64()
-    );
-
-    println!("  sql:      promote: reading staging participants…");
-    let _ = io::stdout().flush();
-    let mut staging_parts = tx.prepare(
-        r#"
-        SELECT conversation_id, handle, name_hint
-        FROM staging_participants
-        WHERE conversation_id IN (
-            SELECT id FROM staging_conversations WHERE account_id = ?1
-        )
-        ORDER BY id
-        "#,
-    )?;
-    let staging_part_rows: Vec<(i64, String, Option<String>)> = staging_parts
-        .query_map(params![account_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(staging_parts);
-    println!(
-        "  sql:      promote: {} staging participants → production…",
-        staging_part_rows.len()
-    );
-    let _ = io::stdout().flush();
-
-    let mut insert_part = tx.prepare(
-        r#"
-        INSERT OR IGNORE INTO participants (conversation_id, handle, name_hint)
-        VALUES (?1, ?2, ?3)
-        "#,
-    )?;
-    for (staging_conv_id, handle, name_hint) in staging_part_rows {
-        let Some(&prod_conv_id) = conv_map.get(&staging_conv_id) else {
-            continue;
-        };
-        let inserted = insert_part.execute(params![prod_conv_id, handle, name_hint])?;
-        if inserted > 0 {
-            stats.participants += 1;
-        }
-    }
-    drop(insert_part);
-    println!(
-        "  sql:      promote: participants done (new={})  ({:.1}s)",
-        stats.participants,
-        started.elapsed().as_secs_f64()
-    );
-
     // Staging→prod conversation id map for set-based inserts.
     tx.execute_batch(
         r#"
@@ -939,13 +813,88 @@ fn promote_append(
         DELETE FROM _promote_conv_map;
         "#,
     )?;
-    {
-        let mut ins =
-            tx.prepare("INSERT INTO _promote_conv_map (staging_id, prod_id) VALUES (?1, ?2)")?;
-        for (staging_id, prod_id) in &conv_map {
-            ins.execute(params![staging_id, prod_id])?;
-        }
-    }
+
+    let staging_conv_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
+        params![account_id],
+        |r| r.get(0),
+    )?;
+    println!("  sql:      promote: {staging_conv_count} staging conversations → production…");
+    let _ = io::stdout().flush();
+
+    let max_conv_before: i64 =
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| r.get(0))?;
+    tx.execute(
+        r#"
+        INSERT INTO conversations (
+            account_id, chat_identifier, service, conversation_type,
+            group_title, exported_at, source_file
+        )
+        SELECT
+            account_id, chat_identifier, service, conversation_type,
+            group_title, exported_at, source_file
+        FROM staging_conversations
+        WHERE account_id = ?1
+        ON CONFLICT(account_id, chat_identifier) DO UPDATE SET
+            service = COALESCE(excluded.service, conversations.service),
+            conversation_type = excluded.conversation_type,
+            group_title = COALESCE(excluded.group_title, conversations.group_title),
+            exported_at = COALESCE(excluded.exported_at, conversations.exported_at),
+            source_file = excluded.source_file
+        "#,
+        params![account_id],
+    )?;
+    tx.execute(
+        r#"
+        INSERT INTO _promote_conv_map (staging_id, prod_id)
+        SELECT sc.id, c.id
+        FROM staging_conversations sc
+        JOIN conversations c
+          ON c.account_id = sc.account_id
+         AND c.chat_identifier = sc.chat_identifier
+        WHERE sc.account_id = ?1
+        "#,
+        params![account_id],
+    )?;
+    let new_conversations: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM _promote_conv_map WHERE prod_id > ?1",
+        params![max_conv_before],
+        |r| r.get(0),
+    )?;
+    stats.conversations = u64::try_from(new_conversations).unwrap_or(0);
+    println!(
+        "  sql:      promote: conversations done (new={})  ({:.1}s)",
+        stats.conversations,
+        started.elapsed().as_secs_f64()
+    );
+
+    let staging_part_count: i64 = tx.query_row(
+        r#"
+        SELECT COUNT(*) FROM staging_participants
+        WHERE conversation_id IN (
+            SELECT id FROM staging_conversations WHERE account_id = ?1
+        )
+        "#,
+        params![account_id],
+        |r| r.get(0),
+    )?;
+    println!("  sql:      promote: {staging_part_count} staging participants → production…");
+    let _ = io::stdout().flush();
+    stats.participants = u64::try_from(tx.execute(
+        r#"
+        INSERT OR IGNORE INTO participants (conversation_id, handle, name_hint)
+        SELECT cm.prod_id, sp.handle, sp.name_hint
+        FROM staging_participants sp
+        JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
+        "#,
+        [],
+    )?)
+    .unwrap_or(0);
+    println!(
+        "  sql:      promote: participants done (new={})  ({:.1}s)",
+        stats.participants,
+        started.elapsed().as_secs_f64()
+    );
 
     let total_msgs: i64 = tx.query_row(
         r#"
@@ -962,6 +911,11 @@ fn promote_append(
         mode.as_str()
     );
     let _ = io::stdout().flush();
+
+    // Skip per-row FTS trigger work during bulk message/attachment inserts; index once after.
+    println!("  sql:      promote: pausing FTS triggers…");
+    let _ = io::stdout().flush();
+    schema::drop_messages_fts_triggers(&tx)?;
 
     let msg_map = if mode == ImportMode::Replace {
         // Source rows were wiped already: one set-based INSERT, then zip new ids in order.
@@ -1187,6 +1141,15 @@ fn promote_append(
         started.elapsed().as_secs_f64()
     );
 
+    println!("  sql:      promote: bulk-indexing FTS for new messages…");
+    let _ = io::stdout().flush();
+    let fts_indexed = schema::index_messages_fts_from_promote_map(&tx)?;
+    schema::install_messages_fts_triggers(&tx)?;
+    println!(
+        "  sql:      promote: FTS indexed={fts_indexed} (triggers restored)  ({:.1}s)",
+        started.elapsed().as_secs_f64()
+    );
+
     if fill_content_keys {
         println!("  sql:      promote: filling content keys…");
         let _ = io::stdout().flush();
@@ -1314,5 +1277,79 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dup_body, "two");
+
+        // Deferred FTS during promote must still index new bodies and restore triggers.
+        let fts_three: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'three'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_three, 1);
+        let fts_one: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'one'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_one, 1);
+        let triggers: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(triggers, 6);
+    }
+
+    #[test]
+    fn deferred_fts_indexes_attachment_text_after_promote() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        let contacts = empty_csv(tmp.path(), "contacts.csv");
+        let exclude = empty_csv(tmp.path(), "exclude.csv");
+        let att_dir = tmp.path().join("attachments");
+        fs::create_dir_all(&att_dir).unwrap();
+        fs::write(att_dir.join("receipt.pdf"), b"%PDF-fixture").unwrap();
+
+        let path = write_jsonl(
+            tmp.path(),
+            "att.jsonl",
+            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+15555550123","service":"SMS","conversation_type":"individual","participants":[{"handle":"+15555550123"}]}
+{"record":"message","guid":"g-att","timestamp":"2015-03-12T14:04:22-04:00","timestamp_utc":"2015-03-12T18:04:22Z","is_from_me":false,"text":"see attached","attachments":[{"path":"attachments/receipt.pdf","original_name":"uniqueinvoice.pdf","mime_type":"application/pdf"}]}
+"#,
+        );
+        import_jsonl_files(
+            &[path],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts_csv: &contacts,
+                exclude_csv: &exclude,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                backfill_contacts: false,
+            },
+        )
+        .unwrap();
+
+        let conn = Connection::open(&db).unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'uniqueinvoice'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "attachment original_name must be searchable after deferred FTS");
     }
 }

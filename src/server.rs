@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -34,8 +34,11 @@ struct AuthIdentity {
 #[derive(Clone)]
 struct AppState {
     cfg: Arc<Config>,
+    /// Warm SQLite writer used by HTTP import (schema ensured at serve startup).
+    db: Arc<StdMutex<Connection>>,
     /// Per-account import mutex: same-account imports stay serialized so staging
-    /// rows for that tenant are not wiped mid-run. Different accounts may overlap.
+    /// rows for that tenant are not wiped mid-run. Different accounts may overlap
+    /// at the lock layer; the shared `db` mutex still serializes writers.
     account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Process-local Import API token → account_id cache (avoids DB open per asset PUT).
     token_cache: Arc<Mutex<HashMap<String, String>>>,
@@ -87,6 +90,7 @@ enum ApiError {
     Unauthorized(String),
     Forbidden(String),
     BadRequest(String),
+    NotFound(String),
     Internal(String),
 }
 
@@ -96,6 +100,7 @@ impl IntoResponse for ApiError {
             Self::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
         };
         (
@@ -113,20 +118,21 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
 
-    // Apply pragmas (and recover a hot rollback journal if present) before serving.
-    {
-        let conn = Connection::open(&cfg.paths.db)?;
-        schema::configure_connection(&conn)?;
-        // Touch a read to force hot-journal rollback when we hold the only writer.
-        let _: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
-        let mode: String = conn
-            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
-            .unwrap_or_else(|_| "unknown".into());
-        eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
-    }
+    // Open a warm writer, recover hot journals, and ensure schema once before serving.
+    let db_conn = Connection::open(&cfg.paths.db)?;
+    schema::configure_connection(&db_conn)?;
+    let _: i64 = db_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
+    schema::ensure_vault_schema(&db_conn)?;
+    schema::ensure_messages_schema(&db_conn)?;
+    let mode: String = db_conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap_or_else(|_| "unknown".into());
+    eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
+    let db = Arc::new(StdMutex::new(db_conn));
 
     let state = AppState {
         cfg: Arc::new(cfg),
+        db,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
         token_cache: Arc::new(Mutex::new(HashMap::new())),
     };
@@ -135,7 +141,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/auth/check", get(auth_check))
         .route("/v1/import", post(import_handler))
-        .route("/v1/assets/{sha256}", put(asset_put_handler))
+        .route(
+            "/v1/assets/{sha256}",
+            put(asset_put_handler).head(asset_head_handler),
+        )
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .with_state(state);
 
@@ -143,6 +152,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-rs serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
+    eprintln!("  HEAD /v1/assets/{{sha256}}?source=&account=  (probe before PUT)");
     eprintln!("  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)");
     eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false");
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
@@ -460,14 +470,13 @@ struct AssetPutResponse {
     already_present: bool,
 }
 
-async fn asset_put_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(sha256): AxumPath<String>,
-    Query(query): Query<AssetPutQuery>,
-    request: Request,
-) -> Result<Json<AssetPutResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
+async fn resolve_asset_lookup(
+    state: &AppState,
+    headers: &HeaderMap,
+    sha256: &str,
+    query: &AssetPutQuery,
+) -> Result<(String, String, Option<assets::StoredAsset>), ApiError> {
+    let auth = resolve_auth(headers, state).await?;
     if query.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "query param source is required".into(),
@@ -478,15 +487,8 @@ async fn asset_put_handler(
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let source_id = query.source.clone();
 
-    let mime = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
-
-    // Short-circuit when the claimed SHA is already on disk (skip hash + temp write).
     let cfg = Arc::clone(&state.cfg);
-    let sha_lookup = sha256.clone();
+    let sha_lookup = sha256.to_string();
     let account_lookup = account.clone();
     let source_lookup = source_id.clone();
     let existing = tokio::task::spawn_blocking(move || {
@@ -495,6 +497,44 @@ async fn asset_put_handler(
     })
     .await
     .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
+    Ok((account, source_id, existing))
+}
+
+/// Probe whether a content-addressed asset is already stored (no body).
+async fn asset_head_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (_account, _source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    let Some(stored) = existing else {
+        return Err(ApiError::NotFound("asset not found".into()));
+    };
+    Ok(Json(AssetPutResponse {
+        ok: true,
+        sha256: stored.sha256,
+        assets_path: stored.assets_path,
+        already_present: true,
+    }))
+}
+
+async fn asset_put_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+    request: Request,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+
+    let mime = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
 
     if let Some(stored) = existing {
         discard_body(request.into_body()).await?;
@@ -703,6 +743,7 @@ async fn run_import_path(
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let cfg = Arc::clone(&state.cfg);
+    let db = Arc::clone(&state.db);
     let account = query
         .account
         .clone()
@@ -738,7 +779,16 @@ async fn run_import_path(
             fill_content_keys: do_dedupe,
             backfill_contacts: false,
         };
-        let stats = import::import_jsonl_files(&[jsonl_path], &opts)?;
+        let mut conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        let stats = import::import_jsonl_files_on_conn(
+            &mut conn,
+            &[jsonl_path],
+            &opts,
+            import::ImportSchemaMode::AssumeReady,
+        )?;
+        drop(conn);
         let dedupe_stats = if do_dedupe {
             Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
         } else {
