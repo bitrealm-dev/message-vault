@@ -24,9 +24,10 @@ export async function DELETE() {
   } catch (err) {
     const auth = authError(err);
     if (auth) return auth;
-    const message = err instanceof Error ? err.message : "delete messages failed";
+    const message =
+      err instanceof Error ? err.message : "Couldn’t delete your messages.";
     return NextResponse.json(
-      { error: message },
+      { error: "Couldn’t delete your messages." },
       { status: mutationErrorStatus(message, 500) },
     );
   }

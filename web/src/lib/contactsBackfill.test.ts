@@ -23,11 +23,11 @@ describe("unknown contact backfill", () => {
   let tmpDir = "";
   let accountId = "";
 
-  before(() => {
+  before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-backfill-"));
     process.env.VAULT_DB = path.join(tmpDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
-    const account = createAccount({
+    const account = await createAccount({
       username: `backfill_${Date.now()}`,
       primaryEmail: `backfill_${Date.now()}@example.com`,
       firstName: "Vault",

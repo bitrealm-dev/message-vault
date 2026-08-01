@@ -33,11 +33,13 @@ cd web && npm ci && npm run dev
 ## 3. Create an account and copy your token
 
 Open <http://localhost:3000>, create an account, then go to
-**Settings → Account** and copy your **Import API token**. That token
-identifies your account. You do **not** need an account UUID.
+**Settings → Access → Vault Import**, generate an **API token**, and copy it
+from the dialog (it is shown only once). That token identifies your account.
+You do **not** need an account UUID.
 
-New accounts start in **read-only** mode for the web UI. Turn that off in
-Settings when you want to edit contacts, trash items, or manage labels.
+New accounts start in **read-only** mode for the browse UI. Turn that off under
+**Settings → Access** when you want to edit contacts, trash items, or manage
+labels.
 Imports through the API or CLI still work while read-only is on.
 
 Keep `serve` running while you import remotely.

@@ -18,6 +18,7 @@ export function isVaultReadOnly(): boolean {
   return loadAccount(currentAccountId()).read_only;
 }
 
+/** Block browse/GUI vault mutations. Settings account APIs must not call this. */
 export function assertVaultWritable(): void {
   if (isVaultReadOnly()) {
     throw new Error(VAULT_READ_ONLY_MESSAGE);

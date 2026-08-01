@@ -8,6 +8,7 @@ cd "$ROOT"
 ACCOUNT="00000000-0000-0000-0000-00000000s001"
 OTHER="00000000-0000-0000-0000-00000000s002"
 USER_TOKEN="mv_smoke_user_token_s001"
+USER_TOKEN_HASH="$(printf '%s' "${USER_TOKEN}" | sha256sum | awk '{print $1}')"
 BIND="127.0.0.1:18081"
 TMP="$(mktemp -d)"
 trap 'kill ${SERVER_PID:-} 2>/dev/null || true; rm -rf "$TMP"' EXIT
@@ -29,7 +30,7 @@ assets_converted_dir = "assets_converted"
 bind = "${BIND}"
 EOF
 
-# Seed account + per-account Import API token before serve.
+# Seed account + hashed Import API token before serve.
 sqlite3 "$TMP/data/vault.db" <<SQL
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS accounts (
@@ -39,12 +40,12 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 CREATE TABLE IF NOT EXISTS account_api_tokens (
   account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE,
+  token_hash TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL
 );
 INSERT INTO accounts (id, username, read_only) VALUES ('${ACCOUNT}', 'smoke', 0);
-INSERT INTO account_api_tokens (account_id, token, created_at)
-VALUES ('${ACCOUNT}', '${USER_TOKEN}', 'smoke');
+INSERT INTO account_api_tokens (account_id, token_hash, created_at)
+VALUES ('${ACCOUNT}', '${USER_TOKEN_HASH}', 'smoke');
 SQL
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"

@@ -22,12 +22,12 @@ describe("contactsVcfImport preview/commit", () => {
   let accountId = "";
   let otherAccountId = "";
 
-  before(() => {
+  before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-vcf-"));
     process.env.VAULT_DB = path.join(tmpDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
 
-    const account = createAccount({
+    const account = await createAccount({
       username: `vcf_${Date.now()}`,
       primaryEmail: `vcf_${Date.now()}@example.com`,
       firstName: "Vault",
@@ -37,7 +37,7 @@ describe("contactsVcfImport preview/commit", () => {
     accountId = account.id;
     saveAccount(accountId, { read_only: false });
 
-    const other = createAccount({
+    const other = await createAccount({
       username: `vcf_other_${Date.now()}`,
       primaryEmail: `vcf_other_${Date.now()}@example.com`,
       firstName: "Other",

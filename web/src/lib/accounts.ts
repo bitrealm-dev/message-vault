@@ -4,8 +4,11 @@ import fs from "node:fs";
 import Database from "better-sqlite3";
 
 import { accountDataDir, ensureDbParentDir } from "./paths";
+import { hashPassword, passwordsMatch, validatePasswordPlaintext } from "./password";
 import { createVaultOwner } from "./vaultOwner";
 import { ensureVaultSchema } from "./vaultSchema";
+
+export const INVALID_CREDENTIALS = "Invalid username or password";
 
 export type AccountEmail = {
   email: string;
@@ -78,7 +81,7 @@ function openDb(): Database.Database {
 function friendlyDbError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("UNIQUE constraint failed: accounts.username")) {
-    return new Error("That username is already taken. Select it from the list above and click Continue.");
+    return new Error("That username is already taken.");
   }
   if (message.includes("UNIQUE constraint failed: account_emails.email")) {
     return new Error("That email is already used by another account.");
@@ -157,50 +160,67 @@ function getAccountRow(db: Database.Database, accountId: string): AccountRow | u
     .get(accountId) as AccountRow | undefined;
 }
 
+const API_TOKEN_ALPHANUM =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/** Import API token: `mv-user-` + 32 letters/digits. */
 export function generateApiToken(): string {
-  return `mv_${crypto.randomBytes(32).toString("base64url")}`;
+  const bytes = crypto.randomBytes(32);
+  let suffix = "";
+  for (const b of bytes) {
+    suffix += API_TOKEN_ALPHANUM[b % API_TOKEN_ALPHANUM.length]!;
+  }
+  return `mv-user-${suffix}`;
 }
 
-/** Return existing import API token, or create one (backfill for older accounts). */
-export function ensureAccountApiToken(accountId: string): string {
+export function hashApiToken(token: string): string {
+  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+export function accountHasApiToken(accountId: string): boolean {
   const db = openDb();
   try {
-    return ensureAccountApiTokenTx(db, accountId);
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM account_api_tokens WHERE account_id = ?`,
+      )
+      .get(accountId) as { n: number };
+    return row.n > 0;
   } finally {
     db.close();
   }
 }
 
-function ensureAccountApiTokenTx(db: Database.Database, accountId: string): string {
-  const row = db
-    .prepare(`SELECT token FROM account_api_tokens WHERE account_id = ?`)
-    .get(accountId) as { token: string } | undefined;
-  if (row?.token) return row.token;
-
-  const token = generateApiToken();
-  const createdAt = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO account_api_tokens (account_id, token, created_at) VALUES (?, ?, ?)`,
-  ).run(accountId, token, createdAt);
-  return token;
-}
-
-/** Replace the account's import API token; returns the new plaintext value. */
+/** Create or replace the token hash; returns plaintext once. */
 export function rotateAccountApiToken(accountId: string): string {
   const db = openDb();
   try {
     const row = getAccountRow(db, accountId);
     if (!row) throw new Error("account not found");
     const token = generateApiToken();
+    const tokenHash = hashApiToken(token);
     const createdAt = new Date().toISOString();
     db.prepare(
-      `INSERT INTO account_api_tokens (account_id, token, created_at)
+      `INSERT INTO account_api_tokens (account_id, token_hash, created_at)
        VALUES (?, ?, ?)
        ON CONFLICT(account_id) DO UPDATE SET
-         token = excluded.token,
+         token_hash = excluded.token_hash,
          created_at = excluded.created_at`,
-    ).run(accountId, token, createdAt);
+    ).run(accountId, tokenHash, createdAt);
     return token;
+  } finally {
+    db.close();
+  }
+}
+
+export function deleteAccountApiToken(accountId: string): void {
+  const db = openDb();
+  try {
+    const row = getAccountRow(db, accountId);
+    if (!row) throw new Error("account not found");
+    db.prepare(`DELETE FROM account_api_tokens WHERE account_id = ?`).run(
+      accountId,
+    );
   } finally {
     db.close();
   }
@@ -244,13 +264,74 @@ export function getAccount(accountId: string): Account | null {
   }
 }
 
-export function createAccount(input: {
+/** True when the account was created with no password (`password_hash` NULL). */
+export function accountHasNoPassword(accountId: string): boolean {
+  const db = openDb();
+  try {
+    const row = db
+      .prepare(`SELECT password_hash FROM accounts WHERE id = ?`)
+      .get(accountId) as { password_hash: string | null } | undefined;
+    if (!row) return false;
+    return row.password_hash == null || row.password_hash === "";
+  } finally {
+    db.close();
+  }
+}
+
+export function isUsernameTaken(username: string): boolean {
+  const trimmed = username.trim();
+  if (!trimmed) return false;
+  const db = openDb();
+  try {
+    return findAccountIdByUsername(db, trimmed) != null;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Verify username + password. Returns the account on success, or null for any failure
+ * (unknown user / wrong password) so callers can show a single error message.
+ */
+export async function authenticateAccount(
+  username: string,
+  password: string,
+): Promise<Account | null> {
+  const trimmed = username.trim();
+  if (!trimmed) return null;
+
+  const db = openDb();
+  try {
+    const row = db
+      .prepare(
+        `SELECT id, username, read_only, password_hash
+         FROM accounts WHERE username = ? COLLATE NOCASE`,
+      )
+      .get(trimmed) as
+      | (AccountRow & { password_hash: string | null })
+      | undefined;
+    if (!row) return null;
+
+    const ok = await passwordsMatch(row.password_hash, password);
+    if (!ok) return null;
+
+    const emails = readAccountEmails(db, row.id);
+    return rowToAccount(row, emails);
+  } finally {
+    db.close();
+  }
+}
+
+export async function createAccount(input: {
   username: string;
   primaryEmail: string;
   firstName: string;
   lastName: string;
   phone: string;
-}): Account {
+  /** Plaintext password, or omit/null when creating a no-password account. */
+  password?: string | null;
+  noPassword?: boolean;
+}): Promise<Account> {
   const username = input.username.trim();
   const email = input.primaryEmail.trim();
   const firstName = input.firstName.trim();
@@ -259,13 +340,24 @@ export function createAccount(input: {
   if (!email) throw new Error("primary email is required");
   if (!firstName) throw new Error("first name is required");
 
+  // Explicit noPassword, or omitted password (tests / legacy callers) → passwordless.
+  const noPassword =
+    input.noPassword === true ||
+    input.password === null ||
+    input.password === undefined;
+  let passwordHash: string | null = null;
+  if (!noPassword) {
+    const password = input.password ?? "";
+    const pwdErr = validatePasswordPlaintext(password);
+    if (pwdErr) throw new Error(pwdErr);
+    passwordHash = await hashPassword(password);
+  }
+
   const db = openDb();
   try {
     const existingId = findAccountIdByUsername(db, username);
     if (existingId) {
-      throw new Error(
-        "That username is already taken. Select it from the list above and click Continue.",
-      );
+      throw new Error("That username is already taken.");
     }
 
     const id = crypto.randomUUID();
@@ -273,15 +365,15 @@ export function createAccount(input: {
 
     try {
       db.prepare(
-        `INSERT INTO accounts (id, username, read_only) VALUES (?, ?, 1)`,
-      ).run(id, username);
+        `INSERT INTO accounts (id, username, read_only, password_hash)
+         VALUES (?, ?, 1, ?)`,
+      ).run(id, username, passwordHash);
       writeAccountEmails(db, id, emails);
       createVaultOwner(db, id, {
         first_name: firstName,
         last_name: lastName,
         phones: [input.phone],
       });
-      ensureAccountApiTokenTx(db, id);
     } catch (err) {
       throw friendlyDbError(err);
     }

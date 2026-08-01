@@ -18,6 +18,6 @@ export async function withAccountHandler<T>(
   return runWithAccountAsync(accountId, () => fn(accountId));
 }
 
-export function unauthorizedResponse(message = "Not signed in"): NextResponse {
+export function unauthorizedResponse(message = "Please sign in again."): NextResponse {
   return NextResponse.json({ error: message }, { status: 401 });
 }

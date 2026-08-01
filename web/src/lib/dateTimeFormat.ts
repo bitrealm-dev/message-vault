@@ -150,34 +150,34 @@ function scanTokens(pattern: string): string[] {
 export type PatternValidation = { ok: true } | { ok: false; error: string };
 
 export function validateDatePattern(pattern: string): PatternValidation {
-  if (!pattern.trim()) return { ok: false, error: "Pattern is required" };
+  if (!pattern.trim()) return { ok: false, error: "Enter a date format." };
   for (const t of scanTokens(pattern)) {
-    if (!t) return { ok: false, error: "Trailing % is invalid" };
+    if (!t) return { ok: false, error: "A format can’t end with %." };
     if (t === "c") {
-      return { ok: false, error: "%c is not allowed in date formats" };
+      return { ok: false, error: "%c isn’t supported here." };
     }
     if (!DATE_TOKENS.has(t)) {
       if (TIME_TOKENS.has(t)) {
-        return { ok: false, error: `%${t} is a time token — use Time format` };
+        return { ok: false, error: `%${t} is for times. Use it under Time.` };
       }
-      return { ok: false, error: `Unknown token %${t}` };
+      return { ok: false, error: `Unrecognized format code: %${t}` };
     }
   }
   return { ok: true };
 }
 
 export function validateTimePattern(pattern: string): PatternValidation {
-  if (!pattern.trim()) return { ok: false, error: "Pattern is required" };
+  if (!pattern.trim()) return { ok: false, error: "Enter a time format." };
   for (const t of scanTokens(pattern)) {
-    if (!t) return { ok: false, error: "Trailing % is invalid" };
+    if (!t) return { ok: false, error: "A format can’t end with %." };
     if (t === "c") {
-      return { ok: false, error: "%c is not allowed in time formats" };
+      return { ok: false, error: "%c isn’t supported here." };
     }
     if (!TIME_TOKENS.has(t)) {
       if (DATE_TOKENS.has(t)) {
-        return { ok: false, error: `%${t} is a date token — use Date format` };
+        return { ok: false, error: `%${t} is for dates. Use it under Date.` };
       }
-      return { ok: false, error: `Unknown token %${t}` };
+      return { ok: false, error: `Unrecognized format code: %${t}` };
     }
   }
   return { ok: true };
@@ -473,7 +473,7 @@ export const TIME_SYNTAX_ROWS: { token: string; desc: string }[] = [
   { token: "%I", desc: "Hour, 12-hour clock (01..12)" },
   { token: "%l", desc: "Hour, 12-hour clock, no leading zero (1..12)" },
   { token: "%M", desc: "Minute (00..59)" },
-  { token: "%N", desc: "Fractional seconds (nanoseconds by default)" },
+  { token: "%N", desc: "Fraction of a second" },
   { token: "%P", desc: 'Meridian, lowercase ("am" or "pm")' },
   { token: "%p", desc: 'Meridian, uppercase ("AM" or "PM")' },
   { token: "%S", desc: "Second (00..60)" },

@@ -144,11 +144,12 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
 
     conn.execute(
         r#"
-        INSERT INTO accounts (id, username, read_only)
-        VALUES (?1, ?2, ?3)
+        INSERT INTO accounts (id, username, read_only, password_hash)
+        VALUES (?1, ?2, ?3, NULL)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
-            read_only = excluded.read_only
+            read_only = excluded.read_only,
+            password_hash = NULL
         "#,
         params![
             account_id,
@@ -167,7 +168,7 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
         "#,
         params![account_id, seed.account.login_email],
     )?;
-    crate::api_tokens::ensure_account_api_token(&conn, account_id)?;
+    // Demo has no Import API token until the user generates one in Settings.
 
     conn.execute(
         r#"

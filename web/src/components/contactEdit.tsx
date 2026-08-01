@@ -94,24 +94,40 @@ export function phonesForSave(phones: string[]): string[] {
 export function ContactPhoneList({
   phones,
   onChange,
+  /** When set, refuse to remove/clear below this many non-empty phones. */
+  minFilled = 0,
+  placeholder = "Phone or email",
+  removeLabel = "Remove phone or email",
 }: {
   phones: string[];
   onChange: (phones: string[]) => void;
+  minFilled?: number;
+  placeholder?: string;
+  removeLabel?: string;
 }) {
+  const filledCount = phonesForSave(phones).length;
   return (
     <div className="flex flex-col gap-1.5">
       {phones.map((phone, index) => {
-        const showRemove = phone.trim() !== "";
+        const showRemove =
+          phone.trim() !== "" && filledCount > minFilled;
         return (
           <div key={index} className="flex items-center gap-2">
             <input
               type="text"
               value={phone}
-              onChange={(e) =>
-                onChange(updatePhoneAt(phones, index, e.target.value))
-              }
+              onChange={(e) => {
+                const next = updatePhoneAt(phones, index, e.target.value);
+                if (
+                  minFilled > 0 &&
+                  phonesForSave(next).length < minFilled
+                ) {
+                  return;
+                }
+                onChange(next);
+              }}
               onBlur={() => onChange(blurPhoneAt(phones, index))}
-              placeholder="Phone or email"
+              placeholder={placeholder}
               className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent/60"
             />
             {showRemove && (
@@ -119,7 +135,7 @@ export function ContactPhoneList({
                 type="button"
                 onClick={() => onChange(removePhoneAt(phones, index))}
                 className="shrink-0 rounded px-1.5 text-[12px] text-muted hover:bg-hover hover:text-text"
-                aria-label="Remove handle"
+                aria-label={removeLabel}
               >
                 ×
               </button>

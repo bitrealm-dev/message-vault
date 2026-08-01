@@ -21,8 +21,7 @@ export function MessageBadgeSettings() {
           List badges
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Choose which badges and indicators appear on contacts in the list.
-          Changes save automatically.
+          Choose what appears in the contact list. Changes save automatically.
         </p>
 
         <div className="mt-4 space-y-3">
@@ -42,7 +41,7 @@ export function MessageBadgeSettings() {
               checked={showMessageBadge}
               onChange={(e) => setShowMessageBadge(e.target.checked)}
             />
-            Show 1-1 message count
+            Show direct message count
           </label>
           <label className="flex cursor-pointer items-center gap-2.5 text-[14px] text-text">
             <input
@@ -61,7 +60,7 @@ export function MessageBadgeSettings() {
           Contact initials
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Colored circles with first and last name initials in the contact list.
+          Show initials beside contacts.
         </p>
 
         <div className="mt-4 space-y-3">

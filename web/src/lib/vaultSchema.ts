@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import Database from "better-sqlite3";
 
 function tableExists(db: Database.Database, name: string): boolean {
@@ -59,7 +61,8 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 1
+      read_only INTEGER NOT NULL DEFAULT 1,
+      password_hash TEXT
     );
 
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -99,7 +102,7 @@ export function ensureVaultSchema(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS account_api_tokens (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-      token TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL
     );
 
@@ -334,8 +337,66 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
+  migrateAccountsPasswordHash(db);
+  migrateAccountApiTokensToHash(db);
   migrateParticipantsHandleIndex(db);
   ensureMessagesFts(db);
+}
+
+function migrateAccountsPasswordHash(db: Database.Database): void {
+  if (!tableExists(db, "accounts")) return;
+  if (tableHasColumn(db, "accounts", "password_hash")) return;
+  db.exec(`ALTER TABLE accounts ADD COLUMN password_hash TEXT`);
+}
+
+function hashApiTokenPlaintext(token: string): string {
+  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/** Migrate plaintext `token` → `token_hash` (SHA-256 hex). */
+function migrateAccountApiTokensToHash(db: Database.Database): void {
+  if (!tableExists(db, "account_api_tokens")) return;
+  const hasToken = tableHasColumn(db, "account_api_tokens", "token");
+  const hasHash = tableHasColumn(db, "account_api_tokens", "token_hash");
+  if (hasHash && !hasToken) return;
+
+  if (hasToken) {
+    db.exec(`PRAGMA foreign_keys = OFF;`);
+    db.exec(`
+      CREATE TABLE account_api_tokens_new (
+        account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      );
+    `);
+    const rows = db
+      .prepare(`SELECT account_id, token, created_at FROM account_api_tokens`)
+      .all() as Array<{ account_id: string; token: string; created_at: string }>;
+    const insert = db.prepare(
+      `INSERT INTO account_api_tokens_new (account_id, token_hash, created_at)
+       VALUES (?, ?, ?)`,
+    );
+    for (const row of rows) {
+      insert.run(row.account_id, hashApiTokenPlaintext(row.token), row.created_at);
+    }
+    db.exec(`
+      DROP TABLE account_api_tokens;
+      ALTER TABLE account_api_tokens_new RENAME TO account_api_tokens;
+      PRAGMA foreign_keys = ON;
+    `);
+    return;
+  }
+
+  if (!hasHash) {
+    db.exec(`
+      DROP TABLE IF EXISTS account_api_tokens;
+      CREATE TABLE account_api_tokens (
+        account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      );
+    `);
+  }
 }
 
 function migrateParticipantsHandleIndex(db: Database.Database): void {

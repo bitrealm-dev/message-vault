@@ -28,8 +28,9 @@ npm run dev
 
 ## Sign in
 
-Open <http://localhost:3000/login>. Sign in as the seeded **`demo`** account
-(or create another account). You should see demo contacts and conversations.
+Open <http://localhost:3000/login>. Enter username **`demo`** with an empty
+password (or create another account). You should see demo contacts and
+conversations.
 
 ## Reset demo data
 

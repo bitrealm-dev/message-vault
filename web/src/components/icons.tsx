@@ -542,3 +542,42 @@ export function LockIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.75" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 3l18 18" />
+      <path d="M9.88 9.94A2.75 2.75 0 0 0 12 14.75c.5 0 .97-.13 1.38-.36" />
+      <path d="M6.1 6.3C4.05 7.7 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.85 0 3.45-.45 4.8-1.1" />
+      <path d="M14.12 9.9A2.75 2.75 0 0 1 17 12c0 .3-.05.6-.13.88" />
+      <path d="M12 5.5c6 0 9.5 6.5 9.5 6.5a16.5 16.5 0 0 1-2.2 2.85" />
+    </svg>
+  );
+}

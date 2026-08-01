@@ -6,83 +6,147 @@ import {
   normalizeCountryCodeDigitsOnBlur,
   toPhoneE164FromParts,
 } from "@/lib/phoneE164";
-import { useCallback, useEffect, useState } from "react";
+import { MAX_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDownIcon, ChevronRightIcon } from "./icons";
-
-type AccountOption = {
-  id: string;
-  username: string;
-  primaryEmail: string;
-};
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  EyeIcon,
+  EyeOffIcon,
+} from "./icons";
 
 type PhoneMode = "usa" | "international";
 
+function CheckMark() {
+  return (
+    <span
+      role="img"
+      aria-label="Valid"
+      className="ml-1 inline-block text-[13px] leading-none"
+    >
+      ✅
+    </span>
+  );
+}
+
+function PasswordField({
+  label,
+  value,
+  onChange,
+  disabled,
+  autoComplete,
+  /** When true, shows a checkmark next to the label (no mark when false). */
+  showCheck,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  autoComplete?: string;
+  showCheck?: boolean;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <label className="block">
+      <span className="inline-flex items-center text-[13px] text-text">
+        {label}
+        {showCheck ? <CheckMark /> : null}
+      </span>
+      <div className="relative mt-1">
+        <input
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          autoComplete={autoComplete}
+          maxLength={MAX_PASSWORD_LENGTH - 1}
+          className="w-full rounded-md border border-border bg-bg py-2 pl-3 pr-10 text-[14px] text-text outline-none focus:border-accent disabled:opacity-50"
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          aria-label={visible ? "Hide password" : "Show password"}
+          onClick={() => setVisible((v) => !v)}
+          className="absolute inset-y-0 right-0 flex items-center px-2.5 text-muted transition-colors hover:text-text disabled:opacity-50"
+        >
+          {visible ? (
+            <EyeOffIcon className="size-4" />
+          ) : (
+            <EyeIcon className="size-4" />
+          )}
+        </button>
+      </div>
+    </label>
+  );
+}
+
 export function LoginScreen() {
   const router = useRouter();
-  const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [selectedId, setSelectedId] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  const [createOpen, setCreateOpen] = useState(false);
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [noPassword, setNoPassword] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phoneMode, setPhoneMode] = useState<PhoneMode>("usa");
   const [countryCode, setCountryCode] = useState("1");
   const [phone, setPhone] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState<"login" | "create" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const effectiveCountryCode = phoneMode === "usa" ? "1" : countryCode;
   const normalizedPhone = toPhoneE164FromParts(effectiveCountryCode, phone);
 
-  const loadAccounts = useCallback(async (): Promise<AccountOption[]> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/auth/accounts");
-      const json = (await res.json()) as {
-        accounts?: AccountOption[];
-        error?: string;
-      };
-      if (!res.ok) throw new Error(json.error ?? "Failed to load users");
-      const list = json.accounts ?? [];
-      setAccounts(list);
-      return list;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load users");
-      return [];
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const passwordsMatch =
+    Boolean(password) &&
+    password.length < MAX_PASSWORD_LENGTH &&
+    password === passwordConfirm;
 
-  useEffect(() => {
-    void loadAccounts();
-  }, [loadAccounts]);
+  const passwordsOk = noPassword || passwordsMatch;
 
-  const continueAsExisting = async () => {
-    if (!selectedId) return;
+  const phoneValid = Boolean(normalizedPhone);
+
+  const canCreate =
+    Boolean(username.trim()) &&
+    Boolean(firstName.trim()) &&
+    Boolean(normalizedPhone) &&
+    passwordsOk &&
+    submitting == null;
+
+  const login = async () => {
+    if (!loginUsername.trim()) return;
     setSubmitting("login");
     setError(null);
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId: selectedId }),
+        body: JSON.stringify({
+          username: loginUsername.trim(),
+          password: loginPassword,
+        }),
       });
       const json = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Sign in failed");
+      if (!res.ok) {
+        throw new Error(json.error ?? "Invalid username or password");
+      }
       router.replace("/");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed");
+      setError(err instanceof Error ? err.message : "Invalid username or password");
     } finally {
       setSubmitting(null);
     }
   };
 
-  const createAndContinue = async () => {
+  const createAccount = async () => {
+    if (!canCreate) return;
     setSubmitting("create");
     setError(null);
     try {
@@ -94,22 +158,12 @@ export function LoginScreen() {
           firstName,
           lastName,
           phone: normalizedPhone ?? phone,
+          noPassword,
+          password: noPassword ? undefined : password,
         }),
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        if (res.status === 409) {
-          const listRes = await fetch("/api/auth/accounts");
-          const listJson = (await listRes.json()) as {
-            accounts?: AccountOption[];
-          };
-          const list = listJson.accounts ?? [];
-          setAccounts(list);
-          const match = list.find(
-            (a) => a.username.toLowerCase() === username.trim().toLowerCase(),
-          );
-          if (match) setSelectedId(match.id);
-        }
         throw new Error(json.error ?? "Create failed");
       }
       router.replace("/");
@@ -121,21 +175,6 @@ export function LoginScreen() {
     }
   };
 
-  const canCreate =
-    Boolean(username.trim()) &&
-    Boolean(firstName.trim()) &&
-    Boolean(normalizedPhone);
-
-  if (loading) {
-    return (
-      <div className="h-full overflow-y-auto">
-        <div className="flex min-h-full items-center justify-center p-6">
-          <p className="text-[14px] text-muted">Loading…</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex min-h-full items-center justify-center p-6">
@@ -144,27 +183,28 @@ export function LoginScreen() {
             Welcome to the Message Vault
           </h1>
 
-          <section className="mt-8">
-            <select
-              value={selectedId}
-              onChange={(e) => setSelectedId(e.target.value)}
-              aria-label="Select user"
-              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
-            >
-              <option value="" disabled>
-                Select user
-              </option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.username}
-                </option>
-              ))}
-            </select>
+          <section className="mt-8 space-y-4">
+            <label className="block">
+              <span className="text-[13px] text-text">Username</span>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                autoComplete="username"
+                className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+              />
+            </label>
+            <PasswordField
+              label="Password"
+              value={loginPassword}
+              onChange={setLoginPassword}
+              autoComplete="current-password"
+            />
             <button
               type="button"
-              disabled={submitting != null || !selectedId}
-              onClick={() => void continueAsExisting()}
-              className="mt-4 w-full rounded-md border border-border bg-bg px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
+              disabled={submitting != null || !loginUsername.trim()}
+              onClick={() => void login()}
+              className="w-full rounded-md border border-border bg-bg px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
             >
               {submitting === "login" ? "Logging in…" : "Login"}
             </button>
@@ -176,7 +216,10 @@ export function LoginScreen() {
             <button
               type="button"
               aria-expanded={createOpen}
-              onClick={() => setCreateOpen((v) => !v)}
+              onClick={() => {
+                setCreateOpen((v) => !v);
+                setError(null);
+              }}
               className="inline-flex items-center gap-1.5 text-left text-[14px] font-medium text-text transition-colors hover:text-accent"
             >
               {createOpen ? (
@@ -195,9 +238,43 @@ export function LoginScreen() {
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
                     className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
                   />
                 </label>
+                <PasswordField
+                  label="Password"
+                  value={password}
+                  onChange={setPassword}
+                  disabled={noPassword}
+                  autoComplete="new-password"
+                  showCheck={noPassword || passwordsMatch}
+                />
+                <PasswordField
+                  label="Confirm password"
+                  value={passwordConfirm}
+                  onChange={setPasswordConfirm}
+                  disabled={noPassword}
+                  autoComplete="new-password"
+                  showCheck={noPassword || passwordsMatch}
+                />
+                <label className="inline-flex items-center gap-2 text-[13px] text-text">
+                  <input
+                    type="checkbox"
+                    checked={noPassword}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setNoPassword(checked);
+                      if (checked) {
+                        setPassword("");
+                        setPasswordConfirm("");
+                      }
+                    }}
+                    className="accent-accent"
+                  />
+                  No password
+                </label>
+
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block">
                     <span className="text-[13px] text-text">First name</span>
@@ -253,7 +330,10 @@ export function LoginScreen() {
 
                 {phoneMode === "usa" ? (
                   <div className="grid grid-cols-[minmax(12rem,1fr)_16ch] gap-x-2 gap-y-1">
-                    <span className="text-[13px] text-text">Phone</span>
+                    <span className="inline-flex items-center text-[13px] text-text">
+                      Phone
+                      {phoneValid ? <CheckMark /> : null}
+                    </span>
                     <span className="text-[13px] text-text">e.164</span>
                     <input
                       type="tel"
@@ -277,7 +357,10 @@ export function LoginScreen() {
                 ) : (
                   <div className="grid grid-cols-[4.25rem_minmax(12rem,1fr)_16ch] gap-x-2 gap-y-1">
                     <span className="text-[13px] text-text">Country</span>
-                    <span className="text-[13px] text-text">Phone</span>
+                    <span className="inline-flex items-center text-[13px] text-text">
+                      Phone
+                      {phoneValid ? <CheckMark /> : null}
+                    </span>
                     <span className="text-[13px] text-text">e.164</span>
                     <div className="flex min-h-[2.5rem] items-center overflow-hidden rounded-md border border-border bg-bg">
                       <span
@@ -327,11 +410,11 @@ export function LoginScreen() {
 
                 <button
                   type="button"
-                  disabled={submitting != null || !canCreate}
-                  onClick={() => void createAndContinue()}
+                  disabled={!canCreate}
+                  onClick={() => void createAccount()}
                   className="w-full rounded-md border border-border bg-bg px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
                 >
-                  {submitting === "create" ? "Creating…" : "Create and continue"}
+                  {submitting === "create" ? "Creating…" : "Create"}
                 </button>
               </div>
             )}

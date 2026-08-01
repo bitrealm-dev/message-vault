@@ -1,25 +1,21 @@
 "use client";
 
-import { formatPhoneDisplay } from "@/lib/phoneE164";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { phoneHandlesOnly } from "@/lib/handleKind";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ContactPhoneList,
+  phonesForSave,
+  seedContactEditDraft,
+} from "./contactEdit";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
-import { ChevronRightIcon, EllipsisIcon } from "./icons";
-import { useDismissible } from "./useDismissible";
-
-type AccountEmail = {
-  email: string;
-  isPrimary: boolean;
-};
+import { ChevronRightIcon } from "./icons";
 
 type AccountData = {
   id: string;
   username: string;
-  primaryEmail: string;
-  emails: AccountEmail[];
-  readOnly: boolean;
+  noPassword: boolean;
   isDemo: boolean;
-  apiToken: string;
   vaultOwner: {
     firstName: string;
     lastName: string;
@@ -28,18 +24,14 @@ type AccountData = {
   };
 };
 
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 export function SettingsAccountForm() {
   const router = useRouter();
   const [data, setData] = useState<AccountData | null>(null);
   const [username, setUsername] = useState("");
-  const [primaryEmail, setPrimaryEmail] = useState("");
-  const [emails, setEmails] = useState<AccountEmail[]>([]);
-  const [newEmail, setNewEmail] = useState("");
-  const [readOnly, setReadOnly] = useState(false);
+  const [noPassword, setNoPassword] = useState(false);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phones, setPhones] = useState<string[]>([""]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -48,17 +40,20 @@ export function SettingsAccountForm() {
   const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [apiToken, setApiToken] = useState("");
-  const [tokenCopied, setTokenCopied] = useState(false);
-  const [regeneratingToken, setRegeneratingToken] = useState(false);
 
   const applyAccount = (json: AccountData) => {
     setData(json);
     setUsername(json.username);
-    setPrimaryEmail(json.primaryEmail);
-    setEmails(json.emails);
-    setReadOnly(json.readOnly);
-    setApiToken(json.apiToken ?? "");
+    setNoPassword(json.noPassword);
+    const draft = seedContactEditDraft({
+      firstName: json.vaultOwner.firstName,
+      lastName: json.vaultOwner.lastName,
+      phones: json.vaultOwner.phones,
+      labels: [],
+    });
+    setFirstName(draft.firstName);
+    setLastName(draft.lastName);
+    setPhones(draft.phones);
   };
 
   const load = useCallback(async () => {
@@ -67,10 +62,10 @@ export function SettingsAccountForm() {
     try {
       const res = await fetch("/api/settings/account");
       const json = (await res.json()) as AccountData & { error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Failed to load account");
+      if (!res.ok) throw new Error(json.error ?? "Couldn’t load your account.");
       applyAccount(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load account");
+      setError(err instanceof Error ? err.message : "Couldn’t load your account.");
     } finally {
       setLoading(false);
     }
@@ -80,44 +75,23 @@ export function SettingsAccountForm() {
     void load();
   }, [load]);
 
-  const updatePrimaryEmail = (value: string) => {
-    setPrimaryEmail(value);
-    setEmails((current) =>
-      current.map((entry) =>
-        entry.isPrimary ? { ...entry, email: value } : entry,
-      ),
-    );
-  };
-
-  const addEmail = () => {
-    const trimmed = newEmail.trim();
-    if (!trimmed) return;
-    if (emails.some((entry) => normalizeEmail(entry.email) === normalizeEmail(trimmed))) {
-      setError("That email is already on this account");
-      return;
-    }
-    setEmails((current) => [...current, { email: trimmed, isPrimary: false }]);
-    setNewEmail("");
-    setError(null);
-  };
-
-  const removeEmail = (email: string) => {
-    const entry = emails.find((item) => item.email === email);
-    if (!entry || entry.isPrimary) return;
-    setEmails((current) => current.filter((item) => item.email !== email));
-  };
-
-  const makePrimary = (email: string) => {
-    setEmails((current) =>
-      current.map((entry) => ({
-        email: entry.email,
-        isPrimary: entry.email === email,
-      })),
-    );
-    setPrimaryEmail(email);
-  };
+  const phonesToSave = phoneHandlesOnly(phonesForSave(phones));
+  const savedPhones = data?.vaultOwner.phones ?? [];
+  const dirty =
+    data != null &&
+    (firstName !== data.vaultOwner.firstName ||
+      lastName !== data.vaultOwner.lastName ||
+      phonesToSave.length !== savedPhones.length ||
+      phonesToSave.some((phone, i) => phone !== savedPhones[i]));
+  const canSave =
+    dirty &&
+    !saving &&
+    !deleting &&
+    firstName.trim() !== "" &&
+    phonesToSave.length > 0;
 
   const save = async () => {
+    if (!canSave) return;
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -125,53 +99,22 @@ export function SettingsAccountForm() {
       const res = await fetch("/api/settings/account", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, readOnly, emails }),
+        body: JSON.stringify({
+          vaultOwner: {
+            firstName,
+            lastName,
+            phones: phonesToSave,
+          },
+        }),
       });
       const json = (await res.json()) as AccountData & { error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Save failed");
+      if (!res.ok) throw new Error(json.error ?? "Couldn’t save your changes.");
       applyAccount(json);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : "Couldn’t save your changes.");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const copyApiToken = async () => {
-    if (!apiToken) return;
-    try {
-      await navigator.clipboard.writeText(apiToken);
-      setTokenCopied(true);
-      window.setTimeout(() => setTokenCopied(false), 2000);
-    } catch {
-      setError("Could not copy token to clipboard");
-    }
-  };
-
-  const regenerateApiToken = async () => {
-    if (
-      !window.confirm(
-        "Regenerate API token? The old token will stop working for vault-push immediately.",
-      )
-    ) {
-      return;
-    }
-    setRegeneratingToken(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/settings/account", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ regenerateApiToken: true }),
-      });
-      const json = (await res.json()) as AccountData & { error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Regenerate failed");
-      applyAccount(json);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Regenerate failed");
-    } finally {
-      setRegeneratingToken(false);
     }
   };
 
@@ -182,13 +125,13 @@ export function SettingsAccountForm() {
       const res = await fetch("/api/settings/account", { method: "DELETE" });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        throw new Error(json.error ?? "Delete failed");
+        throw new Error(json.error ?? "Couldn’t delete your account.");
       }
       setDeleteDialogOpen(false);
       router.replace("/login");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
+      setError(err instanceof Error ? err.message : "Couldn’t delete your account.");
     } finally {
       setDeleting(false);
     }
@@ -201,11 +144,11 @@ export function SettingsAccountForm() {
       const res = await fetch("/api/settings/messages", { method: "DELETE" });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        throw new Error(json.error ?? "Delete messages failed");
+        throw new Error(json.error ?? "Couldn’t delete your messages.");
       }
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete messages failed");
+      setError(err instanceof Error ? err.message : "Couldn’t delete your messages.");
     } finally {
       setDeletingMessages(false);
     }
@@ -215,16 +158,14 @@ export function SettingsAccountForm() {
     return <p className="text-[14px] text-muted">Loading…</p>;
   }
 
-  const additionalEmails = emails.filter((entry) => !entry.isPrimary);
-
   return (
     <div className="max-w-xl space-y-10">
       <section>
         <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-          Sign-in details
+          Your profile
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Credentials for logging into Message Vault in the browser.
+          Helps identify messages you sent. Re-import messages after changes.
         </p>
 
         <div className="mt-4 space-y-4">
@@ -233,165 +174,78 @@ export function SettingsAccountForm() {
             <input
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+              readOnly
+              disabled
+              className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text opacity-70 outline-none"
             />
           </label>
 
-          <label className="block">
-            <span className="text-[13px] text-text">Primary email</span>
+          <label className="inline-flex items-center gap-2 text-[13px] text-text">
             <input
-              type="email"
-              value={primaryEmail}
-              onChange={(e) => updatePrimaryEmail(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+              type="checkbox"
+              checked={noPassword}
+              disabled
+              className="accent-accent disabled:opacity-70"
             />
+            Sign in without a password
           </label>
 
-          <div>
-            <span className="text-[13px] text-text">Additional emails</span>
-            {additionalEmails.length > 0 ? (
-              <ul className="mt-2 space-y-2">
-                {additionalEmails.map((entry) => (
-                  <AdditionalEmailRow
-                    key={entry.email}
-                    email={entry.email}
-                    onMakePrimary={() => makePrimary(entry.email)}
-                    onRemove={() => removeEmail(entry.email)}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-1 text-[12px] text-muted">None</p>
-            )}
-
-            <div className="mt-3 flex gap-2">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="Add another email…"
-                className="min-w-0 flex-1 rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none placeholder:text-muted focus:border-accent"
-              />
-              <button
-                type="button"
-                onClick={addEmail}
-                className="shrink-0 rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text transition-colors hover:bg-hover"
-              >
-                Add
-              </button>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-[13px] text-text">First name</span>
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={(e) => {
+                    setFirstName(e.target.value);
+                    setSaved(false);
+                  }}
+                  className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[13px] text-text">Last name</span>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => {
+                    setLastName(e.target.value);
+                    setSaved(false);
+                  }}
+                  className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+                />
+              </label>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section>
-        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-          Vault access
-        </h2>
-        <p className="mt-1 text-[13px] text-muted">
-          Control whether this browser session can change vault data.
-        </p>
-        <label className="mt-4 flex items-start gap-2.5">
-          <input
-            type="checkbox"
-            checked={readOnly}
-            onChange={(e) => setReadOnly(e.target.checked)}
-            className="mt-0.5 size-4 rounded border-border accent-accent"
-          />
-          <span>
-            <span className="block text-[13px] text-text">Read-only mode</span>
-            <span className="block text-[12px] text-muted">
-              Prevent edits and destructive actions in the Web UI. Imports
-              through the API or CLI remain available.
-            </span>
-          </span>
-        </label>
-      </section>
-
-      <section>
-        <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-          Import API token
-        </h2>
-        <p className="mt-1 text-[13px] text-muted">
-          Paste this into vault-push or vault-push-gui. It identifies your account by username —
-          you do not need an account UUID. This is not your website login.
-        </p>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <code className="min-w-0 flex-1 break-all rounded-md border border-border bg-elevated px-3 py-2 font-mono text-[12px] text-text">
-            {apiToken || "—"}
-          </code>
-          <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              disabled={!apiToken || regeneratingToken}
-              onClick={() => void copyApiToken()}
-              className="rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
-            >
-              {tokenCopied ? "Copied" : "Copy"}
-            </button>
-            <button
-              type="button"
-              disabled={regeneratingToken || deleting}
-              onClick={() => void regenerateApiToken()}
-              className="rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
-            >
-              {regeneratingToken ? "…" : "Regenerate"}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {data && (
-        <section>
-          <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-            Vault identity
-          </h2>
-          <p className="mt-1 text-[13px] text-muted">
-            Name and phones used when matching your own messages. Reingest after
-            changing these values.
-          </p>
-
-          <dl className="mt-4 space-y-3 text-[14px]">
             <div>
-              <dt className="text-[12px] text-muted">First name</dt>
-              <dd className="mt-0.5 text-text">
-                {data.vaultOwner.firstName || "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[12px] text-muted">Last name</dt>
-              <dd className="mt-0.5 text-text">
-                {data.vaultOwner.lastName || "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[12px] text-muted">Phones</dt>
-              <dd className="mt-0.5 text-text">
-                {data.vaultOwner.phones.length > 0 ? (
-                  <ul className="list-disc list-outside pl-4">
-                    {data.vaultOwner.phones.map((phone) => (
-                      <li key={phone}>{formatPhoneDisplay(phone)}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  "None"
-                )}
-              </dd>
+              <span className="text-[13px] text-text">Phones</span>
+              <div className="mt-1">
+                <ContactPhoneList
+                  phones={phones}
+                  onChange={(next) => {
+                    setPhones(next);
+                    setSaved(false);
+                  }}
+                  minFilled={1}
+                  placeholder="Phone number"
+                  removeLabel="Remove phone number"
+                />
+              </div>
               <p className="mt-1 text-[12px] text-muted">
-                Stored in E.164 format.
+                Include the country code. At least one number is required.
               </p>
             </div>
-          </dl>
-        </section>
-      )}
+          </div>
+        </div>
+      </section>
 
-      <div className="flex items-center gap-3 border-t border-border pt-6">
+      <div className="flex items-center gap-3">
         <button
           type="button"
-          disabled={saving || deleting}
+          disabled={!canSave}
           onClick={() => void save()}
-          className="rounded-md border border-border bg-elevated px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
+          className="min-w-[7rem] shrink-0 rounded-md border border-border bg-elevated px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
         </button>
@@ -425,8 +279,8 @@ export function SettingsAccountForm() {
             <div className="mt-4 space-y-4 pl-6">
               <div className="flex items-center justify-between gap-4">
                 <p className="min-w-0 flex-1 text-[13px] text-muted">
-                  Permanently delete every conversation, message, and attachment
-                  for this account. Contacts, labels, and login details remain.
+                  Delete all messages and attachments. Your contacts and
+                  settings remain.
                 </p>
                 <button
                   type="button"
@@ -441,7 +295,7 @@ export function SettingsAccountForm() {
               {!data.isDemo ? (
                 <div className="flex items-center justify-between gap-4">
                   <p className="min-w-0 flex-1 text-[13px] text-muted">
-                    Permanently delete this account and all vault data tied to it.
+                    Delete this account and everything in it.
                   </p>
                   <button
                     type="button"
@@ -468,66 +322,5 @@ export function SettingsAccountForm() {
         onConfirm={() => void performDelete()}
       />
     </div>
-  );
-}
-
-function AdditionalEmailRow({
-  email,
-  onMakePrimary,
-  onRemove,
-}: {
-  email: string;
-  onMakePrimary: () => void;
-  onRemove: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLLIElement>(null);
-
-  useDismissible({
-    open,
-    onDismiss: () => setOpen(false),
-    refs: [rootRef],
-  });
-
-  return (
-    <li
-      ref={rootRef}
-      className="relative flex items-center justify-between gap-3 rounded-md border border-border bg-elevated px-3 py-2"
-    >
-      <span className="min-w-0 truncate text-[14px] text-text">{email}</span>
-      <button
-        type="button"
-        aria-label={`Actions for ${email}`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-text"
-      >
-        <EllipsisIcon className="size-5" />
-      </button>
-      {open && (
-        <div className="absolute top-full right-0 z-50 mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-1 shadow-xl">
-          <button
-            type="button"
-            className="flex w-full px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong"
-            onClick={() => {
-              setOpen(false);
-              onMakePrimary();
-            }}
-          >
-            Make primary
-          </button>
-          <button
-            type="button"
-            className="flex w-full px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong"
-            onClick={() => {
-              setOpen(false);
-              onRemove();
-            }}
-          >
-            Remove
-          </button>
-        </div>
-      )}
-    </li>
   );
 }

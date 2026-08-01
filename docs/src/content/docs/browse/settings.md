@@ -1,24 +1,29 @@
 ---
 title: Settings
-description: Account settings, Import API token, read-only mode, and appearance.
+description: Account, Access (read-only and Vault Import), and appearance.
 ---
 
-Settings opens at `/settings/account` with two tabs:
+Settings opens at `/settings/account` with three tabs:
 
 ## Account
 
-- **Sign-in details** — username, primary email, additional emails
-- **Read-only mode** — blocks edits and destructive actions in the web UI;
-  CLI and HTTP imports still work
-- **Import API token** — copy or regenerate for `vault-push` / Vault tab
-  (not your website login)
-- **Vault identity** — owner name and phones used when matching “from me”
-  messages (reingest after changing these)
+- **Vault identity** — username and no-password flag (read-only; set at
+  account creation); editable first/last name and phones used when matching
+  “from me” messages (reingest after changing name/phones)
 - **Danger zone** — delete all messages for the account, or delete the account
   (demo account cannot be deleted)
 
-New accounts start **read-only**. Turn that off and save before editing
-contacts or trashing items.
+## Access
+
+- **Read-only mode** — blocks edits and destructive actions while browsing
+  the vault (contacts, messages, trash). Settings stay editable; CLI and HTTP
+  imports still work
+- **Vault Import** — generate an API token for `vault-push` / Vault tab (shown
+  once when created; delete and generate again if needed). Not your website
+  login
+
+New accounts start **read-only**. Turn that off under Access and save before
+editing contacts or trashing items in the browse UI.
 
 ## Appearance
 

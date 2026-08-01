@@ -186,8 +186,7 @@ export function DateTimeSettings() {
             Date and time
           </h2>
           <p className="mt-1 text-[13px] text-muted">
-            How dates appear in lists, headers, and message timestamps. Changes
-            save automatically.
+            Choose how dates and times appear. Changes save automatically.
           </p>
           <h3 className="mt-5 text-[13px] font-medium text-text">Date</h3>
 
@@ -246,9 +245,6 @@ export function DateTimeSettings() {
           </p>
 
           <h3 className="mt-8 text-[13px] font-medium text-text">Time</h3>
-          <p className="mt-1 text-[13px] text-muted">
-            How times appear on messages and other timestamps.
-          </p>
 
           <div
             role="radiogroup"

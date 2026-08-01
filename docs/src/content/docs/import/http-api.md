@@ -19,7 +19,7 @@ call. They project message-ir export folders into
 | `POST` | `/v1/import?source=&account=&mode=&dedupe=` | Bearer token |
 
 Auth is per-account only (no host-wide admin token). Tokens come from
-**Settings → Account** in the web UI.
+**Settings → Access** in the web UI.
 
 ## Import body formats
 

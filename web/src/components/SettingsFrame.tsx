@@ -16,7 +16,7 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
           Settings
         </h1>
         <p className="mt-1 text-[14px] text-muted">
-          Manage your account and how Message Vault looks.
+          Manage your profile, access, and appearance.
         </p>
         <nav
           aria-label="Settings sections"

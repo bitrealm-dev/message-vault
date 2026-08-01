@@ -1,6 +1,8 @@
 import {
+  accountHasApiToken,
+  accountHasNoPassword,
   deleteAccount,
-  ensureAccountApiToken,
+  deleteAccountApiToken,
   loadAccount,
   primaryEmail,
   rotateAccountApiToken,
@@ -12,7 +14,7 @@ import {
   withAccountHandler,
 } from "@/lib/accountContext";
 import { isDemoAccount } from "@/lib/demoAccount";
-import { assertVaultWritable, mutationErrorStatus } from "@/lib/owner";
+import { mutationErrorStatus } from "@/lib/owner";
 import { loadVaultOwner, saveVaultOwner } from "@/lib/vaultOwner";
 import { clearAccountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
@@ -29,9 +31,10 @@ function accountJson(account: ReturnType<typeof loadAccount>, accountId: string)
       email: entry.email,
       isPrimary: entry.is_primary,
     })),
+    noPassword: accountHasNoPassword(accountId),
+    hasApiToken: accountHasApiToken(accountId),
     readOnly: account.read_only,
     isDemo: isDemoAccount(accountId),
-    apiToken: ensureAccountApiToken(accountId),
   };
 }
 
@@ -76,8 +79,10 @@ export async function GET() {
   } catch (err) {
     const auth = authError(err);
     if (auth) return auth;
-    const message = err instanceof Error ? err.message : "failed to load account";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Couldn’t load your account." },
+      { status: 500 },
+    );
   }
 }
 
@@ -86,11 +91,48 @@ export async function PATCH(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Couldn’t save your changes." },
+      { status: 400 },
+    );
   }
 
   try {
     return await withAccountHandler(async (accountId) => {
+      const generateApiToken = body.generateApiToken === true;
+      const deleteApiToken = body.deleteApiToken === true;
+
+      if (generateApiToken) {
+        const token = rotateAccountApiToken(accountId);
+        const account = loadAccount(accountId);
+        const owner = loadVaultOwner(accountId);
+        return NextResponse.json({
+          ...accountJson(account, accountId),
+          token,
+          vaultOwner: {
+            firstName: owner.first_name,
+            lastName: owner.last_name,
+            displayName: owner.display_name,
+            phones: owner.phones,
+          },
+        });
+      }
+
+      if (deleteApiToken) {
+        deleteAccountApiToken(accountId);
+        const account = loadAccount(accountId);
+        const owner = loadVaultOwner(accountId);
+        return NextResponse.json({
+          ...accountJson(account, accountId),
+          vaultOwner: {
+            firstName: owner.first_name,
+            lastName: owner.last_name,
+            displayName: owner.display_name,
+            phones: owner.phones,
+          },
+        });
+      }
+
       const patch: {
         username?: string;
         read_only?: boolean;
@@ -126,24 +168,25 @@ export async function PATCH(req: Request) {
           typeof vaultOwnerBody.lastName === "string" ||
           Array.isArray(vaultOwnerBody.phones));
 
-      const regenerateApiToken = body.regenerateApiToken === true;
-
       if (
         patch.username === undefined &&
         patch.read_only === undefined &&
         patch.emails === undefined &&
-        !hasVaultOwnerPatch &&
-        !regenerateApiToken
+        !hasVaultOwnerPatch
       ) {
-        return NextResponse.json({ error: "no valid fields to update" }, { status: 400 });
+        return NextResponse.json({ error: "Nothing to save." }, { status: 400 });
       }
 
-      if (regenerateApiToken) {
-        rotateAccountApiToken(accountId);
-      }
+      // Settings writes (identity, token, read-only flag) are always allowed.
+      // Read-only mode only blocks browse/GUI vault mutations elsewhere.
+      const account =
+        patch.username !== undefined ||
+        patch.read_only !== undefined ||
+        patch.emails !== undefined
+          ? saveAccount(accountId, patch)
+          : loadAccount(accountId);
 
       if (hasVaultOwnerPatch) {
-        assertVaultWritable();
         const current = loadVaultOwner(accountId);
         const phones = Array.isArray(vaultOwnerBody!.phones)
           ? vaultOwnerBody!.phones
@@ -153,7 +196,7 @@ export async function PATCH(req: Request) {
           : current.phones;
         if (phones.length === 0) {
           return NextResponse.json(
-            { error: "at least one phone is required" },
+            { error: "At least one phone number is required." },
             { status: 400 },
           );
         }
@@ -163,7 +206,7 @@ export async function PATCH(req: Request) {
             : current.first_name;
         if (!firstName.trim()) {
           return NextResponse.json(
-            { error: "first name is required" },
+            { error: "First name is required." },
             { status: 400 },
           );
         }
@@ -177,12 +220,6 @@ export async function PATCH(req: Request) {
         });
       }
 
-      const account =
-        patch.username !== undefined ||
-        patch.read_only !== undefined ||
-        patch.emails !== undefined
-          ? saveAccount(accountId, patch)
-          : loadAccount(accountId);
       const owner = loadVaultOwner(accountId);
       return NextResponse.json({
         ...accountJson(account, accountId),
@@ -197,9 +234,16 @@ export async function PATCH(req: Request) {
   } catch (err) {
     const auth = authError(err);
     if (auth) return auth;
-    const message = err instanceof Error ? err.message : "update failed";
+    const message =
+      err instanceof Error ? err.message : "Couldn’t save your changes.";
+    const userMessage =
+      body.generateApiToken === true
+        ? "Couldn’t create an API token."
+        : body.deleteApiToken === true
+          ? "Couldn’t delete the API token."
+          : "Couldn’t save your changes.";
     return NextResponse.json(
-      { error: message },
+      { error: userMessage },
       { status: mutationErrorStatus(message, 500) },
     );
   }
@@ -216,9 +260,10 @@ export async function DELETE() {
   } catch (err) {
     const auth = authError(err);
     if (auth) return auth;
-    const message = err instanceof Error ? err.message : "delete failed";
+    const message =
+      err instanceof Error ? err.message : "Couldn’t delete your account.";
     return NextResponse.json(
-      { error: message },
+      { error: "Couldn’t delete your account." },
       { status: mutationErrorStatus(message, 500) },
     );
   }

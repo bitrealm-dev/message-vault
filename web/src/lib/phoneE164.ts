@@ -175,6 +175,6 @@ export function parsePhoneE164(input: string): string {
   if (e164) return e164;
 
   throw new Error(
-    "Enter a valid phone in E.164 format. US example: +15557891234 (country code +1, then 10 digits). You can paste (555) 789-1234 and we will normalize it.",
+    "Enter a valid phone number with a country code, such as +1 555 789 1234.",
   );
 }

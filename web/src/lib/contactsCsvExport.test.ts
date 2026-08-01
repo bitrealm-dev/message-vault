@@ -16,11 +16,11 @@ describe("exportContactsCsvFromDb", () => {
   let tmpDir = "";
   let accountId = "";
 
-  before(() => {
+  before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-csv-export-"));
     process.env.VAULT_DB = path.join(tmpDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
-    const account = createAccount({
+    const account = await createAccount({
       username: `csvx_${Date.now()}`,
       primaryEmail: `csvx_${Date.now()}@example.com`,
       firstName: "Csv",

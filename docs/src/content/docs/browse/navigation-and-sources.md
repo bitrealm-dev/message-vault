@@ -11,7 +11,7 @@ description: Sidebar sections, Message Sources filter, and the Combined view.
 | **All** | `/all` | Every non-trashed contact |
 | **Group Messages** | `/group-messages` | Multi-party threads |
 | **Trash** | `/trash` | Soft-deleted contacts and group chats |
-| **Settings** | `/settings/account` | Account, Import API token, appearance |
+| **Settings** | `/settings/account` | Account, Access, appearance |
 
 Additional contact views: **No Messages** (`/no-messages`), **No label**
 (`/no-label`), and per-label pages under `/label/[slug]`. Labels (including

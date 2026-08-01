@@ -10,6 +10,7 @@
     "test": "node ./node_modules/tsx/dist/cli.mjs --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "better-sqlite3": "^12.11.1",
     "libphonenumber-js": "^1.13.9",
     "next": "16.2.12",

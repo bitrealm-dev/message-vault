@@ -1,6 +1,7 @@
 /** Settings routes shown as compact tabs inside the settings content frame. */
 export const SETTINGS_TABS = [
   { href: "/settings/account", label: "Account" },
+  { href: "/settings/access", label: "Access" },
   { href: "/settings/display", label: "Appearance" },
 ] as const;
 

@@ -1,4 +1,4 @@
-import { getAccount } from "@/lib/accounts";
+import { authenticateAccount, INVALID_CREDENTIALS } from "@/lib/accounts";
 import { accountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -13,19 +13,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  const accountId =
-    typeof body.accountId === "string" ? body.accountId.trim() : "";
-  if (!accountId) {
-    return NextResponse.json({ error: "accountId is required" }, { status: 400 });
+  const username = typeof body.username === "string" ? body.username.trim() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!username) {
+    return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
   }
 
-  const account = getAccount(accountId);
+  const account = await authenticateAccount(username, password);
   if (!account) {
-    return NextResponse.json({ error: "account not found" }, { status: 404 });
+    return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
   }
 
   const store = await cookies();
-  store.set(accountCookieOptions(accountId));
+  store.set(accountCookieOptions(account.id));
 
   return NextResponse.json({
     id: account.id,

@@ -924,7 +924,8 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 1
+            read_only INTEGER NOT NULL DEFAULT 1,
+            password_hash TEXT
         );
 
         CREATE TABLE IF NOT EXISTS account_emails (
@@ -959,7 +960,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
 
         CREATE TABLE IF NOT EXISTS account_api_tokens (
             account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-            token TEXT NOT NULL UNIQUE,
+            token_hash TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL
         );
 
@@ -979,6 +980,103 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     migrate_legacy_accounts_email(conn)?;
     migrate_vault_owner_name_columns(conn)?;
     migrate_accounts_default_read_only(conn)?;
+    migrate_accounts_password_hash(conn)?;
+    migrate_account_api_tokens_to_hash(conn)?;
+    Ok(())
+}
+
+/// Migrate plaintext `token` column to `token_hash` (SHA-256 hex).
+fn migrate_account_api_tokens_to_hash(conn: &Connection) -> Result<()> {
+    let has_table: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'account_api_tokens'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_table {
+        return Ok(());
+    }
+
+    let has_token: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = 'token'",
+        [],
+        |row| row.get(0),
+    )?;
+    let has_hash: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = 'token_hash'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if has_hash && !has_token {
+        return Ok(());
+    }
+
+    if has_token {
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            CREATE TABLE account_api_tokens_new (
+                account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
+            "#,
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT account_id, token, created_at FROM account_api_tokens",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (account_id, token, created_at) = row?;
+            let token_hash = crate::api_tokens::hash_api_token(&token);
+            conn.execute(
+                "INSERT INTO account_api_tokens_new (account_id, token_hash, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![account_id, token_hash, created_at],
+            )?;
+        }
+        conn.execute_batch(
+            r#"
+            DROP TABLE account_api_tokens;
+            ALTER TABLE account_api_tokens_new RENAME TO account_api_tokens;
+            PRAGMA foreign_keys = ON;
+            "#,
+        )?;
+        return Ok(());
+    }
+
+    // Table exists without token or token_hash (unexpected) — recreate empty.
+    if !has_hash {
+        conn.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS account_api_tokens;
+            CREATE TABLE account_api_tokens (
+                account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
+            "#,
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_accounts_password_hash(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('accounts') WHERE name = 'password_hash'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_col {
+        return Ok(());
+    }
+    conn.execute("ALTER TABLE accounts ADD COLUMN password_hash TEXT", [])?;
     Ok(())
 }
 

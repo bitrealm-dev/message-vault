@@ -57,19 +57,17 @@ export function DeleteAccountDialog({
           id="mv-delete-account-dialog-title"
           className="pr-8 text-[16px] font-semibold text-text"
         >
-          Are you ABSOLUTELY sure?
+          Delete your account?
         </h2>
 
         <p className="mt-3 text-[14px] leading-relaxed text-muted">
-          This action <span className="font-semibold text-text">CANNOT</span> be
-          undone. It will permanently delete your account and all associated
-          data — messages, contacts, groups, vault owner profile, and uploaded
-          assets.
+          This cannot be undone. Your messages, contacts, group chats, profile,
+          and attachments will be permanently deleted.
         </p>
 
         <label className="mt-5 block">
           <span className="text-[14px] text-text">
-            Please type your username{" "}
+            Type your username{" "}
             {expected ? (
               <span className="font-semibold text-text">{expected}</span>
             ) : null}{" "}

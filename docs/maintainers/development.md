@@ -71,9 +71,9 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000/login>. Sign in as the seeded **`demo`** account
-(or create another account). Keep the final PowerShell window running while
-using the application.
+Open <http://localhost:3000/login>. Sign in as username **`demo`** with an empty
+password (or create another account). Keep the final PowerShell window running
+while using the application.
 
 `reset-demo` overwrites `config/config.toml` with the demo config, which has
 `[server]` commented out. Before running `cargo run --release -- serve` for
@@ -115,8 +115,9 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000/login>. Sign in as **`demo`** (or create another
-account). Keep the development server running while using the application.
+Open <http://localhost:3000/login>. Sign in as username **`demo`** with an empty
+password (or create another account). Keep the development server running while
+using the application.
 
 `setup-demo.sh` runs `reset-demo`, which overwrites `config/config.toml` and
 leaves `[server]` disabled until you restore the example config.
@@ -146,8 +147,8 @@ Edit `config/config.toml`:
 1. Adjust `[paths]` for the local machine.
 2. Ensure `[server]` is present (the example file enables it).
 3. Leave `bind = "127.0.0.1:8080"` for local-only access.
-4. Create a web account and use its Import API token from
-   **Settings → Account** for `vault-push`.
+4. Create a web account and generate a Vault Import API token from
+   **Settings → Access** for `vault-push` (copy it from the one-time dialog).
 
 Source names are not listed in TOML — each import/upload supplies its own
 source id (asset folders under `data/<account_id>/<source_id>/`). Runtime
@@ -170,9 +171,9 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>, create an account, and copy its Import API token
-from **Settings → Account**. Keep the import API running while pushing a
-message-ir export from
+Open <http://localhost:3000>, create an account, and generate a Vault Import
+API token under **Settings → Access** (copy it from the one-time dialog).
+Keep the import API running while pushing a message-ir export from
 [message-exporters](https://bitrealm-dev.github.io/message-exporters/)
 (`message-exporter` Vault tab or `cli/vault-push`).
 

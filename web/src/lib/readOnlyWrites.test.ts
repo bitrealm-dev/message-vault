@@ -21,11 +21,11 @@ describe("read-only web vault mutations", () => {
   let tmpDir = "";
   let accountId = "";
 
-  before(() => {
+  before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-ro-"));
     process.env.VAULT_DB = path.join(tmpDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
-    const account = createAccount({
+    const account = await createAccount({
       username: `ro_${Date.now()}`,
       primaryEmail: `ro_${Date.now()}@example.com`,
       firstName: "Read",

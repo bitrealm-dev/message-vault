@@ -93,8 +93,7 @@ export function ThemeSettings() {
         Theme
       </h2>
       <p className="mt-1 text-[13px] text-muted">
-        Four colors define your theme. Surfaces and bubbles are derived from
-        the active header and accent. Changes save automatically.
+        Choose colors for light and dark mode. Changes save automatically.
       </p>
 
       <div
@@ -190,7 +189,7 @@ export function ThemeSettings() {
             else setMode(resolvedMode);
           }}
         />
-        Switch light/dark to match system
+        Match your device theme
       </label>
 
       <div className="mt-6 space-y-3">
@@ -212,8 +211,7 @@ export function ThemeSettings() {
           Share theme
         </div>
         <p className="mt-1 text-[13px] text-muted">
-          Copy or paste four hex values: light header, light accent, dark
-          header, dark accent.
+          Copy or paste the four color codes below.
         </p>
         <div className="mt-2 flex gap-2">
           <input
@@ -251,6 +249,11 @@ export function ThemeSettings() {
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
+        {shareError ? (
+          <p className="mt-1 text-[12px] text-danger" role="alert">
+            Enter four valid color codes.
+          </p>
+        ) : null}
       </div>
 
       <div className="mt-6">

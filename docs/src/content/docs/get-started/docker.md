@@ -103,8 +103,9 @@ docker compose up --build
 VAULT_MODE=personal docker compose up
 ```
 
-Creates an empty `data/` volume. Create an account in the UI, then use the
-Import API token from **Settings → Account** with
+Creates an empty `data/` volume. Create an account in the UI, generate a Vault
+Import API token under **Settings → Access** (copy from the one-time dialog),
+then use it with
 [Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
 (`message-exporter` Vault tab or `cli/vault-push`) against
 <http://127.0.0.1:8080>.

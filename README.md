@@ -41,8 +41,8 @@ cd web && npm ci && npm run dev
 docker compose up
 ```
 
-Open <http://localhost:3000/login> and sign in as **`demo`** (or create another
-account).
+Open <http://localhost:3000/login> and sign in as username **`demo`** with an
+empty password (or create another account).
 
 Windows PowerShell steps and full prerequisites are in the
 [developer setup guide](docs/maintainers/development.md). Docker profiles
@@ -52,7 +52,8 @@ Windows PowerShell steps and full prerequisites are in the
 
 1. Copy `config/config.toml.example` → `config/config.toml` (ensure `[server]`).
 2. `cargo run --release -- serve` and `cd web && npm ci && npm run dev`.
-3. Create an account; copy the Import API token from **Settings → Account**.
+3. Create an account; generate a Vault Import API token under **Settings → Access**
+   (copy it from the one-time dialog).
 4. Export message-ir JSONL with
    [Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
    (`message-exporter`), then push via the Vault tab or `cli/vault-push`.

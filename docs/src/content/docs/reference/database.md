@@ -51,7 +51,7 @@ derived (converted) paths for the browser.
 
 ### `accounts` / `account_emails` / `account_api_tokens`
 
-Web login accounts, emails, and the Import API token used by `serve`.
+Web login accounts, emails, and hashed Vault Import API tokens used by `serve`.
 
 ### `vault_owners` (+ phones/emails)
 

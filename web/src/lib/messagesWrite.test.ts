@@ -16,17 +16,19 @@ describe("deleteAllMessagesForAccount", () => {
   let tempDir = "";
   let accountId = "";
 
-  before(() => {
+  before(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-delete-messages-"));
     process.env.VAULT_DB = path.join(tempDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tempDir, "data");
-    accountId = createAccount({
-      username: `delete_messages_${Date.now()}`,
-      primaryEmail: `delete_messages_${Date.now()}@example.com`,
-      firstName: "Delete",
-      lastName: "Messages",
-      phone: "+15555550123",
-    }).id;
+    accountId = (
+      await createAccount({
+        username: `delete_messages_${Date.now()}`,
+        primaryEmail: `delete_messages_${Date.now()}@example.com`,
+        firstName: "Delete",
+        lastName: "Messages",
+        phone: "+15555550123",
+      })
+    ).id;
   });
 
   after(() => {

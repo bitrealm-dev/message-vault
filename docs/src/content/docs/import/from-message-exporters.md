@@ -16,7 +16,8 @@ Release layout (`message-exporter`, `lib/`, `cli/`):
 ## Prerequisites
 
 - Vault `serve` running with `[server]` enabled in `config/config.toml`
-- Web account created; **Import API token** copied from Settings → Account
+- Web account created; **API token** generated under Settings → Access → Vault
+  Import (copy from the one-time dialog)
 - A message-ir JSONL export folder (one `*.jsonl` per conversation, plus
   `attachments/`)
 
@@ -37,7 +38,7 @@ Fill in:
 
 - URL (for example `http://127.0.0.1:8080`)
 - Username
-- Vault key (Import API token)
+- Vault key (API token from Vault Import)
 - Input directory (your message-ir JSONL export folder)
 
 ## CLI (`vault-push`)

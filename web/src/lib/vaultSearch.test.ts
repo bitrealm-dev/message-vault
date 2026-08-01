@@ -21,11 +21,11 @@ describe("vault search + FTS", () => {
   let tmpDir = "";
   let accountId = "";
 
-  before(() => {
+  before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-search-"));
     process.env.VAULT_DB = path.join(tmpDir, "vault.db");
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
-    const account = createAccount({
+    const account = await createAccount({
       username: `search_${Date.now()}`,
       primaryEmail: `search_${Date.now()}@example.com`,
       firstName: "Search",
