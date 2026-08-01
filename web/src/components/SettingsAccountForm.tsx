@@ -1,6 +1,7 @@
 "use client";
 
-import { phoneHandlesOnly } from "@/lib/handleKind";
+import { toPhoneE164 } from "@/lib/phoneE164";
+import { MAX_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -10,6 +11,7 @@ import {
 } from "./contactEdit";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import { ChevronRightIcon } from "./icons";
+import { PasswordField } from "./PasswordField";
 
 type AccountData = {
   id: string;
@@ -29,6 +31,9 @@ export function SettingsAccountForm() {
   const [data, setData] = useState<AccountData | null>(null);
   const [username, setUsername] = useState("");
   const [noPassword, setNoPassword] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phones, setPhones] = useState<string[]>([""]);
@@ -45,6 +50,9 @@ export function SettingsAccountForm() {
     setData(json);
     setUsername(json.username);
     setNoPassword(json.noPassword);
+    setPasswordOpen(false);
+    setPassword("");
+    setPasswordConfirm("");
     const draft = seedContactEditDraft({
       firstName: json.vaultOwner.firstName,
       lastName: json.vaultOwner.lastName,
@@ -75,37 +83,89 @@ export function SettingsAccountForm() {
     void load();
   }, [load]);
 
-  const phonesToSave = phoneHandlesOnly(phonesForSave(phones));
+  const phonesToSave = phonesForSave(phones);
   const savedPhones = data?.vaultOwner.phones ?? [];
+  const passwordsMatch =
+    Boolean(password) &&
+    password.length < MAX_PASSWORD_LENGTH &&
+    password === passwordConfirm;
   const dirty =
     data != null &&
     (firstName !== data.vaultOwner.firstName ||
       lastName !== data.vaultOwner.lastName ||
+      noPassword !== data.noPassword ||
+      password !== "" ||
+      passwordConfirm !== "" ||
       phonesToSave.length !== savedPhones.length ||
       phonesToSave.some((phone, i) => phone !== savedPhones[i]));
   const canSave =
     dirty &&
     !saving &&
-    !deleting &&
-    firstName.trim() !== "" &&
-    phonesToSave.length > 0;
+    !deleting;
 
   const save = async () => {
     if (!canSave) return;
-    setSaving(true);
     setError(null);
     setSaved(false);
+    if (!firstName.trim()) {
+      setError("Enter your first name.");
+      return;
+    }
+    if (phonesToSave.length === 0) {
+      setError("Add at least one phone number.");
+      return;
+    }
+    const invalidPhone = phonesToSave.find((phone) => !toPhoneE164(phone));
+    if (invalidPhone) {
+      setError(
+        `Invalid phone number “${invalidPhone}”. Include the country code, such as +1 555 789 1234.`,
+      );
+      return;
+    }
+    const passwordRequired = data?.noPassword === true && !noPassword;
+    const changingPassword =
+      passwordRequired || password !== "" || passwordConfirm !== "";
+    if (!noPassword && changingPassword) {
+      if (!password) {
+        setError("Enter a new password.");
+        return;
+      }
+      if (password.length >= MAX_PASSWORD_LENGTH) {
+        setError("Password must be fewer than 100 characters.");
+        return;
+      }
+      if (password !== passwordConfirm) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+    setSaving(true);
     try {
+      const body: {
+        vaultOwner: {
+          firstName: string;
+          lastName: string;
+          phones: string[];
+        };
+        noPassword?: true;
+        password?: string;
+      } = {
+        vaultOwner: {
+          firstName,
+          lastName,
+          phones: phonesToSave,
+        },
+      };
+      if (data && noPassword !== data.noPassword) {
+        if (noPassword) body.noPassword = true;
+        else body.password = password;
+      } else if (!noPassword && changingPassword) {
+        body.password = password;
+      }
       const res = await fetch("/api/settings/account", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vaultOwner: {
-            firstName,
-            lastName,
-            phones: phonesToSave,
-          },
-        }),
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as AccountData & { error?: string };
       if (!res.ok) throw new Error(json.error ?? "Couldn’t save your changes.");
@@ -162,10 +222,10 @@ export function SettingsAccountForm() {
     <div className="max-w-xl space-y-10">
       <section>
         <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
-          Your profile
+          Your login
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Helps identify messages you sent. Re-import messages after changes.
+          Manage how you sign in to Message Vault.
         </p>
 
         <div className="mt-4 space-y-4">
@@ -180,17 +240,87 @@ export function SettingsAccountForm() {
             />
           </label>
 
-          <label className="inline-flex items-center gap-2 text-[13px] text-text">
-            <input
-              type="checkbox"
-              checked={noPassword}
-              disabled
-              className="accent-accent disabled:opacity-70"
-            />
-            Sign in without a password
-          </label>
+          <div>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                aria-expanded={passwordOpen}
+                disabled={noPassword || saving}
+                onClick={() => {
+                  setPasswordOpen((open) => {
+                    if (open) {
+                      setPassword("");
+                      setPasswordConfirm("");
+                    }
+                    return !open;
+                  });
+                  setError(null);
+                }}
+                className="rounded-md border border-border bg-elevated px-3 py-1.5 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
+              >
+                Change password
+              </button>
+              <label className="inline-flex items-center gap-2 text-[13px] text-text">
+                <input
+                  type="checkbox"
+                  checked={noPassword}
+                  disabled={saving || data?.isDemo}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setNoPassword(checked);
+                    setSaved(false);
+                    setError(null);
+                    if (checked) {
+                      setPasswordOpen(false);
+                      setPassword("");
+                      setPasswordConfirm("");
+                    }
+                  }}
+                  className="accent-accent disabled:opacity-70"
+                />
+                Sign in without a password
+              </label>
+            </div>
 
-          <div className="space-y-4">
+            {passwordOpen && !noPassword ? (
+              <div className="mt-4 space-y-4">
+                <PasswordField
+                  label="New password"
+                  value={password}
+                  onChange={(value) => {
+                    setPassword(value);
+                    setSaved(false);
+                    setError(null);
+                  }}
+                  autoComplete="new-password"
+                  showCheck={passwordsMatch}
+                />
+                <PasswordField
+                  label="Confirm new password"
+                  value={passwordConfirm}
+                  onChange={(value) => {
+                    setPasswordConfirm(value);
+                    setSaved(false);
+                    setError(null);
+                  }}
+                  autoComplete="new-password"
+                  showCheck={passwordsMatch}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-4 border-t border-border pt-6">
+            <div>
+              <h2 className="text-[12px] font-semibold tracking-wider text-muted uppercase">
+                Your identity
+              </h2>
+              <p className="mt-1 text-[13px] text-muted">
+                Used to display your name and recognize your phone numbers in
+                messages.
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-[13px] text-text">First name</span>
@@ -200,6 +330,7 @@ export function SettingsAccountForm() {
                   onChange={(e) => {
                     setFirstName(e.target.value);
                     setSaved(false);
+                    setError(null);
                   }}
                   className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
                 />
@@ -212,6 +343,7 @@ export function SettingsAccountForm() {
                   onChange={(e) => {
                     setLastName(e.target.value);
                     setSaved(false);
+                    setError(null);
                   }}
                   className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
                 />
@@ -219,13 +351,14 @@ export function SettingsAccountForm() {
             </div>
 
             <div>
-              <span className="text-[13px] text-text">Phones</span>
+              <span className="text-[13px] text-text">☎ Phone numbers</span>
               <div className="mt-1">
                 <ContactPhoneList
                   phones={phones}
                   onChange={(next) => {
                     setPhones(next);
                     setSaved(false);
+                    setError(null);
                   }}
                   minFilled={1}
                   placeholder="Phone number"
@@ -248,6 +381,18 @@ export function SettingsAccountForm() {
           className="min-w-[7rem] shrink-0 rounded-md border border-border bg-elevated px-4 py-2 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
+        </button>
+        <button
+          type="button"
+          disabled={!dirty || saving}
+          onClick={() => {
+            if (data) applyAccount(data);
+            setError(null);
+            setSaved(false);
+          }}
+          className="shrink-0 rounded-md border border-border bg-transparent px-4 py-2 text-[13px] text-muted transition-colors hover:bg-hover hover:text-text disabled:opacity-50"
+        >
+          Cancel
         </button>
         {saved && <span className="text-[13px] text-muted">Saved.</span>}
         {error && (
@@ -274,6 +419,9 @@ export function SettingsAccountForm() {
               Danger zone
             </span>
           </button>
+          <p className="mt-1 pl-6 text-[13px] text-muted">
+            Delete messages or permanently remove your account.
+          </p>
 
           {dangerZoneOpen && (
             <div className="mt-4 space-y-4 pl-6">
@@ -286,7 +434,7 @@ export function SettingsAccountForm() {
                   type="button"
                   disabled={saving || deleting || deletingMessages}
                   onClick={() => void deleteAllMessages()}
-                  className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                  className="w-40 shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                 >
                   {deletingMessages ? "Deleting…" : "Delete all messages"}
                 </button>
@@ -301,7 +449,7 @@ export function SettingsAccountForm() {
                     type="button"
                     disabled={saving || deleting || deletingMessages}
                     onClick={() => setDeleteDialogOpen(true)}
-                    className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                    className="w-40 shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                   >
                     Delete account
                   </button>

@@ -54,7 +54,7 @@ export async function PATCH(req: Request) {
   }
 
   const patch: Record<string, string> = {};
-  for (const [, value] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value !== "string") {
       return NextResponse.json(
         { error: "Couldn’t save appearance settings." },

@@ -61,7 +61,7 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 1,
+      read_only INTEGER NOT NULL DEFAULT 0,
       password_hash TEXT
     );
 
@@ -848,7 +848,7 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
     CREATE TABLE accounts_new (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 1
+      read_only INTEGER NOT NULL DEFAULT 0
     );
     INSERT INTO accounts_new (id, username, read_only)
       SELECT id, username, read_only FROM accounts;

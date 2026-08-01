@@ -69,7 +69,7 @@ pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwne
 /// Ensure `accounts` row exists (stub username = id) for CLI imports.
 pub fn ensure_account_row(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO accounts (id, username, read_only) VALUES (?1, ?1, 1)",
+        "INSERT OR IGNORE INTO accounts (id, username, read_only) VALUES (?1, ?1, 0)",
         params![account_id],
     )
     .with_context(|| format!("failed to ensure account row for {account_id}"))?;

@@ -7,6 +7,7 @@ import {
   primaryEmail,
   rotateAccountApiToken,
   saveAccount,
+  setAccountPassword,
   type AccountEmail,
 } from "@/lib/accounts";
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/lib/accountContext";
 import { isDemoAccount } from "@/lib/demoAccount";
 import { mutationErrorStatus } from "@/lib/owner";
+import { validatePasswordPlaintext } from "@/lib/password";
 import { loadVaultOwner, saveVaultOwner } from "@/lib/vaultOwner";
 import { clearAccountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
@@ -101,6 +103,22 @@ export async function PATCH(req: Request) {
     return await withAccountHandler(async (accountId) => {
       const generateApiToken = body.generateApiToken === true;
       const deleteApiToken = body.deleteApiToken === true;
+      const clearPassword = body.noPassword === true;
+      const password =
+        typeof body.password === "string" ? body.password : undefined;
+
+      if (clearPassword && password !== undefined) {
+        return NextResponse.json(
+          { error: "Choose either a password or passwordless sign-in." },
+          { status: 400 },
+        );
+      }
+      if (password !== undefined) {
+        const passwordError = validatePasswordPlaintext(password);
+        if (passwordError) {
+          return NextResponse.json({ error: passwordError }, { status: 400 });
+        }
+      }
 
       if (generateApiToken) {
         const token = rotateAccountApiToken(accountId);
@@ -172,7 +190,9 @@ export async function PATCH(req: Request) {
         patch.username === undefined &&
         patch.read_only === undefined &&
         patch.emails === undefined &&
-        !hasVaultOwnerPatch
+        !hasVaultOwnerPatch &&
+        !clearPassword &&
+        password === undefined
       ) {
         return NextResponse.json({ error: "Nothing to save." }, { status: 400 });
       }
@@ -220,6 +240,10 @@ export async function PATCH(req: Request) {
         });
       }
 
+      if (clearPassword || password !== undefined) {
+        await setAccountPassword(accountId, clearPassword ? null : password!);
+      }
+
       const owner = loadVaultOwner(accountId);
       return NextResponse.json({
         ...accountJson(account, accountId),
@@ -236,15 +260,20 @@ export async function PATCH(req: Request) {
     if (auth) return auth;
     const message =
       err instanceof Error ? err.message : "Couldn’t save your changes.";
+    const phoneValidationError = message.startsWith(
+      "Enter a valid phone number",
+    );
     const userMessage =
       body.generateApiToken === true
         ? "Couldn’t create an API token."
         : body.deleteApiToken === true
           ? "Couldn’t delete the API token."
-          : "Couldn’t save your changes.";
+          : phoneValidationError
+            ? message
+            : "Couldn’t save your changes.";
     return NextResponse.json(
       { error: userMessage },
-      { status: mutationErrorStatus(message, 500) },
+      { status: phoneValidationError ? 400 : mutationErrorStatus(message, 500) },
     );
   }
 }

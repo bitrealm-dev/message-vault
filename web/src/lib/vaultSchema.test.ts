@@ -9,7 +9,7 @@ import {
 } from "./vaultSchema";
 
 describe("accounts default read-only migration", () => {
-  it("defaults new accounts to read-only", () => {
+  it("defaults new accounts to writable", () => {
     const db = new Database(":memory:");
     ensureVaultSchema(db);
     db.prepare(`INSERT INTO accounts (id, username) VALUES (?, ?)`).run(
@@ -19,7 +19,7 @@ describe("accounts default read-only migration", () => {
     const row = db
       .prepare(`SELECT read_only FROM accounts WHERE id = ?`)
       .get("11111111-1111-1111-1111-111111111111") as { read_only: number };
-    assert.equal(row.read_only, 1);
+    assert.equal(row.read_only, 0);
     db.close();
   });
 

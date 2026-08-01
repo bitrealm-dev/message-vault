@@ -37,10 +37,8 @@ Open <http://localhost:3000>, create an account, then go to
 from the dialog (it is shown only once). That token identifies your account.
 You do **not** need an account UUID.
 
-New accounts start in **read-only** mode for the browse UI. Turn that off under
-**Settings → Access** when you want to edit contacts, trash items, or manage
-labels.
-Imports through the API or CLI still work while read-only is on.
+New accounts start with browsing edits enabled. You can turn on view-only mode
+under **Settings → Access** without blocking imports.
 
 Keep `serve` running while you import remotely.
 

@@ -33,7 +33,9 @@ describe("read-only web vault mutations", () => {
       phone: "+15555550100",
     });
     accountId = account.id;
-    assert.equal(account.read_only, true);
+    assert.equal(account.read_only, false);
+    const locked = saveAccount(accountId, { read_only: true });
+    assert.equal(locked.read_only, true);
   });
 
   after(() => {

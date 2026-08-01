@@ -278,6 +278,25 @@ export function accountHasNoPassword(accountId: string): boolean {
   }
 }
 
+/** Replace an account password, or pass null to enable passwordless sign-in. */
+export async function setAccountPassword(
+  accountId: string,
+  password: string | null,
+): Promise<void> {
+  const passwordHash = password === null ? null : await hashPassword(password);
+  const db = openDb();
+  try {
+    const result = db
+      .prepare(`UPDATE accounts SET password_hash = ? WHERE id = ?`)
+      .run(passwordHash, accountId);
+    if (result.changes === 0) {
+      throw new Error("account not found");
+    }
+  } finally {
+    db.close();
+  }
+}
+
 export function isUsernameTaken(username: string): boolean {
   const trimmed = username.trim();
   if (!trimmed) return false;
@@ -366,7 +385,7 @@ export async function createAccount(input: {
     try {
       db.prepare(
         `INSERT INTO accounts (id, username, read_only, password_hash)
-         VALUES (?, ?, 1, ?)`,
+         VALUES (?, ?, 0, ?)`,
       ).run(id, username, passwordHash);
       writeAccountEmails(db, id, emails);
       createVaultOwner(db, id, {
@@ -382,7 +401,7 @@ export async function createAccount(input: {
       id,
       username,
       emails,
-      read_only: true,
+      read_only: false,
     };
   } finally {
     db.close();

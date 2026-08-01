@@ -177,9 +177,8 @@ Keep the import API running while pushing a message-ir export from
 [message-exporters](https://bitrealm-dev.github.io/message-exporters/)
 (`message-exporter` Vault tab or `cli/vault-push`).
 
-New accounts start in read-only mode for the web UI. Turn that off in Settings
-when you need to edit contacts or trash items. CLI and HTTP imports still work
-while read-only is enabled.
+New accounts start with browsing edits enabled. View-only mode can be turned on
+under **Settings → Access** without blocking imports.
 
 ## Common checks
 

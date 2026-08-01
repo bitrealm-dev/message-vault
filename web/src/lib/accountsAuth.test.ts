@@ -6,8 +6,10 @@ import { after, before, describe, it } from "node:test";
 
 import {
   authenticateAccount,
+  accountHasNoPassword,
   createAccount,
   isUsernameTaken,
+  setAccountPassword,
 } from "./accounts";
 
 describe("account password auth", () => {
@@ -64,5 +66,15 @@ describe("account password auth", () => {
     assert.ok(okEmpty);
     assert.equal(okEmpty.id, noPass.id);
     assert.equal(await authenticateAccount(noPass.username, "x"), null);
+
+    await setAccountPassword(noPass.id, "new-secret");
+    assert.equal(accountHasNoPassword(noPass.id), false);
+    assert.ok(await authenticateAccount(noPass.username, "new-secret"));
+    assert.equal(await authenticateAccount(noPass.username, ""), null);
+
+    await setAccountPassword(noPass.id, null);
+    assert.equal(accountHasNoPassword(noPass.id), true);
+    assert.ok(await authenticateAccount(noPass.username, ""));
+    assert.equal(await authenticateAccount(noPass.username, "new-secret"), null);
   });
 });

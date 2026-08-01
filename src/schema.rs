@@ -924,7 +924,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS accounts (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 1,
+            read_only INTEGER NOT NULL DEFAULT 0,
             password_hash TEXT
         );
 
@@ -1142,7 +1142,7 @@ fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
         CREATE TABLE accounts_new (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 1
+            read_only INTEGER NOT NULL DEFAULT 0
         );
         INSERT INTO accounts_new (id, username, read_only)
             SELECT id, username, read_only FROM accounts;
@@ -1298,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn new_accounts_default_to_read_only() {
+    fn new_accounts_default_to_writable() {
         let conn = Connection::open_in_memory().unwrap();
         ensure_accounts_schema(&conn).unwrap();
         conn.execute(
@@ -1313,7 +1313,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(read_only, 1);
+        assert_eq!(read_only, 0);
     }
 
     #[test]
