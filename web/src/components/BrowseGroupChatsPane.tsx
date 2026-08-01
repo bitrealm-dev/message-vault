@@ -45,6 +45,7 @@ export function BrowseGroupChatsPane({
   searchHits = [],
   searchTotal = 0,
   searchLoading = false,
+  searchHighlightTerms,
   onSelectSearchHit,
   emptyLabel = "No group messages",
   directAvailable = false,
@@ -85,6 +86,7 @@ export function BrowseGroupChatsPane({
   searchHits?: SearchConversationHit[];
   searchTotal?: number;
   searchLoading?: boolean;
+  searchHighlightTerms?: string[];
   onSelectSearchHit?: (hit: SearchConversationHit) => void;
   emptyLabel?: string;
   /** Synthetic 1:1 chooser row (focused contact path only). */
@@ -162,6 +164,7 @@ export function BrowseGroupChatsPane({
           hits={searchHits}
           total={searchTotal}
           loading={searchLoading}
+          highlightTerms={searchHighlightTerms}
           selectedConversationId={selectedConversationId}
           onSelect={(hit) => onSelectSearchHit?.(hit)}
           emptyLabel="No matches"

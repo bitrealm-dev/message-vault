@@ -6,6 +6,7 @@ import {
   type SearchResultKey,
 } from "@/lib/searchSelection";
 import { CountBadge } from "./CountBadge";
+import { highlightText } from "./highlightText";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
@@ -17,8 +18,16 @@ export type SearchSelectionModifiers = {
   ctrlKey: boolean;
 };
 
+const EMPTY_TERMS: string[] = [];
+
 /** Title, match count, snippet, type and date range for one matching conversation. */
-export function SearchHitSummary({ hit }: { hit: SearchConversationHit }) {
+export function SearchHitSummary({
+  hit,
+  highlightTerms = EMPTY_TERMS,
+}: {
+  hit: SearchConversationHit;
+  highlightTerms?: string[];
+}) {
   const { formatDateRange } = useDateTimeFormat();
   const dateLabel =
     hit.dateStart && hit.dateEnd
@@ -38,7 +47,7 @@ export function SearchHitSummary({ hit }: { hit: SearchConversationHit }) {
       </span>
       {hit.topMatch?.snippet ? (
         <span className="line-clamp-2 text-[12px] text-muted">
-          {hit.topMatch.snippet}
+          {highlightText(hit.topMatch.snippet, highlightTerms)}
         </span>
       ) : null}
       <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
@@ -55,6 +64,7 @@ export function SearchResultsList({
   hits,
   total,
   loading,
+  highlightTerms = EMPTY_TERMS,
   selectedConversationId,
   selectedContactIds = EMPTY_SELECTED_CONTACT_IDS,
   selectedResultKeys = EMPTY_SELECTED_RESULT_KEYS,
@@ -68,6 +78,7 @@ export function SearchResultsList({
   hits: SearchConversationHit[];
   total: number;
   loading: boolean;
+  highlightTerms?: string[];
   selectedConversationId: number | null;
   selectedContactIds?: ReadonlySet<number>;
   selectedResultKeys?: ReadonlySet<SearchResultKey>;
@@ -182,7 +193,7 @@ export function SearchResultsList({
                   : "pr-3"
               }`}
             >
-              <SearchHitSummary hit={hit} />
+              <SearchHitSummary hit={hit} highlightTerms={highlightTerms} />
             </button>
           </div>
         );

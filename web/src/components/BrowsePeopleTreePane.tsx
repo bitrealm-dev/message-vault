@@ -110,6 +110,7 @@ export function BrowsePeopleTreePane({
   searchContactHits = [],
   searchTotal = 0,
   searchLoading = false,
+  searchHighlightTerms,
   searchContactIds = [],
   allSearchContactsSelected = false,
   onToggleSelectAllSearchContacts,
@@ -194,6 +195,7 @@ export function BrowsePeopleTreePane({
   searchContactHits?: SearchContactHit[];
   searchTotal?: number;
   searchLoading?: boolean;
+  searchHighlightTerms?: string[];
   searchContactIds?: number[];
   allSearchContactsSelected?: boolean;
   onToggleSelectAllSearchContacts?: () => void;
@@ -594,6 +596,7 @@ export function BrowsePeopleTreePane({
           contacts={searchContactHits}
           total={searchTotal}
           loading={searchLoading}
+          highlightTerms={searchHighlightTerms}
           selectedConversationId={selectedConversationId}
           selectedContactIds={selectedContactIds}
           expandedContactIds={expandedSearchContactIds}
@@ -608,6 +611,7 @@ export function BrowsePeopleTreePane({
           hits={searchHits}
           total={searchTotal}
           loading={searchLoading}
+          highlightTerms={searchHighlightTerms}
           selectedConversationId={selectedConversationId}
           selectedResultKeys={selectedSearchResultKeys}
           onToggleResult={onToggleSearchResult}

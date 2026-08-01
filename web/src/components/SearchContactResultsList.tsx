@@ -17,6 +17,7 @@ export function SearchContactResultsList({
   contacts,
   total,
   loading,
+  highlightTerms,
   selectedConversationId,
   selectedContactIds = EMPTY_SELECTED_CONTACT_IDS,
   expandedContactIds = EMPTY_SELECTED_CONTACT_IDS,
@@ -30,6 +31,7 @@ export function SearchContactResultsList({
   contacts: SearchContactHit[];
   total: number;
   loading: boolean;
+  highlightTerms?: string[];
   selectedConversationId: number | null;
   selectedContactIds?: ReadonlySet<number>;
   expandedContactIds?: ReadonlySet<number>;
@@ -108,7 +110,10 @@ export function SearchContactResultsList({
                         className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
                       />
                     ) : null}
-                    <SearchHitSummary hit={hit} />
+                    <SearchHitSummary
+                      hit={hit}
+                      highlightTerms={highlightTerms}
+                    />
                   </button>
                 ))}
               </div>

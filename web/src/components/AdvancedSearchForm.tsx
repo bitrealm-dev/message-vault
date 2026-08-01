@@ -82,25 +82,35 @@ export function AdvancedSearchForm({
       <div
         role="tablist"
         aria-label="Search type"
-        className="mb-3 flex border-b border-border"
+        className="flex border-b border-border"
       >
-        {(["contacts", "messages"] as const).map((tab) => (
+        {(
+          [
+            { id: "contacts", label: "People" },
+            { id: "messages", label: "Messages" },
+          ] as const
+        ).map((tab) => (
           <button
-            key={tab}
+            key={tab.id}
             type="button"
             role="tab"
-            aria-selected={mode === tab}
-            onClick={() => setMode(tab)}
-            className={`border-b-2 px-3 py-1.5 text-[13px] capitalize ${
-              mode === tab
+            aria-selected={mode === tab.id}
+            onClick={() => setMode(tab.id)}
+            className={`border-b-2 px-3 py-1.5 text-[13px] ${
+              mode === tab.id
                 ? "border-accent text-text"
                 : "border-transparent text-muted hover:text-text"
             }`}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
       </div>
+      <p className="mt-2 mb-3 text-[12px] text-muted">
+        {mode === "contacts"
+          ? "Find people by name, number, or activity."
+          : "Find messages by what they say."}
+      </p>
       <div className="space-y-2">
         {mode === "contacts" ? (
           <>

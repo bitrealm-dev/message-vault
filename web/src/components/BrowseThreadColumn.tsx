@@ -6,12 +6,14 @@ import type {
   MessageRow,
   YearThread,
 } from "@/lib/types";
+import { useEffect, type ReactNode } from "react";
 import { GroupParticipantChip } from "./GroupParticipantChip";
 import {
   BrowseThreadPane,
   type BrowseGroupThreadMeta,
   type SearchConversationSection,
 } from "./BrowseThreadPane";
+import { SearchIcon } from "./icons";
 
 export function BrowseThreadColumn({
   paneStorageKey,
@@ -47,6 +49,8 @@ export function BrowseThreadColumn({
   onLoadOlder,
   onEnsureYear,
   searchConversationSections = [],
+  findBar = null,
+  onOpenFind,
 }: {
   paneStorageKey: string;
   detail: ContactDetail | null;
@@ -86,6 +90,10 @@ export function BrowseThreadColumn({
   onLoadOlder?: () => void | Promise<void>;
   onEnsureYear?: (year: number) => void | Promise<void>;
   searchConversationSections?: SearchConversationSection[];
+  /** In-thread find bar (renders nothing when closed). */
+  findBar?: ReactNode;
+  /** Opens the find bar; also enables the header button and Ctrl+F. */
+  onOpenFind?: () => void;
 }) {
   const showReader =
     readerOnly
@@ -93,6 +101,23 @@ export function BrowseThreadColumn({
       : activeThread != null;
   const threadsReady =
     threadsReadyOverride ?? threadsLoadedFor === contactId;
+
+  useEffect(() => {
+    if (!onOpenFind || !showReader) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "f"
+      ) {
+        e.preventDefault();
+        onOpenFind();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onOpenFind, showReader]);
 
   return (
     <div
@@ -119,7 +144,20 @@ export function BrowseThreadColumn({
             {statusMsg}
           </span>
         )}
+        {showReader && onOpenFind ? (
+          <button
+            type="button"
+            title="Find in conversation (Ctrl+F)"
+            aria-label="Find in conversation"
+            onClick={onOpenFind}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-text"
+          >
+            <SearchIcon className="size-4" />
+          </button>
+        ) : null}
       </div>
+
+      {showReader ? findBar : null}
 
       {showReader ? (
         <div className="min-h-0 flex-1">

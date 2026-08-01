@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import { runWithAccount } from "./accountScope";
 import { createAccount, saveAccount } from "./accounts";
 import {
+  searchConversationMatches,
   searchVault,
   searchVaultByContact,
   searchVaultContacts,
@@ -20,6 +21,8 @@ describe("vault search + FTS", () => {
   const prevVaultDataDir = process.env.VAULT_DATA_DIR;
   let tmpDir = "";
   let accountId = "";
+  let labeledConvId = 0;
+  let groupConvId = 0;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-search-"));
@@ -176,7 +179,7 @@ describe("vault search + FTS", () => {
       );
 
       // Two labeled contacts, one of them inactive, sharing a group chat.
-      const labeledConvId = Number(
+      labeledConvId = Number(
         insertConv.run(accountId, "+15555551004").lastInsertRowid,
       );
       const labeledId = assignContact("+15555551004", "Labeled");
@@ -204,7 +207,7 @@ describe("vault search + FTS", () => {
         "inactive kumquat note",
       );
 
-      const groupConvId = Number(
+      groupConvId = Number(
         db
           .prepare(
             `INSERT INTO conversations (
@@ -253,6 +256,25 @@ describe("vault search + FTS", () => {
     runWithAccount(accountId, () => {
       const result = searchVault("pineapple");
       assert.ok(result.totalConversations >= 1);
+    });
+  });
+
+  it("lists every match in the given conversations, oldest first", () => {
+    runWithAccount(accountId, () => {
+      const result = searchConversationMatches("kumquat", [
+        labeledConvId,
+        groupConvId,
+      ]);
+      assert.equal(result.matches.length, 2);
+      const [first, second] = result.matches;
+      assert.ok(first!.timestamp < second!.timestamp);
+    });
+  });
+
+  it("returns no matches for an empty find query", () => {
+    runWithAccount(accountId, () => {
+      const result = searchConversationMatches("   ", [labeledConvId]);
+      assert.equal(result.matches.length, 0);
     });
   });
 

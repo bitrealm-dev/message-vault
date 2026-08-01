@@ -47,6 +47,7 @@ export default defineConfig({
           label: 'Browse',
           items: [
             'browse/navigation-and-sources',
+            'browse/search',
             'browse/contacts-and-labels',
             'browse/group-messages',
             'browse/trash-and-undo',

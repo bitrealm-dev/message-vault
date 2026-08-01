@@ -45,7 +45,10 @@ import { useThreadMessages } from "./useThreadMessages";
 import { useTrashActions } from "./useTrashActions";
 import { useVaultReadOnly } from "./useVaultReadOnly";
 import { useVaultSearch } from "./useVaultSearch";
+import { ThreadFindBar } from "./ThreadFindBar";
+import { useThreadFind } from "./useThreadFind";
 import type { SearchConversationHit } from "@/lib/search";
+import { parseSearchQuery } from "@/lib/searchQuery";
 
 const INSPECTOR_PANEL_COLLAPSED_KEY = "mv-group-messages-inspector-collapsed";
 
@@ -200,6 +203,13 @@ export function GroupMessagesShell({
     sourceQuery,
     fullConversation: true,
     enabled: !hasGroupSelection,
+  });
+
+  // Group threads load in full, so jumping needs no extra page loads.
+  const threadFind = useThreadFind({
+    conversationIds: hasGroupSelection ? null : fullMessageIds,
+    source,
+    onJump: (match) => setScrollToMessageId(match.id),
   });
 
   const syncUrl = useCallback(
@@ -497,6 +507,7 @@ export function GroupMessagesShell({
             searchHits={vaultSearch.hits}
             searchTotal={vaultSearch.total}
             searchLoading={vaultSearch.loading}
+            searchHighlightTerms={vaultSearch.highlightTerms}
             onSelectSearchHit={(hit: SearchConversationHit) => {
               setSelectedIds(new Set());
               setConversationId(hit.conversationId);
@@ -511,6 +522,18 @@ export function GroupMessagesShell({
                 pendingScrollYearRef.current = year;
               }
               syncUrl(hit.conversationId, year);
+              // Hand the text terms off to the in-thread find bar so the user
+              // can step through every match, not just the top one.
+              const parsedQuery = parseSearchQuery(vaultSearch.committed);
+              const findSeed = [
+                ...parsedQuery.terms,
+                ...parsedQuery.phrases.map((p) => `"${p}"`),
+              ].join(" ");
+              if (findSeed) {
+                threadFind.openWith(findSeed, hit.topMatch?.id ?? null);
+              } else if (threadFind.open) {
+                threadFind.close();
+              }
             }}
             emptyLabel="No group messages"
           />
@@ -538,7 +561,9 @@ export function GroupMessagesShell({
             threadsLoadedFor={null}
             threadsReadyOverride
             hasConversationChoices={false}
-            highlightTerms={vaultSearch.highlightTerms}
+            highlightTerms={
+              threadFind.open ? threadFind.terms : vaultSearch.highlightTerms
+            }
             scrollToMessageId={scrollToMessageId}
             onGroupParticipantClick={participantForm.onParticipantClick}
             readerOnly
@@ -546,6 +571,8 @@ export function GroupMessagesShell({
             hasGroupSelection={hasGroupSelection}
             emptySelectionGuidance="Selection details are shown in the inspector on the right."
             emptyIdleGuidance="Select a group message to read the conversation."
+            findBar={<ThreadFindBar find={threadFind} />}
+            onOpenFind={threadFind.openBar}
           />
         </Panel>
 

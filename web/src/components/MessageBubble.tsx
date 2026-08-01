@@ -2,32 +2,9 @@
 
 import type { MessageRunPosition } from "@/lib/messageRun";
 import type { MessageRow } from "@/lib/types";
-import type { ReactNode } from "react";
+import { highlightText } from "./highlightText";
 import { MessageAttachments } from "./MessageAttachments";
 import { useDateTimeFormat } from "./useDateTimeFormat";
-
-function highlightText(text: string, terms: string[]): ReactNode {
-  const cleaned = terms.map((t) => t.trim()).filter(Boolean);
-  if (cleaned.length === 0) return text;
-  const pattern = cleaned
-    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  if (!pattern) return text;
-  const re = new RegExp(`(${pattern})`, "gi");
-  const parts = text.split(re);
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <mark
-        key={i}
-        className="rounded-sm bg-accent/35 px-0.5 text-inherit"
-      >
-        {part}
-      </mark>
-    ) : (
-      part
-    ),
-  );
-}
 
 function bubbleRadius(isFromMe: boolean, run: MessageRunPosition): string {
   if (isFromMe) {

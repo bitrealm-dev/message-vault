@@ -26,6 +26,9 @@ import { useVaultReadOnly } from "./useVaultReadOnly";
 import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SearchConversationHit } from "@/lib/search";
+import { parseSearchQuery } from "@/lib/searchQuery";
+import { ThreadFindBar } from "./ThreadFindBar";
+import { useThreadFind } from "./useThreadFind";
 import {
   applySearchResultRangeSelect,
   applySearchRangeSelect,
@@ -1105,6 +1108,19 @@ export function BrowseShell({
     reloadToken: threadsEpoch,
   });
 
+  const threadFind = useThreadFind({
+    conversationIds: hasGroupSelection ? null : threadConversationIds,
+    source,
+    onJump: (match) => {
+      setScrollToMessageId(match.id);
+      const year = Number(match.timestamp.slice(0, 4));
+      void ensureMessageIdsLoaded(
+        [match.id],
+        Number.isFinite(year) ? year : null,
+      );
+    },
+  });
+
   // Search hits / deep links may target messages outside the newest page.
   useEffect(() => {
     if (scrollToMessageId == null || threadConversationIds == null) return;
@@ -2078,6 +2094,7 @@ export function BrowseShell({
           searchContactHits={sortedSearchContactHits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
+          searchHighlightTerms={vaultSearch.highlightTerms}
           searchContactIds={searchContactIds}
           allSearchContactsSelected={allSearchContactsSelected}
           onToggleSelectAllSearchContacts={toggleSelectAllSearchContacts}
@@ -2111,6 +2128,18 @@ export function BrowseShell({
                 ? `gfull-${hit.conversationId}`
                 : "dm",
             );
+            // Hand the text terms off to the in-thread find bar so the user
+            // can step through every match, not just the top one.
+            const parsedQuery = parseSearchQuery(vaultSearch.committed);
+            const findSeed = [
+              ...parsedQuery.terms,
+              ...parsedQuery.phrases.map((p) => `"${p}"`),
+            ].join(" ");
+            if (findSeed) {
+              threadFind.openWith(findSeed, hit.topMatch?.id ?? null);
+            } else if (threadFind.open) {
+              threadFind.close();
+            }
           }}
           onSearchContactContextMenu={openContactCtxMenu}
           onSearchResultContextMenu={openSearchResultCtxMenu}
@@ -2158,7 +2187,9 @@ export function BrowseShell({
             (yearly.some((y) => y.conversationIds.length > 0) ||
               groupChats.length > 0)
           }
-          highlightTerms={vaultSearch.highlightTerms}
+          highlightTerms={
+            threadFind.open ? threadFind.terms : vaultSearch.highlightTerms
+          }
           scrollToMessageId={scrollToMessageId}
           onContactNameClick={onContactNameClick}
           onGroupParticipantClick={onGroupParticipantClick}
@@ -2172,6 +2203,8 @@ export function BrowseShell({
             void ensureYearLoaded(year);
           }}
           searchConversationSections={searchConversationSections}
+          findBar={<ThreadFindBar find={threadFind} />}
+          onOpenFind={threadFind.openBar}
         />
       </Panel>
 

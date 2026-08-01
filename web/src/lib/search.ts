@@ -504,6 +504,52 @@ function buildHits(
   });
 }
 
+export type ConversationMatch = {
+  id: number;
+  timestamp: string;
+};
+
+export type ConversationMatchResult = {
+  query: string;
+  parsed: ParsedSearchQuery;
+  conversationIds: number[];
+  matches: ConversationMatch[];
+};
+
+/**
+ * Every matching message in the given conversations, oldest first, so an
+ * in-thread find bar can step through them. A direct thread may span several
+ * conversation rows (one per source). Applies the same filters as
+ * {@link searchVault}.
+ */
+export function searchConversationMatches(
+  rawQuery: string,
+  conversationIds: number[],
+  opts: { source?: string | null } = {},
+): ConversationMatchResult {
+  const parsed = parseSearchQuery(rawQuery);
+  const ids = conversationIds.filter((id) => Number.isInteger(id) && id > 0);
+  if (ids.length === 0 || (!hasSearchCriteria(parsed) && !rawQuery.trim())) {
+    return { query: rawQuery, parsed, conversationIds: ids, matches: [] };
+  }
+
+  ensureFtsReady();
+
+  const db = getDb();
+  const { whereSql, params, dedupe } = buildSearchFilters(parsed, opts.source);
+  const matches = db
+    .prepare(
+      `SELECT DISTINCT m.id AS id, m.timestamp AS timestamp
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE ${whereSql}${dedupe} AND c.id IN (${ids.map(() => "?").join(",")})
+       ORDER BY m.timestamp ASC, m.id ASC`,
+    )
+    .all(...params, ...ids) as ConversationMatch[];
+
+  return { query: rawQuery, parsed, conversationIds: ids, matches };
+}
+
 /** Contacts allowed to head a result group; null when unfiltered. */
 function intersectContactScopes(scopes: number[][]): Set<number> | null {
   const [first, ...rest] = scopes;

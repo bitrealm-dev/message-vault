@@ -2,7 +2,11 @@ import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
-import { searchVault, searchVaultContacts } from "@/lib/search";
+import {
+  searchConversationMatches,
+  searchVault,
+  searchVaultContacts,
+} from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
 import { NextResponse } from "next/server";
 
@@ -21,6 +25,7 @@ export async function GET(req: Request) {
   const limitParam = url.searchParams.get("limit");
   const offsetParam = url.searchParams.get("offset");
   const source = url.searchParams.get("source");
+  const convParam = url.searchParams.get("conv");
   const limit =
     limitParam != null && limitParam !== "" ? Number(limitParam) : undefined;
   const offset =
@@ -28,6 +33,23 @@ export async function GET(req: Request) {
 
   try {
     return await withAccountHandler(async () => {
+      // Per-conversation match ids for the in-thread find bar.
+      if (convParam != null && convParam !== "") {
+        const conversationIds = convParam.split(",").map((part) => Number(part));
+        if (
+          conversationIds.length === 0 ||
+          conversationIds.some((id) => !Number.isInteger(id) || id <= 0)
+        ) {
+          return NextResponse.json(
+            { error: "Invalid conversation id" },
+            { status: 400 },
+          );
+        }
+        const result = searchConversationMatches(q, conversationIds, {
+          source: source?.trim() || null,
+        });
+        return NextResponse.json(result);
+      }
       const run =
         parseSearchQuery(q).mode === "contacts"
           ? searchVaultContacts
