@@ -176,4 +176,17 @@ export type HomeStats = {
   messageDuplicates: number;
   /** Total contact rows in the DB. */
   contacts: number;
+  sentMessages: number;
+  receivedMessages: number;
+  attachments: number;
+  sources: number;
+  dateStart: string | null;
+  dateEnd: string | null;
+  recentContacts: Array<{
+    id: number;
+    displayName: string;
+    messageCount: number;
+    groupChatCount: number;
+    dateEnd: string;
+  }>;
 };
