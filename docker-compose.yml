@@ -1,17 +1,43 @@
-# Message Vault — Option C: two profiles
+# Message Vault — Compose profiles
+# Enable only one vault profile at a time (dev, release, or hub).
 #
-# Dev (default via committed .env COMPOSE_PROFILES=dev):
-#   docker compose up
-#   docker compose up --build   # when Dockerfile.dev / base deps change
+# What the profiles mean (plain English):
 #
-# Release (slim image from current checkout — do not enable both profiles):
-#   COMPOSE_PROFILES=release docker compose up --build
+#   dev — For working on the code on your laptop. Docker runs with your
+#         project folder mounted in, so edits show up quickly. Heavier;
+#         meant for day-to-day development.
+#
+#   release — For running a finished build from whatever is in your folder
+#         right now. Docker compiles a smaller ready-to-run image, then
+#         starts it. No live editing — change code, then rebuild. Closer
+#         to production, but still built on that machine from git.
+#
+#   hub — Same kind of ready-to-run app as release, except you download
+#         an image CI already built and pushed to Docker Hub. No compile
+#         on the machine — use this on the VPS.
+#
+# Commands:
+#   Dev (default via .env COMPOSE_PROFILES=dev):
+#     docker compose up
+#     docker compose up --build          # when Dockerfile.dev / deps change
+#
+#   Release (build on this machine):
+#     COMPOSE_PROFILES=release docker compose up --build
+#
+#   Hub (pull from Docker Hub; no build):
+#     docker login
+#     COMPOSE_PROFILES=hub docker compose pull
+#     COMPOSE_PROFILES=hub docker compose up -d
+#     Optional pin: VAULT_IMAGE=mbeisser1/message-vault:v0.1.0
 #
 # Personal data (empty vault; create an account in the UI):
 #   VAULT_MODE=personal docker compose up
 #
 # Drop JSONL exports into ./staging on the host (mounted at /app/staging):
 #   mkdir -p staging/imessage && cp -a /path/to/export/. staging/imessage/
+#
+# nginx reverse-proxies the active vault backend on 80/443
+# (UI + /v1 import API; TLS via Cloudflare origin certs on the host).
 
 services:
   vault:
@@ -35,6 +61,10 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - web-node-modules:/app/web/node_modules
       - vault-data:/app/data
+    networks:
+      default:
+        aliases:
+          - vault-backend
     stdin_open: true
     tty: true
 
@@ -52,6 +82,52 @@ services:
       - vault-data:/app/data
       # Host drop folder for JSONL imports
       - ./staging:/app/staging
+    networks:
+      default:
+        aliases:
+          - vault-backend
+
+  vault-hub:
+    profiles: [hub]
+    image: ${VAULT_IMAGE:-mbeisser1/message-vault:latest}
+    pull_policy: always
+    # Localhost only — public traffic should go through nginx :80/:443
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+    volumes:
+      - vault-data:/app/data
+      - ./staging:/app/staging
+    networks:
+      default:
+        aliases:
+          - vault-backend
+    restart: unless-stopped
+
+  nginx:
+    profiles: [dev, release, hub]
+    image: nginx:1.27-alpine
+    # Only one vault profile is active; mark the others optional.
+    depends_on:
+      vault:
+        condition: service_started
+        required: false
+      vault-release:
+        condition: service_started
+        required: false
+      vault-hub:
+        condition: service_started
+        required: false
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/ssl/cloudflare/bitrealm.dev.pem:/etc/nginx/certs/bitrealm.dev.pem:ro
+      - /etc/ssl/cloudflare/bitrealm.dev.key:/etc/nginx/certs/bitrealm.dev.key:ro
+    restart: unless-stopped
 
 volumes:
   cargo-target:
