@@ -10,28 +10,31 @@ pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
     let contacts_path = config_dir.join("contacts.vcf");
     let mut out = String::new();
     for c in &roster.contacts {
-        let display_name = [c.first_name.trim(), c.last_name.trim()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let display_name = c.display_hint();
         writeln!(out, "BEGIN:VCARD")?;
         writeln!(out, "VERSION:3.0")?;
-        writeln!(out, "FN:{}", escape_vcf(&display_name))?;
-        writeln!(
-            out,
-            "N:{};{};;;",
-            escape_vcf(&c.last_name),
-            escape_vcf(&c.first_name)
-        )?;
+        if display_name.is_empty() {
+            // Phone-only card: FN falls back to primary phone for VCF validity.
+            writeln!(out, "FN:{}", escape_vcf(c.primary_phone()))?;
+            writeln!(out, "N:;;;;")?;
+        } else {
+            writeln!(out, "FN:{}", escape_vcf(&display_name))?;
+            writeln!(
+                out,
+                "N:{};{};{};;",
+                escape_vcf(&c.last_name),
+                escape_vcf(&c.first_name),
+                escape_vcf(&c.middle_name)
+            )?;
+        }
         for phone in &c.phones {
             writeln!(out, "TEL:{}", escape_vcf(phone))?;
         }
-        if !c.groups.is_empty() {
+        if !c.labels.is_empty() {
             writeln!(
                 out,
                 "CATEGORIES:{}",
-                c.groups
+                c.labels
                     .iter()
                     .map(|label| escape_vcf(label))
                     .collect::<Vec<_>>()

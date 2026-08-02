@@ -71,8 +71,8 @@ Details: [First personal import](https://bitrealm-dev.github.io/message-vault-rs
 src/                # CLI binary: import, serve, demo reset
   db/               # SQLite schema, accounts, API tokens, contacts
 crates/
-  demo-seed/        # regenerate committed demo data (message-ir JSONL)
-demo/               # committed demo bundle
+  demo-seed/        # regenerate demo/ from demo_seed.toml + public-domain corpus
+demo/               # committed demo bundle (VCF + message-ir JSONL)
 config/             # config.toml.example, config.docker.toml, CSV/VCF examples
 scripts/            # setup-demo, docker entrypoints, smoke tests
 web/                # Next.js UI

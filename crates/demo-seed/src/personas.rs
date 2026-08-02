@@ -1,25 +1,20 @@
-/// Demo contact roster and unassigned handles.
+//! Procedural demo contact roster.
 
-pub const OWNER_PHONE: &str = "+14155559000";
+use std::collections::HashSet;
 
-/// How a contact's 1:1 traffic is timed across the 10-year window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Activity {
-    /// Spread across 2016–2026.
-    Normal,
-    /// Heavy traffic in the past 3 years (2023–2026).
-    Frequent,
-    /// Mostly older history; little recent traffic.
-    Lapsed,
-}
+use rand::Rng;
+use rand::seq::SliceRandom;
+use rand_distr::{Distribution, Normal, Poisson};
+
+use crate::config::SeedConfig;
+use crate::names::NameBank;
+use crate::phones;
+pub use crate::phones::OWNER_PHONE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageScope {
-    /// Individual thread only (no group chat membership).
     OneToOne,
-    /// Appears in group chats only (no 1:1 file).
     Group,
-    /// Both individual and group threads.
     Both,
 }
 
@@ -27,14 +22,13 @@ pub enum MessageScope {
 pub struct Contact {
     pub phones: Vec<String>,
     pub first_name: String,
+    pub middle_name: String,
     pub last_name: String,
-    pub groups: Vec<String>,
-    /// When false, no messages of any kind.
+    pub labels: Vec<String>,
     pub has_messages: bool,
     pub message_scope: MessageScope,
-    pub activity: Activity,
-    /// Very large 1:1 thread (thousands of messages).
-    pub high_volume: bool,
+    pub msgs_per_year: f64,
+    pub span_years: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -44,489 +38,360 @@ pub struct Unassigned {
     pub email_only: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct GroupSpec {
+    pub index: usize,
+    pub member_idxs: Vec<usize>,
+    pub phone_only: bool,
+    pub phone_only_handles: Vec<String>,
+    pub msgs_per_year: f64,
+    pub span_years: f64,
+    pub title: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct Roster {
     pub contacts: Vec<Contact>,
     pub unassigned: Vec<Unassigned>,
+    pub groups: Vec<GroupSpec>,
 }
 
-/// Extra first/last pairs covering A–Z (display name first letter).
-const EXTRA_NAMES: &[(&str, &str)] = &[
-    ("Ada", "Vaughn"),
-    ("Ben", "Adler"),
-    ("Cora", "Bennett"),
-    ("Diego", "Cruz"),
-    ("Elena", "Diaz"),
-    ("Felix", "Edwards"),
-    ("Grace", "Finn"),
-    ("Hugo", "Garcia"),
-    ("Iris", "Holt"),
-    ("Jules", "Ibarra"),
-    ("Kai", "Jones"),
-    ("Lila", "Kwan"),
-    ("Nora", "Lane"),
-    ("Omar", "Moss"),
-    ("Priya", "Nash"),
-    ("Ruth", "Ortiz"),
-    ("Seth", "Park"),
-    ("Uma", "Quincy"),
-    ("Vera", "Ross"),
-    ("Wade", "Santos"),
-    ("Xander", "Torres"),
-    ("Yara", "Underwood"),
-    ("Zane", "Vargas"),
-    ("Amir", "Walsh"),
-    ("Beth", "Xu"),
-    ("Caleb", "Young"),
-    ("Dana", "Zhao"),
-    ("Eve", "Abbott"),
-    ("Finn", "Brooks"),
-    ("Gina", "Carter"),
-    ("Hank", "Doyle"),
-    ("Ivy", "Ellis"),
-    ("Jade", "Frost"),
-    ("Kyle", "Grant"),
-    ("Leah", "Howard"),
-    ("Mia", "Ingram"),
-    ("Nate", "Jenkins"),
-    ("Olive", "Keller"),
-    ("Paul", "Lambert"),
-    ("Rosa", "Mills"),
-    ("Sean", "Nolan"),
-    ("Tess", "Owens"),
-    ("Uri", "Perez"),
-    ("Vince", "Quinn"),
-    ("Wendy", "Ramirez"),
-    ("Xiomara", "Steele"),
-    ("Yusuf", "Tran"),
-    ("Zoe", "Upton"),
-    ("Aaron", "Vega"),
-    ("Bella", "West"),
+pub const EMPTY_GROUP_HANDLE: &str = "chat0000000001";
+pub const EMPTY_THREAD_HANDLE: &str = "+18007438200";
+pub const ORPHAN_SENDER: &str = "+447700900999";
+
+const GROUP_TITLES: &[&str] = &[
+    "Weekend Trip",
+    "Book Club",
+    "Soccer Parents",
+    "Apartment 4B",
+    "Project Atlas",
+    "Family Chat",
+    "College Reunion",
+    "Neighborhood Watch",
+    "Hiking Crew",
+    "Potluck Planning",
+    "Fantasy Draft",
+    "Office Lunch",
+    "Road Trip West",
+    "Baby Shower",
+    "Game Night",
+    "Volunteer Squad",
 ];
 
-pub fn build_roster() -> Roster {
-    let mut contacts = vec![
-        // 1:1 only
-        contact(
-            &["+14155552301"],
-            "Maya",
-            "Chen",
-            false,
-            &["Family"],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+16175553402"],
-            "Jordan",
-            "Reed",
-            false,
-            &["Family", "College"],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+19175559008"],
-            "Morgan",
-            "Patel",
-            false,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+15035553412"],
-            "Avery",
-            "Stone",
-            false,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+12705557816"],
-            "Parker",
-            "Bell",
-            false,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        // Group only
-        contact(
-            &["+13035555604"],
-            "Alex",
-            "Martinez",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Group,
-        ),
-        contact(
-            &["+12065556705"],
-            "Riley",
-            "Nguyen",
-            false,
-            &["College"],
-            true,
-            MessageScope::Group,
-        ),
-        contact(
-            &["+14805552311"],
-            "Quinn",
-            "Lopez",
-            false,
-            &["College"],
-            true,
-            MessageScope::Group,
-        ),
-        contact(
-            &["+15805554513"],
-            "Blake",
-            "Turner",
-            false,
-            &["Family"],
-            true,
-            MessageScope::Group,
-        ),
-        contact(
-            &["+13125556715"],
-            "Skyler",
-            "Wright",
-            false,
-            &["College"],
-            true,
-            MessageScope::Group,
-        ),
-        // Both
-        contact(
-            &["+12125554503"],
-            "Sam",
-            "Okafor",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+17135557806"],
-            "Casey",
-            "Brooks",
-            false,
-            &["Family"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+18125558907"],
-            "Taylor",
-            "Singh",
-            false,
-            &["Work", "College"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+14045550109"],
-            "Jamie",
-            "Foster",
-            false,
-            &["Family"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+13105551210"],
-            "Drew",
-            "Kim",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+16025555614"],
-            "Cameron",
-            "Hayes",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+14245558917"],
-            "Reese",
-            "Cole",
-            false,
-            &["Family"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+15105559018"],
-            "Logan",
-            "Price",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Both,
-        ),
-        // Excluded with messages (1:1 only)
-        contact(
-            &["+12145550119"],
-            "Old",
-            "Roommate",
-            true,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+18885550120"],
-            "Marketing",
-            "Blast",
-            true,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        contact(
-            &["+18005550121"],
-            "Telemarketer",
-            "X",
-            true,
-            &[],
-            true,
-            MessageScope::OneToOne,
-        ),
-        // Multi-phone
-        contact(
-            &["+14155552222", "+16505553333"],
-            "Pat",
-            "MultiPhone",
-            false,
-            &["Work"],
-            true,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+13125554444", "+19725556666"],
-            "Chris",
-            "DualLine",
-            false,
-            &["Family"],
-            true,
-            MessageScope::Both,
-        ),
-        // No messages
-        contact(
-            &["+17025550126"],
-            "Empty",
-            "ContactA",
-            false,
-            &["College"],
-            false,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+12565550127"],
-            "Empty",
-            "ContactB",
-            false,
-            &[],
-            false,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+19195550128"],
-            "Empty",
-            "ContactC",
-            true,
-            &[],
-            false,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+13175550129"],
-            "Empty",
-            "ContactD",
-            false,
-            &["Work"],
-            false,
-            MessageScope::Both,
-        ),
-        contact(
-            &["+14085550130"],
-            "NoChat",
-            "Ever",
-            false,
-            &[],
-            false,
-            MessageScope::Both,
-        ),
-    ];
+pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> Roster {
+    let mut used_phones = HashSet::new();
+    used_phones.insert(OWNER_PHONE.to_string());
 
-    contacts.push(Contact {
-        phones: vec!["+447700900231".into()],
-        first_name: "Mononym".into(),
-        last_name: String::new(),
-        groups: vec![],
-        has_messages: true,
-        message_scope: MessageScope::OneToOne,
-        activity: Activity::Normal,
-        high_volume: false,
-    });
-    contacts.push(Contact {
-        phones: vec!["+33612345678".into()],
-        first_name: String::new(),
-        last_name: "SurnameOnly".into(),
-        groups: vec!["Family".into()],
-        has_messages: true,
-        message_scope: MessageScope::Group,
-        activity: Activity::Normal,
-        high_volume: false,
-    });
+    let mut contacts = Vec::with_capacity(cfg.contacts.count);
+    for _ in 0..cfg.contacts.count {
+        contacts.push(make_contact(cfg, names, rng, &mut used_phones));
+    }
 
-    contacts.extend(extra_contacts());
-    assign_activity_patterns(&mut contacts);
-
-    let unassigned = vec![
-        Unassigned {
-            handle: "+18885559001".into(),
-            name_hint: Some("Unknown Caller".into()),
-            email_only: false,
-        },
-        Unassigned {
-            handle: "+12125550017".into(),
-            name_hint: None,
-            email_only: false,
-        },
-        Unassigned {
-            handle: "stranger@demo.example".into(),
-            name_hint: Some("Stranger Email".into()),
-            email_only: true,
-        },
-        Unassigned {
-            handle: "contractor@demo.example".into(),
-            name_hint: Some("Contractor".into()),
-            email_only: true,
-        },
-        Unassigned {
-            handle: "+447700900888".into(),
-            name_hint: Some("(Unverified)".into()),
-            email_only: false,
-        },
-        Unassigned {
-            handle: "+61491570156".into(),
-            name_hint: None,
-            email_only: false,
-        },
-    ];
+    let groups = build_groups(cfg, &contacts, rng, &mut used_phones);
+    let unassigned = build_unassigned(cfg, rng, &mut used_phones);
 
     Roster {
         contacts,
         unassigned,
+        groups,
     }
 }
 
-/// ~50 generated contacts for alphabet coverage and volume.
-fn extra_contacts() -> Vec<Contact> {
-    let labels = [&[][..], &["Family"][..], &["Work"][..], &["College"][..]];
-    let scopes = [
-        MessageScope::OneToOne,
-        MessageScope::Both,
-        MessageScope::Group,
-        MessageScope::Both,
-        MessageScope::OneToOne,
-    ];
+fn make_contact(
+    cfg: &SeedConfig,
+    names: &NameBank,
+    rng: &mut impl Rng,
+    used: &mut HashSet<String>,
+) -> Contact {
+    let nameless = rng.random_bool(cfg.contacts.no_name);
+    let (first, middle, last) = if nameless {
+        (String::new(), String::new(), String::new())
+    } else {
+        sample_name_shape(cfg, names, rng)
+    };
 
-    EXTRA_NAMES
+    let mut phones = vec![phones::generate_phone(rng, cfg.contacts.us_phones, used)];
+    if rng.random_bool(cfg.contacts.multi_phone_fraction) {
+        phones.push(phones::generate_phone(rng, cfg.contacts.us_phones, used));
+    }
+
+    let inactive = rng.random_bool(cfg.contacts.inactive_fraction);
+    let no_messages = inactive || rng.random_bool(cfg.contacts.no_messages_fraction);
+
+    let mut labels = Vec::new();
+    if inactive {
+        labels.push("Inactive".into());
+    } else {
+        if rng.random_bool(cfg.labels.family) {
+            labels.push("Family".into());
+        }
+        if rng.random_bool(cfg.labels.work) {
+            labels.push("Work".into());
+        }
+        if rng.random_bool(cfg.labels.college) {
+            labels.push("College".into());
+        }
+    }
+
+    let message_scope = if no_messages {
+        MessageScope::Both
+    } else if rng.random_bool(cfg.one_to_one.one_to_one_fraction) {
+        if rng.random_bool(0.75) {
+            MessageScope::Both
+        } else {
+            MessageScope::OneToOne
+        }
+    } else {
+        MessageScope::Group
+    };
+
+    Contact {
+        phones,
+        first_name: first,
+        middle_name: middle,
+        last_name: last,
+        labels,
+        has_messages: !no_messages,
+        message_scope,
+        msgs_per_year: sample_msgs_per_year(cfg, rng),
+        span_years: sample_span_years(
+            cfg.one_to_one.span_mean_years,
+            cfg.one_to_one.span_mean_jitter,
+            cfg.one_to_one.span_max_years,
+            cfg.one_to_one.newest_days,
+            rng,
+        ),
+    }
+}
+
+fn sample_name_shape(
+    cfg: &SeedConfig,
+    names: &NameBank,
+    rng: &mut impl Rng,
+) -> (String, String, String) {
+    let first = names.pick_first(rng).to_string();
+    let roll: f64 = rng.random();
+    if roll < cfg.contacts.first_only {
+        (first, String::new(), String::new())
+    } else if roll < cfg.contacts.first_only + cfg.contacts.first_middle_last {
+        (
+            first,
+            names.pick_middle(rng).to_string(),
+            names.pick_last(rng).to_string(),
+        )
+    } else {
+        (first, String::new(), names.pick_last(rng).to_string())
+    }
+}
+
+fn sample_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
+    let o = &cfg.one_to_one;
+    let roll: f64 = rng.random();
+    if roll < o.low_tail {
+        rng.random_range(o.min_per_year as f64..(o.typical_min as f64))
+    } else if roll < o.low_tail + o.high_tail {
+        let u: f64 = rng.random::<f64>().clamp(1e-6, 1.0);
+        let lo = (o.typical_max as f64).ln();
+        let hi = (o.max_per_year as f64).ln();
+        (lo + u * (hi - lo)).exp()
+    } else {
+        rng.random_range(o.typical_min as f64..=o.typical_max as f64)
+    }
+}
+
+fn sample_span_years(
+    mean: f64,
+    jitter: f64,
+    max_years: f64,
+    newest_days: u32,
+    rng: &mut impl Rng,
+) -> f64 {
+    let min_years = (newest_days as f64) / 365.25;
+    let normal =
+        Normal::new(mean, jitter.max(0.1)).unwrap_or_else(|_| Normal::new(4.0, 1.0).unwrap());
+    let mut years = normal.sample(rng);
+    if rng.random_bool(0.06) {
+        years = rng.random_range((max_years * 0.7)..=max_years);
+    }
+    if rng.random_bool(0.04) {
+        years = rng.random_range(min_years..=(30.0 / 365.25));
+    }
+    years.clamp(min_years, max_years)
+}
+
+fn sample_groups_per_contact(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
+    let g = &cfg.groups;
+    let poisson =
+        Poisson::new(g.per_contact_mean.max(0.1)).unwrap_or_else(|_| Poisson::new(5.0).unwrap());
+    let n = poisson.sample(rng) as u32;
+    n.clamp(g.per_contact_min, g.per_contact_max) as usize
+}
+
+fn sample_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
+    let g = &cfg.groups;
+    let normal =
+        Normal::new(g.participants_mean, 2.0).unwrap_or_else(|_| Normal::new(4.0, 2.0).unwrap());
+    let n = normal.sample(rng).round() as i32;
+    n.clamp(g.participants_min as i32, g.participants_max as i32) as usize
+}
+
+fn build_groups(
+    cfg: &SeedConfig,
+    contacts: &[Contact],
+    rng: &mut impl Rng,
+    used_phones: &mut HashSet<String>,
+) -> Vec<GroupSpec> {
+    let contact_count = contacts.len();
+    let mut remaining: Vec<usize> = contacts
         .iter()
-        .enumerate()
-        .map(|(i, (first, last))| {
-            let phone = format!("+15551{:06}", 100_000 + i);
-            let has_messages = i % 17 != 0; // a few empty
-            let scope = if !has_messages {
-                MessageScope::Both
+        .map(|c| {
+            if !c.has_messages || c.has_label("Inactive") {
+                0
+            } else if matches!(c.message_scope, MessageScope::OneToOne) {
+                // Mostly 1:1; rare group membership.
+                if rng.random_bool(0.15) {
+                    sample_groups_per_contact(cfg, rng).min(2)
+                } else {
+                    0
+                }
             } else {
-                scopes[i % scopes.len()]
-            };
-            Contact {
-                phones: vec![phone],
-                first_name: (*first).into(),
-                last_name: (*last).into(),
-                groups: labels[i % labels.len()]
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect(),
-                has_messages,
-                message_scope: scope,
-                activity: Activity::Normal,
-                high_volume: false,
+                sample_groups_per_contact(cfg, rng)
             }
         })
-        .collect()
-}
-
-/// 15 frequent (incl. 2 high-volume), 10 lapsed — among 1:1-capable contacts.
-fn assign_activity_patterns(contacts: &mut [Contact]) {
-    let mut one_to_one_idxs: Vec<usize> = contacts
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            c.has_messages
-                && !c.has_label("Inactive")
-                && matches!(c.message_scope, MessageScope::OneToOne | MessageScope::Both)
-        })
-        .map(|(i, _)| i)
         .collect();
 
-    // Prefer stable ordering by phone so seed output stays predictable.
-    one_to_one_idxs.sort_by_key(|&i| contacts[i].primary_phone().to_string());
+    let mut groups: Vec<GroupSpec> = Vec::new();
+    let mut safety = 0usize;
+    let max_groups = (contact_count * cfg.groups.per_contact_max as usize / 2).max(8);
 
-    // 2 high-volume whales (also frequent).
-    for &i in one_to_one_idxs.iter().take(2) {
-        contacts[i].high_volume = true;
-        contacts[i].activity = Activity::Frequent;
+    while remaining.iter().any(|&n| n > 0) && groups.len() < max_groups && safety < max_groups * 4 {
+        safety += 1;
+        let phone_only = rng.random_bool(cfg.groups.phone_only_fraction);
+        let target_size = sample_group_size(cfg, rng).max(2);
+
+        let mut member_idxs = Vec::new();
+        let mut phone_only_handles = Vec::new();
+
+        if phone_only {
+            for _ in 0..target_size {
+                phone_only_handles.push(phones::generate_phone(
+                    rng,
+                    cfg.contacts.us_phones,
+                    used_phones,
+                ));
+            }
+        } else {
+            let mut candidates: Vec<usize> = remaining
+                .iter()
+                .enumerate()
+                .filter(|&(_, &n)| n > 0)
+                .map(|(i, _)| i)
+                .collect();
+            if candidates.is_empty() {
+                break;
+            }
+            candidates.shuffle(rng);
+            for &idx in candidates.iter().take(target_size) {
+                member_idxs.push(idx);
+                remaining[idx] = remaining[idx].saturating_sub(1);
+            }
+            if member_idxs.len() < 2 {
+                let mut all: Vec<usize> = contacts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.has_messages && !c.has_label("Inactive"))
+                    .map(|(i, _)| i)
+                    .collect();
+                all.shuffle(rng);
+                for idx in all {
+                    if member_idxs.contains(&idx) {
+                        continue;
+                    }
+                    member_idxs.push(idx);
+                    if member_idxs.len() >= 2 {
+                        break;
+                    }
+                }
+            }
+            if member_idxs.len() < 2 {
+                continue;
+            }
+        }
+
+        let msgs_per_year =
+            rng.random_range(cfg.groups.msgs_per_year_min as f64..=cfg.groups.msgs_per_year_max as f64);
+        let span_years = sample_span_years(
+            cfg.groups.span_mean_years,
+            1.5,
+            cfg.groups.span_max_years,
+            cfg.one_to_one.newest_days,
+            rng,
+        );
+        let title = if rng.random_bool(0.55) {
+            let base = GROUP_TITLES[groups.len() % GROUP_TITLES.len()];
+            Some(
+                if groups.len() >= GROUP_TITLES.len() && rng.random_bool(0.35) {
+                    format!("{base} {}", (groups.len() / GROUP_TITLES.len()) + 1)
+                } else {
+                    base.to_string()
+                },
+            )
+        } else {
+            None
+        };
+
+        let index = groups.len();
+        groups.push(GroupSpec {
+            index,
+            member_idxs,
+            phone_only,
+            phone_only_handles,
+            msgs_per_year,
+            span_years,
+            title,
+        });
     }
-    // 13 more frequent → 15 total.
-    for &i in one_to_one_idxs.iter().skip(2).take(13) {
-        contacts[i].activity = Activity::Frequent;
-    }
-    // 10 lapsed.
-    for &i in one_to_one_idxs.iter().skip(15).take(10) {
-        contacts[i].activity = Activity::Lapsed;
-    }
+
+    groups
 }
 
-fn contact(
-    phones: &[&str],
-    first: &str,
-    last: &str,
-    mark_inactive: bool,
-    groups: &[&str],
-    has_messages: bool,
-    message_scope: MessageScope,
-) -> Contact {
-    let mut groups: Vec<String> = groups.iter().map(|g| (*g).to_string()).collect();
-    if mark_inactive {
-        groups.push("Inactive".to_string());
+fn build_unassigned(
+    cfg: &SeedConfig,
+    rng: &mut impl Rng,
+    used: &mut HashSet<String>,
+) -> Vec<Unassigned> {
+    let mut out = Vec::new();
+    for i in 0..cfg.edge_cases.unassigned_phones {
+        let handle = phones::generate_phone(rng, cfg.contacts.us_phones, used);
+        let name_hint = if i % 2 == 0 {
+            Some("(Unverified)".into())
+        } else {
+            None
+        };
+        out.push(Unassigned {
+            handle,
+            name_hint,
+            email_only: false,
+        });
     }
-    Contact {
-        phones: phones.iter().map(|p| (*p).to_string()).collect(),
-        first_name: first.into(),
-        last_name: last.into(),
-        groups,
-        has_messages,
-        message_scope,
-        activity: Activity::Normal,
-        high_volume: false,
+    for i in 0..cfg.edge_cases.unassigned_emails {
+        out.push(Unassigned {
+            handle: format!("guest{i}@demo.example"),
+            name_hint: Some(if i == 0 {
+                "Stranger Email".into()
+            } else {
+                "Contractor".into()
+            }),
+            email_only: true,
+        });
     }
+    out
 }
 
 impl Contact {
     pub fn has_label(&self, name: &str) -> bool {
-        self.groups
+        self.labels
             .iter()
             .any(|label| label.eq_ignore_ascii_case(name))
     }
@@ -536,11 +401,15 @@ impl Contact {
     }
 
     pub fn display_hint(&self) -> String {
-        let parts = [self.first_name.as_str(), self.last_name.as_str()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>();
-        parts.join(" ")
+        [
+            self.first_name.as_str(),
+            self.middle_name.as_str(),
+            self.last_name.as_str(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 
     pub fn has_one_to_one(&self) -> bool {
@@ -551,25 +420,14 @@ impl Contact {
             )
     }
 
-    pub fn has_group(&self) -> bool {
-        self.has_messages
-            && !self.has_label("Inactive")
-            && matches!(self.message_scope, MessageScope::Group | MessageScope::Both)
+    pub fn message_count(&self) -> usize {
+        if !self.has_one_to_one() {
+            return 0;
+        }
+        if self.has_label("Inactive") {
+            return ((self.msgs_per_year * self.span_years) as usize).clamp(3, 12);
+        }
+        let n = (self.msgs_per_year * self.span_years).round() as isize;
+        n.max(1) as usize
     }
-}
-
-/// Empty group thread placeholder (header only, no messages).
-pub const EMPTY_GROUP_HANDLE: &str = "chat0000000001";
-
-/// Empty 1:1 thread placeholder handle.
-pub const EMPTY_THREAD_HANDLE: &str = "+18007438200";
-
-/// Orphaned-message sender stub (not in contacts).
-pub const ORPHAN_SENDER: &str = "+447700900999";
-
-/// Synthetic phone-only group participants absent from the address book.
-pub fn phone_only_handles(start: usize, count: usize) -> Vec<String> {
-    (0..count)
-        .map(|i| format!("+15559{:06}", 200_000 + start + i))
-        .collect()
 }

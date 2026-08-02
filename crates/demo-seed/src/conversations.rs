@@ -1,9 +1,11 @@
+//! Write message-ir JSONL conversations for the demo bundle.
+
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use chrono::{FixedOffset, TimeZone};
+use chrono::{Duration, FixedOffset, TimeZone, Utc};
 use message_ir::{
     ConversationHeader, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
     IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService,
@@ -14,14 +16,11 @@ use rand::seq::IndexedRandom;
 use serde_json::json;
 
 use crate::assets::{JPG_PHOTOS, OTHER_ATTACHMENTS};
+use crate::config::SeedConfig;
+use crate::corpus::Corpus;
 use crate::personas::{
-    Activity, Contact, EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, Roster, Unassigned,
-    phone_only_handles,
+    EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, OWNER_PHONE, Roster, Unassigned,
 };
-
-const GROUP_COUNT: usize = 200;
-/// Roughly 1 in 7 groups are phone-number-only (no named contacts).
-const PHONE_ONLY_GROUP_EVERY: usize = 7;
 
 #[derive(Debug, Default)]
 pub struct GenStats {
@@ -29,6 +28,7 @@ pub struct GenStats {
     pub conversation_files: usize,
     pub messages: usize,
     pub attachment_refs: usize,
+    pub groups: usize,
 }
 
 const TAPBACK_KINDS: &[&str] = &[
@@ -41,24 +41,6 @@ const TAPBACK_KINDS: &[&str] = &[
     "emoji",
 ];
 
-const CHAT_SNIPPETS: &[&str] = &[
-    "Hey, are we still on for tonight?",
-    "Running a few minutes late!",
-    "Sounds good to me.",
-    "Did you see the game last night?",
-    "I'll send the photos in a sec.",
-    "Can you pick up milk on the way home?",
-    "LOL that's hilarious",
-    "Let me know when you land.",
-    "Happy birthday!! 🎂",
-    "We should plan a trip this summer.",
-    "Meeting moved to 3pm.",
-    "Thanks for checking in.",
-    "On my way now.",
-    "Call me when you're free.",
-    "That restaurant was amazing.",
-];
-
 const PHOTO_CAPTIONS: &[&str] = &[
     "Check this out",
     "Thought you'd like this",
@@ -67,31 +49,16 @@ const PHOTO_CAPTIONS: &[&str] = &[
     "",
 ];
 
-const GROUP_TITLES: &[&str] = &[
-    "Weekend Trip",
-    "Book Club",
-    "Soccer Parents",
-    "Apartment 4B",
-    "Project Atlas",
-    "Family Chat",
-    "College Reunion 2024",
-    "Neighborhood Watch",
-    "Hiking Crew",
-    "Potluck Planning",
-    "Fantasy Draft",
-    "Office Lunch",
-    "Road Trip West",
-    "Baby Shower",
-    "Game Night",
-    "Volunteer Squad",
-];
+const EMOJI_ONLY: &[&str] = &["👍", "😂", "❤️", "🎉", "😊"];
+
+const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
 
 fn export_meta() -> ExportMeta {
     ExportMeta {
         source: "imessage".into(),
         tool: "demo-seed".into(),
-        tool_version: "0.1.0".into(),
-        owner_handle: Some("+15555550100".into()),
+        tool_version: "0.2.0".into(),
+        owner_handle: Some(OWNER_PHONE.into()),
         owner_display_name: Some("Me".into()),
     }
 }
@@ -100,10 +67,13 @@ pub fn write_all(
     staging: &Path,
     _attachments: &Path,
     roster: &Roster,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
     rng: &mut impl Rng,
 ) -> Result<GenStats> {
     let mut stats = GenStats {
         contacts: roster.contacts.len(),
+        groups: roster.groups.len(),
         ..Default::default()
     };
 
@@ -124,41 +94,49 @@ pub fn write_all(
         .filter(|c| !c.phones.is_empty() && c.has_one_to_one())
     {
         let phone = contact.primary_phone();
-        let count = individual_message_count(contact, rng);
-        write_individual(staging, phone, contact, count, rng, &mut stats)?;
+        let count = contact.message_count();
+        write_individual(
+            staging,
+            phone,
+            contact.display_hint(),
+            contact.span_years,
+            count,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+        )?;
     }
 
     for ua in &roster.unassigned {
-        let count = unassigned_message_count(rng);
-        write_unassigned(staging, ua, count, rng, &mut stats)?;
+        let count = rng.random_range(4..16);
+        write_unassigned(staging, ua, count, cfg, corpus, rng, &mut stats)?;
     }
 
-    let group_only: Vec<&Contact> = roster
-        .contacts
-        .iter()
-        .filter(|c| c.message_scope == crate::personas::MessageScope::Group)
-        .collect();
-    let mut phone_only_offset = 0usize;
-    for i in 0..GROUP_COUNT {
-        if i > 0 && i % PHONE_ONLY_GROUP_EVERY == 0 {
-            write_phone_only_group(staging, i, phone_only_offset, rng, &mut stats)?;
-            phone_only_offset += 24;
-        } else {
-            let anchor = group_only.get(i % group_only.len().max(1)).copied();
-            write_group(staging, roster, i, anchor, rng, &mut stats)?;
-        }
+    for group in &roster.groups {
+        write_group(staging, roster, group, cfg, corpus, rng, &mut stats)?;
     }
 
-    write_orphaned(staging, rng, &mut stats)?;
+    write_orphaned(staging, cfg, corpus, rng, &mut stats)?;
 
-    write_header_only(staging, EMPTY_THREAD_HANDLE, IrConversationType::Individual, &[])?;
-    write_header_only(
-        staging,
-        EMPTY_GROUP_HANDLE,
-        IrConversationType::Group,
-        &["+12125554503", "+13035555604"],
-    )?;
-    stats.conversation_files += 2;
+    if cfg.edge_cases.empty_individual {
+        write_header_only(
+            staging,
+            EMPTY_THREAD_HANDLE,
+            IrConversationType::Individual,
+            &[],
+        )?;
+        stats.conversation_files += 1;
+    }
+    if cfg.edge_cases.empty_group {
+        write_header_only(
+            staging,
+            EMPTY_GROUP_HANDLE,
+            IrConversationType::Group,
+            &["+12125554503", "+13035555604"],
+        )?;
+        stats.conversation_files += 1;
+    }
 
     Ok(stats)
 }
@@ -166,14 +144,22 @@ pub fn write_all(
 fn write_individual(
     staging: &Path,
     chat_id: &str,
-    contact: &Contact,
+    display: String,
+    span_years: f64,
     msg_count: usize,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
+    let display_name = if display.is_empty() {
+        None
+    } else {
+        Some(display)
+    };
     let participants = vec![IrParticipant {
         handle: chat_id.into(),
-        display_name: Some(contact.display_hint()),
+        display_name,
     }];
     let path = staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
@@ -188,42 +174,18 @@ fn write_individual(
 
     let mut origin_guid: Option<String> = None;
     for i in 0..msg_count {
-        let year = year_for_activity(i, msg_count, contact.activity, rng);
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
-        let mut msg = text_message(&guid, year, i, from_me, chat_id, rng);
-        if should_attach_jpg(i, msg_count) {
-            add_jpg_attachment(&mut msg, i, stats);
-            if i > 0 && i % 14 == 0 {
-                msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
-            }
-        } else if should_attach_photo_only(i, msg_count) {
-            msg.text.clear();
-            add_jpg_attachment(&mut msg, i + 1, stats);
-        } else if should_attach_other(i, msg_count) {
-            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
-        }
-        if i % 23 == 0 && !from_me && msg_count >= 20 {
-            push_tapback(&mut msg, "loved", None, chat_id, false);
-        }
-        if i % 31 == 0 && origin_guid.is_some() && msg_count >= 25 {
-            let im = msg.imessage.get_or_insert_with(IrImessage::default);
-            im.is_reply = true;
-            im.in_reply_to_guid = origin_guid.clone();
-            im.thread_originator_part = Some(0);
-        }
-        if i % 29 == 0 {
-            origin_guid = Some(guid.clone());
-            let im = msg.imessage.get_or_insert_with(IrImessage::default);
-            im.num_replies = Some(rng.random_range(1..4));
-        }
-        if i % 41 == 0 {
-            msg.service = match *SERVICES.choose(rng).unwrap() {
-                "SMS" => IrService::Sms,
-                "RCS" => IrService::Rcs,
-                _ => IrService::IMessage,
-            };
-        }
+        let mut msg = text_message(
+            &guid,
+            timestamp_for(i, msg_count, span_years, rng),
+            from_me,
+            chat_id,
+            cfg,
+            corpus,
+            rng,
+        );
+        decorate_message(&mut msg, i, msg_count, chat_id, from_me, cfg, rng, stats, &mut origin_guid);
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
@@ -231,12 +193,12 @@ fn write_individual(
     Ok(())
 }
 
-const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
-
 fn write_unassigned(
     staging: &Path,
     ua: &Unassigned,
     msg_count: usize,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
@@ -261,263 +223,151 @@ fn write_unassigned(
         msg_count,
     )?;
 
+    let span_years = 1.5;
     for i in 0..msg_count {
-        let guid = format!("unassigned-{chat_id}-{i}");
         let from_me = i % 4 == 0;
-        let mut msg = text_message(&guid, (2023 + (i % 4)) as i32, i, from_me, chat_id, rng);
+        let guid = format!("unassigned-{chat_id}-{i}");
+        let mut msg = text_message(
+            &guid,
+            timestamp_for(i, msg_count, span_years, rng),
+            from_me,
+            chat_id,
+            cfg,
+            corpus,
+            rng,
+        );
         if i == 2 && ua.name_hint.is_some() && !from_me {
             msg.sender_handle = Some(String::new());
         }
-        if should_attach_jpg(i, msg_count) {
+        if should_attach_jpg(i, msg_count, cfg) {
             add_jpg_attachment(&mut msg, i, stats);
-        } else if should_attach_other(i, msg_count) {
-            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
         }
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
     stats.conversation_files += 1;
     Ok(())
-}
-
-fn group_participant_size(rng: &mut impl Rng, pool_len: usize) -> usize {
-    let roll: f64 = rng.random();
-    let ideal = if roll < 0.70 {
-        rng.random_range(3..9)
-    } else if roll < 0.95 {
-        rng.random_range(9..15)
-    } else {
-        rng.random_range(15..21)
-    };
-    ideal.min(pool_len.max(3)).max(3.min(pool_len.max(1)))
-}
-
-fn group_chat_id(index: usize) -> String {
-    match index % 5 {
-        0 => format!("chat{:010}", 1_000_000_000u64 + index as u64),
-        1 => format!("+1800555{:04}", 1000 + (index % 9000)),
-        2 => format!("+4477009{:05}", 10000 + (index % 80000)),
-        3 => format!("+1212555{:04}", 2000 + (index % 7000)),
-        _ => format!("chat{:010}", 2_000_000_000u64 + index as u64),
-    }
-}
-
-fn group_title(index: usize, rng: &mut impl Rng) -> Option<String> {
-    if rng.random_bool(0.45) {
-        None
-    } else {
-        let base = GROUP_TITLES[index % GROUP_TITLES.len()];
-        if index >= GROUP_TITLES.len() && rng.random_bool(0.35) {
-            Some(format!("{base} {}", (index / GROUP_TITLES.len()) + 1))
-        } else {
-            Some(base.to_string())
-        }
-    }
 }
 
 fn write_group(
     staging: &Path,
     roster: &Roster,
-    index: usize,
-    anchor: Option<&Contact>,
+    group: &crate::personas::GroupSpec,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
-    let mut members: Vec<&Contact> = roster.contacts.iter().filter(|c| c.has_group()).collect();
-    let size = group_participant_size(rng, members.len());
-    members.shuffle(rng);
-    if let Some(a) = anchor {
-        members.retain(|c| c.primary_phone() != a.primary_phone());
-        members.insert(0, a);
+    let chat_id = group_chat_id(group.index);
+    let participants: Vec<IrParticipant> = if group.phone_only {
+        group
+            .phone_only_handles
+            .iter()
+            .map(|h| IrParticipant {
+                handle: h.clone(),
+                display_name: None,
+            })
+            .collect()
+    } else {
+        group
+            .member_idxs
+            .iter()
+            .filter_map(|&i| roster.contacts.get(i))
+            .map(|c| {
+                let hint = c.display_hint();
+                IrParticipant {
+                    handle: c.primary_phone().into(),
+                    display_name: if hint.is_empty() { None } else { Some(hint) },
+                }
+            })
+            .collect()
+    };
+    if participants.len() < 2 && !group.phone_only {
+        return Ok(());
     }
-    members.truncate(size);
 
-    let chat_id = group_chat_id(index);
-    let title = group_title(index, rng);
-
-    let participants: Vec<IrParticipant> = members
-        .iter()
-        .map(|c| IrParticipant {
-            handle: c.primary_phone().into(),
-            display_name: Some(c.display_hint()),
-        })
-        .collect();
-
-    let path = staging.join(format!("group-{index:03}.jsonl"));
+    let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
+    let msg_count = ((group.msgs_per_year * group.span_years).round() as isize)
+        .max(1) as usize;
+    let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
-    let msg_count = group_message_count(rng);
-    let header_msgs = msg_count + usize::from(index == 0);
     write_conversation_header(
         &mut file,
         &chat_id,
         IrConversationType::Group,
-        title.clone(),
+        group.title.clone(),
         participants,
-        header_msgs,
+        msg_count + usize::from(group.index == 0),
     )?;
 
-    if index == 0 {
-        let announcement = format!(
-            "You named the conversation {}",
-            title.clone().unwrap_or_else(|| "Group".into())
+    // First group: synthetic rename announcement.
+    if group.index == 0 {
+        let mut ann = text_message(
+            "grp-0-rename",
+            timestamp_for(0, msg_count.max(1), group.span_years, rng),
+            true,
+            OWNER_PHONE,
+            cfg,
+            corpus,
+            rng,
         );
-        write_message(
-            &mut file,
-            IrMessage {
-                guid: format!("ann-{index}"),
-                timestamp_unix_ms: ts_unix_ms(2018, 6, 1, 10, 0),
-                direction: IrDirection::Incoming,
-                service: IrService::IMessage,
-                message_kind: IrMessageKind::Announcement,
-                sender_handle: Some(members[0].primary_phone().into()),
-                sender_display_name: None,
-                subject: None,
-                text: String::new(),
-                attachments: vec![],
-                imessage: Some(IrImessage {
-                    announcement: Some(announcement),
-                    ..Default::default()
-                }),
-                source: None,
-            },
-        )?;
+        ann.text.clear();
+        ann.message_kind = IrMessageKind::Announcement;
+        let im = ann.imessage.get_or_insert_with(IrImessage::default);
+        im.announcement = Some("Demo User named the conversation “Weekend Trip”.".into());
+        write_message(&mut file, ann)?;
         stats.messages += 1;
     }
 
+    let mut origin_guid: Option<String> = None;
     for i in 0..msg_count {
-        let year = year_span(i, msg_count, 2016, 2026);
-        let from_me = i % 7 == 0;
-        let sender = if from_me {
-            None
-        } else {
-            Some(members[i % members.len()].primary_phone().into())
-        };
-        let guid = format!("grp-{index}-{i}");
-        let name = members[i % members.len()].first_name.as_str();
-        let label = if name.is_empty() {
-            members[i % members.len()].last_name.as_str()
-        } else {
-            name
-        };
-        let mut msg = IrMessage {
-            guid,
-            timestamp_unix_ms: ts_unix_ms(
-                year,
-                ((i % 12) + 1) as u32,
-                ((i % 28) + 1) as u32,
-                (9 + (i % 10)) as u32,
-                i % 60,
-            ),
-            direction: if from_me {
-                IrDirection::Outgoing
-            } else {
-                IrDirection::Incoming
-            },
-            service: if i % 11 == 0 {
-                IrService::Sms
-            } else {
-                IrService::IMessage
-            },
-            message_kind: IrMessageKind::IMessage,
-            sender_handle: sender,
-            sender_display_name: None,
-            subject: None,
-            text: format!("{} {}", label, CHAT_SNIPPETS.choose(rng).unwrap()),
-            attachments: vec![],
-            imessage: None,
-            source: None,
-        };
-        if should_attach_jpg(i, msg_count) {
-            add_jpg_attachment(&mut msg, i + index, stats);
-            if i > 0 && i % 12 == 0 {
-                msg.text = format!("{} {}", label, PHOTO_CAPTIONS.choose(rng).unwrap());
-            }
-        } else if should_attach_other(i, msg_count) {
-            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
-        }
-        if i % 13 == 0 && msg_count >= 18 {
-            let reactor = members[(i + 1) % members.len()].primary_phone();
-            let kind = TAPBACK_KINDS.choose(rng).unwrap().to_string();
-            let emoji = if i % 26 == 0 {
-                Some("🎉".into())
-            } else {
-                None
-            };
-            push_tapback(&mut msg, &kind, emoji, reactor, false);
-        }
-        write_message(&mut file, msg)?;
-        stats.messages += 1;
-    }
-    stats.conversation_files += 1;
-    Ok(())
-}
-
-fn write_phone_only_group(
-    staging: &Path,
-    index: usize,
-    handle_offset: usize,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-) -> Result<()> {
-    let size = group_participant_size(rng, 20);
-    let handles = phone_only_handles(handle_offset, size);
-    let chat_id = group_chat_id(index);
-
-    let participants: Vec<IrParticipant> = handles
-        .iter()
-        .map(|h| IrParticipant {
-            handle: h.clone(),
-            display_name: None,
-        })
-        .collect();
-
-    let path = staging.join(format!("group-{index:03}.jsonl"));
-    let mut file = open_jsonl(&path)?;
-    let msg_count = group_message_count(rng);
-    write_conversation_header(
-        &mut file,
-        &chat_id,
-        IrConversationType::Group,
-        None,
-        participants,
-        msg_count,
-    )?;
-
-    for i in 0..msg_count {
-        let year = year_span(i, msg_count, 2016, 2026);
         let from_me = i % 7 == 0;
         let sender = if from_me {
             None
         } else {
             Some(handles[i % handles.len()].clone())
         };
-        let guid = format!("grp-phone-{index}-{i}");
-        let mut msg = IrMessage {
-            guid,
-            timestamp_unix_ms: ts_unix_ms(
-                year,
-                ((i % 12) + 1) as u32,
-                ((i % 28) + 1) as u32,
-                (9 + (i % 10)) as u32,
-                i % 60,
-            ),
-            direction: if from_me {
-                IrDirection::Outgoing
+        let guid = format!("grp-{}-{i}", group.index);
+        let mut msg = text_message(
+            &guid,
+            timestamp_for(i, msg_count, group.span_years, rng),
+            from_me,
+            sender.as_deref().unwrap_or(OWNER_PHONE),
+            cfg,
+            corpus,
+            rng,
+        );
+        msg.sender_handle = sender;
+        if should_attach_jpg(i, msg_count, cfg) {
+            add_jpg_attachment(&mut msg, i + group.index, stats);
+        } else if should_attach_other(i, msg_count, cfg) {
+            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
+        }
+        if cfg.messages.tapback_stride > 0
+            && i % cfg.messages.tapback_stride == 0
+            && msg_count >= 10
+            && !handles.is_empty()
+        {
+            let reactor = &handles[(i + 1) % handles.len()];
+            let kind = TAPBACK_KINDS.choose(rng).unwrap();
+            let emoji = if *kind == "emoji" && rng.random_bool(0.5) {
+                Some((*EMOJI_ONLY.choose(rng).unwrap()).to_string())
             } else {
-                IrDirection::Incoming
-            },
-            service: IrService::IMessage,
-            message_kind: IrMessageKind::IMessage,
-            sender_handle: sender,
-            sender_display_name: None,
-            subject: None,
-            text: CHAT_SNIPPETS.choose(rng).unwrap().to_string(),
-            attachments: vec![],
-            imessage: None,
-            source: None,
-        };
-        if should_attach_jpg(i, msg_count) {
-            add_jpg_attachment(&mut msg, i + index, stats);
+                None
+            };
+            push_tapback(&mut msg, kind, emoji, reactor, false);
+        }
+        if cfg.messages.reply_stride > 0
+            && i % cfg.messages.reply_stride == 0
+            && origin_guid.is_some()
+        {
+            let im = msg.imessage.get_or_insert_with(IrImessage::default);
+            im.is_reply = true;
+            im.in_reply_to_guid = origin_guid.clone();
+            im.thread_originator_part = Some(0);
+        }
+        if i % (cfg.messages.reply_stride.max(1) + 17) == 0 {
+            origin_guid = Some(guid.clone());
         }
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -526,7 +376,14 @@ fn write_phone_only_group(
     Ok(())
 }
 
-fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> Result<()> {
+fn write_orphaned(
+    staging: &Path,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+) -> Result<()> {
+    let n = cfg.edge_cases.orphaned_messages.max(1);
     let path = staging.join("orphaned.jsonl");
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -535,16 +392,17 @@ fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> R
         IrConversationType::Individual,
         None,
         vec![],
-        6,
+        n,
     )?;
-    for i in 0..6 {
+    for i in 0..n {
         let guid = format!("orphan-{i}");
         let mut msg = text_message(
             &guid,
-            (2022 + (i % 3)) as i32,
-            i,
+            timestamp_for(i, n, 2.0, rng),
             i % 2 == 0,
             ORPHAN_SENDER,
+            cfg,
+            corpus,
             rng,
         );
         msg.text = format!("Orphaned message #{i} (no conversation association)");
@@ -572,6 +430,59 @@ fn write_header_only(
         .collect();
     write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0)?;
     Ok(())
+}
+
+fn decorate_message(
+    msg: &mut IrMessage,
+    i: usize,
+    msg_count: usize,
+    peer: &str,
+    from_me: bool,
+    cfg: &SeedConfig,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+    origin_guid: &mut Option<String>,
+) {
+    if should_attach_jpg(i, msg_count, cfg) {
+        add_jpg_attachment(msg, i, stats);
+        if i > 0 && i % 40 == 0 {
+            msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
+        }
+    } else if should_attach_photo_only(i, msg_count, cfg) {
+        msg.text.clear();
+        add_jpg_attachment(msg, i + 1, stats);
+    } else if should_attach_other(i, msg_count, cfg) {
+        add_attachment(msg, i, stats, OTHER_ATTACHMENTS);
+    }
+    if cfg.messages.tapback_stride > 0
+        && i % cfg.messages.tapback_stride == 0
+        && !from_me
+        && msg_count >= 20
+    {
+        push_tapback(msg, "loved", None, peer, false);
+    }
+    if cfg.messages.reply_stride > 0
+        && i % cfg.messages.reply_stride == 0
+        && origin_guid.is_some()
+        && msg_count >= 25
+    {
+        let im = msg.imessage.get_or_insert_with(IrImessage::default);
+        im.is_reply = true;
+        im.in_reply_to_guid = origin_guid.clone();
+        im.thread_originator_part = Some(0);
+    }
+    if i % (cfg.messages.reply_stride.max(1) + 29) == 0 {
+        *origin_guid = Some(msg.guid.clone());
+        let im = msg.imessage.get_or_insert_with(IrImessage::default);
+        im.num_replies = Some(rng.random_range(1..4));
+    }
+    if i % 120 == 0 {
+        msg.service = match *SERVICES.choose(rng).unwrap() {
+            "SMS" => IrService::Sms,
+            "RCS" => IrService::Rcs,
+            _ => IrService::IMessage,
+        };
+    }
 }
 
 fn open_jsonl(path: &Path) -> Result<BufWriter<File>> {
@@ -617,21 +528,21 @@ fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
 
 fn text_message(
     guid: &str,
-    year: i32,
-    index: usize,
+    timestamp_unix_ms: i64,
     from_me: bool,
     peer: &str,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
     rng: &mut impl Rng,
 ) -> IrMessage {
+    let text = if rng.random_bool(cfg.messages.emoji_probability) {
+        (*EMOJI_ONLY.choose(rng).unwrap()).to_string()
+    } else {
+        corpus.pick_message(rng)
+    };
     IrMessage {
         guid: guid.into(),
-        timestamp_unix_ms: ts_unix_ms(
-            year,
-            ((index % 12) + 1) as u32,
-            ((index % 28) + 1) as u32,
-            (8 + (index % 12)) as u32,
-            index % 60,
-        ),
+        timestamp_unix_ms,
         direction: if from_me {
             IrDirection::Outgoing
         } else {
@@ -642,98 +553,69 @@ fn text_message(
         sender_handle: if from_me { None } else { Some(peer.into()) },
         sender_display_name: None,
         subject: None,
-        text: CHAT_SNIPPETS.choose(rng).unwrap().to_string(),
+        text,
         attachments: vec![],
         imessage: None,
         source: None,
     }
 }
 
-fn individual_message_count(contact: &Contact, rng: &mut impl Rng) -> usize {
-    if contact.has_label("Inactive") {
-        return rng.random_range(3..10);
-    }
-    if contact.high_volume {
-        return rng.random_range(1000..1301);
-    }
-    match contact.activity {
-        Activity::Frequent => {
-            let roll: f64 = rng.random();
-            if roll < 0.55 {
-                rng.random_range(28..55)
-            } else if roll < 0.90 {
-                rng.random_range(55..95)
-            } else {
-                rng.random_range(95..140)
-            }
-        }
-        Activity::Lapsed => rng.random_range(20..48),
-        Activity::Normal => {
-            let roll: f64 = rng.random();
-            if roll < 0.55 {
-                rng.random_range(5..16)
-            } else if roll < 0.90 {
-                rng.random_range(16..36)
-            } else {
-                rng.random_range(36..60)
-            }
-        }
-    }
-}
-
-fn group_message_count(rng: &mut impl Rng) -> usize {
-    let roll: f64 = rng.random();
-    if roll < 0.65 {
-        rng.random_range(2..7)
-    } else if roll < 0.92 {
-        rng.random_range(7..12)
+fn timestamp_for(i: usize, total: usize, span_years: f64, rng: &mut impl Rng) -> i64 {
+    let now = Utc::now();
+    let span = Duration::days((span_years * 365.25).max(1.0) as i64);
+    let start = now - span;
+    let progress = if total <= 1 {
+        1.0
     } else {
-        rng.random_range(12..20)
+        // Mild clustering: cubic ease toward recent.
+        let t = i as f64 / (total - 1) as f64;
+        t.powf(0.85)
+    };
+    let jitter = Duration::seconds(rng.random_range(0..3_600));
+    let millis = start.timestamp_millis()
+        + ((now.timestamp_millis() - start.timestamp_millis()) as f64 * progress) as i64
+        + jitter.num_milliseconds();
+    // Snap into America/New_York-ish fixed offset representation for demo consistency.
+    let offset = FixedOffset::west_opt(4 * 3600).unwrap();
+    offset
+        .timestamp_millis_opt(millis)
+        .single()
+        .unwrap_or_else(|| offset.from_utc_datetime(&now.naive_utc()))
+        .timestamp_millis()
+}
+
+fn group_chat_id(index: usize) -> String {
+    match index % 5 {
+        0 => format!("chat{:010}", 1_000_000_000u64 + index as u64),
+        1 => format!("+1800555{:04}", 1000 + (index % 9000)),
+        2 => format!("+4477009{:05}", 10000 + (index % 80000)),
+        3 => format!("+1212555{:04}", 2000 + (index % 7000)),
+        _ => format!("chat{:010}", 2_000_000_000u64 + index as u64),
     }
 }
 
-fn unassigned_message_count(rng: &mut impl Rng) -> usize {
-    let roll: f64 = rng.random();
-    if roll < 0.55 {
-        rng.random_range(2..6)
-    } else if roll < 0.88 {
-        rng.random_range(6..12)
-    } else {
-        rng.random_range(12..18)
-    }
-}
-
-fn should_attach_jpg(i: usize, total: usize) -> bool {
-    if total < 3 {
+fn should_attach_jpg(i: usize, total: usize, cfg: &SeedConfig) -> bool {
+    if total < 8 {
         return false;
     }
-    if i == 1 || (total >= 6 && i == total - 1) {
-        return true;
-    }
-    let stride = if total < 15 {
-        9
-    } else if total < 50 {
-        7
-    } else if total < 200 {
-        12
-    } else {
-        80
-    };
+    let stride = (cfg.messages.jpg_base_stride + total / 50).max(20);
     i > 0 && i % stride == 0
 }
 
-fn should_attach_photo_only(i: usize, total: usize) -> bool {
-    if total >= 200 {
-        return total >= 12 && i % 120 == 5;
+fn should_attach_photo_only(i: usize, total: usize, cfg: &SeedConfig) -> bool {
+    if total < 20 {
+        return false;
     }
-    total >= 12 && i % 13 == 5
+    let stride = (cfg.messages.jpg_base_stride * 2 + total / 40).max(40);
+    i % stride == 5
 }
 
-fn should_attach_other(i: usize, total: usize) -> bool {
-    if total >= 200 {
-        return total >= 20 && i % 150 == 0;
+fn should_attach_other(i: usize, total: usize, cfg: &SeedConfig) -> bool {
+    if total < 30 {
+        return false;
     }
-    total >= 20 && i % 19 == 0
+    let stride = (cfg.messages.other_base_stride + total / 30).max(50);
+    i > 0 && i % stride == 0
 }
 
 fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {
@@ -799,43 +681,6 @@ fn push_tapback(
     im.tapbacks = Some(serde_json::Value::Array(taps));
 }
 
-fn year_span(i: usize, total: usize, start: i32, end: i32) -> i32 {
-    let span = (end - start).max(0) as usize;
-    if total <= 1 || span == 0 {
-        return end;
-    }
-    start + ((i * span) / (total - 1)) as i32
-}
-
-fn year_for_activity(i: usize, total: usize, activity: Activity, rng: &mut impl Rng) -> i32 {
-    match activity {
-        Activity::Frequent => {
-            if rng.random_bool(0.80) {
-                year_span(i, total, 2023, 2026)
-            } else {
-                year_span(i, total, 2016, 2022)
-            }
-        }
-        Activity::Lapsed => {
-            if rng.random_bool(0.92) {
-                year_span(i, total, 2016, 2022)
-            } else {
-                year_span(i, total, 2023, 2024)
-            }
-        }
-        Activity::Normal => year_span(i, total, 2016, 2026),
-    }
-}
-
-/// Demo timestamps as America/New_York offset (-04:00) unix millis.
-fn ts_unix_ms(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> i64 {
-    let offset = FixedOffset::west_opt(4 * 3600).unwrap();
-    offset
-        .with_ymd_and_hms(year, month, day, hour, minute as u32, 0)
-        .unwrap()
-        .timestamp_millis()
-}
-
 fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -847,17 +692,4 @@ fn sanitize_filename(s: &str) -> String {
             _ => '_',
         })
         .collect()
-}
-
-trait ShuffleSlice<T> {
-    fn shuffle(&mut self, rng: &mut impl Rng);
-}
-
-impl<T> ShuffleSlice<T> for Vec<T> {
-    fn shuffle(&mut self, rng: &mut impl Rng) {
-        for i in (1..self.len()).rev() {
-            let j = rng.random_range(0..=i);
-            self.swap(i, j);
-        }
-    }
 }
