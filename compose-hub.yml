@@ -1,0 +1,47 @@
+# Hub — pull a ready-to-run image from Docker Hub (typical on the VPS).
+# No compile on this machine.
+#
+#   docker login
+#   docker compose -f compose-hub.yml pull
+#   docker compose -f compose-hub.yml up -d
+#   Optional pin: VAULT_IMAGE=mbeisser1/message-vault:v0.1.0
+#
+# Staging drop: copy JSONL into ./staging (mounted at /app/staging).
+
+services:
+  vault:
+    image: ${VAULT_IMAGE:-mbeisser1/message-vault:latest}
+    pull_policy: always
+    # Localhost only — public traffic should go through nginx :80/:443
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+      VAULT_AUTH: ${VAULT_AUTH:-local}
+      HANKO_API_URL: ${HANKO_API_URL:-${NEXT_PUBLIC_HANKO_API_URL:-}}
+      NEXT_PUBLIC_HANKO_API_URL: ${NEXT_PUBLIC_HANKO_API_URL:-}
+    volumes:
+      - vault-data:/app/data
+      - ./staging:/app/staging
+    networks:
+      default:
+        aliases:
+          - vault-backend
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - vault
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/ssl/cloudflare/bitrealm.dev.pem:/etc/nginx/certs/bitrealm.dev.pem:ro
+      - /etc/ssl/cloudflare/bitrealm.dev.key:/etc/nginx/certs/bitrealm.dev.key:ro
+    restart: unless-stopped
+
+volumes:
+  vault-data:

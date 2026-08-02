@@ -50,8 +50,8 @@ docker compose up
 ```
 
 See [Docker](/get-started/docker/) for Windows and Linux install steps, the
-default **dev** profile (pull `main`, bind-mounted source), and the optional
-**release** profile.
+default **compose-dev.yml** (pull `main`, bind-mounted source), plus
+**compose-release.yml** and **compose-hub.yml**.
 
 ## Next steps
 

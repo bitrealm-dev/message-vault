@@ -1,20 +1,22 @@
 ---
 title: Docker
-description: Run Message Vault with Docker Compose — dev profile for pull-main, release profile for a slim build.
+description: Run Message Vault with Docker Compose — compose-dev for pull-main, compose-release for a slim build, compose-hub to pull from Docker Hub.
 ---
 
 Docker Compose packages the Rust import API and the Next.js UI so you do not
-need a host Rust/Node toolchain. Two profiles share the same ports and data
-layout; neither commits binaries to git or publishes a release image.
+need a host Rust/Node toolchain. Pick one compose file per machine — do not
+run two at once (they share ports `3000` / `8080` and the `vault-data` volume
+name).
 
-| Profile | Command | Best for |
-|---------|---------|----------|
-| **dev** (default) | `docker compose up` | Pull `main` often; bind-mounted source; hot reload for the web UI |
-| **release** | `COMPOSE_PROFILES=release docker compose up --build` | Slimmer runtime image built from your checkout |
+| File | Command | Best for |
+|------|---------|----------|
+| **compose-dev.yml** (default) | `docker compose up` | Laptop; bind-mounted source; hot reload for the web UI |
+| **compose-release.yml** | `docker compose -f compose-release.yml up --build` | Slimmer runtime image built from your checkout |
+| **compose-hub.yml** | `docker compose -f compose-hub.yml up -d` | VPS; pull a CI-built image from Docker Hub |
 
 A committed [`.env`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/.env) sets
-`COMPOSE_PROFILES=dev` so bare `docker compose up` starts the toolchain service.
-Enable only one profile at a time — both publish ports `3000` and `8080`.
+`COMPOSE_FILE=compose-dev.yml` so bare `docker compose up` uses the toolchain
+file. Override with `-f`, or change `COMPOSE_FILE` in `.env`.
 
 ## Install Docker
 
@@ -35,17 +37,15 @@ docker version
 docker compose version
 ```
 
-PowerShell environment variables for this repo (set in the same session before
-`docker compose`):
+PowerShell examples:
 
 ```powershell
-# Prefer the slim release image (optional; default profile is "dev")
-$env:COMPOSE_PROFILES = "release"
+# Slim release image built from this checkout
+docker compose -f compose-release.yml up --build
 
 # Empty personal vault instead of the demo seed (optional)
 $env:VAULT_MODE = "personal"
-
-docker compose up --build
+docker compose up
 ```
 
 ### Linux
@@ -67,7 +67,7 @@ docker compose version
 is an alternative if you prefer a GUI; Engine + Compose is enough for this
 project.
 
-## Dev profile (default)
+## Dev (`compose-dev.yml`)
 
 ```bash
 git clone https://github.com/bitrealm-dev/message-vault-rs.git
@@ -115,8 +115,8 @@ If a `vault.db` already exists on the volume, seeding is skipped.
 ### Staging drop folder
 
 Compose always bind-mounts the host directory `./staging` to `/app/staging`
-inside the container (dev and release). Copy a JSONL export onto the host —
-no `docker cp` required:
+inside the container. Copy a JSONL export onto the host — no `docker cp`
+required:
 
 ```bash
 mkdir -p staging/imessage
@@ -126,13 +126,13 @@ cp -a /path/to/your-export/. staging/imessage/
 Then ingest from inside the container:
 
 ```bash
-# Dev profile
+# Dev
 docker compose exec vault cargo run --release -- ingest imessage \
   --account yourusername \
   --staging-dir staging/imessage
 
-# Release profile
-docker compose exec vault-release message-vault-rs ingest imessage \
+# Release / hub (binary is already in the image)
+docker compose -f compose-release.yml exec vault message-vault-rs ingest imessage \
   --account yourusername \
   --staging-dir staging/imessage
 ```
@@ -140,22 +140,37 @@ docker compose exec vault-release message-vault-rs ingest imessage \
 Contents of `staging/` are gitignored; only the empty directory placeholder is
 tracked.
 
-## Release profile
+## Release (`compose-release.yml`)
 
 Builds release artifacts from the current checkout into a smaller image (no
-source bind mount). Override the default profile so only `vault-release` starts:
+source bind mount):
 
 ```bash
-COMPOSE_PROFILES=release docker compose up --build
+docker compose -f compose-release.yml up --build
 ```
 
 Same ports and `VAULT_MODE` behavior. After each `git pull`, run `--build`
 again so the image matches your tree. Expect a multi-minute compile when Rust
 or web dependencies change.
 
+## Hub (`compose-hub.yml`)
+
+Pull a CI-built image (typical on the VPS). No compile on the machine:
+
+```bash
+docker login
+docker compose -f compose-hub.yml pull
+docker compose -f compose-hub.yml up -d
+```
+
+Optional pin: `VAULT_IMAGE=mbeisser1/message-vault:v0.1.0`.
+
+Hub publishes `3000` / `8080` on localhost only; public traffic should go
+through nginx on `80` / `443`.
+
 ## Ports and security
 
-Compose publishes both services on all host interfaces:
+Dev and release publish both services on all host interfaces:
 
 | Port | Service |
 |------|---------|
@@ -174,7 +189,7 @@ http://192.168.50.100:8080/health
 ### Auth mode (`VAULT_AUTH`)
 
 - **`local` (default)** — username/password in the vault UI. Use for self-host
-  and laptop demo/personal profiles.
+  and laptop demo/personal setups.
 - **`hanko`** — Hanko Cloud (or self-hosted Hanko) for identity; the vault still
   uses the `mv_account_id` cookie after `POST /api/auth/hanko/session`. First
   sign-in auto-creates an account and sends the user through name/phone
@@ -187,7 +202,7 @@ HANKO_API_URL=https://<your-hanko-project>.hanko.io
 ```
 
 `NEXT_PUBLIC_*` is baked at **image build** time for release/hub images — rebuild
-and push when the Hanko URL changes. Dev profile can rely on runtime env.
+and push when the Hanko URL changes. Dev can rely on runtime env.
 
 For production behind HTTPS (e.g. `https://app.bitrealm.dev`):
 
@@ -218,7 +233,7 @@ enabling `ufw` globally without reviewing existing rules.
 # Health check (import API)
 curl -sS http://127.0.0.1:8080/health
 
-# Reset demo data (dev profile)
+# Reset demo data (dev)
 docker compose exec vault cargo run --release -- reset-demo
 docker compose exec vault bash -lc 'cp config/config.docker.toml config/config.toml'
 docker compose exec vault cargo run --release -- process-assets
@@ -230,8 +245,8 @@ docker compose exec vault cargo run --release -- process-assets
 docker compose exec vault bash
 ```
 
-For the release profile (`COMPOSE_PROFILES=release`), replace `vault` with
-`vault-release` and call `message-vault-rs` instead of `cargo run --release --`.
+For release/hub, pass `-f compose-release.yml` or `-f compose-hub.yml` and call
+`message-vault-rs` instead of `cargo run --release --`.
 
 ## Layout inside the container
 
@@ -245,7 +260,8 @@ For the release profile (`COMPOSE_PROFILES=release`), replace `vault` with
 ```
 
 Host security and persistence live in Compose volumes and the host firewall —
-the processes inside bind `0.0.0.0` so Docker can publish them on the LAN.
+the processes inside bind `0.0.0.0` so Docker can publish them on the LAN
+(except hub, which binds UI/API to localhost).
 
 ## Next steps
 

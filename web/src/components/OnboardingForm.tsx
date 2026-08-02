@@ -57,16 +57,16 @@ export function OnboardingForm() {
         <div className="w-full max-w-lg">
           <div className="rounded-xl border border-border bg-elevated p-8 shadow-xl">
             <h1 className="text-center text-2xl font-bold tracking-tight text-text">
-              Finish setting up
+              Complete your profile
             </h1>
             <p className="mt-2 text-center text-[14px] text-muted">
-              Add a display name and phone number so Message Vault can recognize
-              you in imports.
+              Add your name and phone number so we can identify your messages
+              when you import them.
             </p>
 
             <div className="mt-8 space-y-4">
               <label className="block">
-                <span className="text-[13px] text-text">Preferred name</span>
+                <span className="text-[13px] text-text">Display name</span>
                 <input
                   type="text"
                   value={preferredName}
@@ -75,7 +75,8 @@ export function OnboardingForm() {
                     setError(null);
                   }}
                   autoComplete="nickname"
-                  className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+                  placeholder="John Doe"
+                  className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none placeholder:text-muted focus:border-accent"
                 />
               </label>
 
@@ -125,7 +126,7 @@ export function OnboardingForm() {
                   />
                 </div>
                 <p className="mt-1 text-[12px] text-muted">
-                  Include the country code. Saved as E.164 (e.g. +15551234567).
+                  Include the country code (saved like +15551234567).
                 </p>
               </div>
 

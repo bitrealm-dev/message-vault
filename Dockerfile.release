@@ -1,5 +1,5 @@
 # Multi-stage release image built from the current checkout (no published binaries).
-# Usage: docker compose --profile release up --build
+# Usage: docker compose -f compose-release.yml up --build
 
 # -----------------------------------------------------------------------------
 # Stage 1: Rust binary

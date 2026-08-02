@@ -1,18 +1,21 @@
 import { cookies } from "next/headers";
 
 import { ACCOUNT_COOKIE } from "@/lib/accountCookie";
-import { isHankoAuth } from "@/lib/authMode";
 
 export { ACCOUNT_COOKIE };
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
-/** Secure cookies for HTTPS / Hanko / production deployments. */
+/**
+ * Secure cookies for HTTPS deployments.
+ * Default: on in production. Override with COOKIE_SECURE=true|false
+ * (use false for local HTTP even when VAULT_AUTH=hanko).
+ */
 function cookieSecure(): boolean {
   const override = process.env.COOKIE_SECURE?.trim().toLowerCase();
   if (override === "true" || override === "1") return true;
   if (override === "false" || override === "0") return false;
-  return process.env.NODE_ENV === "production" || isHankoAuth();
+  return process.env.NODE_ENV === "production";
 }
 
 export function accountCookieOptions(accountId: string) {

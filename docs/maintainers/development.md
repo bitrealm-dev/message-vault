@@ -20,7 +20,7 @@ Commands below assume the repository root is the current directory unless noted.
 - Optional: FFmpeg for video/audio conversion and media format fallbacks
 - Optional: Docker / Compose — see
   [`docs/src/content/docs/get-started/docker.md`](../src/content/docs/get-started/docker.md)
-  (`docker compose up` for the default bind-mounted **dev** profile)
+  (`docker compose up` → **compose-dev.yml** bind-mounted toolchain)
 
 Verify the installed tools:
 

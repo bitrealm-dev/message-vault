@@ -1,5 +1,5 @@
 # Dev toolchain image: Rust + Node + FFmpeg.
-# Source is bind-mounted at runtime (see docker-compose.yml).
+# Source is bind-mounted at runtime (see compose-dev.yml).
 # rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
 FROM rust:1.95-bookworm
 
