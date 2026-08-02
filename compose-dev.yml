@@ -8,6 +8,8 @@
 #
 # Personal vault: VAULT_MODE=personal docker compose -f compose-dev.yml up
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
+#
+# TLS / nginx for production lives in the private message-vault-ops repo.
 
 services:
   vault:
@@ -31,25 +33,8 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - web-node-modules:/app/web/node_modules
       - vault-data:/app/data
-    networks:
-      default:
-        aliases:
-          - vault-backend
     stdin_open: true
     tty: true
-
-  nginx:
-    image: nginx:1.27-alpine
-    depends_on:
-      - vault
-    ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - /etc/ssl/cloudflare/bitrealm.dev.pem:/etc/nginx/certs/bitrealm.dev.pem:ro
-      - /etc/ssl/cloudflare/bitrealm.dev.key:/etc/nginx/certs/bitrealm.dev.key:ro
-    restart: unless-stopped
 
 volumes:
   cargo-target:

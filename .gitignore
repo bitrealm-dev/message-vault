@@ -64,8 +64,3 @@ target
 /docs/dist/
 /docs/node_modules/
 
-# Ansible local inventory / vars (keep *.example committed)
-/ansible/inventory/hosts
-/ansible/group_vars/vault.yml
-/ansible/*.retry
-

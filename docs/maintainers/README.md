@@ -9,9 +9,11 @@ published at <https://bitrealm-dev.github.io/message-vault-rs/>.
 | Doc | Topic |
 |-----|-------|
 | [development.md](development.md) | Windows/Linux setup, checks, troubleshooting |
-| [vps-setup.md](vps-setup.md) | Ubuntu VPS: Cloudflare, Hanko, Hub image, Ansible |
 | [../../demo/README.md](../../demo/README.md) | Demo dataset contents and regen |
 | [../../web/STYLE_GUIDE.md](../../web/STYLE_GUIDE.md) | Web UI theme tokens |
+
+Bitrealm production VPS runbook (Cloudflare, Hanko, Hub compose, Ansible) lives
+in the private **message-vault-ops** repository.
 
 ## Documentation site
 

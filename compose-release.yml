@@ -5,6 +5,8 @@
 #
 # Personal vault: VAULT_MODE=personal docker compose -f compose-release.yml up --build
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
+#
+# VPS Hub + nginx TLS: private message-vault-ops repo (compose-hub.yml).
 
 services:
   vault:
@@ -24,23 +26,6 @@ services:
     volumes:
       - vault-data:/app/data
       - ./staging:/app/staging
-    networks:
-      default:
-        aliases:
-          - vault-backend
-
-  nginx:
-    image: nginx:1.27-alpine
-    depends_on:
-      - vault
-    ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - /etc/ssl/cloudflare/bitrealm.dev.pem:/etc/nginx/certs/bitrealm.dev.pem:ro
-      - /etc/ssl/cloudflare/bitrealm.dev.key:/etc/nginx/certs/bitrealm.dev.key:ro
-    restart: unless-stopped
 
 volumes:
   vault-data:

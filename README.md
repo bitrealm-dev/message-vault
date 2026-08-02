@@ -41,8 +41,8 @@ cd web && npm ci && npm run dev
 docker compose up
 ```
 
-(Uses `compose-dev.yml` via `COMPOSE_FILE` in `.env`. Other modes:
-`compose-release.yml`, `compose-hub.yml`.)
+(Uses `compose-dev.yml` via `COMPOSE_FILE` in `.env`. Also:
+`compose-release.yml`.)
 
 Open <http://localhost:3000/login> and sign in as username **`demo`** with an
 empty password (or create another account).
@@ -50,8 +50,8 @@ empty password (or create another account).
 Windows PowerShell steps and full prerequisites are in the
 [developer setup guide](docs/maintainers/development.md). Docker modes:
 [Docker guide](https://bitrealm-dev.github.io/message-vault-rs/get-started/docker/).
-Production VPS (Cloudflare + Hanko + Ansible):
-[vps-setup.md](docs/maintainers/vps-setup.md).
+Bitrealm production VPS (Cloudflare + Hanko + Ansible) lives in the private
+`message-vault-ops` repo.
 
 ## Import your own messages
 
@@ -81,8 +81,6 @@ Dockerfile.dev       # compose-dev.yml (toolchain + bind mount)
 Dockerfile.release   # compose-release.yml (slim multi-stage image)
 compose-dev.yml
 compose-release.yml
-compose-hub.yml
-ansible/             # VPS provisioning (see docs/maintainers/vps-setup.md)
 ```
 
 

@@ -1,6 +1,6 @@
 ---
 title: Docker
-description: Run Message Vault with Docker Compose — compose-dev for pull-main, compose-release for a slim build, compose-hub to pull from Docker Hub.
+description: Run Message Vault with Docker Compose — compose-dev for pull-main, compose-release for a slim build.
 ---
 
 Docker Compose packages the Rust import API and the Next.js UI so you do not
@@ -12,11 +12,13 @@ name).
 |------|---------|----------|
 | **compose-dev.yml** (default) | `docker compose up` | Laptop; bind-mounted source; hot reload for the web UI |
 | **compose-release.yml** | `docker compose -f compose-release.yml up --build` | Slimmer runtime image built from your checkout |
-| **compose-hub.yml** | `docker compose -f compose-hub.yml up -d` | VPS; pull a CI-built image from Docker Hub |
 
 A committed [`.env`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/.env) sets
 `COMPOSE_FILE=compose-dev.yml` so bare `docker compose up` uses the toolchain
 file. Override with `-f`, or change `COMPOSE_FILE` in `.env`.
+
+Production Hub + nginx TLS for Bitrealm is maintained in a private ops repo
+(`message-vault-ops`), not in this public tree.
 
 ## Install Docker
 
@@ -131,7 +133,7 @@ docker compose exec vault cargo run --release -- ingest imessage \
   --account yourusername \
   --staging-dir staging/imessage
 
-# Release / hub (binary is already in the image)
+# Release (binary is already in the image)
 docker compose -f compose-release.yml exec vault message-vault-rs ingest imessage \
   --account yourusername \
   --staging-dir staging/imessage
@@ -152,21 +154,6 @@ docker compose -f compose-release.yml up --build
 Same ports and `VAULT_MODE` behavior. After each `git pull`, run `--build`
 again so the image matches your tree. Expect a multi-minute compile when Rust
 or web dependencies change.
-
-## Hub (`compose-hub.yml`)
-
-Pull a CI-built image (typical on the VPS). No compile on the machine:
-
-```bash
-docker login
-docker compose -f compose-hub.yml pull
-docker compose -f compose-hub.yml up -d
-```
-
-Optional pin: `VAULT_IMAGE=mbeisser1/message-vault:v0.1.0`.
-
-Hub publishes `3000` / `8080` on localhost only; public traffic should go
-through nginx on `80` / `443`.
 
 ## Ports and security
 
@@ -201,17 +188,11 @@ NEXT_PUBLIC_HANKO_API_URL=https://<your-hanko-project>.hanko.io
 HANKO_API_URL=https://<your-hanko-project>.hanko.io
 ```
 
-`NEXT_PUBLIC_*` is baked at **image build** time for release/hub images — rebuild
-and push when the Hanko URL changes. Dev can rely on runtime env.
-
-For production behind HTTPS (e.g. `https://app.bitrealm.dev`):
-
-- Set Hanko allowed origin to that exact app URL (not apex/`www` unless you also
-  serve the app there).
-- Vault session cookies are marked `Secure` in production / hanko mode.
-- Do not put Cloudflare Zero Trust / Access in front of the same login if Hanko
-  is the IdP. Allow HTTPS egress from the VPS to Hanko for JWKS verification.
-- Import API Bearer tokens are unchanged and separate from Hanko.
+`NEXT_PUBLIC_*` is baked at **image build** time for release/Hub images — rebuild
+and push when the Hanko URL changes. Dev can rely on runtime env
+(`web/.env.local` or process env). For a public HTTPS deployment, set Hanko’s
+allowed origin to that exact app URL and prefer `Secure` session cookies
+(`NODE_ENV=production`).
 
 Import auth uses per-account tokens, not a host-wide secret. Limit inbound
 TCP `3000` and `8080` on the host firewall to your trusted LAN/VPN subnet, and
@@ -245,8 +226,8 @@ docker compose exec vault cargo run --release -- process-assets
 docker compose exec vault bash
 ```
 
-For release/hub, pass `-f compose-release.yml` or `-f compose-hub.yml` and call
-`message-vault-rs` instead of `cargo run --release --`.
+For release, pass `-f compose-release.yml` and call `message-vault-rs` instead
+of `cargo run --release --`.
 
 ## Layout inside the container
 
@@ -260,8 +241,7 @@ For release/hub, pass `-f compose-release.yml` or `-f compose-hub.yml` and call
 ```
 
 Host security and persistence live in Compose volumes and the host firewall —
-the processes inside bind `0.0.0.0` so Docker can publish them on the LAN
-(except hub, which binds UI/API to localhost).
+the processes inside bind `0.0.0.0` so Docker can publish them on the LAN.
 
 ## Next steps
 
