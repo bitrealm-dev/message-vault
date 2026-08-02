@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -5,45 +6,50 @@ use anyhow::{Context, Result};
 
 use crate::personas::{OWNER_PHONE, Roster};
 
-pub fn write_csvs(config_dir: &Path, roster: &Roster) -> Result<()> {
-    let contacts_path = config_dir.join("contacts.csv");
-    let mut wtr = csv::Writer::from_path(&contacts_path)
-        .with_context(|| format!("open {}", contacts_path.display()))?;
-    wtr.write_record([
-        "phones",
-        "first_name",
-        "last_name",
-        "exclude",
-        "label_1",
-        "label_2",
-        "label_3",
-        "label_4",
-        "label_5",
-    ])?;
+pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
+    let contacts_path = config_dir.join("contacts.vcf");
+    let mut out = String::new();
     for c in &roster.contacts {
-        wtr.write_record([
-            c.phones.join(";"),
-            c.first_name.clone(),
-            c.last_name.clone(),
-            if c.exclude { "true" } else { "false" }.to_string(),
-            c.groups.first().cloned().unwrap_or_default(),
-            c.groups.get(1).cloned().unwrap_or_default(),
-            c.groups.get(2).cloned().unwrap_or_default(),
-            c.groups.get(3).cloned().unwrap_or_default(),
-            c.groups.get(4).cloned().unwrap_or_default(),
-        ])?;
+        let display_name = [c.first_name.trim(), c.last_name.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(out, "BEGIN:VCARD")?;
+        writeln!(out, "VERSION:3.0")?;
+        writeln!(out, "FN:{}", escape_vcf(&display_name))?;
+        writeln!(
+            out,
+            "N:{};{};;;",
+            escape_vcf(&c.last_name),
+            escape_vcf(&c.first_name)
+        )?;
+        for phone in &c.phones {
+            writeln!(out, "TEL:{}", escape_vcf(phone))?;
+        }
+        if !c.groups.is_empty() {
+            writeln!(
+                out,
+                "CATEGORIES:{}",
+                c.groups
+                    .iter()
+                    .map(|label| escape_vcf(label))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        writeln!(out, "END:VCARD")?;
     }
-    wtr.flush()?;
-
-    let exclude_path = config_dir.join("exclude.csv");
-    let mut ex = csv::Writer::from_path(&exclude_path)
-        .with_context(|| format!("open {}", exclude_path.display()))?;
-    ex.write_record(["phones", "label"])?;
-    for (phone, label) in &roster.exclude_handles {
-        ex.write_record([phone.as_str(), label.as_str()])?;
-    }
-    ex.flush()?;
+    fs::write(&contacts_path, out).with_context(|| format!("write {}", contacts_path.display()))?;
     Ok(())
+}
+
+fn escape_vcf(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
 }
 
 pub fn write_config_toml(config_dir: &Path) -> Result<()> {

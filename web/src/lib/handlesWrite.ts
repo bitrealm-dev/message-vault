@@ -1,19 +1,8 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { assertVaultWritable } from "./owner";
-import { dbPath } from "./paths";
 import { resetDb } from "./db";
-
-function ensureTrashedHandlesTable(db: Database.Database): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS trashed_handles (
-       account_id TEXT NOT NULL,
-       handle TEXT NOT NULL,
-       trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-       PRIMARY KEY (account_id, handle)
-     )`,
-  );
-}
+import { openWritableVaultDb } from "./vaultSchema";
 
 /** Remove handles from trash (e.g. after assigning to a contact). */
 export function clearTrashedHandles(
@@ -23,7 +12,6 @@ export function clearTrashedHandles(
 ): void {
   const trimmed = handles.map((h) => h.trim()).filter(Boolean);
   if (trimmed.length === 0) return;
-  ensureTrashedHandlesTable(db);
   const del = db.prepare(
     `DELETE FROM trashed_handles WHERE account_id = ? AND handle = ?`,
   );
@@ -40,7 +28,6 @@ export function trashHandlesInDb(
 ): void {
   const trimmed = [...new Set(handles.map((h) => h.trim()).filter(Boolean))];
   if (trimmed.length === 0) return;
-  ensureTrashedHandlesTable(db);
   const upsert = db.prepare(
     `INSERT INTO trashed_handles (account_id, handle, trashed_at)
      VALUES (?, ?, datetime('now'))
@@ -58,7 +45,7 @@ export function trashHandle(handle: string): void {
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     trashHandlesInDb(writeDb, [trimmed], accountId);
   } finally {
@@ -74,9 +61,8 @@ export function restoreHandle(handle: string): void {
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedHandlesTable(writeDb);
     writeDb
       .prepare(`DELETE FROM trashed_handles WHERE account_id = ? AND handle = ?`)
       .run(accountId, trimmed);
@@ -97,9 +83,8 @@ export function permanentlyDeleteHandle(handle: string): void {
   const trimmed = handle.trim();
   if (!trimmed) throw new Error("handle required");
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedHandlesTable(writeDb);
     const trashed = writeDb
       .prepare(
         `SELECT 1 AS ok FROM trashed_handles WHERE account_id = ? AND handle = ?`,

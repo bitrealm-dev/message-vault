@@ -3,10 +3,10 @@ import fs from "node:fs";
 
 import Database from "better-sqlite3";
 
-import { accountDataDir, ensureDbParentDir } from "./paths";
+import { accountDataDir } from "./paths";
 import { hashPassword, passwordsMatch, validatePasswordPlaintext } from "./password";
 import { createAccountProfile } from "./accountProfile";
-import { ensureVaultSchema } from "./vaultSchema";
+import { openWritableVaultDb } from "./vaultSchema";
 
 export const INVALID_CREDENTIALS = "Invalid user ID or password";
 
@@ -57,12 +57,7 @@ function rowToAccount(row: AccountRow, emails: AccountEmailRow[]): Account {
 }
 
 function openDb(): Database.Database {
-  const db = new Database(ensureDbParentDir(), { timeout: 15000 });
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 15000");
-  db.pragma("foreign_keys = ON");
-  ensureVaultSchema(db);
-  return db;
+  return openWritableVaultDb();
 }
 
 function friendlyDbError(err: unknown): Error {

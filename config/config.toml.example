@@ -1,9 +1,5 @@
 # Copy to config.toml and edit for your machine:
 #   cp config/config.toml.example config/config.toml
-#   cp config/contacts.csv.example config/contacts.csv
-#   cp config/exclude.csv.example config/exclude.csv
-#
-# Real config/contacts/exclude files are gitignored.
 #
 # Instance config only: shared database path, per-account data root, and optional
 # HTTP import server. Web accounts (user ID + optional password) and identity
@@ -15,9 +11,8 @@
 # Source folders are not listed here — each import registers its own source for
 # that account under data/<account_id>/<source_id>/.
 #
-# contacts.csv / exclude.csv templates (optional): copy the examples if you want
-# starter files; runtime imports use data/<account_id>/contacts.csv and
-# exclude.csv (created with empty headers on first use).
+# Address books load into SQLite via CLI `import-contacts --contacts`
+# (iMazing CSV or VCF).
 # Older contact_phones / preferred_phone DBs are not upgraded — wipe vault.db and re-import.
 
 [paths]

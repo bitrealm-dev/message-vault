@@ -37,7 +37,7 @@ describe("exportContactsCsvFromDb", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("exports phones, names, exclude, and more than five labels", () => {
+  it("exports phones, names, and more than five labels", () => {
     runWithAccount(accountId, () => {
       const labels = ["A", "B", "C", "D", "E", "F"];
       createContact({
@@ -51,15 +51,14 @@ describe("exportContactsCsvFromDb", () => {
       const lines = csv.trimEnd().split("\n");
       const header = parseCsvLine(lines[0]!);
       assert.ok(header.includes("label_6"));
-      assert.equal(header.indexOf("label_6"), 9);
+      assert.equal(header.indexOf("label_6"), 8);
 
       const row = parseCsvLine(lines[1]!);
       assert.equal(row[0], "+15551234567");
       assert.ok(!row[0]!.includes("@"));
       assert.equal(row[1], "Ada");
       assert.equal(row[2], "Lovelace");
-      assert.equal(row[3], "false");
-      assert.deepEqual(row.slice(4, 10), labels);
+      assert.deepEqual(row.slice(3, 9), labels);
     });
   });
 });

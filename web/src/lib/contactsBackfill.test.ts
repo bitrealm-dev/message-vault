@@ -102,17 +102,25 @@ describe("unknown contact backfill", () => {
       assert.equal(ensureUnknownContacts(), 2);
       resetDb();
 
-      const handles = new Set(
-        listContacts("all").map((c) => c.preferredHandle ?? ""),
-      );
+      const contacts = listContacts("all");
+      const handles = new Set(contacts.map((c) => c.preferredHandle ?? ""));
       assert.ok(
         handles.has(GROUP_ONLY_PHONE),
         `group-only participant should get a contact: ${[...handles].join(", ")}`,
       );
       assert.ok(handles.has(DIRECT_PHONE));
+      assert.deepEqual(
+        contacts.map((c) => c.displayName).sort(),
+        ["Direct Friend", "Group Only"],
+      );
       assert.ok(
         !handles.has(OWNER_PHONE),
         "the account holder must not become a contact",
+      );
+      assert.equal(
+        fs.existsSync(path.join(tmpDir, "data", accountId, "contacts.csv")),
+        false,
+        "backfill must not create a contacts file",
       );
 
       // Nothing left to backfill on a second pass.

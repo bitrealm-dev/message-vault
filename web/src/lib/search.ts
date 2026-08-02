@@ -10,7 +10,6 @@ import {
   splitNameParts,
 } from "./dbCore";
 import { ownerHandleMatcher } from "./owner";
-import { dbPath } from "./paths";
 import { sanitizePhoneDigits, toPhoneE164 } from "./phoneE164";
 import {
   hasDateBounds,
@@ -21,7 +20,7 @@ import {
   type ParsedSearchQuery,
 } from "./searchQuery";
 import type { ContactListItem } from "./types";
-import { ensureVaultSchema } from "./vaultSchema";
+import { openWritableVaultDb } from "./vaultSchema";
 
 /** Query-time phone variants for LIKE matching (raw, E.164, digits). */
 function personMatchNeedles(raw: string): string[] {
@@ -144,10 +143,7 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 100;
 
 function openWritable(): Database.Database {
-  const db = new Database(dbPath());
-  ensureVaultSchema(db);
-  db.pragma("foreign_keys = ON");
-  return db;
+  return openWritableVaultDb();
 }
 
 function snippetFromBody(body: string | null, terms: string[]): string {
@@ -545,7 +541,7 @@ function buildSearchFilters(
     where.push(involvesContactsSql(contactIds));
   };
 
-  // Scoped to a label's contacts whether or not they are marked inactive.
+  // Scoped to a label's member contacts.
   if (parsed.within) {
     scopeToContacts(listLabelMemberContactIds(parsed.within));
   }
@@ -614,7 +610,7 @@ function messageOrderSql(
   return `${MSG_TS} DESC, m.id DESC`;
 }
 
-/** Create FTS if the readonly connection opened before the migration ran. */
+/** Initialize FTS if a readonly connection opened before first-use setup. */
 function ensureFtsReady(): void {
   const writeDb = openWritable();
   writeDb.close();

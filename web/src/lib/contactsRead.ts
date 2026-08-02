@@ -193,7 +193,6 @@ type ContactRow = {
   id: number;
   preferred_name: string | null;
   preferred_handle: string | null;
-  exclude: number;
 };
 
 function derivedNameParts(preferred: string | null | undefined): {
@@ -228,7 +227,7 @@ export function listContactsByIds(contactIds: number[]): ContactListItem[] {
   const placeholders = contactIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, preferred_name, preferred_handle, exclude
+      `SELECT id, preferred_name, preferred_handle
        FROM contacts
        WHERE account_id = ? AND id IN (${placeholders})`,
     )
@@ -279,7 +278,6 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
         firstName: parts.firstName,
         lastName: parts.lastName,
         labels: groupsByContact.get(row.id) ?? [],
-        exclude: row.exclude !== 0,
         messageCount: messageCounts.get(row.id) ?? 0,
         groupMessageCount: groupMessageCounts.get(row.id) ?? 0,
         dateStart: range?.start ?? null,
@@ -299,14 +297,13 @@ export function getContact(id: number): ContactDetail | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name, exclude, preferred_handle
+      `SELECT id, preferred_name, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(id, accountId) as
     | {
         id: number;
         preferred_name: string | null;
-        exclude: number;
         preferred_handle: string | null;
       }
     | undefined;
@@ -343,7 +340,6 @@ export function getContact(id: number): ContactDetail | null {
     preferredHandle: row.preferred_handle,
     firstName: parts.firstName,
     lastName: parts.lastName,
-    exclude: row.exclude !== 0,
     labels: groups.map((t) => t.name),
     phones: phoneList,
     dateStart: dateRange?.start ?? null,
@@ -626,14 +622,13 @@ export function loadContactThreadsPage(
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name, exclude, preferred_handle
+      `SELECT id, preferred_name, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(contactId, accountId) as
     | {
         id: number;
         preferred_name: string | null;
-        exclude: number;
         preferred_handle: string | null;
       }
     | undefined;
@@ -683,7 +678,6 @@ export function loadContactThreadsPage(
       preferredHandle: row.preferred_handle,
       firstName: parts.firstName,
       lastName: parts.lastName,
-      exclude: row.exclude !== 0,
       labels,
       phones,
       dateStart: dateRange?.start ?? null,

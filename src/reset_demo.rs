@@ -7,11 +7,11 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
+use crate::account_profile;
 use crate::config::Config;
 use crate::dedupe;
 use crate::import::{self, ImportMode};
 use crate::schema;
-use crate::vault_owner;
 
 /// Stable demo account id used when `reset-demo` runs without `--account`.
 pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
@@ -48,7 +48,7 @@ pub fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStat
     run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID)
 }
 
-pub fn run_reset_demo_for_account(
+fn run_reset_demo_for_account(
     bundle: &Path,
     config_dest: &Path,
     account_id: &str,
@@ -94,11 +94,13 @@ pub fn run_reset_demo_for_account(
     }
 
     wipe_vault(&cfg, account_id)?;
-    restore_demo_csvs(&bundle, &cfg, account_id)?;
 
     let assets_dir = cfg.paths.assets_dir_for_account(account_id, DEMO_SOURCE);
     let db = cfg.paths.db.clone();
-    let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(account_id)?;
+    let contacts_vcf = bundle.join("config/contacts.vcf");
+    if !contacts_vcf.is_file() {
+        bail!("demo contacts file not found: {}", contacts_vcf.display());
+    }
 
     println!("Reset demo");
     println!("  bundle:       {}", bundle.display());
@@ -109,14 +111,11 @@ pub fn run_reset_demo_for_account(
 
     seed_demo_account(&db, account_id, &seed)?;
 
-    // Demo bundle still ships the legacy vault contacts.csv mirror; load it explicitly.
     let import_stats = import::import_export(
         &export_dir,
         &db,
         &assets_dir,
-        Some(&contacts_csv),
-        &contacts_csv,
-        &exclude_csv,
+        Some(&contacts_vcf),
         true,
         ImportMode::Replace,
         DEMO_SOURCE,
@@ -141,7 +140,7 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     schema::ensure_vault_schema(&conn)?;
-    vault_owner::ensure_account_row(&conn, account_id)?;
+    account_profile::ensure_account_row(&conn, account_id)?;
 
     conn.execute(
         r#"
@@ -189,34 +188,6 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
         )?;
     }
 
-    Ok(())
-}
-
-fn restore_demo_csvs(bundle: &Path, cfg: &Config, account_id: &str) -> Result<()> {
-    let demo_contacts = bundle.join("config/contacts.csv");
-    let demo_exclude = bundle.join("config/exclude.csv");
-    let (contacts, exclude) = cfg.paths.ensure_account_csvs(account_id)?;
-    copy_if_exists(&demo_contacts, &contacts)?;
-    copy_if_exists(&demo_exclude, &exclude)?;
-    Ok(())
-}
-
-fn copy_if_exists(from: &Path, to: &Path) -> Result<()> {
-    if !from.is_file() {
-        return Ok(());
-    }
-    if from == to {
-        return Ok(());
-    }
-    if fs::canonicalize(from).ok() == fs::canonicalize(to).ok() {
-        return Ok(());
-    }
-    if let Some(parent) = to.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(from, to).with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
     Ok(())
 }
 

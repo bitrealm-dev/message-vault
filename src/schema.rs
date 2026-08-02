@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use rusqlite::{Connection, params};
 
 /// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
@@ -17,14 +17,18 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
         "#,
     )?;
     // journal_mode returns a row; may fail if another connection holds a lock.
-    match conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0)) {
+    match conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
+        row.get::<_, String>(0)
+    }) {
         Ok(mode) => {
             if !mode.eq_ignore_ascii_case("wal") {
                 eprintln!("warning: journal_mode is {mode} (wanted wal)");
             }
         }
         Err(err) => {
-            eprintln!("warning: could not enable WAL ({err}); continuing with current journal mode");
+            eprintln!(
+                "warning: could not enable WAL ({err}); continuing with current journal mode"
+            );
         }
     }
     Ok(())
@@ -210,7 +214,6 @@ CREATE TABLE contacts (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     preferred_name TEXT,
-    exclude INTEGER NOT NULL DEFAULT 0,
     preferred_handle TEXT
 );
 
@@ -270,124 +273,34 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(exists)
 }
 
-fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let n: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
-        [column],
-        |row| row.get(0),
-    )?;
-    Ok(n > 0)
-}
-
-/// Fresh-start: drop legacy single-tenant vault tables lacking `account_id`.
-fn wipe_legacy_vault_tables(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        DROP TABLE IF EXISTS tapbacks;
-        DROP TABLE IF EXISTS attachments;
-        DROP TABLE IF EXISTS messages;
-        DROP TABLE IF EXISTS participants;
-        DROP TABLE IF EXISTS conversations;
-        DROP TABLE IF EXISTS staging_tapbacks;
-        DROP TABLE IF EXISTS staging_attachments;
-        DROP TABLE IF EXISTS staging_messages;
-        DROP TABLE IF EXISTS staging_participants;
-        DROP TABLE IF EXISTS staging_conversations;
-        DROP TABLE IF EXISTS contact_label_members;
-        DROP TABLE IF EXISTS contact_labels;
-        DROP TABLE IF EXISTS contact_group_members;
-        DROP TABLE IF EXISTS contact_groups;
-        DROP TABLE IF EXISTS contact_handles;
-        DROP TABLE IF EXISTS contacts;
-        DROP TABLE IF EXISTS trashed_handles;
-        DROP TABLE IF EXISTS trashed_conversations;
-        DROP TABLE IF EXISTS trashed_contacts;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-    Ok(())
-}
-
-/// Ensure multi-account vault schema. Wipes legacy tables when `conversations` lacks `account_id`.
+/// Create every table and index required by a current vault.
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "conversations")?
-        && !table_has_column(conn, "conversations", "account_id")?
-    {
-        wipe_legacy_vault_tables(conn)?;
-    }
-
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_accounts_schema(conn)?;
 
-    let has_conversations = table_exists(conn, "conversations")?;
-    if !has_conversations {
+    if !table_exists(conn, "conversations")? {
         conn.execute_batch(MESSAGE_TABLES_DDL)?;
     }
-
-    let has_contacts = table_exists(conn, "contacts")?;
-    if !has_contacts {
+    if !table_exists(conn, "staging_conversations")? {
+        conn.execute_batch(STAGING_TABLES_DDL)?;
+    }
+    if !table_exists(conn, "contacts")? {
         conn.execute_batch(CONTACTS_TABLES_DDL)?;
     }
 
-    migrate_contact_groups_to_labels(conn)?;
-
-    Ok(())
-}
-
-/// Rename legacy contact_groups* tables to contact_labels*.
-fn migrate_contact_groups_to_labels(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "contact_groups")? || table_exists(conn, "contact_labels")? {
-        return Ok(());
-    }
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        ALTER TABLE contact_groups RENAME TO contact_labels;
-        ALTER TABLE contact_group_members RENAME TO contact_label_members;
-        ALTER TABLE contact_label_members RENAME COLUMN group_id TO label_id;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-    Ok(())
-}
-
-/// Create production message tables if they do not already exist (for append on a fresh DB).
-/// Migrates older schemas that lack `messages.source` / cross-source dedupe columns.
-/// Marker for the one-time FTS5 backfill of existing messages.
-pub const MESSAGES_FTS_BACKFILL_META_KEY: &str = "messages_fts_backfill_v1";
-/// Marker that current FTS sync trigger definitions are installed.
-pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
-
-pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
-    ensure_vault_schema(conn)?;
-
-    let exists = table_exists(conn, "conversations")?;
-    if !exists {
-        conn.execute_batch(MESSAGE_TABLES_DDL)?;
-    } else {
-        migrate_messages_source(conn)?;
-        migrate_messages_dedupe_columns(conn)?;
-        migrate_messages_account_guid(conn)?;
-        migrate_delete_performance_indexes(conn)?;
-        migrate_attachment_size_bytes(conn)?;
-    }
     ensure_messages_fts(conn)?;
     Ok(())
 }
 
-fn migrate_attachment_size_bytes(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "attachments")? && !table_has_column(conn, "attachments", "size_bytes")?
-    {
-        conn.execute_batch("ALTER TABLE attachments ADD COLUMN size_bytes INTEGER;")?;
-    }
-    if table_exists(conn, "staging_attachments")?
-        && !table_has_column(conn, "staging_attachments", "size_bytes")?
-    {
-        conn.execute_batch("ALTER TABLE staging_attachments ADD COLUMN size_bytes INTEGER;")?;
-    }
-    Ok(())
+/// Ensure the complete current vault schema exists.
+pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
+    ensure_vault_schema(conn)
 }
+
+/// Marker for the one-time FTS5 backfill of messages present before trigger setup.
+pub const MESSAGES_FTS_BACKFILL_META_KEY: &str = "messages_fts_backfill_v1";
+/// Marker that current FTS sync trigger definitions are installed.
+pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
 const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str = r#"
 DROP TRIGGER IF EXISTS messages_fts_ai;
@@ -521,7 +434,7 @@ fn ensure_messages_fts(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "messages")? {
         return Ok(());
     }
-    // schema_meta may not exist yet on older DBs that only ran message DDL.
+    // Keep FTS setup self-contained for callers that initialize message storage directly.
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -636,105 +549,12 @@ fn backfill_messages_fts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn migrate_messages_source(conn: &Connection) -> Result<()> {
-    if !table_has_column(conn, "messages", "source")? {
-        conn.execute_batch(
-            r#"
-            ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'default';
-            DROP INDEX IF EXISTS ix_messages_guid;
-            CREATE INDEX IF NOT EXISTS ix_messages_conversation_source_timestamp
-                ON messages (conversation_id, source, timestamp);
-            "#,
-        )?;
-    }
-    Ok(())
-}
-
-/// Denormalize `account_id` onto messages and scope GUID uniqueness per account.
-fn migrate_messages_account_guid(conn: &Connection) -> Result<()> {
-    if !table_has_column(conn, "messages", "account_id")? {
-        conn.execute_batch(
-            "ALTER TABLE messages ADD COLUMN account_id TEXT REFERENCES accounts(id);",
-        )?;
-        conn.execute_batch(
-            r#"
-            UPDATE messages
-            SET account_id = (
-                SELECT c.account_id FROM conversations c
-                WHERE c.id = messages.conversation_id
-            )
-            WHERE account_id IS NULL;
-            "#,
-        )?;
-        let orphans: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE account_id IS NULL OR account_id = ''",
-            [],
-            |row| row.get(0),
-        )?;
-        if orphans > 0 {
-            bail!(
-                "messages.account_id migration found {orphans} orphan message(s) without a conversation account"
-            );
-        }
-    }
-
-    conn.execute_batch(
-        r#"
-        DROP INDEX IF EXISTS ix_messages_source_guid;
-        CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_account_source_guid
-            ON messages (account_id, source, guid)
-            WHERE guid IS NOT NULL AND guid != '';
-        "#,
-    )?;
-    Ok(())
-}
-
-fn migrate_messages_dedupe_columns(conn: &Connection) -> Result<()> {
-    if !table_has_column(conn, "messages", "content_key")? {
-        conn.execute_batch("ALTER TABLE messages ADD COLUMN content_key TEXT;")?;
-    }
-    if !table_has_column(conn, "messages", "duplicate_of")? {
-        conn.execute_batch(
-            "ALTER TABLE messages ADD COLUMN duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL;",
-        )?;
-    }
-    conn.execute_batch(
-        r#"
-        CREATE INDEX IF NOT EXISTS ix_messages_content_key
-            ON messages (content_key)
-            WHERE content_key IS NOT NULL AND content_key != '';
-        CREATE INDEX IF NOT EXISTS ix_messages_duplicate_of
-            ON messages (duplicate_of)
-            WHERE duplicate_of IS NOT NULL;
-        "#,
-    )?;
-    Ok(())
-}
-
-fn migrate_delete_performance_indexes(conn: &Connection) -> Result<()> {
-    // CASCADE deletes on messages are O(n²) without message_id indexes on child tables.
-    // Group discovery filters participants by handle.
-    conn.execute_batch(
-        r#"
-        CREATE INDEX IF NOT EXISTS ix_attachments_message_id ON attachments (message_id);
-        CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
-        CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);
-        CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);
-        "#,
-    )?;
-    Ok(())
-}
-
 /// Delete all production messages (and cascaded rows) for one import source within one account.
 pub fn delete_messages_for_source(
     conn: &Connection,
     account_id: &str,
     source: &str,
 ) -> Result<u64> {
-    // Ensure indexes exist even if caller skipped ensure_messages_schema somehow.
-    migrate_delete_performance_indexes(conn)?;
-
     conn.execute(
         r#"
         DELETE FROM attachments
@@ -782,42 +602,9 @@ pub fn delete_messages_for_source(
     Ok(n as u64)
 }
 
-fn index_exists(conn: &Connection, name: &str) -> Result<bool> {
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = ?1",
-        [name],
-        |row| row.get(0),
-    )?;
-    Ok(exists)
-}
-
-/// Ensure staging tables exist (idempotent). Migrates older staging schemas in place.
+/// Ensure the complete current vault schema exists, including staging tables.
 pub fn ensure_staging_schema(conn: &Connection) -> Result<()> {
-    ensure_accounts_schema(conn)?;
-    if !table_exists(conn, "staging_conversations")? {
-        conn.execute_batch(STAGING_TABLES_DDL)?;
-        return Ok(());
-    }
-
-    // Older staging lacked account_id on messages, or used a global GUID unique index.
-    if table_exists(conn, "staging_messages")?
-        && (!table_has_column(conn, "staging_messages", "account_id")?
-            || index_exists(conn, "ix_staging_messages_source_guid")?)
-    {
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys = ON;
-            DROP TABLE IF EXISTS staging_tapbacks;
-            DROP TABLE IF EXISTS staging_attachments;
-            DROP TABLE IF EXISTS staging_messages;
-            DROP TABLE IF EXISTS staging_participants;
-            DROP TABLE IF EXISTS staging_conversations;
-            "#,
-        )?;
-        conn.execute_batch(STAGING_TABLES_DDL)?;
-    }
-    migrate_attachment_size_bytes(conn)?;
-    Ok(())
+    ensure_vault_schema(conn)
 }
 
 /// Clear one account's staging rows (CASCADE removes children). Other accounts are untouched.
@@ -835,264 +622,12 @@ pub fn clear_staging_for_account(conn: &Connection, account_id: &str) -> Result<
     reset_staging_for_account(conn, account_id)
 }
 
-/// Wipe and recreate all staging tables (emergency / tests). Prefer
-/// [`reset_staging_for_account`] for normal imports.
-#[allow(dead_code)]
-pub fn recreate_staging(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-
-        DROP TABLE IF EXISTS staging_tapbacks;
-        DROP TABLE IF EXISTS staging_attachments;
-        DROP TABLE IF EXISTS staging_messages;
-        DROP TABLE IF EXISTS staging_participants;
-        DROP TABLE IF EXISTS staging_conversations;
-        "#,
-    )?;
-    conn.execute_batch(STAGING_TABLES_DDL)?;
-    Ok(())
-}
-
-/// True when contacts tables match the current multi-account handle-based schema.
-pub fn contacts_schema_ready(conn: &Connection) -> Result<bool> {
-    let has_handles: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contact_handles'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-    if !has_handles {
-        return Ok(false);
-    }
-
-    let mut stmt = conn.prepare("PRAGMA table_info(contacts)")?;
-    let cols: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(cols.iter().any(|c| c == "account_id") && cols.iter().any(|c| c == "preferred_handle"))
-}
-
-/// Create contacts tables if they do not already exist.
+/// Ensure the complete current vault schema exists, including contacts tables.
 pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
-    ensure_vault_schema(conn)?;
-    if !table_exists(conn, "contacts")? {
-        conn.execute_batch(CONTACTS_TABLES_DDL)?;
-    }
-    migrate_contacts_preferred_name(conn)?;
-    migrate_contacts_drop_name_parts(conn)?;
-    migrate_contact_statuses_to_labels(conn)?;
-    Ok(())
+    ensure_vault_schema(conn)
 }
 
-pub const CONTACTS_PREFERRED_NAME_META_KEY: &str = "contacts_preferred_name_v1";
-pub const CONTACTS_DROP_NAME_PARTS_META_KEY: &str = "contacts_drop_name_parts_v1";
-
-fn migrate_contacts_preferred_name(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "contacts")? {
-        return Ok(());
-    }
-    if !table_has_column(conn, "contacts", "preferred_name")? {
-        conn.execute_batch("ALTER TABLE contacts ADD COLUMN preferred_name TEXT;")?;
-    }
-
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS schema_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        "#,
-    )?;
-    let already: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
-        params![CONTACTS_PREFERRED_NAME_META_KEY],
-        |row| row.get(0),
-    )?;
-    if already {
-        return Ok(());
-    }
-
-    let has_first = table_has_column(conn, "contacts", "first_name")?;
-    let has_last = table_has_column(conn, "contacts", "last_name")?;
-    if has_first && has_last {
-        conn.execute(
-            r#"
-            UPDATE contacts
-            SET preferred_name = NULLIF(trim(
-              trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
-            ), '')
-            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
-            "#,
-            [],
-        )?;
-    } else if has_first {
-        conn.execute(
-            r#"
-            UPDATE contacts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(first_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
-            "#,
-            [],
-        )?;
-    } else if has_last {
-        conn.execute(
-            r#"
-            UPDATE contacts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(last_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
-            "#,
-            [],
-        )?;
-    }
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![CONTACTS_PREFERRED_NAME_META_KEY],
-    )?;
-    Ok(())
-}
-
-/// Drop contacts.first_name / last_name; keep preferred_name only.
-fn migrate_contacts_drop_name_parts(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "contacts")? {
-        return Ok(());
-    }
-    let has_first = table_has_column(conn, "contacts", "first_name")?;
-    let has_last = table_has_column(conn, "contacts", "last_name")?;
-    if !has_first && !has_last {
-        return Ok(());
-    }
-
-    if !table_has_column(conn, "contacts", "preferred_name")? {
-        conn.execute_batch("ALTER TABLE contacts ADD COLUMN preferred_name TEXT;")?;
-    }
-    if has_first && has_last {
-        conn.execute_batch(
-            r#"
-            UPDATE contacts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    } else if has_first {
-        conn.execute_batch(
-            r#"
-            UPDATE contacts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(first_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    } else {
-        conn.execute_batch(
-            r#"
-            UPDATE contacts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(last_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    }
-
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-        CREATE TABLE contacts_new (
-            id INTEGER PRIMARY KEY,
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            preferred_name TEXT,
-            exclude INTEGER NOT NULL DEFAULT 0,
-            preferred_handle TEXT
-        );
-        INSERT INTO contacts_new (id, account_id, preferred_name, exclude, preferred_handle)
-            SELECT id, account_id, preferred_name, exclude, preferred_handle FROM contacts;
-        DROP TABLE contacts;
-        ALTER TABLE contacts_new RENAME TO contacts;
-        CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS schema_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        "#,
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![CONTACTS_DROP_NAME_PARTS_META_KEY],
-    )?;
-    Ok(())
-}
-
-pub const CONTACT_STATUS_LABELS_META_KEY: &str = "contact_status_labels_v1";
-
-fn migrate_contact_statuses_to_labels(conn: &Connection) -> Result<()> {
-    let already: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
-        params![CONTACT_STATUS_LABELS_META_KEY],
-        |row| row.get(0),
-    )?;
-    if already {
-        return Ok(());
-    }
-    conn.execute_batch(
-        r#"
-        INSERT INTO contact_labels (account_id, name)
-        SELECT DISTINCT c.account_id, 'Active'
-        FROM contacts c
-        WHERE NOT EXISTS (
-          SELECT 1 FROM contact_labels cl
-          WHERE cl.account_id = c.account_id AND cl.name = 'Active' COLLATE NOCASE
-        );
-        INSERT INTO contact_labels (account_id, name)
-        SELECT DISTINCT c.account_id, 'Inactive'
-        FROM contacts c
-        WHERE NOT EXISTS (
-          SELECT 1 FROM contact_labels cl
-          WHERE cl.account_id = c.account_id AND cl.name = 'Inactive' COLLATE NOCASE
-        );
-
-        INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
-        SELECT c.id, cl.id
-        FROM contacts c
-        JOIN contact_labels cl
-          ON cl.account_id = c.account_id
-         AND cl.name = CASE WHEN c.exclude != 0 THEN 'Inactive' ELSE 'Active' END
-             COLLATE NOCASE;
-
-        UPDATE contacts SET exclude = 0 WHERE exclude != 0;
-        "#,
-    )?;
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![CONTACT_STATUS_LABELS_META_KEY],
-    )?;
-    Ok(())
-}
-
-/// Marker for the one-time migration that locks existing accounts by default.
-pub const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY: &str = "accounts_default_read_only_v1";
-
-pub const VAULT_OWNERS_INTO_ACCOUNTS_META_KEY: &str = "vault_owners_into_accounts_v1";
-
+/// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
@@ -1140,372 +675,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
-    migrate_legacy_accounts_email(conn)?;
-    migrate_vault_owners_into_accounts(conn)?;
-    migrate_accounts_drop_name_parts(conn)?;
-    migrate_accounts_default_read_only(conn)?;
-    migrate_accounts_password_hash(conn)?;
-    migrate_account_api_tokens_to_hash(conn)?;
     Ok(())
-}
-
-/// Migrate plaintext `token` column to `token_hash` (SHA-256 hex).
-fn migrate_account_api_tokens_to_hash(conn: &Connection) -> Result<()> {
-    let has_table: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'account_api_tokens'",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_table {
-        return Ok(());
-    }
-
-    let has_token: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = 'token'",
-        [],
-        |row| row.get(0),
-    )?;
-    let has_hash: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = 'token_hash'",
-        [],
-        |row| row.get(0),
-    )?;
-
-    if has_hash && !has_token {
-        return Ok(());
-    }
-
-    if has_token {
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE account_api_tokens_new (
-                account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-                token_hash TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
-            );
-            "#,
-        )?;
-        let mut stmt = conn.prepare(
-            "SELECT account_id, token, created_at FROM account_api_tokens",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (account_id, token, created_at) = row?;
-            let token_hash = crate::api_tokens::hash_api_token(&token);
-            conn.execute(
-                "INSERT INTO account_api_tokens_new (account_id, token_hash, created_at)
-                 VALUES (?1, ?2, ?3)",
-                params![account_id, token_hash, created_at],
-            )?;
-        }
-        conn.execute_batch(
-            r#"
-            DROP TABLE account_api_tokens;
-            ALTER TABLE account_api_tokens_new RENAME TO account_api_tokens;
-            PRAGMA foreign_keys = ON;
-            "#,
-        )?;
-        return Ok(());
-    }
-
-    // Table exists without token or token_hash (unexpected) — recreate empty.
-    if !has_hash {
-        conn.execute_batch(
-            r#"
-            DROP TABLE IF EXISTS account_api_tokens;
-            CREATE TABLE account_api_tokens (
-                account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-                token_hash TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
-            );
-            "#,
-        )?;
-    }
-    Ok(())
-}
-
-fn migrate_accounts_password_hash(conn: &Connection) -> Result<()> {
-    let has_col: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('accounts') WHERE name = 'password_hash'",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_col {
-        return Ok(());
-    }
-    conn.execute("ALTER TABLE accounts ADD COLUMN password_hash TEXT", [])?;
-    Ok(())
-}
-
-/// One-time: lock every existing account. Later unlocks are preserved.
-fn migrate_accounts_default_read_only(conn: &Connection) -> Result<()> {
-    let already: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
-        params![ACCOUNTS_DEFAULT_READ_ONLY_META_KEY],
-        |row| row.get(0),
-    )?;
-    if already {
-        return Ok(());
-    }
-    conn.execute("UPDATE accounts SET read_only = 1", [])?;
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![ACCOUNTS_DEFAULT_READ_ONLY_META_KEY],
-    )?;
-    Ok(())
-}
-
-/// Fold vault_owners* into accounts.preferred_name + account_phones; drop legacy owner tables.
-fn migrate_vault_owners_into_accounts(conn: &Connection) -> Result<()> {
-    if !table_has_column(conn, "accounts", "preferred_name")? {
-        conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
-    }
-
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS account_phones (
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            phone TEXT NOT NULL,
-            PRIMARY KEY (account_id, phone)
-        );
-        "#,
-    )?;
-
-    let already: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
-        params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
-        |row| row.get(0),
-    )?;
-    if already {
-        return Ok(());
-    }
-
-    if table_exists(conn, "vault_owners")? {
-        // Legacy vault_owners may predate first_name/last_name columns.
-        if !table_has_column(conn, "vault_owners", "first_name")? {
-            conn.execute_batch(
-                r#"
-                ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
-                ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
-                UPDATE vault_owners
-                SET first_name = trim(display_name)
-                WHERE first_name = '' OR first_name IS NULL;
-                "#,
-            )?;
-        }
-
-        conn.execute_batch(
-            r#"
-            UPDATE accounts
-            SET preferred_name = coalesce(
-                (
-                  SELECT NULLIF(trim(vo.display_name), '')
-                  FROM vault_owners vo
-                  WHERE vo.account_id = accounts.id
-                ),
-                NULLIF(trim(
-                  trim(coalesce(
-                    (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-                    ''
-                  )) || ' ' || trim(coalesce(
-                    (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-                    ''
-                  ))
-                ), ''),
-                preferred_name
-              )
-            WHERE EXISTS (SELECT 1 FROM vault_owners vo WHERE vo.account_id = accounts.id);
-            "#,
-        )?;
-
-        if table_exists(conn, "vault_owner_phones")? {
-            conn.execute_batch(
-                r#"
-                INSERT OR IGNORE INTO account_phones (account_id, phone)
-                SELECT account_id, phone FROM vault_owner_phones;
-                "#,
-            )?;
-        }
-
-        if table_exists(conn, "vault_owner_emails")? {
-            conn.execute_batch(
-                r#"
-                INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
-                SELECT account_id, email, 0 FROM vault_owner_emails;
-                "#,
-            )?;
-        }
-
-        conn.execute_batch(
-            r#"
-            DROP TABLE IF EXISTS vault_owner_emails;
-            DROP TABLE IF EXISTS vault_owner_phones;
-            DROP TABLE IF EXISTS vault_owners;
-            "#,
-        )?;
-    }
-
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
-    )?;
-    Ok(())
-}
-
-/// Drop obsolete accounts.first_name / last_name; keep preferred_name only.
-fn migrate_accounts_drop_name_parts(conn: &Connection) -> Result<()> {
-    let has_first = table_has_column(conn, "accounts", "first_name")?;
-    let has_last = table_has_column(conn, "accounts", "last_name")?;
-    if !has_first && !has_last {
-        if !table_has_column(conn, "accounts", "preferred_name")? {
-            conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
-        }
-        return Ok(());
-    }
-
-    if !table_has_column(conn, "accounts", "preferred_name")? {
-        conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
-    }
-
-    // Prefer existing preferred_name; else join leftover first/last parts.
-    if has_first && has_last {
-        conn.execute_batch(
-            r#"
-            UPDATE accounts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    } else if has_first {
-        conn.execute_batch(
-            r#"
-            UPDATE accounts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(first_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    } else {
-        conn.execute_batch(
-            r#"
-            UPDATE accounts
-            SET preferred_name = coalesce(
-              NULLIF(trim(preferred_name), ''),
-              NULLIF(trim(last_name), '')
-            )
-            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-            "#,
-        )?;
-    }
-
-    let has_password = table_has_column(conn, "accounts", "password_hash")?;
-    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
-    if has_password {
-        conn.execute_batch(
-            r#"
-            CREATE TABLE accounts_new (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                read_only INTEGER NOT NULL DEFAULT 0,
-                password_hash TEXT,
-                preferred_name TEXT
-            );
-            INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-                SELECT id, username, read_only, password_hash, preferred_name FROM accounts;
-            "#,
-        )?;
-    } else {
-        conn.execute_batch(
-            r#"
-            CREATE TABLE accounts_new (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                read_only INTEGER NOT NULL DEFAULT 0,
-                password_hash TEXT,
-                preferred_name TEXT
-            );
-            INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-                SELECT id, username, read_only, NULL, preferred_name FROM accounts;
-            "#,
-        )?;
-    }
-    conn.execute_batch(
-        r#"
-        DROP TABLE accounts;
-        ALTER TABLE accounts_new RENAME TO accounts;
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-    Ok(())
-}
-
-/// Drop legacy `accounts.email` column; optional handle emails live in `account_emails`.
-fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
-    let has_email: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('accounts') WHERE name = 'email'",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_email {
-        return Ok(());
-    }
-
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = OFF;
-
-        INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
-        SELECT id, email, 1 FROM accounts
-        WHERE email IS NOT NULL AND trim(email) != '';
-
-        CREATE TABLE accounts_new (
-            id TEXT PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 0,
-            password_hash TEXT,
-            preferred_name TEXT
-        );
-        INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-            SELECT id, username, read_only, NULL, NULL FROM accounts;
-        DROP TABLE accounts;
-        ALTER TABLE accounts_new RENAME TO accounts;
-
-        PRAGMA foreign_keys = ON;
-        "#,
-    )?;
-    Ok(())
-}
-
-/// Drop and recreate contacts tables (used when overwriting from CSV).
-pub fn recreate_contacts(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-
-        DROP TABLE IF EXISTS contact_label_members;
-        DROP TABLE IF EXISTS contact_labels;
-        DROP TABLE IF EXISTS contact_group_members;
-        DROP TABLE IF EXISTS contact_groups;
-        DROP TABLE IF EXISTS contact_handles;
-        DROP TABLE IF EXISTS contacts;
-        DROP TABLE IF EXISTS trashed_handles;
-        DROP TABLE IF EXISTS trashed_conversations;
-        DROP TABLE IF EXISTS trashed_contacts;
-        "#,
-    )?;
-    ensure_contacts_schema(conn)
 }
 
 #[cfg(test)]
@@ -1518,11 +688,10 @@ mod tests {
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        ensure_messages_schema(&conn).unwrap();
-        ensure_staging_schema(&conn).unwrap();
+        ensure_vault_schema(&conn).unwrap();
         for (id, user) in [(A1, "alice"), (A2, "bob")] {
             conn.execute(
-                "INSERT INTO accounts (id, username, read_only) VALUES (?1, ?2, 0)",
+                "INSERT INTO accounts (id, username) VALUES (?1, ?2)",
                 params![id, user],
             )
             .unwrap();
@@ -1541,49 +710,126 @@ mod tests {
     }
 
     #[test]
+    fn fresh_vault_has_complete_current_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_vault_schema(&conn).unwrap();
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/schema/current-schema.json")).unwrap();
+
+        for table in contract["tables"].as_array().unwrap() {
+            let table = table.as_str().unwrap();
+            assert!(table_exists(&conn, table).unwrap(), "missing table {table}");
+        }
+        for index in contract["indexes"].as_array().unwrap() {
+            let index = index.as_str().unwrap();
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    [index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "missing index {index}");
+        }
+        for trigger in contract["triggers"].as_array().unwrap() {
+            let trigger = trigger.as_str().unwrap();
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+                    [trigger],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "missing trigger {trigger}");
+        }
+        for key in contract["metadata"].as_array().unwrap() {
+            let key = key.as_str().unwrap();
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "missing runtime metadata {key}");
+        }
+
+        let columns = |table: &str| -> Vec<String> {
+            conn.prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            columns("accounts"),
+            [
+                "id",
+                "username",
+                "read_only",
+                "password_hash",
+                "preferred_name"
+            ]
+        );
+        assert_eq!(
+            columns("contacts"),
+            ["id", "account_id", "preferred_name", "preferred_handle"]
+        );
+        for column in ["account_id", "source", "content_key", "duplicate_of"] {
+            assert!(columns("messages").iter().any(|c| c == column));
+        }
+        assert!(
+            columns("staging_messages")
+                .iter()
+                .any(|c| c == "account_id")
+        );
+        assert!(columns("attachments").iter().any(|c| c == "size_bytes"));
+        assert!(
+            columns("staging_attachments")
+                .iter()
+                .any(|c| c == "size_bytes")
+        );
+
+        ensure_vault_schema(&conn).unwrap();
+    }
+
+    #[test]
     fn same_source_guid_allowed_across_accounts() {
         let conn = setup();
-        let c1: i64 = conn
-            .query_row(
+        let conversation = |account: &str| -> i64 {
+            conn.query_row(
                 "SELECT id FROM conversations WHERE account_id = ?1",
-                params![A1],
-                |r| r.get(0),
+                params![account],
+                |row| row.get(0),
             )
-            .unwrap();
-        let c2: i64 = conn
-            .query_row(
-                "SELECT id FROM conversations WHERE account_id = ?1",
-                params![A2],
-                |r| r.get(0),
-            )
-            .unwrap();
-
-        for (conv, acct) in [(c1, A1), (c2, A2)] {
+            .unwrap()
+        };
+        for (conv, account) in [(conversation(A1), A1), (conversation(A2), A2)] {
             conn.execute(
                 r#"
                 INSERT INTO messages (
                     conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
-                ) VALUES (?1, ?2, 'sms-backup-restore', 'same-guid', '2020-01-01T00:00:00Z', 0, 0)
+                ) VALUES (?1, ?2, 'sms', 'same-guid', '2020-01-01T00:00:00Z', 0, 0)
                 "#,
-                params![conv, acct],
+                params![conv, account],
             )
             .unwrap();
         }
-
-        let n: i64 = conn
+        let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE guid = 'same-guid'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(count, 2);
     }
 
     #[test]
     fn reset_staging_for_account_leaves_other_accounts() {
         let conn = setup();
-        for acct in [A1, A2] {
+        for account in [A1, A2] {
             conn.execute(
                 r#"
                 INSERT INTO staging_conversations (
@@ -1591,47 +837,38 @@ mod tests {
                     group_title, exported_at, source_file
                 ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
                 "#,
-                params![acct],
+                params![account],
             )
             .unwrap();
-            let sid = conn.last_insert_rowid();
+            let conversation_id = conn.last_insert_rowid();
             conn.execute(
                 r#"
                 INSERT INTO staging_messages (
                     conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order
-                ) VALUES (?1, ?2, 'sms-backup-restore', 'g1', '2020-01-01T00:00:00Z', 0, 0)
+                ) VALUES (?1, ?2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0)
                 "#,
-                params![sid, acct],
+                params![conversation_id, account],
             )
             .unwrap();
         }
 
         reset_staging_for_account(&conn, A1).unwrap();
-
-        let left: i64 = conn
+        let remaining: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
                 params![A2],
                 |r| r.get(0),
             )
             .unwrap();
-        let gone: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
-                params![A1],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(left, 1);
-        assert_eq!(gone, 0);
-        let msgs: i64 = conn
+        let messages: i64 = conn
             .query_row("SELECT COUNT(*) FROM staging_messages", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(msgs, 1);
+        assert_eq!(remaining, 1);
+        assert_eq!(messages, 1);
     }
 
     #[test]
-    fn new_accounts_default_to_writable() {
+    fn fresh_accounts_default_to_writable() {
         let conn = Connection::open_in_memory().unwrap();
         ensure_accounts_schema(&conn).unwrap();
         conn.execute(
@@ -1650,304 +887,15 @@ mod tests {
     }
 
     #[test]
-    fn migrate_locks_existing_accounts_once() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE accounts (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                read_only INTEGER NOT NULL DEFAULT 0
-            );
-            "#,
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
-            params![A1],
-        )
-        .unwrap();
-
-        ensure_accounts_schema(&conn).unwrap();
-        let locked: i64 = conn
+    fn messages_fts_stays_in_sync() {
+        let conn = setup();
+        let conversation_id: i64 = conn
             .query_row(
-                "SELECT read_only FROM accounts WHERE id = ?1",
+                "SELECT id FROM conversations WHERE account_id = ?1",
                 params![A1],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(locked, 1);
-
-        conn.execute(
-            "UPDATE accounts SET read_only = 0 WHERE id = ?1",
-            params![A1],
-        )
-        .unwrap();
-        ensure_accounts_schema(&conn).unwrap();
-        let still_unlocked: i64 = conn
-            .query_row(
-                "SELECT read_only FROM accounts WHERE id = ?1",
-                params![A1],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(still_unlocked, 0);
-    }
-
-    #[test]
-    fn migrate_contacts_drop_name_parts() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE accounts (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                read_only INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE contacts (
-                id INTEGER PRIMARY KEY,
-                account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-                first_name TEXT,
-                last_name TEXT,
-                exclude INTEGER NOT NULL DEFAULT 0,
-                preferred_handle TEXT
-            );
-            CREATE TABLE contact_handles (
-                account_id TEXT NOT NULL,
-                handle TEXT NOT NULL,
-                contact_id INTEGER NOT NULL,
-                PRIMARY KEY (account_id, handle)
-            );
-            CREATE TABLE contact_labels (
-                id INTEGER PRIMARY KEY,
-                account_id TEXT NOT NULL,
-                name TEXT NOT NULL
-            );
-            CREATE TABLE contact_label_members (
-                contact_id INTEGER NOT NULL,
-                label_id INTEGER NOT NULL,
-                PRIMARY KEY (contact_id, label_id)
-            );
-            "#,
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
-             VALUES (?1, 'Ann', 'Lee', 0, '+15555550111')",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
-             VALUES (?1, 'Madonna', '', 0, '+15555550112')",
-            params![A1],
-        )
-        .unwrap();
-
-        ensure_contacts_schema(&conn).unwrap();
-
-        assert!(!table_has_column(&conn, "contacts", "first_name").unwrap());
-        assert!(!table_has_column(&conn, "contacts", "last_name").unwrap());
-        assert!(table_has_column(&conn, "contacts", "preferred_name").unwrap());
-
-        let names: Vec<Option<String>> = conn
-            .prepare("SELECT preferred_name FROM contacts ORDER BY id")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            names,
-            vec![Some("Ann Lee".into()), Some("Madonna".into())]
-        );
-
-        let marker: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
-                params![CONTACTS_DROP_NAME_PARTS_META_KEY],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(marker, 1);
-
-        // Second ensure is a no-op once columns are gone.
-        ensure_contacts_schema(&conn).unwrap();
-        assert!(!table_has_column(&conn, "contacts", "first_name").unwrap());
-    }
-
-    #[test]
-    fn migrate_vault_owners_into_accounts() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE accounts (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                read_only INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE account_emails (
-                account_id TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                is_primary INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (account_id, email)
-            );
-            CREATE TABLE vault_owners (
-                account_id TEXT PRIMARY KEY,
-                first_name TEXT NOT NULL DEFAULT '',
-                last_name TEXT NOT NULL DEFAULT '',
-                display_name TEXT NOT NULL
-            );
-            CREATE TABLE vault_owner_phones (
-                account_id TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                PRIMARY KEY (account_id, phone)
-            );
-            CREATE TABLE vault_owner_emails (
-                account_id TEXT NOT NULL,
-                email TEXT NOT NULL,
-                PRIMARY KEY (account_id, email)
-            );
-            "#,
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO account_emails (account_id, email, is_primary) VALUES (?1, 'alice@example.com', 1)",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
-             VALUES (?1, 'Ann', 'Lee', 'Ann Lee')",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, '+15555550100')",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO vault_owner_emails (account_id, email) VALUES (?1, 'ann@example.com')",
-            params![A1],
-        )
-        .unwrap();
-
-        ensure_accounts_schema(&conn).unwrap();
-
-        let preferred: Option<String> = conn
-            .query_row(
-                "SELECT preferred_name FROM accounts WHERE id = ?1",
-                params![A1],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(preferred.as_deref(), Some("Ann Lee"));
-        assert!(!table_has_column(&conn, "accounts", "first_name").unwrap());
-        assert!(!table_has_column(&conn, "accounts", "last_name").unwrap());
-
-        let phone: String = conn
-            .query_row(
-                "SELECT phone FROM account_phones WHERE account_id = ?1",
-                params![A1],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(phone, "+15555550100");
-
-        let email_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM account_emails WHERE account_id = ?1",
-                params![A1],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(email_count, 2);
-
-        let old_tables: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'vault_owner%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(old_tables, 0);
-
-        let marker: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
-                params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(marker, 1);
-    }
-
-    #[test]
-    fn messages_fts_triggers_installed_once() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        ensure_messages_schema(&conn).unwrap();
-        let marker: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
-                params![MESSAGES_FTS_TRIGGERS_META_KEY],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(marker, 1);
-        let triggers: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(triggers, 6);
-
-        // Second ensure must not drop/recreate (marker stays; triggers still present).
-        ensure_messages_schema(&conn).unwrap();
-        let triggers_after: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_fts_%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(triggers_after, 6);
-    }
-
-    #[test]
-    fn messages_fts_backfills_once_and_stays_in_sync() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        ensure_messages_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 1)",
-            params![A1],
-        )
-        .unwrap();
-        conn.execute(
-            r#"
-            INSERT INTO conversations (
-                account_id, chat_identifier, service, conversation_type,
-                group_title, exported_at, source_file
-            ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
-            "#,
-            params![A1],
-        )
-        .unwrap();
-        let cid = conn.last_insert_rowid();
         conn.execute(
             r#"
             INSERT INTO messages (
@@ -1955,73 +903,42 @@ mod tests {
                 is_from_me, sort_order, body, subject
             ) VALUES (?1, ?2, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0, 'hello vault', NULL)
             "#,
-            params![cid, A1],
+            params![conversation_id, A1],
         )
         .unwrap();
-        let mid = conn.last_insert_rowid();
+        let message_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO attachments (message_id, original_name, transcription) VALUES (?1, 'voice.m4a', 'secret phrase')",
+            params![message_id],
+        )
+        .unwrap();
 
-        // Backfill marker should already be written by ensure_messages_schema.
-        let marker: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
-                params![MESSAGES_FTS_BACKFILL_META_KEY],
-                |r| r.get(0),
+        let hits = |term: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                params![term],
+                |row| row.get(0),
             )
-            .unwrap();
-        assert_eq!(marker, 1);
-
-        // Trigger path indexes new inserts.
-        let hits: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'vault'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(hits, 1);
+            .unwrap()
+        };
+        assert_eq!(hits("vault"), 1);
+        assert_eq!(hits("secret"), 1);
 
         conn.execute(
             "UPDATE messages SET body = 'goodbye' WHERE id = ?1",
-            params![mid],
+            params![message_id],
         )
         .unwrap();
-        let after_update: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'vault'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_update, 0);
-        let goodbye: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'goodbye'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(goodbye, 1);
+        assert_eq!(hits("vault"), 0);
+        assert_eq!(hits("goodbye"), 1);
 
-        conn.execute("DELETE FROM messages WHERE id = ?1", params![mid])
+        conn.execute(
+            "DELETE FROM attachments WHERE message_id = ?1",
+            params![message_id],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])
             .unwrap();
-        let after_delete: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'goodbye'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_delete, 0);
-
-        // Subsequent ensure must not wipe a user's later index state via re-backfill.
-        ensure_messages_schema(&conn).unwrap();
-        let still_empty: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'goodbye'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(still_empty, 0);
+        assert_eq!(hits("goodbye"), 0);
     }
 }

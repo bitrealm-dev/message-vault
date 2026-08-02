@@ -206,9 +206,6 @@ mod tests {
         .unwrap();
         let cards = parse_vcf(tmp.path()).unwrap();
         assert_eq!(cards.len(), 1);
-        assert_eq!(
-            cards[0].categories,
-            vec!["Family", "Friends", "Work"]
-        );
+        assert_eq!(cards[0].categories, vec!["Family", "Friends", "Work"]);
     }
 }

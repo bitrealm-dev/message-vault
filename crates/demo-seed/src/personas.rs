@@ -28,7 +28,6 @@ pub struct Contact {
     pub phones: Vec<String>,
     pub first_name: String,
     pub last_name: String,
-    pub exclude: bool,
     pub groups: Vec<String>,
     /// When false, no messages of any kind.
     pub has_messages: bool,
@@ -49,7 +48,6 @@ pub struct Unassigned {
 pub struct Roster {
     pub contacts: Vec<Contact>,
     pub unassigned: Vec<Unassigned>,
-    pub exclude_handles: Vec<(String, String)>,
 }
 
 /// Extra first/last pairs covering A–Z (display name first letter).
@@ -372,7 +370,6 @@ pub fn build_roster() -> Roster {
         phones: vec!["+447700900231".into()],
         first_name: "Mononym".into(),
         last_name: String::new(),
-        exclude: false,
         groups: vec![],
         has_messages: true,
         message_scope: MessageScope::OneToOne,
@@ -383,7 +380,6 @@ pub fn build_roster() -> Roster {
         phones: vec!["+33612345678".into()],
         first_name: String::new(),
         last_name: "SurnameOnly".into(),
-        exclude: false,
         groups: vec!["Family".into()],
         has_messages: true,
         message_scope: MessageScope::Group,
@@ -427,16 +423,9 @@ pub fn build_roster() -> Roster {
         },
     ];
 
-    let exclude_handles = vec![
-        ("28747".into(), "BANKALERT".into()),
-        ("69243".into(), "PROMO".into()),
-        ("737373".into(), "VERIFY".into()),
-    ];
-
     Roster {
         contacts,
         unassigned,
-        exclude_handles,
     }
 }
 
@@ -466,7 +455,6 @@ fn extra_contacts() -> Vec<Contact> {
                 phones: vec![phone],
                 first_name: (*first).into(),
                 last_name: (*last).into(),
-                exclude: false,
                 groups: labels[i % labels.len()]
                     .iter()
                     .map(|s| (*s).to_string())
@@ -487,7 +475,7 @@ fn assign_activity_patterns(contacts: &mut [Contact]) {
         .enumerate()
         .filter(|(_, c)| {
             c.has_messages
-                && !c.exclude
+                && !c.has_label("Inactive")
                 && matches!(c.message_scope, MessageScope::OneToOne | MessageScope::Both)
         })
         .map(|(i, _)| i)
@@ -515,17 +503,20 @@ fn contact(
     phones: &[&str],
     first: &str,
     last: &str,
-    exclude: bool,
+    mark_inactive: bool,
     groups: &[&str],
     has_messages: bool,
     message_scope: MessageScope,
 ) -> Contact {
+    let mut groups: Vec<String> = groups.iter().map(|g| (*g).to_string()).collect();
+    if mark_inactive {
+        groups.push("Inactive".to_string());
+    }
     Contact {
         phones: phones.iter().map(|p| (*p).to_string()).collect(),
         first_name: first.into(),
         last_name: last.into(),
-        exclude,
-        groups: groups.iter().map(|g| (*g).to_string()).collect(),
+        groups,
         has_messages,
         message_scope,
         activity: Activity::Normal,
@@ -534,6 +525,12 @@ fn contact(
 }
 
 impl Contact {
+    pub fn has_label(&self, name: &str) -> bool {
+        self.groups
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(name))
+    }
+
     pub fn primary_phone(&self) -> &str {
         &self.phones[0]
     }
@@ -556,7 +553,7 @@ impl Contact {
 
     pub fn has_group(&self) -> bool {
         self.has_messages
-            && !self.exclude
+            && !self.has_label("Inactive")
             && matches!(self.message_scope, MessageScope::Group | MessageScope::Both)
     }
 }
@@ -570,7 +567,7 @@ pub const EMPTY_THREAD_HANDLE: &str = "+18007438200";
 /// Orphaned-message sender stub (not in contacts).
 pub const ORPHAN_SENDER: &str = "+447700900999";
 
-/// Synthetic phone-only group participants (not in contacts.csv).
+/// Synthetic phone-only group participants absent from the address book.
 pub fn phone_only_handles(start: usize, count: usize) -> Vec<String> {
     (0..count)
         .map(|i| format!("+15559{:06}", 200_000 + start + i))

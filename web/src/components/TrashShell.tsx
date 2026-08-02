@@ -55,7 +55,6 @@ function syntheticContactDetail(
     sortLast: item.displayName,
     letter: "#",
     labels: [],
-    exclude: false,
     messageCount: item.messageCount,
     groupMessageCount: 0,
     phones: [item.handle],

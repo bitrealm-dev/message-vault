@@ -1,32 +1,10 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
-import { dbPath } from "./paths";
 import { getContact, resetDb } from "./db";
 import { deleteContacts } from "./contactsWrite";
 import { trashHandlesInDb } from "./handlesWrite";
 import { assertVaultWritable } from "./owner";
-
-function ensureTrashedContactsTable(db: Database.Database): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS trashed_contacts (
-       account_id TEXT NOT NULL,
-       contact_id INTEGER NOT NULL,
-       trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-       PRIMARY KEY (account_id, contact_id)
-     )`,
-  );
-}
-
-function ensureTrashedHandlesTable(db: Database.Database): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS trashed_handles (
-       account_id TEXT NOT NULL,
-       handle TEXT NOT NULL,
-       trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-       PRIMARY KEY (account_id, handle)
-     )`,
-  );
-}
+import { openWritableVaultDb } from "./vaultSchema";
 
 function contactHandles(
   db: Database.Database,
@@ -83,10 +61,8 @@ export function trashContactWithMessages(ids: number[]): number {
   if (unique.length === 0) return 0;
   assertContactsExist(unique);
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedContactsTable(writeDb);
-    ensureTrashedHandlesTable(writeDb);
     const upsertContact = writeDb.prepare(
       `INSERT INTO trashed_contacts (account_id, contact_id, trashed_at)
        VALUES (?, ?, datetime('now'))
@@ -122,9 +98,8 @@ export function trashContactMessagesOnly(ids: number[]): {
   assertContactsExist(unique);
 
   const handles: string[] = [];
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedHandlesTable(writeDb);
     const tx = writeDb.transaction(() => {
       for (const id of unique) {
         const next = contactHandlesWithMessages(writeDb, id, accountId);
@@ -147,10 +122,8 @@ export function restoreTrashedContacts(ids: number[]): number {
   const unique = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (unique.length === 0) return 0;
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedContactsTable(writeDb);
-    ensureTrashedHandlesTable(writeDb);
     const delContact = writeDb.prepare(
       `DELETE FROM trashed_contacts WHERE account_id = ? AND contact_id = ?`,
     );
@@ -192,10 +165,8 @@ export function permanentlyDeleteTrashedContacts(ids: number[]): number {
   const unique = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (unique.length === 0) return 0;
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedContactsTable(writeDb);
-    ensureTrashedHandlesTable(writeDb);
     writeDb.pragma("foreign_keys = ON");
     const delConv = writeDb.prepare(
       `DELETE FROM conversations

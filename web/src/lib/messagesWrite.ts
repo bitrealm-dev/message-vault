@@ -1,9 +1,8 @@
-import Database from "better-sqlite3";
 import fs from "fs";
 
 import { resetDb } from "./db";
-import { dbPath, loadSources } from "./paths";
-import { ensureVaultSchema } from "./vaultSchema";
+import { loadSources } from "./paths";
+import { openWritableVaultDb } from "./vaultSchema";
 
 export type DeletedMessagesResult = {
   conversations: number;
@@ -16,11 +15,8 @@ export type DeletedMessagesResult = {
  */
 export function deleteAllMessagesForAccount(accountId: string): DeletedMessagesResult {
   const sourcePaths = loadSources(accountId);
-  const db = new Database(dbPath());
+  const db = openWritableVaultDb();
   try {
-    ensureVaultSchema(db);
-    db.pragma("foreign_keys = ON");
-
     const deleteAll = db.transaction(() => {
       const attachmentRow = db
         .prepare(

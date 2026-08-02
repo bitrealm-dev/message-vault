@@ -1,266 +1,162 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 
-import {
-  ACCOUNTS_DEFAULT_READ_ONLY_META_KEY,
-  CONTACT_STATUS_LABELS_META_KEY,
-  CONTACTS_DROP_NAME_PARTS_META_KEY,
-  CONTACTS_PREFERRED_NAME_META_KEY,
-  VAULT_OWNERS_INTO_ACCOUNTS_META_KEY,
-  ensureVaultSchema,
-} from "./vaultSchema";
+import { ensureVaultSchema } from "./vaultSchema";
 
-describe("accounts default read-only migration", () => {
-  it("defaults new accounts to writable", () => {
+const ACCOUNT_ID = "11111111-1111-1111-1111-111111111111";
+
+function columns(db: Database.Database, table: string): string[] {
+  return (
+    db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function indexExists(db: Database.Database, name: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?`,
+    )
+    .get(name) as { n: number };
+  return row.n === 1;
+}
+
+describe("fresh vault schema", () => {
+  it("creates the complete current schema idempotently", () => {
+    const db = new Database(":memory:");
+    ensureVaultSchema(db);
+    const contract = JSON.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), "..", "fixtures", "schema", "current-schema.json"),
+        "utf8",
+      ),
+    ) as {
+      tables: string[];
+      indexes: string[];
+      triggers: string[];
+      metadata: string[];
+    };
+
+    const tables = new Set(
+      (
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+          .all() as Array<{ name: string }>
+      ).map((row) => row.name),
+    );
+    for (const table of contract.tables) {
+      assert.ok(tables.has(table), `missing table ${table}`);
+    }
+
+    assert.deepEqual(columns(db, "accounts"), [
+      "id",
+      "username",
+      "read_only",
+      "password_hash",
+      "preferred_name",
+    ]);
+    assert.deepEqual(columns(db, "contacts"), [
+      "id",
+      "account_id",
+      "preferred_name",
+      "preferred_handle",
+    ]);
+    for (const column of ["account_id", "source", "content_key", "duplicate_of"]) {
+      assert.ok(columns(db, "messages").includes(column));
+    }
+    assert.ok(columns(db, "staging_messages").includes("account_id"));
+    assert.ok(columns(db, "attachments").includes("size_bytes"));
+    assert.ok(columns(db, "staging_attachments").includes("size_bytes"));
+
+    for (const index of contract.indexes) {
+      assert.ok(indexExists(db, index), `missing index ${index}`);
+    }
+
+    for (const trigger of contract.triggers) {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sqlite_master
+           WHERE type = 'trigger' AND name = ?`,
+        )
+        .get(trigger) as { n: number };
+      assert.equal(row.n, 1, `missing trigger ${trigger}`);
+    }
+    for (const key of contract.metadata) {
+      const row = db
+        .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+        .get(key) as { n: number };
+      assert.equal(row.n, 1, `missing runtime metadata ${key}`);
+    }
+
+    ensureVaultSchema(db);
+    db.close();
+  });
+
+  it("defaults fresh accounts to writable", () => {
     const db = new Database(":memory:");
     ensureVaultSchema(db);
     db.prepare(`INSERT INTO accounts (id, username) VALUES (?, ?)`).run(
-      "11111111-1111-1111-1111-111111111111",
+      ACCOUNT_ID,
       "fresh",
     );
     const row = db
       .prepare(`SELECT read_only FROM accounts WHERE id = ?`)
-      .get("11111111-1111-1111-1111-111111111111") as { read_only: number };
+      .get(ACCOUNT_ID) as { read_only: number };
     assert.equal(row.read_only, 0);
     db.close();
   });
 
-  it("locks existing accounts once and preserves later unlocks", () => {
+  it("keeps fresh FTS triggers in sync", () => {
     const db = new Database(":memory:");
-    db.exec(`
-      CREATE TABLE accounts (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        read_only INTEGER NOT NULL DEFAULT 0
-      );
-    `);
-    db.prepare(
-      `INSERT INTO accounts (id, username, read_only) VALUES (?, ?, 0)`,
-    ).run("11111111-1111-1111-1111-111111111111", "alice");
-
     ensureVaultSchema(db);
-    const locked = db
-      .prepare(`SELECT read_only FROM accounts WHERE id = ?`)
-      .get("11111111-1111-1111-1111-111111111111") as { read_only: number };
-    assert.equal(locked.read_only, 1);
-    const marker = db
-      .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
-      .get(ACCOUNTS_DEFAULT_READ_ONLY_META_KEY) as { value: string };
-    assert.equal(marker.value, "1");
-
-    db.prepare(`UPDATE accounts SET read_only = 0 WHERE id = ?`).run(
-      "11111111-1111-1111-1111-111111111111",
-    );
-    ensureVaultSchema(db);
-    const stillUnlocked = db
-      .prepare(`SELECT read_only FROM accounts WHERE id = ?`)
-      .get("11111111-1111-1111-1111-111111111111") as { read_only: number };
-    assert.equal(stillUnlocked.read_only, 0);
-    db.close();
-  });
-});
-
-describe("vault owners into accounts migration", () => {
-  it("copies names and phones then drops vault_owner tables", () => {
-    const db = new Database(":memory:");
-    const accountId = "11111111-1111-1111-1111-111111111111";
-    db.exec(`
-      CREATE TABLE accounts (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        read_only INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE account_emails (
-        account_id TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        is_primary INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (account_id, email)
-      );
-      CREATE TABLE vault_owners (
-        account_id TEXT PRIMARY KEY,
-        first_name TEXT NOT NULL DEFAULT '',
-        last_name TEXT NOT NULL DEFAULT '',
-        display_name TEXT NOT NULL
-      );
-      CREATE TABLE vault_owner_phones (
-        account_id TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        PRIMARY KEY (account_id, phone)
-      );
-      CREATE TABLE vault_owner_emails (
-        account_id TEXT NOT NULL,
-        email TEXT NOT NULL,
-        PRIMARY KEY (account_id, email)
-      );
-    `);
     db.prepare(`INSERT INTO accounts (id, username) VALUES (?, ?)`).run(
-      accountId,
+      ACCOUNT_ID,
       "alice",
     );
     db.prepare(
-      `INSERT INTO account_emails (account_id, email, is_primary) VALUES (?, ?, 1)`,
-    ).run(accountId, "alice@example.com");
-    db.prepare(
-      `INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
-       VALUES (?, ?, ?, ?)`,
-    ).run(accountId, "Ann", "Lee", "Ann Lee");
-    db.prepare(
-      `INSERT INTO vault_owner_phones (account_id, phone) VALUES (?, ?)`,
-    ).run(accountId, "+15555550100");
-    db.prepare(
-      `INSERT INTO vault_owner_emails (account_id, email) VALUES (?, ?)`,
-    ).run(accountId, "ann@example.com");
-
-    ensureVaultSchema(db);
-
-    const account = db
-      .prepare(`SELECT preferred_name FROM accounts WHERE id = ?`)
-      .get(accountId) as { preferred_name: string | null };
-    assert.equal(account.preferred_name, "Ann Lee");
-    const cols = (
-      db.prepare(`PRAGMA table_info(accounts)`).all() as Array<{ name: string }>
-    ).map((c) => c.name);
-    assert.ok(!cols.includes("first_name"));
-    assert.ok(!cols.includes("last_name"));
-    assert.ok(!cols.includes("email"));
-
-    const phone = db
-      .prepare(`SELECT phone FROM account_phones WHERE account_id = ?`)
-      .get(accountId) as { phone: string };
-    assert.equal(phone.phone, "+15555550100");
-
-    const emails = (
-      db
-        .prepare(`SELECT email FROM account_emails WHERE account_id = ? ORDER BY email`)
-        .all(accountId) as Array<{ email: string }>
-    ).map((r) => r.email);
-    assert.deepEqual(emails, ["alice@example.com", "ann@example.com"]);
-
-    const oldTables = db
+      `INSERT INTO conversations (
+         account_id, chat_identifier, conversation_type, source_file
+       ) VALUES (?, ?, 'individual', 'test.json')`,
+    ).run(ACCOUNT_ID, "+15555550100");
+    const conversationId = Number(
+      db.prepare(`SELECT id FROM conversations`).pluck().get(),
+    );
+    const message = db
       .prepare(
-        `SELECT COUNT(*) AS n FROM sqlite_master
-         WHERE type = 'table' AND name LIKE 'vault_owner%'`,
+        `INSERT INTO messages (
+           conversation_id, account_id, source, guid, timestamp,
+           is_from_me, sort_order, body
+         ) VALUES (?, ?, 'sms', 'g1', '2020-01-01T00:00:00Z', 0, 0, ?)`,
       )
-      .get() as { n: number };
-    assert.equal(oldTables.n, 0);
+      .run(conversationId, ACCOUNT_ID, "hello vault");
+    db.prepare(
+      `INSERT INTO attachments (message_id, original_name, transcription)
+       VALUES (?, 'voice.m4a', 'secret phrase')`,
+    ).run(message.lastInsertRowid);
 
-    const marker = db
-      .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
-      .get(VAULT_OWNERS_INTO_ACCOUNTS_META_KEY) as { value: string };
-    assert.equal(marker.value, "1");
-    db.close();
-  });
-});
-
-describe("contacts preferred_name migration", () => {
-  it("adds preferred_name, backfills from first + last, then drops name cols", () => {
-    const db = new Database(":memory:");
-    const accountId = "11111111-1111-1111-1111-111111111111";
-    db.exec(`
-      CREATE TABLE accounts (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        read_only INTEGER NOT NULL DEFAULT 0
+    const hits = (term: string): number =>
+      Number(
+        db
+          .prepare(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`)
+          .pluck()
+          .get(term),
       );
-      CREATE TABLE contacts (
-        id INTEGER PRIMARY KEY,
-        account_id TEXT NOT NULL,
-        first_name TEXT,
-        last_name TEXT,
-        exclude INTEGER NOT NULL DEFAULT 0,
-        preferred_handle TEXT
-      );
-    `);
-    db.prepare(`INSERT INTO accounts (id, username) VALUES (?, ?)`).run(
-      accountId,
-      "alice",
+    assert.equal(hits("vault"), 1);
+    assert.equal(hits("secret"), 1);
+
+    db.prepare(`UPDATE messages SET body = 'goodbye' WHERE id = ?`).run(
+      message.lastInsertRowid,
     );
-    db.prepare(
-      `INSERT INTO contacts (account_id, first_name, last_name, preferred_handle)
-       VALUES (?, ?, ?, ?)`,
-    ).run(accountId, "Ann", "Lee", "+15555550100");
+    assert.equal(hits("vault"), 0);
+    assert.equal(hits("goodbye"), 1);
 
-    ensureVaultSchema(db);
-
-    const row = db
-      .prepare(`SELECT preferred_name FROM contacts WHERE account_id = ?`)
-      .get(accountId) as { preferred_name: string | null };
-    assert.equal(row.preferred_name, "Ann Lee");
-    const cols = (
-      db.prepare(`PRAGMA table_info(contacts)`).all() as Array<{ name: string }>
-    ).map((c) => c.name);
-    assert.ok(!cols.includes("first_name"));
-    assert.ok(!cols.includes("last_name"));
-    assert.ok(cols.includes("preferred_name"));
-    const marker = db
-      .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
-      .get(CONTACTS_PREFERRED_NAME_META_KEY) as { value: string };
-    assert.equal(marker.value, "1");
-    const dropMarker = db
-      .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
-      .get(CONTACTS_DROP_NAME_PARTS_META_KEY) as { value: string };
-    assert.equal(dropMarker.value, "1");
-
-    db.prepare(`UPDATE contacts SET preferred_name = NULL`).run();
-    ensureVaultSchema(db);
-    const still = db
-      .prepare(`SELECT preferred_name FROM contacts WHERE account_id = ?`)
-      .get(accountId) as { preferred_name: string | null };
-    assert.equal(still.preferred_name, null);
-    db.close();
-  });
-});
-
-describe("contact status label migration", () => {
-  it("converts legacy exclude values once into ordinary labels", () => {
-    const db = new Database(":memory:");
-    ensureVaultSchema(db);
-    const accountId = "11111111-1111-1111-1111-111111111111";
-    db.prepare(`INSERT INTO accounts (id, username) VALUES (?, ?)`).run(
-      accountId,
-      "alice",
+    db.prepare(`DELETE FROM attachments WHERE message_id = ?`).run(
+      message.lastInsertRowid,
     );
-    db.prepare(
-      `INSERT INTO contacts (account_id, preferred_name, exclude) VALUES (?, ?, ?)`,
-    ).run(accountId, "Ada", 0);
-    db.prepare(
-      `INSERT INTO contacts (account_id, preferred_name, exclude) VALUES (?, ?, ?)`,
-    ).run(accountId, "Grace", 1);
-    db.prepare(`DELETE FROM schema_meta WHERE key = ?`).run(
-      CONTACT_STATUS_LABELS_META_KEY,
-    );
-
-    ensureVaultSchema(db);
-
-    const rows = db
-      .prepare(
-        `SELECT c.preferred_name AS name, c.exclude, cl.name AS label
-         FROM contacts c
-         JOIN contact_label_members clm ON clm.contact_id = c.id
-         JOIN contact_labels cl ON cl.id = clm.label_id
-         ORDER BY c.preferred_name`,
-      )
-      .all() as Array<{ name: string; exclude: number; label: string }>;
-    assert.deepEqual(rows, [
-      { name: "Ada", exclude: 0, label: "Active" },
-      { name: "Grace", exclude: 0, label: "Inactive" },
-    ]);
-
-    db.prepare(
-      `DELETE FROM contact_label_members
-       WHERE contact_id = (SELECT id FROM contacts WHERE preferred_name = 'Ada')`,
-    ).run();
-    ensureVaultSchema(db);
-    const activeMemberships = db
-      .prepare(
-        `SELECT COUNT(*) AS n
-         FROM contact_label_members clm
-         JOIN contacts c ON c.id = clm.contact_id
-         WHERE c.preferred_name = 'Ada'`,
-      )
-      .get() as { n: number };
-    assert.equal(activeMemberships.n, 0);
+    db.prepare(`DELETE FROM messages WHERE id = ?`).run(message.lastInsertRowid);
+    assert.equal(hits("goodbye"), 0);
     db.close();
   });
 });

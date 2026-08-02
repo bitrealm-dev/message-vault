@@ -23,6 +23,18 @@ function testDb(): Database.Database {
       contact_id INTEGER NOT NULL,
       PRIMARY KEY (account_id, handle)
     );
+    CREATE TABLE trashed_handles (
+      account_id TEXT NOT NULL,
+      handle TEXT NOT NULL,
+      trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (account_id, handle)
+    );
+    CREATE TABLE trashed_conversations (
+      account_id TEXT NOT NULL,
+      conversation_id INTEGER NOT NULL,
+      trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (account_id, conversation_id)
+    );
     INSERT INTO accounts (id) VALUES ('account-a'), ('account-b');
     INSERT INTO contacts (id, account_id) VALUES (10, 'account-a');
     INSERT INTO contact_handles (account_id, handle, contact_id)

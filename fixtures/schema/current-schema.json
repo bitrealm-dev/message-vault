@@ -1,0 +1,63 @@
+{
+  "tables": [
+    "accounts",
+    "account_emails",
+    "account_phones",
+    "account_api_tokens",
+    "account_prefs",
+    "schema_meta",
+    "conversations",
+    "participants",
+    "messages",
+    "attachments",
+    "tapbacks",
+    "staging_conversations",
+    "staging_participants",
+    "staging_messages",
+    "staging_attachments",
+    "staging_tapbacks",
+    "contacts",
+    "contact_handles",
+    "contact_labels",
+    "contact_label_members",
+    "trashed_handles",
+    "trashed_conversations",
+    "trashed_contacts",
+    "messages_fts"
+  ],
+  "indexes": [
+    "ix_account_emails_one_primary",
+    "ix_conversations_account_id",
+    "ix_participants_handle",
+    "ix_messages_conversation_timestamp",
+    "ix_messages_conversation_source_timestamp",
+    "ix_messages_account_id",
+    "ix_messages_account_source_guid",
+    "ix_messages_content_key",
+    "ix_messages_duplicate_of",
+    "ix_messages_source",
+    "ix_attachments_sha256",
+    "ix_attachments_message_id",
+    "ix_tapbacks_message_id",
+    "ix_staging_messages_conversation_timestamp",
+    "ix_staging_messages_account_id",
+    "ix_staging_messages_account_source_guid",
+    "ix_staging_attachments_sha256",
+    "ix_staging_attachments_message_id",
+    "ix_staging_tapbacks_message_id",
+    "ix_contacts_account_id",
+    "ix_contact_handles_contact_id"
+  ],
+  "triggers": [
+    "messages_fts_ai",
+    "messages_fts_ad",
+    "messages_fts_au",
+    "attachments_fts_ai",
+    "attachments_fts_ad",
+    "attachments_fts_au"
+  ],
+  "metadata": [
+    "messages_fts_backfill_v1",
+    "messages_fts_triggers_v1"
+  ]
+}

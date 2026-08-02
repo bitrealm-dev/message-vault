@@ -1,19 +1,7 @@
-import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { assertVaultWritable } from "./owner";
-import { dbPath } from "./paths";
 import { resetDb } from "./db";
-
-function ensureTrashedConversationsTable(db: Database.Database): void {
-  db.exec(
-    `CREATE TABLE IF NOT EXISTS trashed_conversations (
-       account_id TEXT NOT NULL,
-       conversation_id INTEGER NOT NULL,
-       trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-       PRIMARY KEY (account_id, conversation_id)
-     )`,
-  );
-}
+import { openWritableVaultDb } from "./vaultSchema";
 
 /** Move a group conversation into Trash. */
 export function trashConversation(conversationId: number): void {
@@ -23,9 +11,8 @@ export function trashConversation(conversationId: number): void {
     throw new Error("conversationId required");
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedConversationsTable(writeDb);
     const row = writeDb
       .prepare(
         `SELECT 1 AS ok FROM conversations
@@ -56,9 +43,8 @@ export function restoreConversation(conversationId: number): void {
     throw new Error("conversationId required");
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedConversationsTable(writeDb);
     writeDb
       .prepare(
         `DELETE FROM trashed_conversations WHERE account_id = ? AND conversation_id = ?`,
@@ -81,9 +67,8 @@ export function permanentlyDeleteConversation(conversationId: number): void {
     throw new Error("conversationId required");
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
-    ensureTrashedConversationsTable(writeDb);
     const trashed = writeDb
       .prepare(
         `SELECT 1 AS ok FROM trashed_conversations

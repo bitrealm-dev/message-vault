@@ -1,15 +1,8 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { joinPreferredName } from "./dbCore";
-import { dbPath } from "./paths";
 import { getContact, resetDb } from "./db";
-import {
-  appendContactsCsv,
-  removeContactsCsv,
-  rewriteCsvLabels,
-  updateContactsCsv,
-  updateContactsCsvLabelMembership,
-} from "./contactsCsv";
+import { openWritableVaultDb } from "./vaultSchema";
 import {
   isEmailHandle,
   phoneHandlesOnly,
@@ -33,7 +26,6 @@ import {
 } from "./unassignedRead";
 
 export type ContactPatch = {
-  exclude?: boolean;
   labels?: string[];
   preferredName?: string | null;
   /** @deprecated Prefer preferredName; joined with lastName when preferredName omitted. */
@@ -56,7 +48,6 @@ export type ContactCreate = {
   /** @deprecated Prefer preferredName; joined with firstName when preferredName omitted. */
   lastName?: string | null;
   phones?: string[];
-  exclude?: boolean;
   labels?: string[];
 };
 
@@ -76,7 +67,7 @@ function contactHasName(contact: ContactDetail): boolean {
   return Boolean((contact.preferredName ?? "").trim());
 }
 
-/** Insert a new contact in SQLite and append contacts.csv; returns the contact. */
+/** Insert a new contact in SQLite; returns the contact. */
 export function createContact(input: ContactCreate): ContactDetail {
   assertVaultWritable();
   const accountId = currentAccountId();
@@ -85,30 +76,23 @@ export function createContact(input: ContactCreate): ContactDetail {
     throw new Error("display name required");
   }
   const phones = (input.phones ?? []).map((p) => p.trim()).filter(Boolean);
-  const csvPhones = phoneHandlesOnly(phones);
-  if (csvPhones.length === 0) {
+  if (phoneHandlesOnly(phones).length === 0) {
     throw new Error(
       "at least one phone number required (emails alone cannot create a contact)",
     );
   }
   const preferredHandle = preferredPhoneHandle(phones);
-  let labels = (input.labels ?? [])
+  const labels = (input.labels ?? [])
     .map((t) => t.trim())
     .filter(Boolean)
     .filter((t) => !RESERVED_LABEL_NAMES.has(t.toLowerCase()));
-  if (input.exclude !== undefined) {
-    labels = labels.filter(
-      (label) => !["active", "inactive"].includes(label.toLowerCase()),
-    );
-    labels.push(input.exclude ? "Inactive" : "Active");
-  }
 
   for (const phone of phones) {
     assertNotOwnerHandle(phone);
   }
 
   let newId = 0;
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
       for (const phone of phones) {
@@ -121,10 +105,10 @@ export function createContact(input: ContactCreate): ContactDetail {
       const result = writeDb
         .prepare(
           `INSERT INTO contacts (
-             account_id, preferred_name, exclude, preferred_handle
-           ) VALUES (?, ?, ?, ?)`,
+             account_id, preferred_name, preferred_handle
+           ) VALUES (?, ?, ?)`,
         )
-        .run(accountId, preferredName, 0, preferredHandle);
+        .run(accountId, preferredName, preferredHandle);
       newId = Number(result.lastInsertRowid);
 
       const insertPhone = writeDb.prepare(
@@ -151,12 +135,6 @@ export function createContact(input: ContactCreate): ContactDetail {
   }
 
   resetDb();
-  appendContactsCsv({
-    phones: csvPhones,
-    preferredName,
-    exclude: false,
-    groups: labels,
-  });
 
   const created = getContact(newId);
   if (!created) {
@@ -208,13 +186,12 @@ export function setContactsLabelMembership(
   if (!label) throw new Error("label name required");
   assertAllowedLabelName(label);
 
-  const contacts = ids.map((id) => {
+  for (const id of ids) {
     const contact = getContact(id);
     if (!contact) throw new Error(`contact ${id} not found`);
-    return contact;
-  });
+  }
   const changedIds = new Set<number>();
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
       const labelId = enable
@@ -248,16 +225,6 @@ export function setContactsLabelMembership(
 
   if (changedIds.size === 0) return 0;
   resetDb();
-  updateContactsCsvLabelMembership(
-    contacts
-      .filter((contact) => changedIds.has(contact.id))
-      .map((contact) => ({
-        phones: contact.phones,
-        preferredName: contact.preferredName,
-      })),
-    label,
-    enable,
-  );
   return changedIds.size;
 }
 
@@ -269,7 +236,7 @@ export function createLabel(name: string): string {
   if (!trimmed) throw new Error("name required");
   assertAllowedLabelName(trimmed);
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const existing = writeDb
       .prepare(
@@ -302,7 +269,7 @@ export function renameLabel(from: string, to: string): string {
     if (oldName === newName) return newName;
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const id = findLabelId(writeDb, oldName, accountId);
     if (id == null) throw new Error("label not found");
@@ -323,9 +290,6 @@ export function renameLabel(from: string, to: string): string {
   }
 
   resetDb();
-  rewriteCsvLabels((group) =>
-    group.toLowerCase() === oldName.toLowerCase() ? newName : group,
-  );
   return newName;
 }
 
@@ -335,7 +299,7 @@ export function deleteLabel(name: string): void {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("name required");
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const id = findLabelId(writeDb, trimmed, accountId);
     if (id == null) throw new Error("label not found");
@@ -350,9 +314,6 @@ export function deleteLabel(name: string): void {
   }
 
   resetDb();
-  rewriteCsvLabels((group) =>
-    group.toLowerCase() === trimmed.toLowerCase() ? null : group,
-  );
 }
 
 function phoneOwner(
@@ -444,7 +405,7 @@ function syncContactPhones(
   }
 }
 
-/** Update contact fields in SQLite and contacts.csv; returns refreshed contact. */
+/** Update contact fields in SQLite; returns refreshed contact. */
 export function patchContact(
   id: number,
   patch: ContactPatch,
@@ -456,18 +417,8 @@ export function patchContact(
     throw new Error("contact not found");
   }
 
-  let labels = patch.labels ?? existing.labels;
-  if (patch.exclude !== undefined) {
-    labels = labels.filter(
-      (label) => !["active", "inactive"].includes(label.toLowerCase()),
-    );
-    labels.push(patch.exclude ? "Inactive" : "Active");
-  }
+  const labels = patch.labels ?? existing.labels;
 
-  const namePatch =
-    patch.preferredName !== undefined ||
-    patch.firstName !== undefined ||
-    patch.lastName !== undefined;
   let preferredName = existing.preferredName;
   if (patch.preferredName !== undefined) {
     preferredName = patch.preferredName?.trim() || null;
@@ -483,14 +434,8 @@ export function patchContact(
       ? patch.phones.map((p) => p.trim()).filter(Boolean)
       : existing.phones;
   const preferredHandle = preferredPhoneHandle(phones);
-  const csvPhones = phoneHandlesOnly(phones);
-  const existingCsvPhones = phoneHandlesOnly(existing.phones);
-  const csvPhonesChanged =
-    patch.phones !== undefined &&
-    (csvPhones.length !== existingCsvPhones.length ||
-      csvPhones.some((p, i) => p !== existingCsvPhones[i]));
 
-  if (patch.phones !== undefined && csvPhones.length === 0) {
+  if (patch.phones !== undefined && phoneHandlesOnly(phones).length === 0) {
     throw new Error(
       "at least one phone number required (emails alone cannot be a contact)",
     );
@@ -501,7 +446,7 @@ export function patchContact(
     }
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
       if (patch.phones) {
@@ -512,12 +457,12 @@ export function patchContact(
       writeDb
         .prepare(
           `UPDATE contacts
-           SET preferred_name = ?, exclude = ?, preferred_handle = ?
+           SET preferred_name = ?, preferred_handle = ?
            WHERE id = ? AND account_id = ?`,
         )
-        .run(preferredName, 0, preferredHandle, id, accountId);
+        .run(preferredName, preferredHandle, id, accountId);
 
-      if (patch.labels || patch.exclude !== undefined) {
+      if (patch.labels) {
         writeDb
           .prepare(`DELETE FROM contact_label_members WHERE contact_id = ?`)
           .run(id);
@@ -536,16 +481,6 @@ export function patchContact(
   }
 
   resetDb();
-  updateContactsCsv(
-    existingCsvPhones,
-    { preferredName: existing.preferredName },
-    {
-      exclude: false,
-      groups: labels,
-      preferredName: namePatch ? preferredName : undefined,
-      phones: csvPhonesChanged ? csvPhones : undefined,
-    },
-  );
 
   const updated = getContact(id);
   if (!updated) {
@@ -565,9 +500,8 @@ export function addPhoneToContact(id: number, phone: string): ContactDetail {
   assertNotOwnerHandle(trimmed);
   if (existing.phones.includes(trimmed)) return existing;
 
-  // Emails live in SQLite only — never rewrite contacts.csv phones.
   if (isEmailHandle(trimmed)) {
-    const writeDb = new Database(dbPath());
+    const writeDb = openWritableVaultDb();
     try {
       const owner = phoneOwner(writeDb, trimmed, accountId);
       if (owner != null && owner !== id) {
@@ -612,7 +546,7 @@ export function removePhoneFromContact(
   }
 
   if (isEmailHandle(trimmed)) {
-    const writeDb = new Database(dbPath());
+    const writeDb = openWritableVaultDb();
     try {
       const owner = phoneOwner(writeDb, trimmed, accountId);
       if (owner != null && owner !== id) {
@@ -691,32 +625,39 @@ export function ensureUnknownContacts(): number {
   // Owner handles are resolved up front: the matcher opens its own connection,
   // which would deadlock against the write transaction below.
   const isOwner = ownerHandleMatcher();
-  const handles = [
-    ...listUnassignedHandles().map((row) => row.handle),
-    ...listUnassignedGroupParticipantHandles().map((row) => row.handle),
-  ]
-    .map((handle) => handle.trim())
-    .filter((handle) => handle.length > 0)
-    // The account holder is a participant in their own group chats.
-    .filter((handle) => !isOwner(handle));
-  if (handles.length === 0) return 0;
+  const candidates = [
+    ...listUnassignedHandles().map((row) => ({
+      handle: row.handle,
+      nameHint: row.nameHint,
+    })),
+    ...listUnassignedGroupParticipantHandles(),
+  ];
+  const byHandle = new Map<string, string | null>();
+  for (const candidate of candidates) {
+    const handle = candidate.handle.trim();
+    if (!handle || isOwner(handle)) continue;
+    const hint = candidate.nameHint?.trim() || null;
+    if (!byHandle.has(handle) || (!byHandle.get(handle) && hint)) {
+      byHandle.set(handle, hint);
+    }
+  }
+  if (byHandle.size === 0) return 0;
 
-  const csvRows: string[][] = [];
   let created = 0;
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
-      for (const handle of handles) {
+      for (const [handle, preferredName] of byHandle) {
         const owner = phoneOwner(writeDb, handle, accountId);
         if (owner != null) continue;
 
         const result = writeDb
           .prepare(
             `INSERT INTO contacts (
-               account_id, preferred_name, exclude, preferred_handle
-             ) VALUES (?, NULL, 0, ?)`,
+               account_id, preferred_name, preferred_handle
+             ) VALUES (?, ?, ?)`,
           )
-          .run(accountId, handle);
+          .run(accountId, preferredName, handle);
         const newId = Number(result.lastInsertRowid);
         writeDb
           .prepare(
@@ -726,10 +667,6 @@ export function ensureUnknownContacts(): number {
         clearTrashedHandles(writeDb, [handle], accountId);
         created += 1;
 
-        if (!isEmailHandle(handle)) {
-          const csvPhones = phoneHandlesOnly([handle]);
-          if (csvPhones.length > 0) csvRows.push(csvPhones);
-        }
       }
     });
     tx();
@@ -737,19 +674,6 @@ export function ensureUnknownContacts(): number {
     writeDb.close();
   }
   resetDb();
-
-  for (const phones of csvRows) {
-    try {
-      appendContactsCsv({
-        phones,
-        preferredName: null,
-        exclude: false,
-        groups: [],
-      });
-    } catch (err) {
-      console.error("ensureUnknownContacts CSV append failed", err);
-    }
-  }
   return created;
 }
 
@@ -774,13 +698,11 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
   }
 
   const accountId = currentAccountId();
-  const sourceCsvPhones = phoneHandlesOnly(source.phones);
   const mergedPhones = [
     ...new Set([...target.phones, ...source.phones].map((p) => p.trim()).filter(Boolean)),
   ];
-  const mergedCsvPhones = phoneHandlesOnly(mergedPhones);
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
       for (const handle of source.phones) {
@@ -826,56 +748,30 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
   }
 
   resetDb();
-  if (sourceCsvPhones.length > 0) {
-    removeContactsCsv([
-      {
-        phones: sourceCsvPhones,
-        preferredName: source.preferredName,
-      },
-    ]);
-  }
-  if (mergedCsvPhones.length > 0) {
-    updateContactsCsv(
-      phoneHandlesOnly(target.phones),
-      { preferredName: target.preferredName },
-      {
-        preferredName: target.preferredName,
-        exclude: target.exclude,
-        groups: target.labels,
-        phones: mergedCsvPhones,
-      },
-    );
-  }
 
   const updated = getContact(intoId);
   if (!updated) throw new Error("target missing after merge");
   return updated;
 }
 
-/** Delete contacts from SQLite and contacts.csv. */
+/** Delete contacts from SQLite. */
 export function deleteContacts(ids: number[]): number {
   assertVaultWritable();
   const accountId = currentAccountId();
   const unique = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (unique.length === 0) return 0;
 
-  const snapshots: Array<{
-    phones: string[];
-    preferredName: string | null;
-  }> = [];
+  let existingCount = 0;
   for (const id of unique) {
     const existing = getContact(id);
     if (!existing) continue;
-    snapshots.push({
-      phones: phoneHandlesOnly(existing.phones),
-      preferredName: existing.preferredName,
-    });
+    existingCount += 1;
   }
-  if (snapshots.length === 0) {
+  if (existingCount === 0) {
     throw new Error("contact not found");
   }
 
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     const del = writeDb.prepare(
       `DELETE FROM contacts WHERE id = ? AND account_id = ?`,
@@ -891,6 +787,5 @@ export function deleteContacts(ids: number[]): number {
   }
 
   resetDb();
-  removeContactsCsv(snapshots);
-  return snapshots.length;
+  return existingCount;
 }

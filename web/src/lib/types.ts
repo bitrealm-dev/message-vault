@@ -18,7 +18,6 @@ export type ContactListItem = {
   sortLast: string;
   letter: string;
   labels: string[];
-  exclude: boolean;
   /** Soft-deduped 1:1 message total (Combined view). */
   messageCount: number;
   /** Distinct group chats this contact participates in (non-trashed). */

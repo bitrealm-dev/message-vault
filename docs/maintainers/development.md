@@ -130,16 +130,12 @@ PowerShell:
 
 ```powershell
 Copy-Item .\config\config.toml.example .\config\config.toml
-Copy-Item .\config\contacts.csv.example .\config\contacts.csv
-Copy-Item .\config\exclude.csv.example .\config\exclude.csv
 ```
 
 Linux:
 
 ```bash
 cp config/config.toml.example config/config.toml
-cp config/contacts.csv.example config/contacts.csv
-cp config/exclude.csv.example config/exclude.csv
 ```
 
 Edit `config/config.toml`:
@@ -151,10 +147,9 @@ Edit `config/config.toml`:
    **Settings → Access** for `vault-push` (copy it from the one-time dialog).
 
 Source names are not listed in TOML — each import/upload supplies its own
-source id (asset folders under `data/<account_id>/<source_id>/`). Runtime
-contacts live at `data/<account_id>/contacts.csv` and `exclude.csv` (created
-with empty headers on first use). The files under `config/` are optional
-templates only.
+source id (asset folders under `data/<account_id>/<source_id>/`). Message
+import does not filter contacts at load time. Address books load via
+`import-contacts --contacts` (iMazing CSV or VCF).
 
 Start the import API from the repository root:
 

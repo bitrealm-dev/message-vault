@@ -42,10 +42,6 @@ export function resetDb(): void {
     g.__mvReadonlyDb = null;
   }
   g.__mvHasDuplicateOf = null;
-  const ownerCache = (globalThis as unknown as {
-    __mvOwnerCache?: Map<string, unknown>;
-  }).__mvOwnerCache;
-  ownerCache?.clear();
   const profileCache = (globalThis as unknown as {
     __mvAccountProfileCache?: Map<string, unknown>;
   }).__mvAccountProfileCache;

@@ -1,9 +1,9 @@
+mod account_profile;
 mod api_tokens;
 mod assets;
 mod config;
 mod contacts;
 mod dedupe;
-mod exclude;
 mod export_markdown;
 mod import;
 mod ingest;
@@ -14,9 +14,7 @@ mod process_assets;
 mod reset_demo;
 mod schema;
 mod server;
-mod vault_owner;
 mod vcf;
-mod vcf_to_contacts;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -100,10 +98,6 @@ enum Commands {
         #[arg(long = "contacts", alias = "contacts-csv")]
         contacts: Option<PathBuf>,
 
-        /// Exclude CSV path (overrides per-account default)
-        #[arg(long = "exclude-csv")]
-        exclude_csv: Option<PathBuf>,
-
         /// Delete and reload contacts from --contacts even if the table is non-empty
         #[arg(long)]
         overwrite_contacts: bool,
@@ -173,32 +167,6 @@ enum Commands {
         #[arg(long)]
         account: String,
     },
-    VcfToContacts {
-        /// Path to config.toml
-        #[arg(long, default_value = "config/config.toml")]
-        config: PathBuf,
-
-        /// Input contacts.vcf
-        #[arg(long)]
-        vcf: PathBuf,
-
-        /// Output contacts.csv (defaults to data/<account>/contacts.csv when --account is set)
-        #[arg(long)]
-        out: Option<PathBuf>,
-
-        /// Optional exclude.csv (defaults to data/<account>/exclude.csv when --account is set)
-        #[arg(long = "exclude")]
-        exclude: Option<PathBuf>,
-
-        /// Account username or UUID (used for default --out / --exclude paths)
-        #[arg(long)]
-        account: Option<String>,
-
-        /// Overwrite --out if it already exists
-        #[arg(long)]
-        force: bool,
-    },
-
     /// Restore committed demo bundle: copy config, wipe DB, re-import iMessage staging
     ResetDemo {
         /// Demo bundle directory
@@ -274,7 +242,7 @@ fn main() -> Result<()> {
             }
             let mode = import::ImportMode::parse(&mode)?;
             validate_source_id(&source)?;
-            let account = vault_owner::resolve_account_ref_at(&cfg.paths.db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&cfg.paths.db, &account)?;
 
             let stats = ingest::ingest(
                 &cfg,
@@ -321,7 +289,6 @@ fn main() -> Result<()> {
             db,
             assets_dir,
             contacts,
-            exclude_csv,
             overwrite_contacts,
             mode,
             account,
@@ -329,9 +296,7 @@ fn main() -> Result<()> {
             let cfg = Config::load(&config)?;
             validate_source_id(&source)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let (mirror_csv, default_exclude) = cfg.paths.ensure_account_csvs(&account)?;
-            let exclude_csv = exclude_csv.unwrap_or(default_exclude);
+            let account = account_profile::resolve_account_ref_at(&db, &account)?;
             let mode = import::ImportMode::parse(&mode)?;
             let assets =
                 assets_dir.unwrap_or_else(|| cfg.paths.assets_dir_for_account(&account, &source));
@@ -345,15 +310,12 @@ fn main() -> Result<()> {
                 Some(path) => println!("  contacts:      {}", path.display()),
                 None => println!("  contacts:      (none — use --contacts for iMazing CSV or VCF)"),
             }
-            println!("  exclude csv:   {}", exclude_csv.display());
 
             let stats = import::import_export(
                 &export_dir,
                 &db,
                 &assets,
                 contacts.as_deref(),
-                &mirror_csv,
-                &exclude_csv,
                 overwrite_contacts,
                 mode,
                 &source,
@@ -383,9 +345,6 @@ fn main() -> Result<()> {
             }
             println!("  attachments:   {}", stats.attachments);
             println!("  tapbacks:      {}", stats.tapbacks);
-            println!("  excl. convos:  {}", stats.conversations_excluded);
-            println!("  excl. msgs:    {}", stats.messages_excluded);
-            println!("  excl. parts:   {}", stats.participants_excluded);
             println!("  assets copied: {}", stats.assets_copied);
             println!("  assets deduped:{}", stats.assets_deduped);
             println!("  assets missing:{}", stats.assets_missing);
@@ -399,7 +358,7 @@ fn main() -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = vault_owner::resolve_account_ref_at(&db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db, &account)?;
             if window_secs < 0 {
                 bail!("--window-secs must be >= 0");
             }
@@ -438,7 +397,7 @@ fn main() -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = vault_owner::resolve_account_ref_at(&db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db, &account)?;
 
             if let Some(parent) = db.parent()
                 && !parent.as_os_str().is_empty()
@@ -469,7 +428,7 @@ fn main() -> Result<()> {
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = vault_owner::resolve_account_ref_at(&db, &account)?;
+            let account = account_profile::resolve_account_ref_at(&db, &account)?;
             let snippet_css =
                 snippet_css.unwrap_or_else(|| PathBuf::from("config/obsidian-message-vault.css"));
             if !snippet_css.is_file() {
@@ -506,36 +465,6 @@ fn main() -> Result<()> {
             println!(
                 "Enable CSS snippet message-vault-bubbles in Obsidian (Settings → Appearance)."
             );
-        }
-
-        Commands::VcfToContacts {
-            config,
-            vcf,
-            out,
-            exclude,
-            account,
-            force,
-        } => {
-            let cfg = Config::load(&config)?;
-            let (out, exclude) = match (out, account.as_deref()) {
-                (Some(out), _) => (out, exclude),
-                (None, Some(account_ref)) => {
-                    let account_id =
-                        vault_owner::resolve_account_ref_at(&cfg.paths.db, account_ref)?;
-                    let (contacts, excl) = cfg.paths.ensure_account_csvs(&account_id)?;
-                    (contacts, exclude.or(Some(excl)))
-                }
-                (None, None) => {
-                    bail!("pass --out <contacts.csv> or --account <username|uuid>");
-                }
-            };
-
-            let stats = vcf_to_contacts::convert(&vcf, &out, exclude.as_deref(), force)?;
-            println!("Wrote {}", out.display());
-            println!("  vcf cards:        {}", stats.cards_total);
-            println!("  skipped (no TEL): {}", stats.cards_skipped_no_tel);
-            println!("  exclude-only:     {}", stats.exclude_only);
-            println!("  contacts written: {}", stats.contacts_written);
         }
 
         Commands::ResetDemo { bundle, config } => {

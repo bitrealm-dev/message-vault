@@ -2,8 +2,7 @@ import Database from "better-sqlite3";
 
 import { getDb, resetDb } from "./dbCore";
 import { parsePhoneE164 } from "./phoneE164";
-import { dbPath } from "./paths";
-import { ensureVaultSchema } from "./vaultSchema";
+import { openWritableVaultDb } from "./vaultSchema";
 
 export type AccountProfile = {
   preferred_name: string | null;
@@ -28,9 +27,7 @@ export function invalidateAccountProfileCache(accountId?: string): void {
 }
 
 function openWritableDb(): Database.Database {
-  const db = new Database(dbPath());
-  ensureVaultSchema(db);
-  return db;
+  return openWritableVaultDb();
 }
 
 function profileDisplayName(preferred_name: string | null | undefined): string {

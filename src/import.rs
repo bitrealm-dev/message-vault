@@ -10,7 +10,6 @@ use serde::Serialize;
 
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::contacts;
-use crate::exclude::ExcludeSet;
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 use crate::schema;
@@ -47,9 +46,6 @@ pub struct ImportOptions<'a> {
     pub asset_root: &'a Path,
     /// Optional address book to load: iMazing Contacts CSV or VCF.
     pub contacts: Option<&'a Path>,
-    /// Per-account dual-write CSV used when backfilling unknown contacts.
-    pub contacts_mirror_csv: &'a Path,
-    pub exclude_csv: &'a Path,
     pub overwrite_contacts: bool,
     pub mode: ImportMode,
     pub source: &'a str,
@@ -75,9 +71,6 @@ pub struct ImportStats {
     pub contact_handles: u64,
     pub contact_label_links: u64,
     pub contacts_skipped: bool,
-    pub conversations_excluded: u64,
-    pub messages_excluded: u64,
-    pub participants_excluded: u64,
     pub messages_deduped: u64,
     pub messages_appended: u64,
     pub unknown_contacts: u64,
@@ -92,9 +85,6 @@ impl ImportStats {
         self.attachments += other.attachments;
         self.tapbacks += other.tapbacks;
         self.messages_deduped += other.messages_deduped;
-        self.conversations_excluded += other.conversations_excluded;
-        self.messages_excluded += other.messages_excluded;
-        self.participants_excluded += other.participants_excluded;
     }
 }
 
@@ -109,8 +99,6 @@ pub fn import_export(
     db_path: &Path,
     assets_dir: &Path,
     contacts: Option<&Path>,
-    contacts_mirror_csv: &Path,
-    exclude_csv: &Path,
     overwrite_contacts: bool,
     mode: ImportMode,
     source: &str,
@@ -139,8 +127,6 @@ pub fn import_export(
             assets_dir,
             asset_root: export_dir,
             contacts,
-            contacts_mirror_csv,
-            exclude_csv,
             overwrite_contacts,
             mode,
             source,
@@ -197,7 +183,7 @@ pub fn import_jsonl_files_on_conn(
     if schema_mode == ImportSchemaMode::Ensure {
         schema::ensure_vault_schema(conn)?;
     }
-    crate::vault_owner::ensure_account_row(conn, opts.account_id)?;
+    crate::account_profile::ensure_account_row(conn, opts.account_id)?;
 
     if let Some(path) = opts.contacts {
         println!("  sql:      loading contacts from {}…", path.display());
@@ -219,12 +205,6 @@ pub fn import_jsonl_files_on_conn(
             contact_stats.contacts, contact_stats.phones, contact_stats.labels
         );
     }
-    let exclude = ExcludeSet::load(opts.exclude_csv)?;
-    println!(
-        "  sql:      exclude entries from {}",
-        opts.exclude_csv.display()
-    );
-
     if schema_mode == ImportSchemaMode::Ensure {
         println!("  sql:      ensuring schema + resetting staging for account…");
         let _ = io::stdout().flush();
@@ -286,7 +266,6 @@ pub fn import_jsonl_files_on_conn(
             opts.asset_root,
             opts.assets_dir,
             path,
-            &exclude,
             &mut asset_stats,
             opts.source,
         )?;
@@ -322,8 +301,12 @@ pub fn import_jsonl_files_on_conn(
         started.elapsed().as_secs_f64()
     );
     let _ = io::stdout().flush();
-    let promote_stats =
-        promote_append(&mut conn, opts.mode, opts.account_id, opts.fill_content_keys)?;
+    let promote_stats = promote_append(
+        &mut conn,
+        opts.mode,
+        opts.account_id,
+        opts.fill_content_keys,
+    )?;
     stats.messages_deduped += promote_stats.messages_deduped;
     stats.messages_appended = promote_stats.messages_appended;
     if opts.mode == ImportMode::Append {
@@ -337,12 +320,7 @@ pub fn import_jsonl_files_on_conn(
     schema::clear_staging_for_account(&conn, opts.account_id)?;
 
     if opts.backfill_contacts {
-        let unknown =
-            contacts::ensure_unknown_contacts(
-                &mut conn,
-                opts.account_id,
-                opts.contacts_mirror_csv,
-            )?;
+        let unknown = contacts::ensure_unknown_contacts(&mut conn, opts.account_id)?;
         stats.unknown_contacts = unknown;
         if unknown > 0 {
             println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
@@ -370,15 +348,6 @@ pub fn import_jsonl_files_on_conn(
     );
 
     Ok(stats)
-}
-
-/// Write JSONL bytes to a temp file and import (HTTP body / single stream).
-#[allow(dead_code)] // retained for callers/tests that pass an in-memory body
-pub fn import_jsonl_bytes(bytes: &[u8], opts: &ImportOptions<'_>) -> Result<ImportStats> {
-    let dir = tempfile::tempdir().context("failed to create temp dir for JSONL import")?;
-    let path = dir.path().join("import.jsonl");
-    fs::write(&path, bytes).context("failed to write temp JSONL")?;
-    import_jsonl_files(&[path], opts)
 }
 
 fn prepare_attachments(
@@ -519,7 +488,6 @@ fn import_file_to_staging(
     asset_root: &Path,
     assets_dir: &Path,
     path: &Path,
-    exclude: &ExcludeSet,
     asset_stats: &mut AssetStats,
     source: &str,
 ) -> Result<ImportStats> {
@@ -551,7 +519,6 @@ fn import_file_to_staging(
                         &source_file,
                         header,
                         std::mem::take(&mut messages),
-                        exclude,
                         asset_stats,
                         source,
                     )?);
@@ -589,7 +556,6 @@ fn import_file_to_staging(
             &source_file,
             header,
             messages,
-            exclude,
             asset_stats,
             source,
         )?);
@@ -609,7 +575,6 @@ fn import_file_to_staging(
                 Vec::new(),
             ),
             messages,
-            exclude,
             asset_stats,
             source,
         )?);
@@ -636,7 +601,6 @@ fn import_conversation_to_staging(
     source_file: &str,
     conversation: ConversationHeader,
     messages: Vec<MessageRecord>,
-    exclude: &ExcludeSet,
     asset_stats: &mut AssetStats,
     source: &str,
 ) -> Result<ImportStats> {
@@ -644,51 +608,10 @@ fn import_conversation_to_staging(
         conversation;
 
     let mut stats = ImportStats::default();
+    let kept_participants = participants;
 
-    if exclude.contains_handle(&chat_identifier) {
-        stats.conversations_excluded = 1;
-        return Ok(stats);
-    }
-    if conversation_type == "individual" {
-        let peer_excluded = participants
-            .iter()
-            .any(|(handle, _)| exclude.contains_handle(handle));
-        if peer_excluded {
-            stats.conversations_excluded = 1;
-            return Ok(stats);
-        }
-    }
-
-    let kept_participants: Vec<(String, Option<String>)> = participants
-        .into_iter()
-        .filter(|(handle, _)| {
-            if exclude.contains_handle(handle) {
-                stats.participants_excluded += 1;
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    let kept_messages: Vec<MessageRecord> = messages
-        .into_iter()
-        .filter(|msg| {
-            let excluded = msg
-                .sender
-                .as_deref()
-                .is_some_and(|s| exclude.contains_handle(s));
-            if excluded {
-                stats.messages_excluded += 1;
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    let mut prepared_messages = Vec::with_capacity(kept_messages.len());
-    for mut msg in kept_messages {
+    let mut prepared_messages = Vec::with_capacity(messages.len());
+    for mut msg in messages {
         let attachments = prepare_attachments(
             asset_root,
             assets_dir,
@@ -839,7 +762,9 @@ fn promote_append(
     let _ = io::stdout().flush();
 
     let max_conv_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| r.get(0))?;
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| {
+            r.get(0)
+        })?;
     tx.execute(
         r#"
         INSERT INTO conversations (
@@ -1205,24 +1130,11 @@ mod tests {
         path
     }
 
-    fn empty_csv(dir: &Path, name: &str) -> PathBuf {
-        let path = dir.join(name);
-        let body = if name.contains("contact") {
-            "phones,first_name,last_name,exclude,label_1\n"
-        } else {
-            "phones\n"
-        };
-        fs::write(&path, body).unwrap();
-        path
-    }
-
     #[test]
     fn append_skips_existing_guids_and_keeps_id_map() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
-        let contacts = empty_csv(tmp.path(), "contacts.csv");
-        let exclude = empty_csv(tmp.path(), "exclude.csv");
 
         let first = write_jsonl(
             tmp.path(),
@@ -1239,8 +1151,6 @@ mod tests {
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
-                contacts_mirror_csv: &contacts,
-                exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Replace,
                 source: "sms-backup-restore",
@@ -1268,8 +1178,6 @@ mod tests {
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
-                contacts_mirror_csv: &contacts,
-                exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Append,
                 source: "sms-backup-restore",
@@ -1288,11 +1196,9 @@ mod tests {
             .unwrap();
         assert_eq!(n, 4);
         let dup_body: String = conn
-            .query_row(
-                "SELECT body FROM messages WHERE guid = 'g-dup'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT body FROM messages WHERE guid = 'g-dup'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(dup_body, "two");
 
@@ -1329,8 +1235,6 @@ mod tests {
         let db = tmp.path().join("vault.db");
         let assets = tmp.path().join("assets");
         fs::create_dir_all(&assets).unwrap();
-        let contacts = empty_csv(tmp.path(), "contacts.csv");
-        let exclude = empty_csv(tmp.path(), "exclude.csv");
         let att_dir = tmp.path().join("attachments");
         fs::create_dir_all(&att_dir).unwrap();
         fs::write(att_dir.join("receipt.pdf"), b"%PDF-fixture").unwrap();
@@ -1349,8 +1253,6 @@ mod tests {
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
-                contacts_mirror_csv: &contacts,
-                exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Append,
                 source: "imessage",
@@ -1369,6 +1271,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(hits, 1, "attachment original_name must be searchable after deferred FTS");
+        assert_eq!(
+            hits, 1,
+            "attachment original_name must be searchable after deferred FTS"
+        );
     }
 }

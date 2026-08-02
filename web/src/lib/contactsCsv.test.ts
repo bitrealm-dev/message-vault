@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   contactsCsvHeader,
@@ -12,7 +14,6 @@ describe("serializeContactsCsv", () => {
       {
         phones: ["+15551234567"],
         preferredName: "Ada Lovelace",
-        exclude: false,
         labels: ["Family"],
       },
     ]);
@@ -26,8 +27,7 @@ describe("serializeContactsCsv", () => {
     const csv = serializeContactsCsv([
       {
         phones: ["+15551234567"],
-        preferredName: "Ada",
-        exclude: true,
+        preferredName: "Mononym",
         labels,
       },
     ]);
@@ -36,9 +36,13 @@ describe("serializeContactsCsv", () => {
     assert.deepEqual(header, contactsCsvHeader(7));
     const row = parseCsvLine(lines[1]!);
     assert.equal(row[0], "+15551234567");
-    assert.equal(row[1], "Ada");
+    assert.equal(row[1], "Mononym");
     assert.equal(row[2], "");
-    assert.equal(row[3], "true");
-    assert.deepEqual(row.slice(4), labels);
+    assert.deepEqual(row.slice(3), labels);
+    const fixture = fs.readFileSync(
+      path.join(process.cwd(), "..", "fixtures", "contacts", "current-labels.csv"),
+      "utf8",
+    );
+    assert.equal(csv, fixture);
   });
 });

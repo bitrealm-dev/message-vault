@@ -48,7 +48,6 @@ pub fn ingest(cfg: &Config, opts: &IngestOptions) -> Result<IngestStats> {
     let assets_dir = cfg
         .paths
         .assets_dir_for_account(&opts.account_id, &opts.source_id);
-    let (mirror_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&opts.account_id)?;
 
     println!("Ingest");
     println!("  source:       {}", opts.source_id);
@@ -67,8 +66,6 @@ pub fn ingest(cfg: &Config, opts: &IngestOptions) -> Result<IngestStats> {
         &cfg.paths.db,
         &assets_dir,
         opts.contacts.as_deref(),
-        &mirror_csv,
-        &exclude_csv,
         opts.overwrite_contacts,
         opts.mode,
         &opts.source_id,

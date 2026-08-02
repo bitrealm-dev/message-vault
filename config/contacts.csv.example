@@ -1,4 +1,0 @@
-phones,first_name,last_name,exclude,group_1,group_2,group_3,group_4,group_5
-+15555550100,Ada,Lovelace,false,Example,,,,
-+15555550101;+15555550102,Grace,Hopper,false,Example,Work,,,
-+15555550103,Spam,Bot,true,,,,,

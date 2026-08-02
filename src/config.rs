@@ -49,10 +49,6 @@ fn default_assets_converted_dir_name() -> String {
     "assets_converted".to_string()
 }
 
-const DEFAULT_CONTACTS_CSV_HEADER: &str =
-    "phones,first_name,last_name,exclude,label_1,label_2,label_3,label_4,label_5\n";
-const DEFAULT_EXCLUDE_CSV_HEADER: &str = "phones,label\n";
-
 /// Safe source slug for path segments and `messages.source` values.
 pub fn validate_source_id(source: &str) -> Result<()> {
     let s = source.trim();
@@ -75,16 +71,6 @@ pub fn validate_source_id(source: &str) -> Result<()> {
 }
 
 impl PathsConfig {
-    /// Per-account contacts CSV: `data_dir/<account_id>/contacts.csv`.
-    pub fn contacts_csv_for_account(&self, account_id: &str) -> PathBuf {
-        self.data_dir.join(account_id).join("contacts.csv")
-    }
-
-    /// Per-account exclude CSV: `data_dir/<account_id>/exclude.csv`.
-    pub fn exclude_csv_for_account(&self, account_id: &str) -> PathBuf {
-        self.data_dir.join(account_id).join("exclude.csv")
-    }
-
     /// Originals: `data_dir/<account_id>/<source_id>/<assets_dir>`.
     pub fn assets_dir_for_account(&self, account_id: &str, source_id: &str) -> PathBuf {
         self.data_dir
@@ -100,28 +86,6 @@ impl PathsConfig {
             .join(source_id)
             .join(&self.assets_converted_dir)
     }
-
-    /// Ensure per-account CSVs exist (empty headers when missing).
-    pub fn ensure_account_csvs(&self, account_id: &str) -> Result<(PathBuf, PathBuf)> {
-        let contacts = self.contacts_csv_for_account(account_id);
-        let exclude = self.exclude_csv_for_account(account_id);
-        if let Some(parent) = contacts.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create account data dir {}", parent.display()))?;
-        }
-        write_csv_if_missing(&contacts, DEFAULT_CONTACTS_CSV_HEADER)?;
-        write_csv_if_missing(&exclude, DEFAULT_EXCLUDE_CSV_HEADER)?;
-        Ok((contacts, exclude))
-    }
-}
-
-fn write_csv_if_missing(dest: &Path, empty_header: &str) -> Result<()> {
-    if dest.is_file() {
-        return Ok(());
-    }
-    fs::write(dest, empty_header)
-        .with_context(|| format!("write empty CSV header {}", dest.display()))?;
-    Ok(())
 }
 
 impl Config {

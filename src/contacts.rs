@@ -14,15 +14,6 @@ pub struct ContactLoadStats {
     pub skipped: bool,
 }
 
-#[derive(Debug)]
-struct ContactCsvRow {
-    phones: String,
-    first_name: String,
-    last_name: String,
-    exclude: String,
-    labels: Vec<String>,
-}
-
 /// Address-book formats accepted by CLI contact import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContactsFileFormat {
@@ -30,8 +21,6 @@ enum ContactsFileFormat {
     ImazingCsv,
     /// vCard (.vcf / .vcard).
     Vcf,
-    /// Legacy vault mirror CSV (`phones,first_name,last_name,exclude,label_N`).
-    VaultCsv,
 }
 
 #[derive(Debug)]
@@ -39,7 +28,6 @@ struct ContactDraft {
     phones: Vec<String>,
     preferred_name: Option<String>,
     labels: Vec<String>,
-    legacy_inactive: bool,
 }
 
 fn normalize_header_name(h: &str) -> String {
@@ -49,7 +37,7 @@ fn normalize_header_name(h: &str) -> String {
         .replace('_', " ")
 }
 
-/// True for iMazing/Outlook phone columns (`Mobile Phone`, …). Bare `phones` is vault-only.
+/// True for iMazing/Outlook phone columns (`Mobile Phone`, …).
 fn is_phone_header(h: &str) -> bool {
     h != "phones" && h.contains("phone")
 }
@@ -87,12 +75,6 @@ fn contacts_file_format(path: &Path) -> Result<ContactsFileFormat> {
     let has_phone = header_l.iter().any(|h| is_phone_header(h));
     if has_first && has_last && has_phone {
         return Ok(ContactsFileFormat::ImazingCsv);
-    }
-
-    let has_vault_phones = header_l.iter().any(|h| h == "phones");
-    let has_exclude = header_l.iter().any(|h| h == "exclude");
-    if has_vault_phones && has_exclude {
-        return Ok(ContactsFileFormat::VaultCsv);
     }
 
     bail!(
@@ -216,8 +198,7 @@ fn restore_email_handles(
 /// `overwrite` is true.
 ///
 /// Accepted files: **iMazing Contacts CSV** (First Name, Last Name, Phone
-/// columns) or **VCF**. The vault dual-write `phones,first_name,…` CSV is still
-/// accepted for older demos/mirrors but is not the CLI import format.
+/// columns) or **VCF**.
 ///
 /// Pass `None` to skip address-book load (keep existing SQLite contacts).
 /// On overwrite, email handles already in SQLite are snapshotted by phone set
@@ -229,11 +210,7 @@ pub fn load_contacts_if_needed(
     account_id: &str,
 ) -> Result<ContactLoadStats> {
     crate::schema::ensure_contacts_schema(conn)?;
-    crate::vault_owner::ensure_account_row(conn, account_id)?;
-    if !crate::schema::contacts_schema_ready(conn)? {
-        eprintln!("contacts: schema not current; recreating tables before contacts load");
-        crate::schema::recreate_contacts(conn)?;
-    }
+    crate::account_profile::ensure_account_row(conn, account_id)?;
 
     let Some(path) = contacts_path else {
         return Ok(ContactLoadStats {
@@ -280,14 +257,6 @@ pub fn load_contacts_if_needed(
     let mut stats = match format {
         ContactsFileFormat::ImazingCsv => load_from_imazing_csv(conn, path, account_id)?,
         ContactsFileFormat::Vcf => load_from_vcf(conn, path, account_id)?,
-        ContactsFileFormat::VaultCsv => {
-            eprintln!(
-                "warning: {} is the legacy vault contacts.csv format; \
-                 prefer an iMazing Contacts CSV or .vcf for CLI import",
-                path.display()
-            );
-            load_from_vault_csv(conn, path, account_id)?
-        }
     };
     stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot)?;
     if stats.emails_restored > 0 {
@@ -319,85 +288,6 @@ fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_from_vault_csv(
-    conn: &mut Connection,
-    csv_path: &Path,
-    account_id: &str,
-) -> Result<ContactLoadStats> {
-    let file = File::open(csv_path)
-        .with_context(|| format!("failed to open contacts CSV {}", csv_path.display()))?;
-    let mut reader = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(file);
-    let headers = reader
-        .headers()
-        .with_context(|| format!("failed to read contacts CSV header in {}", csv_path.display()))?
-        .clone();
-    let col = |name: &str| -> Option<usize> { headers.iter().position(|h| h == name) };
-    let phones_i = col("phones").ok_or_else(|| {
-        anyhow::anyhow!("contacts CSV missing phones column ({})", csv_path.display())
-    })?;
-    let first_i = col("first_name");
-    let last_i = col("last_name");
-    let exclude_i = col("exclude").ok_or_else(|| {
-        anyhow::anyhow!("contacts CSV missing exclude column ({})", csv_path.display())
-    })?;
-    let label_slots = label_column_slots(&headers);
-    if label_slots.is_empty() {
-        bail!(
-            "contacts CSV missing label_N (or legacy group_N) columns ({})",
-            csv_path.display()
-        );
-    }
-
-    let mut drafts = Vec::new();
-    for (row_no, result) in reader.records().enumerate() {
-        let row_no = row_no + 2; // header is line 1
-        let record = result.with_context(|| {
-            format!(
-                "failed to parse contacts CSV row {row_no} in {}",
-                csv_path.display()
-            )
-        })?;
-        let field = |i: usize| -> String { record.get(i).unwrap_or("").trim().to_string() };
-        let row = ContactCsvRow {
-            phones: field(phones_i),
-            first_name: first_i.map(field).unwrap_or_default(),
-            last_name: last_i.map(field).unwrap_or_default(),
-            exclude: field(exclude_i),
-            labels: row_labels_from_slots(&record, &label_slots),
-        };
-
-        let raw_handles = split_list(&row.phones);
-        for h in &raw_handles {
-            if is_email_handle(h) {
-                eprintln!(
-                    "warning: contacts CSV row {row_no}: skipping email handle {h} (emails are DB-only)"
-                );
-            }
-        }
-        let phones = phone_handles_only(&raw_handles);
-        if phones.is_empty() {
-            bail!(
-                "contacts CSV row {row_no}: phones is required ({})",
-                csv_path.display()
-            );
-        }
-
-        drafts.push(ContactDraft {
-            phones,
-            preferred_name: join_preferred_name(
-                empty_to_none(&row.first_name).as_deref(),
-                empty_to_none(&row.last_name).as_deref(),
-            ),
-            labels: row.labels,
-            legacy_inactive: parse_bool(&row.exclude),
-        });
-    }
-
-    insert_contact_drafts(conn, account_id, drafts)
-}
-
 fn load_from_imazing_csv(
     conn: &mut Connection,
     csv_path: &Path,
@@ -411,7 +301,12 @@ fn load_from_imazing_csv(
         .from_reader(file);
     let headers = reader
         .headers()
-        .with_context(|| format!("failed to read contacts CSV header in {}", csv_path.display()))?
+        .with_context(|| {
+            format!(
+                "failed to read contacts CSV header in {}",
+                csv_path.display()
+            )
+        })?
         .clone();
     let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
     let first_i = header_l.iter().position(|h| h == "first name");
@@ -439,9 +334,8 @@ fn load_from_imazing_csv(
                 csv_path.display()
             )
         })?;
-        let cell = |i: Option<usize>| -> &str {
-            i.and_then(|idx| record.get(idx)).unwrap_or("").trim()
-        };
+        let cell =
+            |i: Option<usize>| -> &str { i.and_then(|idx| record.get(idx)).unwrap_or("").trim() };
         let first = cell(first_i);
         let middle = cell(middle_i);
         let last = cell(last_i);
@@ -488,7 +382,6 @@ fn load_from_imazing_csv(
             phones,
             preferred_name,
             labels: Vec::new(),
-            legacy_inactive: false,
         });
     }
 
@@ -571,7 +464,6 @@ fn load_from_vcf(
             phones,
             preferred_name,
             labels,
-            legacy_inactive: false,
         });
     }
 
@@ -588,23 +480,18 @@ fn insert_contact_drafts(
     drafts: Vec<ContactDraft>,
 ) -> Result<ContactLoadStats> {
     let mut stats = ContactLoadStats::default();
-    let mut seen_phones: HashSet<String> = HashSet::new();
+    let drafts = merge_duplicate_phone_drafts(drafts);
     let tx = conn.transaction()?;
 
     for draft in drafts {
-        for phone in &draft.phones {
-            if !seen_phones.insert(phone.clone()) {
-                bail!("contacts: duplicate phone {phone}");
-            }
-        }
         let preferred = draft.phones[0].clone();
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, preferred_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, ?3, ?4)
+                account_id, preferred_name, preferred_handle
+            ) VALUES (?1, ?2, ?3)
             "#,
-            params![account_id, draft.preferred_name, 0, preferred],
+            params![account_id, draft.preferred_name, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
@@ -617,16 +504,7 @@ fn insert_contact_drafts(
             stats.phones += 1;
         }
 
-        let mut labels = draft.labels;
-        labels.retain(|label| {
-            !label.eq_ignore_ascii_case("Active") && !label.eq_ignore_ascii_case("Inactive")
-        });
-        let status_label = if draft.legacy_inactive {
-            "Inactive"
-        } else {
-            "Active"
-        };
-        labels.push(status_label.to_string());
+        let labels = draft.labels;
         for label_name in &labels {
             let label_id = ensure_label(&tx, account_id, label_name)?;
             tx.execute(
@@ -639,6 +517,57 @@ fn insert_contact_drafts(
 
     tx.commit()?;
     Ok(stats)
+}
+
+/// Merge address-book rows that share any phone, including transitive overlaps.
+fn merge_duplicate_phone_drafts(drafts: Vec<ContactDraft>) -> Vec<ContactDraft> {
+    let mut merged: Vec<ContactDraft> = Vec::new();
+    for mut draft in drafts {
+        let mut matching: Vec<usize> = merged
+            .iter()
+            .enumerate()
+            .filter(|(_, existing)| {
+                existing
+                    .phones
+                    .iter()
+                    .any(|phone| draft.phones.contains(phone))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if matching.is_empty() {
+            merged.push(draft);
+            continue;
+        }
+
+        let target = matching.remove(0);
+        merge_contact_draft(&mut merged[target], draft);
+        for index in matching.into_iter().rev() {
+            draft = merged.remove(index);
+            let adjusted_target = if index < target { target - 1 } else { target };
+            merge_contact_draft(&mut merged[adjusted_target], draft);
+        }
+    }
+    merged
+}
+
+fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
+    if into.preferred_name.is_none() {
+        into.preferred_name = from.preferred_name;
+    }
+    for phone in from.phones {
+        if !into.phones.contains(&phone) {
+            into.phones.push(phone);
+        }
+    }
+    for label in from.labels {
+        if !into
+            .labels
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&label))
+        {
+            into.labels.push(label);
+        }
+    }
 }
 
 fn ensure_label(conn: &Connection, account_id: &str, name: &str) -> Result<i64> {
@@ -666,12 +595,7 @@ fn handle_match_key(handle: &str) -> String {
 /// Create contacts for handles that have messages but no contact_handles row:
 /// 1:1 handles, plus group participants who never had a 1:1 conversation.
 /// Names come from participant `name_hint` / exporter `display_name` when present.
-/// Phone handles are appended to `contacts.csv`; emails stay DB-only.
-pub fn ensure_unknown_contacts(
-    conn: &mut Connection,
-    account_id: &str,
-    contacts_csv: &Path,
-) -> Result<u64> {
+pub fn ensure_unknown_contacts(conn: &mut Connection, account_id: &str) -> Result<u64> {
     crate::schema::ensure_contacts_schema(conn)?;
 
     let has_trash: bool = conn
@@ -774,16 +698,17 @@ pub fn ensure_unknown_contacts(
     }
 
     // The account holder is a participant in their own groups.
-    let owner_keys: HashSet<String> = crate::vault_owner::load_vault_owner(conn, account_id)
-        .map(|owner| {
-            owner
-                .phones
-                .iter()
-                .chain(owner.emails.iter())
-                .map(|h| handle_match_key(h))
-                .collect()
-        })
-        .unwrap_or_default();
+    let owner_keys: HashSet<String> =
+        crate::account_profile::load_account_profile(conn, account_id)
+            .map(|owner| {
+                owner
+                    .phones
+                    .iter()
+                    .chain(owner.emails.iter())
+                    .map(|h| handle_match_key(h))
+                    .collect()
+            })
+            .unwrap_or_default();
     if !owner_keys.is_empty() {
         handles.retain(|handle| !owner_keys.contains(&handle_match_key(handle)));
     }
@@ -793,7 +718,6 @@ pub fn ensure_unknown_contacts(
     }
 
     let mut created = 0u64;
-    let mut created_named: Vec<(String, Option<String>)> = Vec::new();
     let tx = conn.transaction()?;
     for handle in &handles {
         let preferred = handle.clone();
@@ -806,8 +730,8 @@ pub fn ensure_unknown_contacts(
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, preferred_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, 0, ?3)
+                account_id, preferred_name, preferred_handle
+            ) VALUES (?1, ?2, ?3)
             "#,
             params![account_id, preferred_name, preferred],
         )?;
@@ -817,28 +741,8 @@ pub fn ensure_unknown_contacts(
             params![account_id, handle, contact_id],
         )?;
         created += 1;
-        created_named.push((handle.clone(), preferred_name));
     }
     tx.commit()?;
-
-    for (handle, preferred_name) in &created_named {
-        if is_email_handle(handle) {
-            continue;
-        }
-        let csv_phone = crate::phone::to_e164(handle).unwrap_or_else(|| handle.clone());
-        let (first_name, last_name) = split_display_name(preferred_name.as_deref());
-        if let Err(err) = append_contact_csv_row(
-            contacts_csv,
-            &csv_phone,
-            first_name.as_deref(),
-            last_name.as_deref(),
-        ) {
-            eprintln!(
-                "warning: could not append {csv_phone} to {}: {err}",
-                contacts_csv.display()
-            );
-        }
-    }
 
     Ok(created)
 }
@@ -933,9 +837,7 @@ fn best_name_hint_for_handle(
         ORDER BY LENGTH(TRIM(p.name_hint)) DESC, p.name_hint ASC
         "#,
     )?;
-    let hints = stmt.query_map(params![account_id, handle], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let hints = stmt.query_map(params![account_id, handle], |row| row.get::<_, String>(0))?;
     for hint in hints {
         let hint = hint?;
         if let Some(useful) = useful_name_hint(&hint, handle) {
@@ -968,7 +870,10 @@ fn looks_like_phone(s: &str) -> bool {
     if t.is_empty() {
         return false;
     }
-    if t.starts_with('+') && t.chars().all(|c| c.is_ascii_digit() || "+ ().-".contains(c)) {
+    if t.starts_with('+')
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || "+ ().-".contains(c))
+    {
         return true;
     }
     let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -977,183 +882,6 @@ fn looks_like_phone(s: &str) -> bool {
         .filter(|c| !c.is_whitespace() && !"()+-.".contains(*c))
         .collect();
     digits.len() >= 7 && digits.len() == stripped.len()
-}
-
-/// Join CSV `first_name` + `last_name` into a single preferred display name.
-fn join_preferred_name(first_name: Option<&str>, last_name: Option<&str>) -> Option<String> {
-    let first = first_name.map(str::trim).filter(|s| !s.is_empty());
-    let last = last_name.map(str::trim).filter(|s| !s.is_empty());
-    match (first, last) {
-        (Some(f), Some(l)) => Some(format!("{f} {l}")),
-        (Some(f), None) => Some(f.to_string()),
-        (None, Some(l)) => Some(l.to_string()),
-        (None, None) => None,
-    }
-}
-
-/// Split `"Annette Gubert"` → (`Annette`, `Gubert`); single token → first only.
-/// Used when appending contacts.csv rows that still use first/last columns.
-fn split_display_name(hint: Option<&str>) -> (Option<String>, Option<String>) {
-    let Some(raw) = hint.map(str::trim).filter(|s| !s.is_empty()) else {
-        return (None, None);
-    };
-    let mut parts = raw.split_whitespace();
-    let Some(first) = parts.next() else {
-        return (None, None);
-    };
-    let rest: Vec<&str> = parts.collect();
-    if rest.is_empty() {
-        (Some(first.to_string()), None)
-    } else {
-        (Some(first.to_string()), Some(rest.join(" ")))
-    }
-}
-
-fn append_contact_csv_row(
-    csv_path: &Path,
-    phone: &str,
-    first_name: Option<&str>,
-    last_name: Option<&str>,
-) -> Result<()> {
-    use std::io::Write;
-
-    if !csv_path.exists() {
-        bail!("contacts CSV not found at {}", csv_path.display());
-    }
-    let raw = std::fs::read_to_string(csv_path)
-        .with_context(|| format!("failed to read {}", csv_path.display()))?;
-    let header_line = raw.lines().next().unwrap_or("");
-    let header: Vec<&str> = header_line.split(',').collect();
-    let phones_i = header
-        .iter()
-        .position(|h| *h == "phones")
-        .ok_or_else(|| anyhow::anyhow!("contacts CSV missing phones column"))?;
-    let exclude_i = header
-        .iter()
-        .position(|h| *h == "exclude")
-        .ok_or_else(|| anyhow::anyhow!("contacts CSV missing exclude column"))?;
-    let first_i = header.iter().position(|h| *h == "first_name");
-    let last_i = header.iter().position(|h| *h == "last_name");
-
-    let mut cols: Vec<String> = header.iter().map(|_| String::new()).collect();
-    cols[phones_i] = phone.to_string();
-    cols[exclude_i] = "false".to_string();
-    if let (Some(i), Some(name)) = (first_i, first_name) {
-        cols[i] = name.to_string();
-    }
-    if let (Some(i), Some(name)) = (last_i, last_name) {
-        cols[i] = name.to_string();
-    }
-
-    let line = cols
-        .iter()
-        .map(|c| {
-            if c.contains(',') || c.contains('"') || c.contains('\n') {
-                format!("\"{}\"", c.replace('"', "\"\""))
-            } else {
-                c.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(csv_path)
-        .with_context(|| format!("failed to open {}", csv_path.display()))?;
-    if !raw.is_empty() && !raw.ends_with('\n') {
-        file.write_all(b"\n")?;
-    }
-    writeln!(file, "{line}")?;
-    Ok(())
-}
-
-/// Ordered label slots: prefer `label_N` over legacy `group_N` for each index.
-fn label_column_slots(headers: &csv::StringRecord) -> Vec<(Option<usize>, Option<usize>)> {
-    let mut max_n = 0usize;
-    for h in headers.iter() {
-        if let Some(n) = parse_numbered_column(h, "label_") {
-            max_n = max_n.max(n);
-        } else if let Some(n) = parse_numbered_column(h, "group_") {
-            max_n = max_n.max(n);
-        }
-    }
-    if max_n == 0 {
-        return Vec::new();
-    }
-    (1..=max_n)
-        .map(|n| {
-            let label = headers
-                .iter()
-                .position(|h| h == format!("label_{n}"));
-            let group = headers
-                .iter()
-                .position(|h| h == format!("group_{n}"));
-            (label, group)
-        })
-        .filter(|(label, group)| label.is_some() || group.is_some())
-        .collect()
-}
-
-fn parse_numbered_column(header: &str, prefix: &str) -> Option<usize> {
-    let rest = header.strip_prefix(prefix)?;
-    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let n: usize = rest.parse().ok()?;
-    (n >= 1).then_some(n)
-}
-
-fn row_labels_from_slots(
-    record: &csv::StringRecord,
-    slots: &[(Option<usize>, Option<usize>)],
-) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for (label_i, group_i) in slots {
-        let label = label_i
-            .and_then(|i| record.get(i))
-            .unwrap_or("")
-            .trim();
-        let group = group_i
-            .and_then(|i| record.get(i))
-            .unwrap_or("")
-            .trim();
-        let raw = if !label.is_empty() { label } else { group };
-        if raw.is_empty() {
-            continue;
-        }
-        let key = raw.to_ascii_lowercase();
-        if !seen.insert(key) {
-            continue;
-        }
-        out.push(raw.to_string());
-    }
-    out
-}
-
-fn split_list(raw: &str) -> Vec<String> {
-    raw.split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn empty_to_none(s: &str) -> Option<String> {
-    let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}
-
-fn parse_bool(raw: &str) -> bool {
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "y"
-    )
 }
 
 #[cfg(test)]
@@ -1172,34 +900,6 @@ mod tests {
             ]),
             vec!["+15551234567", "+15559876543"]
         );
-    }
-
-    #[test]
-    fn join_preferred_name_parts() {
-        assert_eq!(
-            join_preferred_name(Some("Ann"), Some("Lee")).as_deref(),
-            Some("Ann Lee")
-        );
-        assert_eq!(join_preferred_name(Some("Madonna"), None).as_deref(), Some("Madonna"));
-        assert_eq!(join_preferred_name(None, Some("Prince")).as_deref(), Some("Prince"));
-        assert_eq!(join_preferred_name(None, None), None);
-    }
-
-    #[test]
-    fn split_display_name_parts() {
-        assert_eq!(
-            split_display_name(Some("Annette Gubert")),
-            (Some("Annette".into()), Some("Gubert".into()))
-        );
-        assert_eq!(
-            split_display_name(Some("Madonna")),
-            (Some("Madonna".into()), None)
-        );
-        assert_eq!(
-            split_display_name(Some("  Mary Ann  Smith ")),
-            (Some("Mary".into()), Some("Ann Smith".into()))
-        );
-        assert_eq!(split_display_name(None), (None, None));
     }
 
     #[test]
@@ -1285,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_imazing_and_vault_csv_formats() {
+    fn accepts_imazing_and_vcf_but_rejects_vault_csv() {
         let dir = std::env::temp_dir().join(format!(
             "mv-contacts-fmt-{}",
             std::time::SystemTime::now()
@@ -1305,16 +1005,9 @@ mod tests {
             ContactsFileFormat::ImazingCsv
         );
 
-        let vault = dir.join("vault.csv");
-        std::fs::write(
-            &vault,
-            "phones,first_name,last_name,exclude,label_1\n+15551234567,Ada,Lovelace,false,\n",
-        )
-        .unwrap();
-        assert_eq!(
-            contacts_file_format(&vault).unwrap(),
-            ContactsFileFormat::VaultCsv
-        );
+        let current_export =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/contacts/current-labels.csv");
+        assert!(contacts_file_format(&current_export).is_err());
 
         let vcf = dir.join("book.vcf");
         std::fs::write(
@@ -1357,8 +1050,8 @@ mod tests {
         )
         .unwrap();
 
-        let stats = load_contacts_if_needed(&mut conn, Some(&csv_path), true, TEST_ACCOUNT_ID)
-            .unwrap();
+        let stats =
+            load_contacts_if_needed(&mut conn, Some(&csv_path), true, TEST_ACCOUNT_ID).unwrap();
         assert_eq!(stats.contacts, 1);
         assert_eq!(stats.phones, 2);
 
@@ -1387,10 +1080,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("vault.db");
         let vcf_path = dir.join("contacts.vcf");
-        std::fs::write(
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/contacts/contact-contract.vcf"),
             &vcf_path,
-            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\n\
-             TEL:+15551234567\nCATEGORIES:Family\nEND:VCARD\n",
         )
         .unwrap();
 
@@ -1406,9 +1098,19 @@ mod tests {
 
         let stats =
             load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
-        assert_eq!(stats.contacts, 1);
-        assert_eq!(stats.phones, 1);
-        assert!(stats.labels >= 2); // Active + Family
+        assert_eq!(stats.contacts, 2);
+        assert_eq!(stats.phones, 3);
+        assert_eq!(stats.labels, 3);
+
+        let preferred_name: String = conn
+            .query_row(
+                "SELECT preferred_name FROM contacts
+                 WHERE account_id = ?1 AND preferred_handle = '+15551234567'",
+                params![TEST_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preferred_name, "Ada Augusta Lovelace");
 
         let labels: Vec<String> = conn
             .prepare(
@@ -1421,8 +1123,14 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(labels.iter().any(|l| l == "Active"));
-        assert!(labels.iter().any(|l| l == "Family"));
+        assert_eq!(
+            labels,
+            vec![
+                "Family".to_string(),
+                "Friends".to_string(),
+                "Work".to_string()
+            ]
+        );
 
         drop(conn);
         std::fs::remove_dir_all(&dir).ok();
@@ -1439,10 +1147,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("vault.db");
-        let csv_path = dir.join("contacts.csv");
-
         let mut conn = seed_group_vault(&db_path);
-        let created = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID, &csv_path).unwrap();
+        let created = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID).unwrap();
         assert_eq!(created, 2, "group-only and 1:1 handles both get contacts");
 
         let handles: Vec<String> = conn
@@ -1460,8 +1166,9 @@ mod tests {
         );
 
         // Second run is a no-op now that every handle has a contact.
-        let again = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID, &csv_path).unwrap();
+        let again = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID).unwrap();
         assert_eq!(again, 0);
+        assert!(!dir.join("contacts.csv").exists());
 
         drop(conn);
         std::fs::remove_dir_all(&dir).ok();

@@ -17,14 +17,13 @@ import {
   SHOW_GROUP_MESSAGE_BADGE_KEY,
   SHOW_MESSAGE_BADGE_KEY,
 } from "./messageBadgePrefs";
-import { dbPath } from "./paths";
 import {
   isThemeMode,
   parseThemeShare,
   THEME_MODE_KEY,
   THEME_SEEDS_KEY,
 } from "./theme";
-import { ensureVaultSchema } from "./vaultSchema";
+import { openWritableVaultDb } from "./vaultSchema";
 
 export const ACCOUNT_PREF_KEYS = [
   DATE_MODE_KEY,
@@ -51,9 +50,7 @@ export class AccountPrefError extends Error {
 }
 
 function openDb(): Database.Database {
-  const db = new Database(dbPath());
-  ensureVaultSchema(db);
-  return db;
+  return openWritableVaultDb();
 }
 
 export function isAccountPrefKey(key: string): key is AccountPrefKey {

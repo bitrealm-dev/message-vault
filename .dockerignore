@@ -18,9 +18,6 @@ data
 *.db-shm
 config/config.toml
 config/contacts.csv
-config/exclude.csv
-config/contacts.xlsx
-config/eml-contacts.csv
 config/contacts.vcf
 
 # Build artifacts

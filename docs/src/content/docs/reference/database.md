@@ -59,9 +59,7 @@ never used for login. Import API tokens live in `account_api_tokens`.
 ### `contacts` / `contact_handles`
 
 Address book rows and phone/email handles. Display name is `preferred_name`
-only (legacy `first_name` / `last_name` columns are migrated away). Legacy
-`exclude` is migrated into ordinary **Active** / **Inactive** labels; the
-column is kept cleared for compatibility.
+only. Labels are ordinary memberships with no reserved status names.
 
 ### `contact_labels` / `contact_label_members`
 

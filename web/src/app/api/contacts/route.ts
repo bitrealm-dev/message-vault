@@ -39,8 +39,7 @@ export async function POST(req: Request) {
     Array.isArray(body.phones) && body.phones.every((p) => typeof p === "string")
       ? body.phones.map((p) => p.trim()).filter(Boolean)
       : undefined;
-  const exclude = typeof body.exclude === "boolean" ? body.exclude : undefined;
-  const labelsBody = body.labels ?? body.contactGroups;
+  const labelsBody = body.labels;
   const labels =
     Array.isArray(labelsBody) && labelsBody.every((t) => typeof t === "string")
       ? labelsBody.map((t) => t.trim()).filter(Boolean)
@@ -53,7 +52,6 @@ export async function POST(req: Request) {
         firstName,
         lastName,
         phones,
-        exclude,
         labels,
       });
       return NextResponse.json({ contact });

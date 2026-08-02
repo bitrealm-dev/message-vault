@@ -179,6 +179,7 @@ export function stripTags(raw: string): string {
 
 export type VcfContactDraft = {
   firstName: string;
+  middleName: string;
   lastName: string;
   phones: string[];
   labels: string[];
@@ -195,6 +196,7 @@ function pushLabel(labels: string[], name: string): void {
 export function cardToDraft(card: VcfCard): VcfContactDraft {
   const { text: fnStripped, tags: fnTags } = extractTags(card.fnRaw);
   const first = stripTags(card.nGiven);
+  const middle = stripTags(card.nMiddle);
   const last = stripTags(card.nFamily);
 
   const nickname =
@@ -214,6 +216,7 @@ export function cardToDraft(card: VcfCard): VcfContactDraft {
 
   return {
     firstName,
+    middleName: nickname ? "" : middle,
     lastName,
     phones: [...card.phones],
     labels,

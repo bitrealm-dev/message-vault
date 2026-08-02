@@ -4,7 +4,6 @@ import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ReactNode } from "react";
 import {
   ContactPhoneList,
-  displayLabelNames,
   type ContactEditDraft,
 } from "./contactEdit";
 import {
@@ -80,7 +79,7 @@ export function ContactDetailsCard({
   /** Hide labels column (e.g. account identity “Me” edit). */
   hideLabels?: boolean;
 }) {
-  const shownLabels = displayLabelNames(labels);
+  const shownLabels = labels;
   const phoneCount =
     formOpen && draft
       ? draft.phones.filter((p) => p.trim()).length

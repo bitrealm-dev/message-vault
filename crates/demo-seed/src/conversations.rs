@@ -143,11 +143,6 @@ pub fn write_all(
         }
     }
 
-    // Exclude.csv spam (3) — still written to staging but skipped on import
-    for (idx, (handle, _label)) in roster.exclude_handles.iter().enumerate() {
-        write_spam(staging, handle, idx, rng, &mut stats)?;
-    }
-
     // orphaned.jsonl
     write_orphaned(staging, rng, &mut stats)?;
 
@@ -491,35 +486,6 @@ fn write_phone_only_group(
     Ok(())
 }
 
-fn write_spam(
-    staging: &Path,
-    handle: &str,
-    index: usize,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-) -> Result<()> {
-    let path = staging.join(format!("spam-{index}.jsonl"));
-    let mut file = open_jsonl(&path)?;
-    write_conversation_header(
-        &mut file,
-        handle,
-        "individual",
-        None,
-        vec![ParticipantRecord {
-            handle: handle.into(),
-            name_hint: Some("Spam".into()),
-        }],
-    )?;
-    for i in 0..5 {
-        let guid = format!("spam-{handle}-{i}");
-        let msg = text_message(&guid, 2024, i, false, handle, rng);
-        write_message(&mut file, msg)?;
-        stats.messages += 1;
-    }
-    stats.conversation_files += 1;
-    Ok(())
-}
-
 fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> Result<()> {
     let path = staging.join("orphaned.jsonl");
     let mut file = open_jsonl(&path)?;
@@ -652,7 +618,7 @@ fn default_message() -> MessageRecord {
 }
 
 fn individual_message_count(contact: &Contact, rng: &mut impl Rng) -> usize {
-    if contact.exclude {
+    if contact.has_label("Inactive") {
         return rng.random_range(3..10);
     }
     if contact.high_volume {

@@ -61,26 +61,17 @@ describe("vault search + FTS", () => {
       );
       const insertContact = db.prepare(
         `INSERT INTO contacts (
-           account_id, preferred_name, exclude, preferred_handle
-         ) VALUES (?, ?, 0, ?)`,
+           account_id, preferred_name, preferred_handle
+         ) VALUES (?, ?, ?)`,
       );
       const insertHandle = db.prepare(
         `INSERT INTO contact_handles (account_id, handle, contact_id)
          VALUES (?, ?, ?)`,
       );
-      const assignContact = (
-        handle: string,
-        name: string,
-        opts: { exclude?: boolean } = {},
-      ) => {
+      const assignContact = (handle: string, name: string) => {
         const contactId = Number(
           insertContact.run(accountId, name, handle).lastInsertRowid,
         );
-        if (opts.exclude) {
-          db.prepare(`UPDATE contacts SET exclude = 1 WHERE id = ?`).run(
-            contactId,
-          );
-        }
         insertHandle.run(accountId, handle, contactId);
         return contactId;
       };
@@ -194,9 +185,7 @@ describe("vault search + FTS", () => {
       const inactiveConvId = Number(
         insertConv.run(accountId, "+15555551005").lastInsertRowid,
       );
-      const inactiveId = assignContact("+15555551005", "Inactive", {
-        exclude: true,
-      });
+      const inactiveId = assignContact("+15555551005", "Inactive");
       addToLabel(inactiveId, "Family");
       insertMsg.run(
         inactiveConvId,
@@ -407,8 +396,8 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO contacts (
-               account_id, preferred_name, exclude, preferred_handle
-             ) VALUES (?, NULL, 0, ?)`,
+               account_id, preferred_name, preferred_handle
+             ) VALUES (?, NULL, ?)`,
           )
           .run(accountId, "+15555551999").lastInsertRowid,
       );
@@ -420,8 +409,8 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO contacts (
-               account_id, preferred_name, exclude, preferred_handle
-             ) VALUES (?, ?, 0, ?)`,
+               account_id, preferred_name, preferred_handle
+             ) VALUES (?, ?, ?)`,
           )
           .run(accountId, "OnlyFirst", "+15555551998").lastInsertRowid,
       );
@@ -554,7 +543,7 @@ describe("vault search + FTS", () => {
     });
   });
 
-  it("within: searches a label's contacts including inactive ones", () => {
+  it("within: searches a label's contacts", () => {
     runWithAccount(accountId, () => {
       const handles = searchVault("kumquat within:Family").hits.map(
         (h) => h.chatIdentifier,

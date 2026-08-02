@@ -14,8 +14,7 @@ description: Sidebar sections, Message Sources filter, and the Combined view.
 | **Settings** | `/settings/account` | Account, Access, appearance |
 
 Additional contact views: **No Messages** (`/no-messages`), **No label**
-(`/no-label`), and per-label pages under `/label/[slug]`. Labels (including
-ordinary **Active** / **Inactive** labels after migration) appear in the
+(`/no-label`), and per-label pages under `/label/[slug]`. Labels appear in the
 sidebar when present. Legacy `/contacts` and `/excluded` redirect to **All**.
 
 Contact pages use a multi-panel layout (list → threads → messages / details).

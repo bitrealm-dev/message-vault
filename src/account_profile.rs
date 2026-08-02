@@ -5,7 +5,7 @@ use crate::schema;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // phones/emails loaded for handle matching; export uses display_name
-pub struct VaultOwner {
+pub struct AccountProfile {
     pub display_name: String,
     pub phones: Vec<String>,
     pub emails: Vec<String>,
@@ -13,7 +13,7 @@ pub struct VaultOwner {
 
 /// Load account identity (preferred name + phones) and optional email handles.
 /// Soft-defaults when the row is missing or name/phones are empty (`"Me"`, empty sets).
-pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwner> {
+pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
     let preferred_name: Option<Option<String>> = conn
         .query_row(
             "SELECT preferred_name FROM accounts WHERE id = ?1",
@@ -40,7 +40,7 @@ pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwne
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(VaultOwner {
+    Ok(AccountProfile {
         display_name,
         phones,
         emails,
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn load_profile_soft_defaults_and_preferred_name() {
         let conn = setup();
-        let empty = load_vault_owner(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        let empty = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
         assert_eq!(empty.display_name, "Me");
         assert!(empty.phones.is_empty());
 
@@ -223,7 +223,7 @@ mod tests {
             params!["00000000-0000-4000-8000-000000000001", "+15555550100"],
         )
         .unwrap();
-        let loaded = load_vault_owner(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        let loaded = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
         assert_eq!(loaded.display_name, "MB");
         assert_eq!(loaded.phones, vec!["+15555550100".to_string()]);
     }

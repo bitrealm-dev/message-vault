@@ -41,7 +41,7 @@ export function mutationErrorStatus(
 /**
  * Owner-handle predicate that loads the account and owner profile once.
  * Prefer this over calling {@link isOwnerHandle} in a loop: each account read
- * opens its own connection and runs the schema migration check.
+ * opens its own connection.
  */
 export function ownerHandleMatcher(): (handle: string) => boolean {
   const accountId = currentAccountId();

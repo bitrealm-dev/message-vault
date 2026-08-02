@@ -24,7 +24,6 @@ function contact(id: number, name = `C${id}`): ContactListItem {
     sortLast: name,
     letter: name[0] ?? "C",
     labels: [],
-    exclude: false,
     messageCount: 0,
     groupMessageCount: 0,
     dateStart: null,

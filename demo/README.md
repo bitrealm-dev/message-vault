@@ -35,4 +35,3 @@ cargo run --release -- process-assets
 - **Year threads** — message history from 2016 through present (10 years)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
 - **orphaned.jsonl** — messages without a conversation header
-- **exclude.csv** — short-code spam absent after import

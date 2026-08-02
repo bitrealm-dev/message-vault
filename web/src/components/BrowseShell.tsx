@@ -923,7 +923,7 @@ export function BrowseShell({
     const selected = new Set(selectedIds);
     const fromSorted = sorted.filter((c) => selected.has(c.id));
     if (fromSorted.length === selectedIds.size) return fromSorted;
-    // Keep contacts that left the visible list (e.g. Excluded while on All).
+    // Keep contacts that left the visible list after a filter or section change.
     const have = new Set(fromSorted.map((c) => c.id));
     const byId = new Map(contacts.map((c) => [c.id, c]));
     const extras: ContactListItem[] = [];

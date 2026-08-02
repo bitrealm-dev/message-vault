@@ -165,4 +165,30 @@ END:VCARD
       assert.deepEqual(again!.labels, ["Kin"]);
     });
   });
+
+  it("merges the shared duplicate-phone fixture with the Rust contract", () => {
+    seedMessage(accountId, "+15551234567");
+    const fixture = fs.readFileSync(
+      path.join(process.cwd(), "..", "fixtures", "contacts", "contact-contract.vcf"),
+      "utf8",
+    );
+    runWithAccount(accountId, () => {
+      const summary = commitContactsFromVcf(fixture, [
+        { source: "Family", target: "Family", enabled: true },
+        { source: "Work", target: "Work", enabled: true },
+      ]);
+      assert.equal(summary.matched, 2);
+      assert.equal(summary.created, 1);
+      assert.equal(summary.updated, 1);
+
+      const ada = listContacts("all").find(
+        (contact) => contact.preferredHandle === "+15551234567",
+      );
+      assert.ok(ada);
+      const detail = getContact(ada.id);
+      assert.equal(detail?.preferredName, "Ada Augusta Lovelace");
+      assert.deepEqual(detail?.phones, ["+15551234567", "+15559876543"]);
+      assert.deepEqual(detail?.labels, ["Family", "Work"]);
+    });
+  });
 });

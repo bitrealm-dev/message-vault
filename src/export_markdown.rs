@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params, params_from_iter};
 
+use crate::account_profile::{self, AccountProfile};
 use crate::schema;
-use crate::vault_owner::{self, VaultOwner};
 
 #[derive(Debug, Default)]
 pub struct ExportStats {
@@ -26,7 +26,7 @@ pub struct ExportStats {
 /// (typically `data/<source>/assets`).
 pub fn export_markdown(
     conn: &Connection,
-    owner: &VaultOwner,
+    owner: &AccountProfile,
     account_id: &str,
     assets_by_source: &HashMap<String, PathBuf>,
     out_dir: &Path,
@@ -123,7 +123,7 @@ pub fn run_export(
     schema::ensure_vault_schema(&conn)?;
     schema::ensure_messages_schema(&conn)?;
     schema::ensure_contacts_schema(&conn)?;
-    let owner = vault_owner::load_vault_owner(&conn, account_id)?;
+    let owner = account_profile::load_account_profile(&conn, account_id)?;
     export_markdown(
         &conn,
         &owner,
@@ -337,7 +337,7 @@ fn contact_yearly_threads(
 
 fn load_year_messages(
     conn: &Connection,
-    owner: &VaultOwner,
+    owner: &AccountProfile,
     account_id: &str,
     contact: &ExportContact,
     yt: &YearThread,
@@ -500,7 +500,7 @@ fn looks_like_phone(value: &str) -> bool {
 
 fn render_year_page(
     conn: &Connection,
-    owner: &VaultOwner,
+    owner: &AccountProfile,
     account_id: &str,
     contact: &ExportContact,
     yt: &YearThread,
@@ -596,7 +596,7 @@ fn render_year_page(
 
 fn render_message_html(
     msg: &ExportMessage,
-    owner: &VaultOwner,
+    owner: &AccountProfile,
     assets_by_source: &HashMap<String, PathBuf>,
     assets_out: &Path,
     person_dir: &Path,
@@ -934,8 +934,8 @@ mod tests {
 
         conn.execute(
             r#"
-            INSERT INTO contacts (account_id, preferred_name, exclude, preferred_handle)
-            VALUES (?1, 'Zach Henson', 0, '+18285532527')
+            INSERT INTO contacts (account_id, preferred_name, preferred_handle)
+            VALUES (?1, 'Zach Henson', '+18285532527')
             "#,
             params![TEST_ACCOUNT_ID],
         )
@@ -1010,7 +1010,7 @@ mod tests {
         let out = tmp.join("export");
         let snippet = tmp.join("snippet.css");
         fs::write(&snippet, "/* test */").unwrap();
-        let owner = VaultOwner {
+        let owner = AccountProfile {
             display_name: "Matt Beisser".into(),
             phones: vec!["+19412660605".into()],
             emails: vec![],

@@ -47,7 +47,7 @@ export type UseBrowseLabelMembershipResult = {
   flushSelectionDirty: () => void;
 };
 
-/** Contact-label assign/clear/exclude membership + the labels flyout panel state. */
+/** Contact-label assignment and the labels flyout panel state. */
 export function useBrowseLabelMembership(
   options: UseBrowseLabelMembershipOptions,
 ): UseBrowseLabelMembershipResult {

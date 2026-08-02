@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { resetDb } from "./db";
 import { assertVaultWritable } from "./owner";
-import { dbPath } from "./paths";
+import { openWritableVaultDb } from "./vaultSchema";
 
 export type MessageTrashTargets = {
   handles: string[];
@@ -25,23 +25,6 @@ function normalizeTargets(targets: MessageTrashTargets): MessageTrashTargets {
   };
 }
 
-function ensureTrashTables(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS trashed_handles (
-      account_id TEXT NOT NULL,
-      handle TEXT NOT NULL,
-      trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (account_id, handle)
-    );
-    CREATE TABLE IF NOT EXISTS trashed_conversations (
-      account_id TEXT NOT NULL,
-      conversation_id INTEGER NOT NULL,
-      trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (account_id, conversation_id)
-    );
-  `);
-}
-
 /**
  * Write direct-handle and group-conversation trash markers atomically.
  * Direct handles remain assigned to their contacts.
@@ -57,7 +40,6 @@ export function setMessageTrashInDb(
     throw new Error("handles or conversationIds required");
   }
 
-  ensureTrashTables(db);
   const transaction = db.transaction(() => {
     if (trashed) {
       const findGroup = db.prepare(
@@ -117,7 +99,7 @@ function writeMessageTrash(
 ): MessageTrashWriteResult {
   assertVaultWritable();
   const accountId = currentAccountId();
-  const writeDb = new Database(dbPath());
+  const writeDb = openWritableVaultDb();
   try {
     return setMessageTrashInDb(writeDb, targets, trashed, accountId);
   } finally {

@@ -38,10 +38,6 @@ export function draftHasName(draft: ContactEditDraft): boolean {
   return draft.preferredName.trim() !== "";
 }
 
-export function displayLabelNames(labels: string[]): string[] {
-  return labels;
-}
-
 /** Drop empty non-trailing rows; ensure exactly one trailing empty row. */
 export function normalizePhoneRows(phones: string[]): string[] {
   const filled = phones.filter((p, i) => {

@@ -80,7 +80,7 @@ export type ParsedSearchQuery = {
   context: number;
   /** Result ordering. */
   sort: "date-desc" | "date-asc" | "relevance";
-  /** Label whose contacts to search, active or not. */
+  /** Label whose contacts to search. */
   within: string | null;
   /** Contact handle (name or phone number). Legacy combined filter. */
   handle: string | null;
@@ -437,7 +437,7 @@ function parseFtsLexemes(lexemes: FtsLex[]): FtsNode | null {
 
   function parseOr(): FtsNode | null {
     const nodes: FtsNode[] = [];
-    let first = parseAnd();
+    const first = parseAnd();
     if (!first) return null;
     nodes.push(first);
     while (peek()?.kind === "or") {

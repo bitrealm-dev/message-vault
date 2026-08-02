@@ -9,9 +9,9 @@ import { dbPath } from "./paths";
 
 /**
  * Export the current account’s contacts as a vault-owned CSV projection
- * sourced from SQLite (not the side-effect CSV mirror or raw VCF).
+ * sourced from SQLite (not raw VCF).
  *
- * Includes: sanitized phones, names, inactive flag, and every vault label.
+ * Includes: sanitized phones, names, and every vault label.
  * Omits: DB-only email handles and all unrelated VCF fields.
  */
 export function exportContactsCsvFromDb(
@@ -61,7 +61,6 @@ export function exportContactsCsvFromDb(
       rows.push({
         phones,
         preferredName: c.preferred_name?.trim() || null,
-        exclude: false,
         labels,
       });
     }

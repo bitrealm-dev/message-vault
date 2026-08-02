@@ -1,10 +1,5 @@
-import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-
 import Database from "better-sqlite3";
-
-import { assetsDirName, dataDir } from "./paths";
+import { ensureDbParentDir } from "./paths";
 
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db
@@ -15,50 +10,7 @@ function tableExists(db: Database.Database, name: string): boolean {
   return row.n > 0;
 }
 
-function tableHasColumn(db: Database.Database, table: string, column: string): boolean {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM pragma_table_info(?) WHERE name = ?`,
-    )
-    .get(table, column) as { n: number };
-  return row.n > 0;
-}
-
-/** Fresh-start: drop legacy single-tenant vault tables lacking account_id. */
-function wipeLegacyVaultTables(db: Database.Database): void {
-  db.exec(`
-    PRAGMA foreign_keys = OFF;
-    DROP TABLE IF EXISTS tapbacks;
-    DROP TABLE IF EXISTS attachments;
-    DROP TABLE IF EXISTS messages;
-    DROP TABLE IF EXISTS participants;
-    DROP TABLE IF EXISTS conversations;
-    DROP TABLE IF EXISTS staging_tapbacks;
-    DROP TABLE IF EXISTS staging_attachments;
-    DROP TABLE IF EXISTS staging_messages;
-    DROP TABLE IF EXISTS staging_participants;
-    DROP TABLE IF EXISTS staging_conversations;
-    DROP TABLE IF EXISTS contact_label_members;
-    DROP TABLE IF EXISTS contact_labels;
-    DROP TABLE IF EXISTS contact_group_members;
-    DROP TABLE IF EXISTS contact_groups;
-    DROP TABLE IF EXISTS contact_handles;
-    DROP TABLE IF EXISTS contacts;
-    DROP TABLE IF EXISTS trashed_handles;
-    DROP TABLE IF EXISTS trashed_conversations;
-    DROP TABLE IF EXISTS trashed_contacts;
-    PRAGMA foreign_keys = ON;
-  `);
-}
-
 export function ensureVaultSchema(db: Database.Database): void {
-  if (
-    tableExists(db, "conversations") &&
-    !tableHasColumn(db, "conversations", "account_id")
-  ) {
-    wipeLegacyVaultTables(db);
-  }
-
   db.exec(`PRAGMA foreign_keys = ON;`);
 
   db.exec(`
@@ -153,6 +105,10 @@ export function ensureVaultSchema(db: Database.Database): void {
       ON messages (conversation_id, timestamp);
     CREATE INDEX IF NOT EXISTS ix_messages_conversation_source_timestamp
       ON messages (conversation_id, source, timestamp);
+    CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_account_source_guid
+      ON messages (account_id, source, guid)
+      WHERE guid IS NOT NULL AND guid != '';
     CREATE INDEX IF NOT EXISTS ix_messages_content_key
       ON messages (content_key)
       WHERE content_key IS NOT NULL AND content_key != '';
@@ -236,6 +192,11 @@ export function ensureVaultSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS ix_staging_messages_conversation_timestamp
       ON staging_messages (conversation_id, timestamp);
+    CREATE INDEX IF NOT EXISTS ix_staging_messages_account_id
+      ON staging_messages (account_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_staging_messages_account_source_guid
+      ON staging_messages (account_id, source, guid)
+      WHERE guid IS NOT NULL AND guid != '';
 
     CREATE TABLE IF NOT EXISTS staging_attachments (
       id INTEGER PRIMARY KEY,
@@ -272,7 +233,6 @@ export function ensureVaultSchema(db: Database.Database): void {
       id INTEGER PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       preferred_name TEXT,
-      exclude INTEGER NOT NULL DEFAULT 0,
       preferred_handle TEXT
     );
 
@@ -323,169 +283,28 @@ export function ensureVaultSchema(db: Database.Database): void {
     );
   `);
 
-  migrateLegacyAccountsEmailColumn(db);
-  migrateVaultOwnersIntoAccounts(db);
-  migrateAccountsDropNameParts(db);
-  migrateContactGroupsToLabels(db);
-  migrateContactStatusesToLabels(db);
-  migrateContactsPreferredName(db);
-  migrateContactsDropNameParts(db);
-  migrateMessagesAccountGuid(db);
-  migrateStagingAccountGuid(db);
-  migrateAccountsDefaultReadOnly(db);
-  migrateAccountsPasswordHash(db);
-  migrateAccountApiTokensToHash(db);
-  migrateParticipantsHandleIndex(db);
-  migrateAttachmentSizeBytes(db);
-  backfillAttachmentSizeBytes(db);
   ensureMessagesFts(db);
 }
 
-function migrateAccountsPasswordHash(db: Database.Database): void {
-  if (!tableExists(db, "accounts")) return;
-  if (tableHasColumn(db, "accounts", "password_hash")) return;
-  db.exec(`ALTER TABLE accounts ADD COLUMN password_hash TEXT`);
-}
-
-/** Add `size_bytes` column on attachments tables. */
-function migrateAttachmentSizeBytes(db: Database.Database): void {
-  if (tableExists(db, "attachments") && !tableHasColumn(db, "attachments", "size_bytes")) {
-    db.exec(`ALTER TABLE attachments ADD COLUMN size_bytes INTEGER`);
+/** Open a writable vault connection with the complete current schema ready. */
+export function openWritableVaultDb(): Database.Database {
+  const db = new Database(ensureDbParentDir(), { timeout: 15000 });
+  try {
+    db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 15000");
+    db.pragma("foreign_keys = ON");
+    ensureVaultSchema(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
   }
-  if (
-    tableExists(db, "staging_attachments") &&
-    !tableHasColumn(db, "staging_attachments", "size_bytes")
-  ) {
-    db.exec(`ALTER TABLE staging_attachments ADD COLUMN size_bytes INTEGER`);
-  }
-}
-
-const ATTACHMENT_SIZE_BACKFILL_META_KEY = "attachment_size_bytes_backfill_v1";
-
-/** One-time fill of `size_bytes` from on-disk asset blobs. */
-function backfillAttachmentSizeBytes(db: Database.Database): void {
-  if (
-    !tableExists(db, "attachments") ||
-    !tableHasColumn(db, "attachments", "size_bytes")
-  ) {
-    return;
-  }
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(ATTACHMENT_SIZE_BACKFILL_META_KEY) as { n: number };
-  if (already.n > 0) return;
-
-  const rows = db
-    .prepare(
-      `SELECT a.id AS id, a.assets_path AS assets_path,
-              m.source AS source, c.account_id AS account_id
-       FROM attachments a
-       JOIN messages m ON m.id = a.message_id
-       JOIN conversations c ON c.id = m.conversation_id
-       WHERE a.size_bytes IS NULL
-         AND a.assets_path IS NOT NULL
-         AND trim(a.assets_path) != ''`,
-    )
-    .all() as Array<{
-    id: number;
-    assets_path: string;
-    source: string;
-    account_id: string;
-  }>;
-
-  const update = db.prepare(
-    `UPDATE attachments SET size_bytes = ? WHERE id = ?`,
-  );
-  const assetsName = assetsDirName();
-  const root = dataDir();
-  const fill = db.transaction(() => {
-    for (const row of rows) {
-      const file = path.join(
-        root,
-        row.account_id,
-        row.source,
-        assetsName,
-        row.assets_path,
-      );
-      try {
-        const st = fs.statSync(file);
-        if (st.isFile()) update.run(st.size, row.id);
-      } catch {
-        // Missing blob — leave NULL.
-      }
-    }
-    db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-      ATTACHMENT_SIZE_BACKFILL_META_KEY,
-    );
-  });
-  fill();
-}
-
-function hashApiTokenPlaintext(token: string): string {
-  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
-}
-
-/** Migrate plaintext `token` → `token_hash` (SHA-256 hex). */
-function migrateAccountApiTokensToHash(db: Database.Database): void {
-  if (!tableExists(db, "account_api_tokens")) return;
-  const hasToken = tableHasColumn(db, "account_api_tokens", "token");
-  const hasHash = tableHasColumn(db, "account_api_tokens", "token_hash");
-  if (hasHash && !hasToken) return;
-
-  if (hasToken) {
-    db.exec(`PRAGMA foreign_keys = OFF;`);
-    db.exec(`
-      CREATE TABLE account_api_tokens_new (
-        account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-        token_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
-      );
-    `);
-    const rows = db
-      .prepare(`SELECT account_id, token, created_at FROM account_api_tokens`)
-      .all() as Array<{ account_id: string; token: string; created_at: string }>;
-    const insert = db.prepare(
-      `INSERT INTO account_api_tokens_new (account_id, token_hash, created_at)
-       VALUES (?, ?, ?)`,
-    );
-    for (const row of rows) {
-      insert.run(row.account_id, hashApiTokenPlaintext(row.token), row.created_at);
-    }
-    db.exec(`
-      DROP TABLE account_api_tokens;
-      ALTER TABLE account_api_tokens_new RENAME TO account_api_tokens;
-      PRAGMA foreign_keys = ON;
-    `);
-    return;
-  }
-
-  if (!hasHash) {
-    db.exec(`
-      DROP TABLE IF EXISTS account_api_tokens;
-      CREATE TABLE account_api_tokens (
-        account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-        token_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
-      );
-    `);
-  }
-}
-
-function migrateParticipantsHandleIndex(db: Database.Database): void {
-  if (!tableExists(db, "participants")) return;
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);`,
-  );
 }
 
 /** Marker for the one-time FTS5 backfill of existing messages. */
 export const MESSAGES_FTS_BACKFILL_META_KEY = "messages_fts_backfill_v1";
+/** Marker that current FTS sync trigger definitions are installed. */
+export const MESSAGES_FTS_TRIGGERS_META_KEY = "messages_fts_triggers_v1";
 
 /** Contentless FTS5 index over message body/subject plus attachment text. */
 function ensureMessagesFts(db: Database.Database): void {
@@ -630,6 +449,9 @@ function ensureMessagesFts(db: Database.Database): void {
       FROM messages m WHERE m.id = new.message_id;
     END;
   `);
+  db.prepare(
+    `INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, '1')`,
+  ).run(MESSAGES_FTS_TRIGGERS_META_KEY);
 
   backfillMessagesFts(db);
 }
@@ -660,566 +482,5 @@ function backfillMessagesFts(db: Database.Database): void {
   `);
   db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
     MESSAGES_FTS_BACKFILL_META_KEY,
-  );
-}
-
-/** Marker for the one-time migration that locks existing accounts by default. */
-export const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY =
-  "accounts_default_read_only_v1";
-export const CONTACT_STATUS_LABELS_META_KEY = "contact_status_labels_v1";
-
-/**
- * One-time conversion of the legacy exclude flag into ordinary labels.
- * Future code no longer gives either label special behavior.
- */
-function migrateContactStatusesToLabels(db: Database.Database): void {
-  if (
-    !tableExists(db, "contacts") ||
-    !tableExists(db, "contact_labels") ||
-    !tableExists(db, "contact_label_members") ||
-    !tableExists(db, "schema_meta")
-  ) {
-    return;
-  }
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(CONTACT_STATUS_LABELS_META_KEY) as { n: number };
-  if (already.n > 0) return;
-
-  db.transaction(() => {
-    db.exec(`
-      INSERT INTO contact_labels (account_id, name)
-      SELECT DISTINCT c.account_id, 'Active'
-      FROM contacts c
-      WHERE NOT EXISTS (
-        SELECT 1 FROM contact_labels cl
-        WHERE cl.account_id = c.account_id AND cl.name = 'Active' COLLATE NOCASE
-      );
-      INSERT INTO contact_labels (account_id, name)
-      SELECT DISTINCT c.account_id, 'Inactive'
-      FROM contacts c
-      WHERE NOT EXISTS (
-        SELECT 1 FROM contact_labels cl
-        WHERE cl.account_id = c.account_id AND cl.name = 'Inactive' COLLATE NOCASE
-      );
-
-      INSERT OR IGNORE INTO contact_label_members (contact_id, label_id)
-      SELECT c.id, cl.id
-      FROM contacts c
-      JOIN contact_labels cl
-        ON cl.account_id = c.account_id
-       AND cl.name = CASE WHEN c.exclude != 0 THEN 'Inactive' ELSE 'Active' END
-           COLLATE NOCASE;
-
-      UPDATE contacts SET exclude = 0 WHERE exclude != 0;
-    `);
-    db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-      CONTACT_STATUS_LABELS_META_KEY,
-    );
-  })();
-}
-
-/** One-time: lock every existing account. Later unlocks are preserved. */
-function migrateAccountsDefaultReadOnly(db: Database.Database): void {
-  if (!tableExists(db, "accounts") || !tableExists(db, "schema_meta")) {
-    return;
-  }
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(ACCOUNTS_DEFAULT_READ_ONLY_META_KEY) as { n: number };
-  if (already.n > 0) return;
-  db.prepare(`UPDATE accounts SET read_only = 1`).run();
-  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-    ACCOUNTS_DEFAULT_READ_ONLY_META_KEY,
-  );
-}
-
-/** Denormalize account_id onto messages; scope GUID uniqueness per account. */
-function migrateMessagesAccountGuid(db: Database.Database): void {
-  if (!tableExists(db, "messages")) return;
-
-  if (!tableHasColumn(db, "messages", "account_id")) {
-    db.exec(
-      `ALTER TABLE messages ADD COLUMN account_id TEXT REFERENCES accounts(id);`,
-    );
-    db.exec(`
-      UPDATE messages
-      SET account_id = (
-        SELECT c.account_id FROM conversations c
-        WHERE c.id = messages.conversation_id
-      )
-      WHERE account_id IS NULL;
-    `);
-    const orphans = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM messages WHERE account_id IS NULL OR account_id = ''`,
-      )
-      .get() as { n: number };
-    if (orphans.n > 0) {
-      throw new Error(
-        `messages.account_id migration found ${orphans.n} orphan message(s)`,
-      );
-    }
-  }
-
-  // Fresh CREATE TABLE IF NOT EXISTS may still leave a legacy global GUID index.
-  db.exec(`
-    DROP INDEX IF EXISTS ix_messages_source_guid;
-    CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_account_source_guid
-      ON messages (account_id, source, guid)
-      WHERE guid IS NOT NULL AND guid != '';
-  `);
-}
-
-/**
- * Older staging_messages lacked account_id. Staging is ephemeral — rebuild when
- * the schema is stale so CREATE INDEX on account_id cannot fail at startup.
- */
-function migrateStagingAccountGuid(db: Database.Database): void {
-  if (!tableExists(db, "staging_messages")) {
-    ensureStagingIndexes(db);
-    return;
-  }
-  if (
-    !tableHasColumn(db, "staging_messages", "account_id") ||
-    indexExists(db, "ix_staging_messages_source_guid")
-  ) {
-    db.exec(`
-      PRAGMA foreign_keys = ON;
-      DROP TABLE IF EXISTS staging_tapbacks;
-      DROP TABLE IF EXISTS staging_attachments;
-      DROP TABLE IF EXISTS staging_messages;
-      DROP TABLE IF EXISTS staging_participants;
-      DROP TABLE IF EXISTS staging_conversations;
-    `);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS staging_conversations (
-        id INTEGER PRIMARY KEY,
-        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-        chat_identifier TEXT NOT NULL,
-        service TEXT,
-        conversation_type TEXT NOT NULL,
-        group_title TEXT,
-        exported_at TEXT,
-        source_file TEXT NOT NULL,
-        UNIQUE(account_id, chat_identifier)
-      );
-      CREATE TABLE IF NOT EXISTS staging_participants (
-        id INTEGER PRIMARY KEY,
-        conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-        handle TEXT NOT NULL,
-        name_hint TEXT,
-        UNIQUE(conversation_id, handle)
-      );
-      CREATE TABLE IF NOT EXISTS staging_messages (
-        id INTEGER PRIMARY KEY,
-        conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-        source TEXT NOT NULL,
-        guid TEXT,
-        timestamp TEXT NOT NULL,
-        timestamp_utc TEXT,
-        is_from_me INTEGER NOT NULL,
-        sender TEXT,
-        subject TEXT,
-        body TEXT,
-        is_announcement INTEGER NOT NULL DEFAULT 0,
-        is_reply INTEGER NOT NULL DEFAULT 0,
-        thread_originator_guid TEXT,
-        thread_originator_part INTEGER,
-        num_replies INTEGER NOT NULL DEFAULT 0,
-        sort_order INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS staging_attachments (
-        id INTEGER PRIMARY KEY,
-        message_id INTEGER NOT NULL REFERENCES staging_messages(id) ON DELETE CASCADE,
-        path TEXT,
-        original_name TEXT,
-        mime_type TEXT,
-        is_sticker INTEGER NOT NULL DEFAULT 0,
-        transcription TEXT,
-        sha256 TEXT,
-        assets_path TEXT,
-        size_bytes INTEGER,
-        derived_sha256 TEXT,
-        derived_assets_path TEXT,
-        derived_mime_type TEXT
-      );
-      CREATE TABLE IF NOT EXISTS staging_tapbacks (
-        id INTEGER PRIMARY KEY,
-        message_id INTEGER NOT NULL REFERENCES staging_messages(id) ON DELETE CASCADE,
-        part_index INTEGER NOT NULL DEFAULT 0,
-        kind TEXT NOT NULL,
-        emoji TEXT,
-        is_from_me INTEGER NOT NULL,
-        sender TEXT
-      );
-    `);
-  }
-  ensureStagingIndexes(db);
-}
-
-function ensureStagingIndexes(db: Database.Database): void {
-  if (!tableExists(db, "staging_messages")) return;
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS ix_staging_messages_conversation_timestamp
-      ON staging_messages (conversation_id, timestamp);
-    DROP INDEX IF EXISTS ix_staging_messages_source_guid;
-    CREATE INDEX IF NOT EXISTS ix_staging_messages_account_id
-      ON staging_messages (account_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS ix_staging_messages_account_source_guid
-      ON staging_messages (account_id, source, guid)
-      WHERE guid IS NOT NULL AND guid != '';
-    CREATE INDEX IF NOT EXISTS ix_staging_attachments_sha256 ON staging_attachments (sha256);
-    CREATE INDEX IF NOT EXISTS ix_staging_attachments_message_id ON staging_attachments (message_id);
-    CREATE INDEX IF NOT EXISTS ix_staging_tapbacks_message_id ON staging_tapbacks (message_id);
-  `);
-}
-
-function indexExists(db: Database.Database, name: string): boolean {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?`,
-    )
-    .get(name) as { n: number };
-  return row.n > 0;
-}
-
-/** Rename legacy contact_groups* tables to contact_labels*. */
-function migrateContactGroupsToLabels(db: Database.Database): void {
-  if (!tableExists(db, "contact_groups") || tableExists(db, "contact_labels")) {
-    return;
-  }
-
-  db.exec(`PRAGMA foreign_keys = OFF;`);
-  db.exec(`
-    ALTER TABLE contact_groups RENAME TO contact_labels;
-    ALTER TABLE contact_group_members RENAME TO contact_label_members;
-    ALTER TABLE contact_label_members RENAME COLUMN group_id TO label_id;
-  `);
-  db.exec(`PRAGMA foreign_keys = ON;`);
-}
-
-/** Rebuild accounts without legacy email column; optional handle emails live in account_emails. */
-function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
-  if (!tableExists(db, "accounts") || !tableHasColumn(db, "accounts", "email")) {
-    return;
-  }
-
-  db.exec(`PRAGMA foreign_keys = OFF;`);
-
-  const rows = db
-    .prepare(
-      `SELECT id, email FROM accounts WHERE email IS NOT NULL AND trim(email) != ''`,
-    )
-    .all() as Array<{ id: string; email: string }>;
-
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
-     VALUES (?, ?, 1)`,
-  );
-  for (const row of rows) {
-    insert.run(row.id, row.email.trim());
-  }
-
-  db.exec(`
-    CREATE TABLE accounts_new (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 0,
-      password_hash TEXT,
-      preferred_name TEXT
-    );
-    INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-      SELECT id, username, read_only, NULL, NULL FROM accounts;
-    DROP TABLE accounts;
-    ALTER TABLE accounts_new RENAME TO accounts;
-  `);
-
-  db.exec(`PRAGMA foreign_keys = ON;`);
-}
-
-export const VAULT_OWNERS_INTO_ACCOUNTS_META_KEY = "vault_owners_into_accounts_v1";
-
-/** Fold vault_owners* into accounts.preferred_name + account_phones; drop legacy owner tables. */
-function migrateVaultOwnersIntoAccounts(db: Database.Database): void {
-  if (!tableExists(db, "accounts")) return;
-
-  if (!tableHasColumn(db, "accounts", "preferred_name")) {
-    db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
-  }
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS account_phones (
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      phone TEXT NOT NULL,
-      PRIMARY KEY (account_id, phone)
-    );
-  `);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(VAULT_OWNERS_INTO_ACCOUNTS_META_KEY) as { n: number };
-  if (already.n > 0) return;
-
-  if (tableExists(db, "vault_owners")) {
-    if (!tableHasColumn(db, "vault_owners", "first_name")) {
-      db.exec(`
-        ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
-        ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
-        UPDATE vault_owners
-        SET first_name = trim(display_name)
-        WHERE first_name = '' OR first_name IS NULL;
-      `);
-    }
-
-    db.exec(`
-      UPDATE accounts
-      SET preferred_name = coalesce(
-        (
-          SELECT NULLIF(trim(vo.display_name), '')
-          FROM vault_owners vo
-          WHERE vo.account_id = accounts.id
-        ),
-        NULLIF(trim(
-          trim(coalesce(
-            (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-            ''
-          )) || ' ' || trim(coalesce(
-            (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-            ''
-          ))
-        ), ''),
-        preferred_name
-      )
-      WHERE EXISTS (SELECT 1 FROM vault_owners vo WHERE vo.account_id = accounts.id);
-    `);
-
-    if (tableExists(db, "vault_owner_phones")) {
-      db.exec(`
-        INSERT OR IGNORE INTO account_phones (account_id, phone)
-        SELECT account_id, phone FROM vault_owner_phones;
-      `);
-    }
-    if (tableExists(db, "vault_owner_emails")) {
-      db.exec(`
-        INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
-        SELECT account_id, email, 0 FROM vault_owner_emails;
-      `);
-    }
-
-    db.exec(`
-      DROP TABLE IF EXISTS vault_owner_emails;
-      DROP TABLE IF EXISTS vault_owner_phones;
-      DROP TABLE IF EXISTS vault_owners;
-    `);
-  }
-
-  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-    VAULT_OWNERS_INTO_ACCOUNTS_META_KEY,
-  );
-}
-
-/** Drop obsolete accounts.first_name / last_name; keep preferred_name only. */
-function migrateAccountsDropNameParts(db: Database.Database): void {
-  if (!tableExists(db, "accounts")) return;
-
-  const hasFirst = tableHasColumn(db, "accounts", "first_name");
-  const hasLast = tableHasColumn(db, "accounts", "last_name");
-  if (!hasFirst && !hasLast) {
-    if (!tableHasColumn(db, "accounts", "preferred_name")) {
-      db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
-    }
-    return;
-  }
-
-  if (!tableHasColumn(db, "accounts", "preferred_name")) {
-    db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
-  }
-
-  if (hasFirst && hasLast) {
-    db.exec(`
-      UPDATE accounts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else if (hasFirst) {
-    db.exec(`
-      UPDATE accounts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(first_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else {
-    db.exec(`
-      UPDATE accounts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(last_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  }
-
-  const hasPassword = tableHasColumn(db, "accounts", "password_hash");
-  db.exec(`PRAGMA foreign_keys = OFF;`);
-  db.exec(`
-    CREATE TABLE accounts_new (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 0,
-      password_hash TEXT,
-      preferred_name TEXT
-    );
-  `);
-  if (hasPassword) {
-    db.exec(`
-      INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-        SELECT id, username, read_only, password_hash, preferred_name FROM accounts;
-    `);
-  } else {
-    db.exec(`
-      INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
-        SELECT id, username, read_only, NULL, preferred_name FROM accounts;
-    `);
-  }
-  db.exec(`
-    DROP TABLE accounts;
-    ALTER TABLE accounts_new RENAME TO accounts;
-    PRAGMA foreign_keys = ON;
-  `);
-}
-
-export const CONTACTS_PREFERRED_NAME_META_KEY = "contacts_preferred_name_v1";
-export const CONTACTS_DROP_NAME_PARTS_META_KEY = "contacts_drop_name_parts_v1";
-
-/** Add `preferred_name` and backfill from first + last once. */
-function migrateContactsPreferredName(db: Database.Database): void {
-  if (!tableExists(db, "contacts")) return;
-  if (!tableHasColumn(db, "contacts", "preferred_name")) {
-    db.exec(`ALTER TABLE contacts ADD COLUMN preferred_name TEXT`);
-  }
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(CONTACTS_PREFERRED_NAME_META_KEY) as { n: number };
-  if (already.n > 0) return;
-
-  const hasFirst = tableHasColumn(db, "contacts", "first_name");
-  const hasLast = tableHasColumn(db, "contacts", "last_name");
-  if (hasFirst && hasLast) {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = NULLIF(trim(
-        trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
-      ), '')
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else if (hasFirst) {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(first_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else if (hasLast) {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(last_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  }
-  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-    CONTACTS_PREFERRED_NAME_META_KEY,
-  );
-}
-
-/** Drop contacts.first_name / last_name; keep preferred_name only. */
-function migrateContactsDropNameParts(db: Database.Database): void {
-  if (!tableExists(db, "contacts")) return;
-  const hasFirst = tableHasColumn(db, "contacts", "first_name");
-  const hasLast = tableHasColumn(db, "contacts", "last_name");
-  if (!hasFirst && !hasLast) return;
-
-  if (!tableHasColumn(db, "contacts", "preferred_name")) {
-    db.exec(`ALTER TABLE contacts ADD COLUMN preferred_name TEXT`);
-  }
-  if (hasFirst && hasLast) {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else if (hasFirst) {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(first_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  } else {
-    db.exec(`
-      UPDATE contacts
-      SET preferred_name = coalesce(
-        NULLIF(trim(preferred_name), ''),
-        NULLIF(trim(last_name), '')
-      )
-      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-    `);
-  }
-
-  db.exec(`PRAGMA foreign_keys = OFF;`);
-  db.exec(`
-    CREATE TABLE contacts_new (
-      id INTEGER PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      preferred_name TEXT,
-      exclude INTEGER NOT NULL DEFAULT 0,
-      preferred_handle TEXT
-    );
-    INSERT INTO contacts_new (id, account_id, preferred_name, exclude, preferred_handle)
-      SELECT id, account_id, preferred_name, exclude, preferred_handle FROM contacts;
-    DROP TABLE contacts;
-    ALTER TABLE contacts_new RENAME TO contacts;
-    CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
-    PRAGMA foreign_keys = ON;
-  `);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  db.prepare(`INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, '1')`).run(
-    CONTACTS_DROP_NAME_PARTS_META_KEY,
   );
 }

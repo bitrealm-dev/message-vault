@@ -15,13 +15,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use rusqlite::Connection;
 
+use crate::account_profile;
 use crate::api_tokens;
 use crate::assets;
 use crate::config::{Config, validate_source_id};
 use crate::dedupe;
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::schema;
-use crate::vault_owner;
 
 const MAX_BODY_BYTES: usize = 512 * 1024 * 1024; // 512 MiB (multipart uploads)
 
@@ -123,7 +123,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     schema::configure_connection(&db_conn)?;
     let _: i64 = db_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
     schema::ensure_vault_schema(&db_conn)?;
-    schema::ensure_messages_schema(&db_conn)?;
     let mode: String = db_conn
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .unwrap_or_else(|_| "unknown".into());
@@ -255,7 +254,7 @@ async fn lookup_or_resolve_query(
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
-        vault_owner::lookup_account_ref(&conn, &account_ref)
+        account_profile::lookup_account_ref(&conn, &account_ref)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("account lookup task: {e}")))?
@@ -268,7 +267,7 @@ async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
-        vault_owner::username_for_account(&conn, &account_id)
+        account_profile::username_for_account(&conn, &account_id)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("username lookup task: {e}")))?
@@ -278,7 +277,7 @@ async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String
 async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
     let db = db_path.to_path_buf();
     let account_ref = account_ref.to_string();
-    tokio::task::spawn_blocking(move || vault_owner::resolve_account_ref_at(&db, &account_ref))
+    tokio::task::spawn_blocking(move || account_profile::resolve_account_ref_at(&db, &account_ref))
         .await
         .map_err(|e| ApiError::Internal(format!("account resolve task: {e}")))?
         .map_err(|e| ApiError::BadRequest(e.to_string()))
@@ -490,7 +489,9 @@ async fn resolve_asset_lookup(
     let account_lookup = account.clone();
     let source_lookup = source_id.clone();
     let existing = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg.paths.assets_dir_for_account(&account_lookup, &source_lookup);
+        let assets_dir = cfg
+            .paths
+            .assets_dir_for_account(&account_lookup, &source_lookup);
         assets::lookup_by_sha256(&assets_dir, &sha_lookup)
     })
     .await
@@ -575,7 +576,13 @@ async fn asset_put_handler(
     let assets_dir_store = assets_dir.clone();
     let result = tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&assets_dir_store)?;
-        assets::store_verified(&tmp_for_store, &sha, &assets_dir_store, mime.as_deref(), true)
+        assets::store_verified(
+            &tmp_for_store,
+            &sha,
+            &assets_dir_store,
+            mime.as_deref(),
+            true,
+        )
     })
     .await
     .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?;
@@ -583,8 +590,7 @@ async fn asset_put_handler(
     // Rename consumes the temp file; remove leftovers after errors / already_present races.
     let _ = tokio::fs::remove_file(&tmp_path).await;
 
-    let (stored, already_present) =
-        result.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let (stored, already_present) = result.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetPutResponse {
         ok: true,
         sha256: stored.sha256,
@@ -598,8 +604,7 @@ async fn discard_body(body: axum::body::Body) -> Result<(), ApiError> {
     let mut stream = body.into_data_stream();
     let mut seen = 0usize;
     while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+        let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         seen = seen.saturating_add(chunk.len());
         if seen > MAX_BODY_BYTES {
             return Err(ApiError::BadRequest("request body too large".into()));
@@ -620,8 +625,7 @@ async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64,
     let mut written = 0u64;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+        let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         written = written.saturating_add(chunk.len() as u64);
         if written > MAX_BODY_BYTES as u64 {
             return Err(ApiError::BadRequest("request body too large".into()));
@@ -762,15 +766,12 @@ async fn run_import_path(
         // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
         // Multipart supplies a temp asset_root for relative file parts.
         let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
-        let (mirror_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&account)?;
         let opts = ImportOptions {
             db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
             asset_root: &asset_root_owned,
             // HTTP import does not reload the address book; use CLI import-contacts / web VCF.
             contacts: None,
-            contacts_mirror_csv: &mirror_csv,
-            exclude_csv: &exclude_csv,
             overwrite_contacts: false,
             mode,
             source: &source_id,

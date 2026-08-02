@@ -41,7 +41,7 @@ pub fn main() -> Result<()> {
 
     assets::write_attachment_blobs(&attachments)?;
     let roster = personas::build_roster();
-    contacts::write_csvs(&config_dir, &roster)?;
+    contacts::write_vcf(&config_dir, &roster)?;
     contacts::write_config_toml(&config_dir)?;
     contacts::write_seed_toml(&config_dir)?;
 
@@ -88,7 +88,7 @@ cargo run --release -- process-assets
 
 ## Exercises
 
-- **Contacts / All / Excluded / No Messages** — CSV `exclude` and zero-message rows
+- **Contacts / All / labels / No Messages** — label memberships and zero-message rows
 - **Unassigned** — handles with messages but no CSV row (phone + email-only)
 - **Frequent / lapsed** — ~15 contacts busy in the past 3 years; ~10 mostly older history
 - **High volume** — a couple 1:1 threads with 1000+ messages
@@ -96,7 +96,6 @@ cargo run --release -- process-assets
 - **Year threads** — message history from 2016 through present (10 years)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
 - **orphaned.jsonl** — messages without a conversation header
-- **exclude.csv** — short-code spam absent after import
 "#,
         contact_count = stats.contacts,
         conversation_count = stats.conversation_files,

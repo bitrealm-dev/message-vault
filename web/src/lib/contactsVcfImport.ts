@@ -134,7 +134,11 @@ function collectMatchedCards(
       continue;
     }
 
-    let preferredName = [draft.firstName.trim(), draft.lastName.trim()]
+    let preferredName = [
+      draft.firstName.trim(),
+      draft.middleName.trim(),
+      draft.lastName.trim(),
+    ]
       .filter(Boolean)
       .join(" ");
     if (!preferredName) {
@@ -345,18 +349,4 @@ export function commitContactsFromVcf(
   }
 
   return summary;
-}
-
-/**
- * @deprecated Prefer previewContactsFromVcf + commitContactsFromVcf.
- * Legacy path: preview-equivalent match filter with all categories enabled.
- */
-export function importContactsFromVcf(text: string): VcfImportSummary {
-  const preview = previewContactsFromVcf(text);
-  const mappings: VcfCategoryMapping[] = preview.categories.map((c) => ({
-    source: c.source,
-    target: c.source,
-    enabled: true,
-  }));
-  return commitContactsFromVcf(text, mappings);
 }

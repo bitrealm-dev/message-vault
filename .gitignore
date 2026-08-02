@@ -48,9 +48,6 @@ target
 # Local machine config (use config/config.toml.example)
 /config/config.toml
 /config/contacts.csv
-/config/exclude.csv
-/config/contacts.xlsx
-/config/eml-contacts.csv
 
 # Local Next.js runtime data and duplicate generated demo bundle
 /web/config/
