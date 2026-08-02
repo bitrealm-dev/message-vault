@@ -62,10 +62,8 @@ fn run_reset_demo_for_account(
         std::env::current_dir()?.join(bundle)
     };
 
-    println!("Reset demo — regenerating bundle");
     println!("  bundle:       {}", bundle.display());
-    let seed_stats =
-        demo_seed::generate_to(&bundle, None).context("regenerate demo bundle (demo-seed)")?;
+    let seed_stats = maybe_regenerate_bundle(&bundle)?;
 
     let demo_config = bundle.join("config/config.toml");
     let demo_seed = bundle.join("config/seed.toml");
@@ -74,7 +72,8 @@ fn run_reset_demo_for_account(
     if !demo_config.is_file() || !demo_seed.is_file() || !export_dir.is_dir() || !contacts_vcf.is_file()
     {
         bail!(
-            "demo-seed did not produce a complete bundle under {}",
+            "incomplete demo bundle under {} (need config/config.toml, config/seed.toml, \
+             staging/imessage/, config/contacts.vcf)",
             bundle.display()
         );
     }
@@ -138,6 +137,40 @@ fn run_reset_demo_for_account(
         dedupe_keys_filled: dedupe_stats.keys_filled,
         process_assets: process_stats,
     })
+}
+
+/// Regenerate from `demo_seed.toml` when present (dev checkout).
+/// Release images only ship the committed `demo/` tree — skip regen there.
+fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
+    let seed_toml = demo_seed::SeedConfig::default_path();
+    if seed_toml.is_file() {
+        println!("Reset demo — regenerating bundle from {}", seed_toml.display());
+        return demo_seed::generate_to(bundle, None)
+            .context("regenerate demo bundle (demo-seed)");
+    }
+
+    let complete = bundle.join("config/seed.toml").is_file()
+        && bundle.join("staging/imessage").is_dir()
+        && bundle.join("config/contacts.vcf").is_file();
+    if complete {
+        println!(
+            "Reset demo — using committed bundle (no {} in this image)",
+            seed_toml.display()
+        );
+        return Ok(demo_seed::GenStats {
+            contacts: 0,
+            conversation_files: 0,
+            messages: 0,
+            attachment_refs: 0,
+            groups: 0,
+        });
+    }
+
+    bail!(
+        "cannot reset demo: {} is missing and {} is not a complete committed bundle",
+        seed_toml.display(),
+        bundle.display()
+    );
 }
 
 fn load_demo_seed(path: &Path) -> Result<DemoSeed> {

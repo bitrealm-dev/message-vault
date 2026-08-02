@@ -338,7 +338,9 @@ fn main() -> Result<()> {
             let stats = reset_demo::run_reset_demo(&bundle, &config)?;
             println!();
             println!("Demo reset complete");
-            println!("  seeded messages: {}", stats.seed.messages);
+            if stats.seed.messages > 0 {
+                println!("  generated msgs:  {}", stats.seed.messages);
+            }
             println!("  conversations:   {}", stats.import.conversations);
             println!("  messages:        {}", stats.import.messages);
             println!("  attachments:     {}", stats.import.attachments);

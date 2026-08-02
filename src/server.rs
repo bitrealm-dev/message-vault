@@ -199,6 +199,7 @@ async fn auth_check(
 ) -> Result<Json<AuthCheckResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     let account_id = auth.account_id;
+    let username = load_username(&state.cfg.paths.db, &account_id).await?;
 
     if let Some(q) = query
         .account
@@ -207,19 +208,17 @@ async fn auth_check(
         .filter(|s| !s.is_empty())
     {
         let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
-        if let Some(resolved) = resolved {
-            if resolved != account_id {
-                return Err(ApiError::Forbidden(
-                    "account query does not match token's account".into(),
-                ));
-            }
-        } else if q != account_id {
-            return Err(ApiError::Forbidden(
-                "account query does not match token's account".into(),
-            ));
+        let matches = match resolved {
+            Some(resolved) => resolved == account_id,
+            None => q == account_id,
+        };
+        if !matches {
+            let for_user = username.as_deref().unwrap_or(account_id.as_str());
+            return Err(ApiError::Forbidden(format!(
+                "account query does not match token's account (token is for {for_user})"
+            )));
         }
     }
-    let username = load_username(&state.cfg.paths.db, &account_id).await?;
     let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
     Ok(Json(AuthCheckResponse {
         ok: true,

@@ -6,11 +6,13 @@ import { ApiTokenRevealDialog } from "./ApiTokenRevealDialog";
 type AccessData = {
   readOnly: boolean;
   hasApiToken: boolean;
+  username: string;
 };
 
 export function SettingsAccessForm() {
   const [readOnly, setReadOnly] = useState(false);
   const [hasApiToken, setHasApiToken] = useState(false);
+  const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tokenBusy, setTokenBusy] = useState(false);
@@ -20,6 +22,7 @@ export function SettingsAccessForm() {
   const apply = (json: AccessData) => {
     setReadOnly(json.readOnly);
     setHasApiToken(json.hasApiToken);
+    setUsername(json.username ?? "");
   };
 
   const load = useCallback(async () => {
@@ -151,7 +154,15 @@ export function SettingsAccessForm() {
           Message import
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Create an API token to import messages. It is shown only once.
+          Create an API token to import messages. It is shown only once. In the
+          exporter, Username must be your User ID
+          {username ? (
+            <>
+              {" "}
+              (<span className="font-mono text-text">{username}</span>)
+            </>
+          ) : null}
+          — not your email or display name.
         </p>
         <div className="mt-4">
           <h3 className="text-[13px] font-medium text-text">API token</h3>
