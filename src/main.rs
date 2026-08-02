@@ -1,16 +1,15 @@
-mod account_profile;
-mod api_tokens;
 mod assets;
 mod config;
-mod contacts;
+mod db;
 mod dedupe;
 mod import;
 mod jsonl;
 mod models;
 mod process_assets;
 mod reset_demo;
-mod schema;
 mod server;
+
+use crate::db::{account_profile, contacts as contacts_db};
 
 use std::path::PathBuf;
 
@@ -319,8 +318,12 @@ fn main() -> Result<()> {
 
             let mut conn = rusqlite::Connection::open(&db)?;
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-            let stats =
-                contacts::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)?;
+            let stats = contacts_db::load_contacts_if_needed(
+                &mut conn,
+                Some(&contacts),
+                true,
+                &account,
+            )?;
 
             println!("Imported contacts into {}", db.display());
             println!("  config:       {}", config.display());

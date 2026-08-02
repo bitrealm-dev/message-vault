@@ -752,14 +752,14 @@ pub fn run_dedupe(
     let mut conn = Connection::open(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    crate::schema::ensure_messages_schema(&conn)?;
+    crate::db::schema::ensure_messages_schema(&conn)?;
     dedupe_cross_source(&mut conn, account_id, None, near_window_secs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
+    use crate::db::schema;
 
     #[test]
     fn normalize_collapses_whitespace() {

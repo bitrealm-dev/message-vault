@@ -722,7 +722,7 @@ fn should_skip_existing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema;
+    use crate::db::schema;
 
     #[test]
     fn derived_rel_path_layout() {

@@ -7,11 +7,11 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
-use crate::account_profile;
+use crate::db::account_profile;
 use crate::config::Config;
 use crate::dedupe;
 use crate::import::{self, ImportMode};
-use crate::schema;
+use crate::db::schema;
 
 /// Stable demo account id used when `reset-demo` runs without `--account`.
 pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";

@@ -9,10 +9,10 @@ use rusqlite::{Connection, Statement, Transaction, params};
 use serde::Serialize;
 
 use crate::assets::{self, AssetStats, StoredAsset};
-use crate::contacts;
+use crate::db::contacts;
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
-use crate::schema;
+use crate::db::schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMode {
@@ -183,7 +183,7 @@ pub fn import_jsonl_files_on_conn(
     if schema_mode == ImportSchemaMode::Ensure {
         schema::ensure_vault_schema(conn)?;
     }
-    crate::account_profile::ensure_account_row(conn, opts.account_id)?;
+    crate::db::account_profile::ensure_account_row(conn, opts.account_id)?;
 
     if let Some(path) = opts.contacts {
         println!("  sql:      loading contacts from {}…", path.display());

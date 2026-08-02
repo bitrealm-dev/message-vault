@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::schema;
+use crate::db::schema;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // phones/emails loaded for handle matching; export uses display_name
@@ -136,7 +136,7 @@ pub fn username_for_account(conn: &Connection, account_id: &str) -> Result<Optio
 pub fn resolve_account_ref_at(db_path: &std::path::Path, account_ref: &str) -> Result<String> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("open database {}", db_path.display()))?;
-    crate::schema::configure_connection(&conn)?;
+    crate::db::schema::configure_connection(&conn)?;
     resolve_account_ref(&conn, account_ref)
 }
 

@@ -15,13 +15,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use rusqlite::Connection;
 
-use crate::account_profile;
-use crate::api_tokens;
+use crate::db::account_profile;
+use crate::db::api_tokens;
 use crate::assets;
 use crate::config::{Config, validate_source_id};
 use crate::dedupe;
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
-use crate::schema;
+use crate::db::schema;
 
 const MAX_BODY_BYTES: usize = 512 * 1024 * 1024; // 512 MiB (multipart uploads)
 

@@ -166,8 +166,8 @@ pub fn load_contacts_if_needed(
     overwrite: bool,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
-    crate::schema::ensure_contacts_schema(conn)?;
-    crate::account_profile::ensure_account_row(conn, account_id)?;
+    crate::db::schema::ensure_contacts_schema(conn)?;
+    crate::db::account_profile::ensure_account_row(conn, account_id)?;
 
     let Some(path) = contacts_path else {
         return Ok(ContactLoadStats {
@@ -498,7 +498,7 @@ fn handle_match_key(handle: &str) -> String {
 /// 1:1 handles, plus group participants who never had a 1:1 conversation.
 /// Names come from participant `name_hint` / exporter `display_name` when present.
 pub fn ensure_unknown_contacts(conn: &mut Connection, account_id: &str) -> Result<u64> {
-    crate::schema::ensure_contacts_schema(conn)?;
+    crate::db::schema::ensure_contacts_schema(conn)?;
 
     let has_trash: bool = conn
         .query_row(
@@ -601,7 +601,7 @@ pub fn ensure_unknown_contacts(conn: &mut Connection, account_id: &str) -> Resul
 
     // The account holder is a participant in their own groups.
     let owner_keys: HashSet<String> =
-        crate::account_profile::load_account_profile(conn, account_id)
+        crate::db::account_profile::load_account_profile(conn, account_id)
             .map(|owner| {
                 owner
                     .phones
@@ -656,7 +656,7 @@ pub fn fill_empty_contact_names_from_participants(
     conn: &mut Connection,
     account_id: &str,
 ) -> Result<u64> {
-    crate::schema::ensure_contacts_schema(conn)?;
+    crate::db::schema::ensure_contacts_schema(conn)?;
 
     let rows: Vec<(i64, String)> = {
         let mut stmt = conn.prepare(
@@ -823,7 +823,7 @@ mod tests {
     fn seed_group_vault(db_path: &Path) -> Connection {
         let conn = Connection::open(db_path).unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
 
         conn.execute(
             "INSERT INTO accounts (id, username, read_only, preferred_name)
@@ -944,7 +944,7 @@ mod tests {
 
         let mut conn = Connection::open(&db_path).unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username, read_only, preferred_name)
              VALUES (?1, 't', 0, 'T')",
@@ -990,7 +990,7 @@ mod tests {
 
         let mut conn = Connection::open(&db_path).unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username, read_only, preferred_name)
              VALUES (?1, 't', 0, 'T')",
