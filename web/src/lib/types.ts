@@ -7,6 +7,8 @@ export type ContactSection =
 export type ContactListItem = {
   id: number;
   displayName: string;
+  /** Stored display name (backfilled / synced from first + last). */
+  preferredName: string | null;
   preferredHandle: string | null;
   firstName: string | null;
   lastName: string | null;

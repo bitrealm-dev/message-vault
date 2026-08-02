@@ -67,15 +67,27 @@ export function combinedDedupeSql(source?: string | null, alias?: string): strin
   return ` AND ${col} IS NULL`;
 }
 
+/** Join first + last into a stored preferred_name (null when both empty). */
+export function joinPreferredName(
+  firstName: string | null | undefined,
+  lastName: string | null | undefined,
+): string | null {
+  const parts = [firstName, lastName]
+    .map((p) => p?.trim())
+    .filter(Boolean) as string[];
+  return parts.length ? parts.join(" ") : null;
+}
+
 export function displayName(row: {
+  preferred_name?: string | null;
   first_name: string | null;
   last_name: string | null;
   preferred_handle: string | null;
 }): string {
-  const parts = [row.first_name, row.last_name]
-    .map((p) => p?.trim())
-    .filter(Boolean) as string[];
-  if (parts.length) return parts.join(" ");
+  const preferred = row.preferred_name?.trim();
+  if (preferred) return preferred;
+  const joined = joinPreferredName(row.first_name, row.last_name);
+  if (joined) return joined;
   if (row.preferred_handle?.trim()) {
     return formatPhoneDisplay(row.preferred_handle);
   }
@@ -83,17 +95,25 @@ export function displayName(row: {
 }
 
 export function sortFields(row: {
+  preferred_name?: string | null;
   first_name: string | null;
   last_name: string | null;
   preferred_handle: string | null;
 }): { sortFirst: string; sortLast: string; letter: string } {
+  const preferred = (row.preferred_name || "").trim();
   const first = (row.first_name || "").trim();
   const last = (row.last_name || "").trim();
-  // Prefer a real name over a phone for sort keys / letter buckets.
-  const sortFirst = first || last || row.preferred_handle || "Unknown";
-  const sortLast = last || first || row.preferred_handle || "Unknown";
-  const letterSrc = sortLast;
-  const ch = letterSrc.charAt(0).toUpperCase();
+  // Prefer preferred_name, then structured names, then phone for sort keys.
+  const sortFirst =
+    preferred || first || last || row.preferred_handle || "Unknown";
+  const sortLast =
+    preferred || last || first || row.preferred_handle || "Unknown";
+  const letterSrc = preferred ? preferred : sortLast;
+  // When using preferred_name alone, letter from last word (surname-ish).
+  const letterSource = preferred
+    ? preferred.split(/\s+/).filter(Boolean).at(-1) || preferred
+    : letterSrc;
+  const ch = letterSource.charAt(0).toUpperCase();
   const letter = ch >= "A" && ch <= "Z" ? ch : "#";
   return { sortFirst, sortLast, letter };
 }

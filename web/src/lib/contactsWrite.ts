@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
+import { joinPreferredName } from "./dbCore";
 import { dbPath } from "./paths";
 import { getContact, resetDb } from "./db";
 import {
@@ -96,12 +97,21 @@ export function createContact(input: ContactCreate): ContactDetail {
         }
       }
 
+      const preferredName = joinPreferredName(firstName, lastName);
       const result = writeDb
         .prepare(
-          `INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO contacts (
+             account_id, first_name, last_name, preferred_name, exclude, preferred_handle
+           ) VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(accountId, firstName, lastName, 0, preferredHandle);
+        .run(
+          accountId,
+          firstName,
+          lastName,
+          preferredName,
+          0,
+          preferredHandle,
+        );
       newId = Number(result.lastInsertRowid);
 
       const insertPhone = writeDb.prepare(
@@ -484,10 +494,19 @@ export function patchContact(
       writeDb
         .prepare(
           `UPDATE contacts
-           SET first_name = ?, last_name = ?, exclude = ?, preferred_handle = ?
+           SET first_name = ?, last_name = ?, preferred_name = ?,
+               exclude = ?, preferred_handle = ?
            WHERE id = ? AND account_id = ?`,
         )
-        .run(firstName, lastName, 0, preferredHandle, id, accountId);
+        .run(
+          firstName,
+          lastName,
+          joinPreferredName(firstName, lastName),
+          0,
+          preferredHandle,
+          id,
+          accountId,
+        );
 
       if (patch.labels || patch.exclude !== undefined) {
         writeDb
@@ -670,7 +689,7 @@ export function ensureUnknownContacts(): number {
   ]
     .map((handle) => handle.trim())
     .filter((handle) => handle.length > 0)
-    // The vault owner is a participant in their own group chats.
+    // The account holder is a participant in their own group chats.
     .filter((handle) => !isOwner(handle));
   if (handles.length === 0) return 0;
 
@@ -685,8 +704,9 @@ export function ensureUnknownContacts(): number {
 
         const result = writeDb
           .prepare(
-            `INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
-             VALUES (?, NULL, NULL, 0, ?)`,
+            `INSERT INTO contacts (
+               account_id, first_name, last_name, preferred_name, exclude, preferred_handle
+             ) VALUES (?, NULL, NULL, NULL, 0, ?)`,
           )
           .run(accountId, handle);
         const newId = Number(result.lastInsertRowid);

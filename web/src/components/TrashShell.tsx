@@ -47,6 +47,7 @@ function syntheticContactDetail(
   return {
     id: item.contactId ?? -1,
     displayName: item.displayName,
+    preferredName: item.displayName,
     preferredHandle: item.handle,
     firstName: null,
     lastName: null,

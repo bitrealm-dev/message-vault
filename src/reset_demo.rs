@@ -144,17 +144,24 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
 
     conn.execute(
         r#"
-        INSERT INTO accounts (id, username, read_only, password_hash)
-        VALUES (?1, ?2, ?3, NULL)
+        INSERT INTO accounts (
+            id, username, read_only, password_hash,
+            first_name, last_name, preferred_name
+        )
+        VALUES (?1, ?2, ?3, NULL, ?4, '', ?4)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
             read_only = excluded.read_only,
-            password_hash = NULL
+            password_hash = NULL,
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            preferred_name = excluded.preferred_name
         "#,
         params![
             account_id,
             seed.account.username,
-            seed.account.read_only as i64
+            seed.account.read_only as i64,
+            seed.owner.display_name
         ],
     )?;
     conn.execute(
@@ -168,37 +175,25 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
         "#,
         params![account_id, seed.account.login_email],
     )?;
+    for email in &seed.owner.emails {
+        conn.execute(
+            r#"
+            INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
+            VALUES (?1, ?2, 0)
+            "#,
+            params![account_id, email],
+        )?;
+    }
     // Demo has no Import API token until the user generates one in Settings.
 
     conn.execute(
-        r#"
-        INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
-        VALUES (?1, ?2, '', ?2)
-        ON CONFLICT(account_id) DO UPDATE SET
-          first_name = excluded.first_name,
-          last_name = excluded.last_name,
-          display_name = excluded.display_name
-        "#,
-        params![account_id, seed.owner.display_name],
-    )?;
-    conn.execute(
-        "DELETE FROM vault_owner_phones WHERE account_id = ?1",
+        "DELETE FROM account_phones WHERE account_id = ?1",
         params![account_id],
     )?;
     for phone in &seed.owner.phones {
         conn.execute(
-            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, ?2)",
+            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
             params![account_id, phone],
-        )?;
-    }
-    conn.execute(
-        "DELETE FROM vault_owner_emails WHERE account_id = ?1",
-        params![account_id],
-    )?;
-    for email in &seed.owner.emails {
-        conn.execute(
-            "INSERT INTO vault_owner_emails (account_id, email) VALUES (?1, ?2)",
-            params![account_id, email],
         )?;
     }
 

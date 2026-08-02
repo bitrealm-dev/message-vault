@@ -1,5 +1,5 @@
 import { currentAccountId } from "./accountScope";
-import { loadVaultOwner } from "./vaultOwner";
+import { loadAccountProfile } from "./accountProfile";
 import {
   combinedDedupeSql,
   getDb,
@@ -37,11 +37,14 @@ function isGenericGroupTitle(title: string | null | undefined): boolean {
 }
 
 function participantLabel(row: {
+  preferred_name?: string | null;
   first_name: string | null;
   last_name: string | null;
   name_hint: string | null;
   handle: string;
 }): { name: string; unknown: boolean } {
+  const preferred = row.preferred_name?.trim() ?? "";
+  if (preferred) return { name: preferred, unknown: false };
   const first = row.first_name?.trim() ?? "";
   const last = row.last_name?.trim() ?? "";
   const full = `${first} ${last}`.trim();
@@ -108,7 +111,7 @@ function groupPeopleTitles(
 
   const accountId = currentAccountId();
   const db = getDb();
-  const owner = loadVaultOwner(accountId);
+  const owner = loadAccountProfile(accountId);
   const exclude = new Set(
     [...owner.phones, ...excludePhones].filter(Boolean).map((p) => p.trim()),
   );
@@ -130,7 +133,7 @@ function groupPeopleTitles(
   const rows = db
     .prepare(
       `SELECT p.conversation_id, p.handle, p.name_hint,
-              c.id AS contact_id, c.first_name, c.last_name
+              c.id AS contact_id, c.preferred_name, c.first_name, c.last_name
        FROM participants p
        JOIN conversations conv ON conv.id = p.conversation_id
        LEFT JOIN contact_handles cp ON cp.handle = p.handle AND cp.account_id = conv.account_id
@@ -142,6 +145,7 @@ function groupPeopleTitles(
     handle: string;
     name_hint: string | null;
     contact_id: number | null;
+    preferred_name: string | null;
     first_name: string | null;
     last_name: string | null;
   }>;

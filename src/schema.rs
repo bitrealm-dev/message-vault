@@ -211,6 +211,7 @@ CREATE TABLE contacts (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     first_name TEXT,
     last_name TEXT,
+    preferred_name TEXT,
     exclude INTEGER NOT NULL DEFAULT 0,
     preferred_handle TEXT
 );
@@ -881,7 +882,52 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "contacts")? {
         conn.execute_batch(CONTACTS_TABLES_DDL)?;
     }
+    migrate_contacts_preferred_name(conn)?;
     migrate_contact_statuses_to_labels(conn)?;
+    Ok(())
+}
+
+pub const CONTACTS_PREFERRED_NAME_META_KEY: &str = "contacts_preferred_name_v1";
+
+fn migrate_contacts_preferred_name(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "contacts")? {
+        return Ok(());
+    }
+    if !table_has_column(conn, "contacts", "preferred_name")? {
+        conn.execute_batch("ALTER TABLE contacts ADD COLUMN preferred_name TEXT;")?;
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        "#,
+    )?;
+    let already: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+        params![CONTACTS_PREFERRED_NAME_META_KEY],
+        |row| row.get(0),
+    )?;
+    if already {
+        return Ok(());
+    }
+
+    conn.execute(
+        r#"
+        UPDATE contacts
+        SET preferred_name = NULLIF(trim(
+          trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
+        ), '')
+        WHERE preferred_name IS NULL OR trim(preferred_name) = ''
+        "#,
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
+        params![CONTACTS_PREFERRED_NAME_META_KEY],
+    )?;
     Ok(())
 }
 
@@ -931,9 +977,10 @@ fn migrate_contact_statuses_to_labels(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Web login accounts and per-account vault owner profile tables.
 /// Marker for the one-time migration that locks existing accounts by default.
 pub const ACCOUNTS_DEFAULT_READ_ONLY_META_KEY: &str = "accounts_default_read_only_v1";
+
+pub const VAULT_OWNERS_INTO_ACCOUNTS_META_KEY: &str = "vault_owners_into_accounts_v1";
 
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -942,7 +989,10 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             read_only INTEGER NOT NULL DEFAULT 0,
-            password_hash TEXT
+            password_hash TEXT,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
+            preferred_name TEXT
         );
 
         CREATE TABLE IF NOT EXISTS account_emails (
@@ -956,23 +1006,10 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             ON account_emails(account_id)
             WHERE is_primary = 1;
 
-        CREATE TABLE IF NOT EXISTS vault_owners (
-            account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-            first_name TEXT NOT NULL DEFAULT '',
-            last_name TEXT NOT NULL DEFAULT '',
-            display_name TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS vault_owner_phones (
+        CREATE TABLE IF NOT EXISTS account_phones (
             account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
             phone TEXT NOT NULL,
             PRIMARY KEY (account_id, phone)
-        );
-
-        CREATE TABLE IF NOT EXISTS vault_owner_emails (
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            email TEXT NOT NULL,
-            PRIMARY KEY (account_id, email)
         );
 
         CREATE TABLE IF NOT EXISTS account_api_tokens (
@@ -995,7 +1032,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
         "#,
     )?;
     migrate_legacy_accounts_email(conn)?;
-    migrate_vault_owner_name_columns(conn)?;
+    migrate_vault_owners_into_accounts(conn)?;
     migrate_accounts_default_read_only(conn)?;
     migrate_accounts_password_hash(conn)?;
     migrate_account_api_tokens_to_hash(conn)?;
@@ -1115,24 +1152,121 @@ fn migrate_accounts_default_read_only(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn migrate_vault_owner_name_columns(conn: &Connection) -> Result<()> {
-    let has_first_name: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('vault_owners') WHERE name = 'first_name'",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_first_name {
-        return Ok(());
+/// Fold vault_owners* into accounts + account_phones; drop legacy owner tables.
+fn migrate_vault_owners_into_accounts(conn: &Connection) -> Result<()> {
+    if !table_has_column(conn, "accounts", "first_name")? {
+        conn.execute_batch(
+            r#"
+            ALTER TABLE accounts ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
+            ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
+            ALTER TABLE accounts ADD COLUMN preferred_name TEXT;
+            "#,
+        )?;
+    } else {
+        if !table_has_column(conn, "accounts", "last_name")? {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT '';")?;
+        }
+        if !table_has_column(conn, "accounts", "preferred_name")? {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
+        }
     }
 
     conn.execute_batch(
         r#"
-        ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
-        ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
-        UPDATE vault_owners
-        SET first_name = trim(display_name)
-        WHERE first_name = '' OR first_name IS NULL;
+        CREATE TABLE IF NOT EXISTS account_phones (
+            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            phone TEXT NOT NULL,
+            PRIMARY KEY (account_id, phone)
+        );
         "#,
+    )?;
+
+    let already: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
+        params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
+        |row| row.get(0),
+    )?;
+    if already {
+        return Ok(());
+    }
+
+    if table_exists(conn, "vault_owners")? {
+        // Legacy vault_owners may predate first_name/last_name columns.
+        if !table_has_column(conn, "vault_owners", "first_name")? {
+            conn.execute_batch(
+                r#"
+                ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
+                ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
+                UPDATE vault_owners
+                SET first_name = trim(display_name)
+                WHERE first_name = '' OR first_name IS NULL;
+                "#,
+            )?;
+        }
+
+        conn.execute_batch(
+            r#"
+            UPDATE accounts
+            SET
+              first_name = coalesce(
+                (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+                first_name
+              ),
+              last_name = coalesce(
+                (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+                last_name
+              ),
+              preferred_name = coalesce(
+                (
+                  SELECT NULLIF(trim(vo.display_name), '')
+                  FROM vault_owners vo
+                  WHERE vo.account_id = accounts.id
+                ),
+                NULLIF(trim(
+                  trim(coalesce(
+                    (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+                    ''
+                  )) || ' ' || trim(coalesce(
+                    (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+                    ''
+                  ))
+                ), ''),
+                preferred_name
+              )
+            WHERE EXISTS (SELECT 1 FROM vault_owners vo WHERE vo.account_id = accounts.id);
+            "#,
+        )?;
+
+        if table_exists(conn, "vault_owner_phones")? {
+            conn.execute_batch(
+                r#"
+                INSERT OR IGNORE INTO account_phones (account_id, phone)
+                SELECT account_id, phone FROM vault_owner_phones;
+                "#,
+            )?;
+        }
+
+        if table_exists(conn, "vault_owner_emails")? {
+            conn.execute_batch(
+                r#"
+                INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
+                SELECT account_id, email, 0 FROM vault_owner_emails;
+                "#,
+            )?;
+        }
+
+        conn.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS vault_owner_emails;
+            DROP TABLE IF EXISTS vault_owner_phones;
+            DROP TABLE IF EXISTS vault_owners;
+            "#,
+        )?;
+    }
+
+    conn.execute(
+        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
+        params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
     )?;
     Ok(())
 }
@@ -1159,10 +1293,18 @@ fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
         CREATE TABLE accounts_new (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 0
+            read_only INTEGER NOT NULL DEFAULT 0,
+            password_hash TEXT,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
+            preferred_name TEXT
         );
-        INSERT INTO accounts_new (id, username, read_only)
-            SELECT id, username, read_only FROM accounts;
+        INSERT INTO accounts_new (
+            id, username, read_only, password_hash, first_name, last_name, preferred_name
+        )
+            SELECT id, username, read_only,
+                   NULL, '', '', NULL
+            FROM accounts;
         DROP TABLE accounts;
         ALTER TABLE accounts_new RENAME TO accounts;
 
@@ -1376,6 +1518,118 @@ mod tests {
             )
             .unwrap();
         assert_eq!(still_unlocked, 0);
+    }
+
+    #[test]
+    fn migrate_vault_owners_into_accounts() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                read_only INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE account_emails (
+                account_id TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                is_primary INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_id, email)
+            );
+            CREATE TABLE vault_owners (
+                account_id TEXT PRIMARY KEY,
+                first_name TEXT NOT NULL DEFAULT '',
+                last_name TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL
+            );
+            CREATE TABLE vault_owner_phones (
+                account_id TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                PRIMARY KEY (account_id, phone)
+            );
+            CREATE TABLE vault_owner_emails (
+                account_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                PRIMARY KEY (account_id, email)
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO account_emails (account_id, email, is_primary) VALUES (?1, 'alice@example.com', 1)",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
+             VALUES (?1, 'Ann', 'Lee', 'Ann Lee')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, '+15555550100')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vault_owner_emails (account_id, email) VALUES (?1, 'ann@example.com')",
+            params![A1],
+        )
+        .unwrap();
+
+        ensure_accounts_schema(&conn).unwrap();
+
+        let (first, last, preferred): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT first_name, last_name, preferred_name FROM accounts WHERE id = ?1",
+                params![A1],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(first, "Ann");
+        assert_eq!(last, "Lee");
+        assert_eq!(preferred.as_deref(), Some("Ann Lee"));
+
+        let phone: String = conn
+            .query_row(
+                "SELECT phone FROM account_phones WHERE account_id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(phone, "+15555550100");
+
+        let email_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM account_emails WHERE account_id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(email_count, 2);
+
+        let old_tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'vault_owner%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_tables, 0);
+
+        let marker: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
+                params![VAULT_OWNERS_INTO_ACCOUNTS_META_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, 1);
     }
 
     #[test]

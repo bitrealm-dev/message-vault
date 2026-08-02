@@ -49,13 +49,11 @@ derived (converted) paths for the browser.
 
 ## People and accounts
 
-### `accounts` / `account_emails` / `account_api_tokens`
+### `accounts` / `account_emails` / `account_phones` / `account_api_tokens`
 
-Web login accounts, emails, and hashed Vault Import API tokens used by `serve`.
-
-### `vault_owners` (+ phones/emails)
-
-Per-account “you” identity for matching outbound messages.
+Web login accounts with identity fields (`first_name`, `last_name`,
+`preferred_name`), phones for recognizing “you” in messages, login emails, and
+hashed Vault Import API tokens used by `serve`.
 
 ### `contacts` / `contact_handles`
 

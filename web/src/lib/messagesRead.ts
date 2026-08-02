@@ -7,7 +7,7 @@ import {
   DEFAULT_MESSAGE_PAGE_SIZE,
   MAX_MESSAGE_PAGE_SIZE,
 } from "./messagePageSize";
-import { loadVaultOwner } from "./vaultOwner";
+import { loadAccountProfile } from "./accountProfile";
 import {
   combinedDedupeSql,
   displayName,
@@ -134,7 +134,7 @@ function loadConversationMessages(
     };
   }
   const db = getDb();
-  const owner = loadVaultOwner(accountId);
+  const owner = loadAccountProfile(accountId);
   const placeholders = ids.map(() => "?").join(",");
   const sourceSql = opts.source ? " AND m.source = ?" : "";
   const yearSql =

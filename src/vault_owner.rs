@@ -21,41 +21,53 @@ fn format_owner_name(first_name: &str, last_name: &str) -> String {
         .join(" ")
 }
 
-/// Load vault owner profile for one account from `vault_owners` tables.
+fn profile_display_name(
+    preferred_name: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+) -> String {
+    if let Some(preferred) = preferred_name.map(str::trim).filter(|s| !s.is_empty()) {
+        return preferred.to_string();
+    }
+    let joined = format_owner_name(first_name, last_name);
+    if joined.is_empty() {
+        "Me".to_string()
+    } else {
+        joined
+    }
+}
+
+/// Load account identity (names + phones + emails) for one account.
+/// Soft-defaults when the row is missing or names/phones are empty (`"Me"`, empty sets).
 pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwner> {
-    let row: (String, String, String) = conn
+    let row: Option<(String, String, Option<String>)> = conn
         .query_row(
-            "SELECT first_name, last_name, display_name FROM vault_owners WHERE account_id = ?1",
+            "SELECT first_name, last_name, preferred_name FROM accounts WHERE id = ?1",
             params![account_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .unwrap_or_else(|_| (String::new(), String::new(), "Me".to_string()));
+        .optional()?;
+
+    let (first_name, last_name, preferred_name) = match row {
+        Some((f, l, p)) => (f, l, p),
+        None => (String::new(), String::new(), None),
+    };
 
     let mut phone_stmt =
-        conn.prepare("SELECT phone FROM vault_owner_phones WHERE account_id = ?1 ORDER BY phone")?;
+        conn.prepare("SELECT phone FROM account_phones WHERE account_id = ?1 ORDER BY phone")?;
     let phones: Vec<String> = phone_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut email_stmt =
-        conn.prepare("SELECT email FROM vault_owner_emails WHERE account_id = ?1 ORDER BY email")?;
+        conn.prepare("SELECT email FROM account_emails WHERE account_id = ?1 ORDER BY email")?;
     let emails: Vec<String> = email_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let first_name = row.0.trim().to_string();
-    let last_name = row.1.trim().to_string();
-    let display_name = format_owner_name(&first_name, &last_name);
-    let display_name = if display_name.is_empty() {
-        let legacy = row.2.trim();
-        if legacy.is_empty() {
-            "Me".to_string()
-        } else {
-            legacy.to_string()
-        }
-    } else {
-        display_name
-    };
+    let first_name = first_name.trim().to_string();
+    let last_name = last_name.trim().to_string();
+    let display_name = profile_display_name(preferred_name.as_deref(), &first_name, &last_name);
 
     Ok(VaultOwner {
         first_name,
@@ -223,5 +235,28 @@ mod tests {
                 .as_deref(),
             Some("Alice")
         );
+    }
+
+    #[test]
+    fn load_profile_soft_defaults_and_preferred_name() {
+        let conn = setup();
+        let empty = load_vault_owner(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        assert_eq!(empty.display_name, "Me");
+        assert!(empty.phones.is_empty());
+
+        conn.execute(
+            "UPDATE accounts SET first_name = 'Matt', last_name = 'Beisser', preferred_name = 'MB'
+             WHERE id = ?1",
+            params!["00000000-0000-4000-8000-000000000001"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
+            params!["00000000-0000-4000-8000-000000000001", "+15555550100"],
+        )
+        .unwrap();
+        let loaded = load_vault_owner(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        assert_eq!(loaded.display_name, "MB");
+        assert_eq!(loaded.phones, vec!["+15555550100".to_string()]);
     }
 }

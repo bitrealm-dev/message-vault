@@ -66,7 +66,10 @@ export function ensureVaultSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       read_only INTEGER NOT NULL DEFAULT 0,
-      password_hash TEXT
+      password_hash TEXT,
+      first_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      preferred_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -85,23 +88,10 @@ export function ensureVaultSchema(db: Database.Database): void {
       ON account_emails(account_id)
       WHERE is_primary = 1;
 
-    CREATE TABLE IF NOT EXISTS vault_owners (
-      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-      first_name TEXT NOT NULL DEFAULT '',
-      last_name TEXT NOT NULL DEFAULT '',
-      display_name TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS vault_owner_phones (
+    CREATE TABLE IF NOT EXISTS account_phones (
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       phone TEXT NOT NULL,
       PRIMARY KEY (account_id, phone)
-    );
-
-    CREATE TABLE IF NOT EXISTS vault_owner_emails (
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      email TEXT NOT NULL,
-      PRIMARY KEY (account_id, email)
     );
 
     CREATE TABLE IF NOT EXISTS account_api_tokens (
@@ -285,6 +275,7 @@ export function ensureVaultSchema(db: Database.Database): void {
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       first_name TEXT,
       last_name TEXT,
+      preferred_name TEXT,
       exclude INTEGER NOT NULL DEFAULT 0,
       preferred_handle TEXT
     );
@@ -337,9 +328,10 @@ export function ensureVaultSchema(db: Database.Database): void {
   `);
 
   migrateLegacyAccountsEmailColumn(db);
-  migrateVaultOwnerNameColumns(db);
+  migrateVaultOwnersIntoAccounts(db);
   migrateContactGroupsToLabels(db);
   migrateContactStatusesToLabels(db);
+  migrateContactsPreferredName(db);
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
@@ -937,10 +929,16 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
     CREATE TABLE accounts_new (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      read_only INTEGER NOT NULL DEFAULT 0
+      read_only INTEGER NOT NULL DEFAULT 0,
+      password_hash TEXT,
+      first_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      preferred_name TEXT
     );
-    INSERT INTO accounts_new (id, username, read_only)
-      SELECT id, username, read_only FROM accounts;
+    INSERT INTO accounts_new (
+      id, username, read_only, password_hash, first_name, last_name, preferred_name
+    )
+      SELECT id, username, read_only, NULL, '', '', NULL FROM accounts;
     DROP TABLE accounts;
     ALTER TABLE accounts_new RENAME TO accounts;
   `);
@@ -948,15 +946,136 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
   db.exec(`PRAGMA foreign_keys = ON;`);
 }
 
-function migrateVaultOwnerNameColumns(db: Database.Database): void {
-  if (!tableExists(db, "vault_owners")) return;
-  if (tableHasColumn(db, "vault_owners", "first_name")) return;
+export const VAULT_OWNERS_INTO_ACCOUNTS_META_KEY = "vault_owners_into_accounts_v1";
+
+/** Fold vault_owners* into accounts + account_phones; drop legacy owner tables. */
+function migrateVaultOwnersIntoAccounts(db: Database.Database): void {
+  if (!tableExists(db, "accounts")) return;
+
+  if (!tableHasColumn(db, "accounts", "first_name")) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN first_name TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!tableHasColumn(db, "accounts", "last_name")) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!tableHasColumn(db, "accounts", "preferred_name")) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
+  }
 
   db.exec(`
-    ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
-    ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
-    UPDATE vault_owners
-    SET first_name = trim(display_name)
-    WHERE first_name = '' OR first_name IS NULL;
+    CREATE TABLE IF NOT EXISTS account_phones (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      phone TEXT NOT NULL,
+      PRIMARY KEY (account_id, phone)
+    );
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(VAULT_OWNERS_INTO_ACCOUNTS_META_KEY) as { n: number };
+  if (already.n > 0) return;
+
+  if (tableExists(db, "vault_owners")) {
+    if (!tableHasColumn(db, "vault_owners", "first_name")) {
+      db.exec(`
+        ALTER TABLE vault_owners ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
+        ALTER TABLE vault_owners ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
+        UPDATE vault_owners
+        SET first_name = trim(display_name)
+        WHERE first_name = '' OR first_name IS NULL;
+      `);
+    }
+
+    db.exec(`
+      UPDATE accounts
+      SET
+        first_name = coalesce(
+          (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+          first_name
+        ),
+        last_name = coalesce(
+          (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+          last_name
+        ),
+        preferred_name = coalesce(
+          (
+            SELECT NULLIF(trim(vo.display_name), '')
+            FROM vault_owners vo
+            WHERE vo.account_id = accounts.id
+          ),
+          NULLIF(trim(
+            trim(coalesce(
+              (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+              ''
+            )) || ' ' || trim(coalesce(
+              (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+              ''
+            ))
+          ), ''),
+          preferred_name
+        )
+      WHERE EXISTS (SELECT 1 FROM vault_owners vo WHERE vo.account_id = accounts.id);
+    `);
+
+    if (tableExists(db, "vault_owner_phones")) {
+      db.exec(`
+        INSERT OR IGNORE INTO account_phones (account_id, phone)
+        SELECT account_id, phone FROM vault_owner_phones;
+      `);
+    }
+    if (tableExists(db, "vault_owner_emails")) {
+      db.exec(`
+        INSERT OR IGNORE INTO account_emails (account_id, email, is_primary)
+        SELECT account_id, email, 0 FROM vault_owner_emails;
+      `);
+    }
+
+    db.exec(`
+      DROP TABLE IF EXISTS vault_owner_emails;
+      DROP TABLE IF EXISTS vault_owner_phones;
+      DROP TABLE IF EXISTS vault_owners;
+    `);
+  }
+
+  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+    VAULT_OWNERS_INTO_ACCOUNTS_META_KEY,
+  );
+}
+
+export const CONTACTS_PREFERRED_NAME_META_KEY = "contacts_preferred_name_v1";
+
+/** Add `preferred_name` and backfill from first + last once. */
+function migrateContactsPreferredName(db: Database.Database): void {
+  if (!tableExists(db, "contacts")) return;
+  if (!tableHasColumn(db, "contacts", "preferred_name")) {
+    db.exec(`ALTER TABLE contacts ADD COLUMN preferred_name TEXT`);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(CONTACTS_PREFERRED_NAME_META_KEY) as { n: number };
+  if (already.n > 0) return;
+
+  db.exec(`
+    UPDATE contacts
+    SET preferred_name = NULLIF(trim(
+      trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
+    ), '')
+    WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+  `);
+  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+    CONTACTS_PREFERRED_NAME_META_KEY,
+  );
 }

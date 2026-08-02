@@ -18,12 +18,10 @@ type AccountData = {
   username: string;
   noPassword: boolean;
   isDemo: boolean;
-  vaultOwner: {
-    firstName: string;
-    lastName: string;
-    displayName: string;
-    phones: string[];
-  };
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  phones: string[];
 };
 
 export function SettingsAccountForm() {
@@ -54,9 +52,9 @@ export function SettingsAccountForm() {
     setPassword("");
     setPasswordConfirm("");
     const draft = seedContactEditDraft({
-      firstName: json.vaultOwner.firstName,
-      lastName: json.vaultOwner.lastName,
-      phones: json.vaultOwner.phones,
+      firstName: json.firstName,
+      lastName: json.lastName,
+      phones: json.phones,
       labels: [],
     });
     setFirstName(draft.firstName);
@@ -84,15 +82,15 @@ export function SettingsAccountForm() {
   }, [load]);
 
   const phonesToSave = phonesForSave(phones);
-  const savedPhones = data?.vaultOwner.phones ?? [];
+  const savedPhones = data?.phones ?? [];
   const passwordsMatch =
     Boolean(password) &&
     password.length < MAX_PASSWORD_LENGTH &&
     password === passwordConfirm;
   const dirty =
     data != null &&
-    (firstName !== data.vaultOwner.firstName ||
-      lastName !== data.vaultOwner.lastName ||
+    (firstName !== data.firstName ||
+      lastName !== data.lastName ||
       noPassword !== data.noPassword ||
       password !== "" ||
       passwordConfirm !== "" ||
@@ -142,19 +140,15 @@ export function SettingsAccountForm() {
     setSaving(true);
     try {
       const body: {
-        vaultOwner: {
-          firstName: string;
-          lastName: string;
-          phones: string[];
-        };
+        firstName: string;
+        lastName: string;
+        phones: string[];
         noPassword?: true;
         password?: string;
       } = {
-        vaultOwner: {
-          firstName,
-          lastName,
-          phones: phonesToSave,
-        },
+        firstName,
+        lastName,
+        phones: phonesToSave,
       };
       if (data && noPassword !== data.noPassword) {
         if (noPassword) body.noPassword = true;

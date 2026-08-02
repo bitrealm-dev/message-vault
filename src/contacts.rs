@@ -296,14 +296,22 @@ fn load_from_csv(
         let legacy_inactive = parse_bool(&row.exclude);
         let first_name = empty_to_none(&row.first_name);
         let last_name = empty_to_none(&row.last_name);
+        let preferred_name = join_preferred_name(first_name.as_deref(), last_name.as_deref());
 
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, first_name, last_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
+                account_id, first_name, last_name, preferred_name, exclude, preferred_handle
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
-            params![account_id, first_name, last_name, 0, preferred],
+            params![
+                account_id,
+                first_name,
+                last_name,
+                preferred_name,
+                0,
+                preferred
+            ],
         )?;
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
@@ -472,7 +480,7 @@ pub fn ensure_unknown_contacts(
         }
     }
 
-    // The vault owner is a participant in their own groups.
+    // The account holder is a participant in their own groups.
     let owner_keys: HashSet<String> = crate::vault_owner::load_vault_owner(conn, account_id)
         .map(|owner| {
             owner
@@ -498,13 +506,20 @@ pub fn ensure_unknown_contacts(
         let preferred = handle.clone();
         let hint = best_name_hint_for_handle(&tx, account_id, handle)?;
         let (first_name, last_name) = split_display_name(hint.as_deref());
+        // Full hint is the preferred display name; first/last stay for CSV/search.
+        let preferred_name = hint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| join_preferred_name(first_name.as_deref(), last_name.as_deref()));
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, first_name, last_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, ?3, 0, ?4)
+                account_id, first_name, last_name, preferred_name, exclude, preferred_handle
+            ) VALUES (?1, ?2, ?3, ?4, 0, ?5)
             "#,
-            params![account_id, first_name, last_name, preferred],
+            params![account_id, first_name, last_name, preferred_name, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         tx.execute(
@@ -554,8 +569,13 @@ pub fn fill_empty_contact_names_from_participants(
             JOIN contact_handles ch
               ON ch.contact_id = c.id AND ch.account_id = c.account_id
             WHERE c.account_id = ?1
-              AND (c.first_name IS NULL OR TRIM(c.first_name) = '')
-              AND (c.last_name IS NULL OR TRIM(c.last_name) = '')
+              AND (
+                (
+                  (c.first_name IS NULL OR TRIM(c.first_name) = '')
+                  AND (c.last_name IS NULL OR TRIM(c.last_name) = '')
+                )
+                OR (c.preferred_name IS NULL OR TRIM(c.preferred_name) = '')
+              )
             ORDER BY c.id, ch.handle
             "#,
         )?;
@@ -595,16 +615,28 @@ pub fn fill_empty_contact_names_from_participants(
         if first_name.is_none() && last_name.is_none() {
             continue;
         }
+        let preferred_name = hint.trim().to_string();
         let n = tx.execute(
             r#"
             UPDATE contacts
-            SET first_name = ?2, last_name = ?3
+            SET first_name = COALESCE(NULLIF(TRIM(first_name), ''), ?2),
+                last_name = COALESCE(NULLIF(TRIM(last_name), ''), ?3),
+                preferred_name = COALESCE(NULLIF(TRIM(preferred_name), ''), ?5)
             WHERE id = ?1
               AND account_id = ?4
-              AND (first_name IS NULL OR TRIM(first_name) = '')
-              AND (last_name IS NULL OR TRIM(last_name) = '')
+              AND (
+                (first_name IS NULL OR TRIM(first_name) = '')
+                AND (last_name IS NULL OR TRIM(last_name) = '')
+                OR (preferred_name IS NULL OR TRIM(preferred_name) = '')
+              )
             "#,
-            params![contact_id, first_name, last_name, account_id],
+            params![
+                contact_id,
+                first_name,
+                last_name,
+                account_id,
+                preferred_name
+            ],
         )?;
         filled += n as u64;
     }
@@ -676,6 +708,17 @@ fn looks_like_phone(s: &str) -> bool {
 }
 
 /// Split `"Annette Gubert"` → (`Annette`, `Gubert`); single token → first only.
+fn join_preferred_name(first_name: Option<&str>, last_name: Option<&str>) -> Option<String> {
+    let first = first_name.map(str::trim).filter(|s| !s.is_empty());
+    let last = last_name.map(str::trim).filter(|s| !s.is_empty());
+    match (first, last) {
+        (Some(f), Some(l)) => Some(format!("{f} {l}")),
+        (Some(f), None) => Some(f.to_string()),
+        (None, Some(l)) => Some(l.to_string()),
+        (None, None) => None,
+    }
+}
+
 fn split_display_name(hint: Option<&str>) -> (Option<String>, Option<String>) {
     let Some(raw) = hint.map(str::trim).filter(|s| !s.is_empty()) else {
         return (None, None);
@@ -858,6 +901,17 @@ mod tests {
     }
 
     #[test]
+    fn join_preferred_name_parts() {
+        assert_eq!(
+            join_preferred_name(Some("Ann"), Some("Lee")).as_deref(),
+            Some("Ann Lee")
+        );
+        assert_eq!(join_preferred_name(Some("Madonna"), None).as_deref(), Some("Madonna"));
+        assert_eq!(join_preferred_name(None, Some("Prince")).as_deref(), Some("Prince"));
+        assert_eq!(join_preferred_name(None, None), None);
+    }
+
+    #[test]
     fn split_display_name_parts() {
         assert_eq!(
             split_display_name(Some("Annette Gubert")),
@@ -896,18 +950,14 @@ mod tests {
         crate::schema::ensure_vault_schema(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'test', 0)",
+            "INSERT INTO accounts (
+                 id, username, read_only, first_name, last_name, preferred_name
+             ) VALUES (?1, 'test', 0, 'Vault', 'Owner', 'Vault Owner')",
             params![TEST_ACCOUNT_ID],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO vault_owners (account_id, first_name, last_name, display_name)
-             VALUES (?1, 'Vault', 'Owner', 'Vault Owner')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO vault_owner_phones (account_id, phone) VALUES (?1, ?2)",
+            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
             params![TEST_ACCOUNT_ID, OWNER_PHONE],
         )
         .unwrap();
@@ -989,7 +1039,7 @@ mod tests {
         assert!(handles.iter().any(|h| h == DIRECT_PHONE));
         assert!(
             !handles.iter().any(|h| h == OWNER_PHONE),
-            "the vault owner must not become a contact: {handles:?}"
+            "the account holder must not become a contact: {handles:?}"
         );
 
         // Second run is a no-op now that every handle has a contact.

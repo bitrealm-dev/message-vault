@@ -114,7 +114,7 @@ describe("unknown contact backfill", () => {
       assert.ok(handles.has(DIRECT_PHONE));
       assert.ok(
         !handles.has(OWNER_PHONE),
-        "the vault owner must not become a contact",
+        "the account holder must not become a contact",
       );
 
       // Nothing left to backfill on a second pass.

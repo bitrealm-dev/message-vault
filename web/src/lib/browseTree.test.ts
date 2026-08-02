@@ -16,6 +16,7 @@ function contact(id: number, name = `C${id}`): ContactListItem {
   return {
     id,
     displayName: name,
+    preferredName: name,
     preferredHandle: null,
     firstName: name,
     lastName: null,

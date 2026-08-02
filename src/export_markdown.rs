@@ -197,12 +197,23 @@ struct ExportTapback {
 fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<ExportContact>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, first_name, last_name, preferred_handle
+        SELECT id, preferred_name, first_name, last_name, preferred_handle
         FROM contacts
         WHERE account_id = ?1
         ORDER BY
-          LOWER(COALESCE(NULLIF(TRIM(last_name), ''), first_name, preferred_handle, '')),
-          LOWER(COALESCE(NULLIF(TRIM(first_name), ''), preferred_handle, ''))
+          LOWER(COALESCE(
+            NULLIF(TRIM(preferred_name), ''),
+            NULLIF(TRIM(last_name), ''),
+            first_name,
+            preferred_handle,
+            ''
+          )),
+          LOWER(COALESCE(
+            NULLIF(TRIM(preferred_name), ''),
+            NULLIF(TRIM(first_name), ''),
+            preferred_handle,
+            ''
+          ))
         "#,
     )?;
     let rows = stmt.query_map(params![account_id], |row| {
@@ -211,6 +222,7 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
             row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
         ))
     })?;
 
@@ -218,7 +230,7 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
     let mut phone_stmt =
         conn.prepare("SELECT handle FROM contact_handles WHERE contact_id = ?1")?;
     for row in rows {
-        let (id, first, last, preferred) = row?;
+        let (id, preferred_name, first, last, preferred) = row?;
         let phones: Vec<String> = phone_stmt
             .query_map(params![id], |r| r.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -226,6 +238,7 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
             continue;
         }
         let display_name = display_name(
+            preferred_name.as_deref(),
             first.as_deref(),
             last.as_deref(),
             preferred.as_deref().or(phones.first().map(|s| s.as_str())),
@@ -239,7 +252,15 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
     Ok(out)
 }
 
-fn display_name(first: Option<&str>, last: Option<&str>, fallback: Option<&str>) -> String {
+fn display_name(
+    preferred_name: Option<&str>,
+    first: Option<&str>,
+    last: Option<&str>,
+    fallback: Option<&str>,
+) -> String {
+    if let Some(name) = preferred_name.map(str::trim).filter(|s| !s.is_empty()) {
+        return name.to_string();
+    }
     let parts: Vec<&str> = [first, last]
         .into_iter()
         .flatten()
@@ -335,7 +356,7 @@ fn load_year_messages(
     let sql = format!(
         r#"
         SELECT m.id, m.source, m.timestamp, m.is_from_me, m.sender, m.body,
-               c.first_name, c.last_name, c.preferred_handle, p.name_hint
+               c.preferred_name, c.first_name, c.last_name, c.preferred_handle, p.name_hint
         FROM messages m
         LEFT JOIN contact_handles cp ON cp.account_id = ? AND cp.handle = m.sender
         LEFT JOIN contacts c ON c.id = cp.contact_id AND c.account_id = ?
@@ -371,6 +392,7 @@ fn load_year_messages(
             row.get::<_, Option<String>>(7)?,
             row.get::<_, Option<String>>(8)?,
             row.get::<_, Option<String>>(9)?,
+            row.get::<_, Option<String>>(10)?,
         ))
     })?;
 
@@ -397,6 +419,7 @@ fn load_year_messages(
             is_from_me,
             sender,
             body,
+            preferred_name,
             first_name,
             last_name,
             preferred_handle,
@@ -407,6 +430,7 @@ fn load_year_messages(
             owner.display_name.clone()
         } else {
             let mut name = display_name(
+                preferred_name.as_deref(),
                 first_name.as_deref(),
                 last_name.as_deref(),
                 preferred_handle
@@ -913,12 +937,9 @@ mod tests {
         schema::ensure_contacts_schema(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'test', 0)",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO vault_owners (account_id, first_name, last_name, display_name) VALUES (?1, 'Matt', 'Beisser', 'Matt Beisser')",
+            "INSERT INTO accounts (
+                 id, username, read_only, first_name, last_name, preferred_name
+             ) VALUES (?1, 'test', 0, 'Matt', 'Beisser', 'Matt Beisser')",
             params![TEST_ACCOUNT_ID],
         )
         .unwrap();

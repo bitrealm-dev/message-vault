@@ -13,7 +13,7 @@
  *   "quoted phrases"  -term  NOT term
  *   OR / AND / (grouping) / prefix*  among free-text (FTS MATCH only)
  *
- * `from:me` = sent by vault owner. Other `from:` = sender match.
+ * `from:me` = sent by you (`is_from_me`). Other `from:` = sender match.
  * `to:` = addressed to (sent by me to them, or `to:me` = received).
  * `with:` = conversation involves this person (any participant).
  * `in:` = restrict to a conversation (title / handle); `in:trash` ignored.
@@ -50,7 +50,7 @@ export type ParsedSearchQuery = {
   exclude: string[];
   /** Boolean free-text expression for FTS5 MATCH (OR / AND / NOT / groups / prefix). */
   ftsAst: FtsNode | null;
-  /** Sender filter; use `me` for vault owner. */
+  /** Sender filter; use `me` for messages you sent. */
   from: string | null;
   /** Addressed-to filter; use `me` for received messages. */
   to: string | null;
@@ -133,7 +133,7 @@ export type AdvancedSearchForm = {
   within?: string;
   /** Name or number of a conversation participant (`with:`). */
   withPerson?: string;
-  /** Sender (`from:`); use `me` for vault owner. */
+  /** Sender (`from:`); use `me` for messages you sent. */
   fromPerson?: string;
   /** Addressed-to (`to:`); use `me` for received. */
   toPerson?: string;

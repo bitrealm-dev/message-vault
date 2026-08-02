@@ -192,6 +192,7 @@ type ContactRow = {
   id: number;
   first_name: string | null;
   last_name: string | null;
+  preferred_name: string | null;
   preferred_handle: string | null;
   exclude: number;
 };
@@ -214,7 +215,7 @@ export function listContactsByIds(contactIds: number[]): ContactListItem[] {
   const placeholders = contactIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, first_name, last_name, preferred_handle, exclude
+      `SELECT id, first_name, last_name, preferred_name, preferred_handle, exclude
        FROM contacts
        WHERE account_id = ? AND id IN (${placeholders})`,
     )
@@ -259,6 +260,7 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
       return {
         id: row.id,
         displayName: name,
+        preferredName: row.preferred_name?.trim() || null,
         preferredHandle: row.preferred_handle,
         firstName: row.first_name,
         lastName: row.last_name,
@@ -283,7 +285,7 @@ export function getContact(id: number): ContactDetail | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, first_name, last_name, exclude, preferred_handle
+      `SELECT id, first_name, last_name, preferred_name, exclude, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(id, accountId) as
@@ -291,6 +293,7 @@ export function getContact(id: number): ContactDetail | null {
         id: number;
         first_name: string | null;
         last_name: string | null;
+        preferred_name: string | null;
         exclude: number;
         preferred_handle: string | null;
       }
@@ -323,6 +326,7 @@ export function getContact(id: number): ContactDetail | null {
   return {
     id: row.id,
     displayName: displayName(row),
+    preferredName: row.preferred_name?.trim() || null,
     preferredHandle: row.preferred_handle,
     firstName: row.first_name,
     lastName: row.last_name,
@@ -609,7 +613,7 @@ export function loadContactThreadsPage(
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, first_name, last_name, exclude, preferred_handle
+      `SELECT id, first_name, last_name, preferred_name, exclude, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(contactId, accountId) as
@@ -617,6 +621,7 @@ export function loadContactThreadsPage(
         id: number;
         first_name: string | null;
         last_name: string | null;
+        preferred_name: string | null;
         exclude: number;
         preferred_handle: string | null;
       }
@@ -662,6 +667,7 @@ export function loadContactThreadsPage(
     contact: {
       id: row.id,
       displayName: displayName(row),
+      preferredName: row.preferred_name?.trim() || null,
       preferredHandle: row.preferred_handle,
       firstName: row.first_name,
       lastName: row.last_name,
@@ -779,6 +785,7 @@ export function listTrashedContacts(): TrashedContactItem[] {
       `SELECT c.id AS id,
               c.first_name AS first_name,
               c.last_name AS last_name,
+              c.preferred_name AS preferred_name,
               c.preferred_handle AS preferred_handle,
               tc.trashed_at AS trashed_at,
               (SELECT COUNT(*) FROM contact_handles cp
@@ -802,6 +809,7 @@ export function listTrashedContacts(): TrashedContactItem[] {
     id: number;
     first_name: string | null;
     last_name: string | null;
+    preferred_name: string | null;
     preferred_handle: string | null;
     trashed_at: string;
     handle_count: number;
@@ -860,6 +868,7 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
               cp.handle AS handle,
               c.first_name AS first_name,
               c.last_name AS last_name,
+              c.preferred_name AS preferred_name,
               c.preferred_handle AS preferred_handle,
               MAX(th.trashed_at) AS trashed_at,
               COUNT(m.id) AS message_count
@@ -872,7 +881,8 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
         AND cv.account_id = cp.account_id
        JOIN messages m ON m.conversation_id = cv.id
        WHERE th.account_id = ? ${notTrashedContact}${hideDupes}
-       GROUP BY cp.contact_id, cp.handle, c.first_name, c.last_name, c.preferred_handle
+       GROUP BY cp.contact_id, cp.handle, c.first_name, c.last_name,
+                c.preferred_name, c.preferred_handle
        HAVING message_count > 0
        ORDER BY trashed_at DESC, cp.handle COLLATE NOCASE`,
     )
@@ -881,6 +891,7 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
     handle: string;
     first_name: string | null;
     last_name: string | null;
+    preferred_name: string | null;
     preferred_handle: string | null;
     trashed_at: string;
     message_count: number;

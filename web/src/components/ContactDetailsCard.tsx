@@ -77,7 +77,7 @@ export function ContactDetailsCard({
   framed?: boolean;
   /** When set and form is open, replaces the static labels list (e.g. LabelsMenu). */
   labelsEditor?: ReactNode;
-  /** Hide labels column (e.g. vault owner “Me” edit). */
+  /** Hide labels column (e.g. account identity “Me” edit). */
   hideLabels?: boolean;
 }) {
   const shownLabels = displayLabelNames(labels);

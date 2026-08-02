@@ -14,10 +14,13 @@ import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
+import {
+  loadAccountProfile,
+  saveAccountProfile,
+} from "@/lib/accountProfile";
 import { isDemoAccount } from "@/lib/demoAccount";
 import { mutationErrorStatus } from "@/lib/owner";
 import { validatePasswordPlaintext } from "@/lib/password";
-import { loadVaultOwner, saveVaultOwner } from "@/lib/vaultOwner";
 import { clearAccountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -25,6 +28,7 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 function accountJson(account: ReturnType<typeof loadAccount>, accountId: string) {
+  const profile = loadAccountProfile(accountId);
   return {
     id: account.id,
     username: account.username,
@@ -37,6 +41,11 @@ function accountJson(account: ReturnType<typeof loadAccount>, accountId: string)
     hasApiToken: accountHasApiToken(accountId),
     readOnly: account.read_only,
     isDemo: isDemoAccount(accountId),
+    firstName: profile.first_name,
+    lastName: profile.last_name,
+    preferredName: profile.preferred_name,
+    displayName: profile.display_name,
+    phones: profile.phones,
   };
 }
 
@@ -67,16 +76,7 @@ export async function GET() {
   try {
     return await withAccountHandler(async (accountId) => {
       const account = loadAccount(accountId);
-      const owner = loadVaultOwner(accountId);
-      return NextResponse.json({
-        ...accountJson(account, accountId),
-        vaultOwner: {
-          firstName: owner.first_name,
-          lastName: owner.last_name,
-          displayName: owner.display_name,
-          phones: owner.phones,
-        },
-      });
+      return NextResponse.json(accountJson(account, accountId));
     });
   } catch (err) {
     const auth = authError(err);
@@ -123,32 +123,16 @@ export async function PATCH(req: Request) {
       if (generateApiToken) {
         const token = rotateAccountApiToken(accountId);
         const account = loadAccount(accountId);
-        const owner = loadVaultOwner(accountId);
         return NextResponse.json({
           ...accountJson(account, accountId),
           token,
-          vaultOwner: {
-            firstName: owner.first_name,
-            lastName: owner.last_name,
-            displayName: owner.display_name,
-            phones: owner.phones,
-          },
         });
       }
 
       if (deleteApiToken) {
         deleteAccountApiToken(accountId);
         const account = loadAccount(accountId);
-        const owner = loadVaultOwner(accountId);
-        return NextResponse.json({
-          ...accountJson(account, accountId),
-          vaultOwner: {
-            firstName: owner.first_name,
-            lastName: owner.last_name,
-            displayName: owner.display_name,
-            phones: owner.phones,
-          },
-        });
+        return NextResponse.json(accountJson(account, accountId));
       }
 
       const patch: {
@@ -176,21 +160,17 @@ export async function PATCH(req: Request) {
         );
       }
 
-      const vaultOwnerBody =
-        body.vaultOwner && typeof body.vaultOwner === "object"
-          ? (body.vaultOwner as Record<string, unknown>)
-          : null;
-      const hasVaultOwnerPatch =
-        vaultOwnerBody != null &&
-        (typeof vaultOwnerBody.firstName === "string" ||
-          typeof vaultOwnerBody.lastName === "string" ||
-          Array.isArray(vaultOwnerBody.phones));
+      const hasIdentityPatch =
+        typeof body.firstName === "string" ||
+        typeof body.lastName === "string" ||
+        typeof body.preferredName === "string" ||
+        Array.isArray(body.phones);
 
       if (
         patch.username === undefined &&
         patch.read_only === undefined &&
         patch.emails === undefined &&
-        !hasVaultOwnerPatch &&
+        !hasIdentityPatch &&
         !clearPassword &&
         password === undefined
       ) {
@@ -206,10 +186,10 @@ export async function PATCH(req: Request) {
           ? saveAccount(accountId, patch)
           : loadAccount(accountId);
 
-      if (hasVaultOwnerPatch) {
-        const current = loadVaultOwner(accountId);
-        const phones = Array.isArray(vaultOwnerBody!.phones)
-          ? vaultOwnerBody!.phones
+      if (hasIdentityPatch) {
+        const current = loadAccountProfile(accountId);
+        const phones = Array.isArray(body.phones)
+          ? body.phones
               .filter((p): p is string => typeof p === "string")
               .map((p) => p.trim())
               .filter(Boolean)
@@ -221,21 +201,21 @@ export async function PATCH(req: Request) {
           );
         }
         const firstName =
-          typeof vaultOwnerBody!.firstName === "string"
-            ? vaultOwnerBody!.firstName
-            : current.first_name;
+          typeof body.firstName === "string" ? body.firstName : current.first_name;
         if (!firstName.trim()) {
           return NextResponse.json(
             { error: "First name is required." },
             { status: 400 },
           );
         }
-        saveVaultOwner(accountId, {
+        saveAccountProfile(accountId, {
           first_name: firstName,
           last_name:
-            typeof vaultOwnerBody!.lastName === "string"
-              ? vaultOwnerBody!.lastName
-              : current.last_name,
+            typeof body.lastName === "string" ? body.lastName : current.last_name,
+          preferred_name:
+            typeof body.preferredName === "string"
+              ? body.preferredName
+              : undefined,
           phones,
         });
       }
@@ -244,16 +224,7 @@ export async function PATCH(req: Request) {
         await setAccountPassword(accountId, clearPassword ? null : password!);
       }
 
-      const owner = loadVaultOwner(accountId);
-      return NextResponse.json({
-        ...accountJson(account, accountId),
-        vaultOwner: {
-          firstName: owner.first_name,
-          lastName: owner.last_name,
-          displayName: owner.display_name,
-          phones: owner.phones,
-        },
-      });
+      return NextResponse.json(accountJson(account, accountId));
     });
   } catch (err) {
     const auth = authError(err);

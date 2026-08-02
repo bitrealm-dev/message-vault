@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 
 import { accountDataDir, ensureDbParentDir } from "./paths";
 import { hashPassword, passwordsMatch, validatePasswordPlaintext } from "./password";
-import { createVaultOwner } from "./vaultOwner";
+import { createAccountProfile } from "./accountProfile";
 import { ensureVaultSchema } from "./vaultSchema";
 
 export const INVALID_CREDENTIALS = "Invalid username or password";
@@ -388,7 +388,7 @@ export async function createAccount(input: {
          VALUES (?, ?, 0, ?)`,
       ).run(id, username, passwordHash);
       writeAccountEmails(db, id, emails);
-      createVaultOwner(db, id, {
+      createAccountProfile(db, id, {
         first_name: firstName,
         last_name: lastName,
         phones: [input.phone],

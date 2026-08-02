@@ -1,7 +1,7 @@
 import { loadAccount } from "./accounts";
 import { currentAccountId } from "./accountScope";
 import { isEmailHandle } from "./handleKind";
-import { loadVaultOwner } from "./vaultOwner";
+import { loadAccountProfile } from "./accountProfile";
 
 /** Strip non-digits; drop leading US country code 1 when 11 digits. */
 export function phoneDigits(handle: string): string {
@@ -49,7 +49,7 @@ export function ownerHandleMatcher(): (handle: string) => boolean {
     loadAccount(accountId).emails.map((entry) => entry.email.toLowerCase()),
   );
   const phones = new Set(
-    loadVaultOwner(accountId).phones.map(phoneDigits).filter(Boolean),
+    loadAccountProfile(accountId).phones.map(phoneDigits).filter(Boolean),
   );
 
   return (handle: string) => {
@@ -61,7 +61,7 @@ export function ownerHandleMatcher(): (handle: string) => boolean {
   };
 }
 
-/** True when handle belongs to the vault owner or web account email. */
+/** True when handle belongs to this account's phones or emails. */
 export function isOwnerHandle(handle: string): boolean {
   return ownerHandleMatcher()(handle);
 }
@@ -69,7 +69,7 @@ export function isOwnerHandle(handle: string): boolean {
 export function assertNotOwnerHandle(handle: string): void {
   if (isOwnerHandle(handle)) {
     throw new Error(
-      "This number or email belongs to the vault owner or web account and cannot be assigned to a contact",
+      "This number or email belongs to your account and cannot be assigned to a contact",
     );
   }
 }

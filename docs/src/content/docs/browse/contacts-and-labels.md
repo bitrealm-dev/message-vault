@@ -30,7 +30,8 @@ Message Vault is **not** a contacts manager. It keeps only what browsing
 needs:
 
 - Normalized phone handles (E.164 where possible)
-- Display names
+- Display names (`preferred_name` in SQLite, backfilled from first + last
+  when that column was added; CSV still uses `first_name` / `last_name`)
 - Vault-owned labels (including Active / Inactive when present)
 
 Uploaded VCF files are **transient**. The vault does not store the raw VCF,
