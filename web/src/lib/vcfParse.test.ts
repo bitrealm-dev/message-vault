@@ -1,12 +1,34 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import {
   cardToDraft,
   parseVcfText,
   splitCategories,
 } from "./vcfParse";
+
+const DUPLICATE_PHONE_VCF = `BEGIN:VCARD
+VERSION:3.0
+FN:Ada Augusta Lovelace
+N:Lovelace;Ada;Augusta;;
+TEL:+15551234567
+CATEGORIES:Family
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Ada Duplicate
+N:Duplicate;Ada;;;
+TEL:+15551234567
+TEL:+15559876543
+CATEGORIES:Work
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Mononym
+N:;Mononym;;;
+TEL:+15557654321
+CATEGORIES:Friends
+END:VCARD
+`;
 
 describe("splitCategories", () => {
   it("splits on commas and unescapes", () => {
@@ -67,12 +89,8 @@ END:VCARD
     assert.equal(draft.lastName, "Lovelace");
   });
 
-  it("matches the shared duplicate-phone and name contract fixture", () => {
-    const fixture = fs.readFileSync(
-      path.join(process.cwd(), "..", "fixtures", "contacts", "contact-contract.vcf"),
-      "utf8",
-    );
-    const drafts = parseVcfText(fixture).map(cardToDraft);
+  it("parses duplicate-phone and name cards", () => {
+    const drafts = parseVcfText(DUPLICATE_PHONE_VCF).map(cardToDraft);
     assert.equal(drafts.length, 3);
     assert.deepEqual(drafts[0], {
       firstName: "Ada",

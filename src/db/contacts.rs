@@ -907,9 +907,14 @@ mod tests {
             ContactsFormat::VcardCsv
         );
 
-        let current_export =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/contacts/current-labels.csv");
-        assert!(contacts_file_format(&current_export).is_err());
+        // Vault's own export CSV (phones/first_name/last_name) is not an address book.
+        let vault_export = dir.join("vault-export.csv");
+        std::fs::write(
+            &vault_export,
+            "phones,first_name,last_name,label_1\n+15551234567,Ada,Lovelace,Family\n",
+        )
+        .unwrap();
+        assert!(contacts_file_format(&vault_export).is_err());
 
         let vcf = dir.join("book.vcf");
         std::fs::write(
@@ -982,9 +987,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("vault.db");
         let vcf_path = dir.join("contacts.vcf");
-        std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/contacts/contact-contract.vcf"),
+        std::fs::write(
             &vcf_path,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Augusta Lovelace\nN:Lovelace;Ada;Augusta;;\nTEL:+15551234567\nCATEGORIES:Family\nEND:VCARD\n\
+             BEGIN:VCARD\nVERSION:3.0\nFN:Ada Duplicate\nN:Duplicate;Ada;;;\nTEL:+15551234567\nTEL:+15559876543\nCATEGORIES:Work\nEND:VCARD\n\
+             BEGIN:VCARD\nVERSION:3.0\nFN:Mononym\nN:;Mononym;;;\nTEL:+15557654321\nCATEGORIES:Friends\nEND:VCARD\n",
         )
         .unwrap();
 

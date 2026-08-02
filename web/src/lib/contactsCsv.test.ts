@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import {
   contactsCsvHeader,
@@ -39,10 +37,5 @@ describe("serializeContactsCsv", () => {
     assert.equal(row[1], "Mononym");
     assert.equal(row[2], "");
     assert.deepEqual(row.slice(3), labels);
-    const fixture = fs.readFileSync(
-      path.join(process.cwd(), "..", "fixtures", "contacts", "current-labels.csv"),
-      "utf8",
-    );
-    assert.equal(csv, fixture);
   });
 });

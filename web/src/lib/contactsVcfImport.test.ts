@@ -166,14 +166,33 @@ END:VCARD
     });
   });
 
-  it("merges the shared duplicate-phone fixture with the Rust contract", () => {
+  it("merges duplicate-phone VCF cards into one contact", () => {
     seedMessage(accountId, "+15551234567");
-    const fixture = fs.readFileSync(
-      path.join(process.cwd(), "..", "fixtures", "contacts", "contact-contract.vcf"),
-      "utf8",
-    );
+    const vcf = `BEGIN:VCARD
+VERSION:3.0
+FN:Ada Augusta Lovelace
+N:Lovelace;Ada;Augusta;;
+TEL:+15551234567
+CATEGORIES:Family
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Ada Duplicate
+N:Duplicate;Ada;;;
+TEL:+15551234567
+TEL:+15559876543
+CATEGORIES:Work
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Mononym
+N:;Mononym;;;
+TEL:+15557654321
+CATEGORIES:Friends
+END:VCARD
+`;
     runWithAccount(accountId, () => {
-      const summary = commitContactsFromVcf(fixture, [
+      const summary = commitContactsFromVcf(vcf, [
         { source: "Family", target: "Family", enabled: true },
         { source: "Work", target: "Work", enabled: true },
       ]);
