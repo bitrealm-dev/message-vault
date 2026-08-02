@@ -143,7 +143,18 @@ export function BrowseShell({
   );
   const sort = sortMode;
   const [query, setQuery] = useState("");
-  const [contactId, setContactId] = useState<number | null>(initialContactId);
+  const urlContactId = useMemo(() => {
+    const raw = searchParams.get("c");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }, [searchParams]);
+  const [contactId, setContactId] = useState<number | null>(
+    () => initialContactId ?? urlContactId,
+  );
+  useEffect(() => {
+    setContactId((prev) => (prev === urlContactId ? prev : urlContactId));
+  }, [urlContactId]);
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [yearly, setYearly] = useState<YearThread[]>([]);
   const [groupChats, setGroupChats] = useState<GroupChatThread[]>([]);

@@ -6,6 +6,10 @@ import { useDateTimeFormat } from "@/components/useDateTimeFormat";
 import type { HomeStats } from "@/lib/types";
 import Link from "next/link";
 
+/** Contacts search: no direct messages and no group messages. */
+const NO_CONVERSATIONS_FILTER =
+  "search:contacts message-count:=0 group-count:=0";
+
 function StatCard({
   href,
   label,
@@ -208,7 +212,7 @@ export function HomePageClient({
                 detail="Browse everyone"
               />
               <StatCard
-                href="/no-messages"
+                href={`/all?q=${encodeURIComponent(NO_CONVERSATIONS_FILTER)}`}
                 label="No messages"
                 value={stats.noMessages}
                 detail="Contacts without conversations"

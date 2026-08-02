@@ -33,7 +33,8 @@ conversations.
 
 ## Reset demo data
 
-Reset is **CLI only**. The web menu shows a hint but does not run the reset:
+Reset is **CLI only**. Signed in as **demo**, the web menu shows a hint but does
+not run the reset:
 
 ```bash
 cargo run --release -- reset-demo

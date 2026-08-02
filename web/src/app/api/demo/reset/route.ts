@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { unauthorizedResponse, withAccountHandler } from "@/lib/accountContext";
+import {
+  unauthorizedResponse,
+  withAccountHandler,
+} from "@/lib/accountContext";
+import { isDemoAccount } from "@/lib/demoAccount";
 import { assertVaultWritable, mutationErrorStatus } from "@/lib/owner";
 import { configTomlPath, repoRoot } from "@/lib/paths";
 import { NextResponse } from "next/server";
@@ -34,18 +38,33 @@ function authError(err: unknown): NextResponse | null {
   return null;
 }
 
-/** Whether the demo bundle is present (UI can show CLI reset instructions). */
+/** Demo reset menu is only for the signed-in demo account when the bundle exists. */
 export async function GET() {
-  return NextResponse.json({
-    available: demoBundleEnabled(),
-    hint: CLI_HINT,
-  });
+  try {
+    return await withAccountHandler(async (accountId) => {
+      const available = isDemoAccount(accountId) && demoBundleEnabled();
+      return NextResponse.json({
+        available,
+        hint: available ? CLI_HINT : null,
+      });
+    });
+  } catch (err) {
+    const auth = authError(err);
+    if (auth) return auth;
+    return NextResponse.json({ available: false, hint: null });
+  }
 }
 
 /** Ingest is owned by the Rust server/CLI — web no longer spawns reset-demo. */
 export async function POST() {
   try {
-    return await withAccountHandler(async () => {
+    return await withAccountHandler(async (accountId) => {
+      if (!isDemoAccount(accountId)) {
+        return NextResponse.json(
+          { ok: false, error: "Demo reset is only available for the demo account." },
+          { status: 403 },
+        );
+      }
       assertVaultWritable();
       return NextResponse.json(
         { ok: false, error: CLI_HINT },

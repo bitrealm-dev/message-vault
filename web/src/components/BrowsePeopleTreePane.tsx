@@ -10,6 +10,7 @@ import type {
 import type { SearchResultKey } from "@/lib/searchSelection";
 import type { ContactListItem, YearThread } from "@/lib/types";
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -290,6 +291,14 @@ export function BrowsePeopleTreePane({
     resultsMode,
     hasContactSelection,
   });
+
+  useEffect(() => {
+    if (contactId == null || resultsMode) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-contact-id="${contactId}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [contactId, resultsMode, grouped]);
 
   const onVcfPicked = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -685,7 +694,7 @@ export function BrowsePeopleTreePane({
                 // its highlight when focus moves.
                 const active = c.id === contactId || menuTarget;
                 return (
-                  <div key={c.id}>
+                  <div key={c.id} data-contact-id={c.id}>
                     <BrowseContactRow
                       contact={c}
                       active={active}

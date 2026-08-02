@@ -29,5 +29,6 @@ New accounts start with view-only mode off. The demo account starts with it on.
 
 ## Demo reset
 
-**Reset demo** is CLI-only (`cargo run --release -- reset-demo`). The web menu
-shows instructions only. See [Try the demo](/get-started/try-the-demo/).
+**Reset demo** is CLI-only (`cargo run --release -- reset-demo`). For the demo
+account, the web menu shows instructions only. See
+[Try the demo](/get-started/try-the-demo/).

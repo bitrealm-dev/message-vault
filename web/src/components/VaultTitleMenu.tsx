@@ -86,19 +86,23 @@ export function VaultTitleMenu({
           >
             Logout
           </button>
-          <div className="my-1 border-t border-border" role="separator" />
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!demoResetAvailable || resettingDemo}
-            className={itemClass}
-            onClick={() => {
-              close();
-              onResetDemo();
-            }}
-          >
-            {resettingDemo ? "Resetting demo…" : "Reset demo"}
-          </button>
+          {demoResetAvailable && (
+            <>
+              <div className="my-1 border-t border-border" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={resettingDemo}
+                className={itemClass}
+                onClick={() => {
+                  close();
+                  onResetDemo();
+                }}
+              >
+                {resettingDemo ? "Resetting demo…" : "Reset demo"}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
