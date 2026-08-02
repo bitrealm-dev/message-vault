@@ -56,4 +56,4 @@ to the import API. Then refresh the website and
 [browse](/browse/navigation-and-sources/).
 
 If the export folder already lives on the vault machine, you can skip the
-network push and use [same-machine ingest](/import/same-machine/) instead.
+network push and use [same-machine import](/import/same-machine/) instead.

@@ -101,7 +101,7 @@ pub fn lookup_account_ref(conn: &Connection, account_ref: &str) -> Result<Option
     Ok(by_user)
 }
 
-/// Resolve an account reference to `accounts.id` for import/ingest.
+/// Resolve an account reference to `accounts.id` for import.
 ///
 /// Accepts UUID or username. Unknown usernames error. Unknown UUID-shaped
 /// values are returned as-is so CLI import can still stub-create the row.

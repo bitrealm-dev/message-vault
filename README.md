@@ -68,7 +68,7 @@ Details: [First personal import](https://bitrealm-dev.github.io/message-vault-rs
 ## Repository layout
 
 ```text
-src/                # CLI binary: import, ingest, serve, demo reset
+src/                # CLI binary: import, serve, demo reset
 crates/
   demo-seed/        # regenerate committed demo data (message-ir JSONL)
 demo/               # committed demo bundle

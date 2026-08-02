@@ -1,6 +1,6 @@
 ---
 title: Same machine
-description: Import a local JSONL staging folder with ingest without the network push tools.
+description: Import a local JSONL staging folder without the network push tools.
 ---
 
 If the export folder already lives on the vault machine, import without
@@ -10,39 +10,35 @@ If the export folder already lives on the vault machine, import without
 ## One source
 
 ```bash
-cargo run --release -- ingest go-sms-pro \
+cargo run --release -- import go-sms-pro \
   --account yourusername \
-  --staging-dir staging/go-sms-pro
+  --dir staging/go-sms-pro
 ```
 
-`ingest` imports JSONL and runs cross-source soft-dedupe afterward (unless
-`--skip-dedupe`). CLI default mode is **replace**.
+`import` loads message-ir JSONL and runs cross-source soft-dedupe afterward
+(unless `--skip-dedupe`). CLI default mode is **replace**.
+
+`--dir` also accepts the aliases `--staging-dir` and `--export-dir`.
 
 ## Several sources
 
-Run `ingest` once per source (default staging path: `staging/<source_id>/`).
-Use `--skip-dedupe` on every source except the last so soft-dedupe runs once:
+Run `import` once per source. Use `--skip-dedupe` on every source except the
+last so soft-dedupe runs once:
 
 ```bash
-cargo run --release -- ingest imessage \
+cargo run --release -- import imessage \
   --account yourusername \
-  --staging-dir staging/imessage \
+  --dir staging/imessage \
   --skip-dedupe
 
-cargo run --release -- ingest go-sms-pro \
+cargo run --release -- import go-sms-pro \
   --account yourusername \
-  --staging-dir staging/go-sms-pro
+  --dir staging/go-sms-pro
 ```
 
-## Import without auto-dedupe
+Or import each source with `--skip-dedupe`, then:
 
 ```bash
-cargo run --release -- import \
-  --source imessage \
-  --export-dir staging/imessage \
-  --mode replace \
-  --account yourusername
-
 cargo run --release -- dedupe-cross-source --account yourusername
 ```
 

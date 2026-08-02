@@ -125,18 +125,18 @@ mkdir -p staging/imessage
 cp -a /path/to/your-export/. staging/imessage/
 ```
 
-Then ingest from inside the container:
+Then import from inside the container:
 
 ```bash
 # Dev
-docker compose exec vault cargo run --release -- ingest imessage \
+docker compose exec vault cargo run --release -- import imessage \
   --account yourusername \
-  --staging-dir staging/imessage
+  --dir staging/imessage
 
 # Release (binary is already in the image)
-docker compose -f compose-release.yml exec vault message-vault-rs ingest imessage \
+docker compose -f compose-release.yml exec vault message-vault-rs import imessage \
   --account yourusername \
-  --staging-dir staging/imessage
+  --dir staging/imessage
 ```
 
 Contents of `staging/` are gitignored; only the empty directory placeholder is

@@ -7,8 +7,7 @@ Run from the repository root with `cargo run --release -- <command>`.
 
 | Command | Purpose |
 |---------|---------|
-| `ingest` | Import a JSONL staging folder for one source, then soft-dedupe |
-| `import` | Import JSONL only (no automatic cross-source dedupe) |
+| `import` | Import a JSONL staging folder for one source, then soft-dedupe (unless `--skip-dedupe`) |
 | `dedupe-cross-source` | Soft-hide the same SMS across sources |
 | `import-contacts` | Load an address book into SQLite (**iMazing Contacts CSV** or **VCF**) |
 | `process-assets` | Generate and register converted media assets |
@@ -22,23 +21,21 @@ Most tenant-scoped commands take:
 - `--config` (default `config/config.toml`)
 - `--account <username|uuid>`
 
-Import commands also accept `--mode replace|append` (default **replace** for
-CLI).
+Import also accepts `--mode replace|append` (default **replace**).
 
 ## Examples
 
 ```bash
-cargo run --release -- ingest imessage \
+cargo run --release -- import imessage \
   --account yourusername \
-  --staging-dir staging/imessage \
+  --dir staging/imessage \
   --mode replace
 
-cargo run --release -- import \
-  --source imessage \
-  --export-dir staging/imessage \
-  --mode replace \
+cargo run --release -- import imessage \
   --account yourusername \
-  --contacts path/to/contacts.vcf
+  --dir staging/imessage \
+  --contacts path/to/contacts.vcf \
+  --skip-dedupe
 
 cargo run --release -- import-contacts \
   --account yourusername \

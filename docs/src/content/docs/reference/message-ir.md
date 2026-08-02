@@ -10,7 +10,7 @@ crate; this repo depends on that package over git.
 
 ## Happy path
 
-**Phone backup → message-ir JSONL → vault import / ingest / `POST /v1/import` → SQLite**
+**Phone backup → message-ir JSONL → vault CLI `import` or `POST /v1/import` → SQLite**
 
 There is no separate “vault JSONL” wire. Optional nested fields (especially
 `imessage`) are omitted when unused — for example an SMS row has
@@ -36,7 +36,7 @@ Attachment records may include `digest_sha256` so remote clients can
 
 ## Clients
 
-- Same-machine: CLI `ingest` / `import` against a local IR staging folder
+- Same-machine: CLI `import` against a local IR staging folder
 - Remote: Message Exporters Vault tab / `vault-push` should POST **message-ir**
   JSONL (upload assets by SHA-256, then import). Older clients that still project
   to a former vault-only NDJSON shape need updating.

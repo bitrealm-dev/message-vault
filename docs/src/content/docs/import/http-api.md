@@ -32,10 +32,10 @@ Request body limit: 512 MiB.
 
 ## Defaults (different from CLI)
 
-| Query | HTTP default | CLI `ingest` / `import` default |
-|-------|--------------|----------------------------------|
+| Query | HTTP default | CLI `import` default |
+|-------|--------------|----------------------|
 | `mode` | `append` | `replace` |
-| `dedupe` | `false` | `ingest` runs dedupe unless `--skip-dedupe` |
+| `dedupe` | `false` | runs dedupe unless `--skip-dedupe` |
 | `account` | Optional when Bearer token identifies the tenant | Required `--account` |
 
 ## Verify a token

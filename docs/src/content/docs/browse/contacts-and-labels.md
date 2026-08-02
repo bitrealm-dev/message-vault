@@ -57,7 +57,7 @@ cargo run --release -- import-contacts \
   --contacts path/to/Contacts.csv
 ```
 
-The same `--contacts` flag is available on `import` / `ingest`. VCF
+The same `--contacts` flag is available on `import`. VCF
 `CATEGORIES` (and `[Tag]` markers in `FN`) become vault labels.
 
 ## Import VCF (web)

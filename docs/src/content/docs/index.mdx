@@ -23,7 +23,7 @@ import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 1. Export     Phone backup → message-ir JSONL + attachments/
               (Message Exporters / message-exporter)
 
-2. Import     Push or ingest message-ir JSONL into the vault
+2. Import     Push or CLI-import message-ir JSONL into the vault
 
 3. Browse     Open the website on your computer
 ```
@@ -52,6 +52,6 @@ uploaded to a cloud service by this project.
 
 <Aside type="tip" title="Two processes for remote import">
   Browsing only needs the Next.js web UI. Remote import also needs the Rust
-  import API (`cargo run --release -- serve`). Same-machine `ingest` does not
+  import API (`cargo run --release -- serve`). Same-machine CLI `import` does not
   require `serve`.
 </Aside>
