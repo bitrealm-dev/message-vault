@@ -6,7 +6,11 @@ members = [
 ]
 
 [workspace.dependencies]
+# Prefer git once the public contacts/phone APIs are on exporters main.
+# Path deps keep local sibling checkouts working before that lands.
 message-ir = { git = "https://github.com/bitrealm-dev/message-exporters", package = "message-ir" }
+contacts = { path = "../message-exporters/crates/message/contacts" }
+phone = { path = "../message-exporters/crates/message/phone" }
 
 [package]
 name = "message-vault-rs"
@@ -18,9 +22,10 @@ anyhow = "1.0.103"
 axum = { version = "0.8.9", features = ["multipart"] }
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.1", features = ["derive"] }
+contacts = { workspace = true }
 futures-util = { version = "0.3.31", default-features = false }
-csv = "1.4.0"
 message-ir = { workspace = true }
+phone = { workspace = true }
 rusqlite = { version = "0.40.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

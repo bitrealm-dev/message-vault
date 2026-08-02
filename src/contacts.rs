@@ -1,8 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use contacts::{
+    ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows, strip_tags,
+};
+use phone::sanitize_number;
 use rusqlite::{Connection, OptionalExtension, params};
 
 #[derive(Debug, Default)]
@@ -14,15 +17,6 @@ pub struct ContactLoadStats {
     pub skipped: bool,
 }
 
-/// Address-book formats accepted by CLI contact import.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContactsFileFormat {
-    /// iMazing Contacts CSV: First Name, Last Name, and columns containing "Phone".
-    ImazingCsv,
-    /// vCard (.vcf / .vcard).
-    Vcf,
-}
-
 #[derive(Debug)]
 struct ContactDraft {
     phones: Vec<String>,
@@ -30,65 +24,28 @@ struct ContactDraft {
     labels: Vec<String>,
 }
 
-fn normalize_header_name(h: &str) -> String {
-    h.trim()
-        .trim_start_matches('\u{feff}')
-        .to_ascii_lowercase()
-        .replace('_', " ")
-}
-
-/// True for iMazing/Outlook phone columns (`Mobile Phone`, …).
-fn is_phone_header(h: &str) -> bool {
-    h != "phones" && h.contains("phone")
-}
-
-fn contacts_file_format(path: &Path) -> Result<ContactsFileFormat> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if ext == "vcf" || ext == "vcard" {
-        return Ok(ContactsFileFormat::Vcf);
-    }
-    if ext != "csv" {
-        bail!(
-            "contacts file must be an iMazing Contacts .csv or a .vcf file: {}",
-            path.display()
-        );
-    }
-
-    let file = File::open(path)
-        .with_context(|| format!("failed to open contacts file {}", path.display()))?;
-    let mut reader = csv::ReaderBuilder::new()
-        .flexible(true)
-        .has_headers(true)
-        .from_reader(file);
-    let headers = reader
-        .headers()
-        .with_context(|| format!("failed to read contacts CSV header in {}", path.display()))?
-        .clone();
-    let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
-
-    let has_first = header_l.iter().any(|h| h == "first name");
-    let has_last = header_l.iter().any(|h| h == "last name");
-    let has_phone = header_l.iter().any(|h| is_phone_header(h));
-    if has_first && has_last && has_phone {
-        return Ok(ContactsFileFormat::ImazingCsv);
-    }
-
-    bail!(
-        "unrecognized contacts CSV {} (headers: {}). \
-         Expected iMazing Contacts export (First Name, Last Name, and at least one \
-         Phone column such as Mobile Phone) or a .vcf file",
-        path.display(),
-        header_l.join(" | ")
-    )
+fn contacts_file_format(path: &Path) -> Result<ContactsFormat> {
+    detect_contacts_format(path).map_err(|e| {
+        if e.details.is_empty() {
+            anyhow::anyhow!("{}", e.message)
+        } else {
+            anyhow::anyhow!("{} ({})", e.message, e.details.join("; "))
+        }
+    })
 }
 
 /// iMessage-style: any handle containing `@` is treated as email.
 fn is_email_handle(handle: &str) -> bool {
     handle.contains('@')
+}
+
+/// Raw phone → E.164 when unambiguous enough for the shared `phone` crate.
+fn to_e164(num: &str) -> Option<String> {
+    let trimmed = num.trim();
+    if trimmed.is_empty() || trimmed.contains('@') {
+        return None;
+    }
+    sanitize_number(trimmed).map(|digits| phone::to_e164(&digits))
 }
 
 fn phone_handles_only(handles: &[String]) -> Vec<String> {
@@ -97,7 +54,7 @@ fn phone_handles_only(handles: &[String]) -> Vec<String> {
         if is_email_handle(h) {
             continue;
         }
-        let Some(e164) = crate::phone::to_e164(h) else {
+        let Some(e164) = to_e164(h) else {
             continue;
         };
         if !out.iter().any(|p| p == &e164) {
@@ -255,8 +212,8 @@ pub fn load_contacts_if_needed(
 
     let format = contacts_file_format(path)?;
     let mut stats = match format {
-        ContactsFileFormat::ImazingCsv => load_from_imazing_csv(conn, path, account_id)?,
-        ContactsFileFormat::Vcf => load_from_vcf(conn, path, account_id)?,
+        ContactsFormat::VcardCsv => load_from_imazing_csv(conn, path, account_id)?,
+        ContactsFormat::Vcf => load_from_vcf(conn, path, account_id)?,
     };
     stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot)?;
     if stats.emails_restored > 0 {
@@ -293,61 +250,22 @@ fn load_from_imazing_csv(
     csv_path: &Path,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
-    let file = File::open(csv_path)
-        .with_context(|| format!("failed to open contacts CSV {}", csv_path.display()))?;
-    let mut reader = csv::ReaderBuilder::new()
-        .flexible(true)
-        .has_headers(true)
-        .from_reader(file);
-    let headers = reader
-        .headers()
-        .with_context(|| {
-            format!(
-                "failed to read contacts CSV header in {}",
-                csv_path.display()
-            )
-        })?
-        .clone();
-    let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
-    let first_i = header_l.iter().position(|h| h == "first name");
-    let middle_i = header_l.iter().position(|h| h == "middle name");
-    let last_i = header_l.iter().position(|h| h == "last name");
-    let phone_cols: Vec<usize> = header_l
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| is_phone_header(h))
-        .map(|(i, _)| i)
-        .collect();
-    if first_i.is_none() || last_i.is_none() || phone_cols.is_empty() {
-        bail!(
-            "iMazing contacts CSV needs First Name, Last Name, and at least one Phone column ({})",
-            csv_path.display()
-        );
-    }
-
+    let rows = read_vcard_csv_rows(csv_path)
+        .with_context(|| format!("failed to read contacts CSV {}", csv_path.display()))?;
     let mut drafts = Vec::new();
-    for (row_no, result) in reader.records().enumerate() {
-        let row_no = row_no + 2;
-        let record = result.with_context(|| {
-            format!(
-                "failed to parse contacts CSV row {row_no} in {}",
-                csv_path.display()
-            )
-        })?;
-        let cell =
-            |i: Option<usize>| -> &str { i.and_then(|idx| record.get(idx)).unwrap_or("").trim() };
-        let first = cell(first_i);
-        let middle = cell(middle_i);
-        let last = cell(last_i);
+    for row in rows {
+        if row.phones.is_empty() {
+            continue;
+        }
         let mut name_parts = Vec::new();
-        if !first.is_empty() {
-            name_parts.push(first);
+        if !row.first.is_empty() {
+            name_parts.push(row.first.as_str());
         }
-        if !middle.is_empty() {
-            name_parts.push(middle);
+        if !row.middle.is_empty() {
+            name_parts.push(row.middle.as_str());
         }
-        if !last.is_empty() {
-            name_parts.push(last);
+        if !row.last.is_empty() {
+            name_parts.push(row.last.as_str());
         }
         let preferred_name = {
             let joined = name_parts.join(" ");
@@ -358,26 +276,10 @@ fn load_from_imazing_csv(
                 Some(collapsed)
             }
         };
-
-        let mut raw_phones = Vec::new();
-        for &i in &phone_cols {
-            let raw = record.get(i).unwrap_or("").trim();
-            if raw.is_empty() {
-                continue;
-            }
-            // iMazing sometimes packs multiple phones with `;`
-            for part in raw.split(';') {
-                let part = part.trim();
-                if !part.is_empty() {
-                    raw_phones.push(part.to_string());
-                }
-            }
-        }
-        let phones = phone_handles_only(&raw_phones);
+        let phones = phone_handles_only(&row.phones);
         if phones.is_empty() {
             continue;
         }
-
         drafts.push(ContactDraft {
             phones,
             preferred_name,
@@ -393,7 +295,7 @@ fn load_from_vcf(
     vcf_path: &Path,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
-    let cards = crate::vcf::parse_vcf(vcf_path)?;
+    let cards = parse_vcf(vcf_path)?;
     let mut drafts = Vec::new();
     for card in cards {
         let phones = phone_handles_only(&card.phones);
@@ -401,10 +303,10 @@ fn load_from_vcf(
             continue;
         }
 
-        let (fn_stripped, fn_tags) = crate::vcf::extract_tags(&card.fn_raw);
-        let first = crate::vcf::strip_tags(&card.n_given);
-        let middle = crate::vcf::strip_tags(&card.n_middle);
-        let last = crate::vcf::strip_tags(&card.n_family);
+        let (fn_stripped, fn_tags) = extract_tags(&card.fn_raw);
+        let first = strip_tags(&card.n_given);
+        let middle = strip_tags(&card.n_middle);
+        let last = strip_tags(&card.n_family);
 
         let nickname = if last.is_empty()
             && !fn_stripped.is_empty()
@@ -589,7 +491,7 @@ fn handle_match_key(handle: &str) -> String {
     if is_email_handle(trimmed) {
         return trimmed.to_lowercase();
     }
-    crate::phone::to_e164(trimmed).unwrap_or_else(|| trimmed.to_string())
+    to_e164(trimmed).unwrap_or_else(|| trimmed.to_string())
 }
 
 /// Create contacts for handles that have messages but no contact_handles row:
@@ -1002,7 +904,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             contacts_file_format(&imazing).unwrap(),
-            ContactsFileFormat::ImazingCsv
+            ContactsFormat::VcardCsv
         );
 
         let current_export =
@@ -1015,7 +917,7 @@ mod tests {
             "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15551234567\nEND:VCARD\n",
         )
         .unwrap();
-        assert_eq!(contacts_file_format(&vcf).unwrap(), ContactsFileFormat::Vcf);
+        assert_eq!(contacts_file_format(&vcf).unwrap(), ContactsFormat::Vcf);
 
         std::fs::remove_dir_all(&dir).ok();
     }

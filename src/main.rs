@@ -8,12 +8,10 @@ mod import;
 mod ingest;
 mod jsonl;
 mod models;
-mod phone;
 mod process_assets;
 mod reset_demo;
 mod schema;
 mod server;
-mod vcf;
 
 use std::path::PathBuf;
 
