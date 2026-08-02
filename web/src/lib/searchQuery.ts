@@ -2,8 +2,10 @@
  * Vault search query parser / composer.
  *
  * Supported operators:
- *   search:contacts  handle:  within:  last-contact:  first-contact:
- *   group-count:  message-count:
+ *   search:contacts  handle:  first:  last:  phone:  is:nofirst  is:nolast
+ *   is:nameless (legacy → both nofirst and nolast)
+ *   first:/last:/phone:/nofirst/nolast also scope Messages “with person”
+ *   within:  last-contact:  first-contact:  group-count:  message-count:
  *   with:  from:  to:  has:attachment  after:  before:  source:
  *   is:group  is:direct
  *   "quoted phrases"  -term
@@ -51,8 +53,18 @@ export type ParsedSearchQuery = {
   conversationType: "group" | "individual" | null;
   /** Label whose contacts to search, active or not. */
   within: string | null;
-  /** Contact handle (name or phone number). */
+  /** Contact handle (name or phone number). Legacy combined filter. */
   handle: string | null;
+  /** Substring match on contact first name. */
+  firstName: string | null;
+  /** Substring match on contact last name. */
+  lastName: string | null;
+  /** Substring match on phone / email handles only. */
+  phone: string | null;
+  /** Contacts with empty first name. */
+  noFirstName: boolean;
+  /** Contacts with empty last name. */
+  noLastName: boolean;
   /** Bounds on each contact's overall last message date. */
   lastContact: DateBounds;
   /** Bounds on each contact's overall first message date. */
@@ -90,8 +102,15 @@ export type AdvancedSearchForm = {
   within?: string;
   /** Name or number of a conversation participant. */
   withPerson?: string;
-  /** Contact handle (name or phone number). */
+  /** Contact handle (name or phone number). Legacy combined filter. */
   handle?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  /** Contacts search: only contacts with empty first name. */
+  noFirstName?: boolean;
+  /** Contacts search: only contacts with empty last name. */
+  noLastName?: boolean;
   hasWords?: string;
   doesntHave?: string;
   /** Message timestamp bounds. */
@@ -124,6 +143,11 @@ const EMPTY: ParsedSearchQuery = {
   conversationType: null,
   within: null,
   handle: null,
+  firstName: null,
+  lastName: null,
+  phone: null,
+  noFirstName: false,
+  noLastName: false,
   lastContact: NO_BOUNDS,
   firstContact: NO_BOUNDS,
   groupCount: null,
@@ -132,7 +156,7 @@ const EMPTY: ParsedSearchQuery = {
 };
 
 const OPERATOR_RE =
-  /^(search|with|from|to|subject|has|after|before|source|is|within|label|in|show|handle|last-contact|first-contact|group-count|message-count):(.*)$/i;
+  /^(search|with|from|to|subject|has|after|before|source|is|within|label|in|show|handle|last-contact|first-contact|group-count|message-count|first|last|phone):(.*)$/i;
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -288,6 +312,14 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
           if (v === "group") out.conversationType = "group";
           else if (v === "direct" || v === "individual" || v === "1-1") {
             out.conversationType = "individual";
+          } else if (v === "nofirst") {
+            out.noFirstName = true;
+          } else if (v === "nolast") {
+            out.noLastName = true;
+          } else if (v === "nameless") {
+            // Legacy: both empty.
+            out.noFirstName = true;
+            out.noLastName = true;
           }
           break;
         }
@@ -297,6 +329,15 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
           break;
         case "handle":
           out.handle = value;
+          break;
+        case "first":
+          out.firstName = value;
+          break;
+        case "last":
+          out.lastName = value;
+          break;
+        case "phone":
+          out.phone = value;
           break;
         case "in":
           // Legacy in:trash — trash is always excluded now.
@@ -378,7 +419,13 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
   return {
     mode: parsed.mode,
     within: parsed.within ?? undefined,
+    // Combined Handle stays on handle:; split fields stay on first/last/phone.
     handle: parsed.handle ?? undefined,
+    firstName: parsed.firstName ?? undefined,
+    lastName: parsed.lastName ?? undefined,
+    phone: parsed.phone ?? undefined,
+    noFirstName: parsed.noFirstName || undefined,
+    noLastName: parsed.noLastName || undefined,
     withPerson: parsed.to ?? undefined,
     hasWords: hasWords || undefined,
     doesntHave: doesntHave || undefined,
@@ -418,6 +465,18 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
   if (form.mode === "contacts") parts.push("search:contacts");
   if (form.within?.trim()) {
     parts.push(`within:${quoteIfNeeded(form.within.trim())}`);
+  }
+  // first/last/phone apply in Contacts search and Messages “with person” expand.
+  if (form.noFirstName) parts.push("is:nofirst");
+  else if (form.firstName?.trim()) {
+    parts.push(`first:${quoteIfNeeded(form.firstName.trim())}`);
+  }
+  if (form.noLastName) parts.push("is:nolast");
+  else if (form.lastName?.trim()) {
+    parts.push(`last:${quoteIfNeeded(form.lastName.trim())}`);
+  }
+  if (form.phone?.trim()) {
+    parts.push(`phone:${quoteIfNeeded(form.phone.trim())}`);
   }
   if (form.mode === "contacts" && form.handle?.trim()) {
     parts.push(`handle:${quoteIfNeeded(form.handle.trim())}`);
@@ -482,6 +541,11 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
     !!q.conversationType ||
     !!q.within ||
     !!q.handle ||
+    !!q.firstName ||
+    !!q.lastName ||
+    !!q.phone ||
+    q.noFirstName ||
+    q.noLastName ||
     !!q.groupCount ||
     !!q.messageCount ||
     hasDateBounds(q.lastContact) ||

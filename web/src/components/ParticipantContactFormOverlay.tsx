@@ -96,7 +96,6 @@ export function ParticipantContactFormOverlay({
         phonesView={phonesView}
         labelsEditor={
           <LabelsMenu
-            labeled
             allLabels={draftMenuLabels}
             checks={draftLabelChecks}
             disabled={contactSaving}

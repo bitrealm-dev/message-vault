@@ -235,7 +235,7 @@ export const BrowseContactRow = memo(function BrowseContactRow({
                         <>
                           <CountBadge
                             count={c.messageCount}
-                            title="1:1 messages"
+                            title="Direct messages"
                           />
                           <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
                         </>

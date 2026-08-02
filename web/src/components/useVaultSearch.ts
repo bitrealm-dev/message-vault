@@ -96,7 +96,7 @@ export function useVaultSearch(initialQuery = "") {
   const loadedCount = mode === "contacts" ? contactHits.length : hits.length;
   const hasMore = resultsMode && !loading && loadedCount > 0 && loadedCount < total;
 
-  /** Fetch the next page and append it (People pages contacts, Messages pages conversations). */
+  /** Fetch the next page and append it (Contacts pages contacts, Messages pages conversations). */
   const loadMore = useCallback(() => {
     if (!committed || loading || loadingMore) return;
     const seq = seqRef.current;

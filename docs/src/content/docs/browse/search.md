@@ -1,14 +1,16 @@
 ---
 title: Search
-description: Find people or find messages, then step through matches inside a conversation.
+description: Find contacts or find messages, then step through matches inside a conversation.
 ---
 
 Search answers two different questions. Pick the one you mean from the tabs in
 the search dropdown (the chevron next to the search box):
 
-- **People** — *who do I know?* Filters your contact list by name, number,
-  label, first/last contact date, or message counts. It never looks at message
-  text, and it can return people with no messages at all.
+- **Contacts** — *who do I know?* Filters your contact list by a combined
+  handle (name or number), or expand Handle for first/last name (including
+  empty), phone, label, first/last message date, or direct/group message
+  counts. It never looks at message text, and it can return contacts with no
+  messages at all.
 - **Messages** — *what was said?* Full-text search across message bodies.
   Results show one row per **conversation**, with a count of matching messages
   and a snippet of the best match — not one row per message.
@@ -37,14 +39,17 @@ The search box also accepts operators, composed for you by the advanced form:
 |----------|---------|
 | `"exact phrase"` | Match the phrase |
 | `-word` | Exclude messages containing the word |
-| `with:name` | Conversation includes this person |
+| `with:name` | Conversation includes this person (name or number) |
+| `first:text` / `last:text` | Contact first / last name (Contacts search, or Messages with-person) |
+| `is:nofirst` / `is:nolast` | Empty first / last name (Contacts, or Messages with-person) |
+| `phone:text` | Phone or email handle (Contacts, or Messages with-person) |
 | `from:name` | Message sent by this person |
 | `after:2020` / `before:2021-06-01` | Date bounds |
 | `is:direct` / `is:group` | Only 1-1 or only group conversations |
 | `source:imessage` | Only one import source |
 | `has:attachment` | Message has a photo or file |
 | `within:label` | Only contacts with this label |
-| `search:contacts` | Switch to People search |
-| `handle:text` | (People) name or number contains text |
-| `first-contact:>=2019` / `last-contact:<2022` | (People) activity dates |
-| `group-count:>5` / `message-count:>100` | (People) message counts |
+| `search:contacts` | Switch to Contacts search |
+| `handle:text` | (Contacts) combined name or number contains text |
+| `first-contact:>=2019` / `last-contact:<2022` | (Contacts) first / last message dates |
+| `group-count:>5` / `message-count:>100` | (Contacts) group / direct message counts |

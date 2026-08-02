@@ -121,42 +121,81 @@ export function SearchContactResultsList({
                 className="mb-1 mr-2 overflow-hidden rounded-md bg-elevated/55"
                 style={{ marginLeft: NESTED_FROM_NAME_PX }}
               >
-                {hits.map((hit, hi) => {
-                  const isDirect = hit.conversationType === "individual";
-                  return (
-                  <button
-                    key={hit.conversationId}
-                    type="button"
-                    onClick={() => onSelectHit?.(hit)}
-                    className={`relative flex w-full min-w-0 flex-col gap-0.5 py-2 pr-3 pl-3 text-left transition-colors ${
-                      selectedConversationId === hit.conversationId
-                        ? "bg-accent/20 hover:bg-accent/25"
-                        : isDirect
-                          ? // Match the contact row (sidebar), not the elevated group panel.
-                            "bg-sidebar hover:bg-hover-strong"
-                          : "bg-transparent hover:bg-hover"
-                    }`}
-                  >
-                    {selectedConversationId === hit.conversationId ? (
-                      <span
-                        aria-hidden
-                        className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
-                      />
-                    ) : null}
-                    {hi < hits.length - 1 ? (
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute bottom-0 left-1/2 h-px w-[95%] -translate-x-1/2 bg-border/55"
-                      />
-                    ) : null}
-                    <SearchHitSummary
-                      hit={hit}
-                      highlightTerms={highlightTerms}
-                      showMeta={false}
-                    />
-                  </button>
+                {(() => {
+                  const directHits = hits.filter(
+                    (hit) => hit.conversationType === "individual",
                   );
-                })}
+                  const groupHits = hits.filter(
+                    (hit) => hit.conversationType === "group",
+                  );
+                  const emptyRow = (label: string, bordered: boolean) => (
+                    <p
+                      className={`px-3 py-2.5 text-[12px] text-muted ${
+                        bordered ? "border-b border-border/40" : ""
+                      }`}
+                    >
+                      {label}
+                    </p>
+                  );
+                  const hitButton = (
+                    hit: SearchConversationHit,
+                    isDirect: boolean,
+                    showDivider: boolean,
+                  ) => (
+                    <button
+                      key={hit.conversationId}
+                      type="button"
+                      onClick={() => onSelectHit?.(hit)}
+                      className={`relative flex w-full min-w-0 flex-col gap-0.5 py-2 pr-3 pl-3 text-left transition-colors ${
+                        selectedConversationId === hit.conversationId
+                          ? "bg-accent/20 hover:bg-accent/25"
+                          : isDirect
+                            ? "bg-sidebar hover:bg-hover-strong"
+                            : "bg-transparent hover:bg-hover"
+                      }`}
+                    >
+                      {selectedConversationId === hit.conversationId ? (
+                        <span
+                          aria-hidden
+                          className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
+                        />
+                      ) : null}
+                      {showDivider ? (
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute bottom-0 left-1/2 h-px w-[95%] -translate-x-1/2 bg-border/55"
+                        />
+                      ) : null}
+                      <SearchHitSummary
+                        hit={hit}
+                        highlightTerms={highlightTerms}
+                        showMeta={false}
+                      />
+                    </button>
+                  );
+                  return (
+                    <>
+                      {directHits.length === 0
+                        ? emptyRow("No direct messages", true)
+                        : directHits.map((hit, i) =>
+                            hitButton(
+                              hit,
+                              true,
+                              i < directHits.length - 1 || groupHits.length > 0,
+                            ),
+                          )}
+                      {groupHits.length === 0
+                        ? emptyRow("No group messages", false)
+                        : groupHits.map((hit, i) =>
+                            hitButton(
+                              hit,
+                              false,
+                              i < groupHits.length - 1,
+                            ),
+                          )}
+                    </>
+                  );
+                })()}
               </div>
             ) : null}
           </div>

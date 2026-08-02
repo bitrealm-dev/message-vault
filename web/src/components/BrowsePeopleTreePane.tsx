@@ -486,7 +486,7 @@ export function BrowsePeopleTreePane({
             <IconHoverTarget
               label={
                 searchMode === "contacts"
-                  ? "Select all matching people"
+                  ? "Select all matching contacts"
                   : "Select all matching messages"
               }
               placement="bottom"
@@ -505,7 +505,7 @@ export function BrowsePeopleTreePane({
                 }
                 aria-label={
                   searchMode === "contacts"
-                    ? "Select all matching people"
+                    ? "Select all matching contacts"
                     : "Select all matching messages"
                 }
                 onChange={
@@ -539,7 +539,7 @@ export function BrowsePeopleTreePane({
               sort={contactSort}
               order={contactSortOrder}
               onChange={onContactSortChange}
-              scopeLabel="People"
+              scopeLabel="Contacts"
               scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
             />
             <ListHistoryMenu items={searchMenuItems} />
@@ -576,7 +576,7 @@ export function BrowsePeopleTreePane({
                 sort={contactSort}
                 order={contactSortOrder}
                 onChange={onContactSortChange}
-                scopeLabel="People"
+                scopeLabel="Contacts"
                 scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
               />
               {(hasContactSelection || expandedContactId != null) && (
@@ -591,7 +591,7 @@ export function BrowsePeopleTreePane({
                     order={groupSortOrder}
                     onChange={onGroupSortChange}
                     disabled={groupItems.length === 0}
-                    scopeLabel="Chats"
+                    scopeLabel="Messages"
                     scopeLabelClassName="@[14rem]/tree-tools:inline hidden"
                   />
                 </>
@@ -650,10 +650,7 @@ export function BrowsePeopleTreePane({
               {items.map((c, i) => {
                 const menuTarget =
                   contextMenuId != null && c.id === contextMenuId;
-                // While contacts are checkbox-selected, keep the list flat so
-                // shared groups can appear as their own section below.
-                const expanded =
-                  !hasContactSelection && expandedContactId === c.id;
+                const expanded = expandedContactId === c.id;
                 const checked = selectedContactIds.has(c.id);
                 // Only the focused contact (or context-menu target) is active —
                 // not merely expanded/checked, so the previous contact drops
@@ -667,7 +664,7 @@ export function BrowsePeopleTreePane({
                       checked={checked}
                       selectionActive={contactSelectionActive}
                       expanded={expanded}
-                      showExpandChevron={!hasContactSelection}
+                      showExpandChevron
                       showInsetDivider={!expanded && i < items.length - 1}
                       onSelectColumnClick={onContactSelectColumnClick}
                       onNamePhoneClick={onContactNamePhoneClick}
@@ -685,20 +682,22 @@ export function BrowsePeopleTreePane({
                           </p>
                         ) : (
                           <>
-                            {hasDirect && onDirectClick && (
+                            {hasDirect && onDirectClick ? (
                               <DirectConversationRow
                                 active={directActive}
-                                showBorder={groupItems.length > 0}
+                                showBorder
                                 nested
                                 onClick={onDirectClick}
                               />
+                            ) : (
+                              <p className="border-b border-border/40 px-3 py-2.5 text-[12px] text-muted">
+                                No direct messages
+                              </p>
                             )}
                             {groupItems.length === 0 ? (
-                              !hasDirect ? (
-                                <p className="px-3 py-2.5 text-[12px] text-muted">
-                                  {emptyGroupsLabel}
-                                </p>
-                              ) : null
+                              <p className="px-3 py-2.5 text-[12px] text-muted">
+                                {emptyGroupsLabel}
+                              </p>
                             ) : (
                               groupItems.map((g, gi) => (
                                 <GroupConversationRow

@@ -620,6 +620,7 @@ export function GroupMessagesShell({
             }
             onClearContactSelection={() => {}}
             onClearGroupSelection={clearGroupSelection}
+            onParticipantClick={participantForm.onParticipantClick}
             vaultReadOnly={vaultReadOnly}
             emptyGuidance="Select a group message to see conversation details."
           />

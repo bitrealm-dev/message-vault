@@ -251,6 +251,24 @@ describe("vault search + FTS", () => {
     });
   });
 
+  it("scopes message search to contacts matching first:/phone:", () => {
+    runWithAccount(accountId, () => {
+      const byFirst = searchVault("first:Recent");
+      assert.ok(byFirst.totalConversations >= 1);
+      assert.ok(
+        byFirst.hits.every(
+          (hit) =>
+            hit.title.includes("Recent") || hit.chatIdentifier.includes("51003"),
+        ),
+      );
+      const byPhone = searchVault("phone:+15555551004");
+      assert.ok(byPhone.totalConversations >= 1);
+      assert.ok(
+        byPhone.hits.some((hit) => hit.chatIdentifier.includes("51004")),
+      );
+    });
+  });
+
   it("still searches after unlocking", () => {
     saveAccount(accountId, { read_only: false });
     runWithAccount(accountId, () => {
@@ -291,6 +309,70 @@ describe("vault search + FTS", () => {
       assert.deepEqual(
         byPhone.contacts?.map((hit) => hit.contact.displayName),
         ["Labeled"],
+      );
+    });
+  });
+
+  it("searches contacts by first/last/phone and is:nofirst / is:nolast", () => {
+    runWithAccount(accountId, () => {
+      const byFirst = searchVaultContacts("search:contacts first:Recent");
+      assert.deepEqual(
+        byFirst.contacts?.map((hit) => hit.contact.displayName),
+        ["Recent"],
+      );
+      const byPhone = searchVaultContacts("search:contacts phone:+15555551004");
+      assert.deepEqual(
+        byPhone.contacts?.map((hit) => hit.contact.displayName),
+        ["Labeled"],
+      );
+
+      const db = new Database(dbPath());
+      const namelessId = Number(
+        db
+          .prepare(
+            `INSERT INTO contacts (
+               account_id, first_name, last_name, exclude, preferred_handle
+             ) VALUES (?, NULL, NULL, 0, ?)`,
+          )
+          .run(accountId, "+15555551999").lastInsertRowid,
+      );
+      db.prepare(
+        `INSERT INTO contact_handles (account_id, handle, contact_id)
+         VALUES (?, ?, ?)`,
+      ).run(accountId, "+15555551999", namelessId);
+      const noLastId = Number(
+        db
+          .prepare(
+            `INSERT INTO contacts (
+               account_id, first_name, last_name, exclude, preferred_handle
+             ) VALUES (?, ?, NULL, 0, ?)`,
+          )
+          .run(accountId, "OnlyFirst", "+15555551998").lastInsertRowid,
+      );
+      db.prepare(
+        `INSERT INTO contact_handles (account_id, handle, contact_id)
+         VALUES (?, ?, ?)`,
+      ).run(accountId, "+15555551998", noLastId);
+      db.close();
+
+      const bothEmpty = searchVaultContacts(
+        "search:contacts is:nofirst is:nolast",
+      );
+      assert.ok(
+        bothEmpty.contacts?.some((hit) => hit.contact.id === namelessId),
+      );
+      assert.ok(
+        bothEmpty.contacts?.every(
+          (hit) =>
+            !(hit.contact.firstName ?? "").trim() &&
+            !(hit.contact.lastName ?? "").trim(),
+        ),
+      );
+
+      const noLast = searchVaultContacts("search:contacts is:nolast");
+      assert.ok(noLast.contacts?.some((hit) => hit.contact.id === noLastId));
+      assert.ok(
+        noLast.contacts?.every((hit) => !(hit.contact.lastName ?? "").trim()),
       );
     });
   });

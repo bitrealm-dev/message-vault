@@ -317,7 +317,7 @@ export function BrowseShell({
   );
   const validIdSet = useMemo(() => new Set(validIds), [validIds]);
 
-  /** Apply the People sort menu to Show-contact search results. */
+  /** Apply the Contacts sort menu to Show-contact search results. */
   const sortedSearchContactHits = useMemo(() => {
     const hits = [...vaultSearch.contactHits];
     hits.sort((a, b) => compareContacts(a.contact, b.contact));
@@ -2101,7 +2101,7 @@ export function BrowseShell({
             if (contactId === id) clearContactFocus();
             else selectContact(id);
           }}
-          expandedContactId={hasSelection ? null : contactId}
+          expandedContactId={contactId}
           onNewContact={(el) =>
             openCreateContactInPlace(
               "",
@@ -2366,6 +2366,7 @@ export function BrowseShell({
                   )
               : undefined
           }
+          onParticipantClick={onGroupParticipantClick}
           vaultReadOnly={vaultReadOnly}
         />
       </Panel>

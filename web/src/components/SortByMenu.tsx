@@ -21,7 +21,7 @@ export function SortMenu<T extends string>({
   order,
   onChange,
   ariaLabel = "Sort by",
-  /** Compact visible scope (e.g. People / Chats) next to the icon. */
+  /** Compact visible scope (e.g. Contacts / Messages) next to the icon. */
   scopeLabel,
   /** Extra classes for the scope label (e.g. container-query hide/show). */
   scopeLabelClassName,
@@ -85,13 +85,13 @@ export function SortMenu<T extends string>({
           disabled={disabled}
           onClick={toggle}
           className={`flex h-7 min-w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:pointer-events-none disabled:opacity-40 ${
-            scopeLabel ? "gap-1 px-1.5" : "w-7"
+            scopeLabel ? "gap-1 px-2" : "w-7"
           }`}
         >
           <SortIcon />
           {scopeLabel ? (
             <span
-              className={`max-w-[3.25rem] truncate text-[11px] font-medium ${
+              className={`whitespace-nowrap text-[11px] font-medium ${
                 scopeLabelClassName ?? ""
               }`}
             >
@@ -154,15 +154,15 @@ const CONTACT_SORT_FIELDS: SortField<SortMode>[] = [
   { id: "first", label: "First Name" },
   { id: "last", label: "Last Name" },
   { id: "phone", label: "Phone number" },
-  { id: "messages", label: "1:1 Messages" },
-  { id: "group-messages", label: "Group Messages" },
+  { id: "messages", label: "Message count" },
+  { id: "group-messages", label: "Group count" },
 ];
 
 export function SortByMenu({
   sort,
   order,
   onChange,
-  scopeLabel = "People",
+  scopeLabel = "Contacts",
   scopeLabelClassName,
 }: {
   sort: SortMode;
@@ -178,7 +178,7 @@ export function SortByMenu({
       sort={sort}
       order={order}
       onChange={onChange}
-      ariaLabel="Sort people"
+      ariaLabel="Sort contacts"
       scopeLabel={scopeLabel ?? undefined}
       scopeLabelClassName={scopeLabelClassName}
     />
@@ -263,7 +263,7 @@ export function BrowseGroupChatSortMenu({
   order,
   onChange,
   disabled = false,
-  scopeLabel = "Chats",
+  scopeLabel = "Messages",
   scopeLabelClassName,
 }: {
   sortBy: BrowseGroupChatSortBy;

@@ -124,7 +124,7 @@ const SearchConversationMessageSections = memo(
                   {section.title}
                 </div>
                 <div className="text-[11px] text-muted">
-                  {section.conversationType === "group" ? "Group" : "1-1"} ·{" "}
+                  {section.conversationType === "group" ? "Group" : "Direct"} ·{" "}
                   {sectionMessages.length.toLocaleString()} messages
                 </div>
               </div>

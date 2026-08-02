@@ -108,6 +108,24 @@ describe("parseSearchQuery", () => {
     assert.equal(hasSearchCriteria(q), true);
   });
 
+  it("parses first/last/phone and is:nofirst / is:nolast", () => {
+    const q = parseSearchQuery(
+      'search:contacts first:Ann last:Lee phone:"+1555" is:nofirst is:nolast',
+    );
+    assert.equal(q.firstName, "Ann");
+    assert.equal(q.lastName, "Lee");
+    assert.equal(q.phone, "+1555");
+    assert.equal(q.noFirstName, true);
+    assert.equal(q.noLastName, true);
+    assert.equal(hasSearchCriteria(q), true);
+  });
+
+  it("maps legacy is:nameless to nofirst and nolast", () => {
+    const q = parseSearchQuery("search:contacts is:nameless");
+    assert.equal(q.noFirstName, true);
+    assert.equal(q.noLastName, true);
+  });
+
   it("ignores invalid count comparisons", () => {
     assert.equal(parseSearchQuery("group-count:2").groupCount, null);
     assert.equal(parseSearchQuery("message-count:>=-1").messageCount, null);
@@ -188,7 +206,9 @@ describe("composeSearchQuery", () => {
     const s = composeSearchQuery({
       mode: "contacts",
       within: "Close Friends",
-      handle: "Ann Lee",
+      firstName: "Ann",
+      lastName: "Lee",
+      phone: "+1555",
       firstContact: { mode: "on-or-after", from: "2019-06-01" },
       lastContact: { mode: "before", to: "2024-01-15" },
       groupCount: { comparator: ">=", value: "2" },
@@ -199,7 +219,21 @@ describe("composeSearchQuery", () => {
     });
     assert.equal(
       s,
-      'search:contacts within:"Close Friends" handle:"Ann Lee" first-contact:>=2019-06-01 last-contact:<2024-01-15 group-count:>=2 message-count:<100',
+      'search:contacts within:"Close Friends" first:Ann last:Lee phone:+1555 first-contact:>=2019-06-01 last-contact:<2024-01-15 group-count:>=2 message-count:<100',
+    );
+  });
+
+  it("composes is:nofirst / is:nolast without first/last text", () => {
+    assert.equal(
+      composeSearchQuery({
+        mode: "contacts",
+        noFirstName: true,
+        noLastName: true,
+        firstName: "ignored",
+        lastName: "ignored",
+        phone: "555",
+      }),
+      "search:contacts is:nofirst is:nolast phone:555",
     );
   });
 
@@ -213,6 +247,19 @@ describe("composeSearchQuery", () => {
         hasWords: "hello",
       }),
       "within:Family hello",
+    );
+  });
+
+  it("composes with-person name fields in message mode", () => {
+    assert.equal(
+      composeSearchQuery({
+        mode: "messages",
+        firstName: "Ann",
+        lastName: "Lee",
+        phone: "555",
+        hasWords: "hello",
+      }),
+      "first:Ann last:Lee phone:555 hello",
     );
   });
 });
@@ -270,12 +317,34 @@ describe("formFromSearchQuery", () => {
 
   it("hydrates contact form mode and count fields", () => {
     const form = formFromSearchQuery(
-      'search:contacts handle:"Ann Lee" group-count:>=2 message-count:=12',
+      'search:contacts first:Ann last:Lee phone:555 group-count:>=2 message-count:=12',
     );
     assert.equal(form.mode, "contacts");
-    assert.equal(form.handle, "Ann Lee");
+    assert.equal(form.firstName, "Ann");
+    assert.equal(form.lastName, "Lee");
+    assert.equal(form.phone, "555");
+    assert.equal(form.handle, undefined);
     assert.deepEqual(form.groupCount, { comparator: ">=", value: "2" });
     assert.deepEqual(form.messageCount, { comparator: "=", value: "12" });
+  });
+
+  it("keeps handle: on the combined Handle field", () => {
+    const name = formFromSearchQuery('search:contacts handle:"Ann Lee"');
+    assert.equal(name.handle, "Ann Lee");
+    assert.equal(name.firstName, undefined);
+    assert.equal(name.phone, undefined);
+    const phone = formFromSearchQuery("search:contacts handle:+15551212");
+    assert.equal(phone.handle, "+15551212");
+    assert.equal(phone.phone, undefined);
+  });
+
+  it("hydrates is:nofirst / is:nolast and legacy is:nameless", () => {
+    const form = formFromSearchQuery("search:contacts is:nofirst is:nolast");
+    assert.equal(form.noFirstName, true);
+    assert.equal(form.noLastName, true);
+    const legacy = formFromSearchQuery("search:contacts is:nameless");
+    assert.equal(legacy.noFirstName, true);
+    assert.equal(legacy.noLastName, true);
   });
 
   it("ignores from: and subject:", () => {

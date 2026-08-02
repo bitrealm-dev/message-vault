@@ -55,7 +55,7 @@ export function DirectConversationRow({
         <span className="flex min-w-0 items-center gap-1.5">
           <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
           <span className="min-w-0 truncate text-[13px] font-medium leading-snug text-text">
-            1-1 messages
+            Direct messages
           </span>
         </span>
       </span>
@@ -111,8 +111,8 @@ export function GroupConversationRow({
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault();
       }}
-      className={`group relative flex w-full items-start gap-1.5 py-2.5 pr-3 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
-        nested ? "pl-3" : ""
+      className={`group relative flex w-full items-start gap-1.5 py-2.5 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
+        nested ? "pr-1.5 pl-8" : "pr-3"
       } ${selectionActive ? "cursor-pointer" : ""} ${
         checked
           ? "bg-accent/40 hover:bg-accent/50"
@@ -173,7 +173,7 @@ export function GroupConversationRow({
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
         }}
-        className="flex min-w-0 flex-1 items-start gap-1.5 text-left outline-none focus:outline-none focus-visible:outline-none"
+        className="flex min-w-0 w-full flex-1 items-start gap-1.5 text-left outline-none focus:outline-none focus-visible:outline-none"
       >
         <GroupMessagesOutlineIcon className="mt-0.5 size-3.5 shrink-0 text-muted opacity-80" />
         <GroupConversationRowBody conversation={g} variant="browse" />

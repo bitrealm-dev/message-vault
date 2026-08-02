@@ -6,11 +6,56 @@ import type {
   ContactDetail,
   ContactListItem,
   GroupChatThread,
+  GroupParticipant,
   YearThread,
 } from "@/lib/types";
 import type { ReactNode } from "react";
 import { collapsedParticipantLabels } from "./GroupConversationRow";
+import { ChevronDownIcon } from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
+
+/** Name/phone that open edit — hover chevron signals menu, not a link. */
+function EditableContactField({
+  onEdit,
+  children,
+  className = "",
+  title = "Edit contact",
+}: {
+  onEdit: (anchorRect: DOMRect) => void;
+  children: ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) =>
+        onEdit((e.currentTarget as HTMLElement).getBoundingClientRect())
+      }
+      className={`group inline-flex max-w-full items-center gap-1 text-left outline-none ${className}`}
+    >
+      <span className="min-w-0 truncate">{children}</span>
+      <ChevronDownIcon className="size-3.5 shrink-0 text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+    </button>
+  );
+}
+
+function inspectorParticipants(
+  open: CollapsedGroupConversation | null,
+  meta: { participants: GroupParticipant[] } | null,
+): GroupParticipant[] {
+  if (open?.participants?.length) return open.participants;
+  if (meta?.participants?.length) return meta.participants;
+  if (!open) return [];
+  const labels = collapsedParticipantLabels(open);
+  const handles = open.participantHandles;
+  return labels.map((name, i) => ({
+    name,
+    handle: handles[i] ?? name,
+    contactId: null,
+  }));
+}
 
 function StatRow({ label, value }: { label: string; value: string | number }) {
   return (
@@ -67,6 +112,7 @@ export function BrowseDetailsInspector({
   onClearContactSelection,
   onClearGroupSelection,
   onEditContact,
+  onParticipantClick,
   vaultReadOnly = false,
   emptyGuidance = "Select a person or conversation to see contact details, conversation stats, and selection summaries here.",
 }: {
@@ -90,7 +136,7 @@ export function BrowseDetailsInspector({
   groupThreadMeta: {
     title?: string | null;
     namedTitle?: string | null;
-    participants: { name: string; handle: string }[];
+    participants: GroupParticipant[];
     dateStart: string | null;
     dateEnd: string | null;
     messageCount: number;
@@ -109,10 +155,15 @@ export function BrowseDetailsInspector({
   onClearContactSelection: () => void;
   onClearGroupSelection: () => void;
   onEditContact?: () => void;
+  /** Open edit (or create) for a group participant. */
+  onParticipantClick?: (
+    participant: GroupParticipant,
+    anchorRect: DOMRect,
+  ) => void;
   vaultReadOnly?: boolean;
   emptyGuidance?: string;
 }) {
-  const { formatDateRange } = useDateTimeFormat();
+  const { formatDate, formatDateRange } = useDateTimeFormat();
 
   if (hasGroupSelection) {
     const totalMessages = selectedGroupRows.reduce(
@@ -198,11 +249,7 @@ export function BrowseDetailsInspector({
       g?.namedTitle?.trim() || groupThreadMeta?.namedTitle?.trim() || null;
     const dateStart = g?.dateStart ?? groupThreadMeta?.dateStart ?? null;
     const dateEnd = g?.dateEnd ?? groupThreadMeta?.dateEnd ?? null;
-    const fromOpen = g != null ? collapsedParticipantLabels(g) : [];
-    const fromMeta =
-      groupThreadMeta?.participants.map((p) => p.name || p.handle).filter(Boolean) ??
-      [];
-    const participants = fromOpen.length > 0 ? fromOpen : fromMeta;
+    const participants = inspectorParticipants(g, groupThreadMeta);
     const participantCount =
       g != null && g.participantCount > 0
         ? g.participantCount
@@ -210,6 +257,8 @@ export function BrowseDetailsInspector({
     const messageCount =
       g?.messageCount ?? groupThreadMeta?.messageCount ?? 0;
     const attachmentCount = groupThreadMeta?.attachmentCount ?? 0;
+    const canEditParticipants =
+      !vaultReadOnly && typeof onParticipantClick === "function";
 
     return (
       <InspectorShell title="Conversation">
@@ -233,14 +282,37 @@ export function BrowseDetailsInspector({
         </div>
         {participants.length > 0 && (
           <ul className="mt-1.5 list-disc space-y-1 pl-4">
-            {participants.map((name, idx) => (
-              <li
-                key={`${name}-${idx}`}
-                className="text-[12px] leading-snug text-muted break-all"
-              >
-                {name}
-              </li>
-            ))}
+            {participants.map((p, idx) => {
+              const label = (p.name || p.handle).trim() || "Unknown";
+              const display =
+                p.handle && label !== p.handle
+                  ? label
+                  : p.handle
+                    ? formatPhoneDisplay(p.handle)
+                    : label;
+              return (
+                <li
+                  key={`${p.handle || p.name}-${idx}`}
+                  className="text-[12px] leading-snug break-all"
+                >
+                  {canEditParticipants ? (
+                    <EditableContactField
+                      onEdit={(rect) => onParticipantClick(p, rect)}
+                      title={
+                        p.contactId != null
+                          ? `Edit ${display}`
+                          : `Create contact for ${display}`
+                      }
+                      className="text-[12px] text-text"
+                    >
+                      {display}
+                    </EditableContactField>
+                  ) : (
+                    <span className="text-muted">{display}</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         <div className="mt-3 border-t border-border/50 pt-2">
@@ -249,12 +321,12 @@ export function BrowseDetailsInspector({
             label="Photos & files"
             value={attachmentCount.toLocaleString()}
           />
-          {dateStart && dateEnd && (
-            <StatRow
-              label="Date range"
-              value={formatDateRange(dateStart, dateEnd, " – ")}
-            />
-          )}
+          {dateStart ? (
+            <StatRow label="First message" value={formatDate(dateStart)} />
+          ) : null}
+          {dateEnd ? (
+            <StatRow label="Last message" value={formatDate(dateEnd)} />
+          ) : null}
         </div>
         <YearBreakdown yearly={conversationYearly} />
       </InspectorShell>
@@ -307,12 +379,23 @@ export function BrowseDetailsInspector({
             }
           : null;
 
+    const canEdit = !vaultReadOnly && !!onEditContact;
+
     return (
       <InspectorShell title="Conversation">
         <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
           Direct
         </div>
-        <h2 className="text-[15px] font-semibold text-text">{name}</h2>
+        {canEdit ? (
+          <EditableContactField
+            onEdit={() => onEditContact()}
+            className="text-[15px] font-semibold text-text"
+          >
+            {name}
+          </EditableContactField>
+        ) : (
+          <h2 className="text-[15px] font-semibold text-text">{name}</h2>
+        )}
         {phones.length > 0 && (
           <div className="mt-2">
             <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
@@ -320,8 +403,19 @@ export function BrowseDetailsInspector({
             </div>
             <ul className="space-y-0.5">
               {phones.map((p) => (
-                <li key={p} className="text-[13px] text-text tabular-nums">
-                  {formatPhoneDisplay(p)}
+                <li key={p}>
+                  {canEdit ? (
+                    <EditableContactField
+                      onEdit={() => onEditContact()}
+                      className="text-[13px] text-text tabular-nums"
+                    >
+                      {formatPhoneDisplay(p)}
+                    </EditableContactField>
+                  ) : (
+                    <span className="text-[13px] text-text tabular-nums">
+                      {formatPhoneDisplay(p)}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -345,12 +439,12 @@ export function BrowseDetailsInspector({
             label="Photos & files"
             value={dmAttachments.toLocaleString()}
           />
-          {range && (
-            <StatRow
-              label="Date range"
-              value={formatDateRange(range.start, range.end, " – ")}
-            />
-          )}
+          {range?.start ? (
+            <StatRow label="First message" value={formatDate(range.start)} />
+          ) : null}
+          {range?.end ? (
+            <StatRow label="Last message" value={formatDate(range.end)} />
+          ) : null}
         </div>
         <YearBreakdown yearly={yearly} />
       </InspectorShell>
@@ -370,19 +464,22 @@ export function BrowseDetailsInspector({
     const groupCount = c?.groupMessageCount ?? groupChats.length;
     const rangeStart = c?.dateStart ?? null;
     const rangeEnd = c?.dateEnd ?? null;
+    const canEdit = !vaultReadOnly && !!onEditContact;
 
     return (
       <InspectorShell title="Contact">
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <h2 className="min-w-0 text-[15px] font-semibold text-text">{name}</h2>
-          {!vaultReadOnly && onEditContact && (
-            <button
-              type="button"
-              onClick={onEditContact}
-              className="shrink-0 rounded-md bg-hover px-2 py-1 text-[11px] text-text hover:bg-hover-strong"
+        <div className="mb-2 min-w-0">
+          {canEdit ? (
+            <EditableContactField
+              onEdit={() => onEditContact()}
+              className="text-[15px] font-semibold text-text"
             >
-              Edit
-            </button>
+              {name}
+            </EditableContactField>
+          ) : (
+            <h2 className="min-w-0 text-[15px] font-semibold text-text">
+              {name}
+            </h2>
           )}
         </div>
         {phones.length > 0 && (
@@ -392,8 +489,19 @@ export function BrowseDetailsInspector({
             </div>
             <ul className="space-y-0.5">
               {phones.map((p) => (
-                <li key={p} className="text-[13px] text-text tabular-nums">
-                  {formatPhoneDisplay(p)}
+                <li key={p}>
+                  {canEdit ? (
+                    <EditableContactField
+                      onEdit={() => onEditContact()}
+                      className="text-[13px] text-text tabular-nums"
+                    >
+                      {formatPhoneDisplay(p)}
+                    </EditableContactField>
+                  ) : (
+                    <span className="text-[13px] text-text tabular-nums">
+                      {formatPhoneDisplay(p)}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -414,12 +522,12 @@ export function BrowseDetailsInspector({
         <div className="border-t border-border/50 pt-2">
           <StatRow label="Direct messages" value={dmCount.toLocaleString()} />
           <StatRow label="Group conversations" value={groupCount} />
-          {rangeStart && rangeEnd && (
-            <StatRow
-              label="Date range"
-              value={formatDateRange(rangeStart, rangeEnd, " – ")}
-            />
-          )}
+          {rangeStart ? (
+            <StatRow label="First message" value={formatDate(rangeStart)} />
+          ) : null}
+          {rangeEnd ? (
+            <StatRow label="Last message" value={formatDate(rangeEnd)} />
+          ) : null}
         </div>
         <YearBreakdown yearly={yearly} />
       </InspectorShell>

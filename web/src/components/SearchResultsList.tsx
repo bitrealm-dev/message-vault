@@ -94,7 +94,7 @@ export function SearchHitSummary({
       {showMeta ? (
         <span className="mt-1 flex min-w-0 items-center justify-between gap-6 text-[11px] text-muted">
           <span className="shrink-0 capitalize">
-            {hit.conversationType === "group" ? "Group" : "1-1"}
+            {hit.conversationType === "group" ? "Group" : "Direct"}
           </span>
           {dateLabel ? (
             <span className="min-w-0 truncate text-right tabular-nums">

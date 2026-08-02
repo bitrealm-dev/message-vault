@@ -128,7 +128,7 @@ export function ContactPhoneList({
               }}
               onBlur={() => onChange(blurPhoneAt(phones, index))}
               placeholder={placeholder}
-              className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent/60"
+              className="min-w-0 flex-1 rounded-md border border-border bg-elevated/40 px-2.5 py-1.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent/60"
             />
             {showRemove && (
               <button

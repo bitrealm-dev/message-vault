@@ -130,8 +130,8 @@ export function GroupConversationRowBody({
   }
 
   return (
-    <span className="flex min-w-0 flex-1 flex-col">
-      <span className="flex min-w-0 items-start gap-2">
+    <span className="flex min-w-0 w-full flex-1 flex-col">
+      <span className="flex min-w-0 w-full items-start justify-between gap-2">
         <span className="min-w-0 flex-1">
           {g.namedTitle ? (
             <span className="mb-0.5 block truncate text-[12px] font-medium text-text">
@@ -160,11 +160,6 @@ export function GroupConversationRowBody({
           <CountBadge count={g.messageCount} title="Messages" />
           <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
         </span>
-      </span>
-      {/* Date range lives in the inspector; list rows stay navigation-only. */}
-      <span className="mt-0.5 flex min-w-0 items-center gap-0.5 text-[11px] text-muted tabular-nums">
-        <PeopleCountIcon className="size-3.5 shrink-0 opacity-80" />
-        {g.participantCount.toLocaleString()}
       </span>
     </span>
   );

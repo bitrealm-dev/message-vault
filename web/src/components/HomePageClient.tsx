@@ -78,7 +78,7 @@ export function HomePageClient({
                 href="/all"
                 label="Contacts"
                 value={stats.contacts}
-                detail="People in your vault"
+                detail="Contacts in your vault"
               />
               <StatCard
                 href="/group-messages"

@@ -59,7 +59,7 @@ export type SearchContactHit = {
   matchCount: number;
 };
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 100;
 
 function openWritable(): Database.Database {
@@ -164,6 +164,98 @@ function involvesContactsSql(contactIds: number[]): string {
   )`;
 }
 
+/** Whether the query uses first/last/phone “with person” contact filters. */
+function hasPersonNameFilters(parsed: ParsedSearchQuery): boolean {
+  return (
+    parsed.noFirstName ||
+    parsed.noLastName ||
+    !!(parsed.firstName?.trim() || parsed.lastName?.trim() || parsed.phone?.trim())
+  );
+}
+
+/**
+ * Contact ids matching first:/last:/phone:/is:nofirst/is:nolast for Messages
+ * “with person” expand (same matching rules as Contacts search).
+ */
+function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
+  const db = getDb();
+  const accountId = currentAccountId();
+  const firstNeedle = parsed.firstName?.trim().toLocaleLowerCase() ?? "";
+  const lastNeedle = parsed.lastName?.trim().toLocaleLowerCase() ?? "";
+  const phoneNeedle = parsed.phone?.trim().toLocaleLowerCase() ?? "";
+
+  const rows = db
+    .prepare(
+      `SELECT c.id AS id,
+              c.first_name AS first_name,
+              c.last_name AS last_name,
+              c.preferred_handle AS preferred_handle
+       FROM contacts c
+       WHERE c.account_id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM trashed_contacts tc
+           WHERE tc.account_id = c.account_id AND tc.contact_id = c.id
+         )`,
+    )
+    .all(accountId) as Array<{
+    id: number;
+    first_name: string | null;
+    last_name: string | null;
+    preferred_handle: string | null;
+  }>;
+
+  const handleRows = db
+    .prepare(
+      `SELECT contact_id, handle
+       FROM contact_handles
+       WHERE account_id = ?`,
+    )
+    .all(accountId) as Array<{ contact_id: number; handle: string }>;
+  const handlesByContact = new Map<number, string[]>();
+  for (const row of handleRows) {
+    const handles = handlesByContact.get(row.contact_id);
+    if (handles) handles.push(row.handle);
+    else handlesByContact.set(row.contact_id, [row.handle]);
+  }
+
+  return rows
+    .filter((contact) => {
+      const noFirst = !(contact.first_name ?? "").trim();
+      const noLast = !(contact.last_name ?? "").trim();
+      if (parsed.noFirstName && !noFirst) return false;
+      if (parsed.noLastName && !noLast) return false;
+      if (
+        !parsed.noFirstName &&
+        firstNeedle &&
+        !(contact.first_name ?? "").toLocaleLowerCase().includes(firstNeedle)
+      ) {
+        return false;
+      }
+      if (
+        !parsed.noLastName &&
+        lastNeedle &&
+        !(contact.last_name ?? "").toLocaleLowerCase().includes(lastNeedle)
+      ) {
+        return false;
+      }
+      if (phoneNeedle) {
+        const phoneValues = [
+          contact.preferred_handle ?? "",
+          ...(handlesByContact.get(contact.id) ?? []),
+        ];
+        if (
+          !phoneValues.some((value) =>
+            value.toLocaleLowerCase().includes(phoneNeedle),
+          )
+        ) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .map((contact) => contact.id);
+}
+
 type SearchFilters = {
   fts: string | null;
   whereSql: string;
@@ -258,6 +350,10 @@ function buildSearchFilters(
   // Scoped to a label's contacts whether or not they are marked inactive.
   if (parsed.within) {
     scopeToContacts(listLabelMemberContactIds(parsed.within));
+  }
+
+  if (hasPersonNameFilters(parsed)) {
+    scopeToContacts(contactIdsMatchingPersonFilters(parsed));
   }
 
   const db = getDb();
@@ -664,15 +760,50 @@ export function searchVaultContacts(
     ? new Set(listLabelMemberContactIds(parsed.within))
     : null;
   const handleNeedle = parsed.handle?.trim().toLocaleLowerCase() ?? "";
+  const firstNeedle = parsed.firstName?.trim().toLocaleLowerCase() ?? "";
+  const lastNeedle = parsed.lastName?.trim().toLocaleLowerCase() ?? "";
+  const phoneNeedle = parsed.phone?.trim().toLocaleLowerCase() ?? "";
   const matchingItems = allItems
     .filter((contact) => {
       if (withinIds && !withinIds.has(contact.id)) return false;
+      const noFirst = !(contact.firstName ?? "").trim();
+      const noLast = !(contact.lastName ?? "").trim();
+      if (parsed.noFirstName && !noFirst) return false;
+      if (parsed.noLastName && !noLast) return false;
+      if (
+        !parsed.noFirstName &&
+        firstNeedle &&
+        !(contact.firstName ?? "").toLocaleLowerCase().includes(firstNeedle)
+      ) {
+        return false;
+      }
+      if (
+        !parsed.noLastName &&
+        lastNeedle &&
+        !(contact.lastName ?? "").toLocaleLowerCase().includes(lastNeedle)
+      ) {
+        return false;
+      }
+      const phoneValues = [
+        contact.preferredHandle ?? "",
+        ...(handlesByContact.get(contact.id) ?? []),
+      ];
+      if (
+        phoneNeedle &&
+        !phoneValues.some((value) =>
+          value.toLocaleLowerCase().includes(phoneNeedle),
+        )
+      ) {
+        return false;
+      }
+      // Legacy combined name/number filter.
       if (
         handleNeedle &&
         ![
           contact.displayName,
-          contact.preferredHandle ?? "",
-          ...(handlesByContact.get(contact.id) ?? []),
+          contact.firstName ?? "",
+          contact.lastName ?? "",
+          ...phoneValues,
         ].some((value) => value.toLocaleLowerCase().includes(handleNeedle))
       ) {
         return false;
