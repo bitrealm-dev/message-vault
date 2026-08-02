@@ -6,15 +6,13 @@ members = [
 ]
 
 [workspace.dependencies]
-# Prefer git once the public contacts/phone APIs are on exporters main.
-# Path deps keep local sibling checkouts working before that lands.
 message-ir = { git = "https://github.com/bitrealm-dev/message-exporters", package = "message-ir" }
-contacts = { path = "../message-exporters/crates/message/contacts" }
-phone = { path = "../message-exporters/crates/message/phone" }
+contacts = { git = "https://github.com/bitrealm-dev/message-exporters", package = "contacts" }
+phone = { git = "https://github.com/bitrealm-dev/message-exporters", package = "phone" }
 
 [package]
 name = "message-vault-rs"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 
 [dependencies]
