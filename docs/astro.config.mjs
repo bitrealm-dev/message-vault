@@ -55,10 +55,6 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Export elsewhere',
-          items: ['export-elsewhere/obsidian'],
-        },
-        {
           label: 'Reference',
           collapsed: true,
           items: [

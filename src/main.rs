@@ -4,7 +4,6 @@ mod assets;
 mod config;
 mod contacts;
 mod dedupe;
-mod export_markdown;
 mod import;
 mod ingest;
 mod jsonl;
@@ -16,7 +15,6 @@ mod schema;
 mod server;
 mod vcf;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
@@ -143,27 +141,6 @@ enum Commands {
         db: Option<PathBuf>,
 
         /// Account username or UUID (scopes contacts to this vault tenant)
-        #[arg(long)]
-        account: String,
-    },
-    ExportMarkdown {
-        /// Output directory (required; written fresh under this path)
-        #[arg(long)]
-        out: PathBuf,
-
-        /// Path to config.toml
-        #[arg(long, default_value = "config/config.toml")]
-        config: PathBuf,
-
-        /// SQLite database path (overrides config)
-        #[arg(long)]
-        db: Option<PathBuf>,
-
-        /// Path to Obsidian bubble CSS snippet (default config/obsidian-message-vault.css)
-        #[arg(long)]
-        snippet_css: Option<PathBuf>,
-
-        /// Account username or UUID (scopes export to this vault tenant)
         #[arg(long)]
         account: String,
     },
@@ -419,54 +396,6 @@ fn main() -> Result<()> {
             println!("  label links:  {}", stats.labels);
         }
 
-        Commands::ExportMarkdown {
-            out,
-            config,
-            db,
-            snippet_css,
-            account,
-        } => {
-            let cfg = Config::load(&config)?;
-            let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db, &account)?;
-            let snippet_css =
-                snippet_css.unwrap_or_else(|| PathBuf::from("config/obsidian-message-vault.css"));
-            if !snippet_css.is_file() {
-                bail!(
-                    "CSS snippet not found at {} (pass --snippet-css)",
-                    snippet_css.display()
-                );
-            }
-
-            let sources = {
-                let conn = rusqlite::Connection::open(&db)?;
-                conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-                list_message_sources(&conn, &account)?
-            };
-            let mut assets_by_source = HashMap::new();
-            for src in &sources {
-                assets_by_source
-                    .insert(src.clone(), cfg.paths.assets_dir_for_account(&account, src));
-            }
-
-            println!("Export markdown → {}", out.display());
-            println!("  config:  {}", config.display());
-            println!("  account: {}", account);
-            println!("  db:      {}", db.display());
-            println!("  snippet: {}", snippet_css.display());
-
-            let stats =
-                export_markdown::run_export(&db, &account, &assets_by_source, &out, &snippet_css)?;
-            println!("  people:        {}", stats.people);
-            println!("  year pages:    {}", stats.year_pages);
-            println!("  messages:      {}", stats.messages);
-            println!("  assets copied: {}", stats.assets_copied);
-            println!("  assets missing:{}", stats.assets_missing);
-            println!(
-                "Enable CSS snippet message-vault-bubbles in Obsidian (Settings → Appearance)."
-            );
-        }
-
         Commands::ResetDemo { bundle, config } => {
             let stats = reset_demo::run_reset_demo(&bundle, &config)?;
             println!();
@@ -518,24 +447,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn list_message_sources(conn: &rusqlite::Connection, account_id: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT DISTINCT m.source
-        FROM messages m
-        JOIN conversations c ON c.id = m.conversation_id
-        WHERE c.account_id = ?1
-          AND m.source IS NOT NULL
-          AND TRIM(m.source) != ''
-        ORDER BY m.source
-        "#,
-    )?;
-    let rows = stmt.query_map(rusqlite::params![account_id], |row| row.get::<_, String>(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
 }

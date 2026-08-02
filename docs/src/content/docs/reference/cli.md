@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: Cargo subcommands for import, dedupe, contacts, export, demo reset, and serve.
+description: Cargo subcommands for import, dedupe, contacts, demo reset, and serve.
 ---
 
 Run from the repository root with `cargo run --release -- <command>`.
@@ -12,7 +12,6 @@ Run from the repository root with `cargo run --release -- <command>`.
 | `dedupe-cross-source` | Soft-hide the same SMS across sources |
 | `import-contacts` | Load an address book into SQLite (**iMazing Contacts CSV** or **VCF**) |
 | `process-assets` | Generate and register converted media assets |
-| `export-markdown` | Obsidian bubble markdown export |
 | `reset-demo` | Restore the committed demo bundle |
 | `serve` | HTTP import API (`[server]` required in config) |
 
