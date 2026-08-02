@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  browseTreeMode,
-  directDateRange,
-  type BrowseTreeMode,
-} from "@/lib/browseTree";
+import { browseTreeMode, type BrowseTreeMode } from "@/lib/browseTree";
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
 import type { SearchResultKey } from "@/lib/searchSelection";
@@ -114,6 +110,8 @@ export function BrowsePeopleTreePane({
   searchContactHits = [],
   searchTotal = 0,
   searchLoading = false,
+  searchLoadingMore = false,
+  onSearchLoadMore,
   searchHighlightTerms,
   searchContactIds = [],
   allSearchContactsSelected = false,
@@ -200,6 +198,8 @@ export function BrowsePeopleTreePane({
   searchContactHits?: SearchContactHit[];
   searchTotal?: number;
   searchLoading?: boolean;
+  searchLoadingMore?: boolean;
+  onSearchLoadMore?: () => void;
   searchHighlightTerms?: string[];
   searchContactIds?: number[];
   allSearchContactsSelected?: boolean;
@@ -395,7 +395,6 @@ export function BrowsePeopleTreePane({
       : []),
   ];
 
-  const directRange = directDateRange(yearly);
   const hasDirect = yearly.some((y) => y.conversationIds.length > 0);
   const groupSelectionActive = selectedGroupIds.size >= 1;
   const contactSelectionActive = selectedContactIds.size >= 1;
@@ -460,6 +459,30 @@ export function BrowsePeopleTreePane({
       {mode === "search" ? (
         <div className="@container/tree-tools flex h-[45px] shrink-0 items-center justify-between overflow-visible border-b border-border px-3">
           <div className="flex min-w-0 items-center gap-2">
+            {searchMode === "contacts" ? (
+              <IconHoverTarget
+                label={
+                  allSearchContactsExpanded ? "Collapse all" : "Expand all"
+                }
+                placement="bottom"
+              >
+                <button
+                  type="button"
+                  disabled={searchContactHits.length === 0}
+                  aria-label={
+                    allSearchContactsExpanded ? "Collapse all" : "Expand all"
+                  }
+                  onClick={toggleAllSearchContactsExpanded}
+                  className="flex h-7 w-5 items-center justify-center text-muted outline-none transition-colors hover:text-text disabled:pointer-events-none disabled:opacity-40 focus:outline-none focus-visible:outline-none"
+                >
+                  <ChevronDownIcon
+                    className={`size-4 transition-transform ${
+                      allSearchContactsExpanded ? "" : "-rotate-90"
+                    }`}
+                  />
+                </button>
+              </IconHoverTarget>
+            ) : null}
             <IconHoverTarget
               label={
                 searchMode === "contacts"
@@ -494,42 +517,24 @@ export function BrowsePeopleTreePane({
               />
             </IconHoverTarget>
             <span className="text-[13px] text-muted">Search results</span>
-            <span className="text-[13px] text-muted tabular-nums">
-              {(searchMode === "contacts"
-                ? selectedSearchContactCount
-                : selectedSearchResultCount) > 0
-                ? (searchMode === "contacts"
-                    ? selectedSearchContactCount
-                    : selectedSearchResultCount
-                  ).toLocaleString()
-                : ""}
-            </span>
+            {(() => {
+              const selected =
+                searchMode === "contacts"
+                  ? selectedSearchContactCount
+                  : selectedSearchResultCount;
+              if (selected === 0) return null;
+              // Selection only covers loaded results; totals can be larger,
+              // so spell out "N of M selected" to avoid confusion.
+              return (
+                <span className="min-w-0 truncate text-[13px] text-muted tabular-nums">
+                  {selected < searchTotal
+                    ? `${selected.toLocaleString()} of ${searchTotal.toLocaleString()} selected`
+                    : `${selected.toLocaleString()} selected`}
+                </span>
+              );
+            })()}
           </div>
           <div className="flex shrink-0 items-center gap-1.5 overflow-visible">
-            {searchMode === "contacts" ? (
-              <IconHoverTarget
-                label={
-                  allSearchContactsExpanded ? "Collapse all" : "Expand all"
-                }
-                placement="bottom"
-              >
-                <button
-                  type="button"
-                  disabled={searchContactHits.length === 0}
-                  aria-label={
-                    allSearchContactsExpanded ? "Collapse all" : "Expand all"
-                  }
-                  onClick={toggleAllSearchContactsExpanded}
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted transition-colors hover:bg-hover hover:text-text disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <ChevronDownIcon
-                    className={`size-4 ${
-                      allSearchContactsExpanded ? "rotate-180" : ""
-                    }`}
-                  />
-                </button>
-              </IconHoverTarget>
-            ) : null}
             <SortByMenu
               sort={contactSort}
               order={contactSortOrder}
@@ -612,6 +617,8 @@ export function BrowsePeopleTreePane({
           onToggleExpand={toggleSearchContactExpanded}
           onSelectHit={(hit) => onSelectSearchHit?.(hit)}
           onContactContextMenu={onSearchContactContextMenu}
+          loadingMore={searchLoadingMore}
+          onLoadMore={onSearchLoadMore}
         />
       ) : mode === "search" ? (
         <SearchResultsList
@@ -625,6 +632,8 @@ export function BrowsePeopleTreePane({
           onSelect={(hit, mods) => onSelectSearchHit?.(hit, mods)}
           onResultContextMenu={onSearchResultContextMenu}
           emptyLabel="No matches"
+          loadingMore={searchLoadingMore}
+          onLoadMore={onSearchLoadMore}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
@@ -679,8 +688,6 @@ export function BrowsePeopleTreePane({
                             {hasDirect && onDirectClick && (
                               <DirectConversationRow
                                 active={directActive}
-                                dateStart={directRange.dateStart}
-                                dateEnd={directRange.dateEnd}
                                 showBorder={groupItems.length > 0}
                                 nested
                                 onClick={onDirectClick}

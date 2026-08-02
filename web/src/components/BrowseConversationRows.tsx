@@ -3,7 +3,7 @@
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type { MouseEvent } from "react";
 import { GroupConversationRowBody } from "./GroupConversationRow";
-import { useDateTimeFormat } from "./useDateTimeFormat";
+import { GroupMessagesOutlineIcon, MessageIcon } from "./icons";
 
 /** Centered hairline (~95% width) between conversation rows. */
 function RowDivider() {
@@ -17,26 +17,16 @@ function RowDivider() {
 
 export function DirectConversationRow({
   active,
-  dateStart = null,
-  dateEnd = null,
   showBorder = false,
   nested = false,
   onClick,
 }: {
   active: boolean;
-  dateStart?: string | null;
-  dateEnd?: string | null;
   showBorder?: boolean;
   /** Under a contact: align content with the contact name column. */
   nested?: boolean;
   onClick: () => void;
 }) {
-  const { formatDateRange } = useDateTimeFormat();
-  const dateLabel =
-    dateStart && dateEnd
-      ? formatDateRange(dateStart, dateEnd, " – ")
-      : null;
-
   return (
     <button
       type="button"
@@ -59,14 +49,12 @@ export function DirectConversationRow({
       {showBorder ? <RowDivider /> : null}
       {!nested ? <span className="w-10 shrink-0" aria-hidden /> : null}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium leading-snug text-text">
-          1-1 messages
-        </span>
-        {dateLabel ? (
-          <span className="mt-0.5 block text-right text-[11px] text-muted tabular-nums">
-            {dateLabel}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
+          <span className="min-w-0 truncate text-[13px] font-medium leading-snug text-text">
+            1-1 messages
           </span>
-        ) : null}
+        </span>
       </span>
     </button>
   );
@@ -182,8 +170,9 @@ export function GroupConversationRow({
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
         }}
-        className="flex min-w-0 flex-1 items-start gap-2 text-left outline-none focus:outline-none focus-visible:outline-none"
+        className="flex min-w-0 flex-1 items-start gap-1.5 text-left outline-none focus:outline-none focus-visible:outline-none"
       >
+        <GroupMessagesOutlineIcon className="mt-0.5 size-3.5 shrink-0 text-muted opacity-80" />
         <GroupConversationRowBody conversation={g} variant="browse" />
       </button>
     </div>

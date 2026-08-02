@@ -45,13 +45,13 @@ export function BrowseGroupChatsPane({
   searchHits = [],
   searchTotal = 0,
   searchLoading = false,
+  searchLoadingMore = false,
+  onSearchLoadMore,
   searchHighlightTerms,
   onSelectSearchHit,
   emptyLabel = "No group messages",
   directAvailable = false,
   directActive = false,
-  directDateStart = null,
-  directDateEnd = null,
   onDirectClick,
 }: {
   items: CollapsedGroupConversation[];
@@ -86,14 +86,14 @@ export function BrowseGroupChatsPane({
   searchHits?: SearchConversationHit[];
   searchTotal?: number;
   searchLoading?: boolean;
+  searchLoadingMore?: boolean;
+  onSearchLoadMore?: () => void;
   searchHighlightTerms?: string[];
   onSelectSearchHit?: (hit: SearchConversationHit) => void;
   emptyLabel?: string;
   /** Synthetic 1:1 chooser row (focused contact path only). */
   directAvailable?: boolean;
   directActive?: boolean;
-  directDateStart?: string | null;
-  directDateEnd?: string | null;
   onDirectClick?: () => void;
 }) {
   const selectionActive = selectedIds.size >= 1;
@@ -168,14 +168,14 @@ export function BrowseGroupChatsPane({
           selectedConversationId={selectedConversationId}
           onSelect={(hit) => onSelectSearchHit?.(hit)}
           emptyLabel="No matches"
+          loadingMore={searchLoadingMore}
+          onLoadMore={onSearchLoadMore}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {directAvailable && onDirectClick && (
             <DirectConversationRow
               active={directActive}
-              dateStart={directDateStart}
-              dateEnd={directDateEnd}
               showBorder
               onClick={onDirectClick}
             />

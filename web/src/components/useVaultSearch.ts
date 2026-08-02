@@ -18,6 +18,7 @@ export function useVaultSearch(initialQuery = "") {
   const [contactIds, setContactIds] = useState<number[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const seqRef = useRef(0);
@@ -60,6 +61,7 @@ export function useVaultSearch(initialQuery = "") {
     const timer = window.setTimeout(() => {
       const seq = ++seqRef.current;
       setLoading(true);
+      setLoadingMore(false);
       setError(null);
       void fetch(`/api/search?q=${encodeURIComponent(committed)}`)
         .then(async (res) => {
@@ -91,6 +93,59 @@ export function useVaultSearch(initialQuery = "") {
     return () => window.clearTimeout(timer);
   }, [committed, refreshToken]);
 
+  const loadedCount = mode === "contacts" ? contactHits.length : hits.length;
+  const hasMore = resultsMode && !loading && loadedCount > 0 && loadedCount < total;
+
+  /** Fetch the next page and append it (People pages contacts, Messages pages conversations). */
+  const loadMore = useCallback(() => {
+    if (!committed || loading || loadingMore) return;
+    const seq = seqRef.current;
+    const isContacts = mode === "contacts";
+    const offset = isContacts ? contactHits.length : hits.length;
+    setLoadingMore(true);
+    void fetch(
+      `/api/search?q=${encodeURIComponent(committed)}&offset=${offset}`,
+    )
+      .then(async (res) => {
+        const json = (await res.json()) as SearchResult & { error?: string };
+        if (seq !== seqRef.current) return;
+        if (!res.ok) {
+          setError(json.error ?? "Search failed");
+          return;
+        }
+        setContactIds(json.contactIds ?? []);
+        setTotal(
+          json.contacts
+            ? (json.totalContacts ?? 0)
+            : (json.totalConversations ?? 0),
+        );
+        if (isContacts) {
+          setContactHits((prev) => {
+            const seen = new Set(prev.map((hit) => hit.contact.id));
+            const next = (json.contacts ?? []).filter(
+              (hit) => !seen.has(hit.contact.id),
+            );
+            return next.length > 0 ? [...prev, ...next] : prev;
+          });
+        } else {
+          setHits((prev) => {
+            const seen = new Set(prev.map((hit) => hit.conversationId));
+            const next = (json.hits ?? []).filter(
+              (hit) => !seen.has(hit.conversationId),
+            );
+            return next.length > 0 ? [...prev, ...next] : prev;
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        if (seq !== seqRef.current) return;
+        setError(err instanceof Error ? err.message : "Search failed");
+      })
+      .finally(() => {
+        if (seq === seqRef.current) setLoadingMore(false);
+      });
+  }, [committed, loading, loadingMore, mode, contactHits.length, hits.length]);
+
   return {
     draft,
     setDraft,
@@ -103,6 +158,9 @@ export function useVaultSearch(initialQuery = "") {
     contactIds,
     total,
     loading,
+    loadingMore,
+    hasMore,
+    loadMore,
     error,
     highlightTerms,
     refresh,

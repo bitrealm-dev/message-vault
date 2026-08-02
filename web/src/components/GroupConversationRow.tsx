@@ -161,12 +161,10 @@ export function GroupConversationRowBody({
           <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
         </span>
       </span>
-      <span className="mt-0.5 flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted tabular-nums">
-        <span className="inline-flex shrink-0 items-center gap-0.5">
-          <PeopleCountIcon className="size-3.5 shrink-0 opacity-80" />
-          {g.participantCount.toLocaleString()}
-        </span>
-        <span className="min-w-0 truncate text-right">{dateLabel}</span>
+      {/* Date range lives in the inspector; list rows stay navigation-only. */}
+      <span className="mt-0.5 flex min-w-0 items-center gap-0.5 text-[11px] text-muted tabular-nums">
+        <PeopleCountIcon className="size-3.5 shrink-0 opacity-80" />
+        {g.participantCount.toLocaleString()}
       </span>
     </span>
   );

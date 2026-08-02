@@ -2165,6 +2165,8 @@ export function BrowseShell({
           searchContactHits={sortedSearchContactHits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
+          searchLoadingMore={vaultSearch.loadingMore}
+          onSearchLoadMore={vaultSearch.hasMore ? vaultSearch.loadMore : undefined}
           searchHighlightTerms={vaultSearch.highlightTerms}
           searchContactIds={searchContactIds}
           allSearchContactsSelected={allSearchContactsSelected}

@@ -512,6 +512,10 @@ export function GroupMessagesShell({
             searchHits={vaultSearch.hits}
             searchTotal={vaultSearch.total}
             searchLoading={vaultSearch.loading}
+            searchLoadingMore={vaultSearch.loadingMore}
+            onSearchLoadMore={
+              vaultSearch.hasMore ? vaultSearch.loadMore : undefined
+            }
             searchHighlightTerms={vaultSearch.highlightTerms}
             onSelectSearchHit={(hit: SearchConversationHit) => {
               setSelectedIds(new Set());

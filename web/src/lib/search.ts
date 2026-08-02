@@ -410,7 +410,7 @@ const CONVERSATION_HIT_COLUMNS = `
   COUNT(DISTINCT m.id) AS match_count,
   MIN(m.timestamp) AS date_start,
   MAX(m.timestamp) AS date_end,
-  MIN(m.id) AS sample_message_id`;
+  MAX(m.id) AS sample_message_id`;
 
 function buildHits(
   db: Database.Database,

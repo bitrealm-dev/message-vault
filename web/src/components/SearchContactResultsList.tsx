@@ -3,7 +3,7 @@
 import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
 import type { MouseEvent } from "react";
 import { BrowseContactRow } from "./BrowseContactRow";
-import { SearchHitSummary } from "./SearchResultsList";
+import { LoadMoreResultsRow, SearchHitSummary } from "./SearchResultsList";
 
 /** Match BrowsePeopleTreePane: left edge of contact name / phone / labels. */
 const NESTED_FROM_NAME_PX = 76;
@@ -29,6 +29,8 @@ export function SearchContactResultsList({
   onSelectHit,
   onContactContextMenu,
   emptyLabel = "No matches",
+  loadingMore = false,
+  onLoadMore,
 }: {
   contacts: SearchContactHit[];
   total: number;
@@ -49,6 +51,8 @@ export function SearchContactResultsList({
   onSelectHit?: (hit: SearchConversationHit) => void;
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
   emptyLabel?: string;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
   if (loading) {
     return (
@@ -143,6 +147,7 @@ export function SearchContactResultsList({
                     <SearchHitSummary
                       hit={hit}
                       highlightTerms={highlightTerms}
+                      showMeta={false}
                     />
                   </button>
                 ))}
@@ -151,6 +156,12 @@ export function SearchContactResultsList({
           </div>
         );
       })}
+      <LoadMoreResultsRow
+        shown={contacts.length}
+        total={total}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+      />
     </div>
   );
 }

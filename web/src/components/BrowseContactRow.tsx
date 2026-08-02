@@ -209,36 +209,15 @@ export const BrowseContactRow = memo(function BrowseContactRow({
             const showGroupIcon =
               showGroupMessageBadge && c.groupMessageCount > 0;
             const showCountBadge = showMessageBadge && c.messageCount > 0;
-            const rowLabels = (c.labels ?? []).filter(Boolean);
+            // Labels live in the inspector and Labels nav, not list rows.
             const hasBottomLine =
-              !!dateLabel ||
-              showGroupIcon ||
-              showCountBadge ||
-              rowLabels.length > 0;
+              !!dateLabel || showGroupIcon || showCountBadge;
             if (!showHandle && !hasBottomLine) return null;
             return (
               <>
                 {showHandle ? (
                   <span className="block truncate text-[12px] text-muted">
                     {formattedHandle}
-                  </span>
-                ) : null}
-                {rowLabels.length > 0 ? (
-                  <span className="mt-0.5 flex min-w-0 flex-wrap gap-1">
-                    {rowLabels.slice(0, 3).map((label) => (
-                      <span
-                        key={label}
-                        className="max-w-[7rem] truncate rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-muted"
-                        title={label}
-                      >
-                        {label}
-                      </span>
-                    ))}
-                    {rowLabels.length > 3 ? (
-                      <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-muted">
-                        +{rowLabels.length - 3}
-                      </span>
-                    ) : null}
                   </span>
                 ) : null}
                 {dateLabel || showGroupIcon || showCountBadge ? (

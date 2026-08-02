@@ -7,6 +7,7 @@ import {
 } from "@/lib/searchSelection";
 import { CountBadge } from "./CountBadge";
 import { highlightText } from "./highlightText";
+import { GroupMessagesOutlineIcon, MessageIcon } from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
@@ -20,13 +21,43 @@ export type SearchSelectionModifiers = {
 
 const EMPTY_TERMS: string[] = [];
 
+/** "Show more" row for paginated search results. */
+export function LoadMoreResultsRow({
+  shown,
+  total,
+  loadingMore = false,
+  onLoadMore,
+}: {
+  shown: number;
+  total: number;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
+}) {
+  if (!onLoadMore || shown >= total) return null;
+  return (
+    <button
+      type="button"
+      disabled={loadingMore}
+      onClick={onLoadMore}
+      className="block w-full px-3 py-2.5 text-center text-[12px] font-medium text-accent transition-colors hover:bg-hover disabled:opacity-60"
+    >
+      {loadingMore
+        ? "Loading…"
+        : `Show more (${shown.toLocaleString()} of ${total.toLocaleString()})`}
+    </button>
+  );
+}
+
 /** Title, match count, snippet, type and date range for one matching conversation. */
 export function SearchHitSummary({
   hit,
   highlightTerms = EMPTY_TERMS,
+  showMeta = true,
 }: {
   hit: SearchConversationHit;
   highlightTerms?: string[];
+  /** Hide type/date line when nested under a contact (inspector covers it). */
+  showMeta?: boolean;
 }) {
   const { formatDateRange } = useDateTimeFormat();
   const dateLabel =
@@ -37,8 +68,18 @@ export function SearchHitSummary({
   return (
     <>
       <span className="flex min-w-0 items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-[13px] font-medium text-text">
-          {hit.title}
+        <span className="flex min-w-0 items-center gap-1.5">
+          {!showMeta ? (
+            // Meta line is hidden when nested; keep the type readable via icon.
+            hit.conversationType === "group" ? (
+              <GroupMessagesOutlineIcon className="size-3.5 shrink-0 text-muted opacity-80" />
+            ) : (
+              <MessageIcon className="size-3.5 shrink-0 text-muted opacity-80" />
+            )
+          ) : null}
+          <span className="min-w-0 truncate text-[13px] font-medium text-text">
+            {hit.title}
+          </span>
         </span>
         <CountBadge
           count={hit.matchCount}
@@ -50,16 +91,18 @@ export function SearchHitSummary({
           {highlightText(hit.topMatch.snippet, highlightTerms)}
         </span>
       ) : null}
-      <span className="mt-1 flex min-w-0 items-center justify-between gap-6 text-[11px] text-muted">
-        <span className="shrink-0 capitalize">
-          {hit.conversationType === "group" ? "Group" : "1-1"}
-        </span>
-        {dateLabel ? (
-          <span className="min-w-0 truncate text-right tabular-nums">
-            {dateLabel}
+      {showMeta ? (
+        <span className="mt-1 flex min-w-0 items-center justify-between gap-6 text-[11px] text-muted">
+          <span className="shrink-0 capitalize">
+            {hit.conversationType === "group" ? "Group" : "1-1"}
           </span>
-        ) : null}
-      </span>
+          {dateLabel ? (
+            <span className="min-w-0 truncate text-right tabular-nums">
+              {dateLabel}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
     </>
   );
 }
@@ -78,6 +121,8 @@ export function SearchResultsList({
   onContactContextMenu,
   onResultContextMenu,
   emptyLabel = "No matches",
+  loadingMore = false,
+  onLoadMore,
 }: {
   hits: SearchConversationHit[];
   total: number;
@@ -105,6 +150,8 @@ export function SearchResultsList({
     y: number,
   ) => void;
   emptyLabel?: string;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
   if (loading) {
     return (
@@ -202,6 +249,12 @@ export function SearchResultsList({
           </div>
         );
       })}
+      <LoadMoreResultsRow
+        shown={hits.length}
+        total={total}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+      />
     </div>
   );
 }
