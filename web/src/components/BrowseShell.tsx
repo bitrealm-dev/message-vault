@@ -1753,6 +1753,50 @@ export function BrowseShell({
     [hasSelection, selectedContacts, detail],
   );
 
+  const directThreadMeta = useMemo(() => {
+    if (activeThread !== "dm") return null;
+    const attachmentCount = messages.reduce(
+      (n, m) => n + m.attachments.length,
+      0,
+    );
+    const fromYearly = yearly.length > 0;
+    return {
+      title:
+        detail?.displayName ||
+        (contactId != null
+          ? (contacts.find((c) => c.id === contactId)?.displayName ?? null)
+          : null) ||
+        (focusedSearchHit?.conversationType === "individual"
+          ? focusedSearchHit.title
+          : null) ||
+        "Direct",
+      dateStart: fromYearly
+        ? yearly.reduce(
+            (min, y) => (y.dateStart < min ? y.dateStart : min),
+            yearly[0]!.dateStart,
+          )
+        : (focusedSearchHit?.dateStart ?? null),
+      dateEnd: fromYearly
+        ? yearly.reduce(
+            (max, y) => (y.dateEnd > max ? y.dateEnd : max),
+            yearly[0]!.dateEnd,
+          )
+        : (focusedSearchHit?.dateEnd ?? null),
+      messageCount: fromYearly
+        ? yearly.reduce((n, y) => n + y.messageCount, 0)
+        : (focusedSearchHit?.matchCount ?? messages.length),
+      attachmentCount,
+    };
+  }, [
+    activeThread,
+    messages,
+    yearly,
+    detail,
+    contactId,
+    contacts,
+    focusedSearchHit,
+  ]);
+
   const groupThread = useMemo(() => {
     if (hasGroupSelection) return null;
     if (!activeThread?.startsWith("gfull-")) return null;
@@ -2129,9 +2173,22 @@ export function BrowseShell({
             }
             clearGroupSelection();
             setFocusedSearchHit(hit);
-            setSelectedGroupConversationId(hit.conversationId);
             setScrollToMessageId(hit.topMatch?.id ?? null);
             setScrollToMessageNonce((n) => n + 1);
+            // Focus the contact so the 1-1 conversation inspector can load
+            // yearly stats; groups don't need a contact focus. pendingConv
+            // keeps the threads effect from clearing the open Direct thread
+            // when the contact also has groups.
+            if (
+              hit.conversationType === "individual" &&
+              hit.contactId != null &&
+              hit.contactId !== contactId
+            ) {
+              selectContact(hit.contactId);
+              pendingConvIdRef.current = hit.conversationId;
+            }
+            // After selectContact (which clears group selection id).
+            setSelectedGroupConversationId(hit.conversationId);
             openThread(
               [hit.conversationId],
               hit.conversationType === "group"
@@ -2250,6 +2307,7 @@ export function BrowseShell({
           groupChats={groupChats}
           activeThread={activeThread}
           groupThreadMeta={groupThread}
+          directThreadMeta={directThreadMeta}
           openConversation={
             selectedGroupConversationId != null
               ? (collapsedById.get(selectedGroupConversationId) ??

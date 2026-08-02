@@ -62,6 +62,7 @@ export function BrowseDetailsInspector({
   groupChats,
   activeThread,
   groupThreadMeta,
+  directThreadMeta = null,
   openConversation,
   onClearContactSelection,
   onClearGroupSelection,
@@ -77,6 +78,8 @@ export function BrowseDetailsInspector({
     id: number;
     displayName: string;
     preferredHandle: string | null;
+    phones?: string[];
+    labels?: string[];
   } | null;
   detail: ContactDetail | null;
   yearly: YearThread[];
@@ -93,6 +96,14 @@ export function BrowseDetailsInspector({
     messageCount: number;
     /** Sum of attachments on loaded messages for the open group thread. */
     attachmentCount?: number;
+  } | null;
+  /** Stats for an open 1-1 when contact detail is missing (e.g. search). */
+  directThreadMeta?: {
+    title: string;
+    dateStart: string | null;
+    dateEnd: string | null;
+    messageCount: number;
+    attachmentCount: number;
   } | null;
   openConversation: CollapsedGroupConversation | null;
   onClearContactSelection: () => void;
@@ -182,18 +193,20 @@ export function BrowseDetailsInspector({
 
   if (activeThread?.startsWith("gfull-") && (openConversation || groupThreadMeta)) {
     const g = openConversation;
-    const title =
-      g?.namedTitle?.trim() ||
-      groupThreadMeta?.namedTitle?.trim() ||
-      g?.title ||
-      groupThreadMeta?.title ||
-      "Group message";
+    // Only a real group title — skip participant-derived fallbacks already listed below.
+    const namedTitle =
+      g?.namedTitle?.trim() || groupThreadMeta?.namedTitle?.trim() || null;
     const dateStart = g?.dateStart ?? groupThreadMeta?.dateStart ?? null;
     const dateEnd = g?.dateEnd ?? groupThreadMeta?.dateEnd ?? null;
-    const participants =
-      g != null
-        ? collapsedParticipantLabels(g)
-        : (groupThreadMeta?.participants.map((p) => p.name || p.handle) ?? []);
+    const fromOpen = g != null ? collapsedParticipantLabels(g) : [];
+    const fromMeta =
+      groupThreadMeta?.participants.map((p) => p.name || p.handle).filter(Boolean) ??
+      [];
+    const participants = fromOpen.length > 0 ? fromOpen : fromMeta;
+    const participantCount =
+      g != null && g.participantCount > 0
+        ? g.participantCount
+        : participants.length;
     const messageCount =
       g?.messageCount ?? groupThreadMeta?.messageCount ?? 0;
     const attachmentCount = groupThreadMeta?.attachmentCount ?? 0;
@@ -203,15 +216,19 @@ export function BrowseDetailsInspector({
         <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
           Group
         </div>
-        <h2 className="text-[15px] font-semibold leading-snug text-text">
-          {title}
-        </h2>
-        <div className="mt-2 flex items-baseline justify-between gap-2">
+        {namedTitle ? (
+          <h2 className="text-[15px] font-semibold leading-snug text-text">
+            {namedTitle}
+          </h2>
+        ) : null}
+        <div
+          className={`${namedTitle ? "mt-2" : ""} flex items-baseline justify-between gap-2`}
+        >
           <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
             Participants
           </span>
           <span className="text-[12px] text-muted tabular-nums">
-            {(g?.participantCount ?? participants.length).toLocaleString()}
+            {participantCount.toLocaleString()}
           </span>
         </div>
         {participants.length > 0 && (
@@ -219,7 +236,7 @@ export function BrowseDetailsInspector({
             {participants.map((name, idx) => (
               <li
                 key={`${name}-${idx}`}
-                className="truncate text-[12px] leading-snug text-muted"
+                className="text-[12px] leading-snug text-muted break-all"
               >
                 {name}
               </li>
@@ -244,11 +261,33 @@ export function BrowseDetailsInspector({
     );
   }
 
-  if (activeThread === "dm" && (detail || focusedContact)) {
+  if (activeThread === "dm") {
     const name =
-      detail?.displayName || focusedContact?.displayName || "Contact";
-    const dmMessages = yearly.reduce((s, y) => s + y.messageCount, 0);
-    const dmAttachments = yearly.reduce((s, y) => s + y.attachmentCount, 0);
+      detail?.displayName ||
+      focusedContact?.displayName ||
+      directThreadMeta?.title ||
+      "Direct";
+    const phones =
+      detail?.phones?.length
+        ? detail.phones
+        : focusedContact?.phones?.length
+          ? focusedContact.phones
+          : focusedContact?.preferredHandle
+            ? [focusedContact.preferredHandle]
+            : [];
+    const labels = (detail?.labels ?? focusedContact?.labels ?? []).filter(
+      Boolean,
+    );
+    const yearlyMessages = yearly.reduce((s, y) => s + y.messageCount, 0);
+    const yearlyAttachments = yearly.reduce((s, y) => s + y.attachmentCount, 0);
+    const dmMessages =
+      yearly.length > 0
+        ? yearlyMessages
+        : (directThreadMeta?.messageCount ?? 0);
+    const dmAttachments =
+      yearly.length > 0
+        ? yearlyAttachments
+        : (directThreadMeta?.attachmentCount ?? 0);
     const range =
       yearly.length > 0
         ? {
@@ -261,7 +300,12 @@ export function BrowseDetailsInspector({
               yearly[0]!.dateEnd,
             ),
           }
-        : null;
+        : directThreadMeta?.dateStart && directThreadMeta?.dateEnd
+          ? {
+              start: directThreadMeta.dateStart,
+              end: directThreadMeta.dateEnd,
+            }
+          : null;
 
     return (
       <InspectorShell title="Conversation">
@@ -269,6 +313,32 @@ export function BrowseDetailsInspector({
           Direct
         </div>
         <h2 className="text-[15px] font-semibold text-text">{name}</h2>
+        {phones.length > 0 && (
+          <div className="mt-2">
+            <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+              Phones
+            </div>
+            <ul className="space-y-0.5">
+              {phones.map((p) => (
+                <li key={p} className="text-[13px] text-text tabular-nums">
+                  {formatPhoneDisplay(p)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {labels.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {labels.map((label) => (
+              <span
+                key={label}
+                className="rounded bg-elevated px-1.5 py-0.5 text-[11px] font-medium text-muted"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="mt-3 border-t border-border/50 pt-2">
           <StatRow label="Messages" value={dmMessages.toLocaleString()} />
           <StatRow

@@ -44,10 +44,18 @@ export function collapsedParticipantLabels(
   if (g.participantNames.length > 0) return g.participantNames;
   if (g.participantHandles.length > 0) return g.participantHandles;
   if (g.title && g.title !== "Group chat" && g.title !== "Group message") {
-    return g.title
+    // Browse rows use a middle-dot separator; search titles join with commas.
+    const byDot = g.title
       .split(/\u00a0*\u00a0·\u00a0\u00a0| {2}· {2}/)
       .map((n) => n.replace(/\u00a0/g, " ").trim())
       .filter(Boolean);
+    if (byDot.length > 1) return byDot;
+    const byComma = g.title
+      .split(/\s*,\s*/)
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (byComma.length > 1) return byComma;
+    return byDot;
   }
   return [];
 }
