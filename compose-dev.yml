@@ -9,7 +9,7 @@
 # Personal vault: VAULT_MODE=personal docker compose -f compose-dev.yml up
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
 #
-# Alpha SQLite browser (always on, localhost only): http://127.0.0.1:8081
+# SQLite browser (plain HTTP on loopback): http://127.0.0.1:8081
 #
 # TLS / nginx for production lives in the private message-vault-ops repo.
 
@@ -38,7 +38,7 @@ services:
     stdin_open: true
     tty: true
 
-  # Alpha import debugging — localhost only.
+  # SQLite browser — localhost only.
   sqlite-web:
     image: ghcr.io/coleifer/sqlite-web:latest
     ports:
