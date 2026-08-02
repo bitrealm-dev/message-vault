@@ -55,5 +55,6 @@ jobs:
           build-args: |
             BUILD_ID=${{ steps.stamp.outputs.build_id }}
             BUILD_DATE=${{ steps.stamp.outputs.build_date }}
+            NEXT_PUBLIC_HANKO_API_URL=${{ secrets.HANKO_API_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

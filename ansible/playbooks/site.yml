@@ -1,0 +1,18 @@
+---
+# Provision an Ubuntu 26.04 VPS for Message Vault (hub compose + nginx).
+#
+# From the ansible/ directory:
+#   cp inventory/hosts.example inventory/hosts
+#   cp group_vars/vault.yml.example group_vars/vault.yml
+#   # edit hosts + vault.yml; install Cloudflare origin certs on the VPS
+#   ansible-playbook playbooks/site.yml
+#
+# Full runbook: docs/maintainers/vps-setup.md
+
+- name: Message Vault VPS
+  hosts: vault
+  become: true
+  roles:
+    - common
+    - docker
+    - vault_host

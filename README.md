@@ -50,6 +50,8 @@ empty password (or create another account).
 Windows PowerShell steps and full prerequisites are in the
 [developer setup guide](docs/maintainers/development.md). Docker modes:
 [Docker guide](https://bitrealm-dev.github.io/message-vault-rs/get-started/docker/).
+Production VPS (Cloudflare + Hanko + Ansible):
+[vps-setup.md](docs/maintainers/vps-setup.md).
 
 ## Import your own messages
 
@@ -80,5 +82,7 @@ Dockerfile.release   # compose-release.yml (slim multi-stage image)
 compose-dev.yml
 compose-release.yml
 compose-hub.yml
+ansible/             # VPS provisioning (see docs/maintainers/vps-setup.md)
 ```
+
 

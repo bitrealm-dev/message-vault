@@ -1,0 +1,98 @@
+---
+- name: Require Hanko API URL when VAULT_AUTH=hanko
+  ansible.builtin.assert:
+    that:
+      - hanko_api_url is defined
+      - hanko_api_url | length > 0
+      - "'REPLACE' not in hanko_api_url"
+    fail_msg: >-
+      Set hanko_api_url in group_vars/vault.yml to your prod Hanko API URL
+      (see docs/maintainers/vps-setup.md).
+  when: (vault_auth | default('hanko')) == 'hanko'
+
+- name: Create Cloudflare origin cert directory
+  ansible.builtin.file:
+    path: "{{ cloudflare_cert_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Assert Cloudflare origin certificate is present
+  ansible.builtin.stat:
+    path: "{{ cloudflare_cert_dir }}/{{ cloudflare_cert_pem }}"
+  register: cf_pem
+
+- name: Assert Cloudflare origin private key is present
+  ansible.builtin.stat:
+    path: "{{ cloudflare_cert_dir }}/{{ cloudflare_cert_key }}"
+  register: cf_key
+
+- name: Fail if origin cert or key is missing
+  ansible.builtin.assert:
+    that:
+      - cf_pem.stat.exists
+      - cf_key.stat.exists
+    fail_msg: >-
+      Install Cloudflare origin certs before compose up:
+      {{ cloudflare_cert_dir }}/{{ cloudflare_cert_pem }}
+      and {{ cloudflare_cert_dir }}/{{ cloudflare_cert_key }}.
+      See docs/maintainers/vps-setup.md.
+
+- name: Tighten origin private key permissions
+  ansible.builtin.file:
+    path: "{{ cloudflare_cert_dir }}/{{ cloudflare_cert_key }}"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Create deploy root and staging
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ vault_docker_user }}"
+    mode: "0755"
+  loop:
+    - "{{ vault_deploy_root }}"
+    - "{{ vault_deploy_root }}/staging"
+    - "{{ vault_deploy_root }}/nginx"
+    - "{{ vault_deploy_root }}/nginx/conf.d"
+
+- name: Sync compose-hub.yml
+  ansible.builtin.copy:
+    src: "{{ vault_repo_src }}/compose-hub.yml"
+    dest: "{{ vault_deploy_root }}/compose-hub.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Sync nginx conf.d
+  ansible.builtin.copy:
+    src: "{{ vault_repo_src }}/nginx/conf.d/"
+    dest: "{{ vault_deploy_root }}/nginx/conf.d/"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render production .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ vault_deploy_root }}/.env"
+    owner: root
+    group: "{{ vault_docker_user }}"
+    mode: "0640"
+
+- name: Pull and start Message Vault (hub compose)
+  ansible.builtin.command:
+    cmd: docker compose -f compose-hub.yml --env-file .env pull
+    chdir: "{{ vault_deploy_root }}"
+  register: compose_pull
+  changed_when: "'Downloaded' in compose_pull.stdout or 'Pull complete' in compose_pull.stdout"
+
+- name: Start hub stack
+  ansible.builtin.command:
+    cmd: docker compose -f compose-hub.yml --env-file .env up -d
+    chdir: "{{ vault_deploy_root }}"
+  register: compose_up
+  changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout or 'Recreated' in compose_up.stdout"

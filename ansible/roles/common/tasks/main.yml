@@ -1,0 +1,38 @@
+---
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - ufw
+      - python3
+    state: present
+
+- name: Set UFW default deny incoming
+  ansible.builtin.command: ufw default deny incoming
+  changed_when: false
+  when: ufw_enabled | default(true) | bool
+
+- name: Set UFW default allow outgoing
+  ansible.builtin.command: ufw default allow outgoing
+  changed_when: false
+  when: ufw_enabled | default(true) | bool
+
+- name: Allow TCP ports through UFW
+  ansible.builtin.command: "ufw allow {{ item }}/tcp"
+  loop: "{{ ufw_allow_tcp | default(['22', '80', '443']) }}"
+  register: ufw_allow
+  changed_when: "'Skipping' not in ufw_allow.stdout"
+  when: ufw_enabled | default(true) | bool
+
+- name: Enable UFW (non-interactive)
+  ansible.builtin.command: ufw --force enable
+  register: ufw_enable
+  changed_when: "'Firewall is active' not in ufw_enable.stdout or ufw_enable.rc == 0"
+  when: ufw_enabled | default(true) | bool

@@ -1,0 +1,29 @@
+---
+# Copy to group_vars/vault.yml (gitignored) and fill in.
+#
+#   cp group_vars/vault.yml.example group_vars/vault.yml
+
+# Deploy layout
+vault_deploy_root: /opt/message-vault-rs
+vault_docker_user: ubuntu
+
+# Compose / app
+vault_image: mbeisser1/message-vault:latest
+vault_mode: personal
+vault_auth: hanko
+
+# Prod Hanko Cloud project API URL (no trailing slash).
+# Same value for both — client URL is also baked into the Hub image at build time.
+hanko_api_url: https://REPLACE_WITH_PROJECT_ID.hanko.io
+
+# Cloudflare origin cert paths on the VPS (must exist before compose up)
+cloudflare_cert_dir: /etc/ssl/cloudflare
+cloudflare_cert_pem: bitrealm.dev.pem
+cloudflare_cert_key: bitrealm.dev.key
+
+# Firewall
+ufw_enabled: true
+ufw_allow_tcp:
+  - "22"
+  - "80"
+  - "443"
