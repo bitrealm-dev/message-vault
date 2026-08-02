@@ -7,8 +7,9 @@
  *   first:/last:/phone:/nofirst/nolast also scope Messages “with person”
  *   within:  last-contact:  first-contact:  group-count:  message-count:
  *   from:  to:  with:  subject:  text:  has:attachment|noattachment
- *   filename:  filetype:  in:  after:  before:  source:
+ *   filename:  filetype:  larger:  smaller:  in:  after:  before:  source:
  *   is:group  is:direct
+ *   group:none|conversation  context:N  sort:date-asc|date|relevance
  *   "quoted phrases"  -term  NOT term
  *   OR / AND / (grouping) / prefix*  among free-text (FTS MATCH only)
  *
@@ -63,12 +64,22 @@ export type ParsedSearchQuery = {
   filename: string | null;
   /** image | video | audio | document | contact | other | pdf (→ document). */
   filetype: string | null;
+  /** Minimum attachment size in bytes (`larger:`). */
+  largerBytes: number | null;
+  /** Maximum attachment size in bytes (`smaller:`). */
+  smallerBytes: number | null;
   /** Restrict to a conversation by title or handle (`in:`). */
   inConversation: string | null;
   after: string | null;
   before: string | null;
   source: string | null;
   conversationType: "group" | "individual" | null;
+  /** Conversation-grouped (default) or one row per matching message. */
+  groupBy: "conversation" | "none";
+  /** Surrounding messages to include when showing/opening a hit. */
+  context: number;
+  /** Result ordering. */
+  sort: "date-desc" | "date-asc" | "relevance";
   /** Label whose contacts to search, active or not. */
   within: string | null;
   /** Contact handle (name or phone number). Legacy combined filter. */
@@ -140,8 +151,18 @@ export type AdvancedSearchForm = {
   subject?: string;
   filename?: string;
   filetype?: string;
+  /** Human size for `larger:` (e.g. `1M`, `500k`). */
+  larger?: string;
+  /** Human size for `smaller:`. */
+  smaller?: string;
   /** Conversation title / handle (`in:`). */
   inConversation?: string;
+  /** `group:none` when "messages". */
+  groupBy?: "conversation" | "none";
+  /** Surrounding messages (`context:N`). */
+  context?: number;
+  /** Result sort (`sort:`). */
+  sort?: "date-desc" | "date-asc" | "relevance";
   /** Message timestamp bounds. */
   date?: DateFilterInput;
   /** Contact's first message date bounds. */
@@ -173,11 +194,16 @@ const EMPTY: ParsedSearchQuery = {
   hasAttachment: null,
   filename: null,
   filetype: null,
+  largerBytes: null,
+  smallerBytes: null,
   inConversation: null,
   after: null,
   before: null,
   source: null,
   conversationType: null,
+  groupBy: "conversation",
+  context: 0,
+  sort: "date-desc",
   within: null,
   handle: null,
   firstName: null,
@@ -193,7 +219,33 @@ const EMPTY: ParsedSearchQuery = {
 };
 
 const OPERATOR_RE =
-  /^(search|with|from|to|subject|text|has|after|before|source|is|within|label|in|show|handle|filename|filetype|last-contact|first-contact|group-count|message-count|first|last|phone):(.*)$/i;
+  /^(search|with|from|to|subject|text|has|after|before|source|is|within|label|in|show|handle|filename|filetype|larger|smaller|group-count|message-count|group|context|sort|last-contact|first-contact|first|last|phone):(.*)$/i;
+
+/** Parse `500k` / `1.5M` / `2G` / plain bytes into an integer byte count. */
+export function parseSizeBytes(raw: string): number | null {
+  const t = raw.trim().toLowerCase().replace(/,/g, "");
+  if (!t) return null;
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*([kmgt]?b?)?$/i);
+  if (!m) return null;
+  const n = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const unit = (m[2] || "").replace(/b$/i, "").toLowerCase();
+  const mult =
+    unit === "k" ? 1024
+    : unit === "m" ? 1024 ** 2
+    : unit === "g" ? 1024 ** 3
+    : unit === "t" ? 1024 ** 4
+    : 1;
+  return Math.round(n * mult);
+}
+
+/** Format bytes for query composition (`larger:` / `smaller:`). */
+export function formatSizeBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}G`;
+  if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}M`;
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}K`;
+  return String(bytes);
+}
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -671,6 +723,48 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
         case "filetype":
           out.filetype = normalizeFiletype(value);
           break;
+        case "larger":
+          out.largerBytes = parseSizeBytes(value);
+          break;
+        case "smaller":
+          out.smallerBytes = parseSizeBytes(value);
+          break;
+        case "group": {
+          const v = value.toLowerCase();
+          if (v === "none" || v === "messages" || v === "message") {
+            out.groupBy = "none";
+          } else if (v === "conversation" || v === "conversations") {
+            out.groupBy = "conversation";
+          }
+          break;
+        }
+        case "context": {
+          const n = Number.parseInt(value, 10);
+          if (Number.isFinite(n) && n >= 0) {
+            out.context = Math.min(n, 20);
+          }
+          break;
+        }
+        case "sort": {
+          const v = value.toLowerCase();
+          if (v === "date-asc" || v === "oldest" || v === "asc") {
+            out.sort = "date-asc";
+          } else if (
+            v === "relevance" ||
+            v === "rank" ||
+            v === "best"
+          ) {
+            out.sort = "relevance";
+          } else if (
+            v === "date" ||
+            v === "date-desc" ||
+            v === "newest" ||
+            v === "desc"
+          ) {
+            out.sort = "date-desc";
+          }
+          break;
+        }
         case "in":
           // Legacy in:trash — trash is always excluded now.
           if (value.toLowerCase() !== "trash") out.inConversation = value;
@@ -778,7 +872,18 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
     subject: parsed.subject ?? undefined,
     filename: parsed.filename ?? undefined,
     filetype: parsed.filetype ?? undefined,
+    larger:
+      parsed.largerBytes != null
+        ? formatSizeBytes(parsed.largerBytes)
+        : undefined,
+    smaller:
+      parsed.smallerBytes != null
+        ? formatSizeBytes(parsed.smallerBytes)
+        : undefined,
     inConversation: parsed.inConversation ?? undefined,
+    groupBy: parsed.groupBy,
+    context: parsed.context > 0 ? parsed.context : undefined,
+    sort: parsed.sort,
     date: dateFilterFromBounds(parsed.after, parsed.before),
     firstContact: dateFilterFromBounds(
       parsed.firstContact.from,
@@ -894,6 +999,19 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
     if (form.filetype?.trim() && form.filetype !== "any") {
       parts.push(`filetype:${quoteIfNeeded(form.filetype.trim())}`);
     }
+    if (form.larger?.trim() && parseSizeBytes(form.larger) != null) {
+      parts.push(`larger:${form.larger.trim()}`);
+    }
+    if (form.smaller?.trim() && parseSizeBytes(form.smaller) != null) {
+      parts.push(`smaller:${form.smaller.trim()}`);
+    }
+    if (form.groupBy === "none") parts.push("group:none");
+    if (form.context != null && form.context > 0) {
+      parts.push(`context:${form.context}`);
+    }
+    if (form.sort && form.sort !== "date-desc") {
+      parts.push(`sort:${form.sort}`);
+    }
   }
   return parts.join(" ");
 }
@@ -913,6 +1031,8 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
     q.hasAttachment !== null ||
     !!q.filename ||
     !!q.filetype ||
+    q.largerBytes != null ||
+    q.smallerBytes != null ||
     !!q.inConversation ||
     !!q.after ||
     !!q.before ||

@@ -479,8 +479,8 @@ impl<'conn> StagingInserts<'conn> {
                 r#"
                 INSERT INTO staging_attachments (
                     message_id, path, original_name, mime_type, is_sticker, transcription,
-                    sha256, assets_path
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    sha256, assets_path, size_bytes
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 "#,
             )?,
             tap: tx.prepare(
@@ -752,6 +752,11 @@ fn import_conversation_to_staging(
                 None => (None, None, att.mime_type),
             };
 
+            let size_bytes = assets_path
+                .as_deref()
+                .and_then(|rel| std::fs::metadata(assets_dir.join(rel)).ok())
+                .map(|meta| meta.len() as i64);
+
             stmts.att.execute(params![
                 message_id,
                 att.path,
@@ -761,6 +766,7 @@ fn import_conversation_to_staging(
                 att.transcription,
                 sha256,
                 assets_path,
+                size_bytes,
             ])?;
             stats.attachments += 1;
         }
@@ -1103,11 +1109,11 @@ fn promote_append(
         r#"
         INSERT INTO attachments (
             message_id, path, original_name, mime_type, is_sticker, transcription,
-            sha256, assets_path
+            sha256, assets_path, size_bytes
         )
         SELECT
             mm.prod_id, sa.path, sa.original_name, sa.mime_type, sa.is_sticker, sa.transcription,
-            sa.sha256, sa.assets_path
+            sa.sha256, sa.assets_path, sa.size_bytes
         FROM staging_attachments sa
         JOIN _promote_msg_map mm ON mm.staging_id = sa.message_id
         "#,

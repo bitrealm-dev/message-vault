@@ -3,6 +3,7 @@
 import type {
   SearchContactHit,
   SearchConversationHit,
+  SearchMessageHit,
   SearchResult,
 } from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
@@ -14,6 +15,7 @@ export function useVaultSearch(initialQuery = "") {
   const [draft, setDraft] = useState(initialQuery);
   const [committed, setCommitted] = useState(initialQuery.trim());
   const [hits, setHits] = useState<SearchConversationHit[]>([]);
+  const [messageHits, setMessageHits] = useState<SearchMessageHit[]>([]);
   const [contactHits, setContactHits] = useState<SearchContactHit[]>([]);
   const [contactIds, setContactIds] = useState<number[]>([]);
   const [total, setTotal] = useState(0);
@@ -27,6 +29,7 @@ export function useVaultSearch(initialQuery = "") {
 
   const parsed = useMemo(() => parseSearchQuery(committed), [committed]);
   const mode = parsed.mode;
+  const groupBy = parsed.groupBy;
 
   const highlightTerms = useMemo(
     () => [
@@ -48,6 +51,7 @@ export function useVaultSearch(initialQuery = "") {
   useEffect(() => {
     const clear = () => {
       setHits([]);
+      setMessageHits([]);
       setContactHits([]);
       setContactIds([]);
       setTotal(0);
@@ -73,12 +77,15 @@ export function useVaultSearch(initialQuery = "") {
             return;
           }
           setHits(json.hits ?? []);
+          setMessageHits(json.messageHits ?? []);
           setContactHits(json.contacts ?? []);
           setContactIds(json.contactIds ?? []);
           setTotal(
             json.contacts
               ? (json.totalContacts ?? 0)
-              : (json.totalConversations ?? 0),
+              : json.messageHits
+                ? (json.totalMessages ?? 0)
+                : (json.totalConversations ?? 0),
           );
         })
         .catch((err: unknown) => {
@@ -93,15 +100,25 @@ export function useVaultSearch(initialQuery = "") {
     return () => window.clearTimeout(timer);
   }, [committed, refreshToken]);
 
-  const loadedCount = mode === "contacts" ? contactHits.length : hits.length;
+  const loadedCount =
+    mode === "contacts"
+      ? contactHits.length
+      : groupBy === "none"
+        ? messageHits.length
+        : hits.length;
   const hasMore = resultsMode && !loading && loadedCount > 0 && loadedCount < total;
 
-  /** Fetch the next page and append it (Contacts pages contacts, Messages pages conversations). */
+  /** Fetch the next page and append it (Contacts pages contacts, Messages pages conversations or messages). */
   const loadMore = useCallback(() => {
     if (!committed || loading || loadingMore) return;
     const seq = seqRef.current;
     const isContacts = mode === "contacts";
-    const offset = isContacts ? contactHits.length : hits.length;
+    const isMessages = !isContacts && groupBy === "none";
+    const offset = isContacts
+      ? contactHits.length
+      : isMessages
+        ? messageHits.length
+        : hits.length;
     setLoadingMore(true);
     void fetch(
       `/api/search?q=${encodeURIComponent(committed)}&offset=${offset}`,
@@ -117,13 +134,23 @@ export function useVaultSearch(initialQuery = "") {
         setTotal(
           json.contacts
             ? (json.totalContacts ?? 0)
-            : (json.totalConversations ?? 0),
+            : json.messageHits
+              ? (json.totalMessages ?? 0)
+              : (json.totalConversations ?? 0),
         );
         if (isContacts) {
           setContactHits((prev) => {
             const seen = new Set(prev.map((hit) => hit.contact.id));
             const next = (json.contacts ?? []).filter(
               (hit) => !seen.has(hit.contact.id),
+            );
+            return next.length > 0 ? [...prev, ...next] : prev;
+          });
+        } else if (isMessages) {
+          setMessageHits((prev) => {
+            const seen = new Set(prev.map((hit) => hit.messageId));
+            const next = (json.messageHits ?? []).filter(
+              (hit) => !seen.has(hit.messageId),
             );
             return next.length > 0 ? [...prev, ...next] : prev;
           });
@@ -144,7 +171,16 @@ export function useVaultSearch(initialQuery = "") {
       .finally(() => {
         if (seq === seqRef.current) setLoadingMore(false);
       });
-  }, [committed, loading, loadingMore, mode, contactHits.length, hits.length]);
+  }, [
+    committed,
+    loading,
+    loadingMore,
+    mode,
+    groupBy,
+    contactHits.length,
+    hits.length,
+    messageHits.length,
+  ]);
 
   return {
     draft,
@@ -153,7 +189,9 @@ export function useVaultSearch(initialQuery = "") {
     submit,
     resultsMode,
     mode,
+    groupBy,
     hits,
+    messageHits,
     contactHits,
     contactIds,
     total,

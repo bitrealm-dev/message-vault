@@ -2,7 +2,11 @@
 
 import { browseTreeMode, type BrowseTreeMode } from "@/lib/browseTree";
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
-import type { SearchContactHit, SearchConversationHit } from "@/lib/search";
+import type {
+  SearchContactHit,
+  SearchConversationHit,
+  SearchMessageHit,
+} from "@/lib/search";
 import type { SearchResultKey } from "@/lib/searchSelection";
 import type { ContactListItem, YearThread } from "@/lib/types";
 import {
@@ -30,6 +34,7 @@ import {
 } from "./icons";
 import { PaneSearchField } from "./PaneSearchField";
 import { SearchContactResultsList } from "./SearchContactResultsList";
+import { SearchMessageResultsList } from "./SearchMessageResultsList";
 import { SearchResultsList } from "./SearchResultsList";
 import {
   BrowseGroupChatSortMenu,
@@ -106,7 +111,9 @@ export function BrowsePeopleTreePane({
   searchLabels = [],
   resultsMode = false,
   searchMode = "messages",
+  searchGroupBy = "conversation",
   searchHits = [],
+  searchMessageHits = [],
   searchContactHits = [],
   searchTotal = 0,
   searchLoading = false,
@@ -123,6 +130,8 @@ export function BrowsePeopleTreePane({
   onToggleSelectAllSearchResults,
   onToggleSearchResult,
   onSelectSearchHit,
+  onSelectSearchMessageHit,
+  selectedSearchMessageId = null,
   onSearchContactContextMenu,
   onSearchResultContextMenu,
   onDeleteSearchResults,
@@ -194,7 +203,9 @@ export function BrowsePeopleTreePane({
   searchLabels?: string[];
   resultsMode?: boolean;
   searchMode?: "contacts" | "messages";
+  searchGroupBy?: "conversation" | "none";
   searchHits?: SearchConversationHit[];
+  searchMessageHits?: SearchMessageHit[];
   searchContactHits?: SearchContactHit[];
   searchTotal?: number;
   searchLoading?: boolean;
@@ -221,6 +232,8 @@ export function BrowsePeopleTreePane({
       ctrlKey: boolean;
     },
   ) => void;
+  onSelectSearchMessageHit?: (hit: SearchMessageHit) => void;
+  selectedSearchMessageId?: number | null;
   onSelectSearchHit?: (
     hit: SearchConversationHit,
     mods?: {
@@ -453,6 +466,9 @@ export function BrowsePeopleTreePane({
           onSubmit={onSearchSubmit}
           sources={searchSources}
           labels={searchLabels}
+          contacts={grouped.flatMap(([, items]) =>
+            items.map((c) => c.displayName).filter(Boolean),
+          )}
         />
       </div>
 
@@ -617,6 +633,18 @@ export function BrowsePeopleTreePane({
           onToggleExpand={toggleSearchContactExpanded}
           onSelectHit={(hit) => onSelectSearchHit?.(hit)}
           onContactContextMenu={onSearchContactContextMenu}
+          loadingMore={searchLoadingMore}
+          onLoadMore={onSearchLoadMore}
+        />
+      ) : mode === "search" && searchGroupBy === "none" ? (
+        <SearchMessageResultsList
+          hits={searchMessageHits}
+          total={searchTotal}
+          loading={searchLoading}
+          highlightTerms={searchHighlightTerms}
+          selectedMessageId={selectedSearchMessageId}
+          onSelect={(hit) => onSelectSearchMessageHit?.(hit)}
+          emptyLabel="No matches"
           loadingMore={searchLoadingMore}
           onLoadMore={onSearchLoadMore}
         />

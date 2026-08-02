@@ -71,6 +71,31 @@ export type SearchHitMessage = {
   sender: string | null;
 };
 
+export type SearchAttachmentSummary = {
+  name: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+};
+
+/** One matching message when `group:none`. */
+export type SearchMessageHit = {
+  messageId: number;
+  conversationId: number;
+  conversationType: "group" | "individual";
+  contactId: number | null;
+  title: string;
+  chatIdentifier: string;
+  timestamp: string;
+  snippet: string;
+  isFromMe: boolean;
+  sender: string | null;
+  attachments: SearchAttachmentSummary[];
+  /** Messages before the hit when `context:N` is set. */
+  contextBefore: SearchHitMessage[];
+  /** Messages after the hit when `context:N` is set. */
+  contextAfter: SearchHitMessage[];
+};
+
 export type SearchConversationHit = {
   conversationId: number;
   conversationType: "group" | "individual";
@@ -92,6 +117,9 @@ export type SearchResult = {
   /** Every distinct contact represented by matching direct conversations. */
   contactIds: number[];
   hits: SearchConversationHit[];
+  /** Flat message rows when `group:none`. */
+  messageHits?: SearchMessageHit[];
+  totalMessages?: number;
   /** Present when `show:contact` groups results under each contact. */
   contacts?: SearchContactHit[];
   totalContacts?: number;
@@ -307,6 +335,8 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
 
 type SearchFilters = {
   fts: string | null;
+  /** FROM clause fragment starting at `messages m`. */
+  fromSql: string;
   whereSql: string;
   params: unknown[];
   dedupe: string;
@@ -329,10 +359,12 @@ function buildSearchFilters(
   const params: unknown[] = [accountId];
   const where: string[] = ["c.account_id = ?"];
 
+  // JOIN FTS when present so ORDER BY bm25(messages_fts) works for relevance.
+  let fromSql =
+    "messages m JOIN conversations c ON c.id = m.conversation_id";
   if (fts) {
-    where.push(
-      `m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)`,
-    );
+    fromSql += " JOIN messages_fts ON messages_fts.rowid = m.id";
+    where.push(`messages_fts MATCH ?`);
     params.push(fts);
   }
 
@@ -461,6 +493,30 @@ function buildSearchFilters(
     params.push(parsed.filetype.trim().toLowerCase());
   }
 
+  if (parsed.largerBytes != null) {
+    where.push(
+      `EXISTS (
+         SELECT 1 FROM attachments a
+         WHERE a.message_id = m.id
+           AND a.size_bytes IS NOT NULL
+           AND a.size_bytes > ?
+       )`,
+    );
+    params.push(parsed.largerBytes);
+  }
+
+  if (parsed.smallerBytes != null) {
+    where.push(
+      `EXISTS (
+         SELECT 1 FROM attachments a
+         WHERE a.message_id = m.id
+           AND a.size_bytes IS NOT NULL
+           AND a.size_bytes < ?
+       )`,
+    );
+    params.push(parsed.smallerBytes);
+  }
+
   if (parsed.inConversation?.trim()) {
     const like = `%${parsed.inConversation.trim()}%`;
     where.push(
@@ -515,12 +571,39 @@ function buildSearchFilters(
 
   return {
     fts,
+    fromSql,
     whereSql: where.join(" AND "),
     params,
     dedupe: combinedDedupeSql(sourceFilter, "m"),
     sourceFilter: sourceFilter ?? null,
     contactScopes,
   };
+}
+
+function conversationOrderSql(
+  sort: ParsedSearchQuery["sort"],
+  fts: string | null,
+): string {
+  if (sort === "relevance" && fts) {
+    return "MIN(bm25(messages_fts)) ASC, MAX(m.timestamp) DESC";
+  }
+  if (sort === "date-asc") {
+    return "MAX(m.timestamp) ASC, c.id ASC";
+  }
+  return "MAX(m.timestamp) DESC, c.id DESC";
+}
+
+function messageOrderSql(
+  sort: ParsedSearchQuery["sort"],
+  fts: string | null,
+): string {
+  if (sort === "relevance" && fts) {
+    return `bm25(messages_fts) ASC, ${MSG_TS} DESC, m.id DESC`;
+  }
+  if (sort === "date-asc") {
+    return `${MSG_TS} ASC, m.id ASC`;
+  }
+  return `${MSG_TS} DESC, m.id DESC`;
 }
 
 /** Create FTS if the readonly connection opened before the migration ran. */
@@ -535,13 +618,18 @@ export function searchVault(
   opts: { limit?: number; offset?: number; source?: string | null } = {},
 ): SearchResult {
   const parsed = parseSearchQuery(rawQuery);
+  if (parsed.mode !== "contacts" && parsed.groupBy === "none") {
+    return searchVaultMessages(rawQuery, opts);
+  }
+
   const limit = Math.min(
     Math.max(1, opts.limit ?? DEFAULT_LIMIT),
     MAX_LIMIT,
   );
   const offset = Math.max(0, opts.offset ?? 0);
 
-  if (!hasSearchCriteria(parsed) && !rawQuery.trim()) {
+  // Presentation-only operators (`group:`, `sort:`, `context:`) do not count.
+  if (!hasSearchCriteria(parsed)) {
     return {
       query: rawQuery,
       parsed,
@@ -554,16 +642,16 @@ export function searchVault(
   ensureFtsReady();
 
   const db = getDb();
-  const { fts, whereSql, params, dedupe } = buildSearchFilters(
+  const { fts, fromSql, whereSql, params, dedupe } = buildSearchFilters(
     parsed,
     opts.source,
   );
+  const orderSql = conversationOrderSql(parsed.sort, fts);
   const countRow = db
     .prepare(
       `SELECT COUNT(*) AS n FROM (
          SELECT c.id
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+         FROM ${fromSql}
          WHERE ${whereSql}${dedupe}
          GROUP BY c.id
        )`,
@@ -573,11 +661,10 @@ export function searchVault(
   const convRows = db
     .prepare(
       `SELECT ${CONVERSATION_HIT_COLUMNS}
-       FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id
+       FROM ${fromSql}
        WHERE ${whereSql}${dedupe}
        GROUP BY c.id
-       ORDER BY MAX(m.timestamp) DESC
+       ORDER BY ${orderSql}
        LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset) as ConversationRow[];
@@ -587,8 +674,7 @@ export function searchVault(
       `SELECT DISTINCT contact_id
        FROM (
          SELECT ch.contact_id AS contact_id
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+         FROM ${fromSql}
          JOIN contact_handles ch
            ON ch.account_id = c.account_id
           AND ch.handle = c.chat_identifier
@@ -610,6 +696,277 @@ export function searchVault(
     contactIds,
     hits,
   };
+}
+
+/** Flat message results for `group:none`. */
+function searchVaultMessages(
+  rawQuery: string,
+  opts: { limit?: number; offset?: number; source?: string | null } = {},
+): SearchResult {
+  const parsed = parseSearchQuery(rawQuery);
+  const limit = Math.min(
+    Math.max(1, opts.limit ?? DEFAULT_LIMIT),
+    MAX_LIMIT,
+  );
+  const offset = Math.max(0, opts.offset ?? 0);
+
+  if (!hasSearchCriteria(parsed)) {
+    return {
+      query: rawQuery,
+      parsed,
+      totalConversations: 0,
+      contactIds: [],
+      hits: [],
+      messageHits: [],
+      totalMessages: 0,
+    };
+  }
+
+  ensureFtsReady();
+
+  const db = getDb();
+  const { fts, fromSql, whereSql, params, dedupe } = buildSearchFilters(
+    parsed,
+    opts.source,
+  );
+  const orderSql = messageOrderSql(parsed.sort, fts);
+
+  const countRow = db
+    .prepare(
+      `SELECT COUNT(DISTINCT m.id) AS n
+       FROM ${fromSql}
+       WHERE ${whereSql}${dedupe}`,
+    )
+    .get(...params) as { n: number };
+
+  const msgRows = db
+    .prepare(
+      `SELECT DISTINCT
+         m.id AS message_id,
+         m.timestamp AS timestamp,
+         m.body AS body,
+         m.is_from_me AS is_from_me,
+         m.sender AS sender,
+         c.id AS conversation_id,
+         c.conversation_type AS conversation_type,
+         c.group_title AS group_title,
+         c.chat_identifier AS chat_identifier,
+         (
+           SELECT ch.contact_id
+           FROM contact_handles ch
+           WHERE ch.account_id = c.account_id
+             AND ch.handle = c.chat_identifier
+             AND c.conversation_type = 'individual'
+           LIMIT 1
+         ) AS contact_id
+       FROM ${fromSql}
+       WHERE ${whereSql}${dedupe}
+       ORDER BY ${orderSql}
+       LIMIT ? OFFSET ?`,
+    )
+    .all(...params, limit, offset) as Array<{
+    message_id: number;
+    timestamp: string;
+    body: string | null;
+    is_from_me: number;
+    sender: string | null;
+    conversation_id: number;
+    conversation_type: string;
+    group_title: string | null;
+    chat_identifier: string;
+    contact_id: number | null;
+  }>;
+
+  const highlightTerms = [
+    ...parsed.terms,
+    ...parsed.phrases,
+    ...(parsed.subject ? [parsed.subject] : []),
+  ];
+
+  const messageHits = msgRows.map((row) => {
+    const participants = db
+      .prepare(
+        `SELECT handle, name_hint FROM participants WHERE conversation_id = ? ORDER BY id`,
+      )
+      .all(row.conversation_id) as Array<{
+      handle: string;
+      name_hint: string | null;
+    }>;
+    const names = participants.map((p) => p.name_hint?.trim() || p.handle);
+    const attachments = listAttachmentSummaries(db, row.message_id);
+    const { before, after } =
+      parsed.context > 0
+        ? messageContext(db, row.message_id, parsed.context)
+        : { before: [], after: [] };
+
+    return {
+      messageId: row.message_id,
+      conversationId: row.conversation_id,
+      conversationType:
+        row.conversation_type === "group" ? ("group" as const) : ("individual" as const),
+      contactId: row.contact_id,
+      title: conversationTitle(
+        row.conversation_type,
+        row.group_title,
+        row.chat_identifier,
+        names,
+      ),
+      chatIdentifier: row.chat_identifier,
+      timestamp: row.timestamp,
+      snippet: snippetFromBody(row.body, highlightTerms),
+      isFromMe: row.is_from_me === 1,
+      sender: row.sender,
+      attachments,
+      contextBefore: before,
+      contextAfter: after,
+    };
+  });
+
+  const contactIds = [
+    ...new Set(
+      messageHits
+        .map((h) => h.contactId)
+        .filter((id): id is number => id != null),
+    ),
+  ].sort((a, b) => a - b);
+
+  return {
+    query: rawQuery,
+    parsed,
+    totalConversations: new Set(messageHits.map((h) => h.conversationId)).size,
+    contactIds,
+    hits: [],
+    messageHits,
+    totalMessages: countRow.n,
+  };
+}
+
+function listAttachmentSummaries(
+  db: Database.Database,
+  messageId: number,
+): SearchAttachmentSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT original_name, mime_type, size_bytes
+       FROM attachments
+       WHERE message_id = ?
+       ORDER BY id`,
+    )
+    .all(messageId) as Array<{
+    original_name: string | null;
+    mime_type: string | null;
+    size_bytes: number | null;
+  }>;
+  return rows.map((row) => ({
+    name: row.original_name,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+  }));
+}
+
+/** Neighboring messages in the same conversation (by timestamp/id). */
+export function messageContext(
+  db: Database.Database,
+  messageId: number,
+  n: number,
+): { before: SearchHitMessage[]; after: SearchHitMessage[] } {
+  if (n <= 0) return { before: [], after: [] };
+  const anchor = db
+    .prepare(
+      `SELECT id, conversation_id, timestamp, body, is_from_me, sender
+       FROM messages WHERE id = ?`,
+    )
+    .get(messageId) as
+    | {
+        id: number;
+        conversation_id: number;
+        timestamp: string;
+        body: string | null;
+        is_from_me: number;
+        sender: string | null;
+      }
+    | undefined;
+  if (!anchor) return { before: [], after: [] };
+
+  const toHit = (row: {
+    id: number;
+    timestamp: string;
+    body: string | null;
+    is_from_me: number;
+    sender: string | null;
+  }): SearchHitMessage => ({
+    id: row.id,
+    timestamp: row.timestamp,
+    snippet: snippetFromBody(row.body, []),
+    isFromMe: row.is_from_me === 1,
+    sender: row.sender,
+  });
+
+  const before = db
+    .prepare(
+      `SELECT id, timestamp, body, is_from_me, sender
+       FROM messages
+       WHERE conversation_id = ?
+         AND (timestamp < ? OR (timestamp = ? AND id < ?))
+       ORDER BY timestamp DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(
+      anchor.conversation_id,
+      anchor.timestamp,
+      anchor.timestamp,
+      anchor.id,
+      n,
+    ) as Array<{
+    id: number;
+    timestamp: string;
+    body: string | null;
+    is_from_me: number;
+    sender: string | null;
+  }>;
+
+  const after = db
+    .prepare(
+      `SELECT id, timestamp, body, is_from_me, sender
+       FROM messages
+       WHERE conversation_id = ?
+         AND (timestamp > ? OR (timestamp = ? AND id > ?))
+       ORDER BY timestamp ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(
+      anchor.conversation_id,
+      anchor.timestamp,
+      anchor.timestamp,
+      anchor.id,
+      n,
+    ) as Array<{
+    id: number;
+    timestamp: string;
+    body: string | null;
+    is_from_me: number;
+    sender: string | null;
+  }>;
+
+  return {
+    before: before.reverse().map(toHit),
+    after: after.map(toHit),
+  };
+}
+
+/**
+ * Message ids around a hit for thread loading when `context:N` is set.
+ * Includes the anchor itself.
+ */
+export function searchMessageContextIds(
+  messageId: number,
+  n: number,
+): number[] {
+  if (!Number.isInteger(messageId) || messageId <= 0) return [];
+  ensureFtsReady();
+  const db = getDb();
+  const { before, after } = messageContext(db, messageId, Math.max(0, n));
+  return [...before.map((m) => m.id), messageId, ...after.map((m) => m.id)];
 }
 
 type ConversationRow = {
@@ -766,12 +1123,14 @@ export function searchConversationMatches(
   ensureFtsReady();
 
   const db = getDb();
-  const { whereSql, params, dedupe } = buildSearchFilters(parsed, opts.source);
+  const { fromSql, whereSql, params, dedupe } = buildSearchFilters(
+    parsed,
+    opts.source,
+  );
   const matches = db
     .prepare(
       `SELECT DISTINCT m.id AS id, m.timestamp AS timestamp
-       FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id
+       FROM ${fromSql}
        WHERE ${whereSql}${dedupe} AND c.id IN (${ids.map(() => "?").join(",")})
        ORDER BY m.timestamp ASC, m.id ASC`,
     )
@@ -1077,10 +1436,8 @@ export function searchVaultByContact(
   ensureFtsReady();
 
   const db = getDb();
-  const { fts, whereSql, params, dedupe, contactScopes } = buildSearchFilters(
-    parsed,
-    opts.source,
-  );
+  const { fts, fromSql, whereSql, params, dedupe, contactScopes } =
+    buildSearchFilters(parsed, opts.source);
 
   // Every (contact, conversation) pair that matched, newest conversation first.
   // Conversations are collapsed before fanning out to contacts, so the handle
@@ -1092,8 +1449,7 @@ export function searchVaultByContact(
          SELECT c.id AS conversation_id,
                 c.chat_identifier AS chat_identifier,
                 MAX(m.timestamp) AS last_ts
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+         FROM ${fromSql}
          WHERE ${whereSql}${dedupe}
          GROUP BY c.id
        )
@@ -1147,8 +1503,7 @@ export function searchVaultByContact(
       : (db
           .prepare(
             `SELECT ${CONVERSATION_HIT_COLUMNS}
-             FROM messages m
-             JOIN conversations c ON c.id = m.conversation_id
+             FROM ${fromSql}
              WHERE ${whereSql}${dedupe}
                AND c.id IN (${conversationIds.map(() => "?").join(",")})
              GROUP BY c.id

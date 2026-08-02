@@ -509,7 +509,9 @@ export function GroupMessagesShell({
             searchSources={sources}
             searchLabels={[]}
             resultsMode={vaultSearch.resultsMode}
+            searchGroupBy={vaultSearch.groupBy}
             searchHits={vaultSearch.hits}
+            searchMessageHits={vaultSearch.messageHits}
             searchTotal={vaultSearch.total}
             searchLoading={vaultSearch.loading}
             searchLoadingMore={vaultSearch.loadingMore}
@@ -517,6 +519,31 @@ export function GroupMessagesShell({
               vaultSearch.hasMore ? vaultSearch.loadMore : undefined
             }
             searchHighlightTerms={vaultSearch.highlightTerms}
+            selectedSearchMessageId={scrollToMessageId}
+            onSelectSearchMessageHit={(hit) => {
+              setSelectedIds(new Set());
+              setConversationId(hit.conversationId);
+              setScrollToMessageId(hit.messageId);
+              setScrollToMessageNonce((n) => n + 1);
+              setFullMessageIds([hit.conversationId]);
+              setActiveThread(`gfull-${hit.conversationId}`);
+              const year = Number(hit.timestamp.slice(0, 4));
+              if (Number.isFinite(year)) {
+                setFocusYear(year);
+                pendingScrollYearRef.current = year;
+              }
+              syncUrl(hit.conversationId, Number.isFinite(year) ? year : null);
+              const parsedQuery = parseSearchQuery(vaultSearch.committed);
+              const findSeed = [
+                ...parsedQuery.terms,
+                ...parsedQuery.phrases.map((p) => `"${p}"`),
+              ].join(" ");
+              if (findSeed) {
+                threadFind.openWith(findSeed, hit.messageId);
+              } else if (threadFind.open) {
+                threadFind.close();
+              }
+            }}
             onSelectSearchHit={(hit: SearchConversationHit) => {
               setSelectedIds(new Set());
               setConversationId(hit.conversationId);

@@ -5,6 +5,7 @@ import {
   formFromSearchQuery,
   hasSearchCriteria,
   parseSearchQuery,
+  parseSizeBytes,
   toFtsMatch,
 } from "./searchQuery";
 
@@ -54,6 +55,38 @@ describe("parseSearchQuery", () => {
     assert.equal(q.text, "hello");
     assert.equal(q.inConversation, "Family Chat");
     assert.match(q.after ?? "", /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("parses larger/smaller, group:none, context, and sort", () => {
+    const q = parseSearchQuery(
+      "larger:1M smaller:500k group:none context:2 sort:relevance",
+    );
+    assert.equal(q.largerBytes, 1024 * 1024);
+    assert.equal(q.smallerBytes, 500 * 1024);
+    assert.equal(q.groupBy, "none");
+    assert.equal(q.context, 2);
+    assert.equal(q.sort, "relevance");
+    // group-count must not be swallowed by group:
+    assert.equal(parseSearchQuery("group-count:>5").groupCount?.value, 5);
+    assert.equal(parseSearchQuery("sort:date-asc").sort, "date-asc");
+    assert.equal(parseSizeBytes("1.5M"), Math.round(1.5 * 1024 * 1024));
+  });
+
+  it("composes phase-2 message result operators", () => {
+    const s = composeSearchQuery({
+      hasWords: "hello",
+      groupBy: "none",
+      sort: "date-asc",
+      context: 3,
+      attachmentFilter: "yes",
+      larger: "1M",
+      smaller: "10M",
+    });
+    assert.match(s, /\bgroup:none\b/);
+    assert.match(s, /\bsort:date-asc\b/);
+    assert.match(s, /\bcontext:3\b/);
+    assert.match(s, /\blarger:1M\b/);
+    assert.match(s, /\bsmaller:10M\b/);
   });
 
   it("parses negation", () => {

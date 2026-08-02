@@ -1,7 +1,7 @@
 "use client";
 
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
-import type { SearchConversationHit } from "@/lib/search";
+import type { SearchConversationHit, SearchMessageHit } from "@/lib/search";
 import type { MouseEvent, RefObject } from "react";
 import {
   DirectConversationRow,
@@ -9,6 +9,7 @@ import {
 } from "./BrowseConversationRows";
 import { IconHoverTarget } from "./IconHoverLabel";
 import { TrashMessagesIcon } from "./icons";
+import { SearchMessageResultsList } from "./SearchMessageResultsList";
 import { SearchResultsList } from "./SearchResultsList";
 import {
   BrowseGroupChatSortMenu,
@@ -42,13 +43,17 @@ export function BrowseGroupChatsPane({
   searchSources = [],
   searchLabels = [],
   resultsMode = false,
+  searchGroupBy = "conversation",
   searchHits = [],
+  searchMessageHits = [],
   searchTotal = 0,
   searchLoading = false,
   searchLoadingMore = false,
   onSearchLoadMore,
   searchHighlightTerms,
   onSelectSearchHit,
+  onSelectSearchMessageHit,
+  selectedSearchMessageId = null,
   emptyLabel = "No group messages",
   directAvailable = false,
   directActive = false,
@@ -83,13 +88,17 @@ export function BrowseGroupChatsPane({
   searchSources?: string[];
   searchLabels?: string[];
   resultsMode?: boolean;
+  searchGroupBy?: "conversation" | "none";
   searchHits?: SearchConversationHit[];
+  searchMessageHits?: SearchMessageHit[];
   searchTotal?: number;
   searchLoading?: boolean;
   searchLoadingMore?: boolean;
   onSearchLoadMore?: () => void;
   searchHighlightTerms?: string[];
   onSelectSearchHit?: (hit: SearchConversationHit) => void;
+  onSelectSearchMessageHit?: (hit: SearchMessageHit) => void;
+  selectedSearchMessageId?: number | null;
   emptyLabel?: string;
   /** Synthetic 1:1 chooser row (focused contact path only). */
   directAvailable?: boolean;
@@ -159,7 +168,19 @@ export function BrowseGroupChatsPane({
           <span className="text-[13px] text-muted">Search results</span>
         </div>
       )}
-      {resultsMode ? (
+      {resultsMode && searchGroupBy === "none" ? (
+        <SearchMessageResultsList
+          hits={searchMessageHits}
+          total={searchTotal}
+          loading={searchLoading}
+          highlightTerms={searchHighlightTerms}
+          selectedMessageId={selectedSearchMessageId}
+          onSelect={(hit) => onSelectSearchMessageHit?.(hit)}
+          emptyLabel="No matches"
+          loadingMore={searchLoadingMore}
+          onLoadMore={onSearchLoadMore}
+        />
+      ) : resultsMode ? (
         <SearchResultsList
           hits={searchHits}
           total={searchTotal}

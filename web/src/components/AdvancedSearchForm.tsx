@@ -88,6 +88,17 @@ export function AdvancedSearchForm({
   const [subject, setSubject] = useState(seed.subject ?? "");
   const [filename, setFilename] = useState(seed.filename ?? "");
   const [filetype, setFiletype] = useState(seed.filetype ?? "");
+  const [larger, setLarger] = useState(seed.larger ?? "");
+  const [smaller, setSmaller] = useState(seed.smaller ?? "");
+  const [groupBy, setGroupBy] = useState<"conversation" | "none">(
+    seed.groupBy ?? "conversation",
+  );
+  const [sort, setSort] = useState<"date-desc" | "date-asc" | "relevance">(
+    seed.sort ?? "date-desc",
+  );
+  const [context, setContext] = useState(
+    seed.context != null && seed.context > 0 ? String(seed.context) : "",
+  );
   const [attachmentFilter, setAttachmentFilter] = useState<AttachmentFilter>(
     seed.attachmentFilter ?? "any",
   );
@@ -163,7 +174,14 @@ export function AdvancedSearchForm({
             subject,
             filename,
             filetype: filetype || undefined,
+            larger: larger || undefined,
+            smaller: smaller || undefined,
             attachmentFilter,
+            groupBy,
+            sort,
+            context: /^\d+$/.test(context.trim())
+              ? Number.parseInt(context.trim(), 10)
+              : undefined,
           }
         : {}),
       hasWords,
@@ -452,8 +470,60 @@ export function AdvancedSearchForm({
                     placeholder="Contains…"
                   />
                 </Field>
+                <Field label="Larger than">
+                  <input
+                    className={inputClass}
+                    value={larger}
+                    onChange={(e) => setLarger(e.target.value)}
+                    placeholder="e.g. 1M"
+                  />
+                </Field>
+                <Field label="Smaller than">
+                  <input
+                    className={inputClass}
+                    value={smaller}
+                    onChange={(e) => setSmaller(e.target.value)}
+                    placeholder="e.g. 500k"
+                  />
+                </Field>
               </>
             ) : null}
+            <Field label="Results">
+              <select
+                className={inputClass}
+                value={groupBy}
+                onChange={(e) =>
+                  setGroupBy(e.target.value as "conversation" | "none")
+                }
+              >
+                <option value="conversation">One row per conversation</option>
+                <option value="none">One row per message</option>
+              </select>
+            </Field>
+            <Field label="Sort">
+              <select
+                className={inputClass}
+                value={sort}
+                onChange={(e) =>
+                  setSort(
+                    e.target.value as "date-desc" | "date-asc" | "relevance",
+                  )
+                }
+              >
+                <option value="date-desc">Newest first</option>
+                <option value="date-asc">Oldest first</option>
+                <option value="relevance">Best match</option>
+              </select>
+            </Field>
+            <Field label="Context">
+              <input
+                className={inputClass}
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                placeholder="Surrounding messages (e.g. 2)"
+                inputMode="numeric"
+              />
+            </Field>
           </>
         )}
       </div>

@@ -25,7 +25,7 @@ import {
 import { useVaultReadOnly } from "./useVaultReadOnly";
 import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { SearchConversationHit } from "@/lib/search";
+import type { SearchConversationHit, SearchMessageHit } from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
 import { ThreadFindBar } from "./ThreadFindBar";
 import { useThreadFind } from "./useThreadFind";
@@ -249,6 +249,10 @@ export function BrowseShell({
     null,
   );
   const [scrollToMessageNonce, setScrollToMessageNonce] = useState(0);
+  const [focusedSearchMessageId, setFocusedSearchMessageId] = useState<
+    number | null
+  >(null);
+  const [contextLoadIds, setContextLoadIds] = useState<number[]>([]);
   const [focusedSearchHit, setFocusedSearchHit] =
     useState<SearchConversationHit | null>(null);
   const [selectedSearchResultKeys, setSelectedSearchResultKeys] = useState<
@@ -538,6 +542,8 @@ export function BrowseShell({
   useEffect(() => {
     if (selectedSearchGroups.length === 0) return;
     setFocusedSearchHit(null);
+    setFocusedSearchMessageId(null);
+    setContextLoadIds([]);
     setSelectedGroupConversationId(null);
     setScrollToMessageId(null);
     setThreadConversationIds(
@@ -615,6 +621,8 @@ export function BrowseShell({
       setSelectedGroupConversationId(null);
       setScrollToMessageId(null);
       setFocusedSearchHit(null);
+      setFocusedSearchMessageId(null);
+      setContextLoadIds([]);
       loadedContactIdRef.current = null;
       setThreadsLoadedFor(null);
       expandContact(id);
@@ -1056,10 +1064,14 @@ export function BrowseShell({
         setActiveThread(null);
         setThreadConversationIds(null);
         setFocusedSearchHit(null);
+        setFocusedSearchMessageId(null);
+        setContextLoadIds([]);
         syncConvUrl(null);
         return;
       }
       setFocusedSearchHit(null);
+      setFocusedSearchMessageId(null);
+      setContextLoadIds([]);
       setSelectedGroupConversationId(g.conversationId);
       const key = `gfull-${g.conversationIds.join("-")}`;
       openThread(g.conversationIds, key);
@@ -1109,6 +1121,8 @@ export function BrowseShell({
     clearGroupSelection();
     setSelectedGroupConversationId(null);
     setFocusedSearchHit(null);
+    setFocusedSearchMessageId(null);
+    setContextLoadIds([]);
     openThread(dmIds, "dm");
   }, [yearly, openThread, clearGroupSelection]);
 
@@ -1144,18 +1158,23 @@ export function BrowseShell({
   // Search hits / deep links may target messages outside the newest page.
   useEffect(() => {
     if (scrollToMessageId == null || threadConversationIds == null) return;
-    if (messages.some((m) => m.id === scrollToMessageId)) return;
+    const wantIds = [
+      scrollToMessageId,
+      ...contextLoadIds.filter((id) => id !== scrollToMessageId),
+    ];
+    if (wantIds.every((id) => messages.some((m) => m.id === id))) return;
     const yearHint = focusedSearchHit?.topMatch?.timestamp
       ? Number(focusedSearchHit.topMatch.timestamp.slice(0, 4))
       : focusedSearchHit?.dateEnd
         ? Number(focusedSearchHit.dateEnd.slice(0, 4))
         : null;
     void ensureMessageIdsLoaded(
-      [scrollToMessageId],
+      wantIds,
       yearHint != null && Number.isFinite(yearHint) ? yearHint : null,
     );
   }, [
     scrollToMessageId,
+    contextLoadIds,
     threadConversationIds,
     messages,
     focusedSearchHit,
@@ -1428,6 +1447,8 @@ export function BrowseShell({
       setSelectedSearchResultKeys(new Set());
       searchResultAnchorRef.current = null;
       setFocusedSearchHit(null);
+      setFocusedSearchMessageId(null);
+      setContextLoadIds([]);
       setSelectedGroupConversationId(null);
       setThreadConversationIds(null);
       setActiveThread(null);
@@ -2161,7 +2182,9 @@ export function BrowseShell({
           searchLabels={allLabels}
           resultsMode={vaultSearch.resultsMode}
           searchMode={vaultSearch.mode}
+          searchGroupBy={vaultSearch.groupBy}
           searchHits={sortedSearchHits}
+          searchMessageHits={vaultSearch.messageHits}
           searchContactHits={sortedSearchContactHits}
           searchTotal={vaultSearch.total}
           searchLoading={vaultSearch.loading}
@@ -2177,6 +2200,60 @@ export function BrowseShell({
           allSearchResultsSelected={allSearchResultsSelected}
           onToggleSelectAllSearchResults={toggleSelectAllSearchResults}
           onToggleSearchResult={toggleSearchResult}
+          selectedSearchMessageId={focusedSearchMessageId}
+          onSelectSearchMessageHit={(hit: SearchMessageHit) => {
+            clearGroupSelection();
+            setFocusedSearchMessageId(hit.messageId);
+            setFocusedSearchHit({
+              conversationId: hit.conversationId,
+              conversationType: hit.conversationType,
+              contactId: hit.contactId,
+              title: hit.title,
+              chatIdentifier: hit.chatIdentifier,
+              matchCount: 1,
+              dateStart: hit.timestamp,
+              dateEnd: hit.timestamp,
+              topMatch: {
+                id: hit.messageId,
+                timestamp: hit.timestamp,
+                snippet: hit.snippet,
+                isFromMe: hit.isFromMe,
+                sender: hit.sender,
+              },
+            });
+            setScrollToMessageId(hit.messageId);
+            setScrollToMessageNonce((n) => n + 1);
+            setContextLoadIds([
+              ...hit.contextBefore.map((m) => m.id),
+              hit.messageId,
+              ...hit.contextAfter.map((m) => m.id),
+            ]);
+            if (
+              hit.conversationType === "individual" &&
+              hit.contactId != null &&
+              hit.contactId !== contactId
+            ) {
+              selectContact(hit.contactId);
+              pendingConvIdRef.current = hit.conversationId;
+            }
+            setSelectedGroupConversationId(hit.conversationId);
+            openThread(
+              [hit.conversationId],
+              hit.conversationType === "group"
+                ? `gfull-${hit.conversationId}`
+                : "dm",
+            );
+            const parsedQuery = parseSearchQuery(vaultSearch.committed);
+            const findSeed = [
+              ...parsedQuery.terms,
+              ...parsedQuery.phrases.map((p) => `"${p}"`),
+            ].join(" ");
+            if (findSeed) {
+              threadFind.openWith(findSeed, hit.messageId);
+            } else if (threadFind.open) {
+              threadFind.close();
+            }
+          }}
           onSelectSearchHit={(hit: SearchConversationHit, mods) => {
             if (
               mods?.shiftKey ||
@@ -2193,9 +2270,26 @@ export function BrowseShell({
               return;
             }
             clearGroupSelection();
+            setFocusedSearchMessageId(hit.topMatch?.id ?? null);
             setFocusedSearchHit(hit);
             setScrollToMessageId(hit.topMatch?.id ?? null);
             setScrollToMessageNonce((n) => n + 1);
+            const parsedQuery = parseSearchQuery(vaultSearch.committed);
+            if (parsedQuery.context > 0 && hit.topMatch?.id != null) {
+              void fetch(
+                `/api/search?around=${hit.topMatch.id}&context=${parsedQuery.context}`,
+              )
+                .then(async (res) => {
+                  if (!res.ok) return;
+                  const json = (await res.json()) as { ids?: number[] };
+                  if (Array.isArray(json.ids)) setContextLoadIds(json.ids);
+                })
+                .catch(() => {});
+            } else {
+              setContextLoadIds(
+                hit.topMatch?.id != null ? [hit.topMatch.id] : [],
+              );
+            }
             // Focus the contact so the 1-1 conversation inspector can load
             // yearly stats; groups don't need a contact focus. pendingConv
             // keeps the threads effect from clearing the open Direct thread
@@ -2218,7 +2312,6 @@ export function BrowseShell({
             );
             // Hand the text terms off to the in-thread find bar so the user
             // can step through every match, not just the top one.
-            const parsedQuery = parseSearchQuery(vaultSearch.committed);
             const findSeed = [
               ...parsedQuery.terms,
               ...parsedQuery.phrases.map((p) => `"${p}"`),

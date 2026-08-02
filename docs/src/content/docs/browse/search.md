@@ -13,8 +13,8 @@ the search dropdown (the chevron next to the search box):
   messages at all.
 - **Messages** — *what was said?* Full-text search across message bodies
   (Fastmail-style operators for from/to/with, attachments, and dates).
-  Results show one row per **conversation**, with a count of matching messages
-  and a snippet of the best match — not one row per message.
+  Results show one row per **conversation** by default (match count + best
+  snippet). Use `group:none` for one row per matching message.
 
 Typing plain words in the search box runs a **Messages** search.
 
@@ -56,9 +56,16 @@ The search box also accepts operators, composed for you by the advanced form:
 | `has:attachment` / `has:noattachment` | With or without attachments |
 | `filename:text` | Attachment filename contains text |
 | `filetype:image` | Attachment category (`image`, `video`, `audio`, `document`, `contact`, `other`; `pdf` → document) |
+| `larger:1M` / `smaller:500k` | Attachment size bounds (`K` / `M` / `G`, or raw bytes) |
+| `group:none` | One result row per matching message (default is per conversation) |
+| `context:2` | Include N surrounding messages when showing/opening a hit |
+| `sort:date-asc` / `sort:relevance` | Oldest first, or FTS best-match (default newest first) |
 | `in:title` | Restrict to a conversation by title or handle |
 | `within:label` | Only contacts with this label |
 | `search:contacts` | Switch to Contacts search |
+
+While typing `with:`, `from:`, `to:`, `within:`, `label:`, `in:`, or `handle:`,
+the search box suggests matching contacts or labels.
 | `handle:text` | (Contacts) combined name or number contains text |
 | `first-contact:>=2019` / `last-contact:<2022` | (Contacts) first / last message dates |
 | `group-count:>5` / `message-count:>100` | (Contacts) group / direct message counts |

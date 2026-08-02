@@ -102,6 +102,7 @@ CREATE TABLE attachments (
     transcription TEXT,
     sha256 TEXT,
     assets_path TEXT,
+    size_bytes INTEGER,
     derived_sha256 TEXT,
     derived_assets_path TEXT,
     derived_mime_type TEXT
@@ -182,6 +183,7 @@ CREATE TABLE staging_attachments (
     transcription TEXT,
     sha256 TEXT,
     assets_path TEXT,
+    size_bytes INTEGER,
     derived_sha256 TEXT,
     derived_assets_path TEXT,
     derived_mime_type TEXT
@@ -369,8 +371,22 @@ pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
         migrate_messages_dedupe_columns(conn)?;
         migrate_messages_account_guid(conn)?;
         migrate_delete_performance_indexes(conn)?;
+        migrate_attachment_size_bytes(conn)?;
     }
     ensure_messages_fts(conn)?;
+    Ok(())
+}
+
+fn migrate_attachment_size_bytes(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "attachments")? && !table_has_column(conn, "attachments", "size_bytes")?
+    {
+        conn.execute_batch("ALTER TABLE attachments ADD COLUMN size_bytes INTEGER;")?;
+    }
+    if table_exists(conn, "staging_attachments")?
+        && !table_has_column(conn, "staging_attachments", "size_bytes")?
+    {
+        conn.execute_batch("ALTER TABLE staging_attachments ADD COLUMN size_bytes INTEGER;")?;
+    }
     Ok(())
 }
 
@@ -801,6 +817,7 @@ pub fn ensure_staging_schema(conn: &Connection) -> Result<()> {
         )?;
         conn.execute_batch(STAGING_TABLES_DDL)?;
     }
+    migrate_attachment_size_bytes(conn)?;
     Ok(())
 }
 

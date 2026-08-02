@@ -312,6 +312,41 @@ describe("vault search + FTS", () => {
     });
   });
 
+  it("supports group:none, sort:date-asc, and larger:/smaller:", () => {
+    runWithAccount(accountId, () => {
+      const db = new Database(dbPath());
+      const msg = db
+        .prepare(
+          `SELECT id FROM messages
+           WHERE account_id = ? AND body LIKE '%zebra%'
+           LIMIT 1`,
+        )
+        .get(accountId) as { id: number };
+      db.prepare(
+        `INSERT INTO attachments (
+           message_id, original_name, mime_type, size_bytes
+         ) VALUES (?, 'big.pdf', 'application/pdf', ?)`,
+      ).run(msg.id, 2 * 1024 * 1024);
+      db.close();
+      resetDb();
+
+      const flat = searchVault("zebra group:none");
+      assert.ok((flat.totalMessages ?? 0) >= 1);
+      assert.ok((flat.messageHits?.length ?? 0) >= 1);
+      assert.equal(flat.messageHits![0]!.snippet.toLowerCase().includes("zebra"), true);
+      assert.ok(flat.messageHits![0]!.attachments.length >= 1);
+
+      const asc = searchVault("still chatting sort:date-asc");
+      assert.ok(asc.hits.length >= 1);
+
+      const large = searchVault("larger:1M filetype:document");
+      assert.ok(large.totalConversations >= 1);
+
+      const small = searchVault("smaller:1K filetype:document");
+      assert.equal(small.totalConversations, 0);
+    });
+  });
+
   it("still searches after unlocking", () => {
     saveAccount(accountId, { read_only: false });
     runWithAccount(accountId, () => {

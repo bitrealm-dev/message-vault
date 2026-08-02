@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 import Database from "better-sqlite3";
+
+import { assetsDirName, dataDir } from "./paths";
 
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db
@@ -180,6 +184,7 @@ export function ensureVaultSchema(db: Database.Database): void {
       transcription TEXT,
       sha256 TEXT,
       assets_path TEXT,
+      size_bytes INTEGER,
       derived_sha256 TEXT,
       derived_assets_path TEXT,
       derived_mime_type TEXT
@@ -254,6 +259,7 @@ export function ensureVaultSchema(db: Database.Database): void {
       transcription TEXT,
       sha256 TEXT,
       assets_path TEXT,
+      size_bytes INTEGER,
       derived_sha256 TEXT,
       derived_assets_path TEXT,
       derived_mime_type TEXT
@@ -340,6 +346,8 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateAccountsPasswordHash(db);
   migrateAccountApiTokensToHash(db);
   migrateParticipantsHandleIndex(db);
+  migrateAttachmentSizeBytes(db);
+  backfillAttachmentSizeBytes(db);
   ensureMessagesFts(db);
 }
 
@@ -347,6 +355,86 @@ function migrateAccountsPasswordHash(db: Database.Database): void {
   if (!tableExists(db, "accounts")) return;
   if (tableHasColumn(db, "accounts", "password_hash")) return;
   db.exec(`ALTER TABLE accounts ADD COLUMN password_hash TEXT`);
+}
+
+/** Add `size_bytes` column on attachments tables. */
+function migrateAttachmentSizeBytes(db: Database.Database): void {
+  if (tableExists(db, "attachments") && !tableHasColumn(db, "attachments", "size_bytes")) {
+    db.exec(`ALTER TABLE attachments ADD COLUMN size_bytes INTEGER`);
+  }
+  if (
+    tableExists(db, "staging_attachments") &&
+    !tableHasColumn(db, "staging_attachments", "size_bytes")
+  ) {
+    db.exec(`ALTER TABLE staging_attachments ADD COLUMN size_bytes INTEGER`);
+  }
+}
+
+const ATTACHMENT_SIZE_BACKFILL_META_KEY = "attachment_size_bytes_backfill_v1";
+
+/** One-time fill of `size_bytes` from on-disk asset blobs. */
+function backfillAttachmentSizeBytes(db: Database.Database): void {
+  if (
+    !tableExists(db, "attachments") ||
+    !tableHasColumn(db, "attachments", "size_bytes")
+  ) {
+    return;
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  const already = db
+    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
+    .get(ATTACHMENT_SIZE_BACKFILL_META_KEY) as { n: number };
+  if (already.n > 0) return;
+
+  const rows = db
+    .prepare(
+      `SELECT a.id AS id, a.assets_path AS assets_path,
+              m.source AS source, c.account_id AS account_id
+       FROM attachments a
+       JOIN messages m ON m.id = a.message_id
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE a.size_bytes IS NULL
+         AND a.assets_path IS NOT NULL
+         AND trim(a.assets_path) != ''`,
+    )
+    .all() as Array<{
+    id: number;
+    assets_path: string;
+    source: string;
+    account_id: string;
+  }>;
+
+  const update = db.prepare(
+    `UPDATE attachments SET size_bytes = ? WHERE id = ?`,
+  );
+  const assetsName = assetsDirName();
+  const root = dataDir();
+  const fill = db.transaction(() => {
+    for (const row of rows) {
+      const file = path.join(
+        root,
+        row.account_id,
+        row.source,
+        assetsName,
+        row.assets_path,
+      );
+      try {
+        const st = fs.statSync(file);
+        if (st.isFile()) update.run(st.size, row.id);
+      } catch {
+        // Missing blob — leave NULL.
+      }
+    }
+    db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
+      ATTACHMENT_SIZE_BACKFILL_META_KEY,
+    );
+  });
+  fill();
 }
 
 function hashApiTokenPlaintext(token: string): string {
@@ -763,6 +851,7 @@ function migrateStagingAccountGuid(db: Database.Database): void {
         transcription TEXT,
         sha256 TEXT,
         assets_path TEXT,
+        size_bytes INTEGER,
         derived_sha256 TEXT,
         derived_assets_path TEXT,
         derived_mime_type TEXT
