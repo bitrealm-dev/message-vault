@@ -20,12 +20,19 @@ cargo run --release -- ingest go-sms-pro \
 
 ## Several sources
 
-```bash
-./scripts/ingest-staging.sh --account yourusername \
-  --source imessage --source go-sms-pro
-```
+Run `ingest` once per source (default staging path: `staging/<source_id>/`).
+Use `--skip-dedupe` on every source except the last so soft-dedupe runs once:
 
-Default staging path per source: `staging/<source_id>/`.
+```bash
+cargo run --release -- ingest imessage \
+  --account yourusername \
+  --staging-dir staging/imessage \
+  --skip-dedupe
+
+cargo run --release -- ingest go-sms-pro \
+  --account yourusername \
+  --staging-dir staging/go-sms-pro
+```
 
 ## Import without auto-dedupe
 
@@ -38,8 +45,6 @@ cargo run --release -- import \
 
 cargo run --release -- dedupe-cross-source --account yourusername
 ```
-
-Helpers: `./scripts/ingest-staging.sh`, `./scripts/import-staging.sh`.
 
 ## Media for the browser
 

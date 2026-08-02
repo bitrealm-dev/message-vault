@@ -25,7 +25,7 @@ Other sources are not touched.
 
 ## Cross-source soft-dedupe
 
-Runs after import via `ingest`, `./scripts/ingest-staging.sh`, or:
+Runs after import via `ingest`, or:
 
 ```bash
 cargo run --release -- dedupe-cross-source --account yourusername
