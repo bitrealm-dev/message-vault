@@ -43,15 +43,15 @@ in SQLite and are not exported.
 
 ### CLI: import address book
 
-Load an **iMazing Contacts CSV** or **VCF** into SQLite (replaces that account’s
-contacts):
+Load a **VCF** or **vCard CSV** (contacts exported as CSV) into SQLite (replaces
+that account’s contacts):
 
 ```bash
 cargo run --release -- import-contacts \
   --account yourusername \
   --contacts path/to/contacts.vcf
 
-# or iMazing export:
+# or vCard CSV:
 cargo run --release -- import-contacts \
   --account yourusername \
   --contacts path/to/Contacts.csv

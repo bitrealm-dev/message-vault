@@ -9,7 +9,7 @@ Run from the repository root with `cargo run --release -- <command>`.
 |---------|---------|
 | `import` | Import a JSONL staging folder for one source, then soft-dedupe (unless `--skip-dedupe`) |
 | `dedupe-cross-source` | Soft-hide the same SMS across sources |
-| `import-contacts` | Load an address book into SQLite (**iMazing Contacts CSV** or **VCF**) |
+| `import-contacts` | Load an address book into SQLite (**VCF** or **vCard CSV**) |
 | `process-assets` | Generate and register converted media assets |
 | `reset-demo` | Restore the committed demo bundle |
 | `serve` | HTTP import API (`[server]` required in config) |
@@ -39,7 +39,7 @@ cargo run --release -- import imessage \
 
 cargo run --release -- import-contacts \
   --account yourusername \
-  --contacts path/to/imazing-contacts.csv
+  --contacts path/to/Contacts.csv
 
 cargo run --release -- dedupe-cross-source --account yourusername
 
@@ -50,8 +50,8 @@ cargo run --release -- reset-demo
 CLI contact import accepts the same address-book formats as Message Exporters:
 
 - **VCF** (`.vcf` / `.vcard`)
-- **iMazing Contacts CSV** with `First Name`, `Last Name`, and at least one
-  column whose header contains `Phone` (for example `Mobile Phone`)
+- **vCard CSV** (VCF exported as CSV) with `First Name`, `Last Name`, and at
+  least one column whose header contains `Phone` (for example `Mobile Phone`)
 
 Pass `--contacts` (or run `import-contacts`) when you want names from an
 external address book. Contact files are never stored under the account data

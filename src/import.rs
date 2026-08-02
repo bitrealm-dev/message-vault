@@ -44,7 +44,7 @@ pub struct ImportOptions<'a> {
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
-    /// Optional address book to load: iMazing Contacts CSV or VCF.
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
     pub overwrite_contacts: bool,
     pub mode: ImportMode,

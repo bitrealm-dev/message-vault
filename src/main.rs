@@ -49,7 +49,7 @@ enum Commands {
         #[arg(long)]
         assets_dir: Option<PathBuf>,
 
-        /// Address book to load: iMazing Contacts CSV or VCF
+        /// Address book to load: VCF or vCard CSV export
         #[arg(long = "contacts", alias = "contacts-csv")]
         contacts: Option<PathBuf>,
 
@@ -97,7 +97,7 @@ enum Commands {
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Address book: iMazing Contacts CSV (First Name, Last Name, Phone columns) or VCF
+        /// Address book: VCF, or vCard CSV (First Name, Last Name, Phone columns)
         #[arg(long = "contacts", alias = "contacts-csv")]
         contacts: PathBuf,
 
@@ -210,7 +210,7 @@ fn main() -> Result<()> {
             println!("  mode:          {}", mode.as_str());
             match &contacts {
                 Some(path) => println!("  contacts:      {}", path.display()),
-                None => println!("  contacts:      (none — use --contacts for iMazing CSV or VCF)"),
+                None => println!("  contacts:      (none — use --contacts for VCF or vCard CSV)"),
             }
 
             let stats = import::import_export(

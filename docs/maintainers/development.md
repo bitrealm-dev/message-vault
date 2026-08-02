@@ -149,7 +149,7 @@ Edit `config/config.toml`:
 Source names are not listed in TOML — each import/upload supplies its own
 source id (asset folders under `data/<account_id>/<source_id>/`). Message
 import does not filter contacts at load time. Address books load via
-`import-contacts --contacts` (iMazing CSV or VCF).
+`import-contacts --contacts` (VCF or vCard CSV).
 
 Start the import API from the repository root:
 

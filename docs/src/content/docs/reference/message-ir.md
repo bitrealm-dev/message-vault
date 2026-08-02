@@ -37,6 +37,6 @@ Attachment records may include `digest_sha256` so remote clients can
 ## Clients
 
 - Same-machine: CLI `import` against a local IR staging folder
-- Remote: Message Exporters Vault tab / `vault-push` should POST **message-ir**
-  JSONL (upload assets by SHA-256, then import). Older clients that still project
-  to a former vault-only NDJSON shape need updating.
+- Remote: Message Exporters Vault tab / `vault-push` POSTs **message-ir** JSONL
+  (upload assets by SHA-256, then import). Batched requests may concatenate
+  multiple conversations (header + messages, repeated) in one body.

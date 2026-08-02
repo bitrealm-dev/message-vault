@@ -154,8 +154,8 @@ fn restore_email_handles(
 /// Load contacts from an address book when the account table is empty or when
 /// `overwrite` is true.
 ///
-/// Accepted files: **iMazing Contacts CSV** (First Name, Last Name, Phone
-/// columns) or **VCF**.
+/// Accepted files: **VCF**, or **vCard CSV** (First Name, Last Name, Phone
+/// columns — a contacts app VCF exported as CSV).
 ///
 /// Pass `None` to skip address-book load (keep existing SQLite contacts).
 /// On overwrite, email handles already in SQLite are snapshotted by phone set
@@ -212,7 +212,7 @@ pub fn load_contacts_if_needed(
 
     let format = contacts_file_format(path)?;
     let mut stats = match format {
-        ContactsFormat::VcardCsv => load_from_imazing_csv(conn, path, account_id)?,
+        ContactsFormat::VcardCsv => load_from_vcard_csv(conn, path, account_id)?,
         ContactsFormat::Vcf => load_from_vcf(conn, path, account_id)?,
     };
     stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot)?;
@@ -245,7 +245,7 @@ fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_from_imazing_csv(
+fn load_from_vcard_csv(
     conn: &mut Connection,
     csv_path: &Path,
     account_id: &str,
@@ -887,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_imazing_and_vcf_but_rejects_vault_csv() {
+    fn accepts_vcard_csv_and_vcf_but_rejects_vault_csv() {
         let dir = std::env::temp_dir().join(format!(
             "mv-contacts-fmt-{}",
             std::time::SystemTime::now()
@@ -896,14 +896,14 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let imazing = dir.join("imazing.csv");
+        let vcard_csv = dir.join("contacts.csv");
         std::fs::write(
-            &imazing,
+            &vcard_csv,
             "First Name,Last Name,Mobile Phone\nAda,Lovelace,+15551234567\n",
         )
         .unwrap();
         assert_eq!(
-            contacts_file_format(&imazing).unwrap(),
+            contacts_file_format(&vcard_csv).unwrap(),
             ContactsFormat::VcardCsv
         );
 
@@ -923,9 +923,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_imazing_csv_into_sqlite() {
+    fn loads_vcard_csv_into_sqlite() {
         let dir = std::env::temp_dir().join(format!(
-            "mv-contacts-imazing-{}",
+            "mv-contacts-vcard-csv-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

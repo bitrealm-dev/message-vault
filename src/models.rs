@@ -78,38 +78,53 @@ pub fn clean_body(text: Option<&str>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Parse message-ir JSONL lines (header + messages) into import records.
+/// Parse message-ir JSONL lines into import records.
+///
+/// Accepts one or more concatenated conversations (each: header line, then
+/// message lines). Remote push clients batch multiple conversations this way.
 pub fn parse_ir_lines(lines: impl IntoIterator<Item = String>) -> Result<Vec<ExportRecord>> {
-    let mut iter = lines.into_iter();
-    let header_line = loop {
-        match iter.next() {
-            Some(line) if !line.trim().is_empty() => break line,
-            Some(_) => continue,
-            None => bail!("empty message-ir JSONL (missing conversation header)"),
-        }
-    };
-
-    let header: ConversationHeader =
-        serde_json::from_str(header_line.trim()).context("parse message-ir conversation header")?;
-    if header.schema_version != SCHEMA_VERSION {
-        bail!(
-            "unsupported schema_version {} (expected {})",
-            header.schema_version,
-            SCHEMA_VERSION
-        );
-    }
-
-    let mut out = vec![ExportRecord::Conversation(conversation_from_ir(&header))];
-    for (i, line) in iter.enumerate() {
+    let mut out = Vec::new();
+    let mut saw_header = false;
+    for (i, line) in lines.into_iter().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let msg: IrMessage = serde_json::from_str(line)
-            .with_context(|| format!("parse message-ir message line {}", i + 2))?;
-        out.push(ExportRecord::Message(message_from_ir(&msg)?));
+        let line_no = i + 1;
+        let value: Value = serde_json::from_str(line)
+            .with_context(|| format!("parse JSON on message-ir line {line_no}"))?;
+        if is_ir_header(&value) {
+            let header: ConversationHeader = serde_json::from_value(value).with_context(|| {
+                format!("parse message-ir conversation header on line {line_no}")
+            })?;
+            if header.schema_version != SCHEMA_VERSION {
+                bail!(
+                    "unsupported schema_version {} (expected {}) on line {line_no}",
+                    header.schema_version,
+                    SCHEMA_VERSION
+                );
+            }
+            out.push(ExportRecord::Conversation(conversation_from_ir(&header)));
+            saw_header = true;
+        } else {
+            if !saw_header {
+                bail!(
+                    "message-ir JSONL missing conversation header before message on line {line_no}"
+                );
+            }
+            let msg: IrMessage = serde_json::from_value(value)
+                .with_context(|| format!("parse message-ir message on line {line_no}"))?;
+            out.push(ExportRecord::Message(message_from_ir(&msg)?));
+        }
+    }
+    if out.is_empty() {
+        bail!("empty message-ir JSONL (missing conversation header)");
     }
     Ok(out)
+}
+
+fn is_ir_header(value: &Value) -> bool {
+    value.get("schema_version").is_some() && value.get("conversation").is_some()
 }
 
 fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
@@ -302,6 +317,36 @@ mod tests {
                 assert!(!m.is_reply);
             }
             _ => panic!("expected message"),
+        }
+    }
+
+    #[test]
+    fn parses_concatenated_ir_conversations() {
+        let header = |chat: &str| {
+            format!(
+                r#"{{"schema_version":3,"export":{{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null}},"conversation":{{"chat_identifier":"{chat}","conversation_type":"individual","group_title":null,"participants":[{{"handle":"{chat}","display_name":null}}],"stats":{{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}}}}"#
+            )
+        };
+        let msg = |guid: &str, handle: &str| {
+            format!(
+                r#"{{"guid":"{guid}","timestamp_unix_ms":1400773261000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"{handle}","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}}"#
+            )
+        };
+        let records = parse_ir_lines([
+            header("+15555550101"),
+            msg("g1", "+15555550101"),
+            header("+15555550102"),
+            msg("g2", "+15555550102"),
+        ])
+        .unwrap();
+        assert_eq!(records.len(), 4);
+        match &records[0] {
+            ExportRecord::Conversation(c) => assert_eq!(c.chat_identifier, "+15555550101"),
+            _ => panic!("expected conversation"),
+        }
+        match &records[2] {
+            ExportRecord::Conversation(c) => assert_eq!(c.chat_identifier, "+15555550102"),
+            _ => panic!("expected conversation"),
         }
     }
 }
