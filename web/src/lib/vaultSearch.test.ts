@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 
 import { runWithAccount } from "./accountScope";
 import { createAccount, saveAccount } from "./accounts";
+import { resetDb } from "./dbCore";
 import {
   searchConversationMatches,
   searchVault,
@@ -266,6 +267,34 @@ describe("vault search + FTS", () => {
       assert.ok(
         byPhone.hits.some((hit) => hit.chatIdentifier.includes("51004")),
       );
+    });
+  });
+
+  it("supports from:me, to:, with:, and has:noattachment", () => {
+    runWithAccount(accountId, () => {
+      const db = new Database(dbPath());
+      // Setup inserts all as incoming; flip one to sent for from:me.
+      db.prepare(
+        `UPDATE messages SET is_from_me = 1
+         WHERE account_id = ? AND body = ?`,
+      ).run(accountId, "still chatting recently");
+      db.close();
+      resetDb();
+
+      const fromMe = searchVault("from:me still chatting");
+      assert.ok(fromMe.totalConversations >= 1);
+
+      const toMe = searchVault("to:me hello from long");
+      assert.ok(toMe.totalConversations >= 1);
+
+      const withHandle = searchVault("with:+15555551001 still");
+      assert.ok(withHandle.totalConversations >= 1);
+
+      const noAtt = searchVault("has:noattachment still chatting");
+      assert.ok(noAtt.totalConversations >= 1);
+
+      const hasAtt = searchVault("has:attachment still chatting");
+      assert.equal(hasAtt.totalConversations, 0);
     });
   });
 

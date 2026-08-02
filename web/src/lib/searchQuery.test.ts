@@ -20,7 +20,8 @@ describe("parseSearchQuery", () => {
       "from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group",
     );
     assert.equal(q.from, "alice");
-    assert.equal(q.to, "bob");
+    assert.equal(q.with, "bob");
+    assert.equal(q.to, null);
     assert.equal(q.hasAttachment, true);
     assert.equal(q.after, "2020-01-01");
     assert.equal(q.before, "2021-01-01");
@@ -33,11 +34,26 @@ describe("parseSearchQuery", () => {
     assert.equal(parseSearchQuery("label:Work").within, "Work");
     const q = parseSearchQuery("in:trash hello");
     assert.deepEqual(q.terms, ["hello"]);
+    assert.equal(q.inConversation, null);
   });
 
-  it("treats with: and to: as the same participant filter", () => {
-    assert.equal(parseSearchQuery("with:sam").to, "sam");
+  it("splits with: and to:; parses from:me and has:noattachment", () => {
+    assert.equal(parseSearchQuery("with:sam").with, "sam");
     assert.equal(parseSearchQuery("to:sam").to, "sam");
+    assert.equal(parseSearchQuery("from:me").from, "me");
+    assert.equal(parseSearchQuery("has:noattachment").hasAttachment, false);
+    assert.equal(parseSearchQuery("has:noatt").hasAttachment, false);
+  });
+
+  it("parses filename, filetype, text, in:, and relative dates", () => {
+    const q = parseSearchQuery(
+      'filename:invoice filetype:pdf text:hello in:"Family Chat" after:7d',
+    );
+    assert.equal(q.filename, "invoice");
+    assert.equal(q.filetype, "document");
+    assert.equal(q.text, "hello");
+    assert.equal(q.inConversation, "Family Chat");
+    assert.match(q.after ?? "", /^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("parses negation", () => {
@@ -139,23 +155,31 @@ describe("composeSearchQuery", () => {
       mode: "messages",
       within: "Close Friends",
       withPerson: "Ann Lee",
+      fromPerson: "me",
+      toPerson: "Sam",
       hasWords: "birthday",
       doesntHave: "spam",
       conversationType: "group",
-      hasAttachment: true,
+      attachmentFilter: "yes",
+      filetype: "image",
+      filename: "photo",
     });
     assert.match(s, /with:"Ann Lee"/);
+    assert.match(s, /from:me/);
+    assert.match(s, /to:Sam/);
     assert.match(s, /within:"Close Friends"/);
     assert.match(s, /birthday/);
     assert.match(s, /-spam/);
     assert.match(s, /is:group/);
     assert.match(s, /has:attachment/);
+    assert.match(s, /filetype:image/);
+    assert.match(s, /filename:photo/);
     assert.doesNotMatch(s, /in:trash/);
-    assert.doesNotMatch(s, /subject:/);
-    assert.doesNotMatch(s, /from:/);
 
     const parsed = parseSearchQuery(s);
-    assert.equal(parsed.to, "Ann Lee");
+    assert.equal(parsed.with, "Ann Lee");
+    assert.equal(parsed.from, "me");
+    assert.equal(parsed.to, "Sam");
     assert.equal(parsed.within, "Close Friends");
     assert.deepEqual(parsed.terms, ["birthday"]);
     assert.deepEqual(parsed.exclude, ["spam"]);
@@ -286,19 +310,24 @@ describe("formFromSearchQuery", () => {
     const composed = composeSearchQuery({
       mode: "messages",
       withPerson: "Ann Lee",
+      fromPerson: "me",
+      toPerson: "Sam",
       hasWords: 'birthday "exact phrase"',
       doesntHave: "spam",
       conversationType: "group",
-      hasAttachment: true,
+      attachmentFilter: "yes",
       source: "imessage",
       date: { mode: "between", from: "2020-01-01", to: "2020-03-01" },
     });
     const form = formFromSearchQuery(composed);
     assert.equal(form.mode, "messages");
     assert.equal(form.withPerson, "Ann Lee");
+    assert.equal(form.fromPerson, "me");
+    assert.equal(form.toPerson, "Sam");
     assert.equal(form.hasWords, 'birthday "exact phrase"');
     assert.equal(form.doesntHave, "spam");
     assert.equal(form.conversationType, "group");
+    assert.equal(form.attachmentFilter, "yes");
     assert.equal(form.hasAttachment, true);
     assert.equal(form.source, "imessage");
     assert.deepEqual(form.date, {
@@ -347,9 +376,15 @@ describe("formFromSearchQuery", () => {
     assert.equal(legacy.noLastName, true);
   });
 
-  it("ignores from: and subject:", () => {
-    const form = formFromSearchQuery("from:alice subject:hi with:bob");
+  it("hydrates from:, to:, subject:, and with:", () => {
+    const form = formFromSearchQuery(
+      'from:alice to:me subject:hi with:bob has:noattachment',
+    );
+    assert.equal(form.fromPerson, "alice");
+    assert.equal(form.toPerson, "me");
+    assert.equal(form.subject, "hi");
     assert.equal(form.withPerson, "bob");
+    assert.equal(form.attachmentFilter, "no");
     assert.equal(form.hasWords, undefined);
   });
 });

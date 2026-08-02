@@ -11,7 +11,8 @@ the search dropdown (the chevron next to the search box):
   empty), phone, label, first/last message date, or direct/group message
   counts. It never looks at message text, and it can return contacts with no
   messages at all.
-- **Messages** — *what was said?* Full-text search across message bodies.
+- **Messages** — *what was said?* Full-text search across message bodies
+  (Fastmail-style operators for from/to/with, attachments, and dates).
   Results show one row per **conversation**, with a count of matching messages
   and a snippet of the best match — not one row per message.
 
@@ -39,15 +40,21 @@ The search box also accepts operators, composed for you by the advanced form:
 |----------|---------|
 | `"exact phrase"` | Match the phrase |
 | `-word` | Exclude messages containing the word |
-| `with:name` | Conversation includes this person (name or number) |
-| `first:text` / `last:text` | Contact first / last name (Contacts search, or Messages with-person) |
+| `from:me` / `from:name` | Sent by you, or by this sender |
+| `to:me` / `to:name` | Received by you, or sent by you to this person |
+| `with:name` | Conversation involves this person (any role) |
+| `first:text` / `last:text` | Contact first / last name (Contacts, or Messages with-person) |
 | `is:nofirst` / `is:nolast` | Empty first / last name (Contacts, or Messages with-person) |
 | `phone:text` | Phone or email handle (Contacts, or Messages with-person) |
-| `from:name` | Message sent by this person |
-| `after:2020` / `before:2021-06-01` | Date bounds |
+| `subject:text` | Subject contains text |
+| `text:terms` | Body only (bare terms also search subject and attachment names) |
+| `after:2020` / `before:2021-06-01` | Date bounds (local calendar; also `7d` / `1w` / `1m` / `1y`) |
 | `is:direct` / `is:group` | Only 1-1 or only group conversations |
 | `source:imessage` | Only one import source |
-| `has:attachment` | Message has a photo or file |
+| `has:attachment` / `has:noattachment` | With or without attachments |
+| `filename:text` | Attachment filename contains text |
+| `filetype:image` | Attachment category (`image`, `video`, `audio`, `document`, `contact`, `other`; `pdf` → document) |
+| `in:title` | Restrict to a conversation by title or handle |
 | `within:label` | Only contacts with this label |
 | `search:contacts` | Switch to Contacts search |
 | `handle:text` | (Contacts) combined name or number contains text |

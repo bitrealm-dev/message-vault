@@ -5,6 +5,7 @@ import { listContactsByIds, listLabelMemberContactIds } from "./contactsRead";
 import { combinedDedupeSql, getDb, hasDuplicateOfColumn, resetDb } from "./dbCore";
 import { ownerHandleMatcher } from "./owner";
 import { dbPath } from "./paths";
+import { sanitizePhoneDigits, toPhoneE164 } from "./phoneE164";
 import {
   hasDateBounds,
   hasSearchCriteria,
@@ -15,6 +16,52 @@ import {
 } from "./searchQuery";
 import type { ContactListItem } from "./types";
 import { ensureVaultSchema } from "./vaultSchema";
+
+/** Query-time phone variants for LIKE matching (raw, E.164, digits). */
+function personMatchNeedles(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const out = new Set<string>([trimmed]);
+  const e164 = toPhoneE164(trimmed);
+  if (e164) out.add(e164);
+  const digits = sanitizePhoneDigits(trimmed);
+  if (digits.length >= 7) out.add(digits);
+  return [...out];
+}
+
+/** Local calendar day start as UTC ISO (viewer TZ = process local). */
+function localDayStartUtc(yyyyMmDd: string): string {
+  const [y, m, d] = yyyyMmDd.split("-").map((p) => Number(p));
+  return new Date(y!, m! - 1, d!, 0, 0, 0, 0).toISOString();
+}
+
+/** Exclusive end of local calendar day as UTC ISO. */
+function localDayEndExclusiveUtc(yyyyMmDd: string): string {
+  const [y, m, d] = yyyyMmDd.split("-").map((p) => Number(p));
+  return new Date(y!, m! - 1, d! + 1, 0, 0, 0, 0).toISOString();
+}
+
+const MSG_TS = `coalesce(nullif(m.timestamp_utc, ''), m.timestamp)`;
+
+/** SQL CASE mapping attachment MIME → filetype category. */
+const ATTACHMENT_CATEGORY_SQL = `
+  CASE
+    WHEN lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE 'image/%' THEN 'image'
+    WHEN lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE 'video/%' THEN 'video'
+    WHEN lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE 'audio/%' THEN 'audio'
+    WHEN lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%vcard%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) = 'text/x-vcard'
+      THEN 'contact'
+    WHEN lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%pdf%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%word%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%document%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%sheet%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE '%presentation%'
+      OR lower(coalesce(a.mime_type, a.derived_mime_type, '')) LIKE 'text/%'
+      THEN 'document'
+    ELSE 'other'
+  END
+`;
 
 export type SearchHitMessage = {
   id: number;
@@ -182,7 +229,9 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
   const accountId = currentAccountId();
   const firstNeedle = parsed.firstName?.trim().toLocaleLowerCase() ?? "";
   const lastNeedle = parsed.lastName?.trim().toLocaleLowerCase() ?? "";
-  const phoneNeedle = parsed.phone?.trim().toLocaleLowerCase() ?? "";
+  const phoneNeedles = parsed.phone?.trim()
+    ? personMatchNeedles(parsed.phone).map((n) => n.toLocaleLowerCase())
+    : [];
 
   const rows = db
     .prepare(
@@ -238,14 +287,14 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
       ) {
         return false;
       }
-      if (phoneNeedle) {
+      if (phoneNeedles.length) {
         const phoneValues = [
           contact.preferred_handle ?? "",
           ...(handlesByContact.get(contact.id) ?? []),
-        ];
+        ].map((v) => v.toLocaleLowerCase());
         if (
-          !phoneValues.some((value) =>
-            value.toLocaleLowerCase().includes(phoneNeedle),
+          !phoneNeedles.some((needle) =>
+            phoneValues.some((value) => value.includes(needle)),
           )
         ) {
           return false;
@@ -288,40 +337,85 @@ function buildSearchFilters(
   }
 
   if (parsed.from) {
-    where.push(
-      `(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
-         SELECT 1 FROM participants p
-         WHERE p.conversation_id = c.id
-           AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
-       )))`,
-    );
-    const like = `%${parsed.from}%`;
-    params.push(like, like, like);
+    if (parsed.from.trim().toLowerCase() === "me") {
+      where.push(`m.is_from_me = 1`);
+    } else {
+      const needles = personMatchNeedles(parsed.from);
+      const parts: string[] = [];
+      for (const n of needles) {
+        const like = `%${n}%`;
+        parts.push(
+          `(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
+             SELECT 1 FROM participants p
+             WHERE p.conversation_id = c.id
+               AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+           )))`,
+        );
+        params.push(like, like, like);
+      }
+      if (parts.length) where.push(`(${parts.join(" OR ")})`);
+    }
   }
 
+  // to:me = received; to:person = I sent in a conversation involving them.
   if (parsed.to) {
-    where.push(
-      `EXISTS (
-         SELECT 1 FROM participants p
-         WHERE p.conversation_id = c.id
-           AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
-       )`,
-    );
-    const like = `%${parsed.to}%`;
-    params.push(like, like);
+    if (parsed.to.trim().toLowerCase() === "me") {
+      where.push(`m.is_from_me = 0`);
+    } else {
+      const needles = personMatchNeedles(parsed.to);
+      const parts: string[] = [];
+      for (const n of needles) {
+        const like = `%${n}%`;
+        parts.push(
+          `(m.is_from_me = 1 AND (
+             c.chat_identifier LIKE ?
+             OR EXISTS (
+               SELECT 1 FROM participants p
+               WHERE p.conversation_id = c.id
+                 AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+             )
+           ))`,
+        );
+        params.push(like, like, like);
+      }
+      if (parts.length) where.push(`(${parts.join(" OR ")})`);
+    }
+  }
+
+  // with: = conversation involves person (any role).
+  if (parsed.with) {
+    const needles = personMatchNeedles(parsed.with);
+    const parts: string[] = [];
+    for (const n of needles) {
+      const like = `%${n}%`;
+      parts.push(
+        `(c.chat_identifier LIKE ?
+          OR EXISTS (
+            SELECT 1 FROM participants p
+            WHERE p.conversation_id = c.id
+              AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+          ))`,
+      );
+      params.push(like, like, like);
+    }
+    if (parts.length) where.push(`(${parts.join(" OR ")})`);
   }
 
   if (parsed.after) {
-    where.push(`m.timestamp >= ?`);
-    params.push(parsed.after);
+    const bound =
+      parsed.after.length === 10
+        ? localDayStartUtc(parsed.after)
+        : parsed.after;
+    where.push(`${MSG_TS} >= ?`);
+    params.push(bound);
   }
   if (parsed.before) {
-    where.push(`m.timestamp < ?`);
-    // exclusive upper bound: allow full day by appending time if date-only
-    const before = parsed.before.length === 10
-      ? `${parsed.before}T23:59:59.999Z`
-      : parsed.before;
-    params.push(before);
+    const bound =
+      parsed.before.length === 10
+        ? localDayEndExclusiveUtc(parsed.before)
+        : parsed.before;
+    where.push(`${MSG_TS} < ?`);
+    params.push(bound);
   }
 
   const sourceFilter = sourceOverride ?? parsed.source;
@@ -335,10 +429,50 @@ function buildSearchFilters(
     params.push(parsed.conversationType);
   }
 
-  if (parsed.hasAttachment) {
+  if (parsed.hasAttachment === true) {
     where.push(
       `EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`,
     );
+  } else if (parsed.hasAttachment === false) {
+    where.push(
+      `NOT EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`,
+    );
+  }
+
+  if (parsed.filename?.trim()) {
+    where.push(
+      `EXISTS (
+         SELECT 1 FROM attachments a
+         WHERE a.message_id = m.id
+           AND lower(coalesce(a.original_name, '')) LIKE ?
+       )`,
+    );
+    params.push(`%${parsed.filename.trim().toLowerCase()}%`);
+  }
+
+  if (parsed.filetype?.trim()) {
+    where.push(
+      `EXISTS (
+         SELECT 1 FROM attachments a
+         WHERE a.message_id = m.id
+           AND (${ATTACHMENT_CATEGORY_SQL}) = ?
+       )`,
+    );
+    params.push(parsed.filetype.trim().toLowerCase());
+  }
+
+  if (parsed.inConversation?.trim()) {
+    const like = `%${parsed.inConversation.trim()}%`;
+    where.push(
+      `(coalesce(c.group_title, '') LIKE ?
+        OR c.chat_identifier LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM participants p
+          WHERE p.conversation_id = c.id
+            AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+        ))`,
+    );
+    params.push(like, like, like, like);
   }
 
   const contactScopes: number[][] = [];
@@ -762,7 +896,9 @@ export function searchVaultContacts(
   const handleNeedle = parsed.handle?.trim().toLocaleLowerCase() ?? "";
   const firstNeedle = parsed.firstName?.trim().toLocaleLowerCase() ?? "";
   const lastNeedle = parsed.lastName?.trim().toLocaleLowerCase() ?? "";
-  const phoneNeedle = parsed.phone?.trim().toLocaleLowerCase() ?? "";
+  const phoneNeedles = parsed.phone?.trim()
+    ? personMatchNeedles(parsed.phone).map((n) => n.toLocaleLowerCase())
+    : [];
   const matchingItems = allItems
     .filter((contact) => {
       if (withinIds && !withinIds.has(contact.id)) return false;
@@ -787,11 +923,11 @@ export function searchVaultContacts(
       const phoneValues = [
         contact.preferredHandle ?? "",
         ...(handlesByContact.get(contact.id) ?? []),
-      ];
+      ].map((v) => v.toLocaleLowerCase());
       if (
-        phoneNeedle &&
-        !phoneValues.some((value) =>
-          value.toLocaleLowerCase().includes(phoneNeedle),
+        phoneNeedles.length &&
+        !phoneNeedles.some((needle) =>
+          phoneValues.some((value) => value.includes(needle)),
         )
       ) {
         return false;

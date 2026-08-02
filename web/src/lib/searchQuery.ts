@@ -6,26 +6,21 @@
  *   is:nameless (legacy → both nofirst and nolast)
  *   first:/last:/phone:/nofirst/nolast also scope Messages “with person”
  *   within:  last-contact:  first-contact:  group-count:  message-count:
- *   with:  from:  to:  has:attachment  after:  before:  source:
+ *   from:  to:  with:  subject:  text:  has:attachment|noattachment
+ *   filename:  filetype:  in:  after:  before:  source:
  *   is:group  is:direct
  *   "quoted phrases"  -term
  *
- * `with:` and `to:` both mean “conversation includes this person”.
- * `from:` still means they sent the message. `subject:` is accepted for
- * typed queries but is not offered in the advanced form (rare for SMS).
+ * `from:me` = sent by vault owner. Other `from:` = sender match.
+ * `to:` = addressed to (sent by me to them, or `to:me` = received).
+ * `with:` = conversation involves this person (any participant).
+ * `in:` = restrict to a conversation (title / handle); `in:trash` ignored.
+ * `within:` / `label:` = contacts on one label.
  *
- * `within:` limits the search to contacts on one label, ignoring whether those
- * contacts are active or inactive. `label:` is kept as an alias for older URLs.
+ * `after:` / `before:` accept YYYY, YYYY-MM-DD, or relative `7d` / `1w` / `1m` / `1y`.
  *
- * `first-contact:` and `last-contact:` bound a contact's overall first / last
- * message date and accept three forms:
- *   first-contact:>=2020-01-01   on or after
- *   first-contact:<2020-01-01    before
- *   first-contact:2020-01-01..2020-06-30   between
- * A bare `first-contact:2020-01-01` means “before”, matching older URLs.
- * Dates use the same YYYY / YYYY-MM-DD forms as after: and before:.
- *
- * Trash is always excluded; a legacy `in:trash` operator is ignored.
+ * `first-contact:` / `last-contact:` bound a contact's overall first / last
+ * message date (`>=D`, `<D`, `D1..D2`, bare `D` = before).
  */
 
 /** Inclusive lower bound / upper bound, both `YYYY-MM-DD`. */
@@ -43,10 +38,22 @@ export type ParsedSearchQuery = {
   phrases: string[];
   /** Terms/phrases to exclude. */
   exclude: string[];
+  /** Sender filter; use `me` for vault owner. */
   from: string | null;
+  /** Addressed-to filter; use `me` for received messages. */
   to: string | null;
+  /** Conversation involves this person (sender or recipient). */
+  with: string | null;
   subject: string | null;
-  hasAttachment: boolean;
+  /** Explicit body-only FTS terms. */
+  text: string | null;
+  /** null = any, true = has attachment, false = no attachment. */
+  hasAttachment: boolean | null;
+  filename: string | null;
+  /** image | video | audio | document | contact | other | pdf (→ document). */
+  filetype: string | null;
+  /** Restrict to a conversation by title or handle (`in:`). */
+  inConversation: string | null;
   after: string | null;
   before: string | null;
   source: string | null;
@@ -96,12 +103,18 @@ export type CountFilterInput = {
   value?: string;
 };
 
+export type AttachmentFilter = "any" | "yes" | "no";
+
 export type AdvancedSearchForm = {
   mode?: "messages" | "contacts";
   /** Label to search within; empty means all contacts. */
   within?: string;
-  /** Name or number of a conversation participant. */
+  /** Name or number of a conversation participant (`with:`). */
   withPerson?: string;
+  /** Sender (`from:`); use `me` for vault owner. */
+  fromPerson?: string;
+  /** Addressed-to (`to:`); use `me` for received. */
+  toPerson?: string;
   /** Contact handle (name or phone number). Legacy combined filter. */
   handle?: string;
   firstName?: string;
@@ -113,6 +126,11 @@ export type AdvancedSearchForm = {
   noLastName?: boolean;
   hasWords?: string;
   doesntHave?: string;
+  subject?: string;
+  filename?: string;
+  filetype?: string;
+  /** Conversation title / handle (`in:`). */
+  inConversation?: string;
   /** Message timestamp bounds. */
   date?: DateFilterInput;
   /** Contact's first message date bounds. */
@@ -123,7 +141,9 @@ export type AdvancedSearchForm = {
   messageCount?: CountFilterInput;
   conversationType?: "any" | "group" | "individual";
   source?: string;
+  /** @deprecated Prefer attachmentFilter; true maps to "yes". */
   hasAttachment?: boolean;
+  attachmentFilter?: AttachmentFilter;
 };
 
 const NO_BOUNDS: DateBounds = { from: null, to: null };
@@ -135,8 +155,13 @@ const EMPTY: ParsedSearchQuery = {
   exclude: [],
   from: null,
   to: null,
+  with: null,
   subject: null,
-  hasAttachment: false,
+  text: null,
+  hasAttachment: null,
+  filename: null,
+  filetype: null,
+  inConversation: null,
   after: null,
   before: null,
   source: null,
@@ -156,7 +181,7 @@ const EMPTY: ParsedSearchQuery = {
 };
 
 const OPERATOR_RE =
-  /^(search|with|from|to|subject|has|after|before|source|is|within|label|in|show|handle|last-contact|first-contact|group-count|message-count|first|last|phone):(.*)$/i;
+  /^(search|with|from|to|subject|text|has|after|before|source|is|within|label|in|show|handle|filename|filetype|last-contact|first-contact|group-count|message-count|first|last|phone):(.*)$/i;
 
 function readQuoted(s: string, start: number): { value: string; next: number } {
   let i = start;
@@ -211,11 +236,47 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+/** Absolute YYYY / YYYY-MM-DD, or relative Nd/Nw/Nm/Ny → local calendar YYYY-MM-DD. */
 function normalizeDate(raw: string): string | null {
   const t = raw.trim();
+  if (!t) return null;
+  const rel = t.match(/^(\d+)([dwmy])$/i);
+  if (rel) {
+    const n = Number.parseInt(rel[1]!, 10);
+    if (!Number.isFinite(n) || n < 0) return null;
+    const unit = rel[2]!.toLowerCase();
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    if (unit === "d") d.setDate(d.getDate() - n);
+    else if (unit === "w") d.setDate(d.getDate() - n * 7);
+    else if (unit === "m") d.setMonth(d.getMonth() - n);
+    else d.setFullYear(d.getFullYear() - n);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
   if (/^\d{4}$/.test(t)) return `${t}-01-01`;
   return t || null;
+}
+
+/** Normalize filetype aliases (e.g. pdf → document). */
+export function normalizeFiletype(raw: string): string | null {
+  const v = raw.trim().toLowerCase();
+  if (!v) return null;
+  if (v === "pdf") return "document";
+  if (
+    v === "image" ||
+    v === "video" ||
+    v === "audio" ||
+    v === "document" ||
+    v === "contact" ||
+    v === "other"
+  ) {
+    return v;
+  }
+  return v;
 }
 
 /** Read `>=D`, `<D`, `D1..D2`, or a bare `D` (which means “before D”). */
@@ -288,16 +349,26 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
         case "from":
           out.from = value;
           break;
-        case "with":
         case "to":
           out.to = value;
+          break;
+        case "with":
+          out.with = value;
           break;
         case "subject":
           out.subject = value;
           break;
-        case "has":
-          if (value.toLowerCase() === "attachment") out.hasAttachment = true;
+        case "text":
+          out.text = value;
           break;
+        case "has": {
+          const v = value.toLowerCase();
+          if (v === "attachment" || v === "att") out.hasAttachment = true;
+          else if (v === "noattachment" || v === "noatt") {
+            out.hasAttachment = false;
+          }
+          break;
+        }
         case "after":
           out.after = normalizeDate(value);
           break;
@@ -339,8 +410,15 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
         case "phone":
           out.phone = value;
           break;
+        case "filename":
+          out.filename = value;
+          break;
+        case "filetype":
+          out.filetype = normalizeFiletype(value);
+          break;
         case "in":
           // Legacy in:trash — trash is always excluded now.
+          if (value.toLowerCase() !== "trash") out.inConversation = value;
           break;
         case "show":
           // Retired legacy presentation operator.
@@ -405,8 +483,7 @@ function dateFilterFromBounds(from: string | null, to: string | null): DateFilte
 
 /**
  * Reverse-parse a vault search string into advanced-form fields so reopening
- * the dropdown can restore Date / First contact / etc. from the query bar.
- * Operators the form does not expose (`from:`, `subject:`) are ignored.
+ * the dropdown can restore fields from the query bar.
  */
 export function formFromSearchQuery(query: string): AdvancedSearchForm {
   const parsed = parseSearchQuery(query);
@@ -415,6 +492,12 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
     ...parsed.phrases.map((p) => quoteToken(p)),
   ].join(" ");
   const doesntHave = parsed.exclude.map((e) => quoteToken(e)).join(" ");
+  const attachmentFilter: AttachmentFilter =
+    parsed.hasAttachment === true
+      ? "yes"
+      : parsed.hasAttachment === false
+        ? "no"
+        : "any";
 
   return {
     mode: parsed.mode,
@@ -426,9 +509,15 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
     phone: parsed.phone ?? undefined,
     noFirstName: parsed.noFirstName || undefined,
     noLastName: parsed.noLastName || undefined,
-    withPerson: parsed.to ?? undefined,
+    withPerson: parsed.with ?? undefined,
+    fromPerson: parsed.from ?? undefined,
+    toPerson: parsed.to ?? undefined,
     hasWords: hasWords || undefined,
     doesntHave: doesntHave || undefined,
+    subject: parsed.subject ?? undefined,
+    filename: parsed.filename ?? undefined,
+    filetype: parsed.filetype ?? undefined,
+    inConversation: parsed.inConversation ?? undefined,
     date: dateFilterFromBounds(parsed.after, parsed.before),
     firstContact: dateFilterFromBounds(
       parsed.firstContact.from,
@@ -452,7 +541,8 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
       : { comparator: "any", value: "" },
     conversationType: parsed.conversationType ?? "any",
     source: parsed.source ?? undefined,
-    hasAttachment: parsed.hasAttachment,
+    attachmentFilter,
+    hasAttachment: parsed.hasAttachment === true,
   };
 }
 
@@ -481,8 +571,20 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
   if (form.mode === "contacts" && form.handle?.trim()) {
     parts.push(`handle:${quoteIfNeeded(form.handle.trim())}`);
   }
+  if (form.mode !== "contacts" && form.fromPerson?.trim()) {
+    parts.push(`from:${quoteIfNeeded(form.fromPerson.trim())}`);
+  }
+  if (form.mode !== "contacts" && form.toPerson?.trim()) {
+    parts.push(`to:${quoteIfNeeded(form.toPerson.trim())}`);
+  }
   if (form.mode !== "contacts" && form.withPerson?.trim()) {
     parts.push(`with:${quoteIfNeeded(form.withPerson.trim())}`);
+  }
+  if (form.mode !== "contacts" && form.inConversation?.trim()) {
+    parts.push(`in:${quoteIfNeeded(form.inConversation.trim())}`);
+  }
+  if (form.mode !== "contacts" && form.subject?.trim()) {
+    parts.push(`subject:${quoteIfNeeded(form.subject.trim())}`);
   }
   if (form.mode !== "contacts" && form.hasWords?.trim()) {
     parts.push(form.hasWords.trim());
@@ -520,7 +622,17 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
     if (form.conversationType === "group") parts.push("is:group");
     if (form.conversationType === "individual") parts.push("is:direct");
     if (form.source?.trim()) parts.push(`source:${form.source.trim()}`);
-    if (form.hasAttachment) parts.push("has:attachment");
+    const attachment =
+      form.attachmentFilter ??
+      (form.hasAttachment ? "yes" : "any");
+    if (attachment === "yes") parts.push("has:attachment");
+    if (attachment === "no") parts.push("has:noattachment");
+    if (form.filename?.trim()) {
+      parts.push(`filename:${quoteIfNeeded(form.filename.trim())}`);
+    }
+    if (form.filetype?.trim() && form.filetype !== "any") {
+      parts.push(`filetype:${quoteIfNeeded(form.filetype.trim())}`);
+    }
   }
   return parts.join(" ");
 }
@@ -533,8 +645,13 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
     q.mode === "contacts" ||
     !!q.from ||
     !!q.to ||
+    !!q.with ||
     !!q.subject ||
-    q.hasAttachment ||
+    !!q.text ||
+    q.hasAttachment !== null ||
+    !!q.filename ||
+    !!q.filetype ||
+    !!q.inConversation ||
     !!q.after ||
     !!q.before ||
     !!q.source ||
@@ -574,6 +691,10 @@ export function toFtsMatch(q: ParsedSearchQuery): string | null {
   if (q.subject?.trim()) {
     const safe = q.subject.trim().replace(/"/g, "");
     if (safe) parts.push(`subject:"${safe}"`);
+  }
+  if (q.text?.trim()) {
+    const safe = q.text.trim().replace(/"/g, "");
+    if (safe) parts.push(`body:"${safe}"`);
   }
   if (parts.length === 0) return null;
   return parts.join(" AND ");

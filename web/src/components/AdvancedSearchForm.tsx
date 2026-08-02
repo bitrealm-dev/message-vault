@@ -4,6 +4,7 @@ import {
   composeSearchQuery,
   formFromSearchQuery,
   type AdvancedSearchForm as FormState,
+  type AttachmentFilter,
   type CountFilterInput,
   type CountComparator,
   type DateFilterInput,
@@ -80,8 +81,16 @@ export function AdvancedSearchForm({
   const [noFirstName, setNoFirstName] = useState(!!seed.noFirstName);
   const [noLastName, setNoLastName] = useState(!!seed.noLastName);
   const [withPerson, setWithPerson] = useState(seed.withPerson ?? "");
+  const [fromPerson, setFromPerson] = useState(seed.fromPerson ?? "");
+  const [toPerson, setToPerson] = useState(seed.toPerson ?? "");
   const [hasWords, setHasWords] = useState(seed.hasWords ?? "");
   const [doesntHave, setDoesntHave] = useState(seed.doesntHave ?? "");
+  const [subject, setSubject] = useState(seed.subject ?? "");
+  const [filename, setFilename] = useState(seed.filename ?? "");
+  const [filetype, setFiletype] = useState(seed.filetype ?? "");
+  const [attachmentFilter, setAttachmentFilter] = useState<AttachmentFilter>(
+    seed.attachmentFilter ?? "any",
+  );
   const [date, setDate] = useState<DateFilterInput>(seed.date ?? NO_DATES);
   const [firstContact, setFirstContact] = useState<DateFilterInput>(
     seed.firstContact ?? NO_DATES,
@@ -101,7 +110,6 @@ export function AdvancedSearchForm({
     "any" | "group" | "individual"
   >(seed.conversationType ?? "any");
   const [source, setSource] = useState(seed.source ?? "");
-  const [hasAttachment, setHasAttachment] = useState(!!seed.hasAttachment);
 
   const clearPersonFields = () => {
     setFirstName("");
@@ -148,6 +156,16 @@ export function AdvancedSearchForm({
         : withPersonExpanded
           ? personFields
           : { withPerson }),
+      ...(mode !== "contacts"
+        ? {
+            fromPerson,
+            toPerson,
+            subject,
+            filename,
+            filetype: filetype || undefined,
+            attachmentFilter,
+          }
+        : {}),
       hasWords,
       doesntHave,
       date,
@@ -163,7 +181,6 @@ export function AdvancedSearchForm({
           : messageCount,
       conversationType,
       source: source || undefined,
-      hasAttachment,
     };
     persistSearchMode(mode);
     onSearch(composeSearchQuery(form));
@@ -201,7 +218,7 @@ export function AdvancedSearchForm({
       <p className="mt-2 mb-3 text-[12px] text-muted">
         {mode === "contacts"
           ? "Find contacts by handle, or expand for first name, last name, phone, and activity."
-          : "Find messages by what they say, or expand With person for name and phone."}
+          : "Find messages like Fastmail: from, to, with, words, attachments, and dates."}
       </p>
       <div className="space-y-2">
         {mode === "contacts" ? (
@@ -293,6 +310,22 @@ export function AdvancedSearchForm({
                 ))}
               </select>
             </Field>
+            <Field label="From">
+              <input
+                className={inputClass}
+                value={fromPerson}
+                onChange={(e) => setFromPerson(e.target.value)}
+                placeholder="me or name/number"
+              />
+            </Field>
+            <Field label="To">
+              <input
+                className={inputClass}
+                value={toPerson}
+                onChange={(e) => setToPerson(e.target.value)}
+                placeholder="me or name/number"
+              />
+            </Field>
             {withPersonExpanded ? (
               <>
                 <DisclosureRow
@@ -343,6 +376,14 @@ export function AdvancedSearchForm({
                 onChange={(e) => setDoesntHave(e.target.value)}
               />
             </Field>
+            <Field label="Subject">
+              <input
+                className={inputClass}
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Optional"
+              />
+            </Field>
             <DateRangeField label="Date" value={date} onChange={setDate} />
             <Field label="Message type">
               <select
@@ -373,15 +414,46 @@ export function AdvancedSearchForm({
                 ))}
               </select>
             </Field>
-            <label className="flex items-center gap-2 pl-36 text-[13px] text-text">
-              <input
-                type="checkbox"
-                checked={hasAttachment}
-                onChange={(e) => setHasAttachment(e.target.checked)}
-                className="size-3.5 accent-accent"
-              />
-              Has an attachment
-            </label>
+            <Field label="Attachment">
+              <select
+                className={inputClass}
+                value={attachmentFilter}
+                onChange={(e) =>
+                  setAttachmentFilter(e.target.value as AttachmentFilter)
+                }
+              >
+                <option value="any">Any</option>
+                <option value="yes">Has attachment</option>
+                <option value="no">No attachment</option>
+              </select>
+            </Field>
+            {attachmentFilter === "yes" ? (
+              <>
+                <Field label="File type">
+                  <select
+                    className={inputClass}
+                    value={filetype}
+                    onChange={(e) => setFiletype(e.target.value)}
+                  >
+                    <option value="">Any type</option>
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                    <option value="document">Document</option>
+                    <option value="contact">Contact</option>
+                    <option value="other">Other</option>
+                  </select>
+                </Field>
+                <Field label="Filename">
+                  <input
+                    className={inputClass}
+                    value={filename}
+                    onChange={(e) => setFilename(e.target.value)}
+                    placeholder="Contains…"
+                  />
+                </Field>
+              </>
+            ) : null}
           </>
         )}
       </div>
