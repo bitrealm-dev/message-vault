@@ -1,6 +1,0 @@
-{"record":"conversation","schema":"imessage","schema_version":4,"chat_identifier":"69243","service":"iMessage","conversation_type":"individual","participants":[{"handle":"69243","name_hint":"Spam"}],"exported_at":"2026-07-14T12:00:00-04:00"}
-{"guid":"spam-69243-0","is_from_me":false,"record":"message","sender":"69243","service":"iMessage","text":"On my way now.","timestamp":"2024-01-01T08:00:00-04:00","timestamp_utc":"2024-01-01T12:00:00+00:00"}
-{"guid":"spam-69243-1","is_from_me":false,"record":"message","sender":"69243","service":"iMessage","text":"Did you see the game last night?","timestamp":"2024-02-02T09:01:00-04:00","timestamp_utc":"2024-02-02T13:01:00+00:00"}
-{"guid":"spam-69243-2","is_from_me":false,"record":"message","sender":"69243","service":"iMessage","text":"Happy birthday!! 🎂","timestamp":"2024-03-03T10:02:00-04:00","timestamp_utc":"2024-03-03T14:02:00+00:00"}
-{"guid":"spam-69243-3","is_from_me":false,"record":"message","sender":"69243","service":"iMessage","text":"Happy birthday!! 🎂","timestamp":"2024-04-04T11:03:00-04:00","timestamp_utc":"2024-04-04T15:03:00+00:00"}
-{"guid":"spam-69243-4","is_from_me":false,"record":"message","sender":"69243","service":"iMessage","text":"We should plan a trip this summer.","timestamp":"2024-05-05T12:04:00-04:00","timestamp_utc":"2024-05-05T16:04:00+00:00"}

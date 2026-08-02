@@ -1139,9 +1139,9 @@ mod tests {
         let first = write_jsonl(
             tmp.path(),
             "a.jsonl",
-            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075551234","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075551234"}]}
-{"record":"message","guid":"g-keep","timestamp":"2015-03-12T14:04:22-04:00","timestamp_utc":"2015-03-12T18:04:22Z","is_from_me":false,"text":"one","attachments":[]}
-{"record":"message","guid":"g-dup","timestamp":"2015-03-12T14:05:22-04:00","timestamp_utc":"2015-03-12T18:05:22Z","is_from_me":true,"text":"two","attachments":[]}
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+14075551234","conversation_type":"individual","group_title":null,"participants":[{"handle":"+14075551234","display_name":null}],"stats":{"message_count":2,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183522000}}}
+{"guid":"g-keep","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+14075551234","sender_display_name":null,"subject":null,"text":"one","attachments":[],"imessage":null,"source":null}
+{"guid":"g-dup","timestamp_unix_ms":1426183522000,"direction":"outgoing","service":"sms","message_kind":"sms","sender_handle":null,"sender_display_name":null,"subject":null,"text":"two","attachments":[],"imessage":null,"source":null}
 "#,
         );
         let first_stats = import_jsonl_files(
@@ -1165,10 +1165,10 @@ mod tests {
         let second = write_jsonl(
             tmp.path(),
             "b.jsonl",
-            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+14075551234","service":"SMS","conversation_type":"individual","participants":[{"handle":"+14075551234"}]}
-{"record":"message","guid":"g-dup","timestamp":"2015-03-12T14:05:22-04:00","timestamp_utc":"2015-03-12T18:05:22Z","is_from_me":true,"text":"two again","attachments":[]}
-{"record":"message","guid":"g-new","timestamp":"2015-03-12T14:06:22-04:00","timestamp_utc":"2015-03-12T18:06:22Z","is_from_me":false,"text":"three","attachments":[]}
-{"record":"message","guid":"","timestamp":"2015-03-12T14:07:22-04:00","timestamp_utc":"2015-03-12T18:07:22Z","is_from_me":false,"text":"empty guid always inserts","attachments":[]}
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+14075551234","conversation_type":"individual","group_title":null,"participants":[{"handle":"+14075551234","display_name":null}],"stats":{"message_count":3,"attachment_count":0,"first_timestamp_unix_ms":1426183522000,"last_timestamp_unix_ms":1426183642000}}}
+{"guid":"g-dup","timestamp_unix_ms":1426183522000,"direction":"outgoing","service":"sms","message_kind":"sms","sender_handle":null,"sender_display_name":null,"subject":null,"text":"two again","attachments":[],"imessage":null,"source":null}
+{"guid":"g-new","timestamp_unix_ms":1426183582000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+14075551234","sender_display_name":null,"subject":null,"text":"three","attachments":[],"imessage":null,"source":null}
+{"guid":"","timestamp_unix_ms":1426183642000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+14075551234","sender_display_name":null,"subject":null,"text":"empty guid always inserts","attachments":[],"imessage":null,"source":null}
 "#,
         );
         let second_stats = import_jsonl_files(
@@ -1242,8 +1242,8 @@ mod tests {
         let path = write_jsonl(
             tmp.path(),
             "att.jsonl",
-            r#"{"record":"conversation","schema":"vault","schema_version":1,"chat_identifier":"+15555550123","service":"SMS","conversation_type":"individual","participants":[{"handle":"+15555550123"}]}
-{"record":"message","guid":"g-att","timestamp":"2015-03-12T14:04:22-04:00","timestamp_utc":"2015-03-12T18:04:22Z","is_from_me":false,"text":"see attached","attachments":[{"path":"attachments/receipt.pdf","original_name":"uniqueinvoice.pdf","mime_type":"application/pdf"}]}
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-att","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"mms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"see attached","attachments":[{"path":"attachments/receipt.pdf","original_name":"uniqueinvoice.pdf","mime_type":"application/pdf","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null}],"imessage":null,"source":null}
 "#,
         );
         import_jsonl_files(

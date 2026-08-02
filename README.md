@@ -11,8 +11,8 @@ that machine; they are not uploaded to a cloud service by this project.
 
 Turning a phone backup into a **message-ir** JSONL export is done by a separate
 project, [message-exporters](https://bitrealm-dev.github.io/message-exporters/)
-(desktop binary `message-exporter`). Push projects that export into vault JSONL
-for this repository—the vault itself: storage, import, and the browser UI.
+(desktop binary `message-exporter`). Push those message-ir JSONL exports into
+this repository—the vault itself: storage, import, and the browser UI.
 
 ## Docs
 
@@ -70,8 +70,7 @@ Details: [First personal import](https://bitrealm-dev.github.io/message-vault-rs
 ```text
 src/                # CLI binary: import, ingest, serve, demo reset
 crates/
-  message-json/     # vault JSONL schemas (ingest wire; not message-ir)
-  demo-seed/        # regenerate committed demo data
+  demo-seed/        # regenerate committed demo data (message-ir JSONL)
 demo/               # committed demo bundle
 config/             # config.toml.example, config.docker.toml, CSV/VCF examples
 scripts/            # setup-demo, docker entrypoints, smoke tests

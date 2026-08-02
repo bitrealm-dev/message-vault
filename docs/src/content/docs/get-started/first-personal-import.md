@@ -51,8 +51,8 @@ or build from source). Prefer a **message-ir JSONL** export folder (plus
 ## 5. Push into the vault
 
 See [Import from Message Exporters](/import/from-message-exporters/) for the
-Vault tab (`message-exporter`) and `cli/vault-push`. Push projects message-ir
-into vault JSONL for the import API. Then refresh the website and
+Vault tab (`message-exporter`) and `cli/vault-push`. They post message-ir JSONL
+to the import API. Then refresh the website and
 [browse](/browse/navigation-and-sources/).
 
 If the export folder already lives on the vault machine, you can skip the

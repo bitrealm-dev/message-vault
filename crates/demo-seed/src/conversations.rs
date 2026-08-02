@@ -3,14 +3,15 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use chrono::{TimeZone, Utc};
-use message_json::imessage::{
-    AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, ParticipantRecord,
-    RECORD_MESSAGE, TapbackRecord,
+use chrono::{FixedOffset, TimeZone};
+use message_ir::{
+    ConversationHeader, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService,
+    SCHEMA_VERSION,
 };
 use rand::Rng;
 use rand::seq::IndexedRandom;
-use serde_json;
+use serde_json::json;
 
 use crate::assets::{JPG_PHOTOS, OTHER_ATTACHMENTS};
 use crate::personas::{
@@ -30,7 +31,6 @@ pub struct GenStats {
     pub attachment_refs: usize,
 }
 
-const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
 const TAPBACK_KINDS: &[&str] = &[
     "loved",
     "liked",
@@ -86,6 +86,16 @@ const GROUP_TITLES: &[&str] = &[
     "Volunteer Squad",
 ];
 
+fn export_meta() -> ExportMeta {
+    ExportMeta {
+        source: "imessage".into(),
+        tool: "demo-seed".into(),
+        tool_version: "0.1.0".into(),
+        owner_handle: Some("+15555550100".into()),
+        owner_display_name: Some("Me".into()),
+    }
+}
+
 pub fn write_all(
     staging: &Path,
     _attachments: &Path,
@@ -97,7 +107,6 @@ pub fn write_all(
         ..Default::default()
     };
 
-    // Clear existing JSONL conversation files
     for entry in fs::read_dir(staging)? {
         let entry = entry?;
         let path = entry.path();
@@ -109,7 +118,6 @@ pub fn write_all(
         }
     }
 
-    // 1:1 with CSV contacts — only OneToOne and Both scopes
     for contact in roster
         .contacts
         .iter()
@@ -120,13 +128,11 @@ pub fn write_all(
         write_individual(staging, phone, contact, count, rng, &mut stats)?;
     }
 
-    // Unassigned 1:1 — mostly short threads
     for ua in &roster.unassigned {
         let count = unassigned_message_count(rng);
         write_unassigned(staging, ua, count, rng, &mut stats)?;
     }
 
-    // Group chats — seed group-only contacts so each appears in at least one thread
     let group_only: Vec<&Contact> = roster
         .contacts
         .iter()
@@ -143,15 +149,13 @@ pub fn write_all(
         }
     }
 
-    // orphaned.jsonl
     write_orphaned(staging, rng, &mut stats)?;
 
-    // Header-only conversations (2)
-    write_header_only(staging, EMPTY_THREAD_HANDLE, "individual", &[])?;
+    write_header_only(staging, EMPTY_THREAD_HANDLE, IrConversationType::Individual, &[])?;
     write_header_only(
         staging,
         EMPTY_GROUP_HANDLE,
-        "group",
+        IrConversationType::Group,
         &["+12125554503", "+13035555604"],
     )?;
     stats.conversation_files += 2;
@@ -167,15 +171,21 @@ fn write_individual(
     rng: &mut impl Rng,
     stats: &mut GenStats,
 ) -> Result<()> {
-    let participants = vec![ParticipantRecord {
+    let participants = vec![IrParticipant {
         handle: chat_id.into(),
-        name_hint: Some(contact.display_hint()),
+        display_name: Some(contact.display_hint()),
     }];
     let path = staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
-    write_conversation_header(&mut file, chat_id, "individual", None, participants)?;
+    write_conversation_header(
+        &mut file,
+        chat_id,
+        IrConversationType::Individual,
+        None,
+        participants,
+        msg_count,
+    )?;
 
-    let mut messages = Vec::new();
     let mut origin_guid: Option<String> = None;
     for i in 0..msg_count {
         let year = year_for_activity(i, msg_count, contact.activity, rng);
@@ -185,38 +195,43 @@ fn write_individual(
         if should_attach_jpg(i, msg_count) {
             add_jpg_attachment(&mut msg, i, stats);
             if i > 0 && i % 14 == 0 {
-                msg.text = Some(PHOTO_CAPTIONS.choose(rng).unwrap().to_string());
+                msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
             }
         } else if should_attach_photo_only(i, msg_count) {
-            msg.text = None;
+            msg.text.clear();
             add_jpg_attachment(&mut msg, i + 1, stats);
         } else if should_attach_other(i, msg_count) {
             add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
         }
         if i % 23 == 0 && !from_me && msg_count >= 20 {
-            msg.tapbacks.push(tapback_loved(chat_id, false));
+            push_tapback(&mut msg, "loved", None, chat_id, false);
         }
         if i % 31 == 0 && origin_guid.is_some() && msg_count >= 25 {
-            msg.is_reply = true;
-            msg.thread_originator_guid = origin_guid.clone();
-            msg.thread_originator_part = Some(0);
+            let im = msg.imessage.get_or_insert_with(IrImessage::default);
+            im.is_reply = true;
+            im.in_reply_to_guid = origin_guid.clone();
+            im.thread_originator_part = Some(0);
         }
         if i % 29 == 0 {
             origin_guid = Some(guid.clone());
-            msg.num_replies = rng.random_range(1..4);
+            let im = msg.imessage.get_or_insert_with(IrImessage::default);
+            im.num_replies = Some(rng.random_range(1..4));
         }
         if i % 41 == 0 {
-            msg.service = Some(SERVICES.choose(rng).unwrap().to_string());
+            msg.service = match *SERVICES.choose(rng).unwrap() {
+                "SMS" => IrService::Sms,
+                "RCS" => IrService::Rcs,
+                _ => IrService::IMessage,
+            };
         }
-        messages.push(msg);
-    }
-    for msg in messages {
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
     stats.conversation_files += 1;
     Ok(())
 }
+
+const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
 
 fn write_unassigned(
     staging: &Path,
@@ -226,9 +241,9 @@ fn write_unassigned(
     stats: &mut GenStats,
 ) -> Result<()> {
     let chat_id = &ua.handle;
-    let participants = vec![ParticipantRecord {
+    let participants = vec![IrParticipant {
         handle: chat_id.clone(),
-        name_hint: ua.name_hint.clone(),
+        display_name: ua.name_hint.clone(),
     }];
     let fname = if ua.email_only {
         format!("email-{}.jsonl", chat_id.replace('@', "_at_"))
@@ -237,15 +252,21 @@ fn write_unassigned(
     };
     let path = staging.join(fname);
     let mut file = open_jsonl(&path)?;
-    write_conversation_header(&mut file, chat_id, "individual", None, participants)?;
+    write_conversation_header(
+        &mut file,
+        chat_id,
+        IrConversationType::Individual,
+        None,
+        participants,
+        msg_count,
+    )?;
 
     for i in 0..msg_count {
         let guid = format!("unassigned-{chat_id}-{i}");
         let from_me = i % 4 == 0;
         let mut msg = text_message(&guid, (2023 + (i % 4)) as i32, i, from_me, chat_id, rng);
-        // Unverified: empty sender on inbound with name_hint only
         if i == 2 && ua.name_hint.is_some() && !from_me {
-            msg.sender = Some(String::new());
+            msg.sender_handle = Some(String::new());
         }
         if should_attach_jpg(i, msg_count) {
             add_jpg_attachment(&mut msg, i, stats);
@@ -281,7 +302,6 @@ fn group_chat_id(index: usize) -> String {
     }
 }
 
-/// ~45% untitled so many groups show participant names only.
 fn group_title(index: usize, rng: &mut impl Rng) -> Option<String> {
     if rng.random_bool(0.45) {
         None
@@ -315,39 +335,55 @@ fn write_group(
     let chat_id = group_chat_id(index);
     let title = group_title(index, rng);
 
-    let participants: Vec<ParticipantRecord> = members
+    let participants: Vec<IrParticipant> = members
         .iter()
-        .map(|c| ParticipantRecord {
+        .map(|c| IrParticipant {
             handle: c.primary_phone().into(),
-            name_hint: Some(c.display_hint()),
+            display_name: Some(c.display_hint()),
         })
         .collect();
 
     let path = staging.join(format!("group-{index:03}.jsonl"));
     let mut file = open_jsonl(&path)?;
-    write_conversation_header(&mut file, &chat_id, "group", title.clone(), participants)?;
+    let msg_count = group_message_count(rng);
+    let header_msgs = msg_count + usize::from(index == 0);
+    write_conversation_header(
+        &mut file,
+        &chat_id,
+        IrConversationType::Group,
+        title.clone(),
+        participants,
+        header_msgs,
+    )?;
 
     if index == 0 {
+        let announcement = format!(
+            "You named the conversation {}",
+            title.clone().unwrap_or_else(|| "Group".into())
+        );
         write_message(
             &mut file,
-            MessageRecord {
-                guid: Some(format!("ann-{index}")),
-                timestamp: ts_local(2018, 6, 1, 10, 0),
-                timestamp_utc: Some(ts_utc(2018, 6, 1, 14, 0)),
-                is_from_me: false,
-                sender: Some(members[0].primary_phone().into()),
-                is_announcement: true,
-                announcement: Some(format!(
-                    "You named the conversation {}",
-                    title.clone().unwrap_or_else(|| "Group".into())
-                )),
-                ..default_message()
+            IrMessage {
+                guid: format!("ann-{index}"),
+                timestamp_unix_ms: ts_unix_ms(2018, 6, 1, 10, 0),
+                direction: IrDirection::Incoming,
+                service: IrService::IMessage,
+                message_kind: IrMessageKind::Announcement,
+                sender_handle: Some(members[0].primary_phone().into()),
+                sender_display_name: None,
+                subject: None,
+                text: String::new(),
+                attachments: vec![],
+                imessage: Some(IrImessage {
+                    announcement: Some(announcement),
+                    ..Default::default()
+                }),
+                source: None,
             },
         )?;
         stats.messages += 1;
     }
 
-    let msg_count = group_message_count(rng);
     for i in 0..msg_count {
         let year = year_span(i, msg_count, 2016, 2026);
         let from_me = i % 7 == 0;
@@ -363,53 +399,51 @@ fn write_group(
         } else {
             name
         };
-        let mut msg = MessageRecord {
-            guid: Some(guid),
-            timestamp: ts_local(
+        let mut msg = IrMessage {
+            guid,
+            timestamp_unix_ms: ts_unix_ms(
                 year,
                 ((i % 12) + 1) as u32,
                 ((i % 28) + 1) as u32,
                 (9 + (i % 10)) as u32,
                 i % 60,
             ),
-            timestamp_utc: Some(ts_utc(
-                year,
-                ((i % 12) + 1) as u32,
-                ((i % 28) + 1) as u32,
-                (13 + (i % 10)) as u32,
-                i % 60,
-            )),
-            is_from_me: from_me,
-            sender,
-            text: Some(format!("{} {}", label, CHAT_SNIPPETS.choose(rng).unwrap())),
-            service: if i % 11 == 0 {
-                Some("SMS".into())
+            direction: if from_me {
+                IrDirection::Outgoing
             } else {
-                Some("iMessage".into())
+                IrDirection::Incoming
             },
-            ..default_message()
+            service: if i % 11 == 0 {
+                IrService::Sms
+            } else {
+                IrService::IMessage
+            },
+            message_kind: IrMessageKind::IMessage,
+            sender_handle: sender,
+            sender_display_name: None,
+            subject: None,
+            text: format!("{} {}", label, CHAT_SNIPPETS.choose(rng).unwrap()),
+            attachments: vec![],
+            imessage: None,
+            source: None,
         };
         if should_attach_jpg(i, msg_count) {
             add_jpg_attachment(&mut msg, i + index, stats);
             if i > 0 && i % 12 == 0 {
-                msg.text = Some(format!("{} {}", label, PHOTO_CAPTIONS.choose(rng).unwrap()));
+                msg.text = format!("{} {}", label, PHOTO_CAPTIONS.choose(rng).unwrap());
             }
         } else if should_attach_other(i, msg_count) {
             add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
         }
         if i % 13 == 0 && msg_count >= 18 {
             let reactor = members[(i + 1) % members.len()].primary_phone();
-            msg.tapbacks.push(TapbackRecord {
-                part_index: 0,
-                kind: TAPBACK_KINDS.choose(rng).unwrap().to_string(),
-                emoji: if i % 26 == 0 {
-                    Some("🎉".into())
-                } else {
-                    None
-                },
-                is_from_me: false,
-                sender: Some(reactor.into()),
-            });
+            let kind = TAPBACK_KINDS.choose(rng).unwrap().to_string();
+            let emoji = if i % 26 == 0 {
+                Some("🎉".into())
+            } else {
+                None
+            };
+            push_tapback(&mut msg, &kind, emoji, reactor, false);
         }
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -418,7 +452,6 @@ fn write_group(
     Ok(())
 }
 
-/// Group chat whose participants are phone numbers only (no contact names / CSV rows).
 fn write_phone_only_group(
     staging: &Path,
     index: usize,
@@ -429,22 +462,27 @@ fn write_phone_only_group(
     let size = group_participant_size(rng, 20);
     let handles = phone_only_handles(handle_offset, size);
     let chat_id = group_chat_id(index);
-    // Untitled so the UI shows phone handles as the identity.
-    let title = None;
 
-    let participants: Vec<ParticipantRecord> = handles
+    let participants: Vec<IrParticipant> = handles
         .iter()
-        .map(|h| ParticipantRecord {
+        .map(|h| IrParticipant {
             handle: h.clone(),
-            name_hint: None,
+            display_name: None,
         })
         .collect();
 
     let path = staging.join(format!("group-{index:03}.jsonl"));
     let mut file = open_jsonl(&path)?;
-    write_conversation_header(&mut file, &chat_id, "group", title, participants)?;
-
     let msg_count = group_message_count(rng);
+    write_conversation_header(
+        &mut file,
+        &chat_id,
+        IrConversationType::Group,
+        None,
+        participants,
+        msg_count,
+    )?;
+
     for i in 0..msg_count {
         let year = year_span(i, msg_count, 2016, 2026);
         let from_me = i % 7 == 0;
@@ -454,27 +492,29 @@ fn write_phone_only_group(
             Some(handles[i % handles.len()].clone())
         };
         let guid = format!("grp-phone-{index}-{i}");
-        let mut msg = MessageRecord {
-            guid: Some(guid),
-            timestamp: ts_local(
+        let mut msg = IrMessage {
+            guid,
+            timestamp_unix_ms: ts_unix_ms(
                 year,
                 ((i % 12) + 1) as u32,
                 ((i % 28) + 1) as u32,
                 (9 + (i % 10)) as u32,
                 i % 60,
             ),
-            timestamp_utc: Some(ts_utc(
-                year,
-                ((i % 12) + 1) as u32,
-                ((i % 28) + 1) as u32,
-                (13 + (i % 10)) as u32,
-                i % 60,
-            )),
-            is_from_me: from_me,
-            sender,
-            text: Some(CHAT_SNIPPETS.choose(rng).unwrap().to_string()),
-            service: Some("iMessage".into()),
-            ..default_message()
+            direction: if from_me {
+                IrDirection::Outgoing
+            } else {
+                IrDirection::Incoming
+            },
+            service: IrService::IMessage,
+            message_kind: IrMessageKind::IMessage,
+            sender_handle: sender,
+            sender_display_name: None,
+            subject: None,
+            text: CHAT_SNIPPETS.choose(rng).unwrap().to_string(),
+            attachments: vec![],
+            imessage: None,
+            source: None,
         };
         if should_attach_jpg(i, msg_count) {
             add_jpg_attachment(&mut msg, i + index, stats);
@@ -489,6 +529,14 @@ fn write_phone_only_group(
 fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> Result<()> {
     let path = staging.join("orphaned.jsonl");
     let mut file = open_jsonl(&path)?;
+    write_conversation_header(
+        &mut file,
+        "orphaned",
+        IrConversationType::Individual,
+        None,
+        vec![],
+        6,
+    )?;
     for i in 0..6 {
         let guid = format!("orphan-{i}");
         let mut msg = text_message(
@@ -499,9 +547,7 @@ fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> R
             ORPHAN_SENDER,
             rng,
         );
-        msg.text = Some(format!(
-            "Orphaned message #{i} (no conversation association)"
-        ));
+        msg.text = format!("Orphaned message #{i} (no conversation association)");
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
@@ -512,19 +558,19 @@ fn write_orphaned(staging: &Path, rng: &mut impl Rng, stats: &mut GenStats) -> R
 fn write_header_only(
     staging: &Path,
     chat_id: &str,
-    conv_type: &str,
+    conv_type: IrConversationType,
     member_phones: &[&str],
 ) -> Result<()> {
     let path = staging.join(format!("empty-{}.jsonl", sanitize_filename(chat_id)));
     let mut file = open_jsonl(&path)?;
-    let participants: Vec<ParticipantRecord> = member_phones
+    let participants: Vec<IrParticipant> = member_phones
         .iter()
-        .map(|h| ParticipantRecord {
+        .map(|h| IrParticipant {
             handle: (*h).into(),
-            name_hint: None,
+            display_name: None,
         })
         .collect();
-    write_conversation_header(&mut file, chat_id, conv_type, None, participants)?;
+    write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0)?;
     Ok(())
 }
 
@@ -536,31 +582,36 @@ fn open_jsonl(path: &Path) -> Result<BufWriter<File>> {
 fn write_conversation_header(
     file: &mut BufWriter<File>,
     chat_id: &str,
-    conv_type: &str,
+    conv_type: IrConversationType,
     group_title: Option<String>,
-    participants: Vec<ParticipantRecord>,
+    participants: Vec<IrParticipant>,
+    message_count: usize,
 ) -> Result<()> {
-    let header = ConversationRecord::header(
-        chat_id,
-        conv_type,
-        group_title,
-        participants,
-        "2026-07-14T12:00:00-04:00",
-    );
-    let line = serde_json::to_string(&ExportRecord::Conversation(header))?;
-    writeln!(file, "{line}")?;
+    let header = ConversationHeader {
+        schema_version: SCHEMA_VERSION,
+        export: export_meta(),
+        conversation: ConversationMeta {
+            chat_identifier: chat_id.into(),
+            conversation_type: conv_type,
+            group_title,
+            participants,
+            stats: ConversationStats {
+                message_count,
+                attachment_count: 0,
+                first_timestamp_unix_ms: None,
+                last_timestamp_unix_ms: None,
+            },
+        },
+    };
+    writeln!(file, "{}", serde_json::to_string(&header)?)?;
     Ok(())
 }
 
-fn write_message(file: &mut BufWriter<File>, msg: MessageRecord) -> Result<()> {
-    let mut value = serde_json::to_value(&msg)?;
-    if let serde_json::Value::Object(ref mut map) = value {
-        map.insert(
-            "record".into(),
-            serde_json::Value::String(RECORD_MESSAGE.into()),
-        );
+fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
+    if let Some(im) = msg.imessage.take() {
+        msg.imessage = im.into_option();
     }
-    writeln!(file, "{}", serde_json::to_string(&value)?)?;
+    writeln!(file, "{}", serde_json::to_string(&msg)?)?;
     Ok(())
 }
 
@@ -571,49 +622,30 @@ fn text_message(
     from_me: bool,
     peer: &str,
     rng: &mut impl Rng,
-) -> MessageRecord {
-    MessageRecord {
-        guid: Some(guid.into()),
-        timestamp: ts_local(
+) -> IrMessage {
+    IrMessage {
+        guid: guid.into(),
+        timestamp_unix_ms: ts_unix_ms(
             year,
             ((index % 12) + 1) as u32,
             ((index % 28) + 1) as u32,
             (8 + (index % 12)) as u32,
             index % 60,
         ),
-        timestamp_utc: Some(ts_utc(
-            year,
-            ((index % 12) + 1) as u32,
-            ((index % 28) + 1) as u32,
-            (12 + (index % 12)) as u32,
-            index % 60,
-        )),
-        is_from_me: from_me,
-        sender: if from_me { None } else { Some(peer.into()) },
-        text: Some(CHAT_SNIPPETS.choose(rng).unwrap().to_string()),
-        service: Some("iMessage".into()),
-        ..default_message()
-    }
-}
-
-fn default_message() -> MessageRecord {
-    MessageRecord {
-        guid: None,
-        timestamp: String::new(),
-        timestamp_utc: None,
-        is_from_me: false,
-        sender: None,
-        service: None,
+        direction: if from_me {
+            IrDirection::Outgoing
+        } else {
+            IrDirection::Incoming
+        },
+        service: IrService::IMessage,
+        message_kind: IrMessageKind::IMessage,
+        sender_handle: if from_me { None } else { Some(peer.into()) },
+        sender_display_name: None,
         subject: None,
-        text: None,
-        is_announcement: false,
-        announcement: None,
+        text: CHAT_SNIPPETS.choose(rng).unwrap().to_string(),
         attachments: vec![],
-        tapbacks: vec![],
-        is_reply: false,
-        thread_originator_guid: None,
-        thread_originator_part: None,
-        num_replies: 0,
+        imessage: None,
+        source: None,
     }
 }
 
@@ -622,7 +654,6 @@ fn individual_message_count(contact: &Contact, rng: &mut impl Rng) -> usize {
         return rng.random_range(3..10);
     }
     if contact.high_volume {
-        // Two whales: thousands of messages each.
         return rng.random_range(1000..1301);
     }
     match contact.activity {
@@ -651,7 +682,6 @@ fn individual_message_count(contact: &Contact, rng: &mut impl Rng) -> usize {
 }
 
 fn group_message_count(rng: &mut impl Rng) -> usize {
-    // Keep group threads short so ~200 groups + whales still land near ~5k total.
     let roll: f64 = rng.random();
     if roll < 0.65 {
         rng.random_range(2..7)
@@ -673,7 +703,6 @@ fn unassigned_message_count(rng: &mut impl Rng) -> usize {
     }
 }
 
-/// Scale attachment density to thread length (sparse for whale threads).
 fn should_attach_jpg(i: usize, total: usize) -> bool {
     if total < 3 {
         return false;
@@ -707,53 +736,69 @@ fn should_attach_other(i: usize, total: usize) -> bool {
     total >= 20 && i % 19 == 0
 }
 
-fn add_jpg_attachment(msg: &mut MessageRecord, idx: usize, stats: &mut GenStats) {
+fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {
     let photo = &JPG_PHOTOS[idx % JPG_PHOTOS.len()];
-    msg.attachments.push(AttachmentRecord {
+    msg.attachments.push(IrAttachment {
         path: Some(photo.path.into()),
         original_name: Some(photo.original_name.into()),
         mime_type: Some("image/jpeg".into()),
+        digest_sha256: None,
         is_sticker: false,
         transcription: None,
+        sticker_effect: None,
+        bytes: None,
     });
     stats.attachment_refs += 1;
 }
 
 fn add_attachment(
-    msg: &mut MessageRecord,
+    msg: &mut IrMessage,
     idx: usize,
     stats: &mut GenStats,
     files: &[(&str, &str, bool)],
 ) {
     let (path, mime, is_sticker) = files[idx % files.len()];
-    let mut att = AttachmentRecord {
+    let transcription = if mime.starts_with("audio/") {
+        Some("Hey, just leaving a quick voice note.".into())
+    } else {
+        None
+    };
+    msg.attachments.push(IrAttachment {
         path: Some(path.into()),
         original_name: Some(path.rsplit('/').next().unwrap_or(path).into()),
         mime_type: Some(mime.into()),
+        digest_sha256: None,
         is_sticker,
-        transcription: None,
-    };
-    if mime.starts_with("audio/") {
-        att.transcription = Some("Hey, just leaving a quick voice note.".into());
-    }
-    msg.attachments.push(att);
+        transcription,
+        sticker_effect: None,
+        bytes: None,
+    });
     stats.attachment_refs += 1;
-    if msg.text.as_deref() == Some("") {
-        msg.text = None;
-    }
 }
 
-fn tapback_loved(sender: &str, from_me: bool) -> TapbackRecord {
-    TapbackRecord {
-        part_index: 0,
-        kind: "loved".into(),
-        emoji: None,
-        is_from_me: from_me,
-        sender: if from_me { None } else { Some(sender.into()) },
-    }
+fn push_tapback(
+    msg: &mut IrMessage,
+    kind: &str,
+    emoji: Option<String>,
+    sender: &str,
+    from_me: bool,
+) {
+    let im = msg.imessage.get_or_insert_with(IrImessage::default);
+    let mut taps = match im.tapbacks.take() {
+        Some(serde_json::Value::Array(items)) => items,
+        Some(other) if !other.is_null() => vec![other],
+        _ => Vec::new(),
+    };
+    taps.push(json!({
+        "part_index": 0,
+        "kind": kind,
+        "emoji": emoji,
+        "is_from_me": from_me,
+        "sender": if from_me { serde_json::Value::Null } else { json!(sender) },
+    }));
+    im.tapbacks = Some(serde_json::Value::Array(taps));
 }
 
-/// Even spread across [start, end] inclusive.
 fn year_span(i: usize, total: usize, start: i32, end: i32) -> i32 {
     let span = (end - start).max(0) as usize;
     if total <= 1 || span == 0 {
@@ -762,11 +807,9 @@ fn year_span(i: usize, total: usize, start: i32, end: i32) -> i32 {
     start + ((i * span) / (total - 1)) as i32
 }
 
-/// 10-year window (2016–2026) with activity-biased density.
 fn year_for_activity(i: usize, total: usize, activity: Activity, rng: &mut impl Rng) -> i32 {
     match activity {
         Activity::Frequent => {
-            // ~80% in past 3 years; remainder older history.
             if rng.random_bool(0.80) {
                 year_span(i, total, 2023, 2026)
             } else {
@@ -774,7 +817,6 @@ fn year_for_activity(i: usize, total: usize, activity: Activity, rng: &mut impl 
             }
         }
         Activity::Lapsed => {
-            // Almost all older; rare recent blip.
             if rng.random_bool(0.92) {
                 year_span(i, total, 2016, 2022)
             } else {
@@ -785,15 +827,13 @@ fn year_for_activity(i: usize, total: usize, activity: Activity, rng: &mut impl 
     }
 }
 
-fn ts_local(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> String {
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:00-04:00")
-}
-
-fn ts_utc(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> String {
-    let dt = Utc
+/// Demo timestamps as America/New_York offset (-04:00) unix millis.
+fn ts_unix_ms(year: i32, month: u32, day: u32, hour: u32, minute: usize) -> i64 {
+    let offset = FixedOffset::west_opt(4 * 3600).unwrap();
+    offset
         .with_ymd_and_hms(year, month, day, hour, minute as u32, 0)
-        .unwrap();
-    dt.to_rfc3339()
+        .unwrap()
+        .timestamp_millis()
 }
 
 fn sanitize_filename(s: &str) -> String {

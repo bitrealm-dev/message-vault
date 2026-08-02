@@ -305,7 +305,7 @@ dependencies = [
  "chrono",
  "clap",
  "image",
- "message_json",
+ "message-ir",
  "rand",
  "rand_chacha",
  "serde_json",
@@ -680,15 +680,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "message-csv"
+version = "0.1.0"
+source = "git+https://github.com/bitrealm-dev/message-exporters#1f4cc4a8dc5a3ee464bbf3629faea89efecd6d89"
+dependencies = [
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "message-ir"
+version = "0.1.0"
+source = "git+https://github.com/bitrealm-dev/message-exporters#1f4cc4a8dc5a3ee464bbf3629faea89efecd6d89"
+dependencies = [
+ "message-csv",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "message-vault-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "clap",
  "csv",
  "futures-util",
- "message_json",
+ "message-ir",
  "rusqlite",
  "serde",
  "serde_json",
@@ -697,16 +720,6 @@ dependencies = [
  "tokio",
  "toml",
  "tower-http",
-]
-
-[[package]]
-name = "message_json"
-version = "0.1.0"
-dependencies = [
- "hex",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]

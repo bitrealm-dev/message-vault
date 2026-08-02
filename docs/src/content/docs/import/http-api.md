@@ -6,8 +6,8 @@ description: Endpoints, auth, and defaults for the Rust serve import API.
 `cargo run --release -- serve` reads `[server]` in `config/config.toml`
 (`bind`). Prefer Message Exporters **`vault-push`** / the **`message-exporter`**
 Vault tab for day-to-day use; this page documents the HTTP surface those tools
-call. They project message-ir export folders into
-[vault JSONL](/reference/vault-jsonl/) before posting here.
+call. They send [message-ir JSONL](/reference/message-ir/) (and upload
+attachments by SHA-256) to these endpoints.
 
 ## Endpoints
 

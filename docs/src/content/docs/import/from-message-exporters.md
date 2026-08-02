@@ -5,8 +5,8 @@ description: Push a message-ir JSONL export folder into Message Vault with the V
 
 Prefer **Message Exporters** for remote import. Export a **message-ir JSONL**
 folder (one `*.jsonl` per conversation, plus `attachments/`), then push that
-folder through the Vault tab or `vault-push`. Push **projects** message-ir into
-[vault JSONL](/reference/vault-jsonl/) before `POST /v1/import`.
+folder through the Vault tab or `vault-push` to `POST /v1/import`. See
+[message-ir ingest](/reference/message-ir/).
 
 Full exporter docs: <https://bitrealm-dev.github.io/message-exporters/>
 
@@ -65,9 +65,8 @@ cargo run --release -p vault-push --features cli -- \
 
 The token identifies your account; you do not need an account UUID.
 
-`vault-push` reads message-ir JSONL, uploads attachments by SHA-256, and sends
-vault JSONL batches to the import API. See
-[Vault JSONL](/reference/vault-jsonl/) for the wire the vault accepts.
+`vault-push` reads message-ir JSONL, uploads attachments by SHA-256, and posts
+IR batches to the import API. See [message-ir ingest](/reference/message-ir/).
 
 ## After import
 

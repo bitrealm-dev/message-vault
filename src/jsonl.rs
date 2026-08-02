@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 
 use crate::models::{self, ExportRecord};
 
-/// Read a JSONL export file (vault, imessage, or sms schema), one typed record per line.
+/// Read a message-ir JSONL conversation file into import records.
 pub fn read_records(path: &Path) -> Result<Vec<ExportRecord>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let reader = BufReader::new(file);
@@ -19,6 +19,6 @@ pub fn read_records(path: &Path) -> Result<Vec<ExportRecord>> {
         lines.push(line);
     }
 
-    models::parse_export_lines(lines)
-        .with_context(|| format!("failed to parse JSONL records in {}", path.display()))
+    models::parse_ir_lines(lines)
+        .with_context(|| format!("failed to parse message-ir JSONL in {}", path.display()))
 }

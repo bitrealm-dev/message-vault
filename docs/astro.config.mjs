@@ -60,7 +60,7 @@ export default defineConfig({
           items: [
             'reference/cli',
             'reference/config-and-accounts',
-            'reference/vault-jsonl',
+            'reference/message-ir',
             'reference/database',
           ],
         },

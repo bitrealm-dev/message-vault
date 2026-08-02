@@ -155,7 +155,7 @@ enum Commands {
         config: PathBuf,
     },
 
-    /// Run HTTP ingest API (`POST /v1/import` with vault JSONL)
+    /// Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
     Serve {
         /// Path to config.toml (must include `[server]` with `bind`)
         #[arg(long, default_value = "config/config.toml")]

@@ -1,13 +1,76 @@
-//! Import helpers around shared JSONL schemas.
+//! Import-side records mapped from message-ir JSONL.
 
 use anyhow::{Context, Result, bail};
+use chrono::{Local, TimeZone, Utc};
+use message_ir::{
+    ConversationHeader, IrAttachment, IrDirection, IrImessage, IrMessage, IrMessageKind, IrService,
+    SCHEMA_VERSION,
+};
+use serde::Deserialize;
 use serde_json::Value;
 
-#[allow(unused_imports)] // re-exported for callers
-pub use message_json::vault::{
-    AttachmentRecord, ConversationRecord, ExportRecord, MessageRecord, ParticipantRecord,
-    TapbackRecord,
-};
+/// One JSONL conversation after IR → vault-row mapping.
+#[derive(Debug, Clone)]
+pub enum ExportRecord {
+    Conversation(ConversationRecord),
+    Message(MessageRecord),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationRecord {
+    pub chat_identifier: String,
+    pub service: Option<String>,
+    pub conversation_type: String,
+    pub group_title: Option<String>,
+    pub participants: Vec<ParticipantRecord>,
+    pub exported_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParticipantRecord {
+    pub handle: String,
+    pub name_hint: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageRecord {
+    pub guid: Option<String>,
+    pub timestamp: String,
+    pub timestamp_utc: Option<String>,
+    pub is_from_me: bool,
+    pub sender: Option<String>,
+    #[allow(dead_code)] // retained from IR for future per-message service UI
+    pub service: Option<String>,
+    pub subject: Option<String>,
+    pub text: Option<String>,
+    pub is_announcement: bool,
+    pub announcement: Option<String>,
+    pub attachments: Vec<AttachmentRecord>,
+    pub tapbacks: Vec<TapbackRecord>,
+    pub is_reply: bool,
+    pub thread_originator_guid: Option<String>,
+    pub thread_originator_part: Option<i64>,
+    pub num_replies: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttachmentRecord {
+    pub path: Option<String>,
+    pub original_name: Option<String>,
+    pub mime_type: Option<String>,
+    pub sha256: Option<String>,
+    pub is_sticker: bool,
+    pub transcription: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TapbackRecord {
+    pub part_index: i64,
+    pub kind: String,
+    pub emoji: Option<String>,
+    pub is_from_me: bool,
+    pub sender: Option<String>,
+}
 
 /// Strip Apple's attachment object-replacement character (U+FFFC) from body text.
 pub fn clean_body(text: Option<&str>) -> Option<String> {
@@ -15,162 +78,230 @@ pub fn clean_body(text: Option<&str>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WireSchema {
-    /// Standard vault JSONL (`schema: "vault"`), also used for CSV ingest.
-    Vault,
-    /// Legacy iOS exporter (`schema: "imessage"`). Same field layout as vault.
-    Imessage,
-    /// Legacy SMS Backup+ JSONL (`schema: "sms"`).
-    Sms,
-}
-
-impl WireSchema {
-    fn from_conversation_value(v: &Value) -> Self {
-        if let Some(s) = v.get("schema").and_then(|x| x.as_str()) {
-            return match s {
-                "sms" => Self::Sms,
-                "vault" => Self::Vault,
-                "imessage" => Self::Imessage,
-                _ => Self::Vault,
-            };
+/// Parse message-ir JSONL lines (header + messages) into import records.
+pub fn parse_ir_lines(lines: impl IntoIterator<Item = String>) -> Result<Vec<ExportRecord>> {
+    let mut iter = lines.into_iter();
+    let header_line = loop {
+        match iter.next() {
+            Some(line) if !line.trim().is_empty() => break line,
+            Some(_) => continue,
+            None => bail!("empty message-ir JSONL (missing conversation header)"),
         }
-        // No schema field: schema_version 2 ⇒ sms; otherwise legacy imessage / vault layout.
-        match v.get("schema_version").and_then(|x| x.as_u64()) {
-            Some(2) => Self::Sms,
-            _ => Self::Imessage,
-        }
+    };
+
+    let header: ConversationHeader =
+        serde_json::from_str(header_line.trim()).context("parse message-ir conversation header")?;
+    if header.schema_version != SCHEMA_VERSION {
+        bail!(
+            "unsupported schema_version {} (expected {})",
+            header.schema_version,
+            SCHEMA_VERSION
+        );
     }
-}
 
-fn participant_from_sms(p: message_json::sms::ParticipantRecord) -> ParticipantRecord {
-    ParticipantRecord {
-        handle: p.handle,
-        name_hint: p.name_hint,
-    }
-}
-
-fn attachment_from_sms(a: message_json::sms::AttachmentRecord) -> AttachmentRecord {
-    AttachmentRecord {
-        path: a.path,
-        original_name: a.original_name,
-        mime_type: a.mime_type,
-        sha256: None,
-        is_sticker: false,
-        transcription: None,
-    }
-}
-
-fn conversation_from_sms(c: message_json::sms::ConversationRecord) -> ConversationRecord {
-    ConversationRecord {
-        schema: message_json::vault::SCHEMA_NAME.to_string(),
-        schema_version: message_json::vault::SCHEMA_VERSION,
-        chat_identifier: c.chat_identifier,
-        service: c.service,
-        conversation_type: c.conversation_type,
-        group_title: c.group_title,
-        participants: c
-            .participants
-            .into_iter()
-            .map(participant_from_sms)
-            .collect(),
-        exported_at: c.exported_at,
-        export_source: None,
-        export_tool: None,
-        export_tool_version: None,
-    }
-}
-
-fn message_from_sms(m: message_json::sms::MessageRecord) -> MessageRecord {
-    MessageRecord {
-        guid: m.guid,
-        timestamp: m.timestamp,
-        timestamp_utc: m.timestamp_utc,
-        is_from_me: m.is_from_me,
-        sender: m.sender,
-        service: m.service,
-        subject: None,
-        text: m.text,
-        read_receipt: None,
-        is_deleted: false,
-        send_effect: None,
-        shared_location: None,
-        is_announcement: false,
-        announcement: None,
-        attachments: m.attachments.into_iter().map(attachment_from_sms).collect(),
-        tapbacks: Vec::new(),
-        parts: Vec::new(),
-        edits: Vec::new(),
-        app: None,
-        is_reply: false,
-        thread_originator_guid: None,
-        thread_originator_part: None,
-        num_replies: 0,
-    }
-}
-
-fn normalize_to_vault_conversation(mut c: ConversationRecord) -> ConversationRecord {
-    c.schema = message_json::vault::SCHEMA_NAME.to_string();
-    c.schema_version = message_json::vault::SCHEMA_VERSION;
-    c
-}
-
-/// Parse JSONL lines from one file into vault records.
-///
-/// Conversation `schema` selects sms vs vault/imessage parsing for following messages.
-/// Missing `schema` with schema_version ≠ 2 is treated as imessage-shaped layout.
-pub fn parse_export_lines(lines: impl IntoIterator<Item = String>) -> Result<Vec<ExportRecord>> {
-    let mut active_schema: Option<WireSchema> = None;
-    let mut records = Vec::new();
-
-    for line in lines {
+    let mut out = vec![ExportRecord::Conversation(conversation_from_ir(&header))];
+    for (i, line) in iter.enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        records.push(parse_export_line(line, &mut active_schema)?);
+        let msg: IrMessage = serde_json::from_str(line)
+            .with_context(|| format!("parse message-ir message line {}", i + 2))?;
+        out.push(ExportRecord::Message(message_from_ir(&msg)?));
     }
-
-    Ok(records)
+    Ok(out)
 }
 
-fn parse_export_line(line: &str, active_schema: &mut Option<WireSchema>) -> Result<ExportRecord> {
-    let value: Value = serde_json::from_str(line).context("invalid JSON")?;
-    let record = value.get("record").and_then(|r| r.as_str()).unwrap_or("");
+fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
+    ConversationRecord {
+        chat_identifier: header.conversation.chat_identifier.clone(),
+        service: None,
+        conversation_type: header.conversation.conversation_type.as_str().to_string(),
+        group_title: header.conversation.group_title.clone(),
+        participants: header
+            .conversation
+            .participants
+            .iter()
+            .map(|p| ParticipantRecord {
+                handle: p.handle.clone(),
+                name_hint: p.display_name.clone(),
+            })
+            .collect(),
+        exported_at: None,
+    }
+}
 
-    match record {
-        "conversation" => {
-            let schema = WireSchema::from_conversation_value(&value);
-            *active_schema = Some(schema);
-            match schema {
-                WireSchema::Sms => {
-                    let c: message_json::sms::ConversationRecord =
-                        serde_json::from_value(value).context("sms conversation")?;
-                    Ok(ExportRecord::Conversation(conversation_from_sms(c)))
-                }
-                WireSchema::Vault | WireSchema::Imessage => {
-                    let c: ConversationRecord =
-                        serde_json::from_value(value).context("conversation")?;
-                    Ok(ExportRecord::Conversation(normalize_to_vault_conversation(
-                        c,
-                    )))
-                }
-            }
+fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
+    let secs = msg.timestamp_unix_ms.div_euclid(1000);
+    let (timestamp, timestamp_utc) = format_timestamps(secs).with_context(|| {
+        format!(
+            "unrepresentable timestamp_unix_ms {}",
+            msg.timestamp_unix_ms
+        )
+    })?;
+    let is_from_me = msg.direction == IrDirection::Outgoing;
+    let im = msg.imessage.as_ref();
+    let text = {
+        let t = msg.text.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(msg.text.clone())
         }
-        "message" => {
-            let schema = active_schema.unwrap_or(WireSchema::Vault);
-            match schema {
-                WireSchema::Sms => {
-                    let m: message_json::sms::MessageRecord =
-                        serde_json::from_value(value).context("sms message")?;
-                    Ok(ExportRecord::Message(message_from_sms(m)))
-                }
-                WireSchema::Vault | WireSchema::Imessage => {
-                    let m: MessageRecord = serde_json::from_value(value).context("message")?;
-                    Ok(ExportRecord::Message(m))
-                }
-            }
+    };
+    let mut tapbacks = tapbacks_from_im(im, is_from_me, msg.sender_handle.as_deref());
+    if tapbacks.is_empty() {
+        if let Some(kind) = im
+            .and_then(|i| i.tapback_kind.as_ref())
+            .filter(|s| !s.is_empty())
+        {
+            tapbacks.push(TapbackRecord {
+                part_index: i64::from(im.and_then(|i| i.associated_part).unwrap_or(0)),
+                kind: kind.clone(),
+                emoji: im.and_then(|i| i.tapback_emoji.clone()),
+                is_from_me,
+                sender: if is_from_me {
+                    None
+                } else {
+                    msg.sender_handle.clone()
+                },
+            });
         }
-        other => bail!("unknown JSONL record type '{other}'"),
+    }
+
+    Ok(MessageRecord {
+        guid: if msg.guid.trim().is_empty() {
+            None
+        } else {
+            Some(msg.guid.clone())
+        },
+        timestamp,
+        timestamp_utc: Some(timestamp_utc),
+        is_from_me,
+        sender: if is_from_me {
+            None
+        } else {
+            msg.sender_handle.clone()
+        },
+        service: Some(service_label(msg.service)),
+        subject: msg.subject.clone().filter(|s| !s.is_empty()),
+        text,
+        is_announcement: im.map(|i| i.announcement.is_some()).unwrap_or(false)
+            || matches!(msg.message_kind, IrMessageKind::Announcement),
+        announcement: im.and_then(|i| i.announcement.clone()),
+        attachments: msg.attachments.iter().map(attachment_from_ir).collect(),
+        tapbacks,
+        is_reply: im.map(|i| i.is_reply).unwrap_or(false),
+        thread_originator_guid: im.and_then(|i| i.in_reply_to_guid.clone()),
+        thread_originator_part: im.and_then(|i| i.thread_originator_part.map(i64::from)),
+        num_replies: im
+            .and_then(|i| i.num_replies.map(i64::from))
+            .unwrap_or(0),
+    })
+}
+
+fn attachment_from_ir(a: &IrAttachment) -> AttachmentRecord {
+    AttachmentRecord {
+        path: a.path.clone(),
+        original_name: a.original_name.clone(),
+        mime_type: a.mime_type.clone(),
+        sha256: a.digest_sha256.clone(),
+        is_sticker: a.is_sticker,
+        transcription: a.transcription.clone(),
+    }
+}
+
+fn tapbacks_from_im(
+    im: Option<&IrImessage>,
+    fallback_from_me: bool,
+    fallback_sender: Option<&str>,
+) -> Vec<TapbackRecord> {
+    let Some(im) = im else {
+        return Vec::new();
+    };
+    let Some(raw) = im.tapbacks.as_ref() else {
+        return Vec::new();
+    };
+    let items = match raw {
+        Value::Array(items) => items.clone(),
+        other if !other.is_null() => vec![other.clone()],
+        _ => return Vec::new(),
+    };
+    items
+        .into_iter()
+        .filter_map(|v| {
+            let t: WireTapback = serde_json::from_value(v).ok()?;
+            Some(TapbackRecord {
+                part_index: t.part_index,
+                kind: t.kind,
+                emoji: t.emoji,
+                is_from_me: t.is_from_me.unwrap_or(fallback_from_me),
+                sender: t
+                    .sender
+                    .or_else(|| fallback_sender.map(|s| s.to_string())),
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct WireTapback {
+    #[serde(default)]
+    part_index: i64,
+    kind: String,
+    #[serde(default)]
+    emoji: Option<String>,
+    #[serde(default)]
+    is_from_me: Option<bool>,
+    #[serde(default)]
+    sender: Option<String>,
+}
+
+fn service_label(service: IrService) -> String {
+    match service {
+        IrService::Sms => "SMS".into(),
+        IrService::IMessage => "iMessage".into(),
+        IrService::Whatsapp => "WhatsApp".into(),
+        IrService::Rcs => "RCS".into(),
+        IrService::Unknown => "Unknown".into(),
+    }
+}
+
+fn format_timestamps(secs: i64) -> Option<(String, String)> {
+    let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
+        Utc.timestamp_opt(secs, 0)
+            .single()
+            .map(|utc| Local.from_utc_datetime(&utc.naive_utc()))
+    })?;
+    let utc = local.with_timezone(&Utc);
+    Some((
+        local.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ir_sms_without_imessage_bag() {
+        let lines = [
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"t","tool_version":"1","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550101","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550101","display_name":"Sam"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1400773261000,"last_timestamp_unix_ms":1400773261000}}}"#.to_string(),
+            r#"{"guid":"g1","timestamp_unix_ms":1400773261000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550101","sender_display_name":"Sam","subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}"#.to_string(),
+        ];
+        let records = parse_ir_lines(lines).unwrap();
+        assert_eq!(records.len(), 2);
+        match &records[1] {
+            ExportRecord::Message(m) => {
+                assert_eq!(m.guid.as_deref(), Some("g1"));
+                assert!(!m.is_from_me);
+                assert_eq!(m.text.as_deref(), Some("hello"));
+                assert_eq!(m.service.as_deref(), Some("SMS"));
+                assert!(m.tapbacks.is_empty());
+                assert!(!m.is_reply);
+            }
+            _ => panic!("expected message"),
+        }
     }
 }

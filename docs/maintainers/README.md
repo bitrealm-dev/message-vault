@@ -41,12 +41,12 @@ Run `npm run check` and `npm run build` before publishing documentation changes.
 
 Keep the two sites separate. Link exporters for backup → **message-ir** JSONL
 (and release layout `message-exporter` + `lib/` + `cli/`), and this site for
-store / import / browse (vault JSONL after `vault-push` projection):
+store / import / browse (message-ir ingest):
 
 - Exporters docs: <https://bitrealm-dev.github.io/message-exporters/>
 - Exporters install / archive layout: <https://bitrealm-dev.github.io/message-exporters/get-started/install/>
 - Vault docs: <https://bitrealm-dev.github.io/message-vault-rs/>
-- Vault JSONL boundary: <https://bitrealm-dev.github.io/message-vault-rs/reference/vault-jsonl/>
+- message-ir ingest: <https://bitrealm-dev.github.io/message-vault-rs/reference/message-ir/>
 
 Prefer absolute published URLs when linking across sites. A reciprocal “Import
 into Message Vault” link on the exporters site can be added in that repository
