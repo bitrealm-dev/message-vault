@@ -176,6 +176,7 @@ export function BrowseGroupChatsPane({
               active={directActive}
               dateStart={directDateStart}
               dateEnd={directDateEnd}
+              showBorder
               onClick={onDirectClick}
             />
           )}

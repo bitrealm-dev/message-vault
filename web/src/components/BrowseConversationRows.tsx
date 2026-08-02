@@ -5,17 +5,30 @@ import type { MouseEvent } from "react";
 import { GroupConversationRowBody } from "./GroupConversationRow";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
+/** Centered hairline (~95% width) between conversation rows. */
+function RowDivider() {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute bottom-0 left-1/2 h-px w-[95%] -translate-x-1/2 bg-border/55"
+    />
+  );
+}
+
 export function DirectConversationRow({
   active,
   dateStart = null,
   dateEnd = null,
-  indentPx = 0,
+  showBorder = false,
+  nested = false,
   onClick,
 }: {
   active: boolean;
   dateStart?: string | null;
   dateEnd?: string | null;
-  indentPx?: number;
+  showBorder?: boolean;
+  /** Under a contact: align content with the contact name column. */
+  nested?: boolean;
   onClick: () => void;
 }) {
   const { formatDateRange } = useDateTimeFormat();
@@ -29,12 +42,13 @@ export function DirectConversationRow({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`group relative flex w-full items-start gap-1.5 border-b border-border/40 py-2.5 pr-3 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
+      className={`group relative flex w-full items-start gap-1.5 py-2.5 pr-3 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
+        nested ? "pl-3" : ""
+      } ${
         active
-          ? "bg-accent/20 hover:bg-accent/25"
-          : "hover:bg-hover-strong"
+          ? "bg-accent/25 hover:bg-accent/30"
+          : "bg-transparent hover:bg-hover"
       }`}
-      style={{ paddingLeft: indentPx }}
     >
       {active && (
         <span
@@ -42,7 +56,8 @@ export function DirectConversationRow({
           className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
         />
       )}
-      <span className="w-10 shrink-0" aria-hidden />
+      {showBorder ? <RowDivider /> : null}
+      {!nested ? <span className="w-10 shrink-0" aria-hidden /> : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium leading-snug text-text">
           1-1 messages
@@ -63,7 +78,7 @@ export function GroupConversationRow({
   checked,
   selectionActive,
   showBorder = true,
-  indentPx = 0,
+  nested = false,
   onSelectColumnClick,
   onRowClick,
 }: {
@@ -72,7 +87,8 @@ export function GroupConversationRow({
   checked: boolean;
   selectionActive: boolean;
   showBorder?: boolean;
-  indentPx?: number;
+  /** Under a contact: align content with the contact name column. */
+  nested?: boolean;
   onSelectColumnClick: (id: number, e: MouseEvent) => void;
   onRowClick: (
     id: number,
@@ -105,15 +121,14 @@ export function GroupConversationRow({
         if (e.shiftKey) e.preventDefault();
       }}
       className={`group relative flex w-full items-start gap-1.5 py-2.5 pr-3 text-left select-none outline-none focus:outline-none focus-visible:outline-none ${
-        selectionActive ? "cursor-pointer" : ""
-      } ${
+        nested ? "pl-3" : ""
+      } ${selectionActive ? "cursor-pointer" : ""} ${
         checked
           ? "bg-accent/40 hover:bg-accent/50"
           : active
-            ? "bg-accent/20 hover:bg-accent/25"
-            : "hover:bg-hover-strong"
-      } ${showBorder ? "border-b border-border/40" : ""}`}
-      style={{ paddingLeft: indentPx }}
+            ? "bg-accent/25 hover:bg-accent/30"
+            : "bg-transparent hover:bg-hover"
+      }`}
     >
       {active && !checked && (
         <span
@@ -127,6 +142,7 @@ export function GroupConversationRow({
           className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent"
         />
       )}
+      {showBorder ? <RowDivider /> : null}
       <button
         type="button"
         aria-pressed={checked}
@@ -136,7 +152,11 @@ export function GroupConversationRow({
           e.stopPropagation();
           if (e.shiftKey) e.preventDefault();
         }}
-        className="flex w-10 shrink-0 cursor-pointer items-center justify-center self-stretch -my-2.5 outline-none focus:outline-none focus-visible:outline-none"
+        className={
+          nested
+            ? "absolute top-0 bottom-0 left-0 z-10 flex w-8 cursor-pointer items-center justify-center outline-none focus:outline-none focus-visible:outline-none"
+            : "flex w-10 shrink-0 cursor-pointer items-center justify-center self-stretch -my-2.5 outline-none focus:outline-none focus-visible:outline-none"
+        }
       >
         <span
           className={

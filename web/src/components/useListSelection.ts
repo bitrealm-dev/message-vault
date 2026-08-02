@@ -273,8 +273,16 @@ export function useListSelection<TId>(
         notifyMutation();
         return;
       }
-      // Groups routes plain checkbox through toggleOrRangeSelect(e) which
-      // also handles meta — already handled above. Plain toggle:
+      // Match row clicks: with nothing selected, open/focus instead of
+      // checking the box (avatar column is easy to hit by accident).
+      if (
+        selectedIds.size === 0 &&
+        rowClickMode !== "alwaysOpen" &&
+        onOpenRef.current
+      ) {
+        onOpenRef.current(id);
+        return;
+      }
       toggleOrRangeSelect(id, false);
       notifyMutation();
     },
@@ -283,6 +291,8 @@ export function useListSelection<TId>(
       checkboxEvents,
       ctrlToggleSelect,
       notifyMutation,
+      rowClickMode,
+      selectedIds.size,
       toggleOrRangeSelect,
     ],
   );

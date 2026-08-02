@@ -5,7 +5,8 @@ import type { MouseEvent } from "react";
 import { BrowseContactRow } from "./BrowseContactRow";
 import { SearchHitSummary } from "./SearchResultsList";
 
-const CHILD_INDENT_PX = 20;
+/** Match BrowsePeopleTreePane: left edge of contact name / phone / labels. */
+const NESTED_FROM_NAME_PX = 76;
 const EMPTY_SELECTED_CONTACT_IDS: ReadonlySet<number> = new Set();
 
 /**
@@ -23,6 +24,7 @@ export function SearchContactResultsList({
   expandedContactIds = EMPTY_SELECTED_CONTACT_IDS,
   contactId = null,
   onToggleContact,
+  onOpenContact,
   onToggleExpand,
   onSelectHit,
   onContactContextMenu,
@@ -41,6 +43,8 @@ export function SearchContactResultsList({
     contactId: number,
     mods?: { shiftKey: boolean },
   ) => void;
+  /** Open/focus on plain name click. */
+  onOpenContact?: (contactId: number) => void;
   onToggleExpand?: (contactId: number) => void;
   onSelectHit?: (hit: SearchConversationHit) => void;
   onContactContextMenu?: (contactId: number, x: number, y: number) => void;
@@ -70,7 +74,7 @@ export function SearchContactResultsList({
       {contacts.map(({ contact, hits }, index) => {
         const expanded = expandedContactIds.has(contact.id);
         const checked = selectedContactIds.has(contact.id);
-        const active = checked || expanded || contact.id === contactId;
+        const active = contact.id === contactId;
         return (
           <div key={contact.id}>
             <BrowseContactRow
@@ -81,33 +85,59 @@ export function SearchContactResultsList({
               expanded={expanded}
               showExpandChevron
               showInsetDivider={!expanded && index < contacts.length - 1}
-              onSelectColumnClick={(id, e: MouseEvent) =>
-                onToggleContact?.(id, { shiftKey: e.shiftKey })
-              }
-              onNamePhoneClick={(id, e) =>
-                onToggleContact?.(id, { shiftKey: e.shiftKey })
-              }
+              onSelectColumnClick={(id, e: MouseEvent) => {
+                if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                  onToggleContact?.(id, { shiftKey: e.shiftKey });
+                  return;
+                }
+                // Avatar column: open when nothing checked, else toggle.
+                if (selectedContactIds.size === 0 && onOpenContact) {
+                  onOpenContact(id);
+                  return;
+                }
+                onToggleContact?.(id, { shiftKey: false });
+              }}
+              onNamePhoneClick={(id, e) => {
+                if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                  onToggleContact?.(id, { shiftKey: e.shiftKey });
+                  return;
+                }
+                // Name always opens so focus moves cleanly between contacts.
+                if (onOpenContact) {
+                  onOpenContact(id);
+                  return;
+                }
+                onToggleContact?.(id, { shiftKey: false });
+              }}
               onContextMenu={(id, x, y) => onContactContextMenu?.(id, x, y)}
               onToggleExpand={onToggleExpand}
             />
             {expanded ? (
-              <div className="border-b border-border/40">
-                {hits.map((hit) => (
+              <div
+                className="mb-1 mr-2 overflow-hidden rounded-md bg-elevated/55"
+                style={{ marginLeft: NESTED_FROM_NAME_PX }}
+              >
+                {hits.map((hit, hi) => (
                   <button
                     key={hit.conversationId}
                     type="button"
                     onClick={() => onSelectHit?.(hit)}
-                    style={{ paddingLeft: CHILD_INDENT_PX + 40 }}
-                    className={`relative flex w-full min-w-0 flex-col gap-0.5 py-2 pr-3 text-left transition-colors ${
+                    className={`relative flex w-full min-w-0 flex-col gap-0.5 py-2 pr-3 pl-3 text-left transition-colors ${
                       selectedConversationId === hit.conversationId
-                        ? "bg-accent/20 hover:bg-accent/25"
-                        : "hover:bg-hover"
+                        ? "bg-accent/25 hover:bg-accent/30"
+                        : "bg-transparent hover:bg-hover"
                     }`}
                   >
                     {selectedConversationId === hit.conversationId ? (
                       <span
                         aria-hidden
                         className="absolute top-1 bottom-1 left-0 w-1 rounded-full bg-accent/80"
+                      />
+                    ) : null}
+                    {hi < hits.length - 1 ? (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute bottom-0 left-1/2 h-px w-[95%] -translate-x-1/2 bg-border/55"
                       />
                     ) : null}
                     <SearchHitSummary

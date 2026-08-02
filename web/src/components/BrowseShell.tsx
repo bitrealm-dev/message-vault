@@ -410,11 +410,19 @@ export function BrowseShell({
     rangeMode: "selectionSpan",
     multiThreshold: "any",
     focusedId: contactId,
-    rowClickMode: "openWhenEmptyElseToggle",
+    // Name/phone always opens (and clears checks via onOpen). Avatar
+    // column still toggles checkboxes once anything is selected, or on
+    // plain click when using alwaysOpen with an empty selection.
+    rowClickMode: "alwaysOpen",
     checkboxEvents: "preventAndStop",
     escapeToClear: false,
     selectAllSetsAnchor: false,
-    onOpen: (id) => selectContactRef.current(id),
+    onOpen: (id) => {
+      // Opening a contact clears checkbox selection so the previous
+      // contact doesn't stay highlighted as checked.
+      setSelectedIds(new Set());
+      selectContactRef.current(id);
+    },
   });
 
   const allSearchContactsSelected =
@@ -579,6 +587,8 @@ export function BrowseShell({
   const selectContact = useCallback(
     (id: number) => {
       allowAutoOpenThreadRef.current = true;
+      // Drop checkbox highlights on other contacts when focus moves.
+      setSelectedIds(new Set());
       setSelectedGroupConversationId(null);
       setGroupChatFilterYear(null);
       cancelContactFormRef.current();
@@ -615,7 +625,15 @@ export function BrowseShell({
       params.delete("conv");
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
-    [contactId, expandContact, pathname, router, searchParams, syncConvUrl],
+    [
+      contactId,
+      expandContact,
+      pathname,
+      router,
+      searchParams,
+      setSelectedIds,
+      syncConvUrl,
+    ],
   );
   selectContactRef.current = selectContact;
 
@@ -2152,6 +2170,7 @@ export function BrowseShell({
           allSearchContactsSelected={allSearchContactsSelected}
           onToggleSelectAllSearchContacts={toggleSelectAllSearchContacts}
           onToggleSearchContact={toggleSearchContact}
+          onOpenSearchContact={selectContact}
           selectedSearchResultKeys={selectedSearchResultKeys}
           allSearchResultsSelected={allSearchResultsSelected}
           onToggleSelectAllSearchResults={toggleSelectAllSearchResults}

@@ -45,7 +45,11 @@ import {
 import { VaultSearchField } from "./VaultSearchField";
 import { YearFilterMenu } from "./YearFilterMenu";
 
-const CHILD_INDENT_PX = 20;
+/**
+ * Left edge of contact name / phone / first label: chevron (w-6) +
+ * gap-1.5 + avatar column (w-10) + gap-1.5.
+ */
+const NESTED_FROM_NAME_PX = 76;
 const EMPTY_SEARCH_EXPANSION: ReadonlySet<number> = new Set();
 
 export function BrowsePeopleTreePane({
@@ -115,6 +119,7 @@ export function BrowsePeopleTreePane({
   allSearchContactsSelected = false,
   onToggleSelectAllSearchContacts,
   onToggleSearchContact,
+  onOpenSearchContact,
   selectedSearchResultKeys,
   allSearchResultsSelected = false,
   onToggleSelectAllSearchResults,
@@ -203,6 +208,7 @@ export function BrowsePeopleTreePane({
     contactId: number,
     mods?: { shiftKey: boolean },
   ) => void;
+  onOpenSearchContact?: (contactId: number) => void;
   selectedSearchResultKeys?: ReadonlySet<SearchResultKey>;
   allSearchResultsSelected?: boolean;
   onToggleSelectAllSearchResults?: () => void;
@@ -602,6 +608,7 @@ export function BrowsePeopleTreePane({
           expandedContactIds={expandedSearchContactIds}
           contactId={contactId}
           onToggleContact={(id, mods) => onToggleSearchContact?.(id, mods)}
+          onOpenContact={onOpenSearchContact}
           onToggleExpand={toggleSearchContactExpanded}
           onSelectHit={(hit) => onSelectSearchHit?.(hit)}
           onContactContextMenu={onSearchContactContextMenu}
@@ -639,8 +646,10 @@ export function BrowsePeopleTreePane({
                 const expanded =
                   !hasContactSelection && expandedContactId === c.id;
                 const checked = selectedContactIds.has(c.id);
-                const active =
-                  c.id === contactId || menuTarget || expanded || checked;
+                // Only the focused contact (or context-menu target) is active —
+                // not merely expanded/checked, so the previous contact drops
+                // its highlight when focus moves.
+                const active = c.id === contactId || menuTarget;
                 return (
                   <div key={c.id}>
                     <BrowseContactRow
@@ -657,12 +666,12 @@ export function BrowsePeopleTreePane({
                       onToggleExpand={onToggleExpandContact}
                     />
                     {expanded && (
-                      <div className="border-b border-border/40">
+                      <div
+                        className="mb-1 mr-2 overflow-hidden rounded-md bg-elevated/55"
+                        style={{ marginLeft: NESTED_FROM_NAME_PX }}
+                      >
                         {loadingThreads ? (
-                          <p
-                            className="py-2.5 text-[12px] text-muted"
-                            style={{ paddingLeft: CHILD_INDENT_PX + 40 }}
-                          >
+                          <p className="px-3 py-2.5 text-[12px] text-muted">
                             Loading…
                           </p>
                         ) : (
@@ -672,18 +681,14 @@ export function BrowsePeopleTreePane({
                                 active={directActive}
                                 dateStart={directRange.dateStart}
                                 dateEnd={directRange.dateEnd}
-                                indentPx={CHILD_INDENT_PX}
+                                showBorder={groupItems.length > 0}
+                                nested
                                 onClick={onDirectClick}
                               />
                             )}
                             {groupItems.length === 0 ? (
                               !hasDirect ? (
-                                <p
-                                  className="py-2.5 text-[12px] text-muted"
-                                  style={{
-                                    paddingLeft: CHILD_INDENT_PX + 40,
-                                  }}
-                                >
+                                <p className="px-3 py-2.5 text-[12px] text-muted">
                                   {emptyGroupsLabel}
                                 </p>
                               ) : null
@@ -700,7 +705,7 @@ export function BrowsePeopleTreePane({
                                   )}
                                   selectionActive={groupSelectionActive}
                                   showBorder={gi < groupItems.length - 1}
-                                  indentPx={CHILD_INDENT_PX}
+                                  nested
                                   onSelectColumnClick={onGroupSelectColumnClick}
                                   onRowClick={onGroupRowClick}
                                 />
