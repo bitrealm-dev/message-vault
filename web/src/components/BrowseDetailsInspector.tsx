@@ -57,13 +57,32 @@ function inspectorParticipants(
   }));
 }
 
+const SECTION_LABEL =
+  "mb-1 text-[12px] font-semibold tracking-wide text-muted uppercase";
+
 function StatRow({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex items-start justify-between gap-3 py-1.5">
-      <span className="text-[12px] text-muted">{label}</span>
-      <span className="min-w-0 text-right text-[12px] text-text tabular-nums">
+      <span className="text-[13px] text-muted">{label}</span>
+      <span className="min-w-0 text-right text-[13px] text-text tabular-nums">
         {value}
       </span>
+    </div>
+  );
+}
+
+function LabelChips({ labels }: { labels: string[] }) {
+  if (labels.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="rounded bg-elevated px-2 py-0.5 text-[13px] font-medium text-text"
+        >
+          {label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -72,16 +91,14 @@ function YearBreakdown({ yearly }: { yearly: { year: number; messageCount: numbe
   if (yearly.length === 0) return null;
   return (
     <div className="mt-3">
-      <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-        Activity by year
-      </div>
+      <div className={SECTION_LABEL}>Activity by year</div>
       <ul className="space-y-0.5">
         {[...yearly]
           .sort((a, b) => b.year - a.year)
           .map((y) => (
             <li
               key={y.year}
-              className="flex items-center justify-between gap-2 text-[12px]"
+              className="flex items-center justify-between gap-2 text-[13px]"
             >
               <span className="text-muted tabular-nums">{y.year}</span>
               <span className="text-text tabular-nums">
@@ -262,9 +279,7 @@ export function BrowseDetailsInspector({
 
     return (
       <InspectorShell title="Conversation">
-        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-          Group
-        </div>
+        <div className={SECTION_LABEL}>Group</div>
         {namedTitle ? (
           <h2 className="text-[15px] font-semibold leading-snug text-text">
             {namedTitle}
@@ -273,15 +288,15 @@ export function BrowseDetailsInspector({
         <div
           className={`${namedTitle ? "mt-2" : ""} flex items-baseline justify-between gap-2`}
         >
-          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+          <span className="text-[12px] font-semibold tracking-wide text-muted uppercase">
             Participants
           </span>
-          <span className="text-[12px] text-muted tabular-nums">
+          <span className="text-[13px] text-muted tabular-nums">
             {participantCount.toLocaleString()}
           </span>
         </div>
         {participants.length > 0 && (
-          <ul className="mt-1.5 list-disc space-y-1 pl-4">
+          <ul className="mt-1.5 list-disc space-y-1.5 pl-4">
             {participants.map((p, idx) => {
               const label = (p.name || p.handle).trim() || "Unknown";
               const display =
@@ -293,7 +308,7 @@ export function BrowseDetailsInspector({
               return (
                 <li
                   key={`${p.handle || p.name}-${idx}`}
-                  className="text-[12px] leading-snug break-all"
+                  className="text-[14px] leading-snug break-all"
                 >
                   {canEditParticipants ? (
                     <EditableContactField
@@ -303,7 +318,7 @@ export function BrowseDetailsInspector({
                           ? `Edit ${display}`
                           : `Create contact for ${display}`
                       }
-                      className="text-[12px] text-text"
+                      className="text-[14px] text-text"
                     >
                       {display}
                     </EditableContactField>
@@ -383,9 +398,7 @@ export function BrowseDetailsInspector({
 
     return (
       <InspectorShell title="Conversation">
-        <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-          Direct
-        </div>
+        <div className={SECTION_LABEL}>Direct</div>
         {canEdit ? (
           <EditableContactField
             onEdit={() => onEditContact()}
@@ -398,21 +411,19 @@ export function BrowseDetailsInspector({
         )}
         {phones.length > 0 && (
           <div className="mt-2">
-            <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-              Phones
-            </div>
+            <div className={SECTION_LABEL}>Phones</div>
             <ul className="space-y-0.5">
               {phones.map((p) => (
                 <li key={p}>
                   {canEdit ? (
                     <EditableContactField
                       onEdit={() => onEditContact()}
-                      className="text-[13px] text-text tabular-nums"
+                      className="text-[14px] text-text tabular-nums"
                     >
                       {formatPhoneDisplay(p)}
                     </EditableContactField>
                   ) : (
-                    <span className="text-[13px] text-text tabular-nums">
+                    <span className="text-[14px] text-text tabular-nums">
                       {formatPhoneDisplay(p)}
                     </span>
                   )}
@@ -422,15 +433,8 @@ export function BrowseDetailsInspector({
           </div>
         )}
         {labels.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {labels.map((label) => (
-              <span
-                key={label}
-                className="rounded bg-elevated px-1.5 py-0.5 text-[11px] font-medium text-muted"
-              >
-                {label}
-              </span>
-            ))}
+          <div className="mt-2">
+            <LabelChips labels={labels} />
           </div>
         )}
         <div className="mt-3 border-t border-border/50 pt-2">
@@ -484,21 +488,19 @@ export function BrowseDetailsInspector({
         </div>
         {phones.length > 0 && (
           <div className="mb-3">
-            <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-              Phones
-            </div>
+            <div className={SECTION_LABEL}>Phones</div>
             <ul className="space-y-0.5">
               {phones.map((p) => (
                 <li key={p}>
                   {canEdit ? (
                     <EditableContactField
                       onEdit={() => onEditContact()}
-                      className="text-[13px] text-text tabular-nums"
+                      className="text-[14px] text-text tabular-nums"
                     >
                       {formatPhoneDisplay(p)}
                     </EditableContactField>
                   ) : (
-                    <span className="text-[13px] text-text tabular-nums">
+                    <span className="text-[14px] text-text tabular-nums">
                       {formatPhoneDisplay(p)}
                     </span>
                   )}
@@ -508,15 +510,8 @@ export function BrowseDetailsInspector({
           </div>
         )}
         {labels.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-1">
-            {labels.map((label) => (
-              <span
-                key={label}
-                className="rounded bg-elevated px-1.5 py-0.5 text-[11px] font-medium text-muted"
-              >
-                {label}
-              </span>
-            ))}
+          <div className="mb-3">
+            <LabelChips labels={labels} />
           </div>
         )}
         <div className="border-t border-border/50 pt-2">

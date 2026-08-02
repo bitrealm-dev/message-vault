@@ -28,6 +28,7 @@ college = 0.20
 
 [one_to_one]
 # Messages per year. Typical band holds most contacts; log-skewed into max.
+# Timestamps are bursty: several msgs on active days, quiet gaps, occasional floods.
 typical_min = 200
 typical_max = 300
 min_per_year = 5

@@ -173,13 +173,14 @@ fn write_individual(
         msg_count,
     )?;
 
+    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
     let mut origin_guid: Option<String> = None;
     for i in 0..msg_count {
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
         let mut msg = text_message(
             &guid,
-            timestamp_for(i, msg_count, span_years, rng),
+            timestamps[i],
             from_me,
             chat_id,
             cfg,
@@ -225,12 +226,13 @@ fn write_unassigned(
     )?;
 
     let span_years = 1.5;
+    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
     for i in 0..msg_count {
         let from_me = i % 4 == 0;
         let guid = format!("unassigned-{chat_id}-{i}");
         let mut msg = text_message(
             &guid,
-            timestamp_for(i, msg_count, span_years, rng),
+            timestamps[i],
             from_me,
             chat_id,
             cfg,
@@ -290,7 +292,7 @@ fn write_group(
     let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
     let msg_count = ((group.msgs_per_year * group.span_years).round() as isize)
         .max(1) as usize;
-    let timestamps = bursty_timestamps(msg_count, group.span_years, rng);
+    let timestamps = bursty_timestamps(msg_count, group.span_years, sample_group_day_burst, rng);
     let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -307,7 +309,7 @@ fn write_group(
         let ann_ts = timestamps
             .first()
             .copied()
-            .unwrap_or_else(|| timestamp_for(0, 1, group.span_years, rng))
+            .unwrap_or_else(|| Utc::now().timestamp_millis())
             - 60_000;
         let mut ann = text_message(
             "grp-0-rename",
@@ -401,11 +403,12 @@ fn write_orphaned(
         vec![],
         n,
     )?;
+    let timestamps = bursty_timestamps(n, 2.0, sample_direct_day_burst, rng);
     for i in 0..n {
         let guid = format!("orphan-{i}");
         let mut msg = text_message(
             &guid,
-            timestamp_for(i, n, 2.0, rng),
+            timestamps[i],
             i % 2 == 0,
             ORPHAN_SENDER,
             cfg,
@@ -567,32 +570,13 @@ fn text_message(
     }
 }
 
-fn timestamp_for(i: usize, total: usize, span_years: f64, rng: &mut impl Rng) -> i64 {
-    let now = Utc::now();
-    let span = Duration::days((span_years * 365.25).max(1.0) as i64);
-    let start = now - span;
-    let progress = if total <= 1 {
-        1.0
-    } else {
-        // Mild clustering: cubic ease toward recent.
-        let t = i as f64 / (total - 1) as f64;
-        t.powf(0.85)
-    };
-    let jitter = Duration::seconds(rng.random_range(0..3_600));
-    let millis = start.timestamp_millis()
-        + ((now.timestamp_millis() - start.timestamp_millis()) as f64 * progress) as i64
-        + jitter.num_milliseconds();
-    // Snap into America/New_York-ish fixed offset representation for demo consistency.
-    let offset = FixedOffset::west_opt(4 * 3600).unwrap();
-    offset
-        .timestamp_millis_opt(millis)
-        .single()
-        .unwrap_or_else(|| offset.from_utc_datetime(&now.naive_utc()))
-        .timestamp_millis()
-}
-
-/// Group chats: several messages on active days, quiet gaps, occasional floods.
-fn bursty_timestamps(total: usize, span_years: f64, rng: &mut impl Rng) -> Vec<i64> {
+/// Several messages on active days, quiet gaps, occasional floods.
+fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
+    total: usize,
+    span_years: f64,
+    mut sample_burst: F,
+    rng: &mut R,
+) -> Vec<i64> {
     if total == 0 {
         return Vec::new();
     }
@@ -604,7 +588,7 @@ fn bursty_timestamps(total: usize, span_years: f64, rng: &mut impl Rng) -> Vec<i
     let mut per_day: HashMap<i64, usize> = HashMap::new();
     let mut left = total;
     while left > 0 {
-        let burst = sample_group_day_burst(rng).min(left);
+        let burst = sample_burst(rng).min(left);
         // Bias toward recent days; most calendar days stay empty.
         let u: f64 = rng.random::<f64>().powf(0.65);
         let day = ((span_days - 1) as f64 * u).round() as i64;
@@ -635,13 +619,26 @@ fn bursty_timestamps(total: usize, span_years: f64, rng: &mut impl Rng) -> Vec<i
                         + Duration::seconds(rng.random_range(12..90));
                 }
             }
-            let local = offset
-                .from_utc_datetime(&dt.naive_utc());
+            let local = offset.from_utc_datetime(&dt.naive_utc());
             out.push(local.timestamp_millis());
         }
     }
     out.sort_unstable();
     out
+}
+
+fn sample_direct_day_burst(rng: &mut impl Rng) -> usize {
+    let roll: f64 = rng.random();
+    if roll < 0.08 {
+        // Heavy day — a lot.
+        rng.random_range(12..=45)
+    } else if roll < 0.20 {
+        // Light day.
+        rng.random_range(1..=2)
+    } else {
+        // Typical active day — several.
+        rng.random_range(3..=10)
+    }
 }
 
 fn sample_group_day_burst(rng: &mut impl Rng) -> usize {
