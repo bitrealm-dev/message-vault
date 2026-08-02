@@ -39,7 +39,9 @@ The search box also accepts operators, composed for you by the advanced form:
 | Operator | Meaning |
 |----------|---------|
 | `"exact phrase"` | Match the phrase |
-| `-word` | Exclude messages containing the word |
+| `-word` / `NOT word` | Exclude messages containing the word |
+| `word*` | Prefix match (e.g. `avoc*` matches avocado) |
+| `OR` / `AND` / `(…)` | Boolean free-text matching (AND is default between words) |
 | `from:me` / `from:name` | Sent by you, or by this sender |
 | `to:me` / `to:name` | Received by you, or sent by you to this person |
 | `with:name` | Conversation involves this person (any role) |

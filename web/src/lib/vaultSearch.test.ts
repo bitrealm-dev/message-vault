@@ -252,6 +252,20 @@ describe("vault search + FTS", () => {
     });
   });
 
+  it("matches OR and prefix* in free text", () => {
+    runWithAccount(accountId, () => {
+      const either = searchVault("zebra OR pineapple");
+      assert.ok(either.totalConversations >= 1);
+      const prefix = searchVault("zebr*");
+      assert.ok(prefix.totalConversations >= 1);
+      assert.ok(
+        prefix.hits.some((h) =>
+          (h.topMatch?.snippet ?? "").toLowerCase().includes("zebra"),
+        ),
+      );
+    });
+  });
+
   it("scopes message search to contacts matching first:/phone:", () => {
     runWithAccount(accountId, () => {
       const byFirst = searchVault("first:Recent");

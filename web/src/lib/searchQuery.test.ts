@@ -324,8 +324,9 @@ describe("formFromSearchQuery", () => {
     assert.equal(form.withPerson, "Ann Lee");
     assert.equal(form.fromPerson, "me");
     assert.equal(form.toPerson, "Sam");
-    assert.equal(form.hasWords, 'birthday "exact phrase"');
-    assert.equal(form.doesntHave, "spam");
+    // Exclusions stay in Has the words when boolean AST is used.
+    assert.equal(form.hasWords, 'birthday "exact phrase" -spam');
+    assert.equal(form.doesntHave, undefined);
     assert.equal(form.conversationType, "group");
     assert.equal(form.attachmentFilter, "yes");
     assert.equal(form.hasAttachment, true);
@@ -339,8 +340,8 @@ describe("formFromSearchQuery", () => {
 
   it("maps is:direct and plain free text", () => {
     const form = formFromSearchQuery('hello is:direct -"bad word"');
-    assert.equal(form.hasWords, "hello");
-    assert.equal(form.doesntHave, '"bad word"');
+    assert.equal(form.hasWords, 'hello -"bad word"');
+    assert.equal(form.doesntHave, undefined);
     assert.equal(form.conversationType, "individual");
   });
 
@@ -394,6 +395,31 @@ describe("toFtsMatch / hasSearchCriteria", () => {
     const q = parseSearchQuery('hello "exact" -nope');
     assert.equal(toFtsMatch(q), '"hello" AND "exact" AND NOT "nope"');
     assert.equal(hasSearchCriteria(q), true);
+  });
+
+  it("compiles OR, grouping, and prefix*", () => {
+    assert.equal(toFtsMatch(parseSearchQuery("cat OR dog")), '("cat" OR "dog")');
+    assert.equal(
+      toFtsMatch(parseSearchQuery("(hello OR world) party")),
+      '("hello" OR "world") AND "party"',
+    );
+    assert.equal(toFtsMatch(parseSearchQuery("avoc*")), "avoc*");
+    assert.equal(
+      toFtsMatch(parseSearchQuery("avoc* OR pine*")),
+      "(avoc* OR pine*)",
+    );
+    // AND binds tighter than OR
+    assert.equal(
+      toFtsMatch(parseSearchQuery("hello OR world party")),
+      '("hello" OR ("world" AND "party"))',
+    );
+  });
+
+  it("keeps operators outside the FTS expression", () => {
+    const q = parseSearchQuery("from:me (cat OR dog) has:attachment");
+    assert.equal(q.from, "me");
+    assert.equal(q.hasAttachment, true);
+    assert.equal(toFtsMatch(q), '("cat" OR "dog")');
   });
 
   it("returns null when only metadata filters are set", () => {

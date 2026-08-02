@@ -9,7 +9,8 @@
  *   from:  to:  with:  subject:  text:  has:attachment|noattachment
  *   filename:  filetype:  in:  after:  before:  source:
  *   is:group  is:direct
- *   "quoted phrases"  -term
+ *   "quoted phrases"  -term  NOT term
+ *   OR / AND / (grouping) / prefix*  among free-text (FTS MATCH only)
  *
  * `from:me` = sent by vault owner. Other `from:` = sender match.
  * `to:` = addressed to (sent by me to them, or `to:me` = received).
@@ -29,15 +30,25 @@ export type DateBounds = {
   to: string | null;
 };
 
+/** Free-text boolean expression compiled to FTS5 MATCH. */
+export type FtsNode =
+  | { type: "term"; value: string; prefix?: boolean }
+  | { type: "phrase"; value: string }
+  | { type: "and"; children: FtsNode[] }
+  | { type: "or"; children: FtsNode[] }
+  | { type: "not"; child: FtsNode };
+
 export type ParsedSearchQuery = {
   /** Queries without an explicit search operator retain legacy message mode. */
   mode: "messages" | "contacts";
-  /** Free-text terms (AND) searched via FTS. */
+  /** Free-text terms (leaf nodes; for highlights / simple AND). */
   terms: string[];
-  /** Phrases that must appear (AND). */
+  /** Phrases that appear in the free-text expression. */
   phrases: string[];
-  /** Terms/phrases to exclude. */
+  /** Terms/phrases excluded via -term or NOT. */
   exclude: string[];
+  /** Boolean free-text expression for FTS5 MATCH (OR / AND / NOT / groups / prefix). */
+  ftsAst: FtsNode | null;
   /** Sender filter; use `me` for vault owner. */
   from: string | null;
   /** Addressed-to filter; use `me` for received messages. */
@@ -153,6 +164,7 @@ const EMPTY: ParsedSearchQuery = {
   terms: [],
   phrases: [],
   exclude: [],
+  ftsAst: null,
   from: null,
   to: null,
   with: null,
@@ -202,6 +214,13 @@ function tokenize(input: string): string[] {
     while (i < s.length && /\s/.test(s[i]!)) i += 1;
     if (i >= s.length) break;
 
+    // Parentheses are their own tokens (FTS grouping).
+    if (s[i] === "(" || s[i] === ")") {
+      tokens.push(s[i]!);
+      i += 1;
+      continue;
+    }
+
     // Negated quoted phrase: -"bad word"
     if (s[i] === "-" && s[i + 1] === '"') {
       const { value, next } = readQuoted(s, i + 2);
@@ -219,7 +238,7 @@ function tokenize(input: string): string[] {
     }
 
     let tok = "";
-    while (i < s.length && !/\s/.test(s[i]!)) {
+    while (i < s.length && !/\s/.test(s[i]!) && s[i] !== "(" && s[i] !== ")") {
       // Operator with quoted value: from:"Ann Lee"
       if (s[i] === ":" && s[i + 1] === '"') {
         tok += ':"';
@@ -234,6 +253,253 @@ function tokenize(input: string): string[] {
     if (tok) tokens.push(tok);
   }
   return tokens;
+}
+
+type FtsLex =
+  | { kind: "term"; value: string; prefix: boolean }
+  | { kind: "phrase"; value: string }
+  | { kind: "or" }
+  | { kind: "and" }
+  | { kind: "not" }
+  | { kind: "lparen" }
+  | { kind: "rparen" };
+
+/** Convert one non-operator token into FTS lexeme(s); leading `-` becomes NOT. */
+function appendFtsLexemes(token: string, out: FtsLex[]): void {
+  if (token === "(") {
+    out.push({ kind: "lparen" });
+    return;
+  }
+  if (token === ")") {
+    out.push({ kind: "rparen" });
+    return;
+  }
+  const upper = token.toUpperCase();
+  if (upper === "OR") {
+    out.push({ kind: "or" });
+    return;
+  }
+  if (upper === "AND") {
+    out.push({ kind: "and" });
+    return;
+  }
+  if (upper === "NOT") {
+    out.push({ kind: "not" });
+    return;
+  }
+
+  let raw = token;
+  if (raw.startsWith("-") && raw.length > 1) {
+    out.push({ kind: "not" });
+    raw = raw.slice(1);
+  }
+
+  if (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) {
+    const phrase = raw.slice(1, -1).trim();
+    if (phrase) out.push({ kind: "phrase", value: phrase });
+    return;
+  }
+
+  let prefix = false;
+  let value = raw;
+  if (value.endsWith("*") && value.length > 1) {
+    prefix = true;
+    value = value.slice(0, -1);
+  }
+  if (value) out.push({ kind: "term", value, prefix });
+}
+
+/** Parse free-text lexemes into an AST. AND binds tighter than OR; NOT is unary. */
+function parseFtsLexemes(lexemes: FtsLex[]): FtsNode | null {
+  let i = 0;
+
+  function peek(): FtsLex | undefined {
+    return lexemes[i];
+  }
+  function consume(): FtsLex | undefined {
+    return lexemes[i++];
+  }
+
+  function parsePrimary(): FtsNode | null {
+    const tok = peek();
+    if (!tok) return null;
+    if (tok.kind === "lparen") {
+      consume();
+      const inner = parseOr();
+      if (peek()?.kind === "rparen") consume();
+      return inner;
+    }
+    if (tok.kind === "term") {
+      consume();
+      return { type: "term", value: tok.value, prefix: tok.prefix || undefined };
+    }
+    if (tok.kind === "phrase") {
+      consume();
+      return { type: "phrase", value: tok.value };
+    }
+    return null;
+  }
+
+  function parseUnary(): FtsNode | null {
+    const tok = peek();
+    if (tok?.kind === "not") {
+      consume();
+      const child = parseUnary();
+      return child ? { type: "not", child } : null;
+    }
+    return parsePrimary();
+  }
+
+  function parseAnd(): FtsNode | null {
+    const nodes: FtsNode[] = [];
+    const first = parseUnary();
+    if (!first) return null;
+    nodes.push(first);
+    while (true) {
+      const tok = peek();
+      if (!tok || tok.kind === "or" || tok.kind === "rparen") break;
+      if (tok.kind === "and") {
+        consume();
+        const next = parseUnary();
+        if (!next) break;
+        nodes.push(next);
+        continue;
+      }
+      // Implicit AND before another primary / NOT / (
+      if (
+        tok.kind === "not" ||
+        tok.kind === "lparen" ||
+        tok.kind === "term" ||
+        tok.kind === "phrase"
+      ) {
+        const next = parseUnary();
+        if (!next) break;
+        nodes.push(next);
+        continue;
+      }
+      break;
+    }
+    if (nodes.length === 1) return nodes[0]!;
+    return { type: "and", children: nodes };
+  }
+
+  function parseOr(): FtsNode | null {
+    const nodes: FtsNode[] = [];
+    let first = parseAnd();
+    if (!first) return null;
+    nodes.push(first);
+    while (peek()?.kind === "or") {
+      consume();
+      const next = parseAnd();
+      if (!next) break;
+      nodes.push(next);
+    }
+    if (nodes.length === 1) return nodes[0]!;
+    return { type: "or", children: nodes };
+  }
+
+  const ast = parseOr();
+  return ast;
+}
+
+function flattenFtsLeaves(
+  node: FtsNode | null,
+  into: { terms: string[]; phrases: string[]; exclude: string[] },
+  negated = false,
+): void {
+  if (!node) return;
+  switch (node.type) {
+    case "term":
+      if (negated) into.exclude.push(node.value);
+      else into.terms.push(node.value);
+      break;
+    case "phrase":
+      if (negated) into.exclude.push(node.value);
+      else into.phrases.push(node.value);
+      break;
+    case "not":
+      flattenFtsLeaves(node.child, into, !negated);
+      break;
+    case "and":
+    case "or":
+      for (const child of node.children) flattenFtsLeaves(child, into, negated);
+      break;
+  }
+}
+
+function compileFtsNode(node: FtsNode): string | null {
+  switch (node.type) {
+    case "term": {
+      const safe = node.value.replace(/"/g, "").trim();
+      if (!safe) return null;
+      if (node.prefix) {
+        // FTS5 prefix queries must be unquoted bare tokens.
+        const bare = safe.replace(/\s+/g, "");
+        return bare ? `${bare}*` : null;
+      }
+      return `"${safe}"`;
+    }
+    case "phrase": {
+      const safe = node.value.replace(/"/g, "").trim();
+      return safe ? `"${safe}"` : null;
+    }
+    case "not": {
+      const inner = compileFtsNode(node.child);
+      return inner ? `NOT ${inner}` : null;
+    }
+    case "and": {
+      const parts = node.children
+        .map(compileFtsNode)
+        .filter((p): p is string => !!p);
+      if (parts.length === 0) return null;
+      if (parts.length === 1) return parts[0]!;
+      return parts
+        .map((p) => {
+          if (p.startsWith("(") && p.endsWith(")")) return p;
+          return p.includes(" OR ") ? `(${p})` : p;
+        })
+        .join(" AND ");
+    }
+    case "or": {
+      const parts = node.children
+        .map(compileFtsNode)
+        .filter((p): p is string => !!p);
+      if (parts.length === 0) return null;
+      if (parts.length === 1) return parts[0]!;
+      return `(${parts
+        .map((p) => {
+          if (p.startsWith("(") && p.endsWith(")")) return p;
+          return p.includes(" AND ") ? `(${p})` : p;
+        })
+        .join(" OR ")})`;
+    }
+  }
+}
+
+/** Serialize an FTS AST back into query-bar free text (for the advanced form). */
+export function serializeFtsAst(node: FtsNode): string {
+  switch (node.type) {
+    case "term":
+      return node.prefix ? `${node.value}*` : node.value;
+    case "phrase":
+      return quoteToken(node.value);
+    case "not": {
+      const inner = serializeFtsAst(node.child);
+      if (node.child.type === "term" || node.child.type === "phrase") {
+        return `-${inner}`;
+      }
+      return `NOT (${inner})`;
+    }
+    case "and":
+      return node.children.map(serializeFtsAst).join(" ");
+    case "or":
+      return node.children
+        .map((child) => {
+          const s = serializeFtsAst(child);
+          return child.type === "and" ? `(${s})` : s;
+        })
+        .join(" OR ");
+  }
 }
 
 /** Absolute YYYY / YYYY-MM-DD, or relative Nd/Nw/Nm/Ny → local calendar YYYY-MM-DD. */
@@ -314,28 +580,17 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
     terms: [],
     phrases: [],
     exclude: [],
+    ftsAst: null,
     lastContact: { ...NO_BOUNDS },
     firstContact: { ...NO_BOUNDS },
   };
   if (!input.trim()) return out;
 
+  const ftsLexemes: FtsLex[] = [];
+
   for (const raw of tokenize(input)) {
-    let token = raw;
-    let negated = false;
-    if (token.startsWith("-") && token.length > 1) {
-      negated = true;
-      token = token.slice(1);
-    }
-
-    if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
-      const phrase = token.slice(1, -1).trim();
-      if (!phrase) continue;
-      if (negated) out.exclude.push(phrase);
-      else out.phrases.push(phrase);
-      continue;
-    }
-
-    const m = token.match(OPERATOR_RE);
+    // Operators bind as global AND filters; free text builds an FTS AST.
+    const m = raw.match(OPERATOR_RE);
     if (m) {
       const op = m[1]!.toLowerCase();
       const value = m[2]!.trim().replace(/^"|"$/g, "");
@@ -441,10 +696,11 @@ export function parseSearchQuery(input: string): ParsedSearchQuery {
       continue;
     }
 
-    if (negated) out.exclude.push(token);
-    else out.terms.push(token);
+    appendFtsLexemes(raw, ftsLexemes);
   }
 
+  out.ftsAst = parseFtsLexemes(ftsLexemes);
+  flattenFtsLeaves(out.ftsAst, out);
   return out;
 }
 
@@ -487,11 +743,16 @@ function dateFilterFromBounds(from: string | null, to: string | null): DateFilte
  */
 export function formFromSearchQuery(query: string): AdvancedSearchForm {
   const parsed = parseSearchQuery(query);
-  const hasWords = [
-    ...parsed.terms,
-    ...parsed.phrases.map((p) => quoteToken(p)),
-  ].join(" ");
-  const doesntHave = parsed.exclude.map((e) => quoteToken(e)).join(" ");
+  // Prefer full AST serialization so OR / prefix / NOT round-trip in Has the words.
+  const hasWords = parsed.ftsAst
+    ? serializeFtsAst(parsed.ftsAst)
+    : [
+        ...parsed.terms,
+        ...parsed.phrases.map((p) => quoteToken(p)),
+      ].join(" ");
+  const doesntHave = parsed.ftsAst
+    ? undefined
+    : parsed.exclude.map((e) => quoteToken(e)).join(" ") || undefined;
   const attachmentFilter: AttachmentFilter =
     parsed.hasAttachment === true
       ? "yes"
@@ -513,7 +774,7 @@ export function formFromSearchQuery(query: string): AdvancedSearchForm {
     fromPerson: parsed.from ?? undefined,
     toPerson: parsed.to ?? undefined,
     hasWords: hasWords || undefined,
-    doesntHave: doesntHave || undefined,
+    doesntHave,
     subject: parsed.subject ?? undefined,
     filename: parsed.filename ?? undefined,
     filetype: parsed.filetype ?? undefined,
@@ -639,6 +900,7 @@ export function composeSearchQuery(form: AdvancedSearchForm): string {
 
 export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
   return (
+    !!q.ftsAst ||
     q.terms.length > 0 ||
     q.phrases.length > 0 ||
     q.exclude.length > 0 ||
@@ -676,17 +938,9 @@ export function hasSearchCriteria(q: ParsedSearchQuery): boolean {
  */
 export function toFtsMatch(q: ParsedSearchQuery): string | null {
   const parts: string[] = [];
-  for (const t of q.terms) {
-    const safe = t.replace(/"/g, "");
-    if (safe) parts.push(`"${safe}"`);
-  }
-  for (const p of q.phrases) {
-    const safe = p.replace(/"/g, "");
-    if (safe) parts.push(`"${safe}"`);
-  }
-  for (const e of q.exclude) {
-    const safe = e.replace(/"/g, "");
-    if (safe) parts.push(`NOT "${safe}"`);
+  if (q.ftsAst) {
+    const compiled = compileFtsNode(q.ftsAst);
+    if (compiled) parts.push(compiled);
   }
   if (q.subject?.trim()) {
     const safe = q.subject.trim().replace(/"/g, "");
@@ -697,5 +951,6 @@ export function toFtsMatch(q: ParsedSearchQuery): string | null {
     if (safe) parts.push(`body:"${safe}"`);
   }
   if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0]!;
   return parts.join(" AND ");
 }
