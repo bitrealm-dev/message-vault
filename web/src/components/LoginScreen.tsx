@@ -6,9 +6,11 @@ import {
   normalizeCountryCodeDigitsOnBlur,
   toPhoneE164FromParts,
 } from "@/lib/phoneE164";
+import type { AuthMode } from "@/lib/authMode";
+import { formatBuildInfo } from "@/lib/buildInfo";
 import { MAX_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { HankoLogin } from "./HankoLogin";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -17,8 +19,16 @@ import { CheckMark, PasswordField } from "./PasswordField";
 
 type PhoneMode = "usa" | "international";
 
-export function LoginScreen() {
-  const router = useRouter();
+type Props = {
+  authMode?: AuthMode;
+  hankoApiUrl?: string;
+};
+
+export function LoginScreen({
+  authMode = "local",
+  hankoApiUrl = "",
+}: Props) {
+  const buildLabel = formatBuildInfo();
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
@@ -70,8 +80,10 @@ export function LoginScreen() {
       if (!res.ok) {
         throw new Error(json.error ?? "Invalid user ID or password");
       }
-      router.replace("/");
-      router.refresh();
+      // Full reload clears any router cache of pre-login /login redirects
+      // for protected routes (settings tabs, etc.).
+      window.location.assign("/");
+      return;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid user ID or password");
     } finally {
@@ -99,8 +111,8 @@ export function LoginScreen() {
       if (!res.ok) {
         throw new Error(json.error ?? "Create failed");
       }
-      router.replace("/");
-      router.refresh();
+      window.location.assign("/");
+      return;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
     } finally {
@@ -108,10 +120,39 @@ export function LoginScreen() {
     }
   };
 
+  if (authMode === "hanko") {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="flex min-h-full items-center justify-center p-6">
+          <div className="w-full max-w-lg">
+            <div className="rounded-xl border border-border bg-elevated p-8 shadow-xl">
+              <h1 className="text-center text-2xl font-bold tracking-tight text-text">
+                Welcome to the Message Vault
+              </h1>
+              <div className="mt-8">
+                {hankoApiUrl ? (
+                  <HankoLogin apiUrl={hankoApiUrl} />
+                ) : (
+                  <p className="text-center text-[13px] text-danger" role="alert">
+                    Hanko is not configured. Set NEXT_PUBLIC_HANKO_API_URL.
+                  </p>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-right font-mono text-[11px] text-muted">
+              {buildLabel}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex min-h-full items-center justify-center p-6">
-        <div className="w-full max-w-lg rounded-xl border border-border bg-elevated p-8 shadow-xl">
+        <div className="w-full max-w-lg">
+          <div className="rounded-xl border border-border bg-elevated p-8 shadow-xl">
           <h1 className="text-center text-2xl font-bold tracking-tight text-text">
             Welcome to the Message Vault
           </h1>
@@ -346,6 +387,10 @@ export function LoginScreen() {
               {error}
             </p>
           )}
+          </div>
+          <p className="mt-3 text-right font-mono text-[11px] text-muted">
+            {buildLabel}
+          </p>
         </div>
       </div>
     </div>

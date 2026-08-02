@@ -27,6 +27,7 @@
   ],
   "indexes": [
     "ix_account_emails_one_primary",
+    "ix_accounts_hanko_user_id",
     "ix_conversations_account_id",
     "ix_participants_handle",
     "ix_messages_conversation_timestamp",

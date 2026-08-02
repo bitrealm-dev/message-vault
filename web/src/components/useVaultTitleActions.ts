@@ -1,12 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useConfirmDialog } from "./useConfirmDialog";
 
 /** Shared logout / demo-reset actions for Message Vault title menus. */
 export function useVaultTitleActions() {
-  const router = useRouter();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [demoResetAvailable, setDemoResetAvailable] = useState(false);
   const [resettingDemo, setResettingDemo] = useState(false);
@@ -28,10 +26,23 @@ export function useVaultTitleActions() {
   }, []);
 
   const logout = useCallback(async () => {
+    try {
+      const modeRes = await fetch("/api/auth/mode");
+      const modeJson = (await modeRes.json()) as {
+        authMode?: string;
+        hankoApiUrl?: string;
+      };
+      if (modeJson.authMode === "hanko" && modeJson.hankoApiUrl) {
+        const { Hanko } = await import("@teamhanko/hanko-elements");
+        const hanko = new Hanko(modeJson.hankoApiUrl);
+        await hanko.logout();
+      }
+    } catch {
+      // Best-effort Hanko logout; still clear the vault cookie.
+    }
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  }, [router]);
+    window.location.assign("/login");
+  }, []);
 
   const resetDemo = useCallback(async () => {
     setResetError(null);

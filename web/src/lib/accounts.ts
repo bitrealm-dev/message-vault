@@ -68,6 +68,9 @@ function friendlyDbError(err: unknown): Error {
   if (message.includes("UNIQUE constraint failed: account_emails.email")) {
     return new Error("That email is already used by another account.");
   }
+  if (message.includes("UNIQUE constraint failed: accounts.hanko_user_id")) {
+    return new Error("That Hanko identity is already linked to an account.");
+  }
   if (err instanceof Error) return err;
   return new Error(message);
 }
@@ -239,6 +242,113 @@ export function accountHasNoPassword(accountId: string): boolean {
       .get(accountId) as { password_hash: string | null } | undefined;
     if (!row) return false;
     return row.password_hash == null || row.password_hash === "";
+  } finally {
+    db.close();
+  }
+}
+
+/** True when the account is linked to a Hanko identity. */
+export function accountHasHankoLink(accountId: string): boolean {
+  const db = openDb();
+  try {
+    const row = db
+      .prepare(`SELECT hanko_user_id FROM accounts WHERE id = ?`)
+      .get(accountId) as { hanko_user_id: string | null } | undefined;
+    return Boolean(row?.hanko_user_id?.trim());
+  } finally {
+    db.close();
+  }
+}
+
+export function findAccountByHankoUserId(hankoUserId: string): Account | null {
+  const trimmed = hankoUserId.trim();
+  if (!trimmed) return null;
+  const db = openDb();
+  try {
+    const row = db
+      .prepare(
+        `SELECT id, username, read_only FROM accounts WHERE hanko_user_id = ?`,
+      )
+      .get(trimmed) as AccountRow | undefined;
+    if (!row) return null;
+    const emails = readAccountEmails(db, row.id);
+    return rowToAccount(row, emails);
+  } finally {
+    db.close();
+  }
+}
+
+function allocateHankoUsername(
+  db: Database.Database,
+  email: string | null | undefined,
+  hankoUserId: string,
+): string {
+  const localPart = email?.split("@")[0]?.trim() ?? "";
+  const sanitized = localPart
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .slice(0, 32);
+  const base =
+    sanitized ||
+    `user_${hankoUserId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12) || crypto.randomUUID().slice(0, 8)}`;
+
+  if (!findAccountIdByUsername(db, base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}_${i}`;
+    if (!findAccountIdByUsername(db, candidate)) return candidate;
+  }
+  return `user_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+/**
+ * Create a passwordless vault account linked to a Hanko user id.
+ * Preferred name / phone are filled later via onboarding.
+ */
+export function createHankoLinkedAccount(input: {
+  hankoUserId: string;
+  email?: string | null;
+}): Account {
+  const hankoUserId = input.hankoUserId.trim();
+  if (!hankoUserId) throw new Error("hanko user id is required");
+
+  const db = openDb();
+  try {
+    const existing = db
+      .prepare(`SELECT id FROM accounts WHERE hanko_user_id = ?`)
+      .get(hankoUserId) as { id: string } | undefined;
+    if (existing) {
+      const row = getAccountRow(db, existing.id);
+      if (!row) throw new Error("account not found");
+      return rowToAccount(row, readAccountEmails(db, existing.id));
+    }
+
+    const id = crypto.randomUUID();
+    const username = allocateHankoUsername(db, input.email, hankoUserId);
+    const email =
+      typeof input.email === "string" && input.email.trim()
+        ? normalizeEmail(input.email)
+        : null;
+
+    try {
+      db.prepare(
+        `INSERT INTO accounts (id, username, read_only, password_hash, hanko_user_id)
+         VALUES (?, ?, 0, NULL, ?)`,
+      ).run(id, username, hankoUserId);
+      if (email) {
+        db.prepare(
+          `INSERT INTO account_emails (account_id, email, is_primary)
+           VALUES (?, ?, 1)`,
+        ).run(id, email);
+      }
+    } catch (err) {
+      throw friendlyDbError(err);
+    }
+
+    return {
+      id,
+      username,
+      emails: email ? [{ email, is_primary: true }] : [],
+      read_only: false,
+    };
   } finally {
     db.close();
   }

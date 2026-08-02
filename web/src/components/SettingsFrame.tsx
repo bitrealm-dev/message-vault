@@ -28,6 +28,9 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
               <Link
                 key={tab.href}
                 href={tab.href}
+                // Avoid caching a logged-out redirect for these tabs (Next can
+                // reuse a pre-login prefetch and bounce back to /login).
+                prefetch={false}
                 className={`relative -mb-px px-3 py-2 text-[13px] font-medium transition-colors ${
                   active
                     ? "text-text"

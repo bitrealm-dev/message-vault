@@ -34,6 +34,16 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=sha-
 
+      - name: Build stamp
+        id: stamp
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "build_id=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_id=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "build_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -42,5 +52,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_ID=${{ steps.stamp.outputs.build_id }}
+            BUILD_DATE=${{ steps.stamp.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

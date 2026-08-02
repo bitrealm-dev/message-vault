@@ -17,6 +17,8 @@ type AccountData = {
   id: string;
   username: string;
   noPassword: boolean;
+  hankoLinked?: boolean;
+  hideLocalPassword?: boolean;
   isDemo: boolean;
   preferredName: string | null;
   displayName: string;
@@ -72,6 +74,7 @@ export function SettingsAccountForm() {
     void load();
   }, [load]);
 
+  const hideLocalPassword = data?.hideLocalPassword === true;
   const phonesToSave = phonesForSave(phones);
   const savedPhones = data?.phones ?? [];
   const passwordsMatch =
@@ -82,9 +85,9 @@ export function SettingsAccountForm() {
   const dirty =
     data != null &&
     (preferredName !== savedName ||
-      noPassword !== data.noPassword ||
-      password !== "" ||
-      passwordConfirm !== "" ||
+      (!hideLocalPassword && noPassword !== data.noPassword) ||
+      (!hideLocalPassword && password !== "") ||
+      (!hideLocalPassword && passwordConfirm !== "") ||
       phonesToSave.length !== savedPhones.length ||
       phonesToSave.some((phone, i) => phone !== savedPhones[i]));
   const canSave =
@@ -111,10 +114,12 @@ export function SettingsAccountForm() {
       );
       return;
     }
-    const passwordRequired = data?.noPassword === true && !noPassword;
+    const passwordRequired =
+      !hideLocalPassword && data?.noPassword === true && !noPassword;
     const changingPassword =
-      passwordRequired || password !== "" || passwordConfirm !== "";
-    if (!noPassword && changingPassword) {
+      !hideLocalPassword &&
+      (passwordRequired || password !== "" || passwordConfirm !== "");
+    if (!hideLocalPassword && !noPassword && changingPassword) {
       if (!password) {
         setError("Enter a new password.");
         return;
@@ -139,11 +144,13 @@ export function SettingsAccountForm() {
         preferredName,
         phones: phonesToSave,
       };
-      if (data && noPassword !== data.noPassword) {
-        if (noPassword) body.noPassword = true;
-        else body.password = password;
-      } else if (!noPassword && changingPassword) {
-        body.password = password;
+      if (!hideLocalPassword) {
+        if (data && noPassword !== data.noPassword) {
+          if (noPassword) body.noPassword = true;
+          else body.password = password;
+        } else if (!noPassword && changingPassword) {
+          body.password = password;
+        }
       }
       const res = await fetch("/api/settings/account", {
         method: "PATCH",
@@ -223,75 +230,82 @@ export function SettingsAccountForm() {
             />
           </label>
 
-          <div>
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                aria-expanded={passwordOpen}
-                disabled={noPassword || saving}
-                onClick={() => {
-                  setPasswordOpen((open) => {
-                    if (open) {
-                      setPassword("");
-                      setPasswordConfirm("");
-                    }
-                    return !open;
-                  });
-                  setError(null);
-                }}
-                className="rounded-md border border-border bg-elevated px-3 py-1.5 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
-              >
-                Change password
-              </button>
-              <label className="inline-flex items-center gap-2 text-[13px] text-text">
-                <input
-                  type="checkbox"
-                  checked={noPassword}
-                  disabled={saving || data?.isDemo}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setNoPassword(checked);
-                    setSaved(false);
-                    setError(null);
-                    if (checked) {
-                      setPasswordOpen(false);
-                      setPassword("");
-                      setPasswordConfirm("");
-                    }
-                  }}
-                  className="accent-accent disabled:opacity-70"
-                />
-                Sign in without a password
-              </label>
-            </div>
-
-            {passwordOpen && !noPassword ? (
-              <div className="mt-4 space-y-4">
-                <PasswordField
-                  label="New password"
-                  value={password}
-                  onChange={(value) => {
-                    setPassword(value);
-                    setSaved(false);
+          {hideLocalPassword ? (
+            <p className="text-[13px] text-muted">
+              Sign-in is managed by Hanko. Password settings are not available
+              for this account.
+            </p>
+          ) : (
+            <div>
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  aria-expanded={passwordOpen}
+                  disabled={noPassword || saving}
+                  onClick={() => {
+                    setPasswordOpen((open) => {
+                      if (open) {
+                        setPassword("");
+                        setPasswordConfirm("");
+                      }
+                      return !open;
+                    });
                     setError(null);
                   }}
-                  autoComplete="new-password"
-                  showCheck={passwordsMatch}
-                />
-                <PasswordField
-                  label="Confirm new password"
-                  value={passwordConfirm}
-                  onChange={(value) => {
-                    setPasswordConfirm(value);
-                    setSaved(false);
-                    setError(null);
-                  }}
-                  autoComplete="new-password"
-                  showCheck={passwordsMatch}
-                />
+                  className="rounded-md border border-border bg-elevated px-3 py-1.5 text-[13px] text-text transition-colors hover:bg-hover disabled:opacity-50"
+                >
+                  Change password
+                </button>
+                <label className="inline-flex items-center gap-2 text-[13px] text-text">
+                  <input
+                    type="checkbox"
+                    checked={noPassword}
+                    disabled={saving || data?.isDemo}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setNoPassword(checked);
+                      setSaved(false);
+                      setError(null);
+                      if (checked) {
+                        setPasswordOpen(false);
+                        setPassword("");
+                        setPasswordConfirm("");
+                      }
+                    }}
+                    className="accent-accent disabled:opacity-70"
+                  />
+                  Sign in without a password
+                </label>
               </div>
-            ) : null}
-          </div>
+
+              {passwordOpen && !noPassword ? (
+                <div className="mt-4 space-y-4">
+                  <PasswordField
+                    label="New password"
+                    value={password}
+                    onChange={(value) => {
+                      setPassword(value);
+                      setSaved(false);
+                      setError(null);
+                    }}
+                    autoComplete="new-password"
+                    showCheck={passwordsMatch}
+                  />
+                  <PasswordField
+                    label="Confirm new password"
+                    value={passwordConfirm}
+                    onChange={(value) => {
+                      setPasswordConfirm(value);
+                      setSaved(false);
+                      setError(null);
+                    }}
+                    autoComplete="new-password"
+                    showCheck={passwordsMatch}
+                  />
+                </div>
+              ) : null}
+            </div>
+          )}
 
           <div className="space-y-4 border-t border-border pt-6">
             <div>

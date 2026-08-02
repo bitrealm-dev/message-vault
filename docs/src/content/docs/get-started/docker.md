@@ -171,6 +171,33 @@ http://192.168.50.100:3000/login
 http://192.168.50.100:8080/health
 ```
 
+### Auth mode (`VAULT_AUTH`)
+
+- **`local` (default)** — username/password in the vault UI. Use for self-host
+  and laptop demo/personal profiles.
+- **`hanko`** — Hanko Cloud (or self-hosted Hanko) for identity; the vault still
+  uses the `mv_account_id` cookie after `POST /api/auth/hanko/session`. First
+  sign-in auto-creates an account and sends the user through name/phone
+  onboarding.
+
+```env
+VAULT_AUTH=hanko
+NEXT_PUBLIC_HANKO_API_URL=https://<your-hanko-project>.hanko.io
+HANKO_API_URL=https://<your-hanko-project>.hanko.io
+```
+
+`NEXT_PUBLIC_*` is baked at **image build** time for release/hub images — rebuild
+and push when the Hanko URL changes. Dev profile can rely on runtime env.
+
+For production behind HTTPS (e.g. `https://app.bitrealm.dev`):
+
+- Set Hanko allowed origin to that exact app URL (not apex/`www` unless you also
+  serve the app there).
+- Vault session cookies are marked `Secure` in production / hanko mode.
+- Do not put Cloudflare Zero Trust / Access in front of the same login if Hanko
+  is the IdP. Allow HTTPS egress from the VPS to Hanko for JWKS verification.
+- Import API Bearer tokens are unchanged and separate from Hanko.
+
 Import auth uses per-account tokens, not a host-wide secret. Limit inbound
 TCP `3000` and `8080` on the host firewall to your trusted LAN/VPN subnet, and
 do **not** add router port-forwarding unless you intentionally expose the

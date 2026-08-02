@@ -264,6 +264,15 @@ CREATE TABLE trashed_contacts (
 );
 "#;
 
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+        params![column],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let exists: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -636,7 +645,8 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             read_only INTEGER NOT NULL DEFAULT 0,
             password_hash TEXT,
-            preferred_name TEXT
+            preferred_name TEXT,
+            hanko_user_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS account_emails (
@@ -673,6 +683,17 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        "#,
+    )?;
+
+    if !column_exists(conn, "accounts", "hanko_user_id")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN hanko_user_id TEXT")?;
+    }
+    conn.execute_batch(
+        r#"
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
+            ON accounts(hanko_user_id)
+            WHERE hanko_user_id IS NOT NULL AND hanko_user_id != ''
         "#,
     )?;
     Ok(())
@@ -769,7 +790,8 @@ mod tests {
                 "username",
                 "read_only",
                 "password_hash",
-                "preferred_name"
+                "preferred_name",
+                "hanko_user_id"
             ]
         );
         assert_eq!(

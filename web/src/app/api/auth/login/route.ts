@@ -1,4 +1,5 @@
 import { authenticateAccount, INVALID_CREDENTIALS } from "@/lib/accounts";
+import { isHankoAuth } from "@/lib/authMode";
 import { accountCookieOptions } from "@/lib/session";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -6,6 +7,13 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  if (isHankoAuth()) {
+    return NextResponse.json(
+      { error: "Local login is disabled when VAULT_AUTH=hanko" },
+      { status: 403 },
+    );
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();

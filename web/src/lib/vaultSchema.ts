@@ -10,6 +10,29 @@ function tableExists(db: Database.Database, name: string): boolean {
   return row.n > 0;
 }
 
+function columnExists(
+  db: Database.Database,
+  table: string,
+  column: string,
+): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  return rows.some((row) => row.name === column);
+}
+
+function ensureAccountColumns(db: Database.Database): void {
+  if (!tableExists(db, "accounts")) return;
+  if (!columnExists(db, "accounts", "hanko_user_id")) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN hanko_user_id TEXT`);
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
+      ON accounts(hanko_user_id)
+      WHERE hanko_user_id IS NOT NULL AND hanko_user_id != ''
+  `);
+}
+
 export function ensureVaultSchema(db: Database.Database): void {
   db.exec(`PRAGMA foreign_keys = ON;`);
 
@@ -19,7 +42,8 @@ export function ensureVaultSchema(db: Database.Database): void {
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       read_only INTEGER NOT NULL DEFAULT 0,
       password_hash TEXT,
-      preferred_name TEXT
+      preferred_name TEXT,
+      hanko_user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS schema_meta (
@@ -283,6 +307,7 @@ export function ensureVaultSchema(db: Database.Database): void {
     );
   `);
 
+  ensureAccountColumns(db);
   ensureMessagesFts(db);
 }
 

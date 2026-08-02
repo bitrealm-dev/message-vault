@@ -1,5 +1,6 @@
 import {
   accountHasApiToken,
+  accountHasHankoLink,
   accountHasNoPassword,
   deleteAccount,
   deleteAccountApiToken,
@@ -17,6 +18,7 @@ import {
   loadAccountProfile,
   saveAccountProfile,
 } from "@/lib/accountProfile";
+import { isHankoAuth } from "@/lib/authMode";
 import { isDemoAccount } from "@/lib/demoAccount";
 import { mutationErrorStatus } from "@/lib/owner";
 import { validatePasswordPlaintext } from "@/lib/password";
@@ -28,6 +30,7 @@ export const runtime = "nodejs";
 
 function accountJson(account: ReturnType<typeof loadAccount>, accountId: string) {
   const profile = loadAccountProfile(accountId);
+  const hankoLinked = accountHasHankoLink(accountId);
   return {
     id: account.id,
     username: account.username,
@@ -36,6 +39,8 @@ function accountJson(account: ReturnType<typeof loadAccount>, accountId: string)
       isPrimary: entry.is_primary,
     })),
     noPassword: accountHasNoPassword(accountId),
+    hankoLinked,
+    hideLocalPassword: isHankoAuth() || hankoLinked,
     hasApiToken: accountHasApiToken(accountId),
     readOnly: account.read_only,
     isDemo: isDemoAccount(accountId),
@@ -102,6 +107,15 @@ export async function PATCH(req: Request) {
       const clearPassword = body.noPassword === true;
       const password =
         typeof body.password === "string" ? body.password : undefined;
+      const hankoLinked = accountHasHankoLink(accountId);
+      const hideLocalPassword = isHankoAuth() || hankoLinked;
+
+      if (hideLocalPassword && (clearPassword || password !== undefined)) {
+        return NextResponse.json(
+          { error: "Password sign-in is managed by Hanko for this account." },
+          { status: 403 },
+        );
+      }
 
       if (clearPassword && password !== undefined) {
         return NextResponse.json(

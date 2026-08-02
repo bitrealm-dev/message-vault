@@ -56,6 +56,7 @@ describe("fresh vault schema", () => {
       "read_only",
       "password_hash",
       "preferred_name",
+      "hanko_user_id",
     ]);
     assert.deepEqual(columns(db, "contacts"), [
       "id",
