@@ -121,15 +121,20 @@ export function SearchContactResultsList({
                 className="mb-1 mr-2 overflow-hidden rounded-md bg-elevated/55"
                 style={{ marginLeft: NESTED_FROM_NAME_PX }}
               >
-                {hits.map((hit, hi) => (
+                {hits.map((hit, hi) => {
+                  const isDirect = hit.conversationType === "individual";
+                  return (
                   <button
                     key={hit.conversationId}
                     type="button"
                     onClick={() => onSelectHit?.(hit)}
                     className={`relative flex w-full min-w-0 flex-col gap-0.5 py-2 pr-3 pl-3 text-left transition-colors ${
                       selectedConversationId === hit.conversationId
-                        ? "bg-accent/25 hover:bg-accent/30"
-                        : "bg-transparent hover:bg-hover"
+                        ? "bg-accent/20 hover:bg-accent/25"
+                        : isDirect
+                          ? // Match the contact row (sidebar), not the elevated group panel.
+                            "bg-sidebar hover:bg-hover-strong"
+                          : "bg-transparent hover:bg-hover"
                     }`}
                   >
                     {selectedConversationId === hit.conversationId ? (
@@ -150,7 +155,8 @@ export function SearchContactResultsList({
                       showMeta={false}
                     />
                   </button>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>

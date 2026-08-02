@@ -36,8 +36,11 @@ export function DirectConversationRow({
         nested ? "pl-3" : ""
       } ${
         active
-          ? "bg-accent/25 hover:bg-accent/30"
-          : "bg-transparent hover:bg-hover"
+          ? "bg-accent/20 hover:bg-accent/25"
+          : nested
+            ? // Match the contact row (sidebar), not the elevated group panel.
+              "bg-sidebar hover:bg-hover-strong"
+            : "bg-transparent hover:bg-hover"
       }`}
     >
       {active && (
