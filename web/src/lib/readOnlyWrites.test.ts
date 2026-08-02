@@ -27,9 +27,7 @@ describe("read-only web vault mutations", () => {
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
     const account = await createAccount({
       username: `ro_${Date.now()}`,
-      primaryEmail: `ro_${Date.now()}@example.com`,
-      firstName: "Read",
-      lastName: "Only",
+      preferredName: "Read Only",
       phone: "+15555550100",
     });
     accountId = account.id;

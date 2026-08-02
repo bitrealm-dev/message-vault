@@ -33,22 +33,25 @@ export async function POST(req: Request) {
   }
 
   const username = typeof body.username === "string" ? body.username.trim() : "";
-  const firstName =
-    typeof body.firstName === "string" ? body.firstName.trim() : "";
-  const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
+  const preferredName =
+    typeof body.preferredName === "string"
+      ? body.preferredName.trim()
+      : typeof body.displayName === "string"
+        ? body.displayName.trim()
+        : typeof body.firstName === "string" || typeof body.lastName === "string"
+          ? [body.firstName, body.lastName]
+              .filter((p): p is string => typeof p === "string")
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .join(" ")
+          : "";
   const phone = typeof body.phone === "string" ? body.phone.trim() : "";
   const noPassword = body.noPassword === true;
   const password = typeof body.password === "string" ? body.password : "";
-  const primaryEmail =
-    typeof body.primaryEmail === "string" && body.primaryEmail.trim()
-      ? body.primaryEmail.trim()
-      : username
-        ? `${username.toLowerCase()}@local`
-        : "";
 
-  if (!username || !firstName || !phone) {
+  if (!username || !preferredName || !phone) {
     return NextResponse.json(
-      { error: "username, firstName, and phone are required" },
+      { error: "username, preferredName, and phone are required" },
       { status: 400 },
     );
   }
@@ -69,9 +72,7 @@ export async function POST(req: Request) {
   try {
     const account = await createAccount({
       username,
-      primaryEmail,
-      firstName,
-      lastName,
+      preferredName,
       phone,
       password: noPassword ? null : password,
       noPassword,
@@ -81,7 +82,6 @@ export async function POST(req: Request) {
     return NextResponse.json({
       id: account.id,
       username: account.username,
-      primaryEmail: account.emails.find((e) => e.is_primary)?.email ?? "",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "create failed";

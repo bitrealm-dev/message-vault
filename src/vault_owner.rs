@@ -4,54 +4,29 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::schema;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // first/last/phones/emails loaded for profile round-trip; export uses display_name
+#[allow(dead_code)] // phones/emails loaded for handle matching; export uses display_name
 pub struct VaultOwner {
-    pub first_name: String,
-    pub last_name: String,
     pub display_name: String,
     pub phones: Vec<String>,
     pub emails: Vec<String>,
 }
 
-fn format_owner_name(first_name: &str, last_name: &str) -> String {
-    [first_name.trim(), last_name.trim()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn profile_display_name(
-    preferred_name: Option<&str>,
-    first_name: &str,
-    last_name: &str,
-) -> String {
-    if let Some(preferred) = preferred_name.map(str::trim).filter(|s| !s.is_empty()) {
-        return preferred.to_string();
-    }
-    let joined = format_owner_name(first_name, last_name);
-    if joined.is_empty() {
-        "Me".to_string()
-    } else {
-        joined
-    }
-}
-
-/// Load account identity (names + phones + emails) for one account.
-/// Soft-defaults when the row is missing or names/phones are empty (`"Me"`, empty sets).
+/// Load account identity (preferred name + phones) and optional email handles.
+/// Soft-defaults when the row is missing or name/phones are empty (`"Me"`, empty sets).
 pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwner> {
-    let row: Option<(String, String, Option<String>)> = conn
+    let preferred_name: Option<Option<String>> = conn
         .query_row(
-            "SELECT first_name, last_name, preferred_name FROM accounts WHERE id = ?1",
+            "SELECT preferred_name FROM accounts WHERE id = ?1",
             params![account_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| row.get(0),
         )
         .optional()?;
 
-    let (first_name, last_name, preferred_name) = match row {
-        Some((f, l, p)) => (f, l, p),
-        None => (String::new(), String::new(), None),
-    };
+    let preferred = preferred_name
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let display_name = preferred.unwrap_or_else(|| "Me".to_string());
 
     let mut phone_stmt =
         conn.prepare("SELECT phone FROM account_phones WHERE account_id = ?1 ORDER BY phone")?;
@@ -65,13 +40,7 @@ pub fn load_vault_owner(conn: &Connection, account_id: &str) -> Result<VaultOwne
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let first_name = first_name.trim().to_string();
-    let last_name = last_name.trim().to_string();
-    let display_name = profile_display_name(preferred_name.as_deref(), &first_name, &last_name);
-
     Ok(VaultOwner {
-        first_name,
-        last_name,
         display_name,
         phones,
         emails,
@@ -245,8 +214,7 @@ mod tests {
         assert!(empty.phones.is_empty());
 
         conn.execute(
-            "UPDATE accounts SET first_name = 'Matt', last_name = 'Beisser', preferred_name = 'MB'
-             WHERE id = ?1",
+            "UPDATE accounts SET preferred_name = 'MB' WHERE id = ?1",
             params!["00000000-0000-4000-8000-000000000001"],
         )
         .unwrap();

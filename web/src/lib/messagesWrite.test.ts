@@ -23,9 +23,7 @@ describe("deleteAllMessagesForAccount", () => {
     accountId = (
       await createAccount({
         username: `delete_messages_${Date.now()}`,
-        primaryEmail: `delete_messages_${Date.now()}@example.com`,
-        firstName: "Delete",
-        lastName: "Messages",
+        preferredName: "Delete Messages",
         phone: "+15555550123",
       })
     ).id;

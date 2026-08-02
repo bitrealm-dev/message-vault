@@ -7,7 +7,7 @@ Settings opens at `/settings/account` with three tabs:
 
 ## Account
 
-- **Your identity** — username and sign-in method, plus the name shown for
+- **Your identity** — user ID and sign-in method, plus the name shown for
   messages you sent and phone numbers used to recognize you
 - **Danger zone** — delete all messages for the account, or delete the account
   (demo account cannot be deleted)

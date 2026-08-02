@@ -67,7 +67,7 @@ export function DeleteAccountDialog({
 
         <label className="mt-5 block">
           <span className="text-[14px] text-text">
-            Type your username{" "}
+            Type your user ID{" "}
             {expected ? (
               <span className="font-semibold text-text">{expected}</span>
             ) : null}{" "}

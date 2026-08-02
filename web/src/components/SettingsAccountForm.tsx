@@ -18,8 +18,7 @@ type AccountData = {
   username: string;
   noPassword: boolean;
   isDemo: boolean;
-  firstName: string;
-  lastName: string;
+  preferredName: string | null;
   displayName: string;
   phones: string[];
 };
@@ -32,8 +31,7 @@ export function SettingsAccountForm() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
+  const [preferredName, setPreferredName] = useState("");
   const [phones, setPhones] = useState<string[]>([""]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,14 +49,13 @@ export function SettingsAccountForm() {
     setPasswordOpen(false);
     setPassword("");
     setPasswordConfirm("");
+    setPreferredName(json.preferredName ?? json.displayName ?? "");
     const draft = seedContactEditDraft({
-      firstName: json.firstName,
-      lastName: json.lastName,
+      firstName: "",
+      lastName: "",
       phones: json.phones,
       labels: [],
     });
-    setFirstName(draft.firstName);
-    setLastName(draft.lastName);
     setPhones(draft.phones);
   };
 
@@ -87,10 +84,10 @@ export function SettingsAccountForm() {
     Boolean(password) &&
     password.length < MAX_PASSWORD_LENGTH &&
     password === passwordConfirm;
+  const savedName = data?.preferredName ?? data?.displayName ?? "";
   const dirty =
     data != null &&
-    (firstName !== data.firstName ||
-      lastName !== data.lastName ||
+    (preferredName !== savedName ||
       noPassword !== data.noPassword ||
       password !== "" ||
       passwordConfirm !== "" ||
@@ -105,8 +102,8 @@ export function SettingsAccountForm() {
     if (!canSave) return;
     setError(null);
     setSaved(false);
-    if (!firstName.trim()) {
-      setError("Enter your first name.");
+    if (!preferredName.trim()) {
+      setError("Enter your display name.");
       return;
     }
     if (phonesToSave.length === 0) {
@@ -140,14 +137,12 @@ export function SettingsAccountForm() {
     setSaving(true);
     try {
       const body: {
-        firstName: string;
-        lastName: string;
+        preferredName: string;
         phones: string[];
         noPassword?: true;
         password?: string;
       } = {
-        firstName,
-        lastName,
+        preferredName,
         phones: phonesToSave,
       };
       if (data && noPassword !== data.noPassword) {
@@ -224,7 +219,7 @@ export function SettingsAccountForm() {
 
         <div className="mt-4 space-y-4">
           <label className="block">
-            <span className="text-[13px] text-text">Username</span>
+            <span className="text-[13px] text-text">User ID</span>
             <input
               type="text"
               value={username}
@@ -315,34 +310,19 @@ export function SettingsAccountForm() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="text-[13px] text-text">First name</span>
-                <input
-                  type="text"
-                  value={firstName}
-                  onChange={(e) => {
-                    setFirstName(e.target.value);
-                    setSaved(false);
-                    setError(null);
-                  }}
-                  className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
-                />
-              </label>
-              <label className="block">
-                <span className="text-[13px] text-text">Last name</span>
-                <input
-                  type="text"
-                  value={lastName}
-                  onChange={(e) => {
-                    setLastName(e.target.value);
-                    setSaved(false);
-                    setError(null);
-                  }}
-                  className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
-                />
-              </label>
-            </div>
+            <label className="block">
+              <span className="text-[13px] text-text">Display name</span>
+              <input
+                type="text"
+                value={preferredName}
+                onChange={(e) => {
+                  setPreferredName(e.target.value);
+                  setSaved(false);
+                  setError(null);
+                }}
+                className="mt-1 w-full rounded-md border border-border bg-elevated px-3 py-2 text-[14px] text-text outline-none focus:border-accent"
+              />
+            </label>
 
             <div>
               <span className="text-[13px] text-text">☎ Phone numbers</span>

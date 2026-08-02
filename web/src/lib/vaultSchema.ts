@@ -67,8 +67,6 @@ export function ensureVaultSchema(db: Database.Database): void {
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       read_only INTEGER NOT NULL DEFAULT 0,
       password_hash TEXT,
-      first_name TEXT NOT NULL DEFAULT '',
-      last_name TEXT NOT NULL DEFAULT '',
       preferred_name TEXT
     );
 
@@ -329,6 +327,7 @@ export function ensureVaultSchema(db: Database.Database): void {
 
   migrateLegacyAccountsEmailColumn(db);
   migrateVaultOwnersIntoAccounts(db);
+  migrateAccountsDropNameParts(db);
   migrateContactGroupsToLabels(db);
   migrateContactStatusesToLabels(db);
   migrateContactsPreferredName(db);
@@ -903,7 +902,7 @@ function migrateContactGroupsToLabels(db: Database.Database): void {
   db.exec(`PRAGMA foreign_keys = ON;`);
 }
 
-/** Rebuild accounts without legacy email column; emails live in account_emails. */
+/** Rebuild accounts without legacy email column; optional handle emails live in account_emails. */
 function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
   if (!tableExists(db, "accounts") || !tableHasColumn(db, "accounts", "email")) {
     return;
@@ -931,14 +930,10 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       read_only INTEGER NOT NULL DEFAULT 0,
       password_hash TEXT,
-      first_name TEXT NOT NULL DEFAULT '',
-      last_name TEXT NOT NULL DEFAULT '',
       preferred_name TEXT
     );
-    INSERT INTO accounts_new (
-      id, username, read_only, password_hash, first_name, last_name, preferred_name
-    )
-      SELECT id, username, read_only, NULL, '', '', NULL FROM accounts;
+    INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+      SELECT id, username, read_only, NULL, NULL FROM accounts;
     DROP TABLE accounts;
     ALTER TABLE accounts_new RENAME TO accounts;
   `);
@@ -948,16 +943,10 @@ function migrateLegacyAccountsEmailColumn(db: Database.Database): void {
 
 export const VAULT_OWNERS_INTO_ACCOUNTS_META_KEY = "vault_owners_into_accounts_v1";
 
-/** Fold vault_owners* into accounts + account_phones; drop legacy owner tables. */
+/** Fold vault_owners* into accounts.preferred_name + account_phones; drop legacy owner tables. */
 function migrateVaultOwnersIntoAccounts(db: Database.Database): void {
   if (!tableExists(db, "accounts")) return;
 
-  if (!tableHasColumn(db, "accounts", "first_name")) {
-    db.exec(`ALTER TABLE accounts ADD COLUMN first_name TEXT NOT NULL DEFAULT ''`);
-  }
-  if (!tableHasColumn(db, "accounts", "last_name")) {
-    db.exec(`ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT ''`);
-  }
   if (!tableHasColumn(db, "accounts", "preferred_name")) {
     db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
   }
@@ -994,32 +983,23 @@ function migrateVaultOwnersIntoAccounts(db: Database.Database): void {
 
     db.exec(`
       UPDATE accounts
-      SET
-        first_name = coalesce(
-          (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-          first_name
+      SET preferred_name = coalesce(
+        (
+          SELECT NULLIF(trim(vo.display_name), '')
+          FROM vault_owners vo
+          WHERE vo.account_id = accounts.id
         ),
-        last_name = coalesce(
-          (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-          last_name
-        ),
-        preferred_name = coalesce(
-          (
-            SELECT NULLIF(trim(vo.display_name), '')
-            FROM vault_owners vo
-            WHERE vo.account_id = accounts.id
-          ),
-          NULLIF(trim(
-            trim(coalesce(
-              (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-              ''
-            )) || ' ' || trim(coalesce(
-              (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-              ''
-            ))
-          ), ''),
-          preferred_name
-        )
+        NULLIF(trim(
+          trim(coalesce(
+            (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+            ''
+          )) || ' ' || trim(coalesce(
+            (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
+            ''
+          ))
+        ), ''),
+        preferred_name
+      )
       WHERE EXISTS (SELECT 1 FROM vault_owners vo WHERE vo.account_id = accounts.id);
     `);
 
@@ -1046,6 +1026,81 @@ function migrateVaultOwnersIntoAccounts(db: Database.Database): void {
   db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
     VAULT_OWNERS_INTO_ACCOUNTS_META_KEY,
   );
+}
+
+/** Drop obsolete accounts.first_name / last_name; keep preferred_name only. */
+function migrateAccountsDropNameParts(db: Database.Database): void {
+  if (!tableExists(db, "accounts")) return;
+
+  const hasFirst = tableHasColumn(db, "accounts", "first_name");
+  const hasLast = tableHasColumn(db, "accounts", "last_name");
+  if (!hasFirst && !hasLast) {
+    if (!tableHasColumn(db, "accounts", "preferred_name")) {
+      db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
+    }
+    return;
+  }
+
+  if (!tableHasColumn(db, "accounts", "preferred_name")) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN preferred_name TEXT`);
+  }
+
+  if (hasFirst && hasLast) {
+    db.exec(`
+      UPDATE accounts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else if (hasFirst) {
+    db.exec(`
+      UPDATE accounts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(first_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else {
+    db.exec(`
+      UPDATE accounts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(last_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  }
+
+  const hasPassword = tableHasColumn(db, "accounts", "password_hash");
+  db.exec(`PRAGMA foreign_keys = OFF;`);
+  db.exec(`
+    CREATE TABLE accounts_new (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      read_only INTEGER NOT NULL DEFAULT 0,
+      password_hash TEXT,
+      preferred_name TEXT
+    );
+  `);
+  if (hasPassword) {
+    db.exec(`
+      INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+        SELECT id, username, read_only, password_hash, preferred_name FROM accounts;
+    `);
+  } else {
+    db.exec(`
+      INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+        SELECT id, username, read_only, NULL, preferred_name FROM accounts;
+    `);
+  }
+  db.exec(`
+    DROP TABLE accounts;
+    ALTER TABLE accounts_new RENAME TO accounts;
+    PRAGMA foreign_keys = ON;
+  `);
 }
 
 export const CONTACTS_PREFERRED_NAME_META_KEY = "contacts_preferred_name_v1";

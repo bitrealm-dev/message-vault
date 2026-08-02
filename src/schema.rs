@@ -990,8 +990,6 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             read_only INTEGER NOT NULL DEFAULT 0,
             password_hash TEXT,
-            first_name TEXT NOT NULL DEFAULT '',
-            last_name TEXT NOT NULL DEFAULT '',
             preferred_name TEXT
         );
 
@@ -1033,6 +1031,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     )?;
     migrate_legacy_accounts_email(conn)?;
     migrate_vault_owners_into_accounts(conn)?;
+    migrate_accounts_drop_name_parts(conn)?;
     migrate_accounts_default_read_only(conn)?;
     migrate_accounts_password_hash(conn)?;
     migrate_account_api_tokens_to_hash(conn)?;
@@ -1152,23 +1151,10 @@ fn migrate_accounts_default_read_only(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Fold vault_owners* into accounts + account_phones; drop legacy owner tables.
+/// Fold vault_owners* into accounts.preferred_name + account_phones; drop legacy owner tables.
 fn migrate_vault_owners_into_accounts(conn: &Connection) -> Result<()> {
-    if !table_has_column(conn, "accounts", "first_name")? {
-        conn.execute_batch(
-            r#"
-            ALTER TABLE accounts ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
-            ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
-            ALTER TABLE accounts ADD COLUMN preferred_name TEXT;
-            "#,
-        )?;
-    } else {
-        if !table_has_column(conn, "accounts", "last_name")? {
-            conn.execute_batch("ALTER TABLE accounts ADD COLUMN last_name TEXT NOT NULL DEFAULT '';")?;
-        }
-        if !table_has_column(conn, "accounts", "preferred_name")? {
-            conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
-        }
+    if !table_has_column(conn, "accounts", "preferred_name")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
     }
 
     conn.execute_batch(
@@ -1207,16 +1193,7 @@ fn migrate_vault_owners_into_accounts(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             r#"
             UPDATE accounts
-            SET
-              first_name = coalesce(
-                (SELECT NULLIF(trim(vo.first_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-                first_name
-              ),
-              last_name = coalesce(
-                (SELECT NULLIF(trim(vo.last_name), '') FROM vault_owners vo WHERE vo.account_id = accounts.id),
-                last_name
-              ),
-              preferred_name = coalesce(
+            SET preferred_name = coalesce(
                 (
                   SELECT NULLIF(trim(vo.display_name), '')
                   FROM vault_owners vo
@@ -1271,7 +1248,99 @@ fn migrate_vault_owners_into_accounts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Drop legacy `accounts.email` column; emails live in `account_emails`.
+/// Drop obsolete accounts.first_name / last_name; keep preferred_name only.
+fn migrate_accounts_drop_name_parts(conn: &Connection) -> Result<()> {
+    let has_first = table_has_column(conn, "accounts", "first_name")?;
+    let has_last = table_has_column(conn, "accounts", "last_name")?;
+    if !has_first && !has_last {
+        if !table_has_column(conn, "accounts", "preferred_name")? {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
+        }
+        return Ok(());
+    }
+
+    if !table_has_column(conn, "accounts", "preferred_name")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN preferred_name TEXT;")?;
+    }
+
+    // Prefer existing preferred_name; else join leftover first/last parts.
+    if has_first && has_last {
+        conn.execute_batch(
+            r#"
+            UPDATE accounts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    } else if has_first {
+        conn.execute_batch(
+            r#"
+            UPDATE accounts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(first_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    } else {
+        conn.execute_batch(
+            r#"
+            UPDATE accounts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(last_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    }
+
+    let has_password = table_has_column(conn, "accounts", "password_hash")?;
+    conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+    if has_password {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts_new (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                read_only INTEGER NOT NULL DEFAULT 0,
+                password_hash TEXT,
+                preferred_name TEXT
+            );
+            INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+                SELECT id, username, read_only, password_hash, preferred_name FROM accounts;
+            "#,
+        )?;
+    } else {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts_new (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                read_only INTEGER NOT NULL DEFAULT 0,
+                password_hash TEXT,
+                preferred_name TEXT
+            );
+            INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+                SELECT id, username, read_only, NULL, preferred_name FROM accounts;
+            "#,
+        )?;
+    }
+    conn.execute_batch(
+        r#"
+        DROP TABLE accounts;
+        ALTER TABLE accounts_new RENAME TO accounts;
+        PRAGMA foreign_keys = ON;
+        "#,
+    )?;
+    Ok(())
+}
+
+/// Drop legacy `accounts.email` column; optional handle emails live in `account_emails`.
 fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
     let has_email: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM pragma_table_info('accounts') WHERE name = 'email'",
@@ -1295,16 +1364,10 @@ fn migrate_legacy_accounts_email(conn: &Connection) -> Result<()> {
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             read_only INTEGER NOT NULL DEFAULT 0,
             password_hash TEXT,
-            first_name TEXT NOT NULL DEFAULT '',
-            last_name TEXT NOT NULL DEFAULT '',
             preferred_name TEXT
         );
-        INSERT INTO accounts_new (
-            id, username, read_only, password_hash, first_name, last_name, preferred_name
-        )
-            SELECT id, username, read_only,
-                   NULL, '', '', NULL
-            FROM accounts;
+        INSERT INTO accounts_new (id, username, read_only, password_hash, preferred_name)
+            SELECT id, username, read_only, NULL, NULL FROM accounts;
         DROP TABLE accounts;
         ALTER TABLE accounts_new RENAME TO accounts;
 
@@ -1584,16 +1647,16 @@ mod tests {
 
         ensure_accounts_schema(&conn).unwrap();
 
-        let (first, last, preferred): (String, String, Option<String>) = conn
+        let preferred: Option<String> = conn
             .query_row(
-                "SELECT first_name, last_name, preferred_name FROM accounts WHERE id = ?1",
+                "SELECT preferred_name FROM accounts WHERE id = ?1",
                 params![A1],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(first, "Ann");
-        assert_eq!(last, "Lee");
         assert_eq!(preferred.as_deref(), Some("Ann Lee"));
+        assert!(!table_has_column(&conn, "accounts", "first_name").unwrap());
+        assert!(!table_has_column(&conn, "accounts", "last_name").unwrap());
 
         let phone: String = conn
             .query_row(

@@ -17,12 +17,19 @@ export async function POST(req: Request) {
   const password = typeof body.password === "string" ? body.password : "";
 
   if (!username) {
-    return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
+    return NextResponse.json(
+      { error: INVALID_CREDENTIALS },
+      { status: 401 },
+    );
   }
 
+  // Sign-in is user ID + password only — never email.
   const account = await authenticateAccount(username, password);
   if (!account) {
-    return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
+    return NextResponse.json(
+      { error: INVALID_CREDENTIALS },
+      { status: 401 },
+    );
   }
 
   const store = await cookies();

@@ -29,9 +29,7 @@ describe("unknown contact backfill", () => {
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
     const account = await createAccount({
       username: `backfill_${Date.now()}`,
-      primaryEmail: `backfill_${Date.now()}@example.com`,
-      firstName: "Vault",
-      lastName: "Owner",
+      preferredName: "Vault Owner",
       phone: OWNER_PHONE,
     });
     accountId = account.id;

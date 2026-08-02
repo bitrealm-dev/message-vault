@@ -27,8 +27,7 @@ export function LoginScreen() {
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [noPassword, setNoPassword] = useState(false);
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
+  const [preferredName, setPreferredName] = useState("");
   const [phoneMode, setPhoneMode] = useState<PhoneMode>("usa");
   const [countryCode, setCountryCode] = useState("1");
   const [phone, setPhone] = useState("");
@@ -49,7 +48,7 @@ export function LoginScreen() {
 
   const canCreate =
     Boolean(username.trim()) &&
-    Boolean(firstName.trim()) &&
+    Boolean(preferredName.trim()) &&
     Boolean(normalizedPhone) &&
     passwordsOk &&
     submitting == null;
@@ -69,12 +68,12 @@ export function LoginScreen() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) {
-        throw new Error(json.error ?? "Invalid username or password");
+        throw new Error(json.error ?? "Invalid user ID or password");
       }
       router.replace("/");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid username or password");
+      setError(err instanceof Error ? err.message : "Invalid user ID or password");
     } finally {
       setSubmitting(null);
     }
@@ -90,8 +89,7 @@ export function LoginScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username,
-          firstName,
-          lastName,
+          preferredName,
           phone: normalizedPhone ?? phone,
           noPassword,
           password: noPassword ? undefined : password,
@@ -120,7 +118,7 @@ export function LoginScreen() {
 
           <section className="mt-8 space-y-4">
             <label className="block">
-              <span className="text-[13px] text-text">Username</span>
+              <span className="text-[13px] text-text">User ID</span>
               <input
                 type="text"
                 value={loginUsername}
@@ -168,7 +166,7 @@ export function LoginScreen() {
             {createOpen && (
               <div className="mt-4 space-y-4">
                 <label className="block">
-                  <span className="text-[13px] text-text">Username</span>
+                  <span className="text-[13px] text-text">User ID</span>
                   <input
                     type="text"
                     value={username}
@@ -210,28 +208,16 @@ export function LoginScreen() {
                   No password
                 </label>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="text-[13px] text-text">First name</span>
-                    <input
-                      type="text"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="John"
-                      className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none placeholder:text-muted focus:border-accent"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[13px] text-text">Last name</span>
-                    <input
-                      type="text"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      placeholder="Doe"
-                      className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none placeholder:text-muted focus:border-accent"
-                    />
-                  </label>
-                </div>
+                <label className="block">
+                  <span className="text-[13px] text-text">Display name</span>
+                  <input
+                    type="text"
+                    value={preferredName}
+                    onChange={(e) => setPreferredName(e.target.value)}
+                    placeholder="John Doe"
+                    className="mt-1 w-full rounded-md border border-border bg-bg px-3 py-2 text-[14px] text-text outline-none placeholder:text-muted focus:border-accent"
+                  />
+                </label>
 
                 <div
                   role="radiogroup"

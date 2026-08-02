@@ -22,9 +22,7 @@ describe("exportContactsCsvFromDb", () => {
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
     const account = await createAccount({
       username: `csvx_${Date.now()}`,
-      primaryEmail: `csvx_${Date.now()}@example.com`,
-      firstName: "Csv",
-      lastName: "Export",
+      preferredName: "Csv Export",
       phone: "+15555550300",
     });
     accountId = account.id;

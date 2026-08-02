@@ -950,9 +950,8 @@ mod tests {
         crate::schema::ensure_vault_schema(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO accounts (
-                 id, username, read_only, first_name, last_name, preferred_name
-             ) VALUES (?1, 'test', 0, 'Vault', 'Owner', 'Vault Owner')",
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 'test', 0, 'Vault Owner')",
             params![TEST_ACCOUNT_ID],
         )
         .unwrap();

@@ -31,9 +31,7 @@ describe("vault search + FTS", () => {
     process.env.VAULT_DATA_DIR = path.join(tmpDir, "data");
     const account = await createAccount({
       username: `search_${Date.now()}`,
-      primaryEmail: `search_${Date.now()}@example.com`,
-      firstName: "Search",
-      lastName: "User",
+      preferredName: "Search User",
       phone: "+15555550100",
     });
     accountId = account.id;

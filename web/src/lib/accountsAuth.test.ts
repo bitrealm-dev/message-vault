@@ -34,9 +34,7 @@ describe("account password auth", () => {
   it("creates password and no-password accounts and authenticates", async () => {
     const withPass = await createAccount({
       username: `pw_${Date.now()}`,
-      primaryEmail: `pw_${Date.now()}@example.com`,
-      firstName: "Pat",
-      lastName: "Word",
+      preferredName: "Pat Word",
       phone: "+15555550111",
       password: "s3cret!",
       noPassword: false,
@@ -44,9 +42,7 @@ describe("account password auth", () => {
 
     const noPass = await createAccount({
       username: `np_${Date.now()}`,
-      primaryEmail: `np_${Date.now()}@example.com`,
-      firstName: "No",
-      lastName: "Pass",
+      preferredName: "No Pass",
       phone: "+15555550112",
       noPassword: true,
     });

@@ -114,17 +114,15 @@ describe("vault owners into accounts migration", () => {
     ensureVaultSchema(db);
 
     const account = db
-      .prepare(
-        `SELECT first_name, last_name, preferred_name FROM accounts WHERE id = ?`,
-      )
-      .get(accountId) as {
-      first_name: string;
-      last_name: string;
-      preferred_name: string | null;
-    };
-    assert.equal(account.first_name, "Ann");
-    assert.equal(account.last_name, "Lee");
+      .prepare(`SELECT preferred_name FROM accounts WHERE id = ?`)
+      .get(accountId) as { preferred_name: string | null };
     assert.equal(account.preferred_name, "Ann Lee");
+    const cols = (
+      db.prepare(`PRAGMA table_info(accounts)`).all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    assert.ok(!cols.includes("first_name"));
+    assert.ok(!cols.includes("last_name"));
+    assert.ok(!cols.includes("email"));
 
     const phone = db
       .prepare(`SELECT phone FROM account_phones WHERE account_id = ?`)

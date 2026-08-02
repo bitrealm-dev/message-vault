@@ -41,7 +41,6 @@ struct DemoOwner {
 #[derive(Debug, Deserialize)]
 struct DemoAccount {
     username: String,
-    login_email: String,
     read_only: bool,
 }
 
@@ -145,16 +144,13 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     conn.execute(
         r#"
         INSERT INTO accounts (
-            id, username, read_only, password_hash,
-            first_name, last_name, preferred_name
+            id, username, read_only, password_hash, preferred_name
         )
-        VALUES (?1, ?2, ?3, NULL, ?4, '', ?4)
+        VALUES (?1, ?2, ?3, NULL, ?4)
         ON CONFLICT(id) DO UPDATE SET
             username = excluded.username,
             read_only = excluded.read_only,
             password_hash = NULL,
-            first_name = excluded.first_name,
-            last_name = excluded.last_name,
             preferred_name = excluded.preferred_name
         "#,
         params![
@@ -164,16 +160,10 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
             seed.owner.display_name
         ],
     )?;
+    // Optional email handles for recognizing “you” in messages — not for login.
     conn.execute(
         "DELETE FROM account_emails WHERE account_id = ?1",
         params![account_id],
-    )?;
-    conn.execute(
-        r#"
-        INSERT INTO account_emails (account_id, email, is_primary)
-        VALUES (?1, ?2, 1)
-        "#,
-        params![account_id, seed.account.login_email],
     )?;
     for email in &seed.owner.emails {
         conn.execute(

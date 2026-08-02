@@ -78,7 +78,6 @@ emails = ["demo.ingest@example.com"]
 
 [account]
 username = "demo"
-login_email = "demo@example.com"
 read_only = true
 "#
     );

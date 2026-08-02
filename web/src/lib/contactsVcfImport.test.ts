@@ -29,9 +29,7 @@ describe("contactsVcfImport preview/commit", () => {
 
     const account = await createAccount({
       username: `vcf_${Date.now()}`,
-      primaryEmail: `vcf_${Date.now()}@example.com`,
-      firstName: "Vault",
-      lastName: "Owner",
+      preferredName: "Vault Owner",
       phone: "+15555550000",
     });
     accountId = account.id;
@@ -39,9 +37,7 @@ describe("contactsVcfImport preview/commit", () => {
 
     const other = await createAccount({
       username: `vcf_other_${Date.now()}`,
-      primaryEmail: `vcf_other_${Date.now()}@example.com`,
-      firstName: "Other",
-      lastName: "Owner",
+      preferredName: "Other Owner",
       phone: "+15555550001",
     });
     otherAccountId = other.id;

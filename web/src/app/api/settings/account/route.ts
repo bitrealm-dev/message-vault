@@ -4,7 +4,6 @@ import {
   deleteAccount,
   deleteAccountApiToken,
   loadAccount,
-  primaryEmail,
   rotateAccountApiToken,
   saveAccount,
   setAccountPassword,
@@ -32,7 +31,6 @@ function accountJson(account: ReturnType<typeof loadAccount>, accountId: string)
   return {
     id: account.id,
     username: account.username,
-    primaryEmail: primaryEmail(account),
     emails: account.emails.map((entry) => ({
       email: entry.email,
       isPrimary: entry.is_primary,
@@ -41,8 +39,6 @@ function accountJson(account: ReturnType<typeof loadAccount>, accountId: string)
     hasApiToken: accountHasApiToken(accountId),
     readOnly: account.read_only,
     isDemo: isDemoAccount(accountId),
-    firstName: profile.first_name,
-    lastName: profile.last_name,
     preferredName: profile.preferred_name,
     displayName: profile.display_name,
     phones: profile.phones,
@@ -151,19 +147,11 @@ export async function PATCH(req: Request) {
       const emails = parseEmails(body);
       if (emails !== undefined) {
         patch.emails = emails;
-      } else if (typeof body.primaryEmail === "string" && body.primaryEmail.trim()) {
-        const account = loadAccount(accountId);
-        patch.emails = account.emails.map((entry) =>
-          entry.is_primary
-            ? { email: body.primaryEmail as string, is_primary: true }
-            : entry,
-        );
       }
 
       const hasIdentityPatch =
-        typeof body.firstName === "string" ||
-        typeof body.lastName === "string" ||
         typeof body.preferredName === "string" ||
+        typeof body.displayName === "string" ||
         Array.isArray(body.phones);
 
       if (
@@ -200,22 +188,20 @@ export async function PATCH(req: Request) {
             { status: 400 },
           );
         }
-        const firstName =
-          typeof body.firstName === "string" ? body.firstName : current.first_name;
-        if (!firstName.trim()) {
+        const preferredName =
+          typeof body.preferredName === "string"
+            ? body.preferredName
+            : typeof body.displayName === "string"
+              ? body.displayName
+              : current.preferred_name ?? "";
+        if (!preferredName.trim()) {
           return NextResponse.json(
-            { error: "First name is required." },
+            { error: "Display name is required." },
             { status: 400 },
           );
         }
         saveAccountProfile(accountId, {
-          first_name: firstName,
-          last_name:
-            typeof body.lastName === "string" ? body.lastName : current.last_name,
-          preferred_name:
-            typeof body.preferredName === "string"
-              ? body.preferredName
-              : undefined,
+          preferred_name: preferredName,
           phones,
         });
       }

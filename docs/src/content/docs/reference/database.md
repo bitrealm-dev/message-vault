@@ -51,9 +51,10 @@ derived (converted) paths for the browser.
 
 ### `accounts` / `account_emails` / `account_phones` / `account_api_tokens`
 
-Web login accounts with identity fields (`first_name`, `last_name`,
-`preferred_name`), phones for recognizing “you” in messages, login emails, and
-hashed Vault Import API tokens used by `serve`.
+Web accounts sign in with **user ID** (`username`) and optional password.
+`preferred_name` is the display name. `account_phones` (and optional
+`account_emails`) are handles used to recognize “you” in messages — emails are
+never used for login. Import API tokens live in `account_api_tokens`.
 
 ### `contacts` / `contact_handles`
 

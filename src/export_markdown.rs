@@ -937,9 +937,8 @@ mod tests {
         schema::ensure_contacts_schema(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO accounts (
-                 id, username, read_only, first_name, last_name, preferred_name
-             ) VALUES (?1, 'test', 0, 'Matt', 'Beisser', 'Matt Beisser')",
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 'test', 0, 'Matt Beisser')",
             params![TEST_ACCOUNT_ID],
         )
         .unwrap();
@@ -1023,8 +1022,6 @@ mod tests {
         let snippet = tmp.join("snippet.css");
         fs::write(&snippet, "/* test */").unwrap();
         let owner = VaultOwner {
-            first_name: "Matt".into(),
-            last_name: "Beisser".into(),
             display_name: "Matt Beisser".into(),
             phones: vec!["+19412660605".into()],
             emails: vec![],

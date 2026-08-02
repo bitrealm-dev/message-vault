@@ -8,7 +8,7 @@ import { hashPassword, passwordsMatch, validatePasswordPlaintext } from "./passw
 import { createAccountProfile } from "./accountProfile";
 import { ensureVaultSchema } from "./vaultSchema";
 
-export const INVALID_CREDENTIALS = "Invalid username or password";
+export const INVALID_CREDENTIALS = "Invalid user ID or password";
 
 export type AccountEmail = {
   email: string;
@@ -17,7 +17,9 @@ export type AccountEmail = {
 
 export type Account = {
   id: string;
+  /** Sign-in user ID (stored as `accounts.username`). */
   username: string;
+  /** Optional email handles used to recognize “you” in messages — not for login. */
   emails: AccountEmail[];
   read_only: boolean;
 };
@@ -25,7 +27,6 @@ export type Account = {
 export type AccountSummary = {
   id: string;
   username: string;
-  primaryEmail: string;
 };
 
 type AccountRow = {
@@ -43,28 +44,14 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-export function primaryEmail(account: Account): string {
-  const primary = account.emails.find((entry) => entry.is_primary);
-  if (!primary?.email.trim()) {
-    throw new Error("account must have a primary email");
-  }
-  return primary.email.trim();
-}
-
 function rowToAccount(row: AccountRow, emails: AccountEmailRow[]): Account {
-  const mapped = emails.map((entry) => ({
-    email: entry.email,
-    is_primary: entry.is_primary === 1,
-  }));
-
-  if (mapped.length === 0) {
-    throw new Error("account must have a primary email");
-  }
-
   return {
     id: row.id,
     username: row.username,
-    emails: mapped,
+    emails: emails.map((entry) => ({
+      email: entry.email,
+      is_primary: entry.is_primary === 1,
+    })),
     read_only: row.read_only === 1,
   };
 }
@@ -81,7 +68,7 @@ function openDb(): Database.Database {
 function friendlyDbError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("UNIQUE constraint failed: accounts.username")) {
-    return new Error("That username is already taken.");
+    return new Error("That user ID is already taken.");
   }
   if (message.includes("UNIQUE constraint failed: account_emails.email")) {
     return new Error("That email is already used by another account.");
@@ -97,23 +84,15 @@ function findAccountIdByUsername(db: Database.Database, username: string): strin
   return row?.id ?? null;
 }
 
+/** Optional email handles for message recognition (not sign-in). */
 function validateEmails(emails: AccountEmail[]): AccountEmail[] {
-  if (emails.length === 0) {
-    throw new Error("account must have a primary email");
-  }
-
   const normalized = emails.map((entry) => ({
     email: entry.email.trim(),
-    is_primary: entry.is_primary,
+    is_primary: false,
   }));
 
   if (normalized.some((entry) => !entry.email)) {
     throw new Error("email addresses cannot be empty");
-  }
-
-  const primaryCount = normalized.filter((entry) => entry.is_primary).length;
-  if (primaryCount !== 1) {
-    throw new Error("account must have exactly one primary email");
   }
 
   const seen = new Set<string>();
@@ -235,18 +214,10 @@ export function listAccounts(): AccountSummary[] {
       )
       .all() as Array<{ id: string; username: string }>;
 
-    return rows.map((row) => {
-      const emails = readAccountEmails(db, row.id);
-      const account = rowToAccount(
-        { ...row, read_only: 0 },
-        emails,
-      );
-      return {
-        id: row.id,
-        username: row.username,
-        primaryEmail: primaryEmail(account),
-      };
-    });
+    return rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+    }));
   } finally {
     db.close();
   }
@@ -309,7 +280,7 @@ export function isUsernameTaken(username: string): boolean {
 }
 
 /**
- * Verify username + password. Returns the account on success, or null for any failure
+ * Verify user ID + password. Returns the account on success, or null for any failure
  * (unknown user / wrong password) so callers can show a single error message.
  */
 export async function authenticateAccount(
@@ -343,21 +314,16 @@ export async function authenticateAccount(
 
 export async function createAccount(input: {
   username: string;
-  primaryEmail: string;
-  firstName: string;
-  lastName: string;
+  preferredName: string;
   phone: string;
   /** Plaintext password, or omit/null when creating a no-password account. */
   password?: string | null;
   noPassword?: boolean;
 }): Promise<Account> {
   const username = input.username.trim();
-  const email = input.primaryEmail.trim();
-  const firstName = input.firstName.trim();
-  const lastName = input.lastName.trim();
-  if (!username) throw new Error("username is required");
-  if (!email) throw new Error("primary email is required");
-  if (!firstName) throw new Error("first name is required");
+  const preferredName = input.preferredName.trim();
+  if (!username) throw new Error("user ID is required");
+  if (!preferredName) throw new Error("display name is required");
 
   // Explicit noPassword, or omitted password (tests / legacy callers) → passwordless.
   const noPassword =
@@ -376,21 +342,18 @@ export async function createAccount(input: {
   try {
     const existingId = findAccountIdByUsername(db, username);
     if (existingId) {
-      throw new Error("That username is already taken.");
+      throw new Error("That user ID is already taken.");
     }
 
     const id = crypto.randomUUID();
-    const emails = [{ email, is_primary: true }];
 
     try {
       db.prepare(
         `INSERT INTO accounts (id, username, read_only, password_hash)
          VALUES (?, ?, 0, ?)`,
       ).run(id, username, passwordHash);
-      writeAccountEmails(db, id, emails);
       createAccountProfile(db, id, {
-        first_name: firstName,
-        last_name: lastName,
+        preferred_name: preferredName,
         phones: [input.phone],
       });
     } catch (err) {
@@ -400,7 +363,7 @@ export async function createAccount(input: {
     return {
       id,
       username,
-      emails,
+      emails: [],
       read_only: false,
     };
   } finally {
@@ -432,7 +395,7 @@ export function saveAccount(
     };
 
     if (!next.username) {
-      throw new Error("username is required");
+      throw new Error("user ID is required");
     }
 
     db.prepare(

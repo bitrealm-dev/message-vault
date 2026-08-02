@@ -6,9 +6,10 @@
 # Real config/contacts/exclude files are gitignored.
 #
 # Instance config only: shared database path, per-account data root, and optional
-# HTTP import server. Web login accounts and identity (names/phones) live in SQLite
-# (`accounts`, `account_phones`, `account_emails`). Create an account in the web UI, then import with
-# `--account <username>` (CLI) or your Import API token (Message Exporters).
+# HTTP import server. Web accounts (user ID + optional password) and identity
+# (preferred name / phones / optional email handles) live in SQLite. Create an
+# account in the web UI, then import with `--account <username>` (CLI) or your
+# Import API token (Message Exporters).
 #
 # Message Exporters writes JSONL + attachments and uploads with a source name.
 # Source folders are not listed here — each import registers its own source for
