@@ -729,6 +729,7 @@ dependencies = [
  "chrono",
  "clap",
  "contacts",
+ "demo-seed",
  "futures-util",
  "message-ir",
  "phone",

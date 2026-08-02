@@ -1,4 +1,4 @@
-//! Restore the committed demo bundle: config, wipe DB/assets, re-import.
+//! Regenerate the demo bundle, clear the demo account's data, re-import, and process media.
 
 use std::fs;
 use std::path::Path;
@@ -7,11 +7,12 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
-use crate::db::account_profile;
 use crate::config::Config;
+use crate::db::account_profile;
+use crate::db::schema;
 use crate::dedupe;
 use crate::import::{self, ImportMode};
-use crate::db::schema;
+use crate::process_assets::{self, ProcessAssetsOptions};
 
 /// Stable demo account id used when `reset-demo` runs without `--account`.
 pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
@@ -20,8 +21,10 @@ const DEMO_SOURCE: &str = "imessage";
 
 #[derive(Debug)]
 pub struct ResetDemoStats {
+    pub seed: demo_seed::GenStats,
     pub import: import::ImportStats,
     pub dedupe_keys_filled: u64,
+    pub process_assets: process_assets::ProcessAssetsStats,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,18 +62,20 @@ fn run_reset_demo_for_account(
         std::env::current_dir()?.join(bundle)
     };
 
+    println!("Reset demo — regenerating bundle");
+    println!("  bundle:       {}", bundle.display());
+    let seed_stats =
+        demo_seed::generate_to(&bundle, None).context("regenerate demo bundle (demo-seed)")?;
+
     let demo_config = bundle.join("config/config.toml");
     let demo_seed = bundle.join("config/seed.toml");
-    if !demo_config.is_file() {
+    let export_dir = bundle.join("staging/imessage");
+    let contacts_vcf = bundle.join("config/contacts.vcf");
+    if !demo_config.is_file() || !demo_seed.is_file() || !export_dir.is_dir() || !contacts_vcf.is_file()
+    {
         bail!(
-            "demo bundle missing {} (run: cargo run -p demo-seed)",
-            demo_config.display()
-        );
-    }
-    if !demo_seed.is_file() {
-        bail!(
-            "demo bundle missing {} (run: cargo run -p demo-seed)",
-            demo_seed.display()
+            "demo-seed did not produce a complete bundle under {}",
+            bundle.display()
         );
     }
 
@@ -85,25 +90,13 @@ fn run_reset_demo_for_account(
 
     let cfg = Config::load(config_dest)?;
     let seed = load_demo_seed(&demo_seed)?;
-    let export_dir = bundle.join("staging/imessage");
-    if !export_dir.is_dir() {
-        bail!(
-            "demo staging missing {} (run: cargo run -p demo-seed)",
-            export_dir.display()
-        );
-    }
 
-    wipe_vault(&cfg, account_id)?;
+    wipe_demo_account(&cfg, account_id)?;
 
     let assets_dir = cfg.paths.assets_dir_for_account(account_id, DEMO_SOURCE);
     let db = cfg.paths.db.clone();
-    let contacts_vcf = bundle.join("config/contacts.vcf");
-    if !contacts_vcf.is_file() {
-        bail!("demo contacts file not found: {}", contacts_vcf.display());
-    }
 
-    println!("Reset demo");
-    println!("  bundle:       {}", bundle.display());
+    println!("Reset demo — importing");
     println!("  config:       {}", config_dest.display());
     println!("  account:      {}", account_id);
     println!("  export_dir:   {}", export_dir.display());
@@ -124,9 +117,26 @@ fn run_reset_demo_for_account(
 
     let dedupe_stats = dedupe::run_dedupe(&db, account_id, 2)?;
 
+    println!("Reset demo — processing assets");
+    let process_stats = process_assets::run(
+        &cfg,
+        &ProcessAssetsOptions {
+            force: false,
+            dry_run: false,
+            skip_image: false,
+            skip_video: false,
+            skip_audio: false,
+            db: None,
+            source: None,
+        },
+    )
+    .context("process-assets after demo import")?;
+
     Ok(ResetDemoStats {
+        seed: seed_stats,
         import: import_stats,
         dedupe_keys_filled: dedupe_stats.keys_filled,
+        process_assets: process_stats,
     })
 }
 
@@ -191,23 +201,29 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     Ok(())
 }
 
-fn wipe_vault(cfg: &Config, account_id: &str) -> Result<()> {
-    remove_db_files(&cfg.paths.db)?;
+/// Clear the demo account's vault rows (CASCADE) and on-disk assets.
+/// Leaves `vault.db` and other accounts intact.
+fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
+    let db = &cfg.paths.db;
+    if db.is_file() {
+        println!("Reset demo — clearing account data in {}", db.display());
+        let conn = Connection::open(db)
+            .with_context(|| format!("open {} for demo account wipe", db.display()))?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        schema::ensure_vault_schema(&conn)?;
+        let deleted = conn
+            .execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
+            .with_context(|| format!("delete account {account_id}"))?;
+        println!("  sql:      demo account rows removed (accounts matched={deleted})");
+    } else {
+        println!(
+            "Reset demo — no existing db at {}; will create on import",
+            db.display()
+        );
+    }
+
     let account_root = cfg.paths.data_dir.join(account_id);
     remove_tree_if_exists(&account_root)?;
-    Ok(())
-}
-
-fn remove_db_files(db: &Path) -> Result<()> {
-    for path in [
-        db.to_path_buf(),
-        db.with_extension("db-wal"),
-        db.with_extension("db-shm"),
-    ] {
-        if path.is_file() {
-            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-        }
-    }
     Ok(())
 }
 

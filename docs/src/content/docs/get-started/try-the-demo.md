@@ -3,8 +3,8 @@ title: Try the demo
 description: Load the committed sample vault and browse it in the web UI.
 ---
 
-No real phone backup needed. The repository includes a demo iMessage JSONL
-bundle you can import in one step.
+No real phone backup needed. `reset-demo` regenerates the demo bundle, imports
+it, and processes media in one step.
 
 ## Linux / macOS
 
@@ -19,7 +19,6 @@ cd web && npm ci && npm run dev
 cargo build --workspace --release
 New-Item -ItemType Directory -Force .\data | Out-Null
 cargo run --release -- reset-demo
-cargo run --release -- process-assets
 
 Set-Location .\web
 npm ci

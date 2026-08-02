@@ -221,12 +221,11 @@ enabling `ufw` globally without reviewing existing rules.
 # Health check (import API)
 curl -sS http://127.0.0.1:8080/health
 
-# Reset demo data (dev)
+# Reset demo data (dev) — regenerates bundle, imports, and processes assets
 docker compose exec vault cargo run --release -- reset-demo
 docker compose exec vault bash -lc 'cp config/config.docker.toml config/config.toml'
-docker compose exec vault cargo run --release -- process-assets
 
-# Convert media after an import (dev)
+# Convert media after a non-demo import (dev)
 docker compose exec vault cargo run --release -- process-assets
 
 # Shell in the running container

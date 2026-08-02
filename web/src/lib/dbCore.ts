@@ -6,13 +6,36 @@ import { ensureDbParentDir } from "./paths";
 
 const g = globalThis as unknown as {
   __mvReadonlyDb?: Database.Database | null;
+  __mvReadonlyDbIdentity?: { dev: number; ino: number } | null;
   __mvHasDuplicateOf?: boolean | null;
 };
 
+function dbFileIdentity(file: string): { dev: number; ino: number } | null {
+  try {
+    const st = fs.statSync(file);
+    return { dev: st.dev, ino: st.ino };
+  } catch {
+    return null;
+  }
+}
+
 export function getDb(): Database.Database {
+  const file = ensureDbParentDir();
+  const identity = dbFileIdentity(file);
+  // reset-demo (and similar) unlink+recreate vault.db; a cached better-sqlite3
+  // handle keeps the deleted inode open and serves stale rows until we reopen.
+  if (
+    g.__mvReadonlyDb &&
+    (!identity ||
+      !g.__mvReadonlyDbIdentity ||
+      identity.dev !== g.__mvReadonlyDbIdentity.dev ||
+      identity.ino !== g.__mvReadonlyDbIdentity.ino)
+  ) {
+    resetDb();
+  }
+
   if (!g.__mvReadonlyDb) {
-    const file = ensureDbParentDir();
-    if (!fs.existsSync(file)) {
+    if (!identity) {
       throw new Error(
         `Vault database not found at ${file}. From the repo root run: ./scripts/setup-demo.sh (or create an account at /login).`,
       );
@@ -30,6 +53,7 @@ export function getDb(): Database.Database {
     }
     g.__mvReadonlyDb.pragma("busy_timeout = 15000");
     g.__mvReadonlyDb.pragma("foreign_keys = ON");
+    g.__mvReadonlyDbIdentity = identity;
     g.__mvHasDuplicateOf = null;
   }
   return g.__mvReadonlyDb;
@@ -38,9 +62,14 @@ export function getDb(): Database.Database {
 /** Close the cached readonly connection so the next read sees recent writes. */
 export function resetDb(): void {
   if (g.__mvReadonlyDb) {
-    g.__mvReadonlyDb.close();
+    try {
+      g.__mvReadonlyDb.close();
+    } catch {
+      /* already closed / deleted inode */
+    }
     g.__mvReadonlyDb = null;
   }
+  g.__mvReadonlyDbIdentity = null;
   g.__mvHasDuplicateOf = null;
   const profileCache = (globalThis as unknown as {
     __mvAccountProfileCache?: Map<string, unknown>;

@@ -64,8 +64,6 @@ cargo build --workspace --release
 New-Item -ItemType Directory -Force .\data | Out-Null
 cargo run --release -- reset-demo
 
-cargo run --release -- process-assets
-
 Set-Location .\web
 npm ci
 npm run dev

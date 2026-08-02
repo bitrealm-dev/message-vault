@@ -109,9 +109,9 @@ enum Commands {
         #[arg(long)]
         account: String,
     },
-    /// Restore committed demo bundle: copy config, wipe DB, re-import iMessage staging
+    /// Regenerate demo bundle, clear demo account data, import, and process assets
     ResetDemo {
-        /// Demo bundle directory
+        /// Demo bundle directory (rewritten by demo-seed, then imported)
         #[arg(long, default_value = "demo")]
         bundle: PathBuf,
 
@@ -338,14 +338,18 @@ fn main() -> Result<()> {
             let stats = reset_demo::run_reset_demo(&bundle, &config)?;
             println!();
             println!("Demo reset complete");
-            println!("  conversations: {}", stats.import.conversations);
-            println!("  messages:      {}", stats.import.messages);
-            println!("  attachments:   {}", stats.import.attachments);
-            println!("  tapbacks:      {}", stats.import.tapbacks);
-            println!("  contacts:      {}", stats.import.contacts);
-            println!("  assets copied: {}", stats.import.assets_copied);
-            println!("  assets missing:{}", stats.import.assets_missing);
-            println!("  dedupe keys:   {}", stats.dedupe_keys_filled);
+            println!("  seeded messages: {}", stats.seed.messages);
+            println!("  conversations:   {}", stats.import.conversations);
+            println!("  messages:        {}", stats.import.messages);
+            println!("  attachments:     {}", stats.import.attachments);
+            println!("  tapbacks:        {}", stats.import.tapbacks);
+            println!("  contacts:        {}", stats.import.contacts);
+            println!("  assets copied:   {}", stats.import.assets_copied);
+            println!("  assets missing:  {}", stats.import.assets_missing);
+            println!("  dedupe keys:     {}", stats.dedupe_keys_filled);
+            println!("  derived media:   {}", stats.process_assets.derived);
+            println!("  derive skipped:  {}", stats.process_assets.skipped);
+            println!("  derive errors:   {}", stats.process_assets.errors);
         }
 
         Commands::Serve { config } => {

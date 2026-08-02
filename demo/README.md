@@ -2,23 +2,22 @@
 
 Committed message-ir JSONL bundle for local browsing without a real phone backup.
 
-Regenerate with:
+Regenerate + import in one step:
 
 ```bash
-cargo run -p demo-seed -- --config crates/demo-seed/demo_seed.toml --out demo
+cargo run --release -- reset-demo
+```
+
+Or regenerate the bundle only:
+
+```bash
+cargo run -p demo-seed -- --out demo
 ```
 
 Config knobs live in `crates/demo-seed/demo_seed.toml` (seed, contact count, rate/span
 distributions, group membership). Message bodies are sampled from Pride and Prejudice
 (5274 sentences) under `crates/demo-seed/data/corpus/`. Names come from
 `crates/demo-seed/data/names/`.
-
-Then import:
-
-```bash
-cargo run --release -- reset-demo
-cargo run --release -- process-assets
-```
 
 ## Contents (seed 42)
 

@@ -11,7 +11,7 @@ Run from the repository root with `cargo run --release -- <command>`.
 | `dedupe-cross-source` | Soft-hide the same SMS across sources |
 | `import-contacts` | Load an address book into SQLite (**VCF** or **vCard CSV**) |
 | `process-assets` | Generate and register converted media assets |
-| `reset-demo` | Restore the committed demo bundle |
+| `reset-demo` | Regenerate demo bundle, clear demo account data, import, and process assets |
 | `serve` | HTTP import API (`[server]` required in config) |
 
 ## Shared flags
