@@ -38,17 +38,11 @@ function isGenericGroupTitle(title: string | null | undefined): boolean {
 
 function participantLabel(row: {
   preferred_name?: string | null;
-  first_name: string | null;
-  last_name: string | null;
   name_hint: string | null;
   handle: string;
 }): { name: string; unknown: boolean } {
   const preferred = row.preferred_name?.trim() ?? "";
   if (preferred) return { name: preferred, unknown: false };
-  const first = row.first_name?.trim() ?? "";
-  const last = row.last_name?.trim() ?? "";
-  const full = `${first} ${last}`.trim();
-  if (full) return { name: full, unknown: false };
   const hint = usefulNameHint(row.name_hint, row.handle);
   if (hint) return { name: hint, unknown: false };
   return { name: formatPhoneDisplay(row.handle), unknown: true };
@@ -133,7 +127,7 @@ function groupPeopleTitles(
   const rows = db
     .prepare(
       `SELECT p.conversation_id, p.handle, p.name_hint,
-              c.id AS contact_id, c.preferred_name, c.first_name, c.last_name
+              c.id AS contact_id, c.preferred_name
        FROM participants p
        JOIN conversations conv ON conv.id = p.conversation_id
        LEFT JOIN contact_handles cp ON cp.handle = p.handle AND cp.account_id = conv.account_id
@@ -146,8 +140,6 @@ function groupPeopleTitles(
     name_hint: string | null;
     contact_id: number | null;
     preferred_name: string | null;
-    first_name: string | null;
-    last_name: string | null;
   }>;
 
   const byConv = new Map<

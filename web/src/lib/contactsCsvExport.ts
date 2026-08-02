@@ -21,19 +21,17 @@ export function exportContactsCsvFromDb(
   try {
     const contacts = db
       .prepare(
-        `SELECT id, first_name, last_name
+        `SELECT id, preferred_name
          FROM contacts
          WHERE account_id = ?
          ORDER BY
-           CASE WHEN first_name IS NULL OR TRIM(first_name) = '' THEN 1 ELSE 0 END,
-           first_name COLLATE NOCASE,
-           last_name COLLATE NOCASE,
+           CASE WHEN preferred_name IS NULL OR TRIM(preferred_name) = '' THEN 1 ELSE 0 END,
+           preferred_name COLLATE NOCASE,
            id`,
       )
       .all(accountId) as Array<{
       id: number;
-      first_name: string | null;
-      last_name: string | null;
+      preferred_name: string | null;
     }>;
 
     const handleStmt = db.prepare(
@@ -62,8 +60,7 @@ export function exportContactsCsvFromDb(
 
       rows.push({
         phones,
-        firstName: c.first_name,
-        lastName: c.last_name,
+        preferredName: c.preferred_name?.trim() || null,
         exclude: false,
         labels,
       });

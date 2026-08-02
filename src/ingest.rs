@@ -16,6 +16,8 @@ pub struct IngestOptions {
     /// Required folder of `*.jsonl` conversation files (+ attachments).
     pub staging_dir: PathBuf,
     pub mode: ImportMode,
+    /// Optional address book: iMazing Contacts CSV or VCF.
+    pub contacts: Option<PathBuf>,
     pub overwrite_contacts: bool,
     pub skip_dedupe: bool,
     pub window_secs: i64,
@@ -46,7 +48,7 @@ pub fn ingest(cfg: &Config, opts: &IngestOptions) -> Result<IngestStats> {
     let assets_dir = cfg
         .paths
         .assets_dir_for_account(&opts.account_id, &opts.source_id);
-    let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&opts.account_id)?;
+    let (mirror_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&opts.account_id)?;
 
     println!("Ingest");
     println!("  source:       {}", opts.source_id);
@@ -55,12 +57,17 @@ pub fn ingest(cfg: &Config, opts: &IngestOptions) -> Result<IngestStats> {
     println!("  db:           {}", cfg.paths.db.display());
     println!("  assets_dir:   {}", assets_dir.display());
     println!("  mode:         {}", opts.mode.as_str());
+    match &opts.contacts {
+        Some(path) => println!("  contacts:     {}", path.display()),
+        None => println!("  contacts:     (none)"),
+    }
 
     let import_stats = import::import_export(
         staging,
         &cfg.paths.db,
         &assets_dir,
-        &contacts_csv,
+        opts.contacts.as_deref(),
+        &mirror_csv,
         &exclude_csv,
         opts.overwrite_contacts,
         opts.mode,

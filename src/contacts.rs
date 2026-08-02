@@ -23,6 +23,87 @@ struct ContactCsvRow {
     labels: Vec<String>,
 }
 
+/// Address-book formats accepted by CLI contact import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContactsFileFormat {
+    /// iMazing Contacts CSV: First Name, Last Name, and columns containing "Phone".
+    ImazingCsv,
+    /// vCard (.vcf / .vcard).
+    Vcf,
+    /// Legacy vault mirror CSV (`phones,first_name,last_name,exclude,label_N`).
+    VaultCsv,
+}
+
+#[derive(Debug)]
+struct ContactDraft {
+    phones: Vec<String>,
+    preferred_name: Option<String>,
+    labels: Vec<String>,
+    legacy_inactive: bool,
+}
+
+fn normalize_header_name(h: &str) -> String {
+    h.trim()
+        .trim_start_matches('\u{feff}')
+        .to_ascii_lowercase()
+        .replace('_', " ")
+}
+
+/// True for iMazing/Outlook phone columns (`Mobile Phone`, …). Bare `phones` is vault-only.
+fn is_phone_header(h: &str) -> bool {
+    h != "phones" && h.contains("phone")
+}
+
+fn contacts_file_format(path: &Path) -> Result<ContactsFileFormat> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "vcf" || ext == "vcard" {
+        return Ok(ContactsFileFormat::Vcf);
+    }
+    if ext != "csv" {
+        bail!(
+            "contacts file must be an iMazing Contacts .csv or a .vcf file: {}",
+            path.display()
+        );
+    }
+
+    let file = File::open(path)
+        .with_context(|| format!("failed to open contacts file {}", path.display()))?;
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .has_headers(true)
+        .from_reader(file);
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read contacts CSV header in {}", path.display()))?
+        .clone();
+    let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
+
+    let has_first = header_l.iter().any(|h| h == "first name");
+    let has_last = header_l.iter().any(|h| h == "last name");
+    let has_phone = header_l.iter().any(|h| is_phone_header(h));
+    if has_first && has_last && has_phone {
+        return Ok(ContactsFileFormat::ImazingCsv);
+    }
+
+    let has_vault_phones = header_l.iter().any(|h| h == "phones");
+    let has_exclude = header_l.iter().any(|h| h == "exclude");
+    if has_vault_phones && has_exclude {
+        return Ok(ContactsFileFormat::VaultCsv);
+    }
+
+    bail!(
+        "unrecognized contacts CSV {} (headers: {}). \
+         Expected iMazing Contacts export (First Name, Last Name, and at least one \
+         Phone column such as Mobile Phone) or a .vcf file",
+        path.display(),
+        header_l.join(" | ")
+    )
+}
+
 /// iMessage-style: any handle containing `@` is treated as email.
 fn is_email_handle(handle: &str) -> bool {
     handle.contains('@')
@@ -131,22 +212,35 @@ fn restore_email_handles(
     Ok(restored)
 }
 
-/// Load contacts from CSV when the account table is empty or when `overwrite` is true.
+/// Load contacts from an address book when the account table is empty or when
+/// `overwrite` is true.
 ///
+/// Accepted files: **iMazing Contacts CSV** (First Name, Last Name, Phone
+/// columns) or **VCF**. The vault dual-write `phones,first_name,…` CSV is still
+/// accepted for older demos/mirrors but is not the CLI import format.
+///
+/// Pass `None` to skip address-book load (keep existing SQLite contacts).
 /// On overwrite, email handles already in SQLite are snapshotted by phone set
-/// and reattached after CSV reload (contacts.csv is phone-only).
+/// and reattached after reload (address-book files are phone-oriented).
 pub fn load_contacts_if_needed(
     conn: &mut Connection,
-    csv_path: &Path,
+    contacts_path: Option<&Path>,
     overwrite: bool,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
     crate::schema::ensure_contacts_schema(conn)?;
     crate::vault_owner::ensure_account_row(conn, account_id)?;
     if !crate::schema::contacts_schema_ready(conn)? {
-        eprintln!("contacts: schema not current; recreating tables before CSV load");
+        eprintln!("contacts: schema not current; recreating tables before contacts load");
         crate::schema::recreate_contacts(conn)?;
     }
+
+    let Some(path) = contacts_path else {
+        return Ok(ContactLoadStats {
+            skipped: true,
+            ..Default::default()
+        });
+    };
 
     let count: i64 = conn
         .query_row(
@@ -163,6 +257,17 @@ pub fn load_contacts_if_needed(
         });
     }
 
+    if !path.exists() {
+        eprintln!(
+            "warning: contacts file not found at {}; leaving contacts empty",
+            path.display()
+        );
+        if count > 0 && overwrite {
+            delete_account_contacts(conn, account_id)?;
+        }
+        return Ok(ContactLoadStats::default());
+    }
+
     let email_snapshot = if count > 0 && overwrite {
         snapshot_email_handles(conn, account_id)?
     } else {
@@ -171,19 +276,23 @@ pub fn load_contacts_if_needed(
 
     delete_account_contacts(conn, account_id)?;
 
-    if !csv_path.exists() {
-        eprintln!(
-            "warning: contacts CSV not found at {}; leaving contacts empty",
-            csv_path.display()
-        );
-        return Ok(ContactLoadStats::default());
-    }
-
-    let mut stats = load_from_csv(conn, csv_path, account_id)?;
+    let format = contacts_file_format(path)?;
+    let mut stats = match format {
+        ContactsFileFormat::ImazingCsv => load_from_imazing_csv(conn, path, account_id)?,
+        ContactsFileFormat::Vcf => load_from_vcf(conn, path, account_id)?,
+        ContactsFileFormat::VaultCsv => {
+            eprintln!(
+                "warning: {} is the legacy vault contacts.csv format; \
+                 prefer an iMazing Contacts CSV or .vcf for CLI import",
+                path.display()
+            );
+            load_from_vault_csv(conn, path, account_id)?
+        }
+    };
     stats.emails_restored = restore_email_handles(conn, account_id, &email_snapshot)?;
     if stats.emails_restored > 0 {
         eprintln!(
-            "contacts: restored {} email handle(s) from previous DB (CSV is phone-only)",
+            "contacts: restored {} email handle(s) from previous DB (address book is phone-only)",
             stats.emails_restored
         );
     }
@@ -210,7 +319,7 @@ fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_from_csv(
+fn load_from_vault_csv(
     conn: &mut Connection,
     csv_path: &Path,
     account_id: &str,
@@ -224,9 +333,7 @@ fn load_from_csv(
         .headers()
         .with_context(|| format!("failed to read contacts CSV header in {}", csv_path.display()))?
         .clone();
-    let col = |name: &str| -> Option<usize> {
-        headers.iter().position(|h| h == name)
-    };
+    let col = |name: &str| -> Option<usize> { headers.iter().position(|h| h == name) };
     let phones_i = col("phones").ok_or_else(|| {
         anyhow::anyhow!("contacts CSV missing phones column ({})", csv_path.display())
     })?;
@@ -243,10 +350,7 @@ fn load_from_csv(
         );
     }
 
-    let mut stats = ContactLoadStats::default();
-    let mut seen_phones: HashSet<String> = HashSet::new();
-    let tx = conn.transaction()?;
-
+    let mut drafts = Vec::new();
     for (row_no, result) in reader.records().enumerate() {
         let row_no = row_no + 2; // header is line 1
         let record = result.with_context(|| {
@@ -255,9 +359,7 @@ fn load_from_csv(
                 csv_path.display()
             )
         })?;
-        let field = |i: usize| -> String {
-            record.get(i).unwrap_or("").trim().to_string()
-        };
+        let field = |i: usize| -> String { record.get(i).unwrap_or("").trim().to_string() };
         let row = ContactCsvRow {
             phones: field(phones_i),
             first_name: first_i.map(field).unwrap_or_default(),
@@ -275,7 +377,6 @@ fn load_from_csv(
             }
         }
         let phones = phone_handles_only(&raw_handles);
-
         if phones.is_empty() {
             bail!(
                 "contacts CSV row {row_no}: phones is required ({})",
@@ -283,40 +384,232 @@ fn load_from_csv(
             );
         }
 
-        for phone in &phones {
-            if !seen_phones.insert(phone.clone()) {
-                bail!(
-                    "contacts CSV: duplicate phone {phone} (row {row_no} in {})",
-                    csv_path.display()
-                );
+        drafts.push(ContactDraft {
+            phones,
+            preferred_name: join_preferred_name(
+                empty_to_none(&row.first_name).as_deref(),
+                empty_to_none(&row.last_name).as_deref(),
+            ),
+            labels: row.labels,
+            legacy_inactive: parse_bool(&row.exclude),
+        });
+    }
+
+    insert_contact_drafts(conn, account_id, drafts)
+}
+
+fn load_from_imazing_csv(
+    conn: &mut Connection,
+    csv_path: &Path,
+    account_id: &str,
+) -> Result<ContactLoadStats> {
+    let file = File::open(csv_path)
+        .with_context(|| format!("failed to open contacts CSV {}", csv_path.display()))?;
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .has_headers(true)
+        .from_reader(file);
+    let headers = reader
+        .headers()
+        .with_context(|| format!("failed to read contacts CSV header in {}", csv_path.display()))?
+        .clone();
+    let header_l: Vec<String> = headers.iter().map(normalize_header_name).collect();
+    let first_i = header_l.iter().position(|h| h == "first name");
+    let middle_i = header_l.iter().position(|h| h == "middle name");
+    let last_i = header_l.iter().position(|h| h == "last name");
+    let phone_cols: Vec<usize> = header_l
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| is_phone_header(h))
+        .map(|(i, _)| i)
+        .collect();
+    if first_i.is_none() || last_i.is_none() || phone_cols.is_empty() {
+        bail!(
+            "iMazing contacts CSV needs First Name, Last Name, and at least one Phone column ({})",
+            csv_path.display()
+        );
+    }
+
+    let mut drafts = Vec::new();
+    for (row_no, result) in reader.records().enumerate() {
+        let row_no = row_no + 2;
+        let record = result.with_context(|| {
+            format!(
+                "failed to parse contacts CSV row {row_no} in {}",
+                csv_path.display()
+            )
+        })?;
+        let cell = |i: Option<usize>| -> &str {
+            i.and_then(|idx| record.get(idx)).unwrap_or("").trim()
+        };
+        let first = cell(first_i);
+        let middle = cell(middle_i);
+        let last = cell(last_i);
+        let mut name_parts = Vec::new();
+        if !first.is_empty() {
+            name_parts.push(first);
+        }
+        if !middle.is_empty() {
+            name_parts.push(middle);
+        }
+        if !last.is_empty() {
+            name_parts.push(last);
+        }
+        let preferred_name = {
+            let joined = name_parts.join(" ");
+            let collapsed = collapse_inner_whitespace(&joined);
+            if collapsed.is_empty() {
+                None
+            } else {
+                Some(collapsed)
+            }
+        };
+
+        let mut raw_phones = Vec::new();
+        for &i in &phone_cols {
+            let raw = record.get(i).unwrap_or("").trim();
+            if raw.is_empty() {
+                continue;
+            }
+            // iMazing sometimes packs multiple phones with `;`
+            for part in raw.split(';') {
+                let part = part.trim();
+                if !part.is_empty() {
+                    raw_phones.push(part.to_string());
+                }
+            }
+        }
+        let phones = phone_handles_only(&raw_phones);
+        if phones.is_empty() {
+            continue;
+        }
+
+        drafts.push(ContactDraft {
+            phones,
+            preferred_name,
+            labels: Vec::new(),
+            legacy_inactive: false,
+        });
+    }
+
+    insert_contact_drafts(conn, account_id, drafts)
+}
+
+fn load_from_vcf(
+    conn: &mut Connection,
+    vcf_path: &Path,
+    account_id: &str,
+) -> Result<ContactLoadStats> {
+    let cards = crate::vcf::parse_vcf(vcf_path)?;
+    let mut drafts = Vec::new();
+    for card in cards {
+        let phones = phone_handles_only(&card.phones);
+        if phones.is_empty() {
+            continue;
+        }
+
+        let (fn_stripped, fn_tags) = crate::vcf::extract_tags(&card.fn_raw);
+        let first = crate::vcf::strip_tags(&card.n_given);
+        let middle = crate::vcf::strip_tags(&card.n_middle);
+        let last = crate::vcf::strip_tags(&card.n_family);
+
+        let nickname = if last.is_empty()
+            && !fn_stripped.is_empty()
+            && !fn_stripped.contains(' ')
+            && (first.is_empty() || first == fn_stripped)
+        {
+            Some(fn_stripped.clone())
+        } else {
+            None
+        };
+
+        let preferred_name = if let Some(nick) = nickname {
+            Some(nick)
+        } else {
+            let mut parts = Vec::new();
+            if !first.is_empty() {
+                parts.push(first.as_str());
+            }
+            if !middle.is_empty() {
+                parts.push(middle.as_str());
+            }
+            if !last.is_empty() {
+                parts.push(last.as_str());
+            }
+            let from_n = collapse_inner_whitespace(&parts.join(" "));
+            if !from_n.is_empty() {
+                Some(from_n)
+            } else {
+                let from_fn = collapse_inner_whitespace(&fn_stripped);
+                if from_fn.is_empty() {
+                    None
+                } else {
+                    Some(from_fn)
+                }
+            }
+        };
+
+        let mut labels = Vec::new();
+        for tag in fn_tags {
+            let t = tag.trim();
+            if t.is_empty() || t.eq_ignore_ascii_case("People") {
+                continue;
+            }
+            labels.push(t.to_string());
+        }
+        for category in &card.categories {
+            let t = category.trim();
+            if t.is_empty() || t.eq_ignore_ascii_case("People") {
+                continue;
+            }
+            if !labels.iter().any(|l| l.eq_ignore_ascii_case(t)) {
+                labels.push(t.to_string());
             }
         }
 
-        let preferred = phones[0].clone();
-        let legacy_inactive = parse_bool(&row.exclude);
-        let first_name = empty_to_none(&row.first_name);
-        let last_name = empty_to_none(&row.last_name);
-        let preferred_name = join_preferred_name(first_name.as_deref(), last_name.as_deref());
+        drafts.push(ContactDraft {
+            phones,
+            preferred_name,
+            labels,
+            legacy_inactive: false,
+        });
+    }
 
+    insert_contact_drafts(conn, account_id, drafts)
+}
+
+fn collapse_inner_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn insert_contact_drafts(
+    conn: &mut Connection,
+    account_id: &str,
+    drafts: Vec<ContactDraft>,
+) -> Result<ContactLoadStats> {
+    let mut stats = ContactLoadStats::default();
+    let mut seen_phones: HashSet<String> = HashSet::new();
+    let tx = conn.transaction()?;
+
+    for draft in drafts {
+        for phone in &draft.phones {
+            if !seen_phones.insert(phone.clone()) {
+                bail!("contacts: duplicate phone {phone}");
+            }
+        }
+        let preferred = draft.phones[0].clone();
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, first_name, last_name, preferred_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                account_id, preferred_name, exclude, preferred_handle
+            ) VALUES (?1, ?2, ?3, ?4)
             "#,
-            params![
-                account_id,
-                first_name,
-                last_name,
-                preferred_name,
-                0,
-                preferred
-            ],
+            params![account_id, draft.preferred_name, 0, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
 
-        for phone in &phones {
+        for phone in &draft.phones {
             tx.execute(
                 "INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?1, ?2, ?3)",
                 params![account_id, phone, contact_id],
@@ -324,11 +617,11 @@ fn load_from_csv(
             stats.phones += 1;
         }
 
-        let mut labels = row.labels.clone();
+        let mut labels = draft.labels;
         labels.retain(|label| {
             !label.eq_ignore_ascii_case("Active") && !label.eq_ignore_ascii_case("Inactive")
         });
-        let status_label = if legacy_inactive {
+        let status_label = if draft.legacy_inactive {
             "Inactive"
         } else {
             "Active"
@@ -500,26 +793,23 @@ pub fn ensure_unknown_contacts(
     }
 
     let mut created = 0u64;
-    let mut created_named: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+    let mut created_named: Vec<(String, Option<String>)> = Vec::new();
     let tx = conn.transaction()?;
     for handle in &handles {
         let preferred = handle.clone();
         let hint = best_name_hint_for_handle(&tx, account_id, handle)?;
-        let (first_name, last_name) = split_display_name(hint.as_deref());
-        // Full hint is the preferred display name; first/last stay for CSV/search.
         let preferred_name = hint
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .or_else(|| join_preferred_name(first_name.as_deref(), last_name.as_deref()));
+            .map(|s| s.to_string());
         tx.execute(
             r#"
             INSERT INTO contacts (
-                account_id, first_name, last_name, preferred_name, exclude, preferred_handle
-            ) VALUES (?1, ?2, ?3, ?4, 0, ?5)
+                account_id, preferred_name, exclude, preferred_handle
+            ) VALUES (?1, ?2, 0, ?3)
             "#,
-            params![account_id, first_name, last_name, preferred_name, preferred],
+            params![account_id, preferred_name, preferred],
         )?;
         let contact_id = tx.last_insert_rowid();
         tx.execute(
@@ -527,15 +817,16 @@ pub fn ensure_unknown_contacts(
             params![account_id, handle, contact_id],
         )?;
         created += 1;
-        created_named.push((handle.clone(), first_name, last_name));
+        created_named.push((handle.clone(), preferred_name));
     }
     tx.commit()?;
 
-    for (handle, first_name, last_name) in &created_named {
+    for (handle, preferred_name) in &created_named {
         if is_email_handle(handle) {
             continue;
         }
         let csv_phone = crate::phone::to_e164(handle).unwrap_or_else(|| handle.clone());
+        let (first_name, last_name) = split_display_name(preferred_name.as_deref());
         if let Err(err) = append_contact_csv_row(
             contacts_csv,
             &csv_phone,
@@ -552,7 +843,7 @@ pub fn ensure_unknown_contacts(
     Ok(created)
 }
 
-/// Fill empty contact first/last names from participant name hints (exporter display names).
+/// Fill empty contact preferred names from participant name hints (exporter display names).
 ///
 /// Does not overwrite names the user (or contacts CSV) already set.
 pub fn fill_empty_contact_names_from_participants(
@@ -569,13 +860,7 @@ pub fn fill_empty_contact_names_from_participants(
             JOIN contact_handles ch
               ON ch.contact_id = c.id AND ch.account_id = c.account_id
             WHERE c.account_id = ?1
-              AND (
-                (
-                  (c.first_name IS NULL OR TRIM(c.first_name) = '')
-                  AND (c.last_name IS NULL OR TRIM(c.last_name) = '')
-                )
-                OR (c.preferred_name IS NULL OR TRIM(c.preferred_name) = '')
-              )
+              AND (c.preferred_name IS NULL OR TRIM(c.preferred_name) = '')
             ORDER BY c.id, ch.handle
             "#,
         )?;
@@ -611,32 +896,19 @@ pub fn fill_empty_contact_names_from_participants(
     let mut filled = 0u64;
     let tx = conn.transaction()?;
     for (contact_id, hint) in best {
-        let (first_name, last_name) = split_display_name(Some(&hint));
-        if first_name.is_none() && last_name.is_none() {
+        let preferred_name = hint.trim();
+        if preferred_name.is_empty() {
             continue;
         }
-        let preferred_name = hint.trim().to_string();
         let n = tx.execute(
             r#"
             UPDATE contacts
-            SET first_name = COALESCE(NULLIF(TRIM(first_name), ''), ?2),
-                last_name = COALESCE(NULLIF(TRIM(last_name), ''), ?3),
-                preferred_name = COALESCE(NULLIF(TRIM(preferred_name), ''), ?5)
+            SET preferred_name = ?2
             WHERE id = ?1
-              AND account_id = ?4
-              AND (
-                (first_name IS NULL OR TRIM(first_name) = '')
-                AND (last_name IS NULL OR TRIM(last_name) = '')
-                OR (preferred_name IS NULL OR TRIM(preferred_name) = '')
-              )
+              AND account_id = ?3
+              AND (preferred_name IS NULL OR TRIM(preferred_name) = '')
             "#,
-            params![
-                contact_id,
-                first_name,
-                last_name,
-                account_id,
-                preferred_name
-            ],
+            params![contact_id, preferred_name, account_id],
         )?;
         filled += n as u64;
     }
@@ -707,7 +979,7 @@ fn looks_like_phone(s: &str) -> bool {
     digits.len() >= 7 && digits.len() == stripped.len()
 }
 
-/// Split `"Annette Gubert"` → (`Annette`, `Gubert`); single token → first only.
+/// Join CSV `first_name` + `last_name` into a single preferred display name.
 fn join_preferred_name(first_name: Option<&str>, last_name: Option<&str>) -> Option<String> {
     let first = first_name.map(str::trim).filter(|s| !s.is_empty());
     let last = last_name.map(str::trim).filter(|s| !s.is_empty());
@@ -719,6 +991,8 @@ fn join_preferred_name(first_name: Option<&str>, last_name: Option<&str>) -> Opt
     }
 }
 
+/// Split `"Annette Gubert"` → (`Annette`, `Gubert`); single token → first only.
+/// Used when appending contacts.csv rows that still use first/last columns.
 fn split_display_name(hint: Option<&str>) -> (Option<String>, Option<String>) {
     let Some(raw) = hint.map(str::trim).filter(|s| !s.is_empty()) else {
         return (None, None);
@@ -1008,6 +1282,150 @@ mod tests {
         .unwrap();
 
         conn
+    }
+
+    #[test]
+    fn detects_imazing_and_vault_csv_formats() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-fmt-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let imazing = dir.join("imazing.csv");
+        std::fs::write(
+            &imazing,
+            "First Name,Last Name,Mobile Phone\nAda,Lovelace,+15551234567\n",
+        )
+        .unwrap();
+        assert_eq!(
+            contacts_file_format(&imazing).unwrap(),
+            ContactsFileFormat::ImazingCsv
+        );
+
+        let vault = dir.join("vault.csv");
+        std::fs::write(
+            &vault,
+            "phones,first_name,last_name,exclude,label_1\n+15551234567,Ada,Lovelace,false,\n",
+        )
+        .unwrap();
+        assert_eq!(
+            contacts_file_format(&vault).unwrap(),
+            ContactsFileFormat::VaultCsv
+        );
+
+        let vcf = dir.join("book.vcf");
+        std::fs::write(
+            &vcf,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL:+15551234567\nEND:VCARD\n",
+        )
+        .unwrap();
+        assert_eq!(contacts_file_format(&vcf).unwrap(), ContactsFileFormat::Vcf);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn loads_imazing_csv_into_sqlite() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-imazing-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("vault.db");
+        let csv_path = dir.join("contacts.csv");
+        std::fs::write(
+            &csv_path,
+            "First Name,Middle Name,Last Name,Mobile Phone,Home Phone\n\
+             Ada,Augusta,Lovelace,+15551234567,+15559876543\n\
+             NoPhone,,,+\n",
+        )
+        .unwrap();
+
+        let mut conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 't', 0, 'T')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        let stats = load_contacts_if_needed(&mut conn, Some(&csv_path), true, TEST_ACCOUNT_ID)
+            .unwrap();
+        assert_eq!(stats.contacts, 1);
+        assert_eq!(stats.phones, 2);
+
+        let name: String = conn
+            .query_row(
+                "SELECT preferred_name FROM contacts WHERE account_id = ?1",
+                params![TEST_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Ada Augusta Lovelace");
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn loads_vcf_into_sqlite() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-vcf-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("vault.db");
+        let vcf_path = dir.join("contacts.vcf");
+        std::fs::write(
+            &vcf_path,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nN:Lovelace;Ada;;;\n\
+             TEL:+15551234567\nCATEGORIES:Family\nEND:VCARD\n",
+        )
+        .unwrap();
+
+        let mut conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 't', 0, 'T')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        let stats =
+            load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
+        assert_eq!(stats.contacts, 1);
+        assert_eq!(stats.phones, 1);
+        assert!(stats.labels >= 2); // Active + Family
+
+        let labels: Vec<String> = conn
+            .prepare(
+                "SELECT cl.name FROM contact_labels cl
+                 JOIN contact_label_members m ON m.label_id = cl.id
+                 WHERE cl.account_id = ?1 ORDER BY cl.name",
+            )
+            .unwrap()
+            .query_map(params![TEST_ACCOUNT_ID], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(labels.iter().any(|l| l == "Active"));
+        assert!(labels.iter().any(|l| l == "Family"));
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

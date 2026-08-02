@@ -22,10 +22,12 @@ export function searchContacts(
   const qDigits = q.replace(/\D/g, "");
 
   return contacts.filter((c) => {
+    const preferred = normalizeName(c.preferredName);
     const first = normalizeName(c.firstName);
     const last = normalizeName(c.lastName);
     const display = normalizeName(c.displayName);
     const nameFields = [
+      preferred,
       first,
       last,
       display,

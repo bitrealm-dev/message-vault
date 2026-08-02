@@ -100,8 +100,7 @@ type RawMessageRow = {
   sender: string | null;
   body: string | null;
   is_announcement: number;
-  first_name: string | null;
-  last_name: string | null;
+  preferred_name: string | null;
   preferred_handle: string | null;
   name_hint: string | null;
 };
@@ -172,7 +171,7 @@ function loadConversationMessages(
   const rows = db
     .prepare(
       `SELECT m.id, m.conversation_id, m.source, m.timestamp, m.sort_order, m.is_from_me, m.sender, m.body, m.is_announcement,
-              c.first_name, c.last_name, c.preferred_handle,
+              c.preferred_name, c.preferred_handle,
               p.name_hint
        FROM messages m
        JOIN conversations conv ON conv.id = m.conversation_id
@@ -246,12 +245,9 @@ function loadConversationMessages(
     if (isFromMe) {
       senderName = owner.display_name;
     } else {
-      const hasContactName = Boolean(
-        r.first_name?.trim() || r.last_name?.trim(),
-      );
+      const hasContactName = Boolean(r.preferred_name?.trim());
       senderName = displayName({
-        first_name: r.first_name,
-        last_name: r.last_name,
+        preferred_name: r.preferred_name,
         preferred_handle: r.preferred_handle ?? r.sender,
       });
       if (!hasContactName) {

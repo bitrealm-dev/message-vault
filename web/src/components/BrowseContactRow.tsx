@@ -152,10 +152,9 @@ export const BrowseContactRow = memo(function BrowseContactRow({
             }`}
             style={{
               backgroundColor: contactAvatarColor({
+                preferredName: c.preferredName,
                 displayName: c.displayName,
                 preferredHandle: c.preferredHandle,
-                firstName: c.firstName,
-                lastName: c.lastName,
               }),
             }}
           >

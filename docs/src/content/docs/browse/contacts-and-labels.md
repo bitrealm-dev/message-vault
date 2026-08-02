@@ -30,8 +30,8 @@ Message Vault is **not** a contacts manager. It keeps only what browsing
 needs:
 
 - Normalized phone handles (E.164 where possible)
-- Display names (`preferred_name` in SQLite, backfilled from first + last
-  when that column was added; CSV still uses `first_name` / `last_name`)
+- Display names (`preferred_name` only in SQLite; CSV `first_name` /
+  `last_name` columns are joined into `preferred_name` on import)
 - Vault-owned labels (including Active / Inactive when present)
 
 Uploaded VCF files are **transient**. The vault does not store the raw VCF,
@@ -44,10 +44,11 @@ edit independently of your address book.
 `contacts.csv` is **phone-only**. SQLite `contact_handles` holds phones plus
 optional iMessage emails for thread linking; emails are not written to the CSV.
 
-Header columns include `phones`, `first_name`, `last_name`, `exclude` (kept for
-compatibility; new writes leave it `false` and encode status as labels), and
-ordered `label_1`…`label_N` (as many as needed). Legacy `group_1`…`group_N`
-aliases are still accepted on import.
+Header columns include `phones`, `first_name`, `last_name` (joined into the
+SQLite `preferred_name` on import), `exclude` (kept for compatibility; new
+writes leave it `false` and encode status as labels), and ordered
+`label_1`…`label_N` (as many as needed). Legacy `group_1`…`group_N` aliases
+are still accepted on import.
 
 ### Export contacts CSV
 
@@ -56,20 +57,27 @@ projection built from SQLite for the signed-in account (`GET
 /api/contacts/export-csv`). It includes sanitized phones, names, and **every**
 current vault label. It is not a raw VCF re-export.
 
-### CLI: VCF → CSV
+### CLI: import address book
 
-Convert a VCF address book offline (writes `contacts.csv`; does not open the
-web preview):
+Load an **iMazing Contacts CSV** or **VCF** into SQLite (replaces that account’s
+contacts):
 
 ```bash
-cargo run --release -- vcf-to-contacts \
-  --vcf path/to/contacts.vcf \
-  --account yourusername
+cargo run --release -- import-contacts \
+  --account yourusername \
+  --contacts path/to/contacts.vcf
+
+# or iMazing export:
+cargo run --release -- import-contacts \
+  --account yourusername \
+  --contacts path/to/Contacts.csv
 ```
 
-The converter reads `CATEGORIES` and legacy `[Tag]` markers in `FN`, then
-writes dynamic `label_N` columns (and maps legacy exclude status into Active /
-Inactive labels).
+The same `--contacts` flag is available on `import` / `ingest`. VCF
+`CATEGORIES` (and legacy `[Tag]` markers in `FN`) become vault labels.
+
+Optional helper `vcf-to-contacts` still writes the vault dual-write
+`contacts.csv` mirror; prefer `import-contacts` for loading into the database.
 
 ## Import VCF (web)
 

@@ -46,6 +46,10 @@ export function resetDb(): void {
     __mvOwnerCache?: Map<string, unknown>;
   }).__mvOwnerCache;
   ownerCache?.clear();
+  const profileCache = (globalThis as unknown as {
+    __mvAccountProfileCache?: Map<string, unknown>;
+  }).__mvAccountProfileCache;
+  profileCache?.clear();
 }
 
 export function hasDuplicateOfColumn(): boolean {
@@ -67,7 +71,7 @@ export function combinedDedupeSql(source?: string | null, alias?: string): strin
   return ` AND ${col} IS NULL`;
 }
 
-/** Join first + last into a stored preferred_name (null when both empty). */
+/** Join first + last into a preferred display name (null when both empty). */
 export function joinPreferredName(
   firstName: string | null | undefined,
   lastName: string | null | undefined,
@@ -78,16 +82,29 @@ export function joinPreferredName(
   return parts.length ? parts.join(" ") : null;
 }
 
+/** Split display name on the first space: first half / remainder as last. */
+export function splitNameParts(name: string | null | undefined): {
+  first: string;
+  last: string;
+} {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) return { first: "", last: "" };
+  const i = trimmed.indexOf(" ");
+  if (i < 0) return { first: trimmed, last: trimmed };
+  const first = trimmed.slice(0, i).trim();
+  const last = trimmed.slice(i + 1).trim();
+  return {
+    first: first || last,
+    last: last || first,
+  };
+}
+
 export function displayName(row: {
   preferred_name?: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  preferred_handle: string | null;
+  preferred_handle?: string | null;
 }): string {
   const preferred = row.preferred_name?.trim();
   if (preferred) return preferred;
-  const joined = joinPreferredName(row.first_name, row.last_name);
-  if (joined) return joined;
   if (row.preferred_handle?.trim()) {
     return formatPhoneDisplay(row.preferred_handle);
   }
@@ -96,26 +113,22 @@ export function displayName(row: {
 
 export function sortFields(row: {
   preferred_name?: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  preferred_handle: string | null;
+  preferred_handle?: string | null;
 }): { sortFirst: string; sortLast: string; letter: string } {
   const preferred = (row.preferred_name || "").trim();
-  const first = (row.first_name || "").trim();
-  const last = (row.last_name || "").trim();
-  // Prefer preferred_name, then structured names, then phone for sort keys.
-  const sortFirst =
-    preferred || first || last || row.preferred_handle || "Unknown";
-  const sortLast =
-    preferred || last || first || row.preferred_handle || "Unknown";
-  const letterSrc = preferred ? preferred : sortLast;
-  // When using preferred_name alone, letter from last word (surname-ish).
-  const letterSource = preferred
-    ? preferred.split(/\s+/).filter(Boolean).at(-1) || preferred
-    : letterSrc;
-  const ch = letterSource.charAt(0).toUpperCase();
+  const handle = row.preferred_handle?.trim() || "";
+  if (preferred) {
+    const { first, last } = splitNameParts(preferred);
+    const sortFirst = first || preferred;
+    const sortLast = last || preferred;
+    const ch = sortLast.charAt(0).toUpperCase();
+    const letter = ch >= "A" && ch <= "Z" ? ch : "#";
+    return { sortFirst, sortLast, letter };
+  }
+  const fallback = handle || "Unknown";
+  const ch = fallback.charAt(0).toUpperCase();
   const letter = ch >= "A" && ch <= "Z" ? ch : "#";
-  return { sortFirst, sortLast, letter };
+  return { sortFirst: fallback, sortLast: fallback, letter };
 }
 
 export function hasTrashedConversationsTable(db: Database.Database): boolean {
@@ -170,4 +183,3 @@ export function usefulNameHint(
   if (/^\(?unknown\)?$/i.test(t)) return null;
   return t;
 }
-

@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import {
   ACCOUNTS_DEFAULT_READ_ONLY_META_KEY,
   CONTACT_STATUS_LABELS_META_KEY,
+  CONTACTS_DROP_NAME_PARTS_META_KEY,
   CONTACTS_PREFERRED_NAME_META_KEY,
   VAULT_OWNERS_INTO_ACCOUNTS_META_KEY,
   ensureVaultSchema,
@@ -153,7 +154,7 @@ describe("vault owners into accounts migration", () => {
 });
 
 describe("contacts preferred_name migration", () => {
-  it("adds preferred_name and backfills from first + last", () => {
+  it("adds preferred_name, backfills from first + last, then drops name cols", () => {
     const db = new Database(":memory:");
     const accountId = "11111111-1111-1111-1111-111111111111";
     db.exec(`
@@ -186,10 +187,20 @@ describe("contacts preferred_name migration", () => {
       .prepare(`SELECT preferred_name FROM contacts WHERE account_id = ?`)
       .get(accountId) as { preferred_name: string | null };
     assert.equal(row.preferred_name, "Ann Lee");
+    const cols = (
+      db.prepare(`PRAGMA table_info(contacts)`).all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    assert.ok(!cols.includes("first_name"));
+    assert.ok(!cols.includes("last_name"));
+    assert.ok(cols.includes("preferred_name"));
     const marker = db
       .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
       .get(CONTACTS_PREFERRED_NAME_META_KEY) as { value: string };
     assert.equal(marker.value, "1");
+    const dropMarker = db
+      .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
+      .get(CONTACTS_DROP_NAME_PARTS_META_KEY) as { value: string };
+    assert.equal(dropMarker.value, "1");
 
     db.prepare(`UPDATE contacts SET preferred_name = NULL`).run();
     ensureVaultSchema(db);
@@ -211,10 +222,10 @@ describe("contact status label migration", () => {
       "alice",
     );
     db.prepare(
-      `INSERT INTO contacts (account_id, first_name, exclude) VALUES (?, ?, ?)`,
+      `INSERT INTO contacts (account_id, preferred_name, exclude) VALUES (?, ?, ?)`,
     ).run(accountId, "Ada", 0);
     db.prepare(
-      `INSERT INTO contacts (account_id, first_name, exclude) VALUES (?, ?, ?)`,
+      `INSERT INTO contacts (account_id, preferred_name, exclude) VALUES (?, ?, ?)`,
     ).run(accountId, "Grace", 1);
     db.prepare(`DELETE FROM schema_meta WHERE key = ?`).run(
       CONTACT_STATUS_LABELS_META_KEY,
@@ -224,11 +235,11 @@ describe("contact status label migration", () => {
 
     const rows = db
       .prepare(
-        `SELECT c.first_name AS name, c.exclude, cl.name AS label
+        `SELECT c.preferred_name AS name, c.exclude, cl.name AS label
          FROM contacts c
          JOIN contact_label_members clm ON clm.contact_id = c.id
          JOIN contact_labels cl ON cl.id = clm.label_id
-         ORDER BY c.first_name`,
+         ORDER BY c.preferred_name`,
       )
       .all() as Array<{ name: string; exclude: number; label: string }>;
     assert.deepEqual(rows, [
@@ -238,7 +249,7 @@ describe("contact status label migration", () => {
 
     db.prepare(
       `DELETE FROM contact_label_members
-       WHERE contact_id = (SELECT id FROM contacts WHERE first_name = 'Ada')`,
+       WHERE contact_id = (SELECT id FROM contacts WHERE preferred_name = 'Ada')`,
     ).run();
     ensureVaultSchema(db);
     const activeMemberships = db
@@ -246,7 +257,7 @@ describe("contact status label migration", () => {
         `SELECT COUNT(*) AS n
          FROM contact_label_members clm
          JOIN contacts c ON c.id = clm.contact_id
-         WHERE c.first_name = 'Ada'`,
+         WHERE c.preferred_name = 'Ada'`,
       )
       .get() as { n: number };
     assert.equal(activeMemberships.n, 0);

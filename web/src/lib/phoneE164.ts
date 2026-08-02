@@ -148,10 +148,6 @@ export function toPhoneE164(input: string): string | null {
   return null;
 }
 
-export function formatOwnerName(firstName: string, lastName: string): string {
-  return [firstName.trim(), lastName.trim()].filter(Boolean).join(" ");
-}
-
 /**
  * Format a stored handle for display. Emails and unparseable values pass through.
  * Phones use international spacing from libphonenumber (`+1 941 266 0605`).

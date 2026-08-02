@@ -66,6 +66,9 @@ export async function PATCH(req: Request, { params }: Params) {
   ) {
     patch.labels = labelsBody.map((t) => t.trim()).filter(Boolean);
   }
+  if (body.preferredName === null || typeof body.preferredName === "string") {
+    patch.preferredName = body.preferredName;
+  }
   if (body.firstName === null || typeof body.firstName === "string") {
     patch.firstName = body.firstName;
   }
@@ -81,6 +84,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (
     patch.exclude === undefined &&
     patch.labels === undefined &&
+    patch.preferredName === undefined &&
     patch.firstName === undefined &&
     patch.lastName === undefined &&
     patch.phones === undefined
@@ -88,7 +92,7 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json(
       {
         error:
-          "exclude, labels, firstName, lastName, and/or phones required",
+          "exclude, labels, preferredName, and/or phones required",
       },
       { status: 400 },
     );

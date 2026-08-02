@@ -53,7 +53,11 @@ enum Commands {
         #[arg(long, default_value = "replace")]
         mode: String,
 
-        /// Reload contacts CSV even if the table is non-empty
+        /// Address book to load: iMazing Contacts CSV or VCF
+        #[arg(long = "contacts", alias = "contacts-csv")]
+        contacts: Option<PathBuf>,
+
+        /// Reload contacts from --contacts even if the table is non-empty
         #[arg(long)]
         overwrite_contacts: bool,
 
@@ -92,15 +96,15 @@ enum Commands {
         #[arg(long)]
         assets_dir: Option<PathBuf>,
 
-        /// Contacts CSV path (overrides per-account default)
-        #[arg(long)]
-        contacts_csv: Option<PathBuf>,
+        /// Address book to load: iMazing Contacts CSV or VCF
+        #[arg(long = "contacts", alias = "contacts-csv")]
+        contacts: Option<PathBuf>,
 
         /// Exclude CSV path (overrides per-account default)
         #[arg(long = "exclude-csv")]
         exclude_csv: Option<PathBuf>,
 
-        /// Delete and reload contacts from CSV even if the table is non-empty
+        /// Delete and reload contacts from --contacts even if the table is non-empty
         #[arg(long)]
         overwrite_contacts: bool,
 
@@ -136,9 +140,9 @@ enum Commands {
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Contacts CSV path (overrides per-account default)
-        #[arg(long)]
-        contacts_csv: Option<PathBuf>,
+        /// Address book: iMazing Contacts CSV (First Name, Last Name, Phone columns) or VCF
+        #[arg(long = "contacts", alias = "contacts-csv")]
+        contacts: PathBuf,
 
         /// Output SQLite database path (overrides config)
         #[arg(long)]
@@ -258,6 +262,7 @@ fn main() -> Result<()> {
             config,
             staging_dir,
             mode,
+            contacts,
             overwrite_contacts,
             skip_dedupe,
             window_secs,
@@ -278,6 +283,7 @@ fn main() -> Result<()> {
                     account_id: account,
                     staging_dir,
                     mode,
+                    contacts,
                     overwrite_contacts,
                     skip_dedupe,
                     window_secs,
@@ -314,7 +320,7 @@ fn main() -> Result<()> {
             export_dir,
             db,
             assets_dir,
-            contacts_csv,
+            contacts,
             exclude_csv,
             overwrite_contacts,
             mode,
@@ -324,8 +330,7 @@ fn main() -> Result<()> {
             validate_source_id(&source)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let (default_contacts, default_exclude) = cfg.paths.ensure_account_csvs(&account)?;
-            let contacts_csv = contacts_csv.unwrap_or(default_contacts);
+            let (mirror_csv, default_exclude) = cfg.paths.ensure_account_csvs(&account)?;
             let exclude_csv = exclude_csv.unwrap_or(default_exclude);
             let mode = import::ImportMode::parse(&mode)?;
             let assets =
@@ -336,14 +341,18 @@ fn main() -> Result<()> {
             println!("  account:       {}", account);
             println!("  source:        {}", source);
             println!("  mode:          {}", mode.as_str());
-            println!("  contacts csv:  {}", contacts_csv.display());
+            match &contacts {
+                Some(path) => println!("  contacts:      {}", path.display()),
+                None => println!("  contacts:      (none — use --contacts for iMazing CSV or VCF)"),
+            }
             println!("  exclude csv:   {}", exclude_csv.display());
 
             let stats = import::import_export(
                 &export_dir,
                 &db,
                 &assets,
-                &contacts_csv,
+                contacts.as_deref(),
+                &mirror_csv,
                 &exclude_csv,
                 overwrite_contacts,
                 mode,
@@ -356,7 +365,9 @@ fn main() -> Result<()> {
             println!("  export_dir:    {}", export_dir.display());
             println!("  assets:        {}", assets.display());
             if stats.contacts_skipped {
-                println!("  contacts:      (skipped — already loaded; use --overwrite-contacts)");
+                println!(
+                    "  contacts:      (skipped — already loaded or no --contacts; use --overwrite-contacts)"
+                );
             } else {
                 println!("  contacts:      {}", stats.contacts);
                 println!("  contact handles:{}", stats.contact_handles);
@@ -421,15 +432,13 @@ fn main() -> Result<()> {
 
         Commands::ImportContacts {
             config,
-            contacts_csv,
+            contacts,
             db,
             account,
         } => {
             let cfg = Config::load(&config)?;
             let db = db.unwrap_or_else(|| cfg.paths.db.clone());
             let account = vault_owner::resolve_account_ref_at(&db, &account)?;
-            let (default_contacts, _) = cfg.paths.ensure_account_csvs(&account)?;
-            let contacts_csv = contacts_csv.unwrap_or(default_contacts);
 
             if let Some(parent) = db.parent()
                 && !parent.as_os_str().is_empty()
@@ -440,13 +449,13 @@ fn main() -> Result<()> {
             let mut conn = rusqlite::Connection::open(&db)?;
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
             let stats =
-                contacts::load_contacts_if_needed(&mut conn, &contacts_csv, true, &account)?;
+                contacts::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)?;
 
             println!("Imported contacts into {}", db.display());
             println!("  config:       {}", config.display());
             println!("  account:      {}", account);
-            println!("  contacts csv: {}", contacts_csv.display());
-            println!("  contacts:     {}", stats.contacts);
+            println!("  contacts:     {}", contacts.display());
+            println!("  rows:         {}", stats.contacts);
             println!("  phones:       {}", stats.phones);
             println!("  label links:  {}", stats.labels);
         }

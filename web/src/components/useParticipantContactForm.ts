@@ -262,8 +262,7 @@ export function useParticipantContactForm(
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          firstName: editDraft.firstName.trim() || null,
-          lastName: editDraft.lastName.trim() || null,
+          preferredName: editDraft.preferredName.trim() || null,
           phones: phonesForSave(editDraft.phones),
           labels: editDraft.labels,
         }),
@@ -291,8 +290,7 @@ export function useParticipantContactForm(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          firstName: editDraft.firstName.trim() || null,
-          lastName: editDraft.lastName.trim() || null,
+          preferredName: editDraft.preferredName.trim() || null,
           phones: phonesForSave(editDraft.phones),
           labels: editDraft.labels,
         }),

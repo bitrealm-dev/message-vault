@@ -95,28 +95,17 @@ export function ContactDetailsCard({
     <div className={`space-y-4 ${framed ? "mt-3" : ""}`}>
       <FormSection
         icon={<PersonDetailIcon className="size-5 shrink-0 text-muted" />}
-        label="Name"
+        label="Display name"
       >
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            type="text"
-            value={draft!.firstName}
-            onChange={(e) =>
-              onDraftChange!({ ...draft!, firstName: e.target.value })
-            }
-            placeholder="First"
-            className={inputClass}
-          />
-          <input
-            type="text"
-            value={draft!.lastName}
-            onChange={(e) =>
-              onDraftChange!({ ...draft!, lastName: e.target.value })
-            }
-            placeholder="Last"
-            className={inputClass}
-          />
-        </div>
+        <input
+          type="text"
+          value={draft!.preferredName}
+          onChange={(e) =>
+            onDraftChange!({ ...draft!, preferredName: e.target.value })
+          }
+          placeholder="Display name"
+          className={inputClass}
+        />
       </FormSection>
 
       {!hideLabels && (

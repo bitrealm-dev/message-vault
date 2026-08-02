@@ -102,8 +102,7 @@ function findContactIdByPhone(phone: string, accountId: string): number | null {
 
 type MatchedCard = {
   index: number;
-  firstName: string;
-  lastName: string;
+  preferredName: string;
   phones: string[];
   labels: string[];
 };
@@ -135,16 +134,16 @@ function collectMatchedCards(
       continue;
     }
 
-    let firstName = draft.firstName.trim();
-    const lastName = draft.lastName.trim();
-    if (!firstName && !lastName) {
-      firstName = card.fnRaw.trim() || phones[0]!;
+    let preferredName = [draft.firstName.trim(), draft.lastName.trim()]
+      .filter(Boolean)
+      .join(" ");
+    if (!preferredName) {
+      preferredName = card.fnRaw.trim() || phones[0]!;
     }
 
     matched.push({
       index: i,
-      firstName,
-      lastName,
+      preferredName,
       phones,
       labels: draft.labels,
     });
@@ -280,8 +279,7 @@ export function commitContactsFromVcf(
 
       if (uniqueOwners.length === 0) {
         createContact({
-          firstName: card.firstName || null,
-          lastName: card.lastName || null,
+          preferredName: card.preferredName || null,
           phones: card.phones,
           labels: mappedLabels,
         });
@@ -312,9 +310,8 @@ export function commitContactsFromVcf(
       }
 
       // Never overwrite names the user (or prior import) already set.
-      const nextFirst =
-        existing.firstName?.trim() || card.firstName || null;
-      const nextLast = existing.lastName?.trim() || card.lastName || null;
+      const nextPreferred =
+        existing.preferredName?.trim() || card.preferredName || null;
       const nextLabels = [
         ...new Set([...existing.labels, ...mappedLabels]),
       ].sort((a, b) =>
@@ -325,16 +322,14 @@ export function commitContactsFromVcf(
         mergedPhones.length !== existing.phones.length ||
         mergedPhones.some((p, idx) => p !== existing.phones[idx]);
       const namesChanged =
-        nextFirst !== (existing.firstName ?? null) ||
-        nextLast !== (existing.lastName ?? null);
+        nextPreferred !== (existing.preferredName ?? null);
       const labelsChanged =
         nextLabels.length !== existing.labels.length ||
         nextLabels.some((l) => !existing.labels.includes(l));
 
       if (phonesChanged || namesChanged || labelsChanged) {
         patchContact(intoId, {
-          firstName: nextFirst,
-          lastName: nextLast,
+          preferredName: nextPreferred,
           phones: phonesChanged ? mergedPhones : undefined,
           labels: labelsChanged ? nextLabels : undefined,
         });

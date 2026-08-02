@@ -61,8 +61,8 @@ describe("vault search + FTS", () => {
       );
       const insertContact = db.prepare(
         `INSERT INTO contacts (
-           account_id, first_name, last_name, exclude, preferred_handle
-         ) VALUES (?, ?, NULL, 0, ?)`,
+           account_id, preferred_name, exclude, preferred_handle
+         ) VALUES (?, ?, 0, ?)`,
       );
       const insertHandle = db.prepare(
         `INSERT INTO contact_handles (account_id, handle, contact_id)
@@ -407,8 +407,8 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO contacts (
-               account_id, first_name, last_name, exclude, preferred_handle
-             ) VALUES (?, NULL, NULL, 0, ?)`,
+               account_id, preferred_name, exclude, preferred_handle
+             ) VALUES (?, NULL, 0, ?)`,
           )
           .run(accountId, "+15555551999").lastInsertRowid,
       );
@@ -420,8 +420,8 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO contacts (
-               account_id, first_name, last_name, exclude, preferred_handle
-             ) VALUES (?, ?, NULL, 0, ?)`,
+               account_id, preferred_name, exclude, preferred_handle
+             ) VALUES (?, ?, 0, ?)`,
           )
           .run(accountId, "OnlyFirst", "+15555551998").lastInsertRowid,
       );

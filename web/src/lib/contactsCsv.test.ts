@@ -11,8 +11,7 @@ describe("serializeContactsCsv", () => {
     const csv = serializeContactsCsv([
       {
         phones: ["+15551234567"],
-        firstName: "Ada",
-        lastName: "Lovelace",
+        preferredName: "Ada Lovelace",
         exclude: false,
         labels: ["Family"],
       },
@@ -27,8 +26,7 @@ describe("serializeContactsCsv", () => {
     const csv = serializeContactsCsv([
       {
         phones: ["+15551234567"],
-        firstName: "Ada",
-        lastName: null,
+        preferredName: "Ada",
         exclude: true,
         labels,
       },
@@ -39,6 +37,7 @@ describe("serializeContactsCsv", () => {
     const row = parseCsvLine(lines[1]!);
     assert.equal(row[0], "+15551234567");
     assert.equal(row[1], "Ada");
+    assert.equal(row[2], "");
     assert.equal(row[3], "true");
     assert.deepEqual(row.slice(4), labels);
   });

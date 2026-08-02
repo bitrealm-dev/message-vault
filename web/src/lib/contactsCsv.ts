@@ -1,11 +1,55 @@
 import fs from "fs";
 import path from "path";
 import { currentAccountId } from "./accountScope";
+import { joinPreferredName, splitNameParts } from "./dbCore";
 import { phoneHandlesOnly } from "./handleKind";
 import { accountDataDir, repoRoot } from "./paths";
 
 const DEFAULT_CONTACTS_CSV_HEADER =
   "phones,first_name,last_name,exclude,label_1,label_2,label_3,label_4,label_5\n";
+
+/** Preferred name from a preferred_name column, else joined first+last. */
+function preferredFromCsvCols(
+  cols: string[],
+  idx: { preferredName: number; firstName: number; lastName: number },
+): string {
+  if (idx.preferredName >= 0) {
+    const preferred = (cols[idx.preferredName] ?? "").trim();
+    if (preferred) return preferred;
+  }
+  const first = idx.firstName >= 0 ? (cols[idx.firstName] ?? "").trim() : "";
+  const last = idx.lastName >= 0 ? (cols[idx.lastName] ?? "").trim() : "";
+  return joinPreferredName(first || null, last || null) ?? "";
+}
+
+/** Write preferred name into preferred_name and/or split first/last columns. */
+function writePreferredToCsvCols(
+  cols: string[],
+  idx: { preferredName: number; firstName: number; lastName: number },
+  preferredName: string | null | undefined,
+): void {
+  const preferred = preferredName?.trim() || "";
+  if (idx.preferredName >= 0) cols[idx.preferredName] = preferred;
+  if (idx.firstName >= 0 || idx.lastName >= 0) {
+    if (!preferred) {
+      if (idx.firstName >= 0) cols[idx.firstName] = "";
+      if (idx.lastName >= 0) cols[idx.lastName] = "";
+      return;
+    }
+    const { first, last } = splitNameParts(preferred);
+    const hasSpace = preferred.includes(" ");
+    if (idx.firstName >= 0) cols[idx.firstName] = first;
+    if (idx.lastName >= 0) cols[idx.lastName] = hasSpace ? last : "";
+  }
+}
+
+function csvNameIndexes(header: string[]) {
+  return {
+    preferredName: header.indexOf("preferred_name"),
+    firstName: header.indexOf("first_name"),
+    lastName: header.indexOf("last_name"),
+  };
+}
 
 /** Per-account contacts CSV under `data/<account_id>/contacts.csv`. */
 function contactsCsvPath(accountId = currentAccountId()): string {
@@ -210,12 +254,11 @@ function ensureLabelColumnCapacity(
 
 export function updateContactsCsv(
   matchPhones: string[],
-  matchNames: { firstName: string | null; lastName: string | null },
+  matchNames: { preferredName: string | null },
   patch: {
     exclude: boolean;
     groups: string[];
-    firstName?: string | null;
-    lastName?: string | null;
+    preferredName?: string | null;
     phones?: string[];
   },
 ): void {
@@ -237,18 +280,17 @@ export function updateContactsCsv(
   lines = expanded.lines;
   const labelIdx = expanded.labelIdx;
 
+  const nameIdx = csvNameIndexes(header);
   const idx = {
     phones: header.indexOf("phones"),
-    firstName: header.indexOf("first_name"),
-    lastName: header.indexOf("last_name"),
     exclude: header.indexOf("exclude"),
+    ...nameIdx,
   };
   if (idx.phones < 0 || idx.exclude < 0) {
     throw new Error("contacts CSV missing required columns");
   }
 
-  const matchFirst = (matchNames.firstName ?? "").trim().toLowerCase();
-  const matchLast = (matchNames.lastName ?? "").trim().toLowerCase();
+  const matchPreferred = (matchNames.preferredName ?? "").trim().toLowerCase();
 
   let matched = false;
   const out = lines.map((line, lineNo) => {
@@ -261,14 +303,12 @@ export function updateContactsCsv(
       .filter(Boolean);
     const phoneHit =
       phoneSet.size > 0 && rowPhones.some((p) => phoneSet.has(p));
+    const rowPreferred = preferredFromCsvCols(cols, nameIdx).toLowerCase();
     const nameHit =
       !phoneHit &&
       phoneSet.size === 0 &&
-      idx.firstName >= 0 &&
-      idx.lastName >= 0 &&
-      (cols[idx.firstName] ?? "").trim().toLowerCase() === matchFirst &&
-      (cols[idx.lastName] ?? "").trim().toLowerCase() === matchLast &&
-      (matchFirst !== "" || matchLast !== "");
+      matchPreferred !== "" &&
+      rowPreferred === matchPreferred;
     if (!phoneHit && !nameHit) {
       return line;
     }
@@ -276,11 +316,8 @@ export function updateContactsCsv(
     if (patch.phones) {
       cols[idx.phones] = phoneHandlesOnly(patch.phones).join(";");
     }
-    if (patch.firstName !== undefined && idx.firstName >= 0) {
-      cols[idx.firstName] = patch.firstName ?? "";
-    }
-    if (patch.lastName !== undefined && idx.lastName >= 0) {
-      cols[idx.lastName] = patch.lastName ?? "";
+    if (patch.preferredName !== undefined) {
+      writePreferredToCsvCols(cols, nameIdx, patch.preferredName);
     }
     cols[idx.exclude] = patch.exclude ? "true" : "false";
     writeCsvLabels(cols, labelIdx, patch.groups);
@@ -301,8 +338,7 @@ export function updateContactsCsv(
 export function updateContactsCsvLabelMembership(
   targets: Array<{
     phones: string[];
-    firstName: string | null;
-    lastName: string | null;
+    preferredName: string | null;
   }>,
   label: string,
   enable: boolean,
@@ -316,10 +352,10 @@ export function updateContactsCsvLabelMembership(
 
   let header = parseCsvLine(lines[0] ?? "");
   const initialLabelIdx = requireLabelColumns(header);
+  const nameIdx = csvNameIndexes(header);
   const idx = {
     phones: header.indexOf("phones"),
-    firstName: header.indexOf("first_name"),
-    lastName: header.indexOf("last_name"),
+    ...nameIdx,
   };
   if (idx.phones < 0) {
     throw new Error("contacts CSV missing required columns");
@@ -331,14 +367,8 @@ export function updateContactsCsvLabelMembership(
   const targetNames = new Set(
     targets
       .filter((target) => phoneHandlesOnly(target.phones).length === 0)
-      .map(
-        (target) =>
-          `${(target.firstName ?? "").trim().toLowerCase()}\0${(
-            target.lastName ?? ""
-          )
-            .trim()
-            .toLowerCase()}`,
-      ),
+      .map((target) => (target.preferredName ?? "").trim().toLowerCase())
+      .filter(Boolean),
   );
   const rowMatches = (cols: string[]) => {
     const phones = (cols[idx.phones] ?? "")
@@ -347,15 +377,7 @@ export function updateContactsCsvLabelMembership(
       .filter(Boolean);
     if (phones.some((phone) => targetPhones.has(phone))) return true;
     if (phones.length > 0 || targetNames.size === 0) return false;
-    const first =
-      idx.firstName >= 0
-        ? (cols[idx.firstName] ?? "").trim().toLowerCase()
-        : "";
-    const last =
-      idx.lastName >= 0
-        ? (cols[idx.lastName] ?? "").trim().toLowerCase()
-        : "";
-    return targetNames.has(`${first}\0${last}`);
+    return targetNames.has(preferredFromCsvCols(cols, nameIdx).toLowerCase());
   };
 
   let neededLabelColumns = initialLabelIdx.length;
@@ -415,8 +437,7 @@ export function updateContactsCsvLabelMembership(
 
 export function appendContactsCsv(row: {
   phones: string[];
-  firstName: string | null;
-  lastName: string | null;
+  preferredName: string | null;
   exclude: boolean;
   groups: string[];
 }): void {
@@ -437,11 +458,11 @@ export function appendContactsCsv(row: {
   lines = expanded.lines;
   const labelIdx = expanded.labelIdx;
 
+  const nameIdx = csvNameIndexes(header);
   const idx = {
     phones: header.indexOf("phones"),
-    firstName: header.indexOf("first_name"),
-    lastName: header.indexOf("last_name"),
     exclude: header.indexOf("exclude"),
+    ...nameIdx,
   };
   if (idx.phones < 0 || idx.exclude < 0) {
     throw new Error("contacts CSV missing required columns");
@@ -449,8 +470,7 @@ export function appendContactsCsv(row: {
 
   const cols = header.map(() => "");
   cols[idx.phones] = phoneHandlesOnly(row.phones).join(";");
-  if (idx.firstName >= 0) cols[idx.firstName] = row.firstName ?? "";
-  if (idx.lastName >= 0) cols[idx.lastName] = row.lastName ?? "";
+  writePreferredToCsvCols(cols, nameIdx, row.preferredName);
   cols[idx.exclude] = row.exclude ? "true" : "false";
   writeCsvLabels(cols, labelIdx, row.groups);
 
@@ -503,8 +523,7 @@ export function rewriteCsvLabels(
 export function removeContactsCsv(
   targets: Array<{
     phones: string[];
-    firstName: string | null;
-    lastName: string | null;
+    preferredName: string | null;
   }>,
 ): void {
   if (targets.length === 0) return;
@@ -521,10 +540,10 @@ export function removeContactsCsv(
   }
 
   const header = parseCsvLine(lines[0] ?? "");
+  const nameIdx = csvNameIndexes(header);
   const idx = {
     phones: header.indexOf("phones"),
-    firstName: header.indexOf("first_name"),
-    lastName: header.indexOf("last_name"),
+    ...nameIdx,
   };
   if (idx.phones < 0) {
     throw new Error("contacts CSV missing required columns");
@@ -532,8 +551,7 @@ export function removeContactsCsv(
 
   const matchers = targets.map((t) => ({
     phones: new Set(phoneHandlesOnly(t.phones)),
-    first: (t.firstName ?? "").trim().toLowerCase(),
-    last: (t.lastName ?? "").trim().toLowerCase(),
+    preferred: (t.preferredName ?? "").trim().toLowerCase(),
   }));
 
   const out = lines.filter((line, lineNo) => {
@@ -543,12 +561,7 @@ export function removeContactsCsv(
       .split(";")
       .map((p) => p.trim())
       .filter(Boolean);
-    const rowFirst =
-      idx.firstName >= 0
-        ? (cols[idx.firstName] ?? "").trim().toLowerCase()
-        : "";
-    const rowLast =
-      idx.lastName >= 0 ? (cols[idx.lastName] ?? "").trim().toLowerCase() : "";
+    const rowPreferred = preferredFromCsvCols(cols, nameIdx).toLowerCase();
 
     for (const m of matchers) {
       const phoneHit =
@@ -556,9 +569,8 @@ export function removeContactsCsv(
       const nameHit =
         !phoneHit &&
         m.phones.size === 0 &&
-        (m.first !== "" || m.last !== "") &&
-        rowFirst === m.first &&
-        rowLast === m.last;
+        m.preferred !== "" &&
+        rowPreferred === m.preferred;
       if (phoneHit || nameHit) return false;
     }
     return true;
@@ -580,8 +592,7 @@ export function contactsCsvHeader(labelCount: number): string[] {
 
 export type VaultContactCsvRow = {
   phones: string[];
-  firstName: string | null;
-  lastName: string | null;
+  preferredName: string | null;
   exclude: boolean;
   labels: string[];
 };
@@ -590,12 +601,12 @@ export type VaultContactCsvRow = {
 export function serializeContactsCsv(rows: VaultContactCsvRow[]): string {
   const maxLabels = rows.reduce((m, r) => Math.max(m, r.labels.length), 0);
   const header = contactsCsvHeader(maxLabels);
+  const nameIdx = csvNameIndexes(header);
   const lines = [header.map(escapeCsvField).join(",")];
   for (const row of rows) {
     const cols = header.map(() => "");
     cols[0] = phoneHandlesOnly(row.phones).join(";");
-    cols[1] = row.firstName ?? "";
-    cols[2] = row.lastName ?? "";
+    writePreferredToCsvCols(cols, nameIdx, row.preferredName);
     cols[3] = row.exclude ? "true" : "false";
     for (let i = 0; i < Math.max(5, maxLabels); i++) {
       cols[4 + i] = row.labels[i] ?? "";

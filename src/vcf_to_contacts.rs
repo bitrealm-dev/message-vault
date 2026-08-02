@@ -19,8 +19,7 @@ pub struct ConvertStats {
 #[derive(Debug, Clone)]
 struct ContactOut {
     phones: Vec<String>,
-    first_name: String,
-    last_name: String,
+    preferred_name: String,
     exclude: bool,
     tags: Vec<String>,
 }
@@ -101,8 +100,7 @@ pub fn convert(
         phone_to_index.insert(number.clone(), contacts.len());
         contacts.push(ContactOut {
             phones: vec![number.clone()],
-            first_name: label.clone(),
-            last_name: String::new(),
+            preferred_name: label.clone(),
             exclude: true,
             tags: Vec::new(),
         });
@@ -125,11 +123,8 @@ fn merge_contact(into: &mut ContactOut, from: ContactOut) {
             into.phones.push(phone);
         }
     }
-    if into.first_name.is_empty() {
-        into.first_name = from.first_name;
-    }
-    if into.last_name.is_empty() {
-        into.last_name = from.last_name;
+    if into.preferred_name.is_empty() {
+        into.preferred_name = from.preferred_name;
     }
     into.exclude = into.exclude || from.exclude;
     for tag in from.tags {
@@ -155,10 +150,10 @@ fn card_to_contact(card: &VcfCard) -> ContactOut {
         String::new()
     };
 
-    let (first_name, last_name) = if !nickname.is_empty() {
-        (nickname, String::new())
+    let preferred_name = if !nickname.is_empty() {
+        nickname
     } else {
-        (first, last)
+        join_preferred_name(&first, &last)
     };
 
     let mut tags = Vec::new();
@@ -179,10 +174,32 @@ fn card_to_contact(card: &VcfCard) -> ContactOut {
 
     ContactOut {
         phones: card.phones.clone(),
-        first_name,
-        last_name,
+        preferred_name,
         exclude: false,
         tags,
+    }
+}
+
+fn join_preferred_name(first: &str, last: &str) -> String {
+    let first = first.trim();
+    let last = last.trim();
+    match (first.is_empty(), last.is_empty()) {
+        (false, false) => format!("{first} {last}"),
+        (false, true) => first.to_string(),
+        (true, false) => last.to_string(),
+        (true, true) => String::new(),
+    }
+}
+
+/// Split preferred name on first space for contacts.csv first_name / last_name columns.
+fn split_preferred_name(preferred: &str) -> (String, String) {
+    let trimmed = preferred.trim();
+    if trimmed.is_empty() {
+        return (String::new(), String::new());
+    }
+    match trimmed.split_once(' ') {
+        Some((first, rest)) => (first.to_string(), rest.trim().to_string()),
+        None => (trimmed.to_string(), String::new()),
     }
 }
 
@@ -275,10 +292,11 @@ fn write_csv(path: &Path, contacts: &[ContactOut]) -> Result<()> {
 
     for c in contacts {
         let phones = c.phones.join(";");
+        let (first_name, last_name) = split_preferred_name(&c.preferred_name);
         let mut row = vec![
             phones,
-            c.first_name.clone(),
-            c.last_name.clone(),
+            first_name,
+            last_name,
             "false".to_string(),
         ];
         let mut labels: Vec<String> = c

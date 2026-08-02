@@ -6,8 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ContactPhoneList,
+  normalizePhoneRows,
   phonesForSave,
-  seedContactEditDraft,
 } from "./contactEdit";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import { ChevronRightIcon } from "./icons";
@@ -50,13 +50,7 @@ export function SettingsAccountForm() {
     setPassword("");
     setPasswordConfirm("");
     setPreferredName(json.preferredName ?? json.displayName ?? "");
-    const draft = seedContactEditDraft({
-      firstName: "",
-      lastName: "",
-      phones: json.phones,
-      labels: [],
-    });
-    setPhones(draft.phones);
+    setPhones(normalizePhoneRows(json.phones));
   };
 
   const load = useCallback(async () => {

@@ -2,7 +2,13 @@ import Database from "better-sqlite3";
 
 import { currentAccountId } from "./accountScope";
 import { listContactsByIds, listLabelMemberContactIds } from "./contactsRead";
-import { combinedDedupeSql, getDb, hasDuplicateOfColumn, resetDb } from "./dbCore";
+import {
+  combinedDedupeSql,
+  getDb,
+  hasDuplicateOfColumn,
+  resetDb,
+  splitNameParts,
+} from "./dbCore";
 import { ownerHandleMatcher } from "./owner";
 import { dbPath } from "./paths";
 import { sanitizePhoneDigits, toPhoneE164 } from "./phoneE164";
@@ -264,8 +270,7 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
   const rows = db
     .prepare(
       `SELECT c.id AS id,
-              c.first_name AS first_name,
-              c.last_name AS last_name,
+              c.preferred_name AS preferred_name,
               c.preferred_handle AS preferred_handle
        FROM contacts c
        WHERE c.account_id = ?
@@ -276,8 +281,7 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
     )
     .all(accountId) as Array<{
     id: number;
-    first_name: string | null;
-    last_name: string | null;
+    preferred_name: string | null;
     preferred_handle: string | null;
   }>;
 
@@ -297,21 +301,25 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
 
   return rows
     .filter((contact) => {
-      const noFirst = !(contact.first_name ?? "").trim();
-      const noLast = !(contact.last_name ?? "").trim();
+      const preferred = (contact.preferred_name ?? "").trim();
+      const parts = splitNameParts(preferred || null);
+      const first = preferred ? parts.first : "";
+      const last = preferred.includes(" ") ? parts.last : "";
+      const noFirst = !first.trim();
+      const noLast = !last.trim();
       if (parsed.noFirstName && !noFirst) return false;
       if (parsed.noLastName && !noLast) return false;
       if (
         !parsed.noFirstName &&
         firstNeedle &&
-        !(contact.first_name ?? "").toLocaleLowerCase().includes(firstNeedle)
+        !first.toLocaleLowerCase().includes(firstNeedle)
       ) {
         return false;
       }
       if (
         !parsed.noLastName &&
         lastNeedle &&
-        !(contact.last_name ?? "").toLocaleLowerCase().includes(lastNeedle)
+        !last.toLocaleLowerCase().includes(lastNeedle)
       ) {
         return false;
       }
@@ -1261,21 +1269,25 @@ export function searchVaultContacts(
   const matchingItems = allItems
     .filter((contact) => {
       if (withinIds && !withinIds.has(contact.id)) return false;
-      const noFirst = !(contact.firstName ?? "").trim();
-      const noLast = !(contact.lastName ?? "").trim();
+      const preferred = (contact.preferredName ?? "").trim();
+      const parts = splitNameParts(preferred || null);
+      const first = preferred ? parts.first : "";
+      const last = preferred.includes(" ") ? parts.last : "";
+      const noFirst = !first.trim();
+      const noLast = !last.trim();
       if (parsed.noFirstName && !noFirst) return false;
       if (parsed.noLastName && !noLast) return false;
       if (
         !parsed.noFirstName &&
         firstNeedle &&
-        !(contact.firstName ?? "").toLocaleLowerCase().includes(firstNeedle)
+        !first.toLocaleLowerCase().includes(firstNeedle)
       ) {
         return false;
       }
       if (
         !parsed.noLastName &&
         lastNeedle &&
-        !(contact.lastName ?? "").toLocaleLowerCase().includes(lastNeedle)
+        !last.toLocaleLowerCase().includes(lastNeedle)
       ) {
         return false;
       }
@@ -1296,8 +1308,9 @@ export function searchVaultContacts(
         handleNeedle &&
         ![
           contact.displayName,
-          contact.firstName ?? "",
-          contact.lastName ?? "",
+          contact.preferredName ?? "",
+          first,
+          last,
           ...phoneValues,
         ].some((value) => value.toLocaleLowerCase().includes(handleNeedle))
       ) {

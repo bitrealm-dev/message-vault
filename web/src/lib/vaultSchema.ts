@@ -271,8 +271,6 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      first_name TEXT,
-      last_name TEXT,
       preferred_name TEXT,
       exclude INTEGER NOT NULL DEFAULT 0,
       preferred_handle TEXT
@@ -331,6 +329,7 @@ export function ensureVaultSchema(db: Database.Database): void {
   migrateContactGroupsToLabels(db);
   migrateContactStatusesToLabels(db);
   migrateContactsPreferredName(db);
+  migrateContactsDropNameParts(db);
   migrateMessagesAccountGuid(db);
   migrateStagingAccountGuid(db);
   migrateAccountsDefaultReadOnly(db);
@@ -1104,6 +1103,7 @@ function migrateAccountsDropNameParts(db: Database.Database): void {
 }
 
 export const CONTACTS_PREFERRED_NAME_META_KEY = "contacts_preferred_name_v1";
+export const CONTACTS_DROP_NAME_PARTS_META_KEY = "contacts_drop_name_parts_v1";
 
 /** Add `preferred_name` and backfill from first + last once. */
 function migrateContactsPreferredName(db: Database.Database): void {
@@ -1123,14 +1123,103 @@ function migrateContactsPreferredName(db: Database.Database): void {
     .get(CONTACTS_PREFERRED_NAME_META_KEY) as { n: number };
   if (already.n > 0) return;
 
-  db.exec(`
-    UPDATE contacts
-    SET preferred_name = NULLIF(trim(
-      trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
-    ), '')
-    WHERE preferred_name IS NULL OR trim(preferred_name) = '';
-  `);
+  const hasFirst = tableHasColumn(db, "contacts", "first_name");
+  const hasLast = tableHasColumn(db, "contacts", "last_name");
+  if (hasFirst && hasLast) {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = NULLIF(trim(
+        trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
+      ), '')
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else if (hasFirst) {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(first_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else if (hasLast) {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(last_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  }
   db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
     CONTACTS_PREFERRED_NAME_META_KEY,
+  );
+}
+
+/** Drop contacts.first_name / last_name; keep preferred_name only. */
+function migrateContactsDropNameParts(db: Database.Database): void {
+  if (!tableExists(db, "contacts")) return;
+  const hasFirst = tableHasColumn(db, "contacts", "first_name");
+  const hasLast = tableHasColumn(db, "contacts", "last_name");
+  if (!hasFirst && !hasLast) return;
+
+  if (!tableHasColumn(db, "contacts", "preferred_name")) {
+    db.exec(`ALTER TABLE contacts ADD COLUMN preferred_name TEXT`);
+  }
+  if (hasFirst && hasLast) {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else if (hasFirst) {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(first_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  } else {
+    db.exec(`
+      UPDATE contacts
+      SET preferred_name = coalesce(
+        NULLIF(trim(preferred_name), ''),
+        NULLIF(trim(last_name), '')
+      )
+      WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+    `);
+  }
+
+  db.exec(`PRAGMA foreign_keys = OFF;`);
+  db.exec(`
+    CREATE TABLE contacts_new (
+      id INTEGER PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      preferred_name TEXT,
+      exclude INTEGER NOT NULL DEFAULT 0,
+      preferred_handle TEXT
+    );
+    INSERT INTO contacts_new (id, account_id, preferred_name, exclude, preferred_handle)
+      SELECT id, account_id, preferred_name, exclude, preferred_handle FROM contacts;
+    DROP TABLE contacts;
+    ALTER TABLE contacts_new RENAME TO contacts;
+    CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
+    PRAGMA foreign_keys = ON;
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  db.prepare(`INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, '1')`).run(
+    CONTACTS_DROP_NAME_PARTS_META_KEY,
   );
 }

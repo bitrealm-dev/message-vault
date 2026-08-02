@@ -35,7 +35,10 @@ import {
 export type ContactPatch = {
   exclude?: boolean;
   labels?: string[];
+  preferredName?: string | null;
+  /** @deprecated Prefer preferredName; joined with lastName when preferredName omitted. */
   firstName?: string | null;
+  /** @deprecated Prefer preferredName; joined with firstName when preferredName omitted. */
   lastName?: string | null;
   phones?: string[];
 };
@@ -47,21 +50,39 @@ function assertAllowedLabelName(name: string): void {
 }
 
 export type ContactCreate = {
+  preferredName?: string | null;
+  /** @deprecated Prefer preferredName; joined with lastName when preferredName omitted. */
   firstName?: string | null;
+  /** @deprecated Prefer preferredName; joined with firstName when preferredName omitted. */
   lastName?: string | null;
   phones?: string[];
   exclude?: boolean;
   labels?: string[];
 };
 
+/** Resolve preferred display name from preferredName or legacy first+last. */
+function resolvePreferredName(input: {
+  preferredName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string | null {
+  if (input.preferredName !== undefined) {
+    return input.preferredName?.trim() || null;
+  }
+  return joinPreferredName(input.firstName, input.lastName);
+}
+
+function contactHasName(contact: ContactDetail): boolean {
+  return Boolean((contact.preferredName ?? "").trim());
+}
+
 /** Insert a new contact in SQLite and append contacts.csv; returns the contact. */
 export function createContact(input: ContactCreate): ContactDetail {
   assertVaultWritable();
   const accountId = currentAccountId();
-  const firstName = input.firstName?.trim() || null;
-  const lastName = input.lastName?.trim() || null;
-  if (!firstName && !lastName) {
-    throw new Error("first or last name required");
+  const preferredName = resolvePreferredName(input);
+  if (!preferredName) {
+    throw new Error("display name required");
   }
   const phones = (input.phones ?? []).map((p) => p.trim()).filter(Boolean);
   const csvPhones = phoneHandlesOnly(phones);
@@ -97,21 +118,13 @@ export function createContact(input: ContactCreate): ContactDetail {
         }
       }
 
-      const preferredName = joinPreferredName(firstName, lastName);
       const result = writeDb
         .prepare(
           `INSERT INTO contacts (
-             account_id, first_name, last_name, preferred_name, exclude, preferred_handle
-           ) VALUES (?, ?, ?, ?, ?, ?)`,
+             account_id, preferred_name, exclude, preferred_handle
+           ) VALUES (?, ?, ?, ?)`,
         )
-        .run(
-          accountId,
-          firstName,
-          lastName,
-          preferredName,
-          0,
-          preferredHandle,
-        );
+        .run(accountId, preferredName, 0, preferredHandle);
       newId = Number(result.lastInsertRowid);
 
       const insertPhone = writeDb.prepare(
@@ -140,8 +153,7 @@ export function createContact(input: ContactCreate): ContactDetail {
   resetDb();
   appendContactsCsv({
     phones: csvPhones,
-    firstName,
-    lastName,
+    preferredName,
     exclude: false,
     groups: labels,
   });
@@ -241,8 +253,7 @@ export function setContactsLabelMembership(
       .filter((contact) => changedIds.has(contact.id))
       .map((contact) => ({
         phones: contact.phones,
-        firstName: contact.firstName,
-        lastName: contact.lastName,
+        preferredName: contact.preferredName,
       })),
     label,
     enable,
@@ -452,14 +463,21 @@ export function patchContact(
     );
     labels.push(patch.exclude ? "Inactive" : "Active");
   }
-  const firstName =
-    patch.firstName !== undefined
-      ? patch.firstName?.trim() || null
-      : existing.firstName;
-  const lastName =
-    patch.lastName !== undefined
-      ? patch.lastName?.trim() || null
-      : existing.lastName;
+
+  const namePatch =
+    patch.preferredName !== undefined ||
+    patch.firstName !== undefined ||
+    patch.lastName !== undefined;
+  let preferredName = existing.preferredName;
+  if (patch.preferredName !== undefined) {
+    preferredName = patch.preferredName?.trim() || null;
+  } else if (patch.firstName !== undefined || patch.lastName !== undefined) {
+    preferredName = joinPreferredName(
+      patch.firstName !== undefined ? patch.firstName : existing.firstName,
+      patch.lastName !== undefined ? patch.lastName : existing.lastName,
+    );
+  }
+
   const phones =
     patch.phones !== undefined
       ? patch.phones.map((p) => p.trim()).filter(Boolean)
@@ -494,19 +512,10 @@ export function patchContact(
       writeDb
         .prepare(
           `UPDATE contacts
-           SET first_name = ?, last_name = ?, preferred_name = ?,
-               exclude = ?, preferred_handle = ?
+           SET preferred_name = ?, exclude = ?, preferred_handle = ?
            WHERE id = ? AND account_id = ?`,
         )
-        .run(
-          firstName,
-          lastName,
-          joinPreferredName(firstName, lastName),
-          0,
-          preferredHandle,
-          id,
-          accountId,
-        );
+        .run(preferredName, 0, preferredHandle, id, accountId);
 
       if (patch.labels || patch.exclude !== undefined) {
         writeDb
@@ -529,12 +538,11 @@ export function patchContact(
   resetDb();
   updateContactsCsv(
     existingCsvPhones,
-    { firstName: existing.firstName, lastName: existing.lastName },
+    { preferredName: existing.preferredName },
     {
       exclude: false,
       groups: labels,
-      firstName: patch.firstName !== undefined ? firstName : undefined,
-      lastName: patch.lastName !== undefined ? lastName : undefined,
+      preferredName: namePatch ? preferredName : undefined,
       phones: csvPhonesChanged ? csvPhones : undefined,
     },
   );
@@ -705,8 +713,8 @@ export function ensureUnknownContacts(): number {
         const result = writeDb
           .prepare(
             `INSERT INTO contacts (
-               account_id, first_name, last_name, preferred_name, exclude, preferred_handle
-             ) VALUES (?, NULL, NULL, NULL, 0, ?)`,
+               account_id, preferred_name, exclude, preferred_handle
+             ) VALUES (?, NULL, 0, ?)`,
           )
           .run(accountId, handle);
         const newId = Number(result.lastInsertRowid);
@@ -734,8 +742,7 @@ export function ensureUnknownContacts(): number {
     try {
       appendContactsCsv({
         phones,
-        firstName: null,
-        lastName: null,
+        preferredName: null,
         exclude: false,
         groups: [],
       });
@@ -759,16 +766,10 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
   const target = getContact(intoId);
   if (!target) throw new Error("target contact not found");
 
-  const sourceHasName = Boolean(
-    (source.firstName ?? "").trim() || (source.lastName ?? "").trim(),
-  );
-  if (sourceHasName) {
+  if (contactHasName(source)) {
     throw new Error("only nameless contacts can be merged into another contact");
   }
-  const targetHasName = Boolean(
-    (target.firstName ?? "").trim() || (target.lastName ?? "").trim(),
-  );
-  if (!targetHasName) {
+  if (!contactHasName(target)) {
     throw new Error("merge target must have a name");
   }
 
@@ -829,18 +830,16 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
     removeContactsCsv([
       {
         phones: sourceCsvPhones,
-        firstName: source.firstName,
-        lastName: source.lastName,
+        preferredName: source.preferredName,
       },
     ]);
   }
   if (mergedCsvPhones.length > 0) {
     updateContactsCsv(
       phoneHandlesOnly(target.phones),
-      { firstName: target.firstName, lastName: target.lastName },
+      { preferredName: target.preferredName },
       {
-        firstName: target.firstName,
-        lastName: target.lastName,
+        preferredName: target.preferredName,
         exclude: target.exclude,
         groups: target.labels,
         phones: mergedCsvPhones,
@@ -862,16 +861,14 @@ export function deleteContacts(ids: number[]): number {
 
   const snapshots: Array<{
     phones: string[];
-    firstName: string | null;
-    lastName: string | null;
+    preferredName: string | null;
   }> = [];
   for (const id of unique) {
     const existing = getContact(id);
     if (!existing) continue;
     snapshots.push({
       phones: phoneHandlesOnly(existing.phones),
-      firstName: existing.firstName,
-      lastName: existing.lastName,
+      preferredName: existing.preferredName,
     });
   }
   if (snapshots.length === 0) {

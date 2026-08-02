@@ -209,8 +209,6 @@ const CONTACTS_TABLES_DDL: &str = r#"
 CREATE TABLE contacts (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    first_name TEXT,
-    last_name TEXT,
     preferred_name TEXT,
     exclude INTEGER NOT NULL DEFAULT 0,
     preferred_handle TEXT
@@ -883,11 +881,13 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch(CONTACTS_TABLES_DDL)?;
     }
     migrate_contacts_preferred_name(conn)?;
+    migrate_contacts_drop_name_parts(conn)?;
     migrate_contact_statuses_to_labels(conn)?;
     Ok(())
 }
 
 pub const CONTACTS_PREFERRED_NAME_META_KEY: &str = "contacts_preferred_name_v1";
+pub const CONTACTS_DROP_NAME_PARTS_META_KEY: &str = "contacts_drop_name_parts_v1";
 
 fn migrate_contacts_preferred_name(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "contacts")? {
@@ -914,19 +914,130 @@ fn migrate_contacts_preferred_name(conn: &Connection) -> Result<()> {
         return Ok(());
     }
 
-    conn.execute(
-        r#"
-        UPDATE contacts
-        SET preferred_name = NULLIF(trim(
-          trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
-        ), '')
-        WHERE preferred_name IS NULL OR trim(preferred_name) = ''
-        "#,
-        [],
-    )?;
+    let has_first = table_has_column(conn, "contacts", "first_name")?;
+    let has_last = table_has_column(conn, "contacts", "last_name")?;
+    if has_first && has_last {
+        conn.execute(
+            r#"
+            UPDATE contacts
+            SET preferred_name = NULLIF(trim(
+              trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))
+            ), '')
+            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
+            "#,
+            [],
+        )?;
+    } else if has_first {
+        conn.execute(
+            r#"
+            UPDATE contacts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(first_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
+            "#,
+            [],
+        )?;
+    } else if has_last {
+        conn.execute(
+            r#"
+            UPDATE contacts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(last_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = ''
+            "#,
+            [],
+        )?;
+    }
     conn.execute(
         "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
         params![CONTACTS_PREFERRED_NAME_META_KEY],
+    )?;
+    Ok(())
+}
+
+/// Drop contacts.first_name / last_name; keep preferred_name only.
+fn migrate_contacts_drop_name_parts(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "contacts")? {
+        return Ok(());
+    }
+    let has_first = table_has_column(conn, "contacts", "first_name")?;
+    let has_last = table_has_column(conn, "contacts", "last_name")?;
+    if !has_first && !has_last {
+        return Ok(());
+    }
+
+    if !table_has_column(conn, "contacts", "preferred_name")? {
+        conn.execute_batch("ALTER TABLE contacts ADD COLUMN preferred_name TEXT;")?;
+    }
+    if has_first && has_last {
+        conn.execute_batch(
+            r#"
+            UPDATE contacts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(trim(coalesce(first_name, '')) || ' ' || trim(coalesce(last_name, ''))), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    } else if has_first {
+        conn.execute_batch(
+            r#"
+            UPDATE contacts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(first_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    } else {
+        conn.execute_batch(
+            r#"
+            UPDATE contacts
+            SET preferred_name = coalesce(
+              NULLIF(trim(preferred_name), ''),
+              NULLIF(trim(last_name), '')
+            )
+            WHERE preferred_name IS NULL OR trim(preferred_name) = '';
+            "#,
+        )?;
+    }
+
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE contacts_new (
+            id INTEGER PRIMARY KEY,
+            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            preferred_name TEXT,
+            exclude INTEGER NOT NULL DEFAULT 0,
+            preferred_handle TEXT
+        );
+        INSERT INTO contacts_new (id, account_id, preferred_name, exclude, preferred_handle)
+            SELECT id, account_id, preferred_name, exclude, preferred_handle FROM contacts;
+        DROP TABLE contacts;
+        ALTER TABLE contacts_new RENAME TO contacts;
+        CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
+        PRAGMA foreign_keys = ON;
+        "#,
+    )?;
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        "#,
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?1, '1')",
+        params![CONTACTS_DROP_NAME_PARTS_META_KEY],
     )?;
     Ok(())
 }
@@ -1581,6 +1692,93 @@ mod tests {
             )
             .unwrap();
         assert_eq!(still_unlocked, 0);
+    }
+
+    #[test]
+    fn migrate_contacts_drop_name_parts() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE accounts (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                read_only INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE contacts (
+                id INTEGER PRIMARY KEY,
+                account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                first_name TEXT,
+                last_name TEXT,
+                exclude INTEGER NOT NULL DEFAULT 0,
+                preferred_handle TEXT
+            );
+            CREATE TABLE contact_handles (
+                account_id TEXT NOT NULL,
+                handle TEXT NOT NULL,
+                contact_id INTEGER NOT NULL,
+                PRIMARY KEY (account_id, handle)
+            );
+            CREATE TABLE contact_labels (
+                id INTEGER PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE contact_label_members (
+                contact_id INTEGER NOT NULL,
+                label_id INTEGER NOT NULL,
+                PRIMARY KEY (contact_id, label_id)
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
+             VALUES (?1, 'Ann', 'Lee', 0, '+15555550111')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
+             VALUES (?1, 'Madonna', '', 0, '+15555550112')",
+            params![A1],
+        )
+        .unwrap();
+
+        ensure_contacts_schema(&conn).unwrap();
+
+        assert!(!table_has_column(&conn, "contacts", "first_name").unwrap());
+        assert!(!table_has_column(&conn, "contacts", "last_name").unwrap());
+        assert!(table_has_column(&conn, "contacts", "preferred_name").unwrap());
+
+        let names: Vec<Option<String>> = conn
+            .prepare("SELECT preferred_name FROM contacts ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            names,
+            vec![Some("Ann Lee".into()), Some("Madonna".into())]
+        );
+
+        let marker: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_meta WHERE key = ?1",
+                params![CONTACTS_DROP_NAME_PARTS_META_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, 1);
+
+        // Second ensure is a no-op once columns are gone.
+        ensure_contacts_schema(&conn).unwrap();
+        assert!(!table_has_column(&conn, "contacts", "first_name").unwrap());
     }
 
     #[test]

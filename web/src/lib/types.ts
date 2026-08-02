@@ -7,10 +7,12 @@ export type ContactSection =
 export type ContactListItem = {
   id: number;
   displayName: string;
-  /** Stored display name (backfilled / synced from first + last). */
+  /** Stored display name. */
   preferredName: string | null;
   preferredHandle: string | null;
+  /** Derived from preferredName (first space split) for search/API compat. */
   firstName: string | null;
+  /** Derived from preferredName (first space split) for search/API compat. */
   lastName: string | null;
   sortFirst: string;
   sortLast: string;

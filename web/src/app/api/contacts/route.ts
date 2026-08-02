@@ -23,6 +23,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
+  const preferredName =
+    body.preferredName === null || typeof body.preferredName === "string"
+      ? body.preferredName
+      : undefined;
   const firstName =
     body.firstName === null || typeof body.firstName === "string"
       ? body.firstName
@@ -45,6 +49,7 @@ export async function POST(req: Request) {
   try {
     return await withAccountHandler(async () => {
       const contact = createContact({
+        preferredName,
         firstName,
         lastName,
         phones,

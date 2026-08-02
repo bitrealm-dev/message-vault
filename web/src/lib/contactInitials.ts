@@ -20,27 +20,28 @@ function firstLetter(raw: string | null | undefined): string {
 }
 
 export function contactInitials(c: {
+  preferredName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   sortFirst?: string;
   sortLast?: string;
   displayName?: string;
 }): string {
+  const preferred = (c.preferredName ?? c.displayName ?? "").trim();
   const first =
     firstLetter(c.firstName) ||
     firstLetter(c.sortFirst) ||
-    firstLetter(c.displayName);
+    firstLetter(preferred);
   const last =
     firstLetter(c.lastName) ||
     firstLetter(c.sortLast) ||
-    // If displayName is "Last, First" style, prefer second token for last initial
     "";
 
   if (first && last && first !== last) return `${first}${last}`;
   if (first && last) return first;
 
-  // Fallback: two letters from displayName words / comma form
-  const name = (c.displayName ?? "").trim();
+  // Fallback: two letters from preferred/display name words / comma form
+  const name = preferred;
   if (name.includes(",")) {
     const [ln, fn] = name.split(",").map((s) => s.trim());
     const a = firstLetter(fn) || firstLetter(ln);
@@ -87,11 +88,13 @@ function normalizeName(name: string | null | undefined): string {
  */
 export function contactAvatarColor(input: {
   displayName?: string | null;
+  preferredName?: string | null;
   preferredHandle?: string | null;
   firstName?: string | null;
   lastName?: string | null;
 }): string {
   const name =
+    normalizeName(input.preferredName) ||
     normalizeName(input.displayName) ||
     normalizeName(
       [input.firstName, input.lastName].filter(Boolean).join(" "),

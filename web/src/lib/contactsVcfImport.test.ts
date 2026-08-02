@@ -151,7 +151,7 @@ END:VCARD
       assert.equal(contacts.length, 1);
       const detail = getContact(contacts[0]!.id);
       assert.ok(detail);
-      assert.equal(detail!.firstName, "Matched");
+      assert.equal(detail!.preferredName, "Matched Person");
       assert.deepEqual(detail!.labels, ["Kin"]);
       assert.ok(!detail!.labels.includes("Friends"));
       assert.ok(!detail!.labels.includes("Work"));

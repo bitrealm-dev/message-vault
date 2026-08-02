@@ -45,7 +45,10 @@ pub struct ImportOptions<'a> {
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
-    pub contacts_csv: &'a Path,
+    /// Optional address book to load: iMazing Contacts CSV or VCF.
+    pub contacts: Option<&'a Path>,
+    /// Per-account dual-write CSV used when backfilling unknown contacts.
+    pub contacts_mirror_csv: &'a Path,
     pub exclude_csv: &'a Path,
     pub overwrite_contacts: bool,
     pub mode: ImportMode,
@@ -105,7 +108,8 @@ pub fn import_export(
     export_dir: &Path,
     db_path: &Path,
     assets_dir: &Path,
-    contacts_csv: &Path,
+    contacts: Option<&Path>,
+    contacts_mirror_csv: &Path,
     exclude_csv: &Path,
     overwrite_contacts: bool,
     mode: ImportMode,
@@ -134,7 +138,8 @@ pub fn import_export(
             db_path,
             assets_dir,
             asset_root: export_dir,
-            contacts_csv,
+            contacts,
+            contacts_mirror_csv,
             exclude_csv,
             overwrite_contacts,
             mode,
@@ -194,19 +199,20 @@ pub fn import_jsonl_files_on_conn(
     }
     crate::vault_owner::ensure_account_row(conn, opts.account_id)?;
 
-    println!(
-        "  sql:      loading contacts from {}…",
-        opts.contacts_csv.display()
-    );
+    if let Some(path) = opts.contacts {
+        println!("  sql:      loading contacts from {}…", path.display());
+    } else {
+        println!("  sql:      contacts load skipped (no --contacts address book)");
+    }
     let _ = io::stdout().flush();
     let contact_stats = contacts::load_contacts_if_needed(
         conn,
-        opts.contacts_csv,
+        opts.contacts,
         opts.overwrite_contacts,
         opts.account_id,
     )?;
     if contact_stats.skipped {
-        println!("  sql:      contacts skipped (already loaded)");
+        println!("  sql:      contacts skipped (already loaded or no address book)");
     } else {
         println!(
             "  sql:      contacts={} phones={} labels={}",
@@ -332,7 +338,11 @@ pub fn import_jsonl_files_on_conn(
 
     if opts.backfill_contacts {
         let unknown =
-            contacts::ensure_unknown_contacts(&mut conn, opts.account_id, opts.contacts_csv)?;
+            contacts::ensure_unknown_contacts(
+                &mut conn,
+                opts.account_id,
+                opts.contacts_mirror_csv,
+            )?;
         stats.unknown_contacts = unknown;
         if unknown > 0 {
             println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
@@ -1228,7 +1238,8 @@ mod tests {
                 db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
-                contacts_csv: &contacts,
+                contacts: None,
+                contacts_mirror_csv: &contacts,
                 exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Replace,
@@ -1256,7 +1267,8 @@ mod tests {
                 db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
-                contacts_csv: &contacts,
+                contacts: None,
+                contacts_mirror_csv: &contacts,
                 exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Append,
@@ -1336,7 +1348,8 @@ mod tests {
                 db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
-                contacts_csv: &contacts,
+                contacts: None,
+                contacts_mirror_csv: &contacts,
                 exclude_csv: &exclude,
                 overwrite_contacts: false,
                 mode: ImportMode::Append,

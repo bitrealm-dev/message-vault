@@ -197,20 +197,33 @@ struct ExportTapback {
 fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<ExportContact>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, preferred_name, first_name, last_name, preferred_handle
+        SELECT id, preferred_name, preferred_handle
         FROM contacts
         WHERE account_id = ?1
         ORDER BY
           LOWER(COALESCE(
-            NULLIF(TRIM(preferred_name), ''),
-            NULLIF(TRIM(last_name), ''),
-            first_name,
+            NULLIF(TRIM(
+              CASE
+                WHEN preferred_name IS NOT NULL
+                     AND TRIM(preferred_name) != ''
+                     AND instr(TRIM(preferred_name), ' ') > 0
+                THEN substr(TRIM(preferred_name), instr(TRIM(preferred_name), ' ') + 1)
+                ELSE TRIM(COALESCE(preferred_name, ''))
+              END
+            ), ''),
             preferred_handle,
             ''
           )),
           LOWER(COALESCE(
-            NULLIF(TRIM(preferred_name), ''),
-            NULLIF(TRIM(first_name), ''),
+            NULLIF(TRIM(
+              CASE
+                WHEN preferred_name IS NOT NULL
+                     AND TRIM(preferred_name) != ''
+                     AND instr(TRIM(preferred_name), ' ') > 0
+                THEN substr(TRIM(preferred_name), 1, instr(TRIM(preferred_name), ' ') - 1)
+                ELSE TRIM(COALESCE(preferred_name, ''))
+              END
+            ), ''),
             preferred_handle,
             ''
           ))
@@ -221,8 +234,6 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
             row.get::<_, i64>(0)?,
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<String>>(4)?,
         ))
     })?;
 
@@ -230,7 +241,7 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
     let mut phone_stmt =
         conn.prepare("SELECT handle FROM contact_handles WHERE contact_id = ?1")?;
     for row in rows {
-        let (id, preferred_name, first, last, preferred) = row?;
+        let (id, preferred_name, preferred) = row?;
         let phones: Vec<String> = phone_stmt
             .query_map(params![id], |r| r.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -239,8 +250,6 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
         }
         let display_name = display_name(
             preferred_name.as_deref(),
-            first.as_deref(),
-            last.as_deref(),
             preferred.as_deref().or(phones.first().map(|s| s.as_str())),
         );
         out.push(ExportContact {
@@ -252,23 +261,9 @@ fn list_export_contacts(conn: &Connection, account_id: &str) -> Result<Vec<Expor
     Ok(out)
 }
 
-fn display_name(
-    preferred_name: Option<&str>,
-    first: Option<&str>,
-    last: Option<&str>,
-    fallback: Option<&str>,
-) -> String {
+fn display_name(preferred_name: Option<&str>, fallback: Option<&str>) -> String {
     if let Some(name) = preferred_name.map(str::trim).filter(|s| !s.is_empty()) {
         return name.to_string();
-    }
-    let parts: Vec<&str> = [first, last]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-    if !parts.is_empty() {
-        return parts.join(" ");
     }
     fallback.unwrap_or("Unknown").to_string()
 }
@@ -356,7 +351,7 @@ fn load_year_messages(
     let sql = format!(
         r#"
         SELECT m.id, m.source, m.timestamp, m.is_from_me, m.sender, m.body,
-               c.preferred_name, c.first_name, c.last_name, c.preferred_handle, p.name_hint
+               c.preferred_name, c.preferred_handle, p.name_hint
         FROM messages m
         LEFT JOIN contact_handles cp ON cp.account_id = ? AND cp.handle = m.sender
         LEFT JOIN contacts c ON c.id = cp.contact_id AND c.account_id = ?
@@ -391,8 +386,6 @@ fn load_year_messages(
             row.get::<_, Option<String>>(6)?,
             row.get::<_, Option<String>>(7)?,
             row.get::<_, Option<String>>(8)?,
-            row.get::<_, Option<String>>(9)?,
-            row.get::<_, Option<String>>(10)?,
         ))
     })?;
 
@@ -420,8 +413,6 @@ fn load_year_messages(
             sender,
             body,
             preferred_name,
-            first_name,
-            last_name,
             preferred_handle,
             name_hint,
         ) = row?;
@@ -431,8 +422,6 @@ fn load_year_messages(
         } else {
             let mut name = display_name(
                 preferred_name.as_deref(),
-                first_name.as_deref(),
-                last_name.as_deref(),
                 preferred_handle
                     .as_deref()
                     .or(sender.as_deref())
@@ -945,8 +934,8 @@ mod tests {
 
         conn.execute(
             r#"
-            INSERT INTO contacts (account_id, first_name, last_name, exclude, preferred_handle)
-            VALUES (?1, 'Zach', 'Henson', 0, '+18285532527')
+            INSERT INTO contacts (account_id, preferred_name, exclude, preferred_handle)
+            VALUES (?1, 'Zach Henson', 0, '+18285532527')
             "#,
             params![TEST_ACCOUNT_ID],
         )

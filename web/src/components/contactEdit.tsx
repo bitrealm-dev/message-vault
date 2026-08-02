@@ -1,21 +1,24 @@
 "use client";
 
 export type ContactEditDraft = {
-  firstName: string;
-  lastName: string;
+  preferredName: string;
   phones: string[];
   labels: string[];
 };
 
 export function seedContactEditDraft(contact: {
-  firstName: string | null;
-  lastName: string | null;
+  preferredName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   phones: string[];
   labels?: string[];
 }): ContactEditDraft {
+  const preferred =
+    contact.preferredName?.trim() ||
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() ||
+    "";
   return {
-    firstName: contact.firstName ?? "",
-    lastName: contact.lastName ?? "",
+    preferredName: preferred,
     phones: [...contact.phones, ""],
     labels: contact.labels ? [...contact.labels] : [],
   };
@@ -25,15 +28,14 @@ export function emptyContactEditDraft(defaults?: {
   labels?: string[];
 }): ContactEditDraft {
   return {
-    firstName: "",
-    lastName: "",
+    preferredName: "",
     phones: [""],
     labels: defaults?.labels ? [...defaults.labels] : [],
   };
 }
 
 export function draftHasName(draft: ContactEditDraft): boolean {
-  return draft.firstName.trim() !== "" || draft.lastName.trim() !== "";
+  return draft.preferredName.trim() !== "";
 }
 
 export function displayLabelNames(labels: string[]): string[] {

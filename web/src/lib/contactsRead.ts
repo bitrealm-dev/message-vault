@@ -8,6 +8,7 @@ import {
   hasTrashedConversationsTable,
   hasTrashedHandlesTable,
   sortFields,
+  splitNameParts,
 } from "./dbCore";
 import { labelSlug } from "./labelSlug";
 import { contactGroupChatThreadsForPhones, contactGroupChatThreadsForPhoneSets } from "./groupChatsRead";
@@ -190,12 +191,24 @@ function sectionSql(section: ContactSection): { sql: string; params: unknown[] }
 
 type ContactRow = {
   id: number;
-  first_name: string | null;
-  last_name: string | null;
   preferred_name: string | null;
   preferred_handle: string | null;
   exclude: number;
 };
+
+function derivedNameParts(preferred: string | null | undefined): {
+  firstName: string | null;
+  lastName: string | null;
+} {
+  const trimmed = preferred?.trim() || "";
+  if (!trimmed) return { firstName: null, lastName: null };
+  const { first, last } = splitNameParts(trimmed);
+  const hasSpace = trimmed.includes(" ");
+  return {
+    firstName: first || null,
+    lastName: hasSpace ? last || null : null,
+  };
+}
 
 export function listContacts(section: ContactSection): ContactListItem[] {
   const db = getDb();
@@ -215,7 +228,7 @@ export function listContactsByIds(contactIds: number[]): ContactListItem[] {
   const placeholders = contactIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, first_name, last_name, preferred_name, preferred_handle, exclude
+      `SELECT id, preferred_name, preferred_handle, exclude
        FROM contacts
        WHERE account_id = ? AND id IN (${placeholders})`,
     )
@@ -257,13 +270,14 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
       const name = displayName(row);
       const sorts = sortFields(row);
       const range = dateRanges.get(row.id);
+      const parts = derivedNameParts(row.preferred_name);
       return {
         id: row.id,
         displayName: name,
         preferredName: row.preferred_name?.trim() || null,
         preferredHandle: row.preferred_handle,
-        firstName: row.first_name,
-        lastName: row.last_name,
+        firstName: parts.firstName,
+        lastName: parts.lastName,
         labels: groupsByContact.get(row.id) ?? [],
         exclude: row.exclude !== 0,
         messageCount: messageCounts.get(row.id) ?? 0,
@@ -285,14 +299,12 @@ export function getContact(id: number): ContactDetail | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, first_name, last_name, preferred_name, exclude, preferred_handle
+      `SELECT id, preferred_name, exclude, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(id, accountId) as
     | {
         id: number;
-        first_name: string | null;
-        last_name: string | null;
         preferred_name: string | null;
         exclude: number;
         preferred_handle: string | null;
@@ -323,13 +335,14 @@ export function getContact(id: number): ContactDetail | null {
   const groupMessageCount = contactGroupMessageCountsById([id]).get(id) ?? 0;
 
   const sorts = sortFields(row);
+  const parts = derivedNameParts(row.preferred_name);
   return {
     id: row.id,
     displayName: displayName(row),
     preferredName: row.preferred_name?.trim() || null,
     preferredHandle: row.preferred_handle,
-    firstName: row.first_name,
-    lastName: row.last_name,
+    firstName: parts.firstName,
+    lastName: parts.lastName,
     exclude: row.exclude !== 0,
     labels: groups.map((t) => t.name),
     phones: phoneList,
@@ -613,14 +626,12 @@ export function loadContactThreadsPage(
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, first_name, last_name, preferred_name, exclude, preferred_handle
+      `SELECT id, preferred_name, exclude, preferred_handle
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(contactId, accountId) as
     | {
         id: number;
-        first_name: string | null;
-        last_name: string | null;
         preferred_name: string | null;
         exclude: number;
         preferred_handle: string | null;
@@ -662,6 +673,7 @@ export function loadContactThreadsPage(
   const groupMessageCount =
     contactGroupMessageCountsById([contactId]).get(contactId) ?? 0;
   const sorts = sortFields(row);
+  const parts = derivedNameParts(row.preferred_name);
 
   return {
     contact: {
@@ -669,8 +681,8 @@ export function loadContactThreadsPage(
       displayName: displayName(row),
       preferredName: row.preferred_name?.trim() || null,
       preferredHandle: row.preferred_handle,
-      firstName: row.first_name,
-      lastName: row.last_name,
+      firstName: parts.firstName,
+      lastName: parts.lastName,
       exclude: row.exclude !== 0,
       labels,
       phones,
@@ -783,8 +795,6 @@ export function listTrashedContacts(): TrashedContactItem[] {
   const rows = db
     .prepare(
       `SELECT c.id AS id,
-              c.first_name AS first_name,
-              c.last_name AS last_name,
               c.preferred_name AS preferred_name,
               c.preferred_handle AS preferred_handle,
               tc.trashed_at AS trashed_at,
@@ -803,12 +813,10 @@ export function listTrashedContacts(): TrashedContactItem[] {
        FROM contacts c
        JOIN trashed_contacts tc ON tc.contact_id = c.id AND tc.account_id = c.account_id
        WHERE c.account_id = ?
-       ORDER BY tc.trashed_at DESC, c.last_name COLLATE NOCASE, c.first_name COLLATE NOCASE`,
+       ORDER BY tc.trashed_at DESC, c.preferred_name COLLATE NOCASE`,
     )
     .all(accountId) as Array<{
     id: number;
-    first_name: string | null;
-    last_name: string | null;
     preferred_name: string | null;
     preferred_handle: string | null;
     trashed_at: string;
@@ -819,6 +827,7 @@ export function listTrashedContacts(): TrashedContactItem[] {
   return rows.map((row) => {
     const name = displayName(row);
     const sorts = sortFields(row);
+    const parts = derivedNameParts(row.preferred_name);
     let preferred = row.preferred_handle;
     if (!preferred) {
       const first = db
@@ -840,8 +849,8 @@ export function listTrashedContacts(): TrashedContactItem[] {
       letter: sorts.letter,
       sortFirst: sorts.sortFirst,
       sortLast: sorts.sortLast,
-      firstName: row.first_name,
-      lastName: row.last_name,
+      firstName: parts.firstName,
+      lastName: parts.lastName,
       trashedAt: row.trashed_at,
     };
   });
@@ -866,8 +875,6 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
     .prepare(
       `SELECT cp.contact_id AS contact_id,
               cp.handle AS handle,
-              c.first_name AS first_name,
-              c.last_name AS last_name,
               c.preferred_name AS preferred_name,
               c.preferred_handle AS preferred_handle,
               MAX(th.trashed_at) AS trashed_at,
@@ -881,16 +888,13 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
         AND cv.account_id = cp.account_id
        JOIN messages m ON m.conversation_id = cv.id
        WHERE th.account_id = ? ${notTrashedContact}${hideDupes}
-       GROUP BY cp.contact_id, cp.handle, c.first_name, c.last_name,
-                c.preferred_name, c.preferred_handle
+       GROUP BY cp.contact_id, cp.handle, c.preferred_name, c.preferred_handle
        HAVING message_count > 0
        ORDER BY trashed_at DESC, cp.handle COLLATE NOCASE`,
     )
     .all(accountId) as Array<{
     contact_id: number;
     handle: string;
-    first_name: string | null;
-    last_name: string | null;
     preferred_name: string | null;
     preferred_handle: string | null;
     trashed_at: string;
@@ -900,6 +904,7 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
   return rows.map((row) => {
     const name = displayName(row);
     const sorts = sortFields(row);
+    const parts = derivedNameParts(row.preferred_name);
     return {
       kind: "messages_only" as const,
       contactId: row.contact_id,
@@ -910,8 +915,8 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
       letter: sorts.letter,
       sortFirst: sorts.sortFirst,
       sortLast: sorts.sortLast,
-      firstName: row.first_name,
-      lastName: row.last_name,
+      firstName: parts.firstName,
+      lastName: parts.lastName,
       trashedAt: row.trashed_at,
     };
   });

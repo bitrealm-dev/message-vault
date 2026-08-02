@@ -7,8 +7,7 @@ description: Configure the vault, create an account, and import your first JSONL
 
 ```bash
 cp config/config.toml.example config/config.toml
-# optional templates:
-cp config/contacts.csv.example config/contacts.csv
+# optional exclude template (contacts come from an iMazing CSV or VCF via CLI):
 cp config/exclude.csv.example config/exclude.csv
 ```
 

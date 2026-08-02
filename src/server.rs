@@ -762,12 +762,14 @@ async fn run_import_path(
         // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
         // Multipart supplies a temp asset_root for relative file parts.
         let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
-        let (contacts_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&account)?;
+        let (mirror_csv, exclude_csv) = cfg.paths.ensure_account_csvs(&account)?;
         let opts = ImportOptions {
             db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
             asset_root: &asset_root_owned,
-            contacts_csv: &contacts_csv,
+            // HTTP import does not reload the address book; use CLI import-contacts / web VCF.
+            contacts: None,
+            contacts_mirror_csv: &mirror_csv,
             exclude_csv: &exclude_csv,
             overwrite_contacts: false,
             mode,

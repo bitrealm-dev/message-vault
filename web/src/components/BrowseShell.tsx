@@ -1641,9 +1641,7 @@ export function BrowseShell({
     [contacts, ctxMenu],
   );
   const ctxMenuIsNameless = Boolean(
-    ctxMenuContact &&
-      !(ctxMenuContact.firstName ?? "").trim() &&
-      !(ctxMenuContact.lastName ?? "").trim(),
+    ctxMenuContact && !(ctxMenuContact.preferredName ?? "").trim(),
   );
 
   const mergeTargets = useMemo(() => {
@@ -1652,9 +1650,7 @@ export function BrowseShell({
     return contacts
       .filter((c) => {
         if (c.id === mergeFromId) return false;
-        const hasName =
-          Boolean((c.firstName ?? "").trim()) ||
-          Boolean((c.lastName ?? "").trim());
+        const hasName = Boolean((c.preferredName ?? "").trim());
         if (!hasName) return false;
         if (!q) return true;
         return (

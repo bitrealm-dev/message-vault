@@ -109,10 +109,12 @@ pub fn run_reset_demo_for_account(
 
     seed_demo_account(&db, account_id, &seed)?;
 
+    // Demo bundle still ships the legacy vault contacts.csv mirror; load it explicitly.
     let import_stats = import::import_export(
         &export_dir,
         &db,
         &assets_dir,
+        Some(&contacts_csv),
         &contacts_csv,
         &exclude_csv,
         true,
