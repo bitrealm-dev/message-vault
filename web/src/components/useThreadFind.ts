@@ -49,6 +49,7 @@ export function useThreadFind({
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const seqRef = useRef(0);
+  const indexRef = useRef(0);
   const seedRef = useRef<number | null>(null);
   const onJumpRef = useRef(onJump);
   onJumpRef.current = onJump;
@@ -71,6 +72,7 @@ export function useThreadFind({
     if (!open || !convKey || !query.trim()) {
       seqRef.current += 1;
       setMatches([]);
+      indexRef.current = 0;
       setIndex(0);
       setLoading(false);
       return;
@@ -93,6 +95,7 @@ export function useThreadFind({
           const list = res.ok ? (json.matches ?? []) : [];
           setMatches(list);
           if (list.length === 0) {
+            indexRef.current = 0;
             setIndex(0);
             return;
           }
@@ -105,6 +108,7 @@ export function useThreadFind({
             if (i >= 0) at = i;
           }
           seedRef.current = null;
+          indexRef.current = at;
           setIndex(at);
           onJumpRef.current(list[at]!);
         })
@@ -122,13 +126,15 @@ export function useThreadFind({
     (i: number) => {
       if (matches.length === 0) return;
       const wrapped = ((i % matches.length) + matches.length) % matches.length;
+      indexRef.current = wrapped;
       setIndex(wrapped);
       onJumpRef.current(matches[wrapped]!);
     },
     [matches],
   );
-  const next = useCallback(() => goTo(index + 1), [goTo, index]);
-  const prev = useCallback(() => goTo(index - 1), [goTo, index]);
+  // Read index from a ref so rapid clicks aren't stuck on a stale closure.
+  const next = useCallback(() => goTo(indexRef.current + 1), [goTo]);
+  const prev = useCallback(() => goTo(indexRef.current - 1), [goTo]);
 
   const openBar = useCallback(() => setOpen(true), []);
   const openWith = useCallback(

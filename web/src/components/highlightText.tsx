@@ -14,7 +14,7 @@ export function highlightText(text: string, terms: string[]): ReactNode {
     i % 2 === 1 ? (
       <mark
         key={i}
-        className="rounded-sm bg-accent/35 px-0.5 text-inherit"
+        className="rounded-sm bg-amber-300 px-0.5 font-medium text-black dark:bg-amber-300/90"
       >
         {part}
       </mark>

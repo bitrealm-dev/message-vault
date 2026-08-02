@@ -19,11 +19,7 @@ import {
   GroupParticipantChip,
 } from "./GroupParticipantChip";
 import { MessageList } from "./MessageList";
-import {
-  ChevronDownIcon,
-  MessageIcon,
-  PaperclipIcon,
-} from "./icons";
+import { ChevronDownIcon, PaperclipIcon } from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 const HEADER_EXPANDED_KEY = "mv-browse-thread-header-expanded";
@@ -162,6 +158,8 @@ export function BrowseThreadPane({
   conversationsPanelCollapsed = false,
   highlightTerms = [],
   scrollToMessageId = null,
+  scrollToMessageNonce = 0,
+  findOpen = false,
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
@@ -195,6 +193,10 @@ export function BrowseThreadPane({
   conversationsPanelCollapsed?: boolean;
   highlightTerms?: string[];
   scrollToMessageId?: number | null;
+  /** Bumps on every find jump so scroll re-runs even for the same message id. */
+  scrollToMessageNonce?: number;
+  /** Hide the end-of-thread control while in-thread find is open. */
+  findOpen?: boolean;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void | Promise<void>;
@@ -479,13 +481,27 @@ export function BrowseThreadPane({
     if (scrollToMessageId == null || loadingMessages) return;
     const root = scrollRef.current;
     if (!root) return;
-    const el = root.querySelector(`#msg-${scrollToMessageId}`);
-    if (!el) return;
-    el.scrollIntoView({
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "center",
+    const scrollToEl = () => {
+      const el = root.querySelector(`#msg-${scrollToMessageId}`);
+      if (!el) return false;
+      el.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "center",
+      });
+      return true;
+    };
+    if (scrollToEl()) return;
+    // Message may still be mounting after a page load — retry once.
+    const frame = requestAnimationFrame(() => {
+      scrollToEl();
     });
-  }, [scrollToMessageId, loadingMessages, visibleMessages]);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    scrollToMessageId,
+    scrollToMessageNonce,
+    loadingMessages,
+    visibleMessages,
+  ]);
 
   const sourceOptions = [
     {
@@ -546,8 +562,8 @@ export function BrowseThreadPane({
   const hasMessages = messages.length > 0;
   const showYearJump = hasMessages && yearItems.length > 0;
   const showSourceRow = stripItems.length > 0 && sourceCounts.all > 0;
-  const showStats = threadStats != null;
-  const showUtility = showSourceRow || showStats;
+  const showPhotosFilter = threadStats != null;
+  const showUtility = showSourceRow || showPhotosFilter;
   const showHeader = showGroupIdentity || showYearJump || showUtility;
 
   return (
@@ -673,66 +689,43 @@ export function BrowseThreadPane({
                   ))}
                 </div>
               )}
-              {showSourceRow && showStats ? (
+              {showSourceRow && showPhotosFilter ? (
                 <span className="hidden text-muted/40 sm:inline" aria-hidden>
                   |
                 </span>
               ) : null}
-              {threadStats && (
-                <div className="flex items-center gap-x-2 text-[12px] text-muted">
-                  <button
-                    type="button"
-                    title="Show all messages"
-                    aria-pressed={!attachmentsOnly}
-                    onClick={() => setAttachmentsFilterThread(null)}
-                    className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
-                      !attachmentsOnly
-                        ? "font-medium text-text"
-                        : "hover:text-text"
-                    }`}
-                  >
-                    <MessageIcon className="size-3.5 shrink-0 opacity-80" />
-                    {threadStats.messageCount.toLocaleString()}
-                  </button>
-                  <span className="opacity-45">·</span>
-                  <button
-                    type="button"
-                    title={
-                      attachmentsOnly
-                        ? "Show all messages"
-                        : "Show only messages with photos or files"
-                    }
-                    aria-label={
-                      attachmentsOnly
-                        ? "Show all messages"
-                        : "Filter to photos and files"
-                    }
-                    aria-pressed={attachmentsOnly}
-                    disabled={threadStats.attachmentCount === 0}
-                    onClick={() =>
-                      setAttachmentsFilterThread((prev) =>
-                        prev === activeThread ? null : activeThread,
-                      )
-                    }
-                    className={`inline-flex items-center gap-1 tabular-nums outline-none focus:outline-none focus-visible:outline-none ${
-                      threadStats.attachmentCount === 0
-                        ? "cursor-default opacity-40"
-                        : attachmentsOnly
-                          ? "font-medium text-accent"
-                          : "hover:text-accent"
-                    }`}
-                  >
-                    <PaperclipIcon className="size-3.5 shrink-0 opacity-80" />
-                    <span className="hidden sm:inline">Photos &amp; files</span>
-                    <span className="sm:hidden">
-                      {threadStats.attachmentCount.toLocaleString()}
-                    </span>
-                    <span className="hidden sm:inline tabular-nums">
-                      {threadStats.attachmentCount.toLocaleString()}
-                    </span>
-                  </button>
-                </div>
-              )}
+              {showPhotosFilter && threadStats ? (
+                <button
+                  type="button"
+                  title={
+                    attachmentsOnly
+                      ? "Show all messages"
+                      : "Show only messages with photos or files"
+                  }
+                  aria-label={
+                    attachmentsOnly
+                      ? "Show all messages"
+                      : "Filter to photos and files"
+                  }
+                  aria-pressed={attachmentsOnly}
+                  disabled={threadStats.attachmentCount === 0}
+                  onClick={() =>
+                    setAttachmentsFilterThread((prev) =>
+                      prev === activeThread ? null : activeThread,
+                    )
+                  }
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-medium transition-colors outline-none focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                    threadStats.attachmentCount === 0
+                      ? "cursor-default border-border/50 text-muted/40"
+                      : attachmentsOnly
+                        ? "border-accent/50 bg-accent/15 text-accent"
+                        : "border-border text-muted hover:border-accent/40 hover:text-accent"
+                  }`}
+                >
+                  <PaperclipIcon className="size-3.5 shrink-0 opacity-80" />
+                  Photos &amp; files
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -780,13 +773,14 @@ export function BrowseThreadPane({
           ))}
       </div>
 
-      {awayFromBottom && visibleMessages.length > 0 && (
+      {awayFromBottom && !findOpen && visibleMessages.length > 0 && (
         <button
           type="button"
           onClick={jumpToLatest}
+          title="Scroll to the newest messages"
           className="absolute right-4 bottom-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-elevated/95 px-3 py-1.5 text-[12px] font-medium text-text shadow-[0_4px_16px_rgba(0,0,0,0.28)] backdrop-blur-sm transition-colors hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          Jump to latest
+          Newest messages
           <ChevronDownIcon className="size-3.5 opacity-80" />
         </button>
       )}

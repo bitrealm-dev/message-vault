@@ -46,15 +46,19 @@ export function SearchHitSummary({
         />
       </span>
       {hit.topMatch?.snippet ? (
-        <span className="line-clamp-2 text-[12px] text-muted">
+        <span className="mt-0.5 line-clamp-2 text-[12px] text-muted">
           {highlightText(hit.topMatch.snippet, highlightTerms)}
         </span>
       ) : null}
-      <span className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
-        <span className="truncate capitalize">
+      <span className="mt-1 flex min-w-0 items-center justify-between gap-6 text-[11px] text-muted">
+        <span className="shrink-0 capitalize">
           {hit.conversationType === "group" ? "Group" : "1-1"}
         </span>
-        {dateLabel ? <span className="tabular-nums">{dateLabel}</span> : null}
+        {dateLabel ? (
+          <span className="min-w-0 truncate text-right tabular-nums">
+            {dateLabel}
+          </span>
+        ) : null}
       </span>
     </>
   );

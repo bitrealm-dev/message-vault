@@ -35,6 +35,8 @@ export function BrowseThreadColumn({
   hasConversationChoices = false,
   highlightTerms = [],
   scrollToMessageId = null,
+  scrollToMessageNonce = 0,
+  findOpen = false,
   onContactNameClick,
   onGroupParticipantClick,
   readerOnly = false,
@@ -71,6 +73,8 @@ export function BrowseThreadColumn({
   hasConversationChoices?: boolean;
   highlightTerms?: string[];
   scrollToMessageId?: number | null;
+  scrollToMessageNonce?: number;
+  findOpen?: boolean;
   onContactNameClick?: (anchorRect: DOMRect) => void;
   onGroupParticipantClick: (
     participant: GroupParticipant,
@@ -181,6 +185,8 @@ export function BrowseThreadColumn({
             conversationsPanelCollapsed={false}
             highlightTerms={highlightTerms}
             scrollToMessageId={scrollToMessageId}
+            scrollToMessageNonce={scrollToMessageNonce}
+            findOpen={findOpen}
             hasOlder={hasOlder}
             loadingOlder={loadingOlder}
             onLoadOlder={onLoadOlder}

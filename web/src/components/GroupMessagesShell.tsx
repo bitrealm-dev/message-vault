@@ -79,6 +79,7 @@ export function GroupMessagesShell({
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(
     null,
   );
+  const [scrollToMessageNonce, setScrollToMessageNonce] = useState(0);
   const [filterYear, setFilterYear] = useState<number | null>(null);
   const [fullMessageIds, setFullMessageIds] = useState<number[] | null>(
     initialConversationId != null ? [initialConversationId] : null,
@@ -209,7 +210,10 @@ export function GroupMessagesShell({
   const threadFind = useThreadFind({
     conversationIds: hasGroupSelection ? null : fullMessageIds,
     source,
-    onJump: (match) => setScrollToMessageId(match.id),
+    onJump: (match) => {
+      setScrollToMessageId(match.id);
+      setScrollToMessageNonce((n) => n + 1);
+    },
   });
 
   const syncUrl = useCallback(
@@ -384,8 +388,9 @@ export function GroupMessagesShell({
       ...groupThread,
       title: selectedGroup.title,
       namedTitle: selectedGroup.namedTitle,
+      attachmentCount: messages.reduce((n, m) => n + m.attachments.length, 0),
     };
-  }, [groupThread, selectedGroup]);
+  }, [groupThread, selectedGroup, messages]);
 
   const yearly: YearThread[] = useMemo(() => {
     if (conversationId == null) return [];
@@ -512,6 +517,7 @@ export function GroupMessagesShell({
               setSelectedIds(new Set());
               setConversationId(hit.conversationId);
               setScrollToMessageId(hit.topMatch?.id ?? null);
+              setScrollToMessageNonce((n) => n + 1);
               setFullMessageIds([hit.conversationId]);
               setActiveThread(`gfull-${hit.conversationId}`);
               const year = hit.dateEnd
@@ -565,6 +571,8 @@ export function GroupMessagesShell({
               threadFind.open ? threadFind.terms : vaultSearch.highlightTerms
             }
             scrollToMessageId={scrollToMessageId}
+            scrollToMessageNonce={scrollToMessageNonce}
+            findOpen={threadFind.open}
             onGroupParticipantClick={participantForm.onParticipantClick}
             readerOnly
             hasSelection={false}

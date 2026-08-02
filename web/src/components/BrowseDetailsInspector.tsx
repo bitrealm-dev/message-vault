@@ -9,10 +9,7 @@ import type {
   YearThread,
 } from "@/lib/types";
 import type { ReactNode } from "react";
-import {
-  collapsedParticipantLabels,
-  GroupNameSep,
-} from "./GroupConversationRow";
+import { collapsedParticipantLabels } from "./GroupConversationRow";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
 function StatRow({ label, value }: { label: string; value: string | number }) {
@@ -94,6 +91,8 @@ export function BrowseDetailsInspector({
     dateStart: string | null;
     dateEnd: string | null;
     messageCount: number;
+    /** Sum of attachments on loaded messages for the open group thread. */
+    attachmentCount?: number;
   } | null;
   openConversation: CollapsedGroupConversation | null;
   onClearContactSelection: () => void;
@@ -197,6 +196,7 @@ export function BrowseDetailsInspector({
         : (groupThreadMeta?.participants.map((p) => p.name || p.handle) ?? []);
     const messageCount =
       g?.messageCount ?? groupThreadMeta?.messageCount ?? 0;
+    const attachmentCount = groupThreadMeta?.attachmentCount ?? 0;
 
     return (
       <InspectorShell title="Conversation">
@@ -206,26 +206,37 @@ export function BrowseDetailsInspector({
         <h2 className="text-[15px] font-semibold leading-snug text-text">
           {title}
         </h2>
+        <div className="mt-2 flex items-baseline justify-between gap-2">
+          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+            Participants
+          </span>
+          <span className="text-[12px] text-muted tabular-nums">
+            {(g?.participantCount ?? participants.length).toLocaleString()}
+          </span>
+        </div>
         {participants.length > 0 && (
-          <p className="mt-2 text-[12px] leading-snug text-muted">
+          <ul className="mt-1.5 list-disc space-y-1 pl-4">
             {participants.map((name, idx) => (
-              <span key={`${name}-${idx}`}>
-                {idx > 0 ? <GroupNameSep /> : null}
-                <span className="whitespace-nowrap">{name}</span>
-              </span>
+              <li
+                key={`${name}-${idx}`}
+                className="truncate text-[12px] leading-snug text-muted"
+              >
+                {name}
+              </li>
             ))}
-          </p>
+          </ul>
         )}
         <div className="mt-3 border-t border-border/50 pt-2">
           <StatRow label="Messages" value={messageCount.toLocaleString()} />
+          <StatRow
+            label="Photos & files"
+            value={attachmentCount.toLocaleString()}
+          />
           {dateStart && dateEnd && (
             <StatRow
               label="Date range"
               value={formatDateRange(dateStart, dateEnd, " – ")}
             />
-          )}
-          {g != null && (
-            <StatRow label="Participants" value={g.participantCount} />
           )}
         </div>
         <YearBreakdown yearly={conversationYearly} />
@@ -261,7 +272,7 @@ export function BrowseDetailsInspector({
         <div className="mt-3 border-t border-border/50 pt-2">
           <StatRow label="Messages" value={dmMessages.toLocaleString()} />
           <StatRow
-            label="Attachments"
+            label="Photos & files"
             value={dmAttachments.toLocaleString()}
           />
           {range && (

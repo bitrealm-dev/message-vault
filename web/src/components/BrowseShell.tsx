@@ -248,6 +248,7 @@ export function BrowseShell({
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(
     null,
   );
+  const [scrollToMessageNonce, setScrollToMessageNonce] = useState(0);
   const [focusedSearchHit, setFocusedSearchHit] =
     useState<SearchConversationHit | null>(null);
   const [selectedSearchResultKeys, setSelectedSearchResultKeys] = useState<
@@ -1113,6 +1114,7 @@ export function BrowseShell({
     source,
     onJump: (match) => {
       setScrollToMessageId(match.id);
+      setScrollToMessageNonce((n) => n + 1);
       const year = Number(match.timestamp.slice(0, 4));
       void ensureMessageIdsLoaded(
         [match.id],
@@ -1754,6 +1756,10 @@ export function BrowseShell({
   const groupThread = useMemo(() => {
     if (hasGroupSelection) return null;
     if (!activeThread?.startsWith("gfull-")) return null;
+    const attachmentCount = messages.reduce(
+      (n, m) => n + m.attachments.length,
+      0,
+    );
     const g = collapsedGroupChats.find(
       (t) => `gfull-${t.conversationIds.join("-")}` === activeThread,
     );
@@ -1763,6 +1769,7 @@ export function BrowseShell({
         dateStart: g.dateStart,
         dateEnd: g.dateEnd,
         messageCount: g.messageCount,
+        attachmentCount,
         title: g.title,
         namedTitle: g.namedTitle,
       };
@@ -1777,6 +1784,7 @@ export function BrowseShell({
         dateStart: focusedSearchHit.dateStart ?? "",
         dateEnd: focusedSearchHit.dateEnd ?? "",
         messageCount: focusedSearchHit.matchCount,
+        attachmentCount,
         title: focusedSearchHit.title,
         namedTitle: null as string | null,
       };
@@ -1788,6 +1796,7 @@ export function BrowseShell({
     activeThread,
     injectSelectedParticipants,
     focusedSearchHit,
+    messages,
   ]);
 
   const selectedGroupRows = useMemo(
@@ -2122,6 +2131,7 @@ export function BrowseShell({
             setFocusedSearchHit(hit);
             setSelectedGroupConversationId(hit.conversationId);
             setScrollToMessageId(hit.topMatch?.id ?? null);
+            setScrollToMessageNonce((n) => n + 1);
             openThread(
               [hit.conversationId],
               hit.conversationType === "group"
@@ -2191,6 +2201,8 @@ export function BrowseShell({
             threadFind.open ? threadFind.terms : vaultSearch.highlightTerms
           }
           scrollToMessageId={scrollToMessageId}
+          scrollToMessageNonce={scrollToMessageNonce}
+          findOpen={threadFind.open}
           onContactNameClick={onContactNameClick}
           onGroupParticipantClick={onGroupParticipantClick}
           readerOnly
