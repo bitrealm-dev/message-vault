@@ -142,6 +142,13 @@ docker compose -f compose-release.yml exec vault message-vault-rs ingest imessag
 Contents of `staging/` are gitignored; only the empty directory placeholder is
 tracked.
 
+### sqlite-web
+
+`compose-dev.yml` always starts [sqlite-web](https://github.com/coleifer/sqlite-web)
+on <http://127.0.0.1:8081> (localhost only) against the shared `vault-data`
+volume. On the Bitrealm VPS, the same service is in private ops
+`compose-hub.yml` (SSH tunnel — see ops `vps-setup.md`).
+
 ## Release (`compose-release.yml`)
 
 Builds release artifacts from the current checkout into a smaller image (no
