@@ -1,5 +1,6 @@
 //! Write message-ir JSONL conversations for the demo bundle.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -289,6 +290,7 @@ fn write_group(
     let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
     let msg_count = ((group.msgs_per_year * group.span_years).round() as isize)
         .max(1) as usize;
+    let timestamps = bursty_timestamps(msg_count, group.span_years, rng);
     let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -302,9 +304,14 @@ fn write_group(
 
     // First group: synthetic rename announcement.
     if group.index == 0 {
+        let ann_ts = timestamps
+            .first()
+            .copied()
+            .unwrap_or_else(|| timestamp_for(0, 1, group.span_years, rng))
+            - 60_000;
         let mut ann = text_message(
             "grp-0-rename",
-            timestamp_for(0, msg_count.max(1), group.span_years, rng),
+            ann_ts,
             true,
             OWNER_PHONE,
             cfg,
@@ -330,7 +337,7 @@ fn write_group(
         let guid = format!("grp-{}-{i}", group.index);
         let mut msg = text_message(
             &guid,
-            timestamp_for(i, msg_count, group.span_years, rng),
+            timestamps[i],
             from_me,
             sender.as_deref().unwrap_or(OWNER_PHONE),
             cfg,
@@ -582,6 +589,73 @@ fn timestamp_for(i: usize, total: usize, span_years: f64, rng: &mut impl Rng) ->
         .single()
         .unwrap_or_else(|| offset.from_utc_datetime(&now.naive_utc()))
         .timestamp_millis()
+}
+
+/// Group chats: several messages on active days, quiet gaps, occasional floods.
+fn bursty_timestamps(total: usize, span_years: f64, rng: &mut impl Rng) -> Vec<i64> {
+    if total == 0 {
+        return Vec::new();
+    }
+    let now = Utc::now();
+    let span_days = ((span_years * 365.25).round() as i64).max(1);
+    let start = now - Duration::days(span_days);
+    let offset = FixedOffset::west_opt(4 * 3600).unwrap();
+
+    let mut per_day: HashMap<i64, usize> = HashMap::new();
+    let mut left = total;
+    while left > 0 {
+        let burst = sample_group_day_burst(rng).min(left);
+        // Bias toward recent days; most calendar days stay empty.
+        let u: f64 = rng.random::<f64>().powf(0.65);
+        let day = ((span_days - 1) as f64 * u).round() as i64;
+        *per_day.entry(day.clamp(0, span_days - 1)).or_default() += burst;
+        left -= burst;
+    }
+
+    let mut days: Vec<(i64, usize)> = per_day.into_iter().collect();
+    days.sort_by_key(|(d, _)| *d);
+
+    let mut out = Vec::with_capacity(total);
+    for (day, count) in days {
+        let day_start = start + Duration::days(day);
+        let mut seconds: Vec<i64> = (0..count)
+            .map(|_| rng.random_range(8 * 3600..23 * 3600))
+            .collect();
+        seconds.sort_unstable();
+        for (i, secs) in seconds.into_iter().enumerate() {
+            // Spread collisions so bursts aren't identical timestamps.
+            let spaced = secs + (i as i64) * rng.random_range(8..45);
+            let mut dt = day_start + Duration::seconds(spaced.min(23 * 3600 + 3599));
+            if let Some(&prev) = out.last() {
+                if dt.timestamp_millis() <= prev {
+                    dt = Utc
+                        .timestamp_millis_opt(prev)
+                        .single()
+                        .unwrap_or(now)
+                        + Duration::seconds(rng.random_range(12..90));
+                }
+            }
+            let local = offset
+                .from_utc_datetime(&dt.naive_utc());
+            out.push(local.timestamp_millis());
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+fn sample_group_day_burst(rng: &mut impl Rng) -> usize {
+    let roll: f64 = rng.random();
+    if roll < 0.10 {
+        // Heavy day — a lot.
+        rng.random_range(16..=70)
+    } else if roll < 0.22 {
+        // Light day.
+        rng.random_range(1..=2)
+    } else {
+        // Typical active day — several.
+        rng.random_range(3..=12)
+    }
 }
 
 fn group_chat_id(index: usize) -> String {

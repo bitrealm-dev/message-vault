@@ -116,7 +116,7 @@ distributions, group membership). Message bodies are sampled from Pride and Prej
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year; rare whales up to ~12k/year
 - **History** — typical first contact ~3–5 years ago; longest ~14 years; newest ~1 week
-- **Group Chats** — membership mean ~5 groups/contact; size mean ~4; 5–50 msgs/year
+- **Group Chats** — membership mean ~5 groups/contact; size mean ~4; bursty days (several / none / a lot)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
 - **orphaned.jsonl** — synthetic orphaned conversation
 "#,

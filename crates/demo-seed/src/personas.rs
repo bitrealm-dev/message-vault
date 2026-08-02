@@ -186,17 +186,48 @@ fn sample_name_shape(
 }
 
 fn sample_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
-    let o = &cfg.one_to_one;
+    sample_skewed_msgs_per_year(
+        cfg.one_to_one.min_per_year,
+        cfg.one_to_one.typical_min,
+        cfg.one_to_one.typical_max,
+        cfg.one_to_one.max_per_year,
+        cfg.one_to_one.low_tail,
+        cfg.one_to_one.high_tail,
+        rng,
+    )
+}
+
+fn sample_group_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
+    sample_skewed_msgs_per_year(
+        cfg.groups.min_per_year,
+        cfg.groups.typical_min,
+        cfg.groups.typical_max,
+        cfg.groups.max_per_year,
+        cfg.groups.low_tail,
+        cfg.groups.high_tail,
+        rng,
+    )
+}
+
+fn sample_skewed_msgs_per_year(
+    min_per_year: u32,
+    typical_min: u32,
+    typical_max: u32,
+    max_per_year: u32,
+    low_tail: f64,
+    high_tail: f64,
+    rng: &mut impl Rng,
+) -> f64 {
     let roll: f64 = rng.random();
-    if roll < o.low_tail {
-        rng.random_range(o.min_per_year as f64..(o.typical_min as f64))
-    } else if roll < o.low_tail + o.high_tail {
+    if roll < low_tail {
+        rng.random_range(min_per_year as f64..(typical_min as f64).max(min_per_year as f64 + 1.0))
+    } else if roll < low_tail + high_tail {
         let u: f64 = rng.random::<f64>().clamp(1e-6, 1.0);
-        let lo = (o.typical_max as f64).ln();
-        let hi = (o.max_per_year as f64).ln();
+        let lo = (typical_max as f64).max(1.0).ln();
+        let hi = (max_per_year as f64).max(typical_max as f64 + 1.0).ln();
         (lo + u * (hi - lo)).exp()
     } else {
-        rng.random_range(o.typical_min as f64..=o.typical_max as f64)
+        rng.random_range(typical_min as f64..=typical_max as f64)
     }
 }
 
@@ -319,8 +350,7 @@ fn build_groups(
             }
         }
 
-        let msgs_per_year =
-            rng.random_range(cfg.groups.msgs_per_year_min as f64..=cfg.groups.msgs_per_year_max as f64);
+        let msgs_per_year = sample_group_msgs_per_year(cfg, rng);
         let span_years = sample_span_years(
             cfg.groups.span_mean_years,
             1.5,
