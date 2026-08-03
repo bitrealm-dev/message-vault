@@ -3,24 +3,32 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 
+use chrono::Local;
 use contacts::{ValidateMode, probe_contacts_input, validate_contacts_file};
+use message_exporter_core::{Exporter, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job};
 use message_reexport::run as run_format;
-use message_exporter_core::{ProcessEvent, ensure_output_dir, spawn_job};
 use phone::PhoneRegion;
+use slint::ComponentHandle;
 use vault_push::{
     ProgressEvent as VaultProgressEvent, VaultPushConfig, authenticate as vault_authenticate,
     run as run_vault_push,
 };
 
-use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
-use crate::state::AppState;
-use crate::sync;
 use crate::AppWindow;
+use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
+use crate::staging::{self, IPHONE_IOS_IMPORTER};
+use crate::state::{self, AppState};
+use crate::sync;
 
-const TAB_LOG: i32 = 4;
+/// Optional action after a job finishes successfully.
+#[derive(Clone, Copy)]
+enum OnSuccess {
+    None,
+    GoToImportScreen,
+}
 
 pub(crate) fn report_errors(ui: &AppWindow, state: &mut AppState, errors: Vec<String>) {
-    state.set_errors(errors, ui.get_tab_index());
+    state.set_errors(errors, ui.get_workflow_screen());
     sync::push_chrome(ui, state);
 }
 
@@ -30,11 +38,12 @@ fn start_library_job(
     state: &Arc<Mutex<AppState>>,
     label: String,
     job: LibraryJob,
+    on_success: OnSuccess,
 ) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
     };
-    let source_tab = ui.get_tab_index();
+    let source_screen = ui.get_workflow_screen();
     let (tx, rx) = mpsc::channel::<ProcessEvent>();
     {
         let mut st = state.lock().expect("state lock");
@@ -46,7 +55,7 @@ fn start_library_job(
         st.running = true;
         spawn_job(st.control.clone(), tx, label, job);
     }
-    ui.set_tab_index(TAB_LOG);
+    sync::show_embedded_log(&ui);
     sync::clear_log_lines(&ui);
     sync::push_chrome(&ui, &state.lock().expect("state lock"));
 
@@ -73,7 +82,11 @@ fn start_library_job(
                     let mut st = state_clone.lock().expect("state lock");
                     st.running = false;
                     if is_error {
-                        st.set_errors(vec![line.clone()], source_tab);
+                        st.set_errors(vec![line.clone()], source_screen);
+                    } else if matches!(on_success, OnSuccess::GoToImportScreen) {
+                        ui.set_workflow_screen(state::screen::IMPORT);
+                        ui.global::<crate::ImportAdapter>().set_panel_tab(0);
+                        sync::push_import(&ui, &st);
                     }
                     sync::push_chrome(&ui, &st);
                 }
@@ -141,7 +154,7 @@ pub(crate) fn start_validate(
                 },
             );
         drop(st);
-        start_library_job(ui_weak, state, label, job);
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
     }
 }
 
@@ -177,7 +190,7 @@ pub(crate) fn start_extract(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
-        start_library_job(ui_weak, state, label, job);
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
     }
 }
 
@@ -219,7 +232,7 @@ pub(crate) fn start_format(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<A
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
-        start_library_job(ui_weak, state, label, job);
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
     }
 }
 
@@ -272,7 +285,61 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
-        start_library_job(ui_weak, state, label, job);
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
+    }
+}
+
+/// Verify credentials from the guided workflow, then advance to Import Messages.
+pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    let job_and_label = {
+        let mut st = state.lock().expect("state lock");
+        if st.running {
+            return;
+        }
+        sync::pull_credentials(&ui, &mut st);
+        let url = st.export_ini.vault.url.trim().to_string();
+        let key = st.export_ini.vault.key.trim().to_string();
+        let mut errors = Vec::new();
+        if url.is_empty() {
+            errors.push("Vault URL is required.".into());
+        }
+        if key.is_empty() {
+            errors.push("API Key is required.".into());
+        }
+        if !errors.is_empty() {
+            report_errors(&ui, &mut st, errors);
+            return;
+        }
+        if let Err(error) = st.save_export_ini() {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+        let label = "vault-push auth".to_string();
+        let job: LibraryJob = Box::new(move |_cancel, tx| {
+            let _ = tx.send(ProcessEvent::Log(format!("Authenticating {url}…")));
+            match vault_authenticate(&url, &key, "") {
+                Ok(auth) => {
+                    let name = auth
+                        .username
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| auth.account_id.clone());
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Authenticated as {name} ({})",
+                        auth.account_id
+                    )));
+                    Ok(())
+                }
+                Err(e) => Err(format!("{e:#}")),
+            }
+        });
+        Some((label, job))
+    };
+    if let Some((label, job)) = job_and_label {
+        start_library_job(ui_weak, state, label, job, OnSuccess::GoToImportScreen);
     }
 }
 
@@ -313,70 +380,238 @@ pub(crate) fn start_vault_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         let skip_attachments = st.export_ini.vault.skip_attachments;
         let label = "vault-push (library)".to_string();
         let job: LibraryJob = Box::new(move |cancel, tx| {
-            let cfg = VaultPushConfig {
-                input: PathBuf::from(input),
-                base_url: url,
-                username: String::new(),
-                key,
-                mode: "append".into(),
-                continue_on_error,
-                force,
-                skip_attachments,
-                verify_digests: false,
-                max_retries: 3,
-                batch_size: vault_push::DEFAULT_BATCH_SIZE,
-                asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
-                asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
-                asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
-                report_path: None,
-                log_path: None,
-                journal_path: None,
-                cancel: Some(cancel),
-            };
-            let mut on_progress = |event: VaultProgressEvent| match event {
-                VaultProgressEvent::Log(line) => {
-                    let _ = tx.send(ProcessEvent::Log(line));
+            run_vault_upload(
+                VaultUploadArgs {
+                    input: PathBuf::from(input),
+                    url,
+                    key,
+                    continue_on_error,
+                    force,
+                    skip_attachments,
+                },
+                cancel,
+                &tx,
+            )
+        });
+        Some((label, job))
+    };
+    if let Some((label, job)) = job_and_label {
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
+    }
+}
+
+/// Extract an iPhone backup into a staging directory, then upload it to Message Vault.
+pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    let job_and_label = {
+        let mut st = state.lock().expect("state lock");
+        if st.running {
+            return;
+        }
+        sync::pull_import(&ui, &mut st);
+        sync::pull_credentials(&ui, &mut st);
+
+        let url = st.export_ini.vault.url.trim().to_string();
+        let key = st.export_ini.vault.key.trim().to_string();
+        let backup = st.form.db_path.trim().to_string();
+        let mut errors = Vec::new();
+        if url.is_empty() {
+            errors.push("Vault URL is required. Go back and verify credentials.".into());
+        }
+        if key.is_empty() {
+            errors.push("API Key is required. Go back and verify credentials.".into());
+        }
+        if backup.is_empty() {
+            errors.push("iPhone Backup Directory is required.".into());
+        }
+        if !errors.is_empty() {
+            report_errors(&ui, &mut st, errors);
+            return;
+        }
+
+        let staging =
+            staging::staging_dir_path(&st.export_ini.path, IPHONE_IOS_IMPORTER, Local::now());
+        st.form.output = staging.display().to_string();
+        st.form.output_format = message_exporter_core::OutputFormat::Jsonl;
+        st.form.apple_platform = message_exporter_core::ApplePlatform::Ios;
+        st.exporter = Exporter::Imessage;
+        st.export_ini.exporter = Exporter::Imessage;
+        st.last_staging_dir = Some(staging.clone());
+
+        if let Err(error) = st.save_export_ini() {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+
+        let result = st.form.to_config(Exporter::Imessage);
+        let config = match result {
+            Ok(config) => config,
+            Err(errors) => {
+                report_errors(&ui, &mut st, errors);
+                return;
+            }
+        };
+        if let Err(error) = ensure_output_dir(&config.output) {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+
+        let delete_staging = st.delete_staging_after_success;
+        let continue_on_error = st.export_ini.vault.continue_on_error;
+        let force = st.export_ini.vault.force;
+        let skip_attachments = st.export_ini.vault.skip_attachments;
+        let label = "vault import (extract + upload)".to_string();
+        let job: LibraryJob = Box::new(move |cancel, tx| {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "Staging directory: {}",
+                staging.display()
+            )));
+            let _ = tx.send(ProcessEvent::Log(
+                "Step 1/2: Extracting iPhone backup…".into(),
+            ));
+
+            let extract_job = library_job_for_exporter(Exporter::Imessage, config);
+            if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
+                let _ = tx.send(ProcessEvent::Log(format!(
+                    "Extraction failed; staging retained at {}",
+                    staging.display()
+                )));
+                return Err(error);
+            }
+
+            if is_cancelled(Some(&cancel)) {
+                let _ = tx.send(ProcessEvent::Log(format!(
+                    "Cancelled after extraction; staging retained at {}",
+                    staging.display()
+                )));
+                return Err("cancelled".into());
+            }
+
+            let _ = tx.send(ProcessEvent::Log(
+                "Step 2/2: Uploading staging data to Message Vault…".into(),
+            ));
+            match run_vault_upload(
+                VaultUploadArgs {
+                    input: staging.clone(),
+                    url,
+                    key,
+                    continue_on_error,
+                    force,
+                    skip_attachments,
+                },
+                cancel,
+                &tx,
+            ) {
+                Ok(()) => {
+                    match staging::maybe_cleanup_staging(&staging, delete_staging, true) {
+                        Ok(true) => {
+                            let _ = tx.send(ProcessEvent::Log(format!(
+                                "Deleted staging directory {}",
+                                staging.display()
+                            )));
+                        }
+                        Ok(false) => {
+                            let _ = tx.send(ProcessEvent::Log(format!(
+                                "Staging data retained at {}",
+                                staging.display()
+                            )));
+                        }
+                        Err(error) => {
+                            let _ = tx.send(ProcessEvent::Log(error));
+                        }
+                    }
+                    Ok(())
                 }
-                VaultProgressEvent::Auth {
-                    account_id,
-                    username,
-                } => {
+                Err(error) => {
                     let _ = tx.send(ProcessEvent::Log(format!(
-                        "Authenticated as {username} ({account_id})"
+                        "Upload failed; staging retained at {}",
+                        staging.display()
                     )));
+                    Err(error)
                 }
-                VaultProgressEvent::FileStart { index, total, file } => {
-                    let _ = tx.send(ProcessEvent::Log(format!("File {index}/{total}: {file}")));
-                }
-                VaultProgressEvent::FileDone { file, status } => {
-                    let _ = tx.send(ProcessEvent::Log(format!("{status}: {file}")));
-                }
-                VaultProgressEvent::Finished(report) => {
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Import finished ok={} conversations_ok={} failed={} skipped={} messages={} \
-                         elapsed_ms={} ({})",
-                        report.ok,
-                        report.conversations_ok,
-                        report.conversations_failed,
-                        report.conversations_skipped,
-                        report.messages,
-                        report.elapsed_ms,
-                        vault_push::format_duration_ms(report.elapsed_ms)
-                    )));
-                }
-            };
-            match run_vault_push(&cfg, Some(&mut on_progress)) {
-                Ok(report) if report.ok => Ok(()),
-                Ok(report) => Err(format!(
-                    "import completed with failures (failed={})",
-                    report.conversations_failed
-                )),
-                Err(e) => Err(format!("{e:#}")),
             }
         });
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
-        start_library_job(ui_weak, state, label, job);
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
+    }
+}
+
+struct VaultUploadArgs {
+    input: PathBuf,
+    url: String,
+    key: String,
+    continue_on_error: bool,
+    force: bool,
+    skip_attachments: bool,
+}
+
+fn run_vault_upload(
+    args: VaultUploadArgs,
+    cancel: message_exporter_core::CancelFlag,
+    tx: &mpsc::Sender<ProcessEvent>,
+) -> Result<(), String> {
+    let cfg = VaultPushConfig {
+        input: args.input,
+        base_url: args.url,
+        username: String::new(),
+        key: args.key,
+        mode: "append".into(),
+        continue_on_error: args.continue_on_error,
+        force: args.force,
+        skip_attachments: args.skip_attachments,
+        verify_digests: false,
+        max_retries: 3,
+        batch_size: vault_push::DEFAULT_BATCH_SIZE,
+        asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
+        asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
+        asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
+        report_path: None,
+        log_path: None,
+        journal_path: None,
+        cancel: Some(cancel),
+    };
+    let mut on_progress = |event: VaultProgressEvent| match event {
+        VaultProgressEvent::Log(line) => {
+            let _ = tx.send(ProcessEvent::Log(line));
+        }
+        VaultProgressEvent::Auth {
+            account_id,
+            username,
+        } => {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "Authenticated as {username} ({account_id})"
+            )));
+        }
+        VaultProgressEvent::FileStart { index, total, file } => {
+            let _ = tx.send(ProcessEvent::Log(format!("File {index}/{total}: {file}")));
+        }
+        VaultProgressEvent::FileDone { file, status } => {
+            let _ = tx.send(ProcessEvent::Log(format!("{status}: {file}")));
+        }
+        VaultProgressEvent::Finished(report) => {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "Import finished ok={} conversations_ok={} failed={} skipped={} messages={} \
+                 elapsed_ms={} ({})",
+                report.ok,
+                report.conversations_ok,
+                report.conversations_failed,
+                report.conversations_skipped,
+                report.messages,
+                report.elapsed_ms,
+                vault_push::format_duration_ms(report.elapsed_ms)
+            )));
+        }
+    };
+    match run_vault_push(&cfg, Some(&mut on_progress)) {
+        Ok(report) if report.ok => Ok(()),
+        Ok(report) => Err(format!(
+            "import completed with failures (failed={})",
+            report.conversations_failed
+        )),
+        Err(e) => Err(format!("{e:#}")),
     }
 }

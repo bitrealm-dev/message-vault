@@ -1,4 +1,4 @@
-//! Slint callback wiring for each tab / chrome control.
+//! Slint callback wiring for each workflow screen / chrome control.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,31 +9,28 @@ use slint::ComponentHandle;
 use crate::browse;
 use crate::options;
 use crate::start;
-use crate::state::AppState;
+use crate::state::{self, AppState};
 use crate::sync;
 use crate::wsl;
 use crate::{
-    AppWindow, ContactsAdapter, FormatAdapter, Date, ExtractAdapter, LogAdapter, VaultAdapter,
+    AppWindow, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter, FormatAdapter,
+    HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter,
 };
 
+const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-exporters/";
+
 pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
-    wire_about(ui);
     wire_error_dismiss(ui, Arc::clone(&state));
-    wire_help(ui, Arc::clone(&state));
+    wire_navigate_back(ui);
+    wire_home(ui);
+    wire_credentials(ui, Arc::clone(&state));
+    wire_import(ui, Arc::clone(&state));
+    // Legacy adapters remain wired for reference until the deprecation pass.
     wire_contacts(ui, Arc::clone(&state));
     wire_extract(ui, Arc::clone(&state));
     wire_format(ui, Arc::clone(&state));
     wire_vault(ui, Arc::clone(&state));
     wire_log(ui, Arc::clone(&state));
-}
-
-fn wire_about(ui: &AppWindow) {
-    let ui_weak = ui.as_weak();
-    ui.on_about_toggled(move || {
-        if let Some(ui) = ui_weak.upgrade() {
-            ui.set_about_open(!ui.get_about_open());
-        }
-    });
 }
 
 fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
@@ -48,17 +45,108 @@ fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
-fn wire_help(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
-    const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-exporters/";
-
+fn wire_navigate_back(ui: &AppWindow) {
     let ui_weak = ui.as_weak();
-    ui.on_help_requested(move || {
-        if let Err(error) = wsl::open_url(DOCS_URL)
-            && let Some(ui) = ui_weak.upgrade()
-        {
-            let mut st = state.lock().expect("state lock");
-            start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
+    ui.on_navigate_back(move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_workflow_screen();
+        if current > state::screen::HOME {
+            ui.set_workflow_screen(current - 1);
         }
+    });
+}
+
+fn wire_home(ui: &AppWindow) {
+    let ui_weak = ui.as_weak();
+    ui.global::<HomeAdapter>().on_vault_import({
+        let ui_weak = ui_weak.clone();
+        move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_workflow_screen(state::screen::CREDENTIALS);
+                ui.global::<CredentialsAdapter>().set_panel_tab(0);
+            }
+        }
+    });
+    // Convert messages is intentionally a no-op for this refactor phase.
+    ui.global::<HomeAdapter>().on_convert_messages(move || {});
+}
+
+fn wire_credentials(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
+
+    ui.global::<CredentialsAdapter>().on_open_help({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || {
+            if let Err(error) = wsl::open_url(DOCS_URL)
+                && let Some(ui) = ui_weak.upgrade()
+            {
+                let mut st = state.lock().expect("state lock");
+                start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
+            }
+        }
+    });
+
+    ui.global::<CredentialsAdapter>().on_verify({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || start::start_guided_verify(&ui_weak, &state)
+    });
+}
+
+fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
+
+    ui.global::<ImportAdapter>().on_date_for_text(|value| {
+        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+            .unwrap_or_else(|_| Local::now().date_naive());
+        Date {
+            year: date.year(),
+            month: i32::try_from(date.month()).expect("month fits in i32"),
+            day: i32::try_from(date.day()).expect("day fits in i32"),
+        }
+    });
+
+    ui.global::<ImportAdapter>().on_browse({
+        let ui_weak = ui_weak.clone();
+        move |field_id| {
+            let kind = browse::browse_kind_for_field(&field_id);
+            browse::pick_path(ui_weak.clone(), field_id.to_string(), kind);
+        }
+    });
+
+    ui.global::<ImportAdapter>().on_open_help({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || {
+            if let Err(error) = wsl::open_url(DOCS_URL)
+                && let Some(ui) = ui_weak.upgrade()
+            {
+                let mut st = state.lock().expect("state lock");
+                start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
+            }
+        }
+    });
+
+    ui.global::<ImportAdapter>().on_media_changed({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.lock().expect("state lock");
+            sync::pull_import(&ui, &mut st);
+            sync::push_import(&ui, &st);
+        }
+    });
+
+    ui.global::<ImportAdapter>().on_run({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || start::start_guided_import(&ui_weak, &state)
     });
 }
 
@@ -308,4 +396,3 @@ fn wire_log(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
         }
     });
 }
-

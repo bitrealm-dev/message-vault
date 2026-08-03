@@ -9,8 +9,9 @@ use slint::{ComponentHandle, SharedString, Weak};
 
 use crate::AppWindow;
 use crate::ContactsAdapter;
-use crate::FormatAdapter;
 use crate::ExtractAdapter;
+use crate::FormatAdapter;
+use crate::ImportAdapter;
 use crate::VaultAdapter;
 
 #[derive(Debug, Clone, Copy)]
@@ -29,7 +30,7 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
         | "extract.whatsapp_db"
         | "extract.apple_contacts" => BrowseKind::File,
         "extract.input" => BrowseKind::FileOrFolder,
-        "extract.db_path" => BrowseKind::FileOrFolder,
+        "extract.db_path" | "import.backup_path" => BrowseKind::FileOrFolder,
         "extract.whatsapp_backup" => BrowseKind::FileOrFolder,
         _ => BrowseKind::Folder,
     }
@@ -163,6 +164,7 @@ fn apply_path(ui: &AppWindow, field_id: &str, path: SharedString) {
         "extract.whatsapp_db" => ui.global::<ExtractAdapter>().set_whatsapp_db(path),
         "extract.apple_contacts" => ui.global::<ExtractAdapter>().set_apple_contacts(path),
         "extract.attachment_root" => ui.global::<ExtractAdapter>().set_attachment_root(path),
+        "import.backup_path" => ui.global::<ImportAdapter>().set_backup_path(path),
         "format.input" => ui.global::<FormatAdapter>().set_input(path),
         "format.output" => ui.global::<FormatAdapter>().set_output(path),
         "vault.input" => ui.global::<VaultAdapter>().set_input(path),

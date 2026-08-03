@@ -1,0 +1,92 @@
+import { Button, ListView, Spinner } from "std-widgets.slint";
+import {
+    ActionRow, FormMetrics
+} from "../widgets.slint";
+import { LogAdapter } from "log.slint";
+
+/// Shared log viewer used inside Credentials / Import tab panes.
+export component LogPanel inherits VerticalLayout {
+    padding: FormMetrics.page-padding;
+    spacing: FormMetrics.row-spacing;
+    alignment: stretch;
+    vertical-stretch: 1;
+
+    private property <bool> stick-to-end: true;
+    private property <int> line-count: LogAdapter.lines.length;
+
+    changed line-count => {
+        if root.stick-to-end {
+            scroll-timer.running = true;
+        }
+    }
+
+    function scroll-to-end() {
+        log-view.viewport-y = min(0px, log-view.visible-height - log-view.viewport-height);
+    }
+
+    scroll-timer := Timer {
+        interval: 16ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if root.stick-to-end {
+                root.scroll-to-end();
+            }
+        }
+    }
+
+    follow-timer := Timer {
+        interval: 100ms;
+        running: LogAdapter.running && root.stick-to-end;
+        triggered => { root.scroll-to-end(); }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding: 0;
+        alignment: start;
+        vertical-stretch: 0;
+        if LogAdapter.running: Spinner { }
+        Text {
+            text: LogAdapter.session-log-name == "" ? "(no session log)" : LogAdapter.session-log-name;
+            font-size: 11px;
+            vertical-alignment: center;
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+        }
+    }
+
+    Rectangle {
+        border-width: 1px;
+        border-color: #808080;
+        background: #111827;
+        vertical-stretch: 1;
+        min-height: 160px;
+
+        log-view := ListView {
+            scrolled => {
+                root.stick-to-end =
+                    log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
+            }
+            for line[i] in LogAdapter.lines: HorizontalLayout {
+                padding: 3px;
+                Text {
+                    text: line;
+                    color: #e5e7eb;
+                    font-family: "monospace";
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+    }
+
+    ActionRow {
+        Button {
+            text: "Clear view";
+            enabled: !LogAdapter.running && LogAdapter.lines.length > 0;
+            clicked => { LogAdapter.clear-view(); }
+        }
+    }
+}

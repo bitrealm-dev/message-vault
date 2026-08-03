@@ -6,6 +6,13 @@ use std::path::PathBuf;
 
 use crate::session_log::SessionLog;
 
+/// Workflow screens for the guided Vault import UI.
+pub mod screen {
+    pub const HOME: i32 = 0;
+    pub const CREDENTIALS: i32 = 1;
+    pub const IMPORT: i32 = 2;
+}
+
 pub struct AppState {
     pub export_ini: ExportIniState,
     pub form: Form,
@@ -17,16 +24,21 @@ pub struct AppState {
     pub control: ProcessControl,
     pub session_log: Option<SessionLog>,
     pub errors: Vec<String>,
-    /// Tab index that produced `errors` (banner also shows on Log).
-    pub error_source_tab: Option<i32>,
+    /// Workflow screen that produced `errors`.
+    pub error_source_screen: Option<i32>,
     pub vault_source_note: String,
+    /// When true, delete the staging directory after a successful vault upload.
+    /// Defaults to false so staging data is retained.
+    pub delete_staging_after_success: bool,
+    /// Last staging directory created by a guided import (for status/logging).
+    pub last_staging_dir: Option<PathBuf>,
 }
 
 impl AppState {
     pub fn load() -> Self {
         let (export_ini, form, load_error) = ExportIniState::load_or_default();
         let exporter = export_ini.exporter;
-        let error_source_tab = load_error.as_ref().map(|_| 0);
+        let error_source_screen = load_error.as_ref().map(|_| screen::HOME);
         Self {
             export_ini,
             form,
@@ -38,8 +50,10 @@ impl AppState {
             control: ProcessControl::default(),
             session_log: None,
             errors: load_error.into_iter().collect(),
-            error_source_tab,
+            error_source_screen,
             vault_source_note: String::new(),
+            delete_staging_after_success: false,
+            last_staging_dir: None,
         }
     }
 
@@ -57,14 +71,14 @@ impl AppState {
         }
     }
 
-    pub fn set_errors(&mut self, errors: Vec<String>, source_tab: i32) {
+    pub fn set_errors(&mut self, errors: Vec<String>, source_screen: i32) {
         self.errors = errors;
-        self.error_source_tab = Some(source_tab);
+        self.error_source_screen = Some(source_screen);
     }
 
     pub fn clear_errors(&mut self) {
         self.errors.clear();
-        self.error_source_tab = None;
+        self.error_source_screen = None;
     }
 
     pub fn error_text(&self) -> String {

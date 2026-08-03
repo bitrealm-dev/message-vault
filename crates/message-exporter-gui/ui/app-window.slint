@@ -1,23 +1,25 @@
 import {
-    AboutSlint, Button, TabWidget
+    Button
 } from "std-widgets.slint";
-import { ContactsPage } from "pages/contacts.slint";
-import { ExtractPage } from "pages/extract.slint";
-import { FormatPage } from "pages/format.slint";
-import { VaultPage } from "pages/vault.slint";
-import { LogPage } from "pages/log.slint";
+import { HomePage } from "pages/home.slint";
+import { CredentialsPage } from "pages/credentials.slint";
+import { ImportPage } from "pages/import.slint";
 
+// Legacy screens kept for reference until the final deprecation pass.
+// The page components remain in ui/pages/ but are not shown in the guided workflow.
 export { ContactsAdapter } from "pages/contacts.slint";
 export { ExtractAdapter } from "pages/extract.slint";
 export { FormatAdapter } from "pages/format.slint";
 export { VaultAdapter } from "pages/vault.slint";
 export { LogAdapter } from "pages/log.slint";
 
+export { HomeAdapter } from "pages/home.slint";
+export { CredentialsAdapter } from "pages/credentials.slint";
+export { ImportAdapter } from "pages/import.slint";
+
 export component AppWindow inherits Window {
-    // Official Slint small mark (blue S); CC-BY-ND-4.0 from slint-ui/slint logo/.
-    icon: @image-url("assets/slint-logo-small-light.png");
     // OS title bar text; version is filled in from Rust (CARGO_PKG_VERSION).
-    in-out property <string> app-title: "Message Exporters";
+    in-out property <string> app-title: "Message Vault";
     title: root.app-title;
     preferred-width: 920px;
     preferred-height: 720px;
@@ -25,56 +27,84 @@ export component AppWindow inherits Window {
     min-height: 560px;
     default-font-size: 12px;
 
-    in-out property <int> tab-index: 0;
+    // 0 = Home, 1 = Vault Credentials, 2 = Import Messages
+    in-out property <int> workflow-screen: 0;
     in property <string> error-text;
-    // Tab that produced the error; -1 means no active error. Banner shows on that tab and Log (4).
-    in property <int> error-source-tab: -1;
+    // Screen that produced the error; -1 means no active error.
+    in property <int> error-source-screen: -1;
     in property <string> status-text: "Ready";
-    in property <bool> about-open: false;
-    in property <bool> tabs-enabled: true;
+    in property <bool> workflow-enabled: true;
     property <bool> show-error:
         root.error-text != ""
-        && root.error-source-tab >= 0
-        && (root.tab-index == root.error-source-tab || root.tab-index == 4);
+        && root.error-source-screen >= 0
+        && root.workflow-screen == root.error-source-screen;
     callback close-requested();
-    callback help-requested();
-    callback about-toggled();
     callback error-dismissed();
+    callback navigate-back();
+
+    property <string> back-label:
+        root.workflow-screen == 2 ? "Verify your vault credentials"
+        : root.workflow-screen == 1 ? "Home"
+        : "";
 
     // Use Layout (not Box): Box widgets inject StyleMetrics.layout-padding.
     VerticalLayout {
         padding: 0;
         spacing: 0;
 
-        HorizontalLayout {
-            padding: 8px;
-            spacing: 8px;
-            alignment: stretch;
+        if root.workflow-screen > 0: Rectangle {
             vertical-stretch: 0;
-            Image {
-                source: @image-url("assets/slint-logo-small-light.png");
-                width: 20px;
-                height: 20px;
-                vertical-alignment: center;
-                horizontal-stretch: 0;
-            }
-            Text {
-                text: root.app-title;
-                font-size: 13px;
-                font-weight: 700;
-                vertical-alignment: center;
-                horizontal-alignment: left;
-                horizontal-stretch: 1;
-            }
-            Button {
-                text: "Help";
-                horizontal-stretch: 0;
-                clicked => { root.help-requested(); }
-            }
-            Button {
-                text: "About";
-                horizontal-stretch: 0;
-                clicked => { root.about-toggled(); }
+            background: #f3f4f6;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 4px;
+                alignment: start;
+
+                back-btn := Rectangle {
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: back-touch.pressed || back-touch.has-hover
+                        ? #9ca3af
+                        : transparent;
+                    background: back-touch.pressed
+                        ? #d1d5db
+                        : back-touch.has-hover
+                            ? #e5e7eb
+                            : transparent;
+                    vertical-stretch: 0;
+                    horizontal-stretch: 0;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+                        spacing: 4px;
+                        Text {
+                            text: "←";
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: #111827;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.back-label;
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: #111827;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    back-touch := TouchArea {
+                        enabled: root.workflow-enabled;
+                        mouse-cursor: pointer;
+                        clicked => { root.navigate-back(); }
+                    }
+                }
             }
         }
 
@@ -100,55 +130,11 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.about-open: VerticalLayout {
-            padding: 12px;
-            spacing: 8px;
-            alignment: start;
-            vertical-stretch: 1;
-            Text {
-                text: root.app-title + " — Slint desktop GUI";
-                font-size: 13px;
-                font-weight: 700;
-                vertical-stretch: 0;
-            }
-            Text {
-                text: "Desktop GUI for Message Exporters. Same exporters and export.ini as the CLI tools.";
-                wrap: word-wrap;
-                font-size: 12px;
-                vertical-stretch: 0;
-            }
-            AboutSlint { }
-            Button {
-                text: "Close";
-                horizontal-stretch: 0;
-                clicked => { root.about-toggled(); }
-            }
-        }
+        if root.workflow-screen == 0: HomePage { }
 
-        if !root.about-open: TabWidget {
-            current-index <=> root.tab-index;
-            vertical-stretch: 1;
-            Tab {
-                title: "Extract Messages";
-                ExtractPage { }
-            }
-            Tab {
-                title: "Format";
-                FormatPage { }
-            }
-            Tab {
-                title: "Vault";
-                VaultPage { }
-            }
-            Tab {
-                title: "Contacts";
-                ContactsPage { }
-            }
-            Tab {
-                title: "Log";
-                LogPage { }
-            }
-        }
+        if root.workflow-screen == 1: CredentialsPage { }
+
+        if root.workflow-screen == 2: ImportPage { }
 
         Rectangle {
             height: 24px;
@@ -163,12 +149,6 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
-                }
-                Text {
-                    text: "Slint desktop GUI";
-                    font-size: 11px;
-                    vertical-alignment: center;
-                    horizontal-stretch: 0;
                 }
             }
         }

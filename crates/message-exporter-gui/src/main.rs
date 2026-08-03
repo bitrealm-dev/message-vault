@@ -10,6 +10,7 @@ mod browse;
 mod jobs;
 mod options;
 mod session_log;
+mod staging;
 mod start;
 mod state;
 mod sync;
@@ -24,7 +25,7 @@ slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
-    ui.set_app_title(format!("Message Exporters {}", env!("CARGO_PKG_VERSION")).into());
+    ui.set_app_title(format!("Message Vault {}", env!("CARGO_PKG_VERSION")).into());
     let state = Arc::new(Mutex::new(AppState::load()));
 
     sync::push_static_option_models(&ui);
@@ -37,13 +38,13 @@ fn main() -> Result<(), slint::PlatformError> {
     wire::wire_all(&ui, Arc::clone(&state));
 
     // Persist when the process exits after `run()` returns.
-    // Pull UI fields first so Vault key / Format / Extract edits are not lost.
+    // Pull guided workflow fields only — legacy adapters are not shown and
+    // would overwrite Import / Credentials edits with stale values.
     let result = ui.run();
     {
         let mut st = state.lock().expect("state lock");
-        sync::pull_extract(&ui, &mut st);
-        sync::pull_format(&ui, &mut st);
-        sync::pull_vault(&ui, &mut st);
+        sync::pull_credentials(&ui, &mut st);
+        sync::pull_import(&ui, &mut st);
         st.persist_on_exit();
     }
     result

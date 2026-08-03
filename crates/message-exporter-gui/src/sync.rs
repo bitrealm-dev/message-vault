@@ -1,17 +1,21 @@
 //! Push `AppState` into Slint adapters and pull adapter values back into `Form`
 //! / `ExportIniState` before validation and save.
 
-use message_exporter_core::{
-    AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform, contacts_kind_from_path,
-};
 use media::ffmpeg_available;
+use message_exporter_core::{
+    ApplePlatform, AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
+    contacts_kind_from_path,
+};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::rc::Rc;
 use vault_push::detect_source as vault_detect_source;
 
 use crate::options;
 use crate::state::AppState;
-use crate::{AppWindow, ContactsAdapter, FormatAdapter, ExtractAdapter, LogAdapter, VaultAdapter};
+use crate::{
+    AppWindow, ContactsAdapter, CredentialsAdapter, ExtractAdapter, FormatAdapter, HomeAdapter,
+    ImportAdapter, LogAdapter, VaultAdapter,
+};
 
 pub fn push_static_option_models(ui: &AppWindow) {
     let extract = ui.global::<ExtractAdapter>();
@@ -30,6 +34,11 @@ pub fn push_static_option_models(ui: &AppWindow) {
 
     ui.global::<ContactsAdapter>()
         .set_region_options(options::region_options());
+
+    let import = ui.global::<ImportAdapter>();
+    import.set_format_options(options::guided_import_format_options());
+    import.set_attachment_media_options(options::attachment_media_options());
+    import.set_max_resolution_options(options::max_resolution_options());
 }
 
 pub fn push_all(ui: &AppWindow, state: &mut AppState) {
@@ -37,14 +46,21 @@ pub fn push_all(ui: &AppWindow, state: &mut AppState) {
     push_extract(ui, state);
     push_format(ui, state);
     push_vault(ui, state);
+    push_credentials(ui, state);
+    push_import(ui, state);
     push_chrome(ui, state);
 }
 
 pub fn push_chrome(ui: &AppWindow, state: &AppState) {
     ui.set_error_text(SharedString::from(state.error_text()));
-    ui.set_error_source_tab(state.error_source_tab.unwrap_or(-1));
+    ui.set_error_source_screen(state.error_source_screen.unwrap_or(-1));
     ui.set_status_text(SharedString::from(state.status_text()));
-    ui.set_tabs_enabled(!state.running);
+    ui.set_workflow_enabled(!state.running);
+    ui.global::<HomeAdapter>().set_enabled(!state.running);
+    ui.global::<CredentialsAdapter>()
+        .set_enabled(!state.running);
+    ui.global::<ImportAdapter>().set_enabled(!state.running);
+
     let extract = ui.global::<ExtractAdapter>();
     extract.set_enabled(!state.running);
     ui.global::<ContactsAdapter>().set_enabled(!state.running);
@@ -65,6 +81,65 @@ pub fn pull_contacts(ui: &AppWindow, state: &mut AppState) {
     let contacts = ui.global::<ContactsAdapter>();
     state.validate_input = contacts.get_input().to_string();
     state.validate_usa = contacts.get_region_index() == 0;
+}
+
+pub fn push_credentials(ui: &AppWindow, state: &AppState) {
+    let credentials = ui.global::<CredentialsAdapter>();
+    let v = &state.export_ini.vault;
+    credentials.set_url(SharedString::from(v.url.as_str()));
+    credentials.set_key(SharedString::from(v.key.as_str()));
+}
+
+pub fn pull_credentials(ui: &AppWindow, state: &mut AppState) {
+    let credentials = ui.global::<CredentialsAdapter>();
+    state.export_ini.vault.url = credentials.get_url().to_string();
+    state.export_ini.vault.key = credentials.get_key().to_string();
+}
+
+pub fn push_import(ui: &AppWindow, state: &AppState) {
+    let import = ui.global::<ImportAdapter>();
+    let form = &state.form;
+
+    import.set_format_index(0);
+    import.set_backup_path(SharedString::from(form.db_path.as_str()));
+    import.set_backup_password(SharedString::from(form.backup_password.as_str()));
+    import.set_attachment_media_index(options::attachment_media_index(form.attachment_media));
+    import.set_max_resolution_index(options::max_resolution_index(form.media_max_resolution));
+    import.set_media_max_fps(SharedString::from(form.media_max_fps.as_str()));
+    import.set_media_min_size(SharedString::from(form.media_min_size.as_str()));
+    import.set_advanced(form.advanced);
+    import.set_conversation_filter(SharedString::from(form.conversation_filter.as_str()));
+    import.set_start_date(SharedString::from(form.start_date.as_str()));
+    import.set_end_date(SharedString::from(form.end_date.as_str()));
+    import.set_obfuscate(form.obfuscate);
+    import.set_delete_staging_after_success(state.delete_staging_after_success);
+
+    let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
+    import.set_show_ffmpeg_warning(
+        !obfuscate_active && form.attachment_media.needs_ffmpeg() && !ffmpeg_available(),
+    );
+    import.set_show_compress_options(form.attachment_media == AttachmentMedia::Compress);
+}
+
+pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
+    let import = ui.global::<ImportAdapter>();
+    let form = &mut state.form;
+
+    state.exporter = Exporter::Imessage;
+    form.output_format = OutputFormat::Jsonl;
+    form.apple_platform = ApplePlatform::Ios;
+    form.db_path = import.get_backup_path().to_string();
+    form.backup_password = import.get_backup_password().to_string();
+    form.attachment_media = options::attachment_media_at(import.get_attachment_media_index());
+    form.media_max_resolution = options::max_resolution_at(import.get_max_resolution_index());
+    form.media_max_fps = import.get_media_max_fps().to_string();
+    form.media_min_size = import.get_media_min_size().to_string();
+    form.advanced = import.get_advanced();
+    form.conversation_filter = import.get_conversation_filter().to_string();
+    form.start_date = import.get_start_date().to_string();
+    form.end_date = import.get_end_date().to_string();
+    form.obfuscate = import.get_obfuscate();
+    state.delete_staging_after_success = import.get_delete_staging_after_success();
 }
 
 pub fn push_extract(ui: &AppWindow, state: &AppState) {
@@ -191,9 +266,7 @@ pub fn push_format(ui: &AppWindow, state: &AppState) {
     let format = ui.global::<FormatAdapter>();
     let form = &state.form;
     format.set_input(SharedString::from(state.export_ini.format.input.as_str()));
-    format.set_output(SharedString::from(
-        state.export_ini.format.output.as_str(),
-    ));
+    format.set_output(SharedString::from(state.export_ini.format.output.as_str()));
     format.set_output_format_index(options::output_format_index(
         state.export_ini.format.output_format,
     ));
@@ -218,10 +291,8 @@ pub fn pull_format(ui: &AppWindow, state: &mut AppState) {
     state.export_ini.format.output = format.get_output().to_string();
     state.export_ini.format.output_format =
         options::output_format_at(format.get_output_format_index());
-    state.form.attachment_media =
-        options::attachment_media_at(format.get_attachment_media_index());
-    state.form.media_max_resolution =
-        options::max_resolution_at(format.get_max_resolution_index());
+    state.form.attachment_media = options::attachment_media_at(format.get_attachment_media_index());
+    state.form.media_max_resolution = options::max_resolution_at(format.get_max_resolution_index());
     state.form.media_max_fps = format.get_media_max_fps().to_string();
     state.form.media_min_size = format.get_media_min_size().to_string();
     state.form.media_skip_efficient = format.get_media_skip_efficient();
@@ -285,4 +356,16 @@ pub fn append_log_line(ui: &AppWindow, line: &str) {
 
 pub fn clear_log_lines(ui: &AppWindow) {
     set_log_lines(ui, &[]);
+}
+
+pub fn show_embedded_log(ui: &AppWindow) {
+    match ui.get_workflow_screen() {
+        crate::state::screen::CREDENTIALS => {
+            ui.global::<CredentialsAdapter>().set_panel_tab(1);
+        }
+        crate::state::screen::IMPORT => {
+            ui.global::<ImportAdapter>().set_panel_tab(1);
+        }
+        _ => {}
+    }
 }

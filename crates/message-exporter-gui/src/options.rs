@@ -1,10 +1,10 @@
 //! Combo-box option lists shared with the Slint adapters.
 
+use media::MaxResolution;
 use message_exporter_core::{
     APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia, EXPORTERS, Exporter,
     MAX_RESOLUTIONS, OUTPUT_FORMATS_MAIL, OutputFormat, WHATSAPP_PLATFORMS, WhatsappPlatform,
 };
-use media::MaxResolution;
 use slint::{ModelRc, SharedString, VecModel};
 
 const OUTPUT_FORMATS_ALPHABETICAL: [OutputFormat; OUTPUT_FORMATS_MAIL.len()] = [
@@ -113,6 +113,11 @@ pub fn timezone_options() -> ModelRc<SharedString> {
 
 pub fn region_options() -> ModelRc<SharedString> {
     model_from_labels(["USA".into(), "International".into()])
+}
+
+/// Format choices for the guided Import Messages screen.
+pub fn guided_import_format_options() -> ModelRc<SharedString> {
+    model_from_labels(["iPhone - iOS".into()])
 }
 
 pub fn exporter_index(exporter: Exporter) -> i32 {

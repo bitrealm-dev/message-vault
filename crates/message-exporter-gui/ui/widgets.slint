@@ -368,8 +368,34 @@ export component CheckBoxRow inherits FormRow {
     }
 }
 
+/// Bordered group for related options (compress settings, advanced filters, …).
+export component OptionGroup inherits Rectangle {
+    in property <string> title: "";
+    border-width: 1px;
+    border-color: Palette.border;
+    border-radius: 6px;
+    background: Palette.alternate-background;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: FormMetrics.row-spacing;
+        vertical-stretch: 0;
+
+        if root.title != "": Text {
+            text: root.title;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-stretch: 0;
+        }
+        @children
+    }
+}
+
 export component AdvancedSection inherits VerticalLayout {
     in-out property <bool> open: false;
+    in property <string> title: "Advanced Options";
     spacing: FormMetrics.row-spacing;
     padding: 0;
     vertical-stretch: 0;
@@ -378,7 +404,7 @@ export component AdvancedSection inherits VerticalLayout {
         label: "";
         has-trailing: false;
         Button {
-            text: root.open ? "⌄  Advanced options" : "›  Advanced options";
+            text: root.open ? "⌄  " + root.title : "›  " + root.title;
             vertical-stretch: 0;
             horizontal-stretch: 0;
             height: FormMetrics.row-height;
@@ -398,10 +424,8 @@ export component AdvancedSection inherits VerticalLayout {
         height: root.open ? self.preferred-height : 0px;
         clip: true;
         vertical-stretch: 0;
-        VerticalLayout {
-            spacing: FormMetrics.row-spacing;
-            padding: 0;
-            vertical-stretch: 0;
+        OptionGroup {
+            title: "";
             @children
         }
     }
@@ -522,6 +546,85 @@ export component ActionRow inherits HorizontalLayout {
     alignment: end;
     vertical-stretch: 0;
     @children
+}
+
+/// High-contrast tab button for Form / Log panel switches.
+export component PanelTabButton inherits Rectangle {
+    in property <string> title;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 36px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: 0px;
+    background: root.active ? #ffffff : #e5e7eb;
+    border-width: 0px;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+        Text {
+            text: root.title;
+            font-size: 13px;
+            font-weight: root.active ? 700 : 600;
+            color: root.active ? #111827 : #374151;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Active underline.
+    if root.active: Rectangle {
+        y: parent.height - 3px;
+        height: 3px;
+        width: parent.width;
+        background: #1d4ed8;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// Two-tab strip with clear selected / unselected contrast.
+export component PanelTabBar inherits VerticalLayout {
+    in-out property <int> current-index: 0;
+    in property <string> first-title;
+    in property <string> second-title;
+    spacing: 0;
+    padding: 0;
+    vertical-stretch: 0;
+
+    Rectangle {
+        height: 38px;
+        vertical-stretch: 0;
+        background: #e5e7eb;
+
+        HorizontalLayout {
+            padding: 0;
+            spacing: 0;
+            alignment: start;
+            PanelTabButton {
+                title: root.first-title;
+                active: root.current-index == 0;
+                clicked => { root.current-index = 0; }
+            }
+            PanelTabButton {
+                title: root.second-title;
+                active: root.current-index == 1;
+                clicked => { root.current-index = 1; }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+        }
+    }
+    Rectangle {
+        height: 1px;
+        vertical-stretch: 0;
+        background: #9ca3af;
+    }
 }
 
 // Fill-tab page shell: page margin only, children pack to top.
