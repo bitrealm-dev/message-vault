@@ -112,6 +112,12 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
                 eprintln!("  skip — assets dir missing");
                 continue;
             }
+            let cleaned = cleanup_incoming_parts(&assets_dir, opts.dry_run)?;
+            if cleaned > 0 {
+                println!(
+                    "  cleaned {cleaned} leftover .part upload temp(s) under .incoming/"
+                );
+            }
             fs::create_dir_all(&converted_dir).with_context(|| {
                 format!("create converted dir {}", converted_dir.display())
             })?;
@@ -169,6 +175,28 @@ fn process_one(
     converted_dir: &Path,
     row: &AssetRow,
 ) -> Result<Outcome> {
+    // Incomplete transfers / aborted uploads — never hand these to ffmpeg.
+    if is_part_path(&row.assets_path) {
+        let source_path = assets_dir.join(&row.assets_path);
+        if source_path.is_file() {
+            if opts.dry_run {
+                println!(
+                    "[dry-run] would remove incomplete {account_id}/{source_id}/{}",
+                    row.assets_path
+                );
+            } else {
+                fs::remove_file(&source_path).with_context(|| {
+                    format!("remove incomplete {}", source_path.display())
+                })?;
+                println!(
+                    "removed incomplete {account_id}/{source_id}/{}",
+                    row.assets_path
+                );
+            }
+        }
+        return Ok(Outcome::Skipped);
+    }
+
     let kind = kind_of(&row.assets_path, row.mime_type.as_deref());
     match kind {
         MediaKind::Image if opts.skip_image => return Ok(Outcome::Skipped),
@@ -410,7 +438,52 @@ fn ext_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Incomplete iMessage/SMS transfers and aborted vault uploads use a `.part` suffix.
+fn is_part_path(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("part"))
+}
+
+/// Remove stale `{sha}-*.part` temps left under `assets/.incoming/` after failed PUTs.
+fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
+    let incoming = assets_dir.join(".incoming");
+    if !incoming.is_dir() {
+        return Ok(0);
+    }
+    let mut removed = 0u64;
+    for entry in fs::read_dir(&incoming)
+        .with_context(|| format!("read {}", incoming.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let is_part = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("part"));
+        if !is_part {
+            continue;
+        }
+        if dry_run {
+            println!("[dry-run] would remove {}", path.display());
+            removed += 1;
+            continue;
+        }
+        fs::remove_file(&path)
+            .with_context(|| format!("remove leftover {}", path.display()))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 fn kind_of(assets_path: &str, mime: Option<&str>) -> MediaKind {
+    if is_part_path(assets_path) {
+        return MediaKind::Other;
+    }
     let ext = ext_of(Path::new(assets_path));
     if ext == ".gif" || mime == Some("image/gif") {
         return MediaKind::Other;
@@ -454,13 +527,16 @@ fn ffprobe_available() -> bool {
         .unwrap_or(false)
 }
 
-fn run_ffmpeg(args: &[&str]) -> Result<()> {
+fn run_ffmpeg(args: &[&str], cleanup_on_fail: Option<&Path>) -> Result<()> {
     let output = Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-y"])
         .args(args)
         .output()
         .context("spawn ffmpeg")?;
     if !output.status.success() {
+        if let Some(path) = cleanup_on_fail {
+            let _ = fs::remove_file(path);
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         bail!(
@@ -491,21 +567,24 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
         .context("temp jpeg")?;
     let tmp_path = tmp.path().to_path_buf();
     // High-quality still (`-q:v 2` ≈ quality ~85 intent); autorotate is ffmpeg default.
-    run_ffmpeg(&[
-        "-i",
-        source_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("non-utf8 path"))?,
-        "-frames:v",
-        "1",
-        "-update",
-        "1",
-        "-q:v",
-        "2",
-        tmp_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("non-utf8 temp path"))?,
-    ])?;
+    run_ffmpeg(
+        &[
+            "-i",
+            source_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-utf8 path"))?,
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            "-q:v",
+            "2",
+            tmp_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("non-utf8 temp path"))?,
+        ],
+        Some(&tmp_path),
+    )?;
     let mut buf = Vec::new();
     File::open(&tmp_path)?.read_to_end(&mut buf)?;
     Ok(Some(buf))
@@ -583,25 +662,28 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
     let dest = out
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("non-utf8 out path"))?;
-    run_ffmpeg(&[
-        "-i",
-        src,
-        "-vf",
-        "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "28",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "96k",
-        "-movflags",
-        "+faststart",
-        dest,
-    ])?;
+    run_ffmpeg(
+        &[
+            "-i",
+            src,
+            "-vf",
+            "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "28",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-movflags",
+            "+faststart",
+            dest,
+        ],
+        Some(&out),
+    )?;
     Ok(Some(out))
 }
 
@@ -627,9 +709,12 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
     let dest = out
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("non-utf8 out path"))?;
-    run_ffmpeg(&[
-        "-i", src, "-vn", "-ac", "1", "-c:a", "libmp3lame", "-q:a", "6", dest,
-    ])?;
+    run_ffmpeg(
+        &[
+            "-i", src, "-vn", "-ac", "1", "-c:a", "libmp3lame", "-q:a", "6", dest,
+        ],
+        Some(&out),
+    )?;
     Ok(Some(out))
 }
 
@@ -807,6 +892,14 @@ mod tests {
         assert_eq!(d_sha, blob.sha256);
         assert_eq!(d_path, blob.assets_path);
         assert_eq!(d_mime, "image/jpeg");
+    }
+
+    #[test]
+    fn part_paths_are_not_media() {
+        assert!(is_part_path("aa/aabbcc.part"));
+        assert!(is_part_path("upload.PART"));
+        assert!(!is_part_path("aa/aabbcc.mp4"));
+        assert_eq!(kind_of("aa/x.part", Some("video/mp4")), MediaKind::Other);
     }
 
     #[test]

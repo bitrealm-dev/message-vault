@@ -1,0 +1,498 @@
+//! Multipart (chunked) asset upload staging for Cloudflare-sized HTTP bodies.
+//!
+//! Staging layout: `{assets}/.incoming/{sha256}/{upload_id}/part-NNNN` + `manifest.json`.
+
+use std::collections::BTreeSet;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+use crate::assets::{self, StoredAsset};
+
+/// Default part size advertised to clients (under Cloudflare ~100 MiB).
+pub const DEFAULT_PART_SIZE: usize = 64 * 1024 * 1024;
+/// Default max object size for one asset (single PUT or multipart).
+pub const DEFAULT_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Limits for multipart sessions (from `[server]` config; optional env override).
+#[derive(Debug, Clone, Copy)]
+pub struct UploadLimits {
+    pub part_size: usize,
+    pub max_bytes: u64,
+}
+
+impl Default for UploadLimits {
+    fn default() -> Self {
+        Self {
+            part_size: DEFAULT_PART_SIZE,
+            max_bytes: DEFAULT_MAX_BYTES,
+        }
+    }
+}
+
+impl UploadLimits {
+    /// Build limits from config. `VAULT_ASSET_PART_SIZE` overrides part size when set
+    /// to a value in `1..=part_size` (tests / smoke).
+    pub fn resolve(part_size: usize, max_bytes: u64) -> Self {
+        let part_size = std::env::var("VAULT_ASSET_PART_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n >= 1 && n <= part_size.max(1))
+            .unwrap_or(part_size.max(1));
+        let max_bytes = max_bytes.max(part_size as u64);
+        Self {
+            part_size,
+            max_bytes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadManifest {
+    pub sha256: String,
+    pub bytes: u64,
+    pub part_size: usize,
+    #[serde(default)]
+    pub mime: Option<String>,
+    #[serde(default)]
+    pub received: BTreeSet<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartUpload {
+    pub upload_id: String,
+    pub part_size: usize,
+}
+
+fn normalize_sha(sha: &str) -> Result<String> {
+    let s = sha.trim().to_ascii_lowercase();
+    if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid sha256 (expected 64 lowercase hex digits)");
+    }
+    Ok(s)
+}
+
+fn new_upload_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:x}")
+}
+
+pub fn session_dir(assets_root: &Path, sha256: &str, upload_id: &str) -> PathBuf {
+    assets_root
+        .join(".incoming")
+        .join(sha256)
+        .join(upload_id)
+}
+
+fn manifest_path(session: &Path) -> PathBuf {
+    session.join("manifest.json")
+}
+
+fn part_path(session: &Path, part: u32) -> PathBuf {
+    session.join(format!("part-{part:04}"))
+}
+
+fn expected_part_count(bytes: u64, part_size: usize) -> u32 {
+    if bytes == 0 {
+        return 0;
+    }
+    let ps = part_size as u64;
+    ((bytes + ps - 1) / ps) as u32
+}
+
+fn expected_part_len(bytes: u64, part_size: usize, part: u32) -> u64 {
+    let count = expected_part_count(bytes, part_size);
+    if part == 0 || part > count {
+        return 0;
+    }
+    let start = (part as u64 - 1) * part_size as u64;
+    (bytes - start).min(part_size as u64)
+}
+
+fn read_manifest(session: &Path) -> Result<UploadManifest> {
+    let path = manifest_path(session);
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+}
+
+fn write_manifest(session: &Path, manifest: &UploadManifest) -> Result<()> {
+    let path = manifest_path(session);
+    let text = serde_json::to_string_pretty(manifest)?;
+    fs::write(&path, text).with_context(|| format!("write {}", path.display()))
+}
+
+fn ext_for_mime(mime: Option<&str>) -> String {
+    let Some(mime) = mime.map(str::trim).filter(|s| !s.is_empty()) else {
+        return String::new();
+    };
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or(mime)
+        .trim()
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "image/jpeg" => ".jpg".into(),
+        "image/png" => ".png".into(),
+        "image/gif" => ".gif".into(),
+        "image/webp" => ".webp".into(),
+        "image/heic" | "image/heif" => ".heic".into(),
+        "video/mp4" => ".mp4".into(),
+        "video/quicktime" => ".mov".into(),
+        "video/webm" => ".webm".into(),
+        "audio/mpeg" | "audio/mp3" => ".mp3".into(),
+        "audio/mp4" | "audio/aac" => ".m4a".into(),
+        "audio/wav" | "audio/x-wav" => ".wav".into(),
+        _ => String::new(),
+    }
+}
+
+/// Start a chunked upload session. Returns `already_present` asset when the blob exists.
+pub fn start_upload(
+    assets_root: &Path,
+    sha256: &str,
+    bytes: u64,
+    mime: Option<&str>,
+    limits: UploadLimits,
+) -> Result<(Option<StoredAsset>, Option<StartUpload>)> {
+    let sha = normalize_sha(sha256)?;
+    if bytes == 0 {
+        bail!("bytes must be > 0");
+    }
+    if bytes > limits.max_bytes {
+        bail!(
+            "object exceeds {} byte server limit ({} MiB)",
+            limits.max_bytes,
+            limits.max_bytes / (1024 * 1024)
+        );
+    }
+    if let Some(existing) = assets::lookup_by_sha256(assets_root, &sha) {
+        return Ok((Some(existing), None));
+    }
+
+    let part_size = limits.part_size;
+    let upload_id = new_upload_id();
+    let session = session_dir(assets_root, &sha, &upload_id);
+    fs::create_dir_all(&session).with_context(|| format!("mkdir {}", session.display()))?;
+    let manifest = UploadManifest {
+        sha256: sha,
+        bytes,
+        part_size,
+        mime: mime.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        received: BTreeSet::new(),
+    };
+    write_manifest(&session, &manifest)?;
+    Ok((
+        None,
+        Some(StartUpload {
+            upload_id,
+            part_size,
+        }),
+    ))
+}
+
+/// Write (or overwrite) one part. `body` is the full part payload.
+pub fn put_part(
+    assets_root: &Path,
+    sha256: &str,
+    upload_id: &str,
+    part: u32,
+    body: &[u8],
+) -> Result<u64> {
+    let sha = normalize_sha(sha256)?;
+    if part == 0 {
+        bail!("part number must be >= 1");
+    }
+    let session = session_dir(assets_root, &sha, upload_id);
+    if !session.is_dir() {
+        bail!("upload session not found");
+    }
+    let mut manifest = read_manifest(&session)?;
+    if manifest.sha256 != sha {
+        bail!("upload session sha256 mismatch");
+    }
+    if body.len() > manifest.part_size {
+        bail!(
+            "part body {} bytes exceeds session part_size {}",
+            body.len(),
+            manifest.part_size
+        );
+    }
+    let count = expected_part_count(manifest.bytes, manifest.part_size);
+    if part > count {
+        bail!("part {part} out of range (expected 1..={count})");
+    }
+    let expect = expected_part_len(manifest.bytes, manifest.part_size, part);
+    if body.len() as u64 != expect {
+        bail!(
+            "part {part} length {} does not match expected {expect}",
+            body.len()
+        );
+    }
+
+    let path = part_path(&session, part);
+    fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
+    manifest.received.insert(part);
+    write_manifest(&session, &manifest)?;
+    Ok(body.len() as u64)
+}
+
+/// Concatenate parts, verify claimed SHA-256, install into the asset store.
+pub fn complete_upload(
+    assets_root: &Path,
+    sha256: &str,
+    upload_id: &str,
+) -> Result<(StoredAsset, bool)> {
+    let sha = normalize_sha(sha256)?;
+    let session = session_dir(assets_root, &sha, upload_id);
+    if !session.is_dir() {
+        bail!("upload session not found");
+    }
+    let manifest = read_manifest(&session)?;
+    if manifest.sha256 != sha {
+        bail!("upload session sha256 mismatch");
+    }
+    let count = expected_part_count(manifest.bytes, manifest.part_size);
+    if count == 0 {
+        bail!("empty upload");
+    }
+    for n in 1..=count {
+        if !manifest.received.contains(&n) {
+            bail!("missing part {n} of {count}");
+        }
+        let path = part_path(&session, n);
+        if !path.is_file() {
+            bail!("missing part file {n}");
+        }
+    }
+
+    let ext = ext_for_mime(manifest.mime.as_deref());
+    let assembled = session.join(format!("assembled{ext}"));
+    {
+        let mut out = File::create(&assembled)
+            .with_context(|| format!("create {}", assembled.display()))?;
+        let mut total = 0u64;
+        for n in 1..=count {
+            let path = part_path(&session, n);
+            let mut file =
+                File::open(&path).with_context(|| format!("open {}", path.display()))?;
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)?;
+            out.write_all(&buf)?;
+            total += buf.len() as u64;
+        }
+        out.flush()?;
+        if total != manifest.bytes {
+            let _ = fs::remove_file(&assembled);
+            bail!(
+                "assembled size {total} does not match declared {}",
+                manifest.bytes
+            );
+        }
+    }
+
+    let result = assets::store_verified(
+        &assembled,
+        &sha,
+        assets_root,
+        manifest.mime.as_deref(),
+        true,
+    );
+    // Always drop the session directory after complete attempt.
+    let _ = fs::remove_dir_all(&session);
+    result
+}
+
+/// Abort and delete staging for an upload session.
+pub fn abort_upload(assets_root: &Path, sha256: &str, upload_id: &str) -> Result<()> {
+    let sha = normalize_sha(sha256)?;
+    let session = session_dir(assets_root, &sha, upload_id);
+    if session.exists() {
+        fs::remove_dir_all(&session)
+            .with_context(|| format!("remove {}", session.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use tempfile::tempdir;
+
+    fn hash_bytes(data: &[u8]) -> String {
+        Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn multipart_roundtrip() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"hello-multipart-asset-bytes!!";
+        let sha = hash_bytes(data);
+
+        let upload_id = "testupload";
+        let session = session_dir(root, &sha, upload_id);
+        fs::create_dir_all(&session).unwrap();
+        let part_size = 10usize;
+        let mut manifest = UploadManifest {
+            sha256: sha.clone(),
+            bytes: data.len() as u64,
+            part_size,
+            mime: Some("text/plain".into()),
+            received: BTreeSet::new(),
+        };
+        write_manifest(&session, &manifest).unwrap();
+
+        let count = expected_part_count(manifest.bytes, part_size);
+        for n in 1..=count {
+            let start = (n as usize - 1) * part_size;
+            let end = (start + part_size).min(data.len());
+            let chunk = &data[start..end];
+            let path = part_path(&session, n);
+            fs::write(&path, chunk).unwrap();
+            manifest.received.insert(n);
+        }
+        write_manifest(&session, &manifest).unwrap();
+
+        let (stored, already) = complete_upload(root, &sha, upload_id).unwrap();
+        assert!(!already);
+        assert_eq!(stored.sha256, sha);
+        assert!(root.join(&stored.assets_path).is_file());
+        assert!(!session.exists());
+        assert_eq!(fs::read(root.join(&stored.assets_path)).unwrap(), data);
+    }
+
+    #[test]
+    fn complete_rejects_hash_mismatch() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"abc123";
+        let wrong_sha = hash_bytes(b"other");
+        let upload_id = "badhash";
+        let session = session_dir(root, &wrong_sha, upload_id);
+        fs::create_dir_all(&session).unwrap();
+        let mut manifest = UploadManifest {
+            sha256: wrong_sha.clone(),
+            bytes: data.len() as u64,
+            part_size: 64,
+            mime: None,
+            received: BTreeSet::new(),
+        };
+        fs::write(part_path(&session, 1), data).unwrap();
+        manifest.received.insert(1);
+        write_manifest(&session, &manifest).unwrap();
+
+        let err = complete_upload(root, &wrong_sha, upload_id).unwrap_err();
+        assert!(err.to_string().contains("sha256 mismatch"));
+        assert!(!session.exists());
+    }
+
+    #[test]
+    fn complete_rejects_missing_part() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"0123456789abcdef";
+        let sha = hash_bytes(data);
+        let upload_id = "missingpart";
+        let session = session_dir(root, &sha, upload_id);
+        fs::create_dir_all(&session).unwrap();
+        let part_size = 8usize;
+        let mut manifest = UploadManifest {
+            sha256: sha.clone(),
+            bytes: data.len() as u64,
+            part_size,
+            mime: None,
+            received: BTreeSet::new(),
+        };
+        // Only write part 1 of 2.
+        fs::write(part_path(&session, 1), &data[..8]).unwrap();
+        manifest.received.insert(1);
+        write_manifest(&session, &manifest).unwrap();
+
+        let err = complete_upload(root, &sha, upload_id).unwrap_err();
+        assert!(err.to_string().contains("missing part"));
+        // Incomplete sessions are kept so the client can resume missing parts.
+        assert!(session.exists());
+    }
+
+    #[test]
+    fn put_part_and_complete_via_api() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"abcdefghijklmnopqrstuvwxyz";
+        let sha = hash_bytes(data);
+        // Force tiny parts for this process.
+        // SAFETY: single-threaded test process; no concurrent env readers.
+        unsafe {
+            std::env::set_var("VAULT_ASSET_PART_SIZE", "10");
+        }
+        let limits = UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES);
+        let (existing, start) =
+            start_upload(root, &sha, data.len() as u64, Some("text/plain"), limits).unwrap();
+        assert!(existing.is_none());
+        let start = start.expect("upload started");
+        assert_eq!(start.part_size, 10);
+
+        let mut offset = 0usize;
+        let mut part = 1u32;
+        while offset < data.len() {
+            let end = (offset + start.part_size).min(data.len());
+            put_part(root, &sha, &start.upload_id, part, &data[offset..end]).unwrap();
+            offset = end;
+            part += 1;
+        }
+        let (stored, already) = complete_upload(root, &sha, &start.upload_id).unwrap();
+        assert!(!already);
+        assert_eq!(stored.sha256, sha);
+        unsafe {
+            std::env::remove_var("VAULT_ASSET_PART_SIZE");
+        }
+    }
+
+    #[test]
+    fn start_returns_existing() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"already-here";
+        let sha = hash_bytes(data);
+        let path = root.join(&sha[..2]).join(&sha);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, data).unwrap();
+
+        let (existing, start) = start_upload(
+            root,
+            &sha,
+            data.len() as u64,
+            None,
+            UploadLimits::default(),
+        )
+        .unwrap();
+        assert!(existing.is_some());
+        assert!(start.is_none());
+    }
+
+    #[test]
+    fn start_rejects_over_max_bytes() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let sha = "a".repeat(64);
+        let limits = UploadLimits {
+            part_size: 1024,
+            max_bytes: 2048,
+        };
+        let err = start_upload(root, &sha, 4096, None, limits).unwrap_err();
+        assert!(err.to_string().contains("server limit"));
+    }
+}

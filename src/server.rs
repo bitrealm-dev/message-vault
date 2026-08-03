@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -15,15 +15,14 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use rusqlite::Connection;
 
-use crate::db::account_profile;
-use crate::db::api_tokens;
+use crate::asset_uploads;
 use crate::assets;
 use crate::config::{Config, validate_source_id};
+use crate::db::account_profile;
+use crate::db::api_tokens;
 use crate::dedupe;
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::db::schema;
-
-const MAX_BODY_BYTES: usize = 512 * 1024 * 1024; // 512 MiB (multipart uploads)
 
 /// Authenticated vault account from a per-account Import API token.
 #[derive(Debug, Clone)]
@@ -40,8 +39,15 @@ struct AppState {
     /// rows for that tenant are not wiped mid-run. Different accounts may overlap
     /// at the lock layer; the shared `db` mutex still serializes writers.
     account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// Serialize multipart complete per (account, sha256) so two clients cannot
+    /// race `store_verified` on the same digest.
+    asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Process-local Import API token → account_id cache (avoids DB open per asset PUT).
     token_cache: Arc<Mutex<HashMap<String, String>>>,
+    /// Multipart / asset size limits from `[server]` (env may override part size).
+    upload_limits: asset_uploads::UploadLimits,
+    /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
+    max_body_bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +123,9 @@ impl IntoResponse for ApiError {
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
+    let upload_limits =
+        asset_uploads::UploadLimits::resolve(server.asset_part_size, server.asset_max_bytes);
+    let max_body_bytes = upload_limits.max_bytes as usize;
 
     // Open a warm writer, recover hot journals, and ensure schema once before serving.
     let db_conn = Connection::open(&cfg.paths.db)?;
@@ -127,13 +136,21 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .unwrap_or_else(|_| "unknown".into());
     eprintln!("  db:   {} (journal_mode={mode})", cfg.paths.db.display());
+    eprintln!(
+        "  assets: max={} MiB  part_size={} MiB",
+        upload_limits.max_bytes / (1024 * 1024),
+        upload_limits.part_size / (1024 * 1024)
+    );
     let db = Arc::new(StdMutex::new(db_conn));
 
     let state = AppState {
         cfg: Arc::new(cfg),
         db,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
+        asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         token_cache: Arc::new(Mutex::new(HashMap::new())),
+        upload_limits,
+        max_body_bytes,
     };
 
     let app = Router::new()
@@ -144,7 +161,23 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/assets/{sha256}",
             put(asset_put_handler).head(asset_head_handler),
         )
-        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .route(
+            "/v1/assets/{sha256}/uploads",
+            post(asset_upload_start_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
+            put(asset_upload_part_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}/complete",
+            post(asset_upload_complete_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}",
+            delete(asset_upload_abort_handler),
+        )
+        .layer(RequestBodyLimitLayer::new(max_body_bytes))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -153,6 +186,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
     eprintln!("  HEAD /v1/assets/{{sha256}}?source=&account=  (probe before PUT)");
     eprintln!("  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)");
+    eprintln!("  POST /v1/assets/{{sha256}}/uploads?source=&account=  (start multipart)");
+    eprintln!("  PUT  /v1/assets/{{sha256}}/uploads/{{id}}/parts/{{n}}  (part body)");
+    eprintln!("  POST /v1/assets/{{sha256}}/uploads/{{id}}/complete");
+    eprintln!("  DELETE /v1/assets/{{sha256}}/uploads/{{id}}  (abort)");
     eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false");
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
     eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
@@ -437,7 +474,7 @@ async fn import_handler(
     if is_jsonl_content_type(ct) {
         let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
         let jsonl_path = temp.path().join("_import.jsonl");
-        let n = stream_body_to_file(request.into_body(), &jsonl_path).await?;
+        let n = stream_body_to_file(request.into_body(), &jsonl_path, state.max_body_bytes).await?;
         if n == 0 {
             return Err(ApiError::BadRequest("request body is empty".into()));
         }
@@ -535,7 +572,7 @@ async fn asset_put_handler(
         .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
 
     if let Some(stored) = existing {
-        discard_body(request.into_body()).await?;
+        discard_body(request.into_body(), state.max_body_bytes).await?;
         return Ok(Json(AssetPutResponse {
             ok: true,
             sha256: stored.sha256,
@@ -558,7 +595,7 @@ async fn asset_put_handler(
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    let n = match stream_body_to_file(request.into_body(), &tmp_path).await {
+    let n = match stream_body_to_file(request.into_body(), &tmp_path, state.max_body_bytes).await {
         Ok(n) => n,
         Err(err) => {
             let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -598,21 +635,222 @@ async fn asset_put_handler(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct AssetUploadStartBody {
+    bytes: u64,
+    #[serde(default)]
+    mime: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetUploadStartResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assets_path: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    already_present: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetUploadPartResponse {
+    ok: bool,
+    part: u32,
+    bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AssetUploadAbortResponse {
+    ok: bool,
+}
+
+async fn asset_upload_start_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+    Json(body): Json<AssetUploadStartBody>,
+) -> Result<Json<AssetUploadStartResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let mime = body.mime.clone();
+    let bytes = body.bytes;
+    let sha = sha256.clone();
+    let limits = state.upload_limits;
+    let result = tokio::task::spawn_blocking(move || {
+        asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("upload start task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    match result {
+        (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
+            ok: true,
+            upload_id: None,
+            part_size: None,
+            sha256: Some(stored.sha256),
+            assets_path: Some(stored.assets_path),
+            already_present: true,
+        })),
+        (None, Some(start)) => Ok(Json(AssetUploadStartResponse {
+            ok: true,
+            upload_id: Some(start.upload_id),
+            part_size: Some(start.part_size),
+            sha256: None,
+            assets_path: None,
+            already_present: false,
+        })),
+        _ => Err(ApiError::Internal(
+            "upload start returned inconsistent state".into(),
+        )),
+    }
+}
+
+async fn asset_upload_part_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id, part)): AxumPath<(String, String, u32)>,
+    Query(query): Query<AssetPutQuery>,
+    request: Request,
+) -> Result<Json<AssetUploadPartResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    if part == 0 {
+        return Err(ApiError::BadRequest("part number must be >= 1".into()));
+    }
+    let body = read_body_limited(request.into_body(), state.upload_limits.part_size).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("upload part task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(AssetUploadPartResponse {
+        ok: true,
+        part,
+        bytes: written,
+    }))
+}
+
+async fn asset_upload_complete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    if let Some(stored) = existing {
+        // Drop staging if a concurrent single-PUT won the race.
+        let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+        let sha = sha256.clone();
+        let uid = upload_id.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            asset_uploads::abort_upload(&assets_dir, &sha, &uid)
+        })
+        .await;
+        return Ok(Json(AssetPutResponse {
+            ok: true,
+            sha256: stored.sha256,
+            assets_path: stored.assets_path,
+            already_present: true,
+        }));
+    }
+
+    let lock_key = format!("{account}:{sha256}");
+    let complete_lock = {
+        let mut map = state.asset_complete_locks.lock().await;
+        map.entry(lock_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = complete_lock.lock().await;
+
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        asset_uploads::complete_upload(&assets_dir, &sha, &uid)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("upload complete task: {e}")))?
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    let (stored, already_present) = result;
+    Ok(Json(AssetPutResponse {
+        ok: true,
+        sha256: stored.sha256,
+        assets_path: stored.assets_path,
+        already_present,
+    }))
+}
+
+async fn asset_upload_abort_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
+        .await
+        .map_err(|e| ApiError::Internal(format!("upload abort task: {e}")))?
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(AssetUploadAbortResponse { ok: true }))
+}
+
+async fn read_body_limited(
+    body: axum::body::Body,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ApiError> {
+    let mut out = Vec::new();
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
+        if out.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(ApiError::BadRequest("request body too large".into()));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 /// Drain request body without retaining it (used when asset already exists).
-async fn discard_body(body: axum::body::Body) -> Result<(), ApiError> {
+async fn discard_body(
+    body: axum::body::Body,
+    max_body_bytes: usize,
+) -> Result<(), ApiError> {
     let mut stream = body.into_data_stream();
     let mut seen = 0usize;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         seen = seen.saturating_add(chunk.len());
-        if seen > MAX_BODY_BYTES {
+        if seen > max_body_bytes {
             return Err(ApiError::BadRequest("request body too large".into()));
         }
     }
     Ok(())
 }
 
-async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64, ApiError> {
+async fn stream_body_to_file(
+    body: axum::body::Body,
+    dest: &Path,
+    max_body_bytes: usize,
+) -> Result<u64, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -626,7 +864,7 @@ async fn stream_body_to_file(body: axum::body::Body, dest: &Path) -> Result<u64,
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::BadRequest(format!("failed to read body: {e}")))?;
         written = written.saturating_add(chunk.len() as u64);
-        if written > MAX_BODY_BYTES as u64 {
+        if written > max_body_bytes as u64 {
             return Err(ApiError::BadRequest("request body too large".into()));
         }
         file.write_all(&chunk)

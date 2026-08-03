@@ -17,10 +17,26 @@ pub struct ServerConfig {
     /// Bind address (default `127.0.0.1:8080`).
     #[serde(default = "default_server_bind")]
     pub bind: String,
+    /// Max size of one asset (single PUT or multipart complete), in bytes.
+    /// Default 512 MiB.
+    #[serde(default = "default_asset_max_bytes")]
+    pub asset_max_bytes: u64,
+    /// Multipart part size advertised to clients, in bytes. Default 64 MiB
+    /// (under Cloudflare Free/Pro ~100 MB). Must be ≤ `asset_max_bytes`.
+    #[serde(default = "default_asset_part_size")]
+    pub asset_part_size: usize,
 }
 
 fn default_server_bind() -> String {
     "127.0.0.1:8080".to_string()
+}
+
+fn default_asset_max_bytes() -> u64 {
+    512 * 1024 * 1024
+}
+
+fn default_asset_part_size() -> usize {
+    64 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,9 +135,24 @@ impl Config {
 
     /// Server settings for `serve`. Fails if `[server]` is missing.
     pub fn require_server(&self) -> Result<&ServerConfig> {
-        self.server
+        let server = self
+            .server
             .as_ref()
-            .context("config missing [server] section (needed for serve)")
+            .context("config missing [server] section (needed for serve)")?;
+        if server.asset_part_size == 0 {
+            bail!("server.asset_part_size must be > 0");
+        }
+        if server.asset_max_bytes == 0 {
+            bail!("server.asset_max_bytes must be > 0");
+        }
+        if server.asset_part_size as u64 > server.asset_max_bytes {
+            bail!(
+                "server.asset_part_size ({}) must be ≤ server.asset_max_bytes ({})",
+                server.asset_part_size,
+                server.asset_max_bytes
+            );
+        }
+        Ok(server)
     }
 }
 

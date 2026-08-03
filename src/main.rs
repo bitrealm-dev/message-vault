@@ -1,3 +1,4 @@
+mod asset_uploads;
 mod assets;
 mod config;
 mod db;
