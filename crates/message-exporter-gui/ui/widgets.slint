@@ -368,6 +368,358 @@ export component CheckBoxRow inherits FormRow {
     }
 }
 
+/// Label above the control (guided Import / Credentials layout).
+export component StackedFieldLabel inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    spacing: 2px;
+    padding: 0;
+    alignment: start;
+    vertical-stretch: 0;
+    height: 22px;
+
+    Text {
+        text: root.label;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-stretch: 0;
+    }
+    if root.required: Text {
+        text: "*";
+        font-size: 12px;
+        font-weight: 700;
+        color: #c0392b;
+        vertical-alignment: center;
+        horizontal-stretch: 0;
+    }
+    Rectangle { horizontal-stretch: 1; }
+}
+
+export component StackedLineEdit inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <string> placeholder: "";
+    in-out property <string> value;
+    in property <bool> password: false;
+    in property <bool> enabled: true;
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+    }
+    if !root.password: LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        enabled: root.enabled;
+        horizontal-stretch: 1;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+    }
+    if root.password: LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        enabled: root.enabled;
+        input-type: InputType.password;
+        horizontal-stretch: 1;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+    }
+}
+
+export component StackedPathField inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <string> placeholder: "";
+    in property <string> field-id;
+    in-out property <string> value;
+    callback browse-requested(string);
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+    }
+    HorizontalLayout {
+        spacing: FormMetrics.field-spacing;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+        Button {
+            text: "Browse…";
+            horizontal-stretch: 0;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+            clicked => { root.browse-requested(root.field-id); }
+        }
+    }
+}
+
+export component StackedComboBox inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <[string]> model;
+    in-out property <int> current-index;
+    in property <int> separator-before-index: -1;
+    callback selected(string);
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+    }
+    CompactComboBox {
+        model: root.model;
+        current-index <=> root.current-index;
+        separator-before-index: root.separator-before-index;
+        selected(value) => { root.selected(value); }
+        horizontal-stretch: 1;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+    }
+}
+
+export component StackedDateEdit inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder: "YYYY-MM-DD (optional)";
+    in-out property <string> value;
+    private property <Date> picker-date;
+    private property <int> display-year;
+    private property <int> display-month;
+    private property <[string]> month-names: [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    private property <[string]> weekday-names: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    private property <int> first-weekday: root.weekday(root.display-year, root.display-month, 1);
+    private property <int> month-days: root.days-in-month(root.display-year, root.display-month);
+    callback date-for-text(string) -> Date;
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    function two-digits(value: int) -> string {
+        return value < 10 ? "0\{value}" : "\{value}";
+    }
+
+    function days-in-month(year: int, month: int) -> int {
+        if month == 2 {
+            return (Math.mod(year, 400) == 0
+                || (Math.mod(year, 4) == 0 && Math.mod(year, 100) != 0)) ? 29 : 28;
+        }
+        return (month == 4 || month == 6 || month == 9 || month == 11) ? 30 : 31;
+    }
+
+    function weekday(year: int, month: int, day: int) -> int {
+        let adjusted-year = month < 3 ? year - 1 : year;
+        let adjusted-month = month < 3 ? month + 12 : month;
+        let year-of-century = Math.mod(adjusted-year, 100);
+        let century = floor(adjusted-year / 100);
+        let zeller = Math.mod(day + floor(13 * (adjusted-month + 1) / 5)
+            + year-of-century + floor(year-of-century / 4)
+            + floor(century / 4) + 5 * century, 7);
+        return Math.mod(zeller + 5, 7);
+    }
+
+    function previous-month() {
+        if root.display-month == 1 {
+            root.display-month = 12;
+            root.display-year -= 1;
+        } else {
+            root.display-month -= 1;
+        }
+    }
+
+    function next-month() {
+        if root.display-month == 12 {
+            root.display-month = 1;
+            root.display-year += 1;
+        } else {
+            root.display-month += 1;
+        }
+    }
+
+    function open-picker() {
+        root.picker-date = root.date-for-text(root.value);
+        root.display-year = root.picker-date.year;
+        root.display-month = root.picker-date.month;
+        picker.show();
+    }
+
+    StackedFieldLabel { label: root.label; }
+    HorizontalLayout {
+        spacing: FormMetrics.field-spacing;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+        Button {
+            text: "▦";
+            width: FormMetrics.button-width;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+            horizontal-stretch: 0;
+            clicked => { root.open-picker(); }
+        }
+    }
+
+    picker := PopupWindow {
+        x: root.width - self.width;
+        y: root.height;
+        width: 252px;
+        height: 246px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            border-radius: 3px;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    vertical-stretch: 0;
+                    spacing: 4px;
+
+                    Button {
+                        text: "‹";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.previous-month(); }
+                    }
+                    Text {
+                        text: root.month-names[root.display-month - 1] + " " + root.display-year;
+                        color: Palette.control-foreground;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "›";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.next-month(); }
+                    }
+                }
+
+                Rectangle {
+                    height: 20px;
+                    vertical-stretch: 0;
+                    for weekday[index] in root.weekday-names: Text {
+                        x: index * parent.width / 7;
+                        width: parent.width / 7;
+                        height: parent.height;
+                        text: weekday;
+                        color: Palette.alternate-foreground;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    for cell[index] in 42: day-cell := Rectangle {
+                        property <int> day: index - root.first-weekday + 1;
+                        property <bool> valid: self.day >= 1 && self.day <= root.month-days;
+                        property <bool> selected: self.valid
+                            && root.picker-date.year == root.display-year
+                            && root.picker-date.month == root.display-month
+                            && root.picker-date.day == self.day;
+                        x: Math.mod(index, 7) * parent.width / 7;
+                        y: floor(index / 7) * parent.height / 6;
+                        width: parent.width / 7;
+                        height: parent.height / 6;
+                        border-radius: 3px;
+                        background: self.selected
+                            ? Palette.selection-background
+                            : day-touch.has-hover && self.valid
+                                ? Palette.alternate-background
+                                : Palette.background;
+
+                        Text {
+                            text: day-cell.valid ? day-cell.day : "";
+                            color: day-cell.selected
+                                ? Palette.selection-foreground
+                                : Palette.control-foreground;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        day-touch := TouchArea {
+                            enabled: day-cell.valid;
+                            clicked => {
+                                root.picker-date = {
+                                    year: root.display-year,
+                                    month: root.display-month,
+                                    day: day-cell.day
+                                };
+                                root.value = "\{root.picker-date.year}-\{root.two-digits(root.picker-date.month)}-\{root.two-digits(root.picker-date.day)}";
+                                picker.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component StackedHint inherits Text {
+    in property <string> message;
+    text: root.message;
+    font-size: 11px;
+    wrap: word-wrap;
+    color: #555555;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+}
+
+export component StackedDangerHint inherits Text {
+    in property <string> message;
+    text: root.message;
+    font-size: 11px;
+    wrap: word-wrap;
+    color: #c0392b;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+}
+
+export component StackedCheckBox inherits CheckBox {
+    // Left-aligned checkbox for stacked forms (no side label column).
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    height: FormMetrics.row-height;
+}
+
 /// Bordered group for related options (compress settings, advanced filters, …).
 export component OptionGroup inherits Rectangle {
     in property <string> title: "";
@@ -380,7 +732,7 @@ export component OptionGroup inherits Rectangle {
 
     VerticalLayout {
         padding: 10px;
-        spacing: FormMetrics.row-spacing;
+        spacing: FormMetrics.section-spacing;
         vertical-stretch: 0;
 
         if root.title != "": Text {
@@ -400,9 +752,11 @@ export component AdvancedSection inherits VerticalLayout {
     padding: 0;
     vertical-stretch: 0;
 
-    FormRow {
-        label: "";
-        has-trailing: false;
+    HorizontalLayout {
+        padding: 0;
+        spacing: 0;
+        alignment: start;
+        vertical-stretch: 0;
         Button {
             text: root.open ? "⌄  " + root.title : "›  " + root.title;
             vertical-stretch: 0;
@@ -410,7 +764,6 @@ export component AdvancedSection inherits VerticalLayout {
             height: FormMetrics.row-height;
             clicked => { root.open = !root.open; }
         }
-        // Keep the disclosure left-aligned in the editor column.
         Rectangle {
             horizontal-stretch: 1;
             height: FormMetrics.row-height;
@@ -552,9 +905,11 @@ export component ActionRow inherits HorizontalLayout {
 export component PanelTabButton inherits Rectangle {
     in property <string> title;
     in property <bool> active: false;
+    in property <length> min-tab-width: 0px;
     callback clicked();
 
     height: 36px;
+    min-width: root.min-tab-width;
     horizontal-stretch: 0;
     vertical-stretch: 0;
     border-radius: 0px;
@@ -562,8 +917,8 @@ export component PanelTabButton inherits Rectangle {
     border-width: 0px;
 
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 18px;
+        padding-right: 18px;
         alignment: center;
         Text {
             text: root.title;
@@ -615,6 +970,8 @@ export component PanelTabBar inherits VerticalLayout {
             PanelTabButton {
                 title: root.second-title;
                 active: root.current-index == 1;
+                // Wider hit target than the short "Log" label, but still content-sized.
+                min-tab-width: 120px;
                 clicked => { root.current-index = 1; }
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }

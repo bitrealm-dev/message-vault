@@ -1,8 +1,8 @@
 import { Button, Date } from "std-widgets.slint";
 import {
-    LabeledDateEdit, LabeledLineEdit, LabeledPathField, LabeledComboBox,
-    AdvancedSection, Hint, DangerHint, AnchoredScrollPage, CheckBoxRow,
-    FormMetrics, OptionGroup, PanelTabBar
+    StackedDateEdit, StackedLineEdit, StackedPathField, StackedComboBox,
+    StackedHint, StackedDangerHint, StackedCheckBox, AdvancedSection,
+    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
 import { LogPanel } from "log-panel.slint";
@@ -71,40 +71,43 @@ export component ImportPage inherits VerticalLayout {
 
         Rectangle { height: 8px; vertical-stretch: 0; }
 
-        HorizontalLayout {
-            spacing: FormMetrics.field-spacing;
+        VerticalLayout {
+            spacing: 2px;
             padding: 0;
-            alignment: stretch;
             vertical-stretch: 0;
-            height: FormMetrics.row-height;
-            Text {
-                text: "Import Format";
-                font-size: 12px;
-                font-weight: 600;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
-            TouchArea {
-                horizontal-stretch: 0;
-                mouse-cursor: pointer;
-                clicked => { ImportAdapter.open-help(); }
-                Text {
-                    text: "Need help?";
-                    font-size: 12px;
-                    color: #1d4ed8;
-                    vertical-alignment: center;
+
+            HorizontalLayout {
+                spacing: FormMetrics.field-spacing;
+                padding: 0;
+                alignment: stretch;
+                vertical-stretch: 0;
+                height: 22px;
+                StackedFieldLabel {
+                    label: "Import Format";
+                    horizontal-stretch: 1;
+                }
+                TouchArea {
+                    horizontal-stretch: 0;
+                    mouse-cursor: pointer;
+                    clicked => { ImportAdapter.open-help(); }
+                    Text {
+                        text: "Need help?";
+                        font-size: 12px;
+                        color: #1d4ed8;
+                        vertical-alignment: center;
+                    }
                 }
             }
-        }
-        CompactComboBox {
-            model: ImportAdapter.format-options;
-            current-index <=> ImportAdapter.format-index;
-            horizontal-stretch: 1;
-            height: FormMetrics.row-height;
-            vertical-stretch: 0;
+            CompactComboBox {
+                model: ImportAdapter.format-options;
+                current-index <=> ImportAdapter.format-index;
+                horizontal-stretch: 1;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+            }
         }
 
-        LabeledPathField {
+        StackedPathField {
             label: "iPhone Backup Directory";
             required: true;
             placeholder: "Path to iPhone backup";
@@ -113,39 +116,39 @@ export component ImportPage inherits VerticalLayout {
             browse-requested(id) => { ImportAdapter.browse(id); }
         }
 
-        LabeledLineEdit {
-            label: "Encryption password";
+        StackedLineEdit {
+            label: "Encryption password (optional)";
             placeholder: "Optional";
             password: true;
             value <=> ImportAdapter.backup-password;
         }
 
-        LabeledComboBox {
+        StackedComboBox {
             label: "Message Attachments";
             model: ImportAdapter.attachment-media-options;
             current-index <=> ImportAdapter.attachment-media-index;
             selected(_) => { ImportAdapter.media-changed(); }
         }
-        if ImportAdapter.obfuscate: Hint {
+        if ImportAdapter.obfuscate: StackedHint {
             message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
         }
-        if ImportAdapter.show-ffmpeg-warning: DangerHint {
+        if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
             message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_EXPORTERS_BIN, or on PATH.";
         }
         if ImportAdapter.show-compress-options: OptionGroup {
-            title: "Compress & Convert";
-            LabeledComboBox {
+            title: "";
+            StackedComboBox {
                 label: "Target resolution";
                 model: ImportAdapter.max-resolution-options;
                 current-index <=> ImportAdapter.max-resolution-index;
             }
-            LabeledLineEdit {
+            StackedLineEdit {
                 label: "Max FPS";
                 required: true;
                 placeholder: "e.g. 30";
                 value <=> ImportAdapter.media-max-fps;
             }
-            LabeledLineEdit {
+            StackedLineEdit {
                 label: "Minimum file size (MB)";
                 required: true;
                 placeholder: "e.g. 20";
@@ -155,29 +158,29 @@ export component ImportPage inherits VerticalLayout {
 
         AdvancedSection {
             open <=> ImportAdapter.advanced;
-            LabeledLineEdit {
+            StackedLineEdit {
                 label: "Participant Filtering";
                 placeholder: "Comma separate list of names and number.";
                 value <=> ImportAdapter.conversation-filter;
             }
-            Hint {
+            StackedHint {
                 message: "Only conversations with the specified participants are exported, including group conversations.";
             }
-            LabeledDateEdit {
+            StackedDateEdit {
                 label: "Start Date";
                 value <=> ImportAdapter.start-date;
                 date-for-text(value) => { return ImportAdapter.date-for-text(value); }
             }
-            LabeledDateEdit {
+            StackedDateEdit {
                 label: "End Date (exclusive)";
                 value <=> ImportAdapter.end-date;
                 date-for-text(value) => { return ImportAdapter.date-for-text(value); }
             }
-            CheckBoxRow {
+            StackedCheckBox {
                 text: "Obfuscate - All message data is anonymized.";
                 checked <=> ImportAdapter.obfuscate;
             }
-            CheckBoxRow {
+            StackedCheckBox {
                 text: "Delete staging data after a successful import";
                 checked <=> ImportAdapter.delete-staging-after-success;
             }
