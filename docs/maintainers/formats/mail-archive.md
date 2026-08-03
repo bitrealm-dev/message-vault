@@ -91,7 +91,7 @@ Do **not** use the `X-smssync-*` header namespace. This format is not Plus-compa
 ### Message-ID
 
 - Prefer source guid when present (iMessage): `<{apple-guid}@imessage.local>`.
-- Otherwise: `<{sha256-fingerprint}@message-exporters.local>` matching CSV `guid` construction where possible.
+- Otherwise: `<{sha256-fingerprint}@message-vault-io.local>` matching CSV `guid` construction where possible.
 - Must be stable across re-exports of the same logical message.
 
 ### From / To / Cc mapping
@@ -112,7 +112,7 @@ Reverse import (EML/MBOX → common-message JSON) is available via [`message-ir-
 
 ## Core `X-ME-*` headers (SMS / MMS / shared)
 
-Prefix: **`X-ME-`** (Message Exporters). JSON header values are compact single-line JSON.
+Prefix: **`X-ME-`** (Message Vault). JSON header values are compact single-line JSON.
 
 | Header | Values | Notes |
 |--------|----------------|-------|

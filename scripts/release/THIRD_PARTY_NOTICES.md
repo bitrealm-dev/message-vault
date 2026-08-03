@@ -20,6 +20,6 @@ those tools live in this `licenses/` directory.
 - Location in archive: `lib/ffmpeg`, `lib/ffprobe`
 - License: GPL (see `THIRD_PARTY_FFMPEG.LICENSE` in this directory)
 
-The Message Exporters project itself remains under the terms in `LICENSE`, except
+The Message Vault project itself remains under the terms in `LICENSE`, except
 where a workspace crate states otherwise (for example `imessage-ir-exporter` is
 GPL-3.0-or-later via its dependencies).

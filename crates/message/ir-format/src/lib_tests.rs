@@ -1,6 +1,6 @@
 use super::*;
 use mail::clean_previous_mail_output;
-use message_exporter_core::OutputFormat;
+use message_vault_io_core::OutputFormat;
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrConversationType,
     IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService, IrSource,

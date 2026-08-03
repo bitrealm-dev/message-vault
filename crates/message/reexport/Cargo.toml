@@ -2,7 +2,7 @@
 name = "message-reexport"
 version = "0.1.0"
 edition = "2024"
-description = "Convert a Message Exporters output directory to another format"
+description = "Convert a Message Vault output directory to another format"
 license = "MIT OR Apache-2.0"
 
 [[bin]]
@@ -13,7 +13,7 @@ path = "src/bin/message_reexporter.rs"
 anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
 csv = "1.4.0"
-message-exporter-core = { path = "../../message-exporter-core" }
+message-vault-io-core = { path = "../../message-vault-io-core" }
 message-ir = { path = "../ir" }
 message-ir-format = { path = "../ir-format" }
 media = { path = "../media" }

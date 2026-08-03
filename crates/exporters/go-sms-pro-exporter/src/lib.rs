@@ -8,7 +8,7 @@ mod phone;
 mod run;
 mod xml;
 
-pub use message_exporter_core::{RunResult, parse_date_range};
+pub use message_vault_io_core::{RunResult, parse_date_range};
 pub use run::run;
 
 #[cfg(test)]

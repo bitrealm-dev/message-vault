@@ -3,7 +3,7 @@ title: Export Apple Messages
 description: Export iMessage and SMS from a Mac Messages database or an iPhone backup.
 ---
 
-Message Exporters can read a Mac Messages `chat.db` or an iPhone backup and write JSON, JSONL, CSV, EML, MBOX, or Android-compatible XML.
+Message Vault can read a Mac Messages `chat.db` or an iPhone backup and write JSON, JSONL, CSV, EML, MBOX, or Android-compatible XML.
 
 ## Prepare the input
 

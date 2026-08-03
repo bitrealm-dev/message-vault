@@ -16,5 +16,5 @@ mod options;
 mod run;
 mod session;
 
-pub use message_exporter_core::RunResult;
+pub use message_vault_io_core::RunResult;
 pub use run::run;

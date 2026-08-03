@@ -134,7 +134,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 const WINDOWS_FILE_OR_FOLDER_PICKER: &str = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
-$sentinel = '__MESSAGE_EXPORTERS_SELECT_THIS_FOLDER__'
+$sentinel = '__MESSAGE_VAULT_IO_SELECT_THIS_FOLDER__'
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = 'Choose file or open a folder and select Choose'
 $dialog.CheckFileExists = $false

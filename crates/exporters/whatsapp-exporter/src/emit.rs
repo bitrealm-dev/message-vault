@@ -6,7 +6,7 @@ use crate::parse::{
 };
 use anyhow::{Context, Result};
 use message_csv::{DateRange, format_local_ts, json_cell, stable_guid};
-use message_exporter_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -112,7 +112,7 @@ pub(crate) fn convert_json(
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     for (jid, chat) in store {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         if jid.starts_with('_') {
             // Reserved / system keys if any.
             continue;
@@ -135,7 +135,7 @@ pub(crate) fn convert_json(
     }
 
     for (chat_id, mut convo) in conversations {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         if !prepare_conversation(&mut convo, &mut report) {
             continue;
         }

@@ -14,7 +14,7 @@ Choose the attachment and privacy settings before starting an export or re-expor
 | **Convert** | Converts common media types to `.jpg`, `.mp4`, or `.mp3`. |
 | **Convert & compress** | Re-encodes media with the size and quality limits you choose. |
 
-**Convert** and **Convert & compress** require `ffmpeg` and `ffprobe`. Release ZIPs ship both beside the desktop app; otherwise place them in `MESSAGE_EXPORTERS_BIN` or on `PATH`. Copying does not need those tools.
+**Convert** and **Convert & compress** require `ffmpeg` and `ffprobe`. Release ZIPs ship both beside the desktop app; otherwise place them in `MESSAGE_VAULT_IO_BIN` or on `PATH`. Copying does not need those tools.
 
 When compression is selected, you can set:
 

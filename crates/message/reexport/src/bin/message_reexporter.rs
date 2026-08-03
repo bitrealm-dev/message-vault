@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use message_exporter_core::{
+use message_vault_io_core::{
     ExporterConfig, MediaConfig, FormatConfig, ObfuscateConfig, OutputFormat, SourceConfig,
 };
 use message_reexport::run;
@@ -10,9 +10,9 @@ use media::{MaxResolution, MediaMode, compress_options_from_cli};
 
 #[derive(Parser, Debug)]
 #[command(name = "message-reexporter")]
-#[command(about = "Convert an existing Message Exporters output to another format")]
+#[command(about = "Convert an existing Message Vault output to another format")]
 struct Cli {
-    /// Directory containing a prior Message Exporters output (auto-detected)
+    /// Directory containing a prior Message Vault output (auto-detected)
     #[arg(long)]
     input: PathBuf,
 

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_exporter_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, OutputFormat};
 use message_ir::{
     ConversationDocument,
 };

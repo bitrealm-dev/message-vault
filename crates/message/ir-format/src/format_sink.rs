@@ -5,7 +5,7 @@ use crate::write_sbr::SbrBackupSession;
 use crate::write::write_format;
 use message_ir::ConversationDocument;
 use anyhow::Result;
-use message_exporter_core::OutputFormat;
+use message_vault_io_core::OutputFormat;
 use media::MediaReport;
 use std::fs;
 use std::path::{Path, PathBuf};

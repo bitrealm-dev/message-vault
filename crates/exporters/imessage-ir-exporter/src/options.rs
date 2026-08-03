@@ -6,7 +6,7 @@ use imessage_database::{
     tables::table::DEFAULT_PATH_IOS,
     util::{platform::Platform, query_context::QueryContext},
 };
-use message_exporter_core::{LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{LogSink, OutputFormat, emit_log};
 use message_ir_format::ExportTransforms;
 
 use crate::error::RuntimeError;

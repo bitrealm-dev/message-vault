@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Export iMessage data to per-conversation CSV / EML / MBOX / JSON via message-ir"
-repository = "https://github.com/bitrealm-dev/message-exporters"
+repository = "https://github.com/bitrealm-dev/message-vault-io"
 
 [lib]
 name = "imessage_ir_exporter"
@@ -22,7 +22,7 @@ crabapple = { version = "=0.4.7" }
 hex = "0.4.3"
 imessage-database = "4.2.0"
 message-csv = { path = "../../message/csv" }
-message-exporter-core = { path = "../../message-exporter-core" }
+message-vault-io-core = { path = "../../message-vault-io-core" }
 message-ir = { path = "../../message/ir" }
 message-ir-format = { path = "../../message/ir-format" }
 mail = { path = "../../message/mail" }

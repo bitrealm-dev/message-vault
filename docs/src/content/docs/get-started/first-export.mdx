@@ -5,7 +5,7 @@ description: Run a message export in the desktop app and understand its tabs.
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The desktop app can extract messages from a phone backup, convert an older app export, or change the format of an archive that Message Exporters already created.
+The desktop app can extract messages from a phone backup, convert an older app export, or change the format of an archive that Message Vault already created.
 
 ## Before you start
 
@@ -19,7 +19,7 @@ Choose the source guide for exact requirements: [Apple](/apple/), [Android](/and
 
 ## Run an export
 
-1. Start `message-exporter` and open **Extract Messages**.
+1. Start `message-vault-io` and open **Extract Messages**.
 2. Choose the **Backup type**.
 3. Fill in the source paths and identity fields shown for that backup type.
 4. Choose a new empty **Output directory**.
@@ -39,7 +39,7 @@ Start dates are inclusive. End dates are exclusive. Both use local calendar date
     Extract a phone backup or an export from another app into a JSONL archive. This is the tab to use for a first export.
   </TabItem>
   <TabItem label="Format">
-    Read an existing Message Exporters output folder and write it in another format. You do not need this tab when making the first JSONL archive; use it when you want CSV, EML, MBOX, JSON, or Android XML.
+    Read an existing Message Vault output folder and write it in another format. You do not need this tab when making the first JSONL archive; use it when you want CSV, EML, MBOX, JSON, or Android XML.
   </TabItem>
   <TabItem label="Contacts">
     Check a VCF or contacts CSV without changing it, or write a cleaned sibling file. Cleaned contacts can improve phone-number and display-name matching for sources that accept a contacts file.

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use imessage_database::util::{
     dirs::default_db_path, platform::Platform, query_context::QueryContext,
 };
-use message_exporter_core::{RunResult, ApplePlatform, ExporterConfig, SourceConfig};
+use message_vault_io_core::{RunResult, ApplePlatform, ExporterConfig, SourceConfig};
 use message_ir_format::ExportTransforms;
 
 use crate::{
@@ -45,7 +45,7 @@ pub fn run(config: &ExporterConfig) -> anyhow::Result<RunResult> {
 }
 
 fn check_cancel(config: &ExporterConfig) -> Result<(), RuntimeError> {
-    message_exporter_core::check_cancel(config.cancel.as_ref())
+    message_vault_io_core::check_cancel(config.cancel.as_ref())
         .map_err(|msg| RuntimeError::InvalidOptions(msg.to_string()))
 }
 

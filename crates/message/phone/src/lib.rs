@@ -1,4 +1,4 @@
-//! Shared US-centric phone normalization for message exporters.
+//! Shared US-centric phone normalization for message-vault-io.
 
 use std::collections::HashSet;
 use std::fmt;

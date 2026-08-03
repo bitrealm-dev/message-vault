@@ -9,22 +9,22 @@ const limitedBadge = {
 
 export default defineConfig({
   site: 'https://bitrealm-dev.github.io',
-  base: '/message-exporters/',
+  base: '/message-vault-io/',
   integrations: [
     starlight({
-      title: 'Message Exporters',
+      title: 'Message Vault',
       description:
         'Turn Apple and Android message backups into files you can keep and open.',
       plugins: [starlightBasePath()],
       editLink: {
         baseUrl:
-          'https://github.com/bitrealm-dev/message-exporters/edit/main/docs/',
+          'https://github.com/bitrealm-dev/message-vault-io/edit/main/docs/',
       },
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/bitrealm-dev/message-exporters',
+          href: 'https://github.com/bitrealm-dev/message-vault-io',
         },
       ],
       customCss: ['./src/styles/custom.css'],

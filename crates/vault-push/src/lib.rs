@@ -1,6 +1,6 @@
 //! Push message-ir JSONL export folders into a Message Vault import API.
 //!
-//! Used by the `vault-push` CLI and the Message Exporters GUI Vault tab.
+//! Used by the `vault-push` CLI and the Message Vault GUI Vault tab.
 
 mod http;
 mod journal;

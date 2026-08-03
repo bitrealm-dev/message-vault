@@ -4,7 +4,7 @@ use crate::util;
 use crate::write_sbr;
 use anyhow::{Context, Result, bail};
 use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
-use message_exporter_core::OutputFormat;
+use message_vault_io_core::OutputFormat;
 use message_ir::{
     ConversationDocument, ConversationHeader, IrDirection, IrImessage, IrMessageKind,
 };

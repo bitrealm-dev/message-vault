@@ -9,7 +9,7 @@ The recommended Android SMS and MMS path starts with a readable SyncTech SMS Bac
 
 1. Create an XML backup in SMS Backup & Restore.
 2. Copy the `.xml` file to the computer. You may also use a folder containing multiple `.xml` backups; they are combined into one export.
-3. If the app produced an encrypted ZIP, unlock and unzip it first. Message Exporters does not open encrypted ZIP backups.
+3. If the app produced an encrypted ZIP, unlock and unzip it first. Message Vault does not open encrypted ZIP backups.
 4. Write down every phone number that belonged to the backed-up device.
 5. Optionally prepare a contacts VCF or vCard CSV.
 

@@ -3,7 +3,7 @@
 //! Layout and headers follow the [mail archive format](../../../docs/maintainers/formats/mail-archive.md).
 //! Canonical packaging is folders of `.eml`; [`append_message_mbox`] writes
 //! derived **mboxrd** mailboxes for clients that prefer a single file.
-//! SMS/MMS fill the core fields; iMessage exporters also set reply / tapback /
+//! SMS/MMS fill the core fields; iMessage Vault also set reply / tapback /
 //! balloon / parts / edits extension fields.
 
 mod parse;
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 pub use parse::{mail_message_from_eml_bytes, mail_messages_from_mbox};
 
-const MESSAGE_ID_DOMAIN_DEFAULT: &str = "message-exporters.local";
+const MESSAGE_ID_DOMAIN_DEFAULT: &str = "message-vault-io.local";
 const MESSAGE_ID_DOMAIN_IMESSAGE: &str = "imessage.local";
 const SMS_ADDRESS_DOMAIN: &str = "sms.local";
 const HANDLE_ADDRESS_DOMAIN: &str = "handle.local";
@@ -437,7 +437,7 @@ fn envelope_sender(msg: &MailMessage) -> String {
     {
         format!("{handle}@{SMS_ADDRESS_DOMAIN}")
     } else {
-        "MAILER-DAEMON@message-exporters.local".into()
+        "MAILER-DAEMON@message-vault-io.local".into()
     }
 }
 
@@ -942,7 +942,7 @@ mod tests {
             Some("sms-backup-restore")
         );
         let mid = headers.get_first_value("Message-ID").unwrap();
-        assert!(mid.contains("aabbccddeeff00112233445566778899@message-exporters.local"));
+        assert!(mid.contains("aabbccddeeff00112233445566778899@message-vault-io.local"));
         assert!(!headers.get_first_value("In-Reply-To").is_some());
         let from = headers.get_first_value("From").unwrap();
         assert!(from.contains("Sam"), "From was {from}");

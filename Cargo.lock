@@ -2395,9 +2395,9 @@ dependencies = [
  "hex",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "quick-xml 0.41.0",
@@ -3271,9 +3271,9 @@ dependencies = [
  "hex",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "serde_json",
@@ -3310,9 +3310,9 @@ dependencies = [
  "imessage-database",
  "mail",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "rpassword",
  "rusqlite",
  "serde",
@@ -3935,40 +3935,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "message-exporter-core"
-version = "0.1.0"
-dependencies = [
- "media",
- "message-csv",
- "rust-ini",
- "tempfile",
-]
-
-[[package]]
-name = "message-exporter-gui"
-version = "0.5.0"
-dependencies = [
- "chrono",
- "contacts",
- "go-sms-pro-exporter",
- "imazing-exporter",
- "imessage-ir-exporter",
- "media",
- "message-exporter-core",
- "message-reexport",
- "open",
- "openextract-exporter",
- "phone",
- "rfd",
- "slint",
- "slint-build",
- "sms-backup-plus-exporter",
- "sms-backup-restore-exporter",
- "vault-push",
- "whatsapp-exporter",
-]
-
-[[package]]
 name = "message-ir"
 version = "0.1.0"
 dependencies = [
@@ -3986,8 +3952,8 @@ dependencies = [
  "mail",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "sbr",
@@ -4004,11 +3970,45 @@ dependencies = [
  "clap",
  "csv",
  "media",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "message-vault-io-core"
+version = "0.1.0"
+dependencies = [
+ "media",
+ "message-csv",
+ "rust-ini",
+ "tempfile",
+]
+
+[[package]]
+name = "message-vault-io-gui"
+version = "0.5.0"
+dependencies = [
+ "chrono",
+ "contacts",
+ "go-sms-pro-exporter",
+ "imazing-exporter",
+ "imessage-ir-exporter",
+ "media",
+ "message-reexport",
+ "message-vault-io-core",
+ "open",
+ "openextract-exporter",
+ "phone",
+ "rfd",
+ "slint",
+ "slint-build",
+ "sms-backup-plus-exporter",
+ "sms-backup-restore-exporter",
+ "vault-push",
+ "whatsapp-exporter",
 ]
 
 [[package]]
@@ -4672,9 +4672,9 @@ dependencies = [
  "csv",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "serde_json",
@@ -6296,9 +6296,9 @@ dependencies = [
  "mailparse",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "rayon",
@@ -6319,9 +6319,9 @@ dependencies = [
  "contacts",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "serde_json",
  "tempfile",
 ]
@@ -7215,9 +7215,9 @@ dependencies = [
  "clap",
  "hex",
  "httpmock",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "reqwest",
  "serde",
  "serde_json",
@@ -7544,9 +7544,9 @@ dependencies = [
  "hex",
  "media",
  "message-csv",
- "message-exporter-core",
  "message-ir",
  "message-ir-format",
+ "message-vault-io-core",
  "obfuscate",
  "phone",
  "serde",

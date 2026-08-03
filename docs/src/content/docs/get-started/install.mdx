@@ -1,5 +1,5 @@
 ---
-title: Install Message Exporters
+title: Install Message Vault
 description: Download and run the desktop app on Linux, Windows, or macOS.
 ---
 
@@ -9,24 +9,24 @@ Download the release archive for your operating system. Extract the whole archiv
 
 ## Download and start the app
 
-Open the [latest GitHub release](https://github.com/bitrealm-dev/message-exporters/releases), then follow the instructions for your system.
+Open the [latest GitHub release](https://github.com/bitrealm-dev/message-vault-io/releases), then follow the instructions for your system.
 
 <Tabs>
   <TabItem label="Linux">
-    1. Download `message-exporters-*-x86_64-unknown-linux-gnu.tgz`.
+    1. Download `message-vault-io-*-x86_64-unknown-linux-gnu.tgz`.
     2. Extract it to a folder you plan to keep (`tar -xzf …`).
-    3. Run `message-exporter` from that folder.
+    3. Run `message-vault-io` from that folder.
   </TabItem>
   <TabItem label="Windows">
-    1. Download `message-exporters-*-x86_64-pc-windows-msvc.zip`.
+    1. Download `message-vault-io-*-x86_64-pc-windows-msvc.zip`.
     2. Extract the archive instead of running the app from inside it.
-    3. Open the extracted folder and start `message-exporter.exe`.
+    3. Open the extracted folder and start `message-vault-io.exe`.
     4. If SmartScreen blocks the unsigned app, choose the option to allow it once, then start it again.
   </TabItem>
   <TabItem label="macOS">
-    1. On an Apple Silicon Mac, download `message-exporters-*-aarch64-apple-darwin.zip`.
+    1. On an Apple Silicon Mac, download `message-vault-io-*-aarch64-apple-darwin.zip`.
     2. Extract it to a folder you plan to keep.
-    3. Start `message-exporter` from that folder.
+    3. Start `message-vault-io` from that folder.
     4. If Gatekeeper blocks the unsigned app, allow it once in the macOS security prompt, then start it again.
   </TabItem>
 </Tabs>
@@ -37,7 +37,7 @@ Do not move the desktop app away from the other folders in the release archive. 
 
 **Archive root**
 
-- `message-exporter` — the desktop app
+- `message-vault-io` — the desktop app
 
 **`lib/`**
 
@@ -55,7 +55,7 @@ Do not move the desktop app away from the other folders in the release archive. 
 
 The Extract Messages, Format, Contacts, and Vault tabs in the desktop app call libraries inside the app itself. They do not need the exporter programs under `cli/`, but WhatsApp extract still needs `cli/wtsexporter`, and media convert/compress needs `lib/ffmpeg` and `lib/ffprobe`.
 
-The app looks for helpers under `lib/` and `cli/` next to itself. It can also find them in the directory named by `MESSAGE_EXPORTERS_BIN` or on `PATH`. To point directly to the WhatsApp helper, set `WTSEXPORTER` to its full path. Programs under `cli/` look for media tools in `../lib/`.
+The app looks for helpers under `lib/` and `cli/` next to itself. It can also find them in the directory named by `MESSAGE_VAULT_IO_BIN` or on `PATH`. To point directly to the WhatsApp helper, set `WTSEXPORTER` to its full path. Programs under `cli/` look for media tools in `../lib/`.
 
 <Aside type="note" title="Bundled media tools">
   Release archives ship `ffmpeg` and `ffprobe` under `lib/`. You do not need a separate system install for Convert / Convert & compress when you keep the archive files together.

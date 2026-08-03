@@ -3,7 +3,7 @@
 use crate::emit::{ExportReport, convert_export};
 use anyhow::{Result, bail};
 use contacts::resolve_contacts_cli;
-use message_exporter_core::{RunResult, ExporterConfig, SourceConfig};
+use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig};
 use message_ir_format::ExportTransforms;
 use std::path::Path;
 

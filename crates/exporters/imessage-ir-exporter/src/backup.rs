@@ -1,4 +1,4 @@
-//! Encrypted iOS backup decrypt helpers (ported from imessage-exporter).
+//! Encrypted iOS backup decrypt helpers (ported from imessage-vault-io).
 
 use std::{
     env::temp_dir,
@@ -12,7 +12,7 @@ use crabapple::{
     error::BackupError,
 };
 use imessage_database::{tables::table::DEFAULT_PATH_IOS, util::platform::Platform};
-use message_exporter_core::{LogSink, emit_log};
+use message_vault_io_core::{LogSink, emit_log};
 
 use crate::{contacts, error::RuntimeError, options::MailOptions};
 

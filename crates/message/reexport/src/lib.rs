@@ -1,4 +1,4 @@
-//! Convert an existing Message Exporters output directory to another format.
+//! Convert an existing Message Vault output directory to another format.
 
 use message_ir::ConversationDocument;
 use message_ir_format::{
@@ -7,8 +7,8 @@ use message_ir_format::{
     read_conversation_json, read_conversation_jsonl, read_conversation_mbox, read_sbr_documents,
 };
 use anyhow::{Context, Result, bail};
-use message_exporter_core::{ExporterConfig, OutputFormat};
-pub use message_exporter_core::RunResult;
+use message_vault_io_core::{ExporterConfig, OutputFormat};
+pub use message_vault_io_core::RunResult;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -193,7 +193,7 @@ fn detect_ir_export(input_dir: &Path) -> Result<DetectedExport> {
     match present.as_slice() {
         [format] => Ok(DetectedExport { format: *format }),
         [] => bail!(
-            "unsupported input: no Message Exporters IR export found in {} \
+            "unsupported input: no Message Vault IR export found in {} \
              (expected smses.xml, *.json, *.jsonl, *.csv, *.mbox, or EML folders)",
             input_dir.display()
         ),
@@ -372,7 +372,7 @@ mod tests {
         IrMessage, IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
     };
     use message_ir_format::{read_conversation_csv, read_conversation_json};
-    use message_exporter_core::{
+    use message_vault_io_core::{
         MediaConfig, FormatConfig, ObfuscateConfig, SourceConfig,
     };
 

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use chrono::Local;
 use contacts::{ValidateMode, probe_contacts_input, validate_contacts_file};
-use message_exporter_core::{Exporter, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job};
+use message_vault_io_core::{Exporter, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job};
 use message_reexport::run as run_format;
 use phone::PhoneRegion;
 use slint::ComponentHandle;
@@ -434,8 +434,8 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
         let staging =
             staging::staging_dir_path(&st.export_ini.path, IPHONE_IOS_IMPORTER, Local::now());
         st.form.output = staging.display().to_string();
-        st.form.output_format = message_exporter_core::OutputFormat::Jsonl;
-        st.form.apple_platform = message_exporter_core::ApplePlatform::Ios;
+        st.form.output_format = message_vault_io_core::OutputFormat::Jsonl;
+        st.form.apple_platform = message_vault_io_core::ApplePlatform::Ios;
         st.exporter = Exporter::Imessage;
         st.export_ini.exporter = Exporter::Imessage;
         st.last_staging_dir = Some(staging.clone());
@@ -551,7 +551,7 @@ struct VaultUploadArgs {
 
 fn run_vault_upload(
     args: VaultUploadArgs,
-    cancel: message_exporter_core::CancelFlag,
+    cancel: message_vault_io_core::CancelFlag,
     tx: &mpsc::Sender<ProcessEvent>,
 ) -> Result<(), String> {
     let cfg = VaultPushConfig {

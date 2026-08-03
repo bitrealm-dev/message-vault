@@ -7,7 +7,7 @@
 //! - **Compress** — size-oriented re-encode with optional video knobs
 //!
 //! Requires `ffmpeg` / `ffprobe` for convert/compress (beside the running
-//! binary, in `MESSAGE_EXPORTERS_BIN`, or on `PATH`).
+//! binary, in `MESSAGE_VAULT_IO_BIN`, or on `PATH`).
 
 mod process;
 mod size;

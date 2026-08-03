@@ -7,7 +7,7 @@ Load the same contact files as **contacts-validate**: a VCF, or a vCard CSV (Fir
 - **name → phone** — fill missing chat peer numbers (SMS Backup+)
 - **phone → name** — fill blank / `unknown` display names (GO SMS Pro, SMS Backup & Restore, Plus)
 
-Name resolution belongs in **message-exporters** (backup → common message → packaging), not in vault `csv-ingest`. CSV packaging is a useful human checkpoint: inspect and correct before further convert.
+Name resolution belongs in **message-vault-io** (backup → common message → packaging), not in vault `csv-ingest`. CSV packaging is a useful human checkpoint: inspect and correct before further convert.
 
 ## CLI helper
 

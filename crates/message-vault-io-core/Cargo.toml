@@ -1,8 +1,8 @@
 [package]
-name = "message-exporter-core"
+name = "message-vault-io-core"
 version = "0.1.0"
 edition = "2024"
-description = "Shared form models and process spawning for message-exporters GUIs"
+description = "Shared form models and process spawning for message-vault-io GUIs"
 
 [dependencies]
 message-csv = { path = "../message/csv" }

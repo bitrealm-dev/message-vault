@@ -13,6 +13,6 @@ Post-process attachment media under a converter export directory (`attachments/`
 
 Intermediate `*.msgmedia.tmp.*` files are deleted after each file and swept from `attachments/` at the start and end of a run.
 
-Requires **ffmpeg** and **ffprobe** for convert/compress (beside the running binary, in `MESSAGE_EXPORTERS_BIN`, or on `PATH`). Release ZIPs bundle both.
+Requires **ffmpeg** and **ffprobe** for convert/compress (beside the running binary, in `MESSAGE_VAULT_IO_BIN`, or on `PATH`). Release ZIPs bundle both.
 
 Used by `go-sms-pro-exporter`, `sms-backup-restore-exporter`, `sms-backup-plus-exporter`, and the GUI (iPhone convert/compress post-step).

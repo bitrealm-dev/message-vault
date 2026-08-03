@@ -106,7 +106,7 @@ mod tests {
 
     fn tempfile_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "message-exporter-gui-staging-{}-{}-{}",
+            "message-vault-io-gui-staging-{}-{}-{}",
             label,
             std::process::id(),
             std::time::SystemTime::now()

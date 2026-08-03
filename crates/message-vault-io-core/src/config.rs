@@ -189,7 +189,7 @@ pub enum SourceConfig {
     Imazing(ImazingConfig),
     Apple(AppleConfig),
     Whatsapp(WhatsappConfig),
-    /// Existing Message Exporters output → another IR format (`message-reexporter`).
+    /// Existing Message Vault output → another IR format (`message-reexporter`).
     /// Not listed in [`crate::exporters::EXPORTERS`] (own GUI Format tab).
     Format(FormatConfig),
 }

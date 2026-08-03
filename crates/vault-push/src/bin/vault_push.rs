@@ -13,10 +13,10 @@ use vault_push::{
 #[derive(Debug, Parser)]
 #[command(
     name = "vault-push",
-    about = "Push a Message Exporters JSONL folder into Message Vault",
+    about = "Push a Message Vault JSONL folder into Message Vault",
     long_about = "Reads per-conversation .jsonl files (message-ir schema v3) plus \
 attachments/, uploads media by SHA-256, then imports message batches.\n\n\
-Prefer VAULT_KEY for the vault key. Prefer Message Exporters → Vault for a GUI."
+Prefer VAULT_KEY for the vault key. Prefer Message Vault → Vault for a GUI."
 )]
 struct Cli {
     /// Vault base URL (e.g. http://127.0.0.1:8080)

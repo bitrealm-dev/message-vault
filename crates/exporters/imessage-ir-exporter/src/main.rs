@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use imessage_ir_exporter::run;
 use message_csv::DateRange;
-use message_exporter_core::{
+use message_vault_io_core::{
     AppleConfig, ApplePlatform, ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat,
     SourceConfig,
 };

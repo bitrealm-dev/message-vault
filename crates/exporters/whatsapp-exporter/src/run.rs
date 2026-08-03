@@ -3,7 +3,7 @@
 use crate::emit::{ExportReport, convert_json};
 use crate::wtsexporter::{Platform, WtsexporterArgs, resolve_wtsexporter, run_wtsexporter};
 use anyhow::{Context, Result, bail};
-use message_exporter_core::{RunResult, ExporterConfig, SourceConfig, WhatsappPlatform as CorePlatform};
+use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig, WhatsappPlatform as CorePlatform};
 use message_ir_format::ExportTransforms;
 use std::env;
 use std::fs;
@@ -14,7 +14,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::Whatsapp(source) = &config.source else {
         bail!("whatsapp-exporter requires SourceConfig::Whatsapp");
     };
-    message_exporter_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
 
     let platform = match source.platform {
@@ -46,7 +46,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
             None => env::current_dir().context("resolve current working directory")?,
         };
 
-        message_exporter_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
         let bin = resolve_wtsexporter()?;
         fs::create_dir_all(&config.output)
             .with_context(|| format!("create {}", config.output.display()))?;
@@ -64,7 +64,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
 
         // Cooperative only: we check cancel before and after the external process.
         // Killing wtsexporter mid-run is not implemented.
-        message_exporter_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
         let log = run_wtsexporter(
             &bin,
             &WtsexporterArgs {
@@ -81,7 +81,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
             },
             &json_out,
         )?;
-        message_exporter_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
 
         if !log.trim().is_empty() {
             let trimmed = log.trim_end_matches('\n');
@@ -105,7 +105,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         bail!("JSON not found: {}", json_path.display());
     }
 
-    message_exporter_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
     transforms.log = config.log.clone();
     let needs_media_tools = transforms.needs_media_tools();

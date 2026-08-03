@@ -27,7 +27,7 @@ use imessage_database::{
     },
     util::dates::TIMESTAMP_FACTOR,
 };
-use message_exporter_core::OutputFormat;
+use message_vault_io_core::OutputFormat;
 use message_ir::{
     ConversationDocument,
     ConversationMeta,

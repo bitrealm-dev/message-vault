@@ -1,7 +1,7 @@
 //! Combo-box option lists shared with the Slint adapters.
 
 use media::MaxResolution;
-use message_exporter_core::{
+use message_vault_io_core::{
     APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia, EXPORTERS, Exporter,
     MAX_RESOLUTIONS, OUTPUT_FORMATS_MAIL, OutputFormat, WHATSAPP_PLATFORMS, WhatsappPlatform,
 };

@@ -7,7 +7,7 @@ use std::{
 
 use crabapple::Backup;
 use imessage_database::{tables::table::get_connection, util::platform::Platform};
-use message_exporter_core::{LogSink, emit_log};
+use message_vault_io_core::{LogSink, emit_log};
 use rusqlite::Connection;
 
 use crate::{

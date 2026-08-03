@@ -1,4 +1,4 @@
-//! Shared CSV emit helpers for message exporters.
+//! Shared CSV emit helpers for message-vault-io.
 
 mod date_range;
 mod utc_offset;

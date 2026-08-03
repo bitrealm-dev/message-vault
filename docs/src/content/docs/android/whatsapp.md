@@ -3,7 +3,7 @@ title: Export WhatsApp from Android
 description: Export an Android WhatsApp database or encrypted backup through wtsexporter.
 ---
 
-Android WhatsApp export requires files that `wtsexporter` can read. How you obtain them depends on the device and backup type; Message Exporters does not extract them directly from the phone.
+Android WhatsApp export requires files that `wtsexporter` can read. How you obtain them depends on the device and backup type; Message Vault does not extract them directly from the phone.
 
 ## Prepare the input
 
@@ -30,7 +30,7 @@ The key value may be a key-file path or crypt15 hexadecimal material. The GUI do
 
 ## If it fails
 
-- Confirm that `wtsexporter` can be found under `cli/` next to the app, through `MESSAGE_EXPORTERS_BIN` or `PATH`, or through `WTSEXPORTER`.
+- Confirm that `wtsexporter` can be found under `cli/` next to the app, through `MESSAGE_VAULT_IO_BIN` or `PATH`, or through `WTSEXPORTER`.
 - Confirm that the backup and key belong together.
 - Confirm that an explicitly selected database or media folder exists.
 - Wait for extraction to finish or fail. The app cannot cancel the external helper mid-run.

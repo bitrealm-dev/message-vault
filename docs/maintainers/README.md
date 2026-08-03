@@ -1,6 +1,6 @@
 # Maintainer documentation
 
-This directory contains implementation and release documentation for contributors. End-user guides live in the [Starlight source](../src/content/docs/) and are published at <https://bitrealm-dev.github.io/message-exporters/>.
+This directory contains implementation and release documentation for contributors. End-user guides live in the [Starlight source](../src/content/docs/) and are published at <https://bitrealm-dev.github.io/message-vault-io/>.
 
 ## Start here
 

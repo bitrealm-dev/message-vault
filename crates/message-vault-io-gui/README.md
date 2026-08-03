@@ -1,28 +1,28 @@
-# Message Exporter GUI
+# Message Vault GUI
 
 Desktop GUI built with [Slint](https://slint.dev). Same exporter libraries and
 `export.ini` as the rest of the workspace.
 
-**End-user guides:** [docs site](https://bitrealm-dev.github.io/message-exporters/).
+**End-user guides:** [docs site](https://bitrealm-dev.github.io/message-vault-io/).
 
 ## Run in development
 
 ```bash
 cargo build --workspace
-cargo run -p message-exporter-gui
+cargo run -p message-vault-io-gui
 ```
 
 For release:
 
 ```bash
 cargo build --workspace --release
-./target/release/message-exporter
+./target/release/message-vault-io
 ```
 
-On Windows the final command is `target\release\message-exporter.exe`.
+On Windows the final command is `target\release\message-vault-io.exe`.
 
 The app searches for helpers under `lib/` (`ffmpeg`/`ffprobe`) and `cli/`
-(`wtsexporter`) next to its own executable, then in `MESSAGE_EXPORTERS_BIN`,
+(`wtsexporter`) next to its own executable, then in `MESSAGE_VAULT_IO_BIN`,
 then on `PATH`.
 
 ## Look and feel
@@ -43,14 +43,14 @@ from the Experimental group. Override the style at compile time with
 `SLINT_STYLE` if needed:
 
 ```bash
-SLINT_STYLE=fluent cargo run -p message-exporter-gui
+SLINT_STYLE=fluent cargo run -p message-vault-io-gui
 ```
 
 ## Included
 
 - Top tabs: **Extract Messages** | **Format** | **Vault** | **Contacts** | **Log**
 - **Extract Messages**: choose a backup source and extract a JSONL archive; attachments, obfuscation, and optional date filters are available
-- **Format**: convert a prior Message Exporters output folder to another format
+- **Format**: convert a prior Message Vault output folder to another format
 - **Vault**: push a JSONL export folder into Message Vault
 - **Contacts**: Check (dry run) / Update (write corrected files)
 - Forms for GO SMS Pro, SMS Backup & Restore, SMS Backup+, OpenExtract, iMazing, WhatsApp, and iPhone backup

@@ -1,4 +1,4 @@
-# message-exporters
+# message-vault-io
 
 Phone backups are easy to make. Reading the messages later is harder.
 
@@ -16,19 +16,19 @@ Photos and other media are saved next to those files when the format needs them.
 
 Read the full guide (install, desktop app, supported backups, CSV layout):
 
-**https://bitrealm-dev.github.io/message-exporters/**
+**https://bitrealm-dev.github.io/message-vault-io/**
 
 Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published with Astro Starlight.
 
 ## Quick start
 
-**Desktop app / binaries:** Download the platform ZIP from the latest [Release](https://github.com/bitrealm-dev/message-exporters/releases). Extract it and keep every file in the same folder. Run `message-exporter`.
+**Desktop app / binaries:** Download the platform ZIP from the latest [Release](https://github.com/bitrealm-dev/message-vault-io/releases). Extract it and keep every file in the same folder. Run `message-vault-io`.
 
 **From source:**
 
 ```bash
 cargo build --workspace --release
-cargo run --release -p message-exporter-gui
+cargo run --release -p message-vault-io-gui
 ```
 
 ### WSL2 development
@@ -84,7 +84,7 @@ app automatically opens Windows-native file dialogs and the Windows browser
 when it detects WSL. Build it in release mode for realistic export performance:
 
 ```bash
-cargo run --release -p message-exporter-gui
+cargo run --release -p message-vault-io-gui
 ```
 
 More Linux package details and optional helpers such as `ffmpeg` are documented
@@ -98,7 +98,7 @@ in [CONTRIBUTING.md](CONTRIBUTING.md).
 | SMS Backup & Restore (SyncTech XML) | [`sms-backup-restore-exporter`](crates/exporters/sms-backup-restore-exporter) |
 | WhatsApp (native DB / crypt) | [`whatsapp-exporter`](crates/exporters/whatsapp-exporter) |
 
-Experimental converters also ship in the GUI and release zip: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm-dev.github.io/message-exporters/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
+Experimental converters also ship in the GUI and release zip: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm-dev.github.io/message-vault-io/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
 
 Already exported? The GUI **Format** tab ([`message-reexporter`](crates/message/reexport/docs/REEXPORT.md)) converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 
@@ -110,7 +110,7 @@ Setup, build, run, test, and contribution rules: [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Releases
 
-Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives (GUI + `lib/` + `cli/` + `licenses/`): [Releases](https://github.com/bitrealm-dev/message-exporters/releases).
+Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives (GUI + `lib/` + `cli/` + `licenses/`): [Releases](https://github.com/bitrealm-dev/message-vault-io/releases).
 
 Maintainer documentation (architecture, GUI design, signing): [`docs/maintainers/`](docs/maintainers/README.md). Release steps: [Development and releases](docs/maintainers/developing.md).
 

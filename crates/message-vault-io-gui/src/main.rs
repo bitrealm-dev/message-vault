@@ -1,8 +1,8 @@
-//! Slint desktop GUI for message-exporters.
+//! Slint desktop GUI for message-vault-io.
 //!
 //! In-process exporter libraries and `export.ini` persistence.
 
-// Release builds use the Windows GUI subsystem so launching message-exporter.exe
+// Release builds use the Windows GUI subsystem so launching message-vault-io.exe
 // does not open a console window. Debug builds keep a console for logging/panics.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

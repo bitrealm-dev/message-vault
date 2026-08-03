@@ -3,11 +3,11 @@ title: Export WhatsApp from Apple
 description: Export WhatsApp chats from an iPhone backup with the wtsexporter helper.
 ---
 
-WhatsApp export uses `wtsexporter` to read an iPhone backup. Message Exporters then converts the extracted JSON into the output format you choose.
+WhatsApp export uses `wtsexporter` to read an iPhone backup. Message Vault then converts the extracted JSON into the output format you choose.
 
 ## Prepare the input
 
-1. Install Message Exporters and keep the release folder together (`cli/wtsexporter` ships with the archive).
+1. Install Message Vault and keep the release folder together (`cli/wtsexporter` ships with the archive).
 2. Locate the iPhone backup that contains WhatsApp data.
 3. Create a new empty output folder.
 
@@ -26,7 +26,7 @@ Extraction happens first. Conversion starts after `wtsexporter` succeeds. Conver
 
 ## If it fails
 
-- Confirm that `wtsexporter` or `wtsexporter.exe` is under `cli/` next to the app, available through `MESSAGE_EXPORTERS_BIN` or `PATH`, or named by `WTSEXPORTER`.
+- Confirm that `wtsexporter` or `wtsexporter.exe` is under `cli/` next to the app, available through `MESSAGE_VAULT_IO_BIN` or `PATH`, or named by `WTSEXPORTER`.
 - Confirm that the backup path is set and points to the expected iPhone backup.
 - Wait for extraction to finish or fail. The desktop app cannot cancel `wtsexporter` in the middle of its run.
 

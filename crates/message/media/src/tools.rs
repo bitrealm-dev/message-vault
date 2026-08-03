@@ -15,7 +15,7 @@ pub(crate) fn require_ffmpeg() -> Result<()> {
         bail!(
             "ffmpeg and ffprobe are required for --media-mode convert/compress. \
              Keep the release-bundled tools in lib/ next to this program (or ../lib/ from cli/), \
-             install ffmpeg on PATH, or set MESSAGE_EXPORTERS_BIN to a directory that contains both."
+             install ffmpeg on PATH, or set MESSAGE_VAULT_IO_BIN to a directory that contains both."
         )
     }
 }
@@ -32,7 +32,7 @@ fn command_ok(bin: &Path, args: &[&str]) -> bool {
 }
 
 /// Resolve `ffmpeg` / `ffprobe`: sibling of current exe, `lib/` next to the GUI,
-/// `../lib/` from `cli/`, legacy parent dir, then `MESSAGE_EXPORTERS_BIN`, then PATH.
+/// `../lib/` from `cli/`, legacy parent dir, then `MESSAGE_VAULT_IO_BIN`, then PATH.
 fn resolve_tool(name: &str) -> Option<PathBuf> {
     static FFMPEG: OnceLock<Option<PathBuf>> = OnceLock::new();
     static FFPROBE: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -71,7 +71,7 @@ fn find_tool(name: &str) -> Option<PathBuf> {
         }
     }
 
-    if let Some(extra) = std::env::var_os("MESSAGE_EXPORTERS_BIN") {
+    if let Some(extra) = std::env::var_os("MESSAGE_VAULT_IO_BIN") {
         let candidate = PathBuf::from(extra).join(&executable);
         if candidate.is_file() && command_ok(&candidate, &["-version"]) {
             return Some(candidate);
@@ -107,7 +107,7 @@ fn executable_name(name: &str) -> String {
 pub(crate) fn run_ffmpeg(args: &[String]) -> Result<()> {
     let ffmpeg = resolve_tool("ffmpeg").ok_or_else(|| {
         anyhow::anyhow!(
-            "ffmpeg not found in lib/ (or beside this program), in MESSAGE_EXPORTERS_BIN, or on PATH"
+            "ffmpeg not found in lib/ (or beside this program), in MESSAGE_VAULT_IO_BIN, or on PATH"
         )
     })?;
     let status = Command::new(ffmpeg)
@@ -134,7 +134,7 @@ pub(crate) struct Probe {
 pub(crate) fn probe_video(path: &std::path::Path) -> Result<Probe> {
     let ffprobe = resolve_tool("ffprobe").ok_or_else(|| {
         anyhow::anyhow!(
-            "ffprobe not found in lib/ (or beside this program), in MESSAGE_EXPORTERS_BIN, or on PATH"
+            "ffprobe not found in lib/ (or beside this program), in MESSAGE_VAULT_IO_BIN, or on PATH"
         )
     })?;
     let output = Command::new(ffprobe)
@@ -186,7 +186,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn find_tool_prefers_message_exporters_bin() {
+    fn find_tool_prefers_message_vault_io_bin() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("ffmpeg");
         fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
@@ -196,12 +196,12 @@ mod tests {
 
         // SAFETY: test-only env mutation for discovery path coverage.
         unsafe {
-            std::env::set_var("MESSAGE_EXPORTERS_BIN", dir.path());
+            std::env::set_var("MESSAGE_VAULT_IO_BIN", dir.path());
         }
-        let found = find_tool("ffmpeg").expect("ffmpeg from MESSAGE_EXPORTERS_BIN");
+        let found = find_tool("ffmpeg").expect("ffmpeg from MESSAGE_VAULT_IO_BIN");
         assert_eq!(found, script);
         unsafe {
-            std::env::remove_var("MESSAGE_EXPORTERS_BIN");
+            std::env::remove_var("MESSAGE_VAULT_IO_BIN");
         }
     }
 }

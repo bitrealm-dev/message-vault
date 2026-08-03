@@ -8,7 +8,7 @@ use crate::types::{AttachmentBlob, ParsedMessage};
 use anyhow::{Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_exporter_core::{CancelFlag, LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -478,7 +478,7 @@ fn collect_eml_paths<P: AsRef<Path>>(
 
     fn walk(dir: &Path, out: &mut Vec<PathBuf>, cancel: Option<&CancelFlag>) -> Result<()> {
         for entry in fs::read_dir(dir)? {
-            message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
             let entry = entry?;
             let ft = entry.file_type()?;
             let path = entry.path();
@@ -506,7 +506,7 @@ fn collect_eml_paths<P: AsRef<Path>>(
 
     let mut paths = Vec::new();
     for input in inputs {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         let input = input.as_ref();
         if input.is_file() {
             if input
@@ -710,7 +710,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     // Pre-size for typical 1:1 chat counts; grows as needed.
     conversations.reserve((total / 4).min(50_000) as usize);
 
-    message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
     // Parallel: read + MIME parse + message build. Serial: attachment write + dedupe merge.
     let outcomes: Vec<ParsedEmlKind> = eml_paths
@@ -729,7 +729,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         .collect();
 
     for (idx, outcome) in outcomes.into_iter().enumerate() {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         report_progress(verbose, log, "scanned", (idx + 1) as u64, total);
         match outcome {
             ParsedEmlKind::Archive {
@@ -820,7 +820,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     let mut sink = FormatSink::open(output_dir, output_format, transforms)?;
     let mut written = 0u64;
     for (chat_id, mut convo) in conversations {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         if !prepare_conversation(&mut convo, &mut report) {
             written += 1;
             report_progress(verbose, log, "wrote", written, convo_total);

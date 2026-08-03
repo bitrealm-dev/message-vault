@@ -20,7 +20,7 @@ clap = { version = "4.6.1", features = ["derive"], optional = true }
 hex = "0.4.3"
 obfuscate = { path = "../../message/obfuscate" }
 message-csv = { path = "../../message/csv" }
-message-exporter-core = { path = "../../message-exporter-core" }
+message-vault-io-core = { path = "../../message-vault-io-core" }
 message-ir = { path = "../../message/ir" }
 message-ir-format = { path = "../../message/ir-format" }
 media = { path = "../../message/media" }

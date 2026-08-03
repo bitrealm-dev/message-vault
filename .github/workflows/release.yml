@@ -2,7 +2,7 @@
 # (Linux .tgz, Windows/macOS .zip).
 # Does not run on push/PR — only via Actions → Release → Run workflow.
 #
-# Version comes from crates/message-exporter-gui/Cargo.toml (single source of truth;
+# Version comes from crates/message-vault-io-gui/Cargo.toml (single source of truth;
 # also shown in the GUI title via CARGO_PKG_VERSION). Bump that field before releasing.
 #
 # Optional signing (no-op until the matching repo secrets are set):
@@ -31,9 +31,9 @@ jobs:
       - id: semver
         run: |
           set -euo pipefail
-          V="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' crates/message-exporter-gui/Cargo.toml | head -n1)"
+          V="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' crates/message-vault-io-gui/Cargo.toml | head -n1)"
           if [[ -z "$V" ]]; then
-            echo "version not found in crates/message-exporter-gui/Cargo.toml" >&2
+            echo "version not found in crates/message-vault-io-gui/Cargo.toml" >&2
             exit 1
           fi
           if [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -42,7 +42,7 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
-          echo "Will release tag v$V (from crates/message-exporter-gui/Cargo.toml)"
+          echo "Will release tag v$V (from crates/message-vault-io-gui/Cargo.toml)"
 
   build:
     needs: validate
@@ -123,7 +123,7 @@ jobs:
 
           # Sign project binaries that ship in the ZIP (GUI + cli/).
           for bin in \
-            message-exporter \
+            message-vault-io \
             go-sms-pro-exporter \
             sms-backup-restore-exporter \
             sms-backup-plus-exporter \
@@ -152,7 +152,7 @@ jobs:
         if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE_BASE64 != ''
         run: |
           set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/message-exporters-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/message-vault-io-signing.keychain-db"
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
 
@@ -173,7 +173,7 @@ jobs:
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           for bin in \
-            message-exporter \
+            message-vault-io \
             go-sms-pro-exporter \
             sms-backup-restore-exporter \
             sms-backup-plus-exporter \
@@ -196,8 +196,8 @@ jobs:
 
           # Notarize the GUI (standalone Mach-O; stapling is not available without a
           # .app / .pkg / .dmg — Gatekeeper still checks online on first launch).
-          NOTARY_ZIP="$RUNNER_TEMP/message-exporter-notarize.zip"
-          ditto -c -k --keepParent target/release/message-exporter "$NOTARY_ZIP"
+          NOTARY_ZIP="$RUNNER_TEMP/message-vault-io-notarize.zip"
+          ditto -c -k --keepParent target/release/message-vault-io "$NOTARY_ZIP"
           xcrun notarytool submit "$NOTARY_ZIP" \
             --apple-id "$NOTARY_APPLE_ID" \
             --team-id "$NOTARY_TEAM_ID" \
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.artifact_suffix }}
-          path: dist/message-exporters-${{ needs.validate.outputs.version }}-${{ matrix.artifact_suffix }}${{ matrix.archive_ext }}
+          path: dist/message-vault-io-${{ needs.validate.outputs.version }}-${{ matrix.artifact_suffix }}${{ matrix.archive_ext }}
           if-no-files-found: error
 
   release:
@@ -248,7 +248,7 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" "${assets[@]}" \
-            --title "Message Exporters ${VERSION}" \
+            --title "Message Vault ${VERSION}" \
             --notes "## Highlights
 
           - Vault push posts message-ir JSONL as-is (batched multi-conversation bodies supported)
@@ -263,19 +263,19 @@ jobs:
 
           ## Archives
 
-          - \`message-exporters-${VERSION}-x86_64-unknown-linux-gnu.tgz\`
-          - \`message-exporters-${VERSION}-x86_64-pc-windows-msvc.zip\`
-          - \`message-exporters-${VERSION}-aarch64-apple-darwin.zip\`
+          - \`message-vault-io-${VERSION}-x86_64-unknown-linux-gnu.tgz\`
+          - \`message-vault-io-${VERSION}-x86_64-pc-windows-msvc.zip\`
+          - \`message-vault-io-${VERSION}-aarch64-apple-darwin.zip\`
 
           ## Layout
 
-          - **Root:** \`message-exporter\` (GUI; exporters run as libraries)
+          - **Root:** \`message-vault-io\` (GUI; exporters run as libraries)
           - **\`lib/\`:** bundled \`ffmpeg\` / \`ffprobe\` (eugeneware/ffmpeg-static \`b6.1.1\`)
           - **\`cli/\`:** standalone exporter CLIs, WhatsApp \`wtsexporter\` 0.13.0, \`message-reexporter\`, and \`vault-push\`
           - **\`licenses/\`:** project and third-party license notices
 
           ## Notes
 
-          - Start the desktop app from the archive root: Linux/macOS \`message-exporter\`, Windows \`message-exporter.exe\`
+          - Start the desktop app from the archive root: Linux/macOS \`message-vault-io\`, Windows \`message-vault-io.exe\`
           - Builds are unsigned until code-signing secrets are configured (see \`docs/maintainers/signing.md\`). Windows SmartScreen and macOS Gatekeeper may warn on first launch; allow the app once if you trust the download.
           - See \`licenses/THIRD_PARTY_NOTICES.md\` in each archive for bundled helper provenance and licenses."

@@ -103,5 +103,5 @@ Experimental in the desktop GUI. Field mapping and skip counters: [IMPORT_MAPPIN
 
 # SEE ALSO
 
-- [GO SMS Pro user guide](https://bitrealm-dev.github.io/message-exporters/other-app-exports/go-sms-pro/)
+- [GO SMS Pro user guide](https://bitrealm-dev.github.io/message-vault-io/other-app-exports/go-sms-pro/)
 - [Import mapping](IMPORT_MAPPING.md)

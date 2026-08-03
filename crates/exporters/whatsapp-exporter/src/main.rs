@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use message_exporter_core::{
+use message_vault_io_core::{
     ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat, SourceConfig, WhatsappConfig,
     WhatsappPlatform,
 };

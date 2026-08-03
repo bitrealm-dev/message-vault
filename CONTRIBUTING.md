@@ -1,8 +1,8 @@
 # Contributing
 
-How to set up, build, run, and contribute to message-exporters.
+How to set up, build, run, and contribute to message-vault-io.
 
-End-user guides (install, first export, formats) live on the [docs site](https://bitrealm-dev.github.io/message-exporters/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
+End-user guides (install, first export, formats) live on the [docs site](https://bitrealm-dev.github.io/message-vault-io/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
 
@@ -38,13 +38,13 @@ sudo dnf install \
   libxkbcommon-devel libxcb-devel
 ```
 
-`libxkbcommon-x11-0` provides `libxkbcommon-x11.so` — required to **run** `message-exporter` even when the build succeeded.
+`libxkbcommon-x11-0` provides `libxkbcommon-x11.so` — required to **run** `message-vault-io` even when the build succeeded.
 
 ## Clone and build
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-exporters.git
-cd message-exporters
+git clone https://github.com/bitrealm-dev/message-vault-io.git
+cd message-vault-io
 cargo build --workspace
 ```
 
@@ -66,22 +66,22 @@ cargo build --release -p vault-push --features cli
 ## Run the app
 
 ```bash
-cargo run -p message-exporter-gui
+cargo run -p message-vault-io-gui
 ```
 
 Use a release build when testing real exports. Debug builds compile faster, but parsing,
 attachment hashing, and JSON serialization can be substantially slower:
 
 ```bash
-cargo run --release -p message-exporter-gui
+cargo run --release -p message-vault-io-gui
 ```
 
-Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-exporter-gui/export.example.ini`](crates/message-exporter-gui/export.example.ini). Backup passwords are never written.
+Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-vault-io-gui/export.example.ini`](crates/message-vault-io-gui/export.example.ini). Backup passwords are never written.
 
 Compile-time Slint style override (optional):
 
 ```bash
-SLINT_STYLE=fluent cargo build -p message-exporter-gui
+SLINT_STYLE=fluent cargo build -p message-vault-io-gui
 ```
 
 ## Helper binaries and environment variables
@@ -93,30 +93,30 @@ Most export work runs in-process as Rust libraries. A few features still shell o
 | `wtsexporter` | WhatsApp extract step |
 | `ffmpeg` / `ffprobe` | Media convert / compress |
 
-Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI (or `../lib/` from `cli/`) → legacy one directory up → directory in `MESSAGE_EXPORTERS_BIN` → `PATH`. WhatsApp also accepts an explicit `WTSEXPORTER` path.
+Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI (or `../lib/` from `cli/`) → legacy one directory up → directory in `MESSAGE_VAULT_IO_BIN` → `PATH`. WhatsApp also accepts an explicit `WTSEXPORTER` path.
 
 | Variable | Purpose |
 |----------|---------|
-| `MESSAGE_EXPORTERS_BIN` | Directory that contains helper binaries |
+| `MESSAGE_VAULT_IO_BIN` | Directory that contains helper binaries |
 | `WTSEXPORTER` | Full path to the WhatsApp extractor |
 | `SLINT_STYLE` | Slint widget style at compile time (e.g. `fluent`) |
 
 Local options:
 
 - Install WhatsApp helper: `pip install 'whatsapp-chat-exporter>=0.13'`
-- Install system `ffmpeg` / `ffprobe`, or copy them from a [release ZIP](https://github.com/bitrealm-dev/message-exporters/releases) next to your built GUI
+- Install system `ffmpeg` / `ffprobe`, or copy them from a [release ZIP](https://github.com/bitrealm-dev/message-vault-io/releases) next to your built GUI
 - After `cargo build --workspace --release`, point helpers at the build output:
 
 ```powershell
 # Windows PowerShell
-$env:MESSAGE_EXPORTERS_BIN = "$PWD\target\release"
-cargo run --release -p message-exporter-gui
+$env:MESSAGE_VAULT_IO_BIN = "$PWD\target\release"
+cargo run --release -p message-vault-io-gui
 ```
 
 ```bash
 # Linux / macOS
-export MESSAGE_EXPORTERS_BIN="$PWD/target/release"
-cargo run --release -p message-exporter-gui
+export MESSAGE_VAULT_IO_BIN="$PWD/target/release"
+cargo run --release -p message-vault-io-gui
 ```
 
 ## Test
@@ -158,9 +158,9 @@ Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand
 
 ## Workspace map
 
-- **Libraries:** under `crates/message/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-exporter-core`
+- **Libraries:** under `crates/message/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
 - **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
-- **GUI:** `message-exporter-gui`
+- **GUI:** `message-vault-io-gui`
 - **Utilities:** `vault-push`, `message-reexporter` (package `message-reexport`)
 
 Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database` / `crabapple`). The GUI binary therefore includes GPL-licensed code.
@@ -181,7 +181,7 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 |---------|-------------|
 | `Package 'fontconfig' not found` / `yeslogic-fontconfig-sys` panic | Install `libfontconfig1-dev` (Debian/Ubuntu) or `fontconfig-devel` (Fedora); see [Linux packages](#linux-packages) |
 | `Library libxkbcommon-x11.so could not be loaded` | Install `libxkbcommon-x11-0` (Debian/Ubuntu) or `libxkbcommon-x11` (Fedora), then re-run |
-| “Could not find wtsexporter / ffmpeg / ffprobe” | Install the helper, put it on `PATH`, or set `MESSAGE_EXPORTERS_BIN` / `WTSEXPORTER` |
+| “Could not find wtsexporter / ffmpeg / ffprobe” | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
 | Windows linker / `link.exe` errors | Install MSVC Build Tools with the C++ desktop workload |
 | Other GUI link / load errors on Linux | Install the packages under [Linux packages](#linux-packages) |
 
@@ -191,4 +191,4 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 - [Development and releases](docs/maintainers/developing.md)
 - [Exporter capability matrix](docs/maintainers/exporter-matrix.md)
 - [Code signing](docs/maintainers/signing.md)
-- End-user docs: <https://bitrealm-dev.github.io/message-exporters/>
+- End-user docs: <https://bitrealm-dev.github.io/message-vault-io/>

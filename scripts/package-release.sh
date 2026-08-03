@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Stage a self-contained platform archive for a message-exporters release.
+# Stage a self-contained platform archive for a message-vault-io release.
 #
 # Layout:
-#   root       — message-exporter (GUI)
+#   root       — message-vault-io (GUI)
 #   lib/       — ffmpeg, ffprobe
 #   cli/       — exporter CLIs, wtsexporter, message-reexporter, vault-push
 #   licenses/  — LICENSE + third-party notices
@@ -16,8 +16,8 @@
 #
 # Expects release binaries already built under target/release/.
 # Writes:
-#   Linux  → dist/message-exporters-<version>-<suffix>.tgz
-#   Windows/macOS → dist/message-exporters-<version>-<suffix>.zip
+#   Linux  → dist/message-vault-io-<version>-<suffix>.tgz
+#   Windows/macOS → dist/message-vault-io-<version>-<suffix>.zip
 set -euo pipefail
 
 VERSION="${1:?version required (e.g. 0.3.0)}"
@@ -33,13 +33,13 @@ case "$SUFFIX" in
 esac
 
 STAGE="dist/stage-${SUFFIX}"
-OUT_ARCHIVE="dist/message-exporters-${VERSION}-${SUFFIX}${ARCHIVE_EXT}"
+OUT_ARCHIVE="dist/message-vault-io-${VERSION}-${SUFFIX}${ARCHIVE_EXT}"
 RELEASE_DIR="${CARGO_TARGET_DIR:-target}/release"
 rm -rf "$STAGE"
 mkdir -p "$STAGE" dist
 
 # --- desktop app at archive root ---
-GUI_BIN="message-exporter${EXT}"
+GUI_BIN="message-vault-io${EXT}"
 src="${RELEASE_DIR}/${GUI_BIN}"
 if [[ ! -f "$src" ]]; then
   echo "missing release binary: $src" >&2

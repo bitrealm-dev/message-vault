@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{Datelike, Local, NaiveDate};
-use message_exporter_core::VaultSection;
+use message_vault_io_core::VaultSection;
 use slint::ComponentHandle;
 
 use crate::browse;
@@ -17,7 +17,7 @@ use crate::{
     HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter,
 };
 
-const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-exporters/";
+const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
 
 pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_error_dismiss(ui, Arc::clone(&state));

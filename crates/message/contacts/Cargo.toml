@@ -2,7 +2,7 @@
 name = "contacts"
 version = "0.1.0"
 edition = "2024"
-description = "VCF / contacts CSV name↔phone resolution for message exporters"
+description = "VCF / contacts CSV name↔phone resolution for message-vault-io"
 
 [[bin]]
 name = "contacts-validate"

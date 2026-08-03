@@ -78,4 +78,4 @@ Experimental in the GUI. Thin source format: no groups, no media extraction; con
 
 # SEE ALSO
 
-- [OpenExtract user guide](https://bitrealm-dev.github.io/message-exporters/other-app-exports/openextract/)
+- [OpenExtract user guide](https://bitrealm-dev.github.io/message-vault-io/other-app-exports/openextract/)

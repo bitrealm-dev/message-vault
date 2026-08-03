@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use go_sms_pro_exporter::run as run_go_sms_pro;
 use imazing_exporter::run as run_imazing;
 use imessage_ir_exporter::run as run_imessage;
-use message_exporter_core::{
+use message_vault_io_core::{
     CancelFlag, Exporter, ExporterConfig, LogSink, ProcessEvent, RunResult,
 };
 use openextract_exporter::run as run_openextract;

@@ -2,7 +2,7 @@
 //! / `ExportIniState` before validation and save.
 
 use media::ffmpeg_available;
-use message_exporter_core::{
+use message_vault_io_core::{
     ApplePlatform, AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
     contacts_kind_from_path,
 };

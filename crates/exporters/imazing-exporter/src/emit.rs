@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{FixedOffset, Local, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{AttachmentCell, DateRange, format_local_ts, parse_utc_offset, stable_guid};
-use message_exporter_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -147,7 +147,7 @@ pub(crate) fn convert_export(
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     for discovered in &files {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match discovered.kind {
             SourceKind::Messages => report.messages_files += 1,
             SourceKind::WhatsApp => report.whatsapp_files += 1,
@@ -463,7 +463,7 @@ fn resolve_chat_identifier(
             let title = session.trim().to_string();
             return (peer_handles.join(","), title, false);
         }
-        return (message_exporter_core::name_stem(session), session.trim().to_string(), true);
+        return (message_vault_io_core::name_stem(session), session.trim().to_string(), true);
     }
 
     if let Some(handle) = peer_handles.first() {
@@ -492,7 +492,7 @@ fn resolve_chat_identifier(
     if let Some(e164) = book.lookup_e164_by_name(session) {
         return (e164, session.to_string(), false);
     }
-    (message_exporter_core::name_stem(session), session.to_string(), true)
+    (message_vault_io_core::name_stem(session), session.to_string(), true)
 }
 
 fn resolve_sender(

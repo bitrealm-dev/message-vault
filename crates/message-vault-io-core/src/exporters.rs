@@ -92,7 +92,7 @@ impl Exporter {
             Self::OpenExtract => "https://www.openextract.app/",
             Self::Imazing => "https://imazing.com/",
             Self::Imessage => {
-                "https://github.com/bitrealm-dev/message-exporters/tree/main/crates/exporters/imessage-ir-exporter"
+                "https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter"
             }
             Self::Whatsapp => "https://github.com/KnugiHK/WhatsApp-Chat-Exporter",
         }
@@ -466,7 +466,7 @@ impl Form {
             && !media::ffmpeg_available()
         {
             errors.push(
-                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_EXPORTERS_BIN, or on PATH.".into(),
+                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
             );
         }
         let media = self.media_config_for(
@@ -754,7 +754,7 @@ impl Form {
         // Obfuscate skips copy/convert, so ffmpeg is not required.
         if !obfuscate_active && mode.needs_tools() && !media::ffmpeg_available() {
             errors.push(
-                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_EXPORTERS_BIN, or on PATH.".into(),
+                "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
             );
         }
         self.media_config_for(matches!(mode, MediaMode::Compress), errors)
@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn ensure_output_dir_creates_missing_path() {
         let out = std::env::temp_dir().join(format!(
-            "message-exporter-core-test-{}-{}",
+            "message-vault-io-core-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

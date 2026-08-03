@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use message_exporter_core::{
+use message_vault_io_core::{
     ContactsConfig, ContactsKind, ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat,
     SmsBackupPlusConfig, SourceConfig,
 };

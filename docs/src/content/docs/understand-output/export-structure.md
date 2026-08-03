@@ -1,6 +1,6 @@
 ---
 title: What’s inside an export
-description: Learn how Message Exporters represents conversations and arranges the output files.
+description: Learn how Message Vault represents conversations and arranges the output files.
 ---
 
 Every source is first converted into the same per-conversation structure: participants, timestamps, text, attachment details, and any extra fields the source can provide. The selected output format then writes that structure as JSON, JSON Lines, CSV, EML, MBOX, or Android XML.

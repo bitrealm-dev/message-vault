@@ -38,7 +38,7 @@ const pages = [
     slug: 'message-reexporter',
     title: 'Convert an existing export',
     description:
-      'Command-line options for converting a Message Exporters output directory to another format.',
+      'Command-line options for converting a Message Vault output directory to another format.',
     source: 'crates/message/reexport/docs/MESSAGE_REEXPORTER.md',
   },
   {
@@ -84,7 +84,7 @@ function repositoryUrl(sourcePath, target) {
     path.posix.join(path.posix.dirname(sourcePath), linkPath),
   );
   const suffix = fragment ? `#${fragment}` : '';
-  return `https://github.com/bitrealm-dev/message-exporters/blob/main/${resolvedPath}${suffix}`;
+  return `https://github.com/bitrealm-dev/message-vault-io/blob/main/${resolvedPath}${suffix}`;
 }
 
 function prepareBody(markdown, sourcePath) {
@@ -103,7 +103,7 @@ for (const page of pages) {
   const sourceFile = path.join(repositoryDirectory, page.source);
   const body = prepareBody(await readFile(sourceFile, 'utf8'), page.source);
   const editUrl =
-    `https://github.com/bitrealm-dev/message-exporters/edit/main/${page.source}`;
+    `https://github.com/bitrealm-dev/message-vault-io/edit/main/${page.source}`;
   const frontmatter = [
     '---',
     `title: ${JSON.stringify(page.title)}`,

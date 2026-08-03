@@ -1,6 +1,6 @@
 # vault-push
 
-Push a Message Exporters **JSONL** export folder into a running Message Vault (`message-vault-rs serve`).
+Push a Message Vault **JSONL** export folder into a running Message Vault (`message-vault-rs serve`).
 
 ## Synopsis
 
@@ -36,4 +36,4 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 ## See also
 
-Message Exporters GUI → **Vault** tab.
+Message Vault GUI → **Vault** tab.

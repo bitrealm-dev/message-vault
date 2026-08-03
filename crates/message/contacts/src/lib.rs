@@ -1,4 +1,4 @@
-//! Contact books and shared VCF / vCard-CSV parsers for message exporters and vault.
+//! Contact books and shared VCF / vCard-CSV parsers for message-vault-io and vault.
 //!
 //! - [`parse_vcf`] / [`read_vcard_csv_rows`] — public parse APIs (vault ingest + exporters)
 //! - [`ContactsBook`] — name↔phone indexes for backup→IR exporters

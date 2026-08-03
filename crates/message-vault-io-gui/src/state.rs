@@ -1,7 +1,7 @@
 //! Application state: the same `ExportIniState` + `Form` the other GUIs use,
 //! plus job control and the session log.
 
-use message_exporter_core::{ExportIniState, Exporter, Form, ProcessControl};
+use message_vault_io_core::{ExportIniState, Exporter, Form, ProcessControl};
 use std::path::PathBuf;
 
 use crate::session_log::SessionLog;

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_exporter_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -91,7 +91,7 @@ pub(crate) fn convert_export(
 
     // For per-chat files, infer peer once from all rows in that file.
     for path in &files {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         let rows = match parse_csv_file(path) {
             Ok(r) => r,
             Err(e) => {
@@ -157,7 +157,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
     for (chat_id, mut convo) in conversations {
         if !prepare_conversation(&mut convo, &mut report) {
@@ -229,7 +229,7 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
         return (e164, peer.to_string(), false);
     }
     // Name-only chat id — not fatal; vault may struggle later.
-    (message_exporter_core::name_stem(peer), peer.to_string(), true)
+    (message_vault_io_core::name_stem(peer), peer.to_string(), true)
 }
 
 fn resolve_is_from_me(row: &RawRow) -> bool {

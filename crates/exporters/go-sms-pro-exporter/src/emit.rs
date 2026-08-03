@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_exporter_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -693,7 +693,7 @@ pub(crate) fn convert_export(
     xml_paths.sort();
 
     for xml_path in xml_paths {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_xml_file(&xml_path) {
             Ok((msgs, stats)) => {
                 report.xml_messages_seen += stats.messages;
@@ -734,7 +734,7 @@ pub(crate) fn convert_export(
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {
-        message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+        message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_pdu_file(&pdu_path, &owners.all_digits, &owners.primary_digits) {
             Ok(None) => {
                 report.skipped_unparseable_pdu += 1;
@@ -765,7 +765,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    message_exporter_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+    message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
     for (chat_id, mut convo) in conversations {
         for msg in &mut convo.messages {

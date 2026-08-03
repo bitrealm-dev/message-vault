@@ -15,7 +15,7 @@ impl SessionLog {
     /// Create (or truncate) a log file in `dir` (normally the directory that holds `export.ini`).
     pub fn new(dir: &Path) -> Self {
         let name = Local::now()
-            .format("message-exporters-%Y-%m-%d_%H%M%S.log")
+            .format("message-vault-io-%Y-%m-%d_%H%M%S.log")
             .to_string();
         let path = dir.join(&name);
         let _ = OpenOptions::new()

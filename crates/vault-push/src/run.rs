@@ -16,7 +16,7 @@ use message_ir::{
 use message_ir_format::{
     read_conversation_jsonl,
 };
-use message_exporter_core::{CancelFlag, check_cancel};
+use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

@@ -1,6 +1,6 @@
 //! Structured helpers for mail headers (parts, edits, balloons).
 //!
-//! Ported from `imessage-exporter` CSV `data.rs` so this crate stays independent.
+//! Ported from `imessage-vault-io` CSV `data.rs` so this crate stays independent.
 
 use imessage_database::{
     message_types::{

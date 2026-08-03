@@ -18,7 +18,7 @@ use message_ir::{
 };
 use anyhow::{Result, bail};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_exporter_core::{CancelFlag, check_cancel};
+use message_vault_io_core::{CancelFlag, check_cancel};
 use phone::{OwnerPhoneSet, to_e164};
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file,

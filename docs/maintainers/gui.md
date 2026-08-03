@@ -1,9 +1,9 @@
-# Message Exporter GUI
+# Message Vault GUI
 
 Living design notes for the cross-platform desktop GUI.
 
 **Framework:** [Slint](https://slint.dev) 1.17, implemented in
-[`crates/message-exporter-gui`](../../crates/message-exporter-gui).
+[`crates/message-vault-io-gui`](../../crates/message-vault-io-gui).
 
 ## Goals
 
@@ -31,7 +31,7 @@ Compiled with Slint's `native` style in `build.rs`:
 
 This crate stays pure Rust (no Qt SDK dependency). On Linux without Qt, Fluent is
 the intentional fallback. Override at compile time with `SLINT_STYLE`
-(for example `SLINT_STYLE=fluent cargo build -p message-exporter-gui`).
+(for example `SLINT_STYLE=fluent cargo build -p message-vault-io-gui`).
 
 Layout density lives in `ui/widgets.slint` (`FormMetrics`, horizontal `FormRow`
 fields, tight row gaps). Ordinary fields do not stretch; only the Log tab's viewer
@@ -59,21 +59,21 @@ grows when the window is resized vertically.
 - `src/session_log.rs` — timestamped session log next to `export.ini`.
 - `src/wsl.rs` — Windows interop when the Linux GUI runs under WSL (browser / help).
 
-Jobs run via `message_exporter_core::spawn_job` on a `std::thread` with a
+Jobs run via `message_vault_io_core::spawn_job` on a `std::thread` with a
 `CancelFlag` + `mpsc::Sender<ProcessEvent>`. A bridge thread drains the receiver
 and marshals each line onto the Slint UI thread (`upgrade_in_event_loop`),
 appending to the Log tab's `VecModel` and the session log file.
 
 Contacts, Extract Messages, Format, and Vault are linked libraries (no sibling
 exporter CLIs required). WhatsApp’s `wtsexporter` and media tools `ffmpeg` /
-`ffprobe` still resolve under `lib/` next to the GUI, via `MESSAGE_EXPORTERS_BIN`, or on `PATH`.
+`ffprobe` still resolve under `lib/` next to the GUI, via `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
 
 ## Persistence
 
 Reads/writes `export.ini` via `ExportIniState::load_or_default()` / `save()`.
 Prefer an existing file in the working directory, else beside the GUI binary;
 otherwise create `./export.ini` on first save. Template:
-[`export.example.ini`](../../crates/message-exporter-gui/export.example.ini).
+[`export.example.ini`](../../crates/message-vault-io-gui/export.example.ini).
 Backup passwords are never written. The vault key is persisted in plain text under
 `[vault]`.
 
@@ -92,15 +92,15 @@ paid commercial license is required for this desktop app.
 
 ```bash
 cargo build --workspace
-# optional: cp crates/message-exporter-gui/export.example.ini export.ini
-cargo run -p message-exporter-gui
+# optional: cp crates/message-vault-io-gui/export.example.ini export.ini
+cargo run -p message-vault-io-gui
 ```
 
 ## Layout
 
 1. Top tabs — **Extract Messages** | **Format** | **Vault** | **Contacts** | **Log**
 2. **Extract Messages:** backup source picker + global options + per-source form
-3. **Format:** format a prior Message Exporters output (`message-reexporter`) —
+3. **Format:** format a prior Message Vault output (`message-reexporter`) —
    input dir, output dir, output format, attachments, obfuscate. Input format is
    auto-detected.
 4. **Vault:** import a JSONL export folder into Message Vault — URL, vault key
@@ -122,7 +122,7 @@ in-process via the `message-contacts` library.
 
 ### Format — `message-reexporter`
 
-Top tab (not an Extract Messages backup type). Converts a prior Message Exporters
+Top tab (not an Extract Messages backup type). Converts a prior Message Vault
 output folder to another packaging format (via the common message).
 
 | Control | Type | Required | CLI |
@@ -294,7 +294,7 @@ chats use the `__whatsapp` stem suffix. See
 Product: [WhatsApp Chat Exporter](https://github.com/KnugiHK/WhatsApp-Chat-Exporter)
 (`wtsexporter`)
 
-Requires `wtsexporter` under `cli/` next to the GUI, on `PATH`, in `MESSAGE_EXPORTERS_BIN`, or
+Requires `wtsexporter` under `cli/` next to the GUI, on `PATH`, in `MESSAGE_VAULT_IO_BIN`, or
 via `WTSEXPORTER` (pip install or release-bundled binary).
 
 No Input directory and no Contacts file row in the GUI. `wtsexporter` runs in a
@@ -328,7 +328,7 @@ temp dir under Output.
 ### iPhone backup — `imessage-ir-exporter`
 
 Form link label: **imessage-ir-exporter** →
-[imessage-ir-exporter](https://github.com/bitrealm-dev/message-exporters/tree/main/crates/exporters/imessage-ir-exporter).
+[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter).
 Dropdown stays **iPhone backup**.
 
 GUI defaults: JSONL for Extract Messages, `--copy-method clone` (or `disabled`),
