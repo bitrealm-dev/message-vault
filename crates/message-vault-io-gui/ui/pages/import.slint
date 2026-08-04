@@ -2,8 +2,7 @@ import { Button, Date } from "std-widgets.slint";
 import {
     StackedDateEdit, StackedLineEdit, StackedPathField, StackedComboBox,
     StackedHint, StackedDangerHint, StackedCheckBox, AdvancedSection,
-    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel,
-    SectionDivider
+    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
 import { LogPanel } from "log-panel.slint";
@@ -73,143 +72,148 @@ export component ImportPage inherits VerticalLayout {
 
         Rectangle { height: 8px; vertical-stretch: 0; }
 
-        SectionDivider { }
+        OptionGroup {
+            title: "";
 
-        VerticalLayout {
-            spacing: 2px;
-            padding: 0;
-            vertical-stretch: 0;
-
-            HorizontalLayout {
-                spacing: FormMetrics.field-spacing;
+            VerticalLayout {
+                spacing: 2px;
                 padding: 0;
-                alignment: stretch;
                 vertical-stretch: 0;
-                height: 22px;
-                StackedFieldLabel {
-                    label: "Import Format";
-                    horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: FormMetrics.field-spacing;
+                    padding: 0;
+                    alignment: stretch;
+                    vertical-stretch: 0;
+                    height: 22px;
+                    StackedFieldLabel {
+                        label: "Import Format";
+                        horizontal-stretch: 1;
+                    }
+                    TouchArea {
+                        horizontal-stretch: 0;
+                        mouse-cursor: pointer;
+                        clicked => { ImportAdapter.open-help(); }
+                        Text {
+                            text: "Need help?";
+                            font-size: 12px;
+                            color: #1d4ed8;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
-                TouchArea {
-                    horizontal-stretch: 0;
-                    mouse-cursor: pointer;
-                    clicked => { ImportAdapter.open-help(); }
-                    Text {
-                        text: "Need help?";
-                        font-size: 12px;
-                        color: #1d4ed8;
-                        vertical-alignment: center;
+                HorizontalLayout {
+                    spacing: 0;
+                    padding: 0;
+                    alignment: stretch;
+                    vertical-stretch: 0;
+                    height: FormMetrics.row-height;
+                    Rectangle {
+                        width: FormMetrics.stacked-control-indent;
+                        horizontal-stretch: 0;
+                    }
+                    CompactComboBox {
+                        model: ImportAdapter.format-options;
+                        current-index <=> ImportAdapter.format-index;
+                        horizontal-stretch: 1;
+                        height: FormMetrics.row-height;
+                        vertical-stretch: 0;
                     }
                 }
             }
-            HorizontalLayout {
-                spacing: 0;
-                padding: 0;
-                alignment: stretch;
-                vertical-stretch: 0;
-                height: FormMetrics.row-height;
-                Rectangle {
-                    width: FormMetrics.stacked-control-indent;
-                    horizontal-stretch: 0;
-                }
-                CompactComboBox {
-                    model: ImportAdapter.format-options;
-                    current-index <=> ImportAdapter.format-index;
-                    horizontal-stretch: 1;
-                    height: FormMetrics.row-height;
-                    vertical-stretch: 0;
-                }
+
+            StackedPathField {
+                label: "iPhone Backup Directory";
+                required: true;
+                placeholder: "Path to iPhone backup";
+                field-id: "import.backup_path";
+                value <=> ImportAdapter.backup-path;
+                browse-requested(id) => { ImportAdapter.browse(id); }
             }
-        }
 
-        StackedPathField {
-            label: "iPhone Backup Directory";
-            required: true;
-            placeholder: "Path to iPhone backup";
-            field-id: "import.backup_path";
-            value <=> ImportAdapter.backup-path;
-            browse-requested(id) => { ImportAdapter.browse(id); }
-        }
+            StackedLineEdit {
+                label: "Encryption password";
+                placeholder: "Optional";
+                password: true;
+                value <=> ImportAdapter.backup-password;
+            }
 
-        StackedLineEdit {
-            label: "Encryption password (optional)";
-            placeholder: "Optional";
-            password: true;
-            value <=> ImportAdapter.backup-password;
-        }
-
-        StackedComboBox {
-            label: "Message Attachments";
-            model: ImportAdapter.attachment-media-options;
-            current-index <=> ImportAdapter.attachment-media-index;
-            selected(_) => { ImportAdapter.media-changed(); }
-        }
-        if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
-            message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
-        }
-        if ImportAdapter.show-compress-options: OptionGroup {
-            title: "";
             StackedComboBox {
-                label: "Target resolution";
-                model: ImportAdapter.max-resolution-options;
-                current-index <=> ImportAdapter.max-resolution-index;
+                label: "Message Attachments";
+                model: ImportAdapter.attachment-media-options;
+                current-index <=> ImportAdapter.attachment-media-index;
+                selected(_) => { ImportAdapter.media-changed(); }
             }
-            StackedLineEdit {
-                label: "Max FPS";
-                required: true;
-                placeholder: "e.g. 30";
-                value <=> ImportAdapter.media-max-fps;
+            if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
+                message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
             }
-            StackedLineEdit {
-                label: "Minimum file size (MB)";
-                required: true;
-                placeholder: "e.g. 20";
-                value <=> ImportAdapter.media-min-size;
+            if ImportAdapter.show-compress-options: OptionGroup {
+                title: "";
+                StackedComboBox {
+                    label: "Target resolution";
+                    model: ImportAdapter.max-resolution-options;
+                    current-index <=> ImportAdapter.max-resolution-index;
+                }
+                StackedLineEdit {
+                    label: "Max FPS";
+                    required: true;
+                    placeholder: "e.g. 30";
+                    value <=> ImportAdapter.media-max-fps;
+                }
+                StackedLineEdit {
+                    label: "Minimum file size (MB)";
+                    required: true;
+                    placeholder: "e.g. 20";
+                    value <=> ImportAdapter.media-min-size;
+                }
             }
         }
 
-        SectionDivider { }
-
-        AdvancedSection {
-            open <=> ImportAdapter.advanced;
-            StackedLineEdit {
-                label: "Participant Filtering";
-                placeholder: "Comma separated list of names and numbers.";
-                value <=> ImportAdapter.conversation-filter;
-            }
-            StackedHint {
-                message: "Only conversations with the specified participants are exported, including group conversations.";
-            }
-            StackedDateEdit {
-                label: "Start Date";
-                value <=> ImportAdapter.start-date;
-                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-            }
-            StackedHint {
-                message: "Only import messages on or after this date (YYYY-MM-DD)";
-            }
-            StackedDateEdit {
-                label: "End Date";
-                value <=> ImportAdapter.end-date;
-                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-            }
-            StackedHint {
-                message: "Only import messages before this date (YYYY-MM-DD)";
-            }
-            StackedCheckBox {
-                text: "Continue importing after failed message conversion";
-                checked <=> ImportAdapter.continue-on-error;
-            }
-            StackedCheckBox {
-                text: "Force re-upload";
-                checked <=> ImportAdapter.force;
-            }
-            StackedCheckBox {
-                text: "Obfuscate - All message data is anonymized";
-                checked <=> ImportAdapter.obfuscate;
-            }
-            if ImportAdapter.obfuscate: StackedHint {
-                message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
+        OptionGroup {
+            title: "";
+            AdvancedSection {
+                open <=> ImportAdapter.advanced;
+                StackedLineEdit {
+                    label: "Participant Filtering";
+                    placeholder: "Comma separated list of names and numbers.";
+                    value <=> ImportAdapter.conversation-filter;
+                }
+                StackedHint {
+                    message: "Only conversations with the specified participants are exported, including group conversations.";
+                }
+                StackedDateEdit {
+                    label: "Start Date";
+                    placeholder: "Optional";
+                    value <=> ImportAdapter.start-date;
+                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only import messages on or after this date (YYYY-MM-DD)";
+                }
+                StackedDateEdit {
+                    label: "End Date";
+                    placeholder: "Optional";
+                    value <=> ImportAdapter.end-date;
+                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only import messages before this date (YYYY-MM-DD)";
+                }
+                StackedCheckBox {
+                    text: "Continue importing after failed message conversion (default)";
+                    checked <=> ImportAdapter.continue-on-error;
+                }
+                StackedCheckBox {
+                    text: "Force re-upload";
+                    checked <=> ImportAdapter.force;
+                }
+                StackedCheckBox {
+                    text: "Obfuscate - All message data is anonymized";
+                    checked <=> ImportAdapter.obfuscate;
+                }
+                if ImportAdapter.obfuscate: StackedHint {
+                    message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
+                }
             }
         }
     }

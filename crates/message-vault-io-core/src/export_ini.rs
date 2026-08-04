@@ -32,7 +32,7 @@ pub struct FormatSection {
 }
 
 /// Fields for the Vault top-level tab (`vault-push`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultSection {
     pub url: String,
     pub username: String,
@@ -42,6 +42,20 @@ pub struct VaultSection {
     pub continue_on_error: bool,
     pub force: bool,
     pub skip_attachments: bool,
+}
+
+impl Default for VaultSection {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            username: String::new(),
+            key: String::new(),
+            input: String::new(),
+            continue_on_error: true,
+            force: false,
+            skip_attachments: false,
+        }
+    }
 }
 
 /// Per-exporter path / type-specific fields kept when switching backup types.
