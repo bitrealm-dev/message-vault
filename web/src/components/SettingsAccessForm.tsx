@@ -181,15 +181,19 @@ export function SettingsAccessForm({
           Message import
         </h2>
         <p className="mt-1 text-[13px] text-muted">
-          Create an API token to import messages. It is shown only once. In the
-          exporter, Username must be your User ID
+          Create an API token to import messages. It is shown only once. In Message
+          Exporters → Vault, paste the token and set Vault URL to your vault origin
+          (for example <span className="font-mono text-text">http://127.0.0.1:8080</span>{" "}
+          or <span className="font-mono text-text">https://app.bitrealm.dev</span>
+          ).
           {username ? (
             <>
               {" "}
-              (<span className="font-mono text-text">{username}</span>)
+              Your User ID is{" "}
+              <span className="font-mono text-text">{username}</span> (shown for
+              reference; the token alone identifies the account).
             </>
           ) : null}
-          — not your email or display name.
         </p>
         <div className="mt-4">
           <h3 className="text-[13px] font-medium text-text">API token</h3>

@@ -43,8 +43,6 @@ struct AppState {
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same digest.
     asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
-    /// Process-local Import API token → account_id cache (avoids DB open per asset PUT).
-    token_cache: Arc<Mutex<HashMap<String, String>>>,
     /// Multipart / asset size limits from `[server]` (env may override part size).
     upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
@@ -152,7 +150,6 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         db,
         account_import_locks: Arc::new(Mutex::new(HashMap::new())),
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
-        token_cache: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
     };
@@ -356,15 +353,8 @@ fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
 
 async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdentity, ApiError> {
     let token = bearer_token(headers)?;
-    {
-        let cache = state.token_cache.lock().await;
-        if let Some(account_id) = cache.get(&token) {
-            return Ok(AuthIdentity {
-                account_id: account_id.clone(),
-            });
-        }
-    }
-
+    // Always look up against SQLite so rotate/delete in Settings takes effect
+    // without restarting serve (no process-local token cache).
     let db = state.cfg.paths.db.clone();
     let token_owned = token.clone();
     let account_id = tokio::task::spawn_blocking(move || {
@@ -378,14 +368,7 @@ async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdent
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     match account_id {
-        Some(account_id) => {
-            state
-                .token_cache
-                .lock()
-                .await
-                .insert(token, account_id.clone());
-            Ok(AuthIdentity { account_id })
-        }
+        Some(account_id) => Ok(AuthIdentity { account_id }),
         None => Err(ApiError::Unauthorized("invalid API token".into())),
     }
 }
@@ -1233,14 +1216,33 @@ async fn run_import_path(
         // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
         // Multipart supplies a temp asset_root for relative file parts.
         let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
-        if let Some(import_id) = query_import_id {
+
+        // Client session (vault-push): verify ownership. Otherwise start a one-shot
+        // vault_imports row so Storage history works for curl / single POSTs.
+        let (import_id, owns_session) = if let Some(id) = query_import_id {
             let conn = db
                 .lock()
                 .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
-            crate::db::vault_imports::get_owned_import(&conn, &account, import_id)
+            crate::db::vault_imports::get_owned_import(&conn, &account, id)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             drop(conn);
-        }
+            (Some(id), false)
+        } else {
+            let conn = db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+            crate::db::account_profile::ensure_account_row(&conn, &account)?;
+            let id = crate::db::vault_imports::start_import(
+                &conn,
+                &account,
+                &source_id,
+                mode.as_str(),
+                Some("http"),
+            )?;
+            drop(conn);
+            (Some(id), true)
+        };
+
         let opts = ImportOptions::fixed(
             &cfg.paths.db,
             &assets_dir,
@@ -1252,17 +1254,45 @@ async fn run_import_path(
             &account,
             do_dedupe,
             false,
-            query_import_id,
+            import_id,
         );
         let mut conn = db
             .lock()
             .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
-        let stats = import::import_jsonl_files_on_conn(
+        let import_result = import::import_jsonl_files_on_conn(
             &mut conn,
             &[jsonl_path],
             &opts,
             import::ImportSchemaMode::AssumeReady,
-        )?;
+        );
+
+        if owns_session {
+            if let Some(id) = import_id {
+                let complete_args = match &import_result {
+                    Ok(stats) => crate::db::vault_imports::CompleteImportArgs {
+                        ok: true,
+                        message_count: Some(stats.messages as i64),
+                        attachment_count: Some(stats.attachments as i64),
+                        bytes_uploaded: None,
+                    },
+                    Err(_) => crate::db::vault_imports::CompleteImportArgs {
+                        ok: false,
+                        message_count: None,
+                        attachment_count: None,
+                        bytes_uploaded: None,
+                    },
+                };
+                if let Err(e) = crate::db::vault_imports::complete_import(
+                    &conn,
+                    &account,
+                    id,
+                    &complete_args,
+                ) {
+                    eprintln!("warning: complete_import({id}) failed: {e}");
+                }
+            }
+        }
+        let stats = import_result?;
         drop(conn);
         let dedupe_stats = if do_dedupe {
             Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)

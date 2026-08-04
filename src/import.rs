@@ -203,7 +203,7 @@ pub fn import_export(
 
     match &result {
         Ok(stats) => {
-            let _ = crate::db::vault_imports::complete_import(
+            if let Err(e) = crate::db::vault_imports::complete_import(
                 &conn,
                 account_id,
                 import_id,
@@ -213,10 +213,12 @@ pub fn import_export(
                     attachment_count: Some(stats.attachments as i64),
                     bytes_uploaded: None,
                 },
-            );
+            ) {
+                eprintln!("warning: complete_import({import_id}) failed: {e}");
+            }
         }
         Err(_) => {
-            let _ = crate::db::vault_imports::complete_import(
+            if let Err(e) = crate::db::vault_imports::complete_import(
                 &conn,
                 account_id,
                 import_id,
@@ -226,7 +228,9 @@ pub fn import_export(
                     attachment_count: None,
                     bytes_uploaded: None,
                 },
-            );
+            ) {
+                eprintln!("warning: complete_import({import_id}) failed: {e}");
+            }
         }
     }
 

@@ -33,6 +33,8 @@ there is no message/asset DELETE API.
 `vault-push` starts a session with `POST /v1/imports`, passes `import_id` on each
 `POST /v1/import`, then completes the session so Settings → Storage can list
 import history. Messages promoted during that session store `messages.import_id`.
+If `import_id` is omitted on `POST /v1/import`, the server starts and finishes a
+one-shot session for that request so Storage still records the import.
 
 ## Export (read-only)
 

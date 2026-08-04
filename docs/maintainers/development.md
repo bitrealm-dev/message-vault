@@ -173,6 +173,21 @@ Keep the import API running while pushing a message-ir export from
 New accounts start with browsing edits enabled. View-only mode can be turned on
 under **Settings → Access** without blocking imports.
 
+## Schema source of truth
+
+Vault table definitions live in [`schema/sql/`](../../schema/sql/). Edit those
+files, then sync the web copy and commit both:
+
+```text
+node scripts/sync-vault-schema.mjs
+```
+
+Use `--check` in CI (or locally) to fail if generated outputs are stale:
+
+```text
+node scripts/sync-vault-schema.mjs --check
+```
+
 ## Common checks
 
 Build and test the Rust workspace:
@@ -189,6 +204,12 @@ cd web
 npm run lint
 npm test
 npm run build
+```
+
+Confirm the shared schema sync is current:
+
+```text
+node scripts/sync-vault-schema.mjs --check
 ```
 
 Verify a running local instance:

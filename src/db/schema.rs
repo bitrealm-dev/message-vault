@@ -34,249 +34,17 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-const MESSAGE_TABLES_DDL: &str = r#"
-CREATE TABLE conversations (
-    id INTEGER PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
-    service TEXT,
-    conversation_type TEXT NOT NULL,
-    group_title TEXT,
-    exported_at TEXT,
-    source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
-);
-
-CREATE INDEX ix_conversations_account_id ON conversations (account_id);
-
-CREATE TABLE participants (
-    id INTEGER PRIMARY KEY,
-    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
-    name_hint TEXT,
-    UNIQUE(conversation_id, handle)
-);
-
-CREATE INDEX ix_participants_handle ON participants (handle);
-
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    source TEXT NOT NULL,
-    guid TEXT,
-    timestamp TEXT NOT NULL,
-    timestamp_utc TEXT,
-    is_from_me INTEGER NOT NULL,
-    sender TEXT,
-    subject TEXT,
-    body TEXT,
-    is_announcement INTEGER NOT NULL DEFAULT 0,
-    is_reply INTEGER NOT NULL DEFAULT 0,
-    thread_originator_guid TEXT,
-    thread_originator_part INTEGER,
-    num_replies INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL,
-    content_key TEXT,
-    duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL,
-    import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
-);
-
-CREATE INDEX ix_messages_conversation_timestamp
-    ON messages (conversation_id, timestamp);
-CREATE INDEX ix_messages_conversation_source_timestamp
-    ON messages (conversation_id, source, timestamp);
-CREATE INDEX ix_messages_account_id ON messages (account_id);
-CREATE UNIQUE INDEX ix_messages_account_source_guid
-    ON messages (account_id, source, guid)
-    WHERE guid IS NOT NULL AND guid != '';
-CREATE INDEX ix_messages_content_key
-    ON messages (content_key)
-    WHERE content_key IS NOT NULL AND content_key != '';
-CREATE INDEX ix_messages_duplicate_of
-    ON messages (duplicate_of)
-    WHERE duplicate_of IS NOT NULL;
-CREATE INDEX ix_messages_import_id
-    ON messages (import_id)
-    WHERE import_id IS NOT NULL;
-
-CREATE TABLE attachments (
-    id INTEGER PRIMARY KEY,
-    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    path TEXT,
-    original_name TEXT,
-    mime_type TEXT,
-    is_sticker INTEGER NOT NULL DEFAULT 0,
-    transcription TEXT,
-    sha256 TEXT,
-    assets_path TEXT,
-    size_bytes INTEGER,
-    derived_sha256 TEXT,
-    derived_assets_path TEXT,
-    derived_mime_type TEXT
-);
-
-CREATE INDEX ix_attachments_sha256 ON attachments (sha256);
-CREATE INDEX ix_attachments_message_id ON attachments (message_id);
-
-CREATE TABLE tapbacks (
-    id INTEGER PRIMARY KEY,
-    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    part_index INTEGER NOT NULL DEFAULT 0,
-    kind TEXT NOT NULL,
-    emoji TEXT,
-    is_from_me INTEGER NOT NULL,
-    sender TEXT
-);
-
-CREATE INDEX ix_tapbacks_message_id ON tapbacks (message_id);
-CREATE INDEX ix_messages_source ON messages (source);
-"#;
-
-const STAGING_TABLES_DDL: &str = r#"
-CREATE TABLE staging_conversations (
-    id INTEGER PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
-    service TEXT,
-    conversation_type TEXT NOT NULL,
-    group_title TEXT,
-    exported_at TEXT,
-    source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
-);
-
-CREATE TABLE staging_participants (
-    id INTEGER PRIMARY KEY,
-    conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
-    name_hint TEXT,
-    UNIQUE(conversation_id, handle)
-);
-
-CREATE TABLE staging_messages (
-    id INTEGER PRIMARY KEY,
-    conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    source TEXT NOT NULL,
-    guid TEXT,
-    timestamp TEXT NOT NULL,
-    timestamp_utc TEXT,
-    is_from_me INTEGER NOT NULL,
-    sender TEXT,
-    subject TEXT,
-    body TEXT,
-    is_announcement INTEGER NOT NULL DEFAULT 0,
-    is_reply INTEGER NOT NULL DEFAULT 0,
-    thread_originator_guid TEXT,
-    thread_originator_part INTEGER,
-    num_replies INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL,
-    import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
-);
-
-CREATE INDEX ix_staging_messages_conversation_timestamp
-    ON staging_messages (conversation_id, timestamp);
-CREATE INDEX ix_staging_messages_account_id ON staging_messages (account_id);
-CREATE UNIQUE INDEX ix_staging_messages_account_source_guid
-    ON staging_messages (account_id, source, guid)
-    WHERE guid IS NOT NULL AND guid != '';
-
-CREATE TABLE staging_attachments (
-    id INTEGER PRIMARY KEY,
-    message_id INTEGER NOT NULL REFERENCES staging_messages(id) ON DELETE CASCADE,
-    path TEXT,
-    original_name TEXT,
-    mime_type TEXT,
-    is_sticker INTEGER NOT NULL DEFAULT 0,
-    transcription TEXT,
-    sha256 TEXT,
-    assets_path TEXT,
-    size_bytes INTEGER,
-    derived_sha256 TEXT,
-    derived_assets_path TEXT,
-    derived_mime_type TEXT
-);
-
-CREATE INDEX ix_staging_attachments_sha256 ON staging_attachments (sha256);
-CREATE INDEX ix_staging_attachments_message_id ON staging_attachments (message_id);
-
-CREATE TABLE staging_tapbacks (
-    id INTEGER PRIMARY KEY,
-    message_id INTEGER NOT NULL REFERENCES staging_messages(id) ON DELETE CASCADE,
-    part_index INTEGER NOT NULL DEFAULT 0,
-    kind TEXT NOT NULL,
-    emoji TEXT,
-    is_from_me INTEGER NOT NULL,
-    sender TEXT
-);
-
-CREATE INDEX ix_staging_tapbacks_message_id ON staging_tapbacks (message_id);
-"#;
-
-const CONTACTS_TABLES_DDL: &str = r#"
-CREATE TABLE contacts (
-    id INTEGER PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    preferred_name TEXT,
-    preferred_handle TEXT
-);
-
-CREATE INDEX ix_contacts_account_id ON contacts (account_id);
-
-CREATE TABLE contact_handles (
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
-    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    PRIMARY KEY (account_id, handle)
-);
-
-CREATE INDEX ix_contact_handles_contact_id
-    ON contact_handles (contact_id);
-
-CREATE TABLE contact_labels (
-    id INTEGER PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    UNIQUE(account_id, name)
-);
-
-CREATE TABLE contact_label_members (
-    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    label_id INTEGER NOT NULL REFERENCES contact_labels(id) ON DELETE CASCADE,
-    PRIMARY KEY (contact_id, label_id)
-);
-
-CREATE TABLE trashed_handles (
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
-    trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, handle)
-);
-
-CREATE TABLE trashed_conversations (
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    conversation_id INTEGER NOT NULL,
-    trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, conversation_id)
-);
-
-CREATE TABLE trashed_contacts (
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    contact_id INTEGER NOT NULL,
-    trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, contact_id)
-);
-"#;
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let count: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
-        params![column],
-        |row| row.get(0),
-    )?;
-    Ok(count > 0)
-}
+/// Baseline DDL lives in `schema/sql/` (shared with the web app via sync script).
+const ACCOUNTS_DDL: &str = include_str!("../../schema/sql/accounts.sql");
+const MESSAGE_TABLES_DDL: &str = include_str!("../../schema/sql/messages.sql");
+const STAGING_TABLES_DDL: &str = include_str!("../../schema/sql/staging.sql");
+const CONTACTS_TABLES_DDL: &str = include_str!("../../schema/sql/contacts.sql");
+const FTS_VIRTUAL_DDL: &str = include_str!("../../schema/sql/fts_virtual.sql");
+const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
+    include_str!("../../schema/sql/fts_triggers_drop.sql");
+const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
+    include_str!("../../schema/sql/fts_triggers_create.sql");
+const FTS_BACKFILL_SQL: &str = include_str!("../../schema/sql/fts_backfill.sql");
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let exists: bool = conn.query_row(
@@ -291,45 +59,10 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_accounts_schema(conn)?;
-
-    if !table_exists(conn, "conversations")? {
-        conn.execute_batch(MESSAGE_TABLES_DDL)?;
-    }
-    if !table_exists(conn, "staging_conversations")? {
-        conn.execute_batch(STAGING_TABLES_DDL)?;
-    }
-    if !table_exists(conn, "contacts")? {
-        conn.execute_batch(CONTACTS_TABLES_DDL)?;
-    }
-
-    ensure_import_id_columns(conn)?;
+    conn.execute_batch(MESSAGE_TABLES_DDL)?;
+    conn.execute_batch(STAGING_TABLES_DDL)?;
+    conn.execute_batch(CONTACTS_TABLES_DDL)?;
     ensure_messages_fts(conn)?;
-    Ok(())
-}
-
-/// Migrate existing DBs: messages / staging_messages.import_id + indexes.
-fn ensure_import_id_columns(conn: &Connection) -> Result<()> {
-    if table_exists(conn, "messages")? && !column_exists(conn, "messages", "import_id")? {
-        conn.execute_batch(
-            "ALTER TABLE messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL",
-        )?;
-    }
-    if table_exists(conn, "staging_messages")?
-        && !column_exists(conn, "staging_messages", "import_id")?
-    {
-        conn.execute_batch(
-            "ALTER TABLE staging_messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL",
-        )?;
-    }
-    if table_exists(conn, "messages")? {
-        conn.execute_batch(
-            r#"
-            CREATE INDEX IF NOT EXISTS ix_messages_import_id
-                ON messages (import_id)
-                WHERE import_id IS NOT NULL
-            "#,
-        )?;
-    }
     Ok(())
 }
 
@@ -343,155 +76,12 @@ pub const MESSAGES_FTS_BACKFILL_META_KEY: &str = "messages_fts_backfill_v1";
 /// Marker that current FTS sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
-const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str = r#"
-DROP TRIGGER IF EXISTS messages_fts_ai;
-DROP TRIGGER IF EXISTS messages_fts_ad;
-DROP TRIGGER IF EXISTS messages_fts_au;
-DROP TRIGGER IF EXISTS attachments_fts_ai;
-DROP TRIGGER IF EXISTS attachments_fts_ad;
-DROP TRIGGER IF EXISTS attachments_fts_au;
-"#;
-
-const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str = r#"
-CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-    VALUES (
-        new.id,
-        coalesce(new.body, ''),
-        coalesce(new.subject, ''),
-        (
-            SELECT coalesce(
-                group_concat(
-                    trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
-                    ' '
-                ),
-                ''
-            )
-            FROM attachments
-            WHERE message_id = new.id
-        )
-    );
-END;
-
-CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-    VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
-END;
-
-CREATE TRIGGER messages_fts_au AFTER UPDATE OF body, subject ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-    VALUES ('delete', old.id, coalesce(old.body, ''), coalesce(old.subject, ''), '');
-    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-    VALUES (
-        new.id,
-        coalesce(new.body, ''),
-        coalesce(new.subject, ''),
-        (
-            SELECT coalesce(
-                group_concat(
-                    trim(coalesce(original_name, '') || ' ' || coalesce(transcription, '')),
-                    ' '
-                ),
-                ''
-            )
-            FROM attachments
-            WHERE message_id = new.id
-        )
-    );
-END;
-
-CREATE TRIGGER attachments_fts_ai AFTER INSERT ON attachments BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-    SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-    FROM messages m WHERE m.id = new.message_id;
-    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-    SELECT
-        m.id,
-        coalesce(m.body, ''),
-        coalesce(m.subject, ''),
-        (
-            SELECT coalesce(
-                group_concat(
-                    trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                    ' '
-                ),
-                ''
-            )
-            FROM attachments a
-            WHERE a.message_id = m.id
-        )
-    FROM messages m WHERE m.id = new.message_id;
-END;
-
-CREATE TRIGGER attachments_fts_ad AFTER DELETE ON attachments BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-    SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-    FROM messages m WHERE m.id = old.message_id;
-    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-    SELECT
-        m.id,
-        coalesce(m.body, ''),
-        coalesce(m.subject, ''),
-        (
-            SELECT coalesce(
-                group_concat(
-                    trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                    ' '
-                ),
-                ''
-            )
-            FROM attachments a
-            WHERE a.message_id = m.id
-        )
-    FROM messages m WHERE m.id = old.message_id;
-END;
-
-CREATE TRIGGER attachments_fts_au AFTER UPDATE OF original_name, transcription ON attachments BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, body, subject, attachment_text)
-    SELECT 'delete', m.id, coalesce(m.body, ''), coalesce(m.subject, ''), ''
-    FROM messages m WHERE m.id = new.message_id;
-    INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-    SELECT
-        m.id,
-        coalesce(m.body, ''),
-        coalesce(m.subject, ''),
-        (
-            SELECT coalesce(
-                group_concat(
-                    trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                    ' '
-                ),
-                ''
-            )
-            FROM attachments a
-            WHERE a.message_id = m.id
-        )
-    FROM messages m WHERE m.id = new.message_id;
-END;
-"#;
-
 /// Contentless FTS5 index over message body/subject plus attachment text.
 fn ensure_messages_fts(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "messages")? {
         return Ok(());
     }
-    // Keep FTS setup self-contained for callers that initialize message storage directly.
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS schema_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-            body,
-            subject,
-            attachment_text,
-            content='',
-            tokenize='unicode61 remove_diacritics 2'
-        );
-        "#,
-    )?;
+    conn.execute_batch(FTS_VIRTUAL_DDL)?;
 
     let triggers_ready: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
@@ -564,25 +154,7 @@ fn backfill_messages_fts(conn: &Connection) -> Result<()> {
     }
 
     // Clear any partial index before a full rebuild.
-    conn.execute_batch(
-        r#"
-        INSERT INTO messages_fts(messages_fts) VALUES('delete-all');
-        INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-        SELECT
-            m.id,
-            coalesce(m.body, ''),
-            coalesce(m.subject, ''),
-            coalesce((
-                SELECT group_concat(
-                    trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-                    ' '
-                )
-                FROM attachments a
-                WHERE a.message_id = m.id
-            ), '')
-        FROM messages m;
-        "#,
-    )?;
+    conn.execute_batch(FTS_BACKFILL_SQL)?;
     conn.execute(
         "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
         params![MESSAGES_FTS_BACKFILL_META_KEY],
@@ -670,81 +242,7 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
 
 /// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS accounts (
-            id TEXT PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            read_only INTEGER NOT NULL DEFAULT 0,
-            password_hash TEXT,
-            preferred_name TEXT,
-            hanko_user_id TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS account_emails (
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            is_primary INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (account_id, email)
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS ix_account_emails_one_primary
-            ON account_emails(account_id)
-            WHERE is_primary = 1;
-
-        CREATE TABLE IF NOT EXISTS account_phones (
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            phone TEXT NOT NULL,
-            PRIMARY KEY (account_id, phone)
-        );
-
-        CREATE TABLE IF NOT EXISTS account_api_tokens (
-            account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-            token_hash TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS account_prefs (
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            PRIMARY KEY (account_id, key)
-        );
-
-        CREATE TABLE IF NOT EXISTS schema_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS vault_imports (
-            id INTEGER PRIMARY KEY,
-            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            source TEXT NOT NULL,
-            tool TEXT,
-            mode TEXT NOT NULL,
-            status TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            message_count INTEGER NOT NULL DEFAULT 0,
-            attachment_count INTEGER NOT NULL DEFAULT 0,
-            bytes_uploaded INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
-            ON vault_imports(account_id, started_at DESC);
-        "#,
-    )?;
-
-    if !column_exists(conn, "accounts", "hanko_user_id")? {
-        conn.execute_batch("ALTER TABLE accounts ADD COLUMN hanko_user_id TEXT")?;
-    }
-    conn.execute_batch(
-        r#"
-        CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
-            ON accounts(hanko_user_id)
-            WHERE hanko_user_id IS NOT NULL AND hanko_user_id != ''
-        "#,
-    )?;
+    conn.execute_batch(ACCOUNTS_DDL)?;
     Ok(())
 }
 

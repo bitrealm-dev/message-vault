@@ -142,7 +142,7 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
 
     let import_stats = match &result {
         Ok(stats) => {
-            let _ = vault_imports::complete_import(
+            if let Err(e) = vault_imports::complete_import(
                 &conn,
                 &account_id,
                 import_id,
@@ -152,11 +152,13 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
                     attachment_count: Some(stats.attachments as i64),
                     bytes_uploaded: None,
                 },
-            );
+            ) {
+                eprintln!("warning: complete_import({import_id}) failed: {e}");
+            }
             stats.clone()
         }
         Err(_) => {
-            let _ = vault_imports::complete_import(
+            if let Err(e) = vault_imports::complete_import(
                 &conn,
                 &account_id,
                 import_id,
@@ -166,7 +168,9 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
                     attachment_count: None,
                     bytes_uploaded: None,
                 },
-            );
+            ) {
+                eprintln!("warning: complete_import({import_id}) failed: {e}");
+            }
             return result.map(|_| unreachable!());
         }
     };

@@ -102,7 +102,10 @@ as trashed without deleting underlying rows.
 | Soft-deleted items | `trashed_*` |
 | Import scratch space | `staging_*` |
 
-Table definitions in code:
-[`src/schema.rs`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/src/schema.rs).
+Baseline table definitions live in
+[`schema/sql/`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/schema/sql/).
+Rust loads them from [`src/db/schema.rs`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/src/db/schema.rs).
+After editing the SQL files, run `node scripts/sync-vault-schema.mjs` so the web
+app’s generated copy stays in sync.
 
 Related: [import modes and dedupe](/import/modes-and-dedupe/).

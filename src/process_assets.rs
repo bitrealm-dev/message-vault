@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::config::Config;
+use crate::db::schema;
 
 const JPEG_MIN_BYTES: u64 = 500 * 1024;
 const MP3_MIN_BYTES: u64 = 100 * 1024;
@@ -73,7 +74,8 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
 
     let mut conn = Connection::open(db_path)
         .with_context(|| format!("open database {}", db_path.display()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    schema::configure_connection(&conn)?;
+    schema::ensure_vault_schema(&conn)?;
     assert_schema(&conn)?;
 
     let account_ids = list_account_ids(&conn, &cfg.paths.data_dir)?;
@@ -288,7 +290,8 @@ fn assert_schema(conn: &Connection) -> Result<()> {
         )?;
         if n == 0 {
             bail!(
-                "attachments.{col} missing — wipe vault.db and re-ingest before process-assets"
+                "attachments.{col} missing after schema ensure — wipe vault.db and re-ingest \
+                 (incompatible old DB shape)"
             );
         }
     }
@@ -446,38 +449,86 @@ fn is_part_path(path: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("part"))
 }
 
-/// Remove stale `{sha}-*.part` temps left under `assets/.incoming/` after failed PUTs.
+/// Max age for abandoned multipart upload sessions under `.incoming/{sha}/{upload_id}/`.
+const STALE_UPLOAD_SESSION_SECS: u64 = 24 * 60 * 60;
+
+/// Remove stale `{sha}-*.part` temps and abandoned multipart session dirs under `.incoming/`.
 fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
     let incoming = assets_dir.join(".incoming");
     if !incoming.is_dir() {
         return Ok(0);
     }
     let mut removed = 0u64;
+    let now = std::time::SystemTime::now();
     for entry in fs::read_dir(&incoming)
         .with_context(|| format!("read {}", incoming.display()))?
     {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let is_part = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("part"));
-        if !is_part {
-            continue;
-        }
-        if dry_run {
-            println!("[dry-run] would remove {}", path.display());
+        if path.is_file() {
+            let is_part = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("part"));
+            if !is_part {
+                continue;
+            }
+            if dry_run {
+                println!("[dry-run] would remove {}", path.display());
+                removed += 1;
+                continue;
+            }
+            fs::remove_file(&path)
+                .with_context(|| format!("remove leftover {}", path.display()))?;
             removed += 1;
             continue;
         }
-        fs::remove_file(&path)
-            .with_context(|| format!("remove leftover {}", path.display()))?;
-        removed += 1;
+        if !path.is_dir() {
+            continue;
+        }
+        // Multipart staging: `.incoming/{sha256}/{upload_id}/`
+        for session_ent in fs::read_dir(&path)
+            .with_context(|| format!("read {}", path.display()))?
+        {
+            let session_ent = session_ent?;
+            let session = session_ent.path();
+            if !session.is_dir() {
+                continue;
+            }
+            if !upload_session_is_stale(&session, now)? {
+                continue;
+            }
+            if dry_run {
+                println!("[dry-run] would remove stale upload session {}", session.display());
+                removed += 1;
+                continue;
+            }
+            fs::remove_dir_all(&session)
+                .with_context(|| format!("remove stale upload session {}", session.display()))?;
+            removed += 1;
+        }
+        // Drop empty sha parent dirs.
+        if path.is_dir() && fs::read_dir(&path)?.next().is_none() {
+            if dry_run {
+                println!("[dry-run] would remove empty {}", path.display());
+            } else {
+                let _ = fs::remove_dir(&path);
+            }
+        }
     }
     Ok(removed)
+}
+
+fn upload_session_is_stale(session: &Path, now: std::time::SystemTime) -> Result<bool> {
+    let manifest = session.join("manifest.json");
+    let meta = if manifest.is_file() {
+        fs::metadata(&manifest)?
+    } else {
+        fs::metadata(session)?
+    };
+    let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let age = now.duration_since(modified).unwrap_or_default();
+    Ok(age.as_secs() >= STALE_UPLOAD_SESSION_SECS)
 }
 
 fn kind_of(assets_path: &str, mime: Option<&str>) -> MediaKind {
