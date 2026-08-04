@@ -160,12 +160,15 @@ impl HttpSession {
         // Validate the token first (no account=). A wrong User ID used to return
         // HTTP 403 "username does not match vault key", which looked like a bad token.
         let base = base_url.trim().trim_end_matches('/');
-        if let Err(error) = reqwest::Url::parse(base) {
-            return Err(AuthError::InvalidUrl {
-                url: base.to_string(),
-                detail: error.to_string(),
-            });
-        }
+        let parsed_base = match reqwest::Url::parse(base) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return Err(AuthError::InvalidUrl {
+                    url: base.to_string(),
+                    detail: error.to_string(),
+                });
+            }
+        };
         let url = format!("{base}/v1/auth/check");
         let response = self
             .client
@@ -176,6 +179,8 @@ impl HttpSession {
             .map_err(|error| classify_auth_transport_error(&url, error))?;
         let status = response.status();
         let status_code = status.as_u16();
+        // After redirects, reqwest reports the final URL. http→https drops Authorization.
+        let final_url = response.url().clone();
         let text = response.text().map_err(|error| AuthError::ReadResponse {
             detail: error.to_string(),
         })?;
@@ -186,7 +191,7 @@ impl HttpSession {
             });
         }
         if status_code == 401 {
-            return Err(AuthError::InvalidKey);
+            return Err(classify_unauthorized(base, &parsed_base, &final_url));
         }
         if !status.is_success() {
             return Err(classify_auth_http_status(status_code, text));
@@ -528,6 +533,22 @@ impl HttpSession {
     }
 }
 
+/// Map HTTP 401. When `http://` was redirected to `https://`, the API key was
+/// dropped with the Authorization header — tell the user to use https.
+fn classify_unauthorized(
+    requested_base: &str,
+    requested_url: &reqwest::Url,
+    final_url: &reqwest::Url,
+) -> AuthError {
+    if requested_url.scheme() == "http" && final_url.scheme() == "https" {
+        AuthError::HttpsRequired {
+            url: requested_base.to_string(),
+        }
+    } else {
+        AuthError::InvalidKey
+    }
+}
+
 fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError {
     let detail = error.to_string();
     if error.is_timeout() {
@@ -590,5 +611,36 @@ where
                 thread::sleep(Duration::from_secs(u64::from(attempt)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unauthorized_http_to_https_redirect_asks_for_https() {
+        let requested = reqwest::Url::parse("http://app.bitrealm.dev").unwrap();
+        let final_url = reqwest::Url::parse("https://app.bitrealm.dev/v1/auth/check").unwrap();
+        let err = classify_unauthorized("http://app.bitrealm.dev", &requested, &final_url);
+        assert_eq!(err.kind(), "https_required");
+        assert!(err.user_message().contains("https://"));
+        assert!(err.detail().contains("Authorization"));
+    }
+
+    #[test]
+    fn unauthorized_same_scheme_is_invalid_key() {
+        let requested = reqwest::Url::parse("https://app.bitrealm.dev").unwrap();
+        let final_url = reqwest::Url::parse("https://app.bitrealm.dev/v1/auth/check").unwrap();
+        let err = classify_unauthorized("https://app.bitrealm.dev", &requested, &final_url);
+        assert_eq!(err.kind(), "invalid_key");
+    }
+
+    #[test]
+    fn unauthorized_local_http_is_invalid_key() {
+        let requested = reqwest::Url::parse("http://127.0.0.1:8080").unwrap();
+        let final_url = reqwest::Url::parse("http://127.0.0.1:8080/v1/auth/check").unwrap();
+        let err = classify_unauthorized("http://127.0.0.1:8080", &requested, &final_url);
+        assert_eq!(err.kind(), "invalid_key");
     }
 }

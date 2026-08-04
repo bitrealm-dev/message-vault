@@ -11,6 +11,8 @@ pub enum AuthError {
     Timeout { url: String, detail: String },
     ReadResponse { detail: String },
     WrongHostHtml { url: String, status: u16 },
+    /// Requested `http://…` but the vault redirected to `https://…` (auth header dropped).
+    HttpsRequired { url: String },
     InvalidKey,
     Forbidden { status: u16, body: String },
     ApiNotFound { status: u16, body: String },
@@ -36,6 +38,7 @@ impl AuthError {
             Self::Timeout { .. } => "timeout",
             Self::ReadResponse { .. } => "read_response",
             Self::WrongHostHtml { .. } => "wrong_host",
+            Self::HttpsRequired { .. } => "https_required",
             Self::InvalidKey => "invalid_key",
             Self::Forbidden { .. } => "forbidden",
             Self::ApiNotFound { .. } => "api_not_found",
@@ -69,6 +72,9 @@ impl AuthError {
             }
             Self::WrongHostHtml { .. } => {
                 "This URL points to the Message Vault website, not the vault API. Use the vault server URL (the TLS vault host or port 8080, not port 3000).".into()
+            }
+            Self::HttpsRequired { .. } => {
+                "This Vault URL uses `http://`, but the server requires `https://`. Change the URL to start with `https://` and try again.".into()
             }
             Self::InvalidKey => {
                 "This API key is not valid for the specified vault. Paste a valid key and try again."
@@ -127,6 +133,11 @@ impl fmt::Display for AuthError {
                 "auth/check returned HTML from {url} (HTTP {status}). \
                  Vault URL must point at the vault host (TLS site or port 8080), \
                  not the Next.js browse UI alone (port 3000)"
+            ),
+            Self::HttpsRequired { url } => write!(
+                f,
+                "vault URL {url} redirected from http to https; \
+                 use https:// so the API key is sent (http redirects drop Authorization)"
             ),
             Self::InvalidKey => write!(f, "invalid vault key"),
             Self::Forbidden { status, body }
@@ -198,6 +209,12 @@ mod tests {
                     status: 200,
                 },
                 "wrong_host",
+            ),
+            (
+                AuthError::HttpsRequired {
+                    url: "http://app.example".into(),
+                },
+                "https_required",
             ),
             (AuthError::InvalidKey, "invalid_key"),
             (
@@ -273,6 +290,11 @@ mod tests {
             assert!(!detail.is_empty(), "{kind} detail empty");
             match &error {
                 AuthError::InvalidKey | AuthError::MissingAccountId => {}
+                AuthError::HttpsRequired { url } => {
+                    assert!(detail.contains(url));
+                    assert!(detail.contains("https"));
+                    assert!(user.contains("https://"));
+                }
                 AuthError::WrongHostHtml { .. } => {
                     assert!(detail.contains("HTML") || detail.contains("html"));
                 }
