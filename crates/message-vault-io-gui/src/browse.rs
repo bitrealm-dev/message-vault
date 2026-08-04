@@ -30,7 +30,8 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
         | "extract.whatsapp_db"
         | "extract.apple_contacts" => BrowseKind::File,
         "extract.input" => BrowseKind::FileOrFolder,
-        "extract.db_path" | "import.backup_path" => BrowseKind::FileOrFolder,
+        "extract.db_path" => BrowseKind::FileOrFolder,
+        "import.backup_path" => BrowseKind::Folder,
         "extract.whatsapp_backup" => BrowseKind::FileOrFolder,
         _ => BrowseKind::Folder,
     }

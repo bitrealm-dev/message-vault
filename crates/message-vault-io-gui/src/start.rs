@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 use contacts::{ValidateMode, probe_contacts_input, validate_contacts_file};
@@ -64,27 +65,63 @@ fn start_library_job(
     let ui_weak = ui_weak.clone();
     let state_for_done = Arc::clone(state);
     std::thread::spawn(move || {
-        while let Ok(event) = rx.recv() {
-            let finished =
-                matches!(event, ProcessEvent::Finished(_) | ProcessEvent::Error { .. });
-            let (line, banner) = match &event {
-                ProcessEvent::Started(s) => (format!("$ {s}"), None),
-                ProcessEvent::Log(s) | ProcessEvent::Finished(s) => (s.clone(), None),
-                ProcessEvent::Error {
-                    detail,
-                    user_message,
-                } => (
-                    detail.clone(),
-                    Some(user_message.clone().unwrap_or_else(|| detail.clone())),
-                ),
-            };
+        while let Ok(first) = rx.recv() {
+            // Coalesce a short burst so rapid producers don't rebind the whole
+            // log buffer on every line (that freezes TextInput layout).
+            let mut batch = vec![first];
+            let deadline = Instant::now() + Duration::from_millis(50);
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(remaining) {
+                    Ok(more) => {
+                        let terminal = matches!(
+                            more,
+                            ProcessEvent::Finished(_) | ProcessEvent::Error { .. }
+                        );
+                        batch.push(more);
+                        if terminal {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            let mut lines = Vec::with_capacity(batch.len());
+            let mut finished = false;
+            let mut banner: Option<String> = None;
+            for event in batch {
+                match event {
+                    ProcessEvent::Started(s) => lines.push(format!("$ {s}")),
+                    ProcessEvent::Log(s) => lines.push(s),
+                    ProcessEvent::Finished(s) => {
+                        lines.push(s);
+                        finished = true;
+                    }
+                    ProcessEvent::Error {
+                        detail,
+                        user_message,
+                    } => {
+                        lines.push(detail.clone());
+                        banner = Some(user_message.unwrap_or(detail));
+                        finished = true;
+                    }
+                }
+            }
+
+            let chunk = lines.join("\n");
             let state_clone = Arc::clone(&state_for_done);
             let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                 {
                     let st = state_clone.lock().expect("state lock");
-                    st.append_session_log(&line);
+                    for line in &lines {
+                        st.append_session_log(line);
+                    }
                 }
-                sync::append_log_line(&ui, &line);
+                sync::append_log_text(&ui, &chunk);
                 if finished {
                     let mut st = state_clone.lock().expect("state lock");
                     st.running = false;
@@ -491,9 +528,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                 "Staging directory: {}",
                 staging.display()
             )));
-            let _ = tx.send(ProcessEvent::Log(
-                "Step 1/2: Extracting iPhone backup…".into(),
-            ));
+            send_step_banner(&tx, "Step 1/2: Extracting iPhone backup…");
 
             let extract_job = library_job_for_exporter(Exporter::Imessage, config);
             if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
@@ -512,9 +547,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                 return Err("cancelled".into());
             }
 
-            let _ = tx.send(ProcessEvent::Log(
-                "Step 2/2: Uploading staging data to Message Vault…".into(),
-            ));
+            send_step_banner(&tx, "Step 2/2: Uploading staging data to Message Vault…");
             match run_vault_upload(
                 VaultUploadArgs {
                     input: staging.clone(),
@@ -561,6 +594,12 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
     if let Some((label, job)) = job_and_label {
         start_library_job(ui_weak, state, label, job, OnSuccess::None);
     }
+}
+
+fn send_step_banner(tx: &mpsc::Sender<ProcessEvent>, title: &str) {
+    let _ = tx.send(ProcessEvent::Log("==========".into()));
+    let _ = tx.send(ProcessEvent::Log(title.to_string()));
+    let _ = tx.send(ProcessEvent::Log("==========".into()));
 }
 
 struct VaultUploadArgs {

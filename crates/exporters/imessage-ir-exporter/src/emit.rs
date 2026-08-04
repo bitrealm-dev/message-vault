@@ -67,7 +67,8 @@ use crate::{
 const EXPORT_SOURCE: &str = "imessage";
 const EXPORT_TOOL: &str = "imessage-ir-exporter";
 const DEFAULT_MESSAGE_PROGRESS_EVERY: u64 = 500;
-const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 1_000;
+const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 10_000;
+const CONVERSATION_PROGRESS_EVERY: u64 = 100;
 
 const fn message_progress_every(format: OutputFormat) -> u64 {
     match format {
@@ -92,7 +93,7 @@ struct PendingConversation {
 pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, RuntimeError> {
     let format = session.options.output_format;
     session.options.emit_log(format!(
-        "Exporting to {} as {}...",
+        "Preparing messages in {} as {}",
         session.options.export_path.display(),
         format.as_str()
     ));
@@ -223,7 +224,8 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
                 document_id
             ))
         })?;
-        if written.is_multiple_of(50) || written == total_conversations {
+        if written.is_multiple_of(CONVERSATION_PROGRESS_EVERY) || written == total_conversations
+        {
             session.options.emit_log(format!(
                 "  wrote {written}/{total_conversations} conversations"
             ));

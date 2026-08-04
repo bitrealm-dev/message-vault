@@ -35,12 +35,6 @@ export component LogPanel inherits VerticalLayout {
         }
     }
 
-    follow-timer := Timer {
-        interval: 100ms;
-        running: LogAdapter.running && root.stick-to-end;
-        triggered => { root.scroll-to-end(); }
-    }
-
     HorizontalLayout {
         spacing: 8px;
         padding: 0;

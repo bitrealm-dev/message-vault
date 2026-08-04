@@ -1012,7 +1012,8 @@ export component LogTextView inherits Rectangle {
             text: root.text;
             read-only: true;
             single-line: false;
-            wrap: word-wrap;
+            // no-wrap: word-wrap on a multi-MB buffer freezes the UI thread.
+            wrap: no-wrap;
             color: #e5e7eb;
             font-family: "monospace";
             font-size: 13px;

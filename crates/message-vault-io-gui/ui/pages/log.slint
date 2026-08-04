@@ -41,12 +41,6 @@ export component LogPage inherits VerticalLayout {
         }
     }
 
-    follow-timer := Timer {
-        interval: 100ms;
-        running: LogAdapter.running && root.stick-to-end;
-        triggered => { root.scroll-to-end(); }
-    }
-
     PageSummary {
         message: "Review progress and errors from the current or most recent operation.";
     }

@@ -332,19 +332,42 @@ pub fn pull_vault(ui: &AppWindow, state: &mut AppState) {
     state.export_ini.vault.skip_attachments = vault.get_skip_attachments();
 }
 
+/// Soft cap for on-screen log text. The session log file keeps the full stream.
+const UI_LOG_MAX_CHARS: usize = 256 * 1024;
+
 pub fn set_log_lines(ui: &AppWindow, lines: &[String]) {
     ui.global::<LogAdapter>()
-        .set_text(SharedString::from(lines.join("\n")));
+        .set_text(SharedString::from(trim_ui_log(&lines.join("\n"))));
 }
 
 pub fn append_log_line(ui: &AppWindow, line: &str) {
+    append_log_text(ui, line);
+}
+
+pub fn append_log_text(ui: &AppWindow, text: &str) {
+    if text.is_empty() {
+        return;
+    }
     let log = ui.global::<LogAdapter>();
     let current = log.get_text();
-    if current.is_empty() {
-        log.set_text(SharedString::from(line));
+    let next = if current.is_empty() {
+        text.to_string()
     } else {
-        log.set_text(SharedString::from(format!("{current}\n{line}")));
+        format!("{current}\n{text}")
+    };
+    log.set_text(SharedString::from(trim_ui_log(&next)));
+}
+
+fn trim_ui_log(text: &str) -> String {
+    if text.len() <= UI_LOG_MAX_CHARS {
+        return text.to_string();
     }
+    let cut = text.len() - UI_LOG_MAX_CHARS;
+    let cut = text[cut..]
+        .find('\n')
+        .map(|i| cut + i + 1)
+        .unwrap_or(cut);
+    format!("… (earlier log truncated)\n{}", &text[cut..])
 }
 
 pub fn clear_log_lines(ui: &AppWindow) {
