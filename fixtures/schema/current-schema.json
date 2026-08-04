@@ -6,6 +6,7 @@
     "account_api_tokens",
     "account_prefs",
     "schema_meta",
+    "vault_imports",
     "conversations",
     "participants",
     "messages",
@@ -28,6 +29,7 @@
   "indexes": [
     "ix_account_emails_one_primary",
     "ix_accounts_hanko_user_id",
+    "ix_vault_imports_account_started",
     "ix_conversations_account_id",
     "ix_participants_handle",
     "ix_messages_conversation_timestamp",
@@ -36,6 +38,7 @@
     "ix_messages_account_source_guid",
     "ix_messages_content_key",
     "ix_messages_duplicate_of",
+    "ix_messages_import_id",
     "ix_messages_source",
     "ix_attachments_sha256",
     "ix_attachments_message_id",

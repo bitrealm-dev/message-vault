@@ -16,7 +16,7 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
           Settings
         </h1>
         <p className="mt-1 text-[14px] text-muted">
-          Manage your profile, access, and appearance.
+          Manage your profile, access, storage, and appearance.
         </p>
         <nav
           aria-label="Settings sections"

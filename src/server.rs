@@ -61,6 +61,9 @@ struct ImportQuery {
     /// Run cross-source soft-dedupe after import.
     #[serde(default)]
     dedupe: bool,
+    /// Optional vault import session id from POST /v1/imports.
+    #[serde(default)]
+    import_id: Option<i64>,
 }
 
 fn default_import_mode() -> String {
@@ -156,6 +159,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/auth/check", get(auth_check))
+        .route("/v1/imports", post(imports_create_handler))
+        .route("/v1/imports/{id}/complete", post(imports_complete_handler))
         .route("/v1/import", post(import_handler))
         .route(
             "/v1/assets/{sha256}",
@@ -184,13 +189,15 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-rs serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
+    eprintln!("  POST /v1/imports  (start import session; returns id)");
+    eprintln!("  POST /v1/imports/{{id}}/complete");
     eprintln!("  HEAD /v1/assets/{{sha256}}?source=&account=  (probe before PUT)");
     eprintln!("  PUT  /v1/assets/{{sha256}}?source=&account=  (raw body; content-addressed media)");
     eprintln!("  POST /v1/assets/{{sha256}}/uploads?source=&account=  (start multipart)");
     eprintln!("  PUT  /v1/assets/{{sha256}}/uploads/{{id}}/parts/{{n}}  (part body)");
     eprintln!("  POST /v1/assets/{{sha256}}/uploads/{{id}}/complete");
     eprintln!("  DELETE /v1/assets/{{sha256}}/uploads/{{id}}  (abort)");
-    eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false");
+    eprintln!("  POST /v1/import?source=&account=&mode=append|replace&dedupe=false&import_id=");
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
     eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
     eprintln!("       Content-Type: multipart/form-data   (field jsonl + file parts; remote push)");
@@ -438,6 +445,131 @@ fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
         )));
     }
     Ok(out)
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateImportBody {
+    source: String,
+    #[serde(default = "default_import_mode")]
+    mode: String,
+    #[serde(default)]
+    tool: Option<String>,
+    #[serde(default)]
+    account: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateImportResponse {
+    ok: bool,
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteImportBody {
+    #[serde(default = "default_true")]
+    ok: bool,
+    #[serde(default)]
+    message_count: Option<i64>,
+    #[serde(default)]
+    attachment_count: Option<i64>,
+    #[serde(default)]
+    bytes_uploaded: Option<i64>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+struct CompleteImportResponse {
+    ok: bool,
+    id: i64,
+    status: String,
+    message_count: i64,
+    attachment_count: i64,
+    bytes_uploaded: i64,
+}
+
+async fn imports_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateImportBody>,
+) -> Result<Json<CreateImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    if body.source.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "body field source is required".into(),
+        ));
+    }
+    validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
+
+    let db = Arc::clone(&state.db);
+    let source = body.source.clone();
+    let mode = body.mode.clone();
+    let tool = body.tool.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        crate::db::account_profile::ensure_account_row(&conn, &account)?;
+        crate::db::vault_imports::start_import(
+            &conn,
+            &account,
+            &source,
+            &mode,
+            tool.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("create import task failed: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(CreateImportResponse { ok: true, id }))
+}
+
+async fn imports_complete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+    Json(body): Json<CompleteImportBody>,
+) -> Result<Json<CompleteImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
+    let db = Arc::clone(&state.db);
+    let args = crate::db::vault_imports::CompleteImportArgs {
+        ok: body.ok,
+        message_count: body.message_count,
+        attachment_count: body.attachment_count,
+        bytes_uploaded: body.bytes_uploaded,
+    };
+    let row = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("complete import task failed: {e}")))?
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            ApiError::NotFound(msg)
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+
+    Ok(Json(CompleteImportResponse {
+        ok: true,
+        id: row.id,
+        status: row.status,
+        message_count: row.message_count,
+        attachment_count: row.attachment_count,
+        bytes_uploaded: row.bytes_uploaded,
+    }))
 }
 
 async fn import_handler(
@@ -989,6 +1121,7 @@ async fn run_import_path(
         .ok_or_else(|| ApiError::BadRequest("account is required".into()))?;
     let source_id = query.source.clone();
     let do_dedupe = query.dedupe;
+    let query_import_id = query.import_id;
 
     let account_lock = {
         let mut map = state.account_import_locks.lock().await;
@@ -1003,6 +1136,14 @@ async fn run_import_path(
         // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
         // Multipart supplies a temp asset_root for relative file parts.
         let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
+        if let Some(import_id) = query_import_id {
+            let conn = db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+            crate::db::vault_imports::get_owned_import(&conn, &account, import_id)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            drop(conn);
+        }
         let opts = ImportOptions {
             db_path: &cfg.paths.db,
             assets_dir: &assets_dir,
@@ -1016,6 +1157,7 @@ async fn run_import_path(
             // Content keys are only required when the optional post-import dedupe pass runs.
             fill_content_keys: do_dedupe,
             backfill_contacts: false,
+            import_id: query_import_id,
         };
         let mut conn = db
             .lock()

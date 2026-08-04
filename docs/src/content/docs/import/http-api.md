@@ -15,11 +15,17 @@ attachments by SHA-256) to these endpoints.
 |--------|------|------|
 | `GET` | `/health` | None |
 | `GET` | `/v1/auth/check` | Bearer Import API token |
+| `POST` | `/v1/imports` | Bearer token — start an import session (`{ source, mode, tool? }`) |
+| `POST` | `/v1/imports/{id}/complete` | Bearer token — finish session with counts |
 | `PUT` | `/v1/assets/{sha256}?source=&account=` | Bearer token |
-| `POST` | `/v1/import?source=&account=&mode=&dedupe=` | Bearer token |
+| `POST` | `/v1/import?source=&account=&mode=&dedupe=&import_id=` | Bearer token |
 
 Auth is per-account only (no host-wide admin token). Tokens come from
 **Settings → Access** in the web UI.
+
+`vault-push` starts a session with `POST /v1/imports`, passes `import_id` on each
+`POST /v1/import`, then completes the session so Settings → Storage can list
+import history. Messages promoted during that session store `messages.import_id`.
 
 ## Import body formats
 

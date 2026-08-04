@@ -54,6 +54,8 @@ pub struct ImportOptions<'a> {
     pub fill_content_keys: bool,
     /// Create unknown contacts / fill empty names after promote.
     pub backfill_contacts: bool,
+    /// Optional vault import session id (messages stamped on promote).
+    pub import_id: Option<i64>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -120,7 +122,22 @@ pub fn import_export(
         .collect();
     paths.sort();
 
-    import_jsonl_files(
+    let mut conn = Connection::open(db_path)
+        .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    schema::configure_connection(&conn)?;
+    schema::ensure_vault_schema(&conn)?;
+    crate::db::account_profile::ensure_account_row(&conn, account_id)?;
+
+    let import_id = crate::db::vault_imports::start_import(
+        &conn,
+        account_id,
+        source,
+        mode.as_str(),
+        Some("message-vault-rs"),
+    )?;
+
+    let result = import_jsonl_files_on_conn(
+        &mut conn,
         &paths,
         &ImportOptions {
             db_path,
@@ -133,8 +150,41 @@ pub fn import_export(
             account_id,
             fill_content_keys: true,
             backfill_contacts: true,
+            import_id: Some(import_id),
         },
-    )
+        ImportSchemaMode::AssumeReady,
+    );
+
+    match &result {
+        Ok(stats) => {
+            let _ = crate::db::vault_imports::complete_import(
+                &conn,
+                account_id,
+                import_id,
+                &crate::db::vault_imports::CompleteImportArgs {
+                    ok: true,
+                    message_count: Some(stats.messages as i64),
+                    attachment_count: Some(stats.attachments as i64),
+                    bytes_uploaded: None,
+                },
+            );
+        }
+        Err(_) => {
+            let _ = crate::db::vault_imports::complete_import(
+                &conn,
+                account_id,
+                import_id,
+                &crate::db::vault_imports::CompleteImportArgs {
+                    ok: false,
+                    message_count: None,
+                    attachment_count: None,
+                    bytes_uploaded: None,
+                },
+            );
+        }
+    }
+
+    result
 }
 
 /// Whether import should run DDL/schema ensure on the connection.
@@ -257,7 +307,7 @@ pub fn import_jsonl_files_on_conn(
     const STAGING_COMMIT_EVERY: usize = 50;
 
     let mut tx = conn.transaction()?;
-    let mut stmts = StagingInserts::prepare(&tx, opts.account_id)?;
+    let mut stmts = StagingInserts::prepare(&tx, opts.account_id, opts.import_id)?;
 
     for (idx, path) in paths.iter().enumerate() {
         let file_stats = import_file_to_staging(
@@ -290,7 +340,7 @@ pub fn import_jsonl_files_on_conn(
             drop(stmts);
             tx.commit()?;
             tx = conn.transaction()?;
-            stmts = StagingInserts::prepare(&tx, opts.account_id)?;
+            stmts = StagingInserts::prepare(&tx, opts.account_id, opts.import_id)?;
         }
     }
     drop(stmts);
@@ -419,6 +469,7 @@ fn prepare_attachments(
 
 struct StagingInserts<'conn> {
     account_id: String,
+    import_id: Option<i64>,
     conv: Statement<'conn>,
     part: Statement<'conn>,
     msg: Statement<'conn>,
@@ -427,9 +478,14 @@ struct StagingInserts<'conn> {
 }
 
 impl<'conn> StagingInserts<'conn> {
-    fn prepare(tx: &'conn Transaction<'_>, account_id: &str) -> Result<Self> {
+    fn prepare(
+        tx: &'conn Transaction<'_>,
+        account_id: &str,
+        import_id: Option<i64>,
+    ) -> Result<Self> {
         Ok(Self {
             account_id: account_id.to_string(),
+            import_id,
             conv: tx.prepare(
                 r#"
                 INSERT INTO staging_conversations (
@@ -448,9 +504,9 @@ impl<'conn> StagingInserts<'conn> {
                 INSERT OR IGNORE INTO staging_messages (
                     conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                     subject, body, is_announcement, is_reply, thread_originator_guid,
-                    thread_originator_part, num_replies, sort_order
+                    thread_originator_part, num_replies, sort_order, import_id
                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
                 )
                 "#,
             )?,
@@ -664,6 +720,7 @@ fn import_conversation_to_staging(
             msg.thread_originator_part,
             msg.num_replies,
             sort_order as i64,
+            stmts.import_id,
         ])?;
 
         if inserted == 0 {
@@ -867,12 +924,13 @@ fn promote_append(
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                 subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order
+                thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
                 sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+                sm.import_id
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
             ORDER BY sm.id
@@ -920,12 +978,13 @@ fn promote_append(
             INSERT OR IGNORE INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                 subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order
+                thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
                 sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+                sm.import_id
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
             WHERE sm.account_id = ?1
@@ -942,12 +1001,13 @@ fn promote_append(
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
                 subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order
+                thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
                 sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+                sm.import_id
             FROM staging_messages sm
             JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
             WHERE sm.account_id = ?1
@@ -1157,6 +1217,7 @@ mod tests {
                 account_id: TEST_ACCOUNT,
                 fill_content_keys: true,
                 backfill_contacts: false,
+                import_id: None,
             },
         )
         .unwrap();
@@ -1184,6 +1245,7 @@ mod tests {
                 account_id: TEST_ACCOUNT,
                 fill_content_keys: false,
                 backfill_contacts: false,
+                import_id: None,
             },
         )
         .unwrap();
@@ -1259,6 +1321,7 @@ mod tests {
                 account_id: TEST_ACCOUNT,
                 fill_content_keys: false,
                 backfill_contacts: false,
+                import_id: None,
             },
         )
         .unwrap();
@@ -1274,6 +1337,93 @@ mod tests {
         assert_eq!(
             hits, 1,
             "attachment original_name must be searchable after deferred FTS"
+        );
+    }
+
+    #[test]
+    fn promote_stamps_messages_with_import_id() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let path = write_jsonl(
+            tmp.path(),
+            "import-id.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-import","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"linked","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+
+        let mut conn = Connection::open(&db).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        let import_id = crate::db::vault_imports::start_import(
+            &conn,
+            TEST_ACCOUNT,
+            "imessage",
+            "append",
+            Some("test"),
+        )
+        .unwrap();
+
+        let stats = import_jsonl_files_on_conn(
+            &mut conn,
+            &[path],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                backfill_contacts: false,
+                import_id: Some(import_id),
+            },
+            ImportSchemaMode::AssumeReady,
+        )
+        .unwrap();
+        assert_eq!(stats.messages, 1);
+
+        let stamped: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE import_id = ?1",
+                params![import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stamped, 1);
+
+        let row = crate::db::vault_imports::complete_import(
+            &conn,
+            TEST_ACCOUNT,
+            import_id,
+            &crate::db::vault_imports::CompleteImportArgs {
+                ok: true,
+                message_count: Some(stats.messages as i64),
+                attachment_count: Some(0),
+                bytes_uploaded: Some(0),
+            },
+        )
+        .unwrap();
+        assert_eq!(row.status, "completed");
+        assert_eq!(row.message_count, 1);
+
+        let listed = crate::db::vault_imports::list_imports_for_account(&conn, TEST_ACCOUNT, 10)
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].source, "imessage");
+        assert_eq!(listed[0].started_at.is_empty(), false);
+        assert!(listed[0].finished_at.is_some());
+        assert_eq!(
+            crate::db::vault_imports::account_attachment_bytes(&conn, TEST_ACCOUNT).unwrap(),
+            0
+        );
+        assert!(
+            crate::db::vault_imports::top_attachments_by_size(&conn, TEST_ACCOUNT, 5)
+                .unwrap()
+                .is_empty()
         );
     }
 }

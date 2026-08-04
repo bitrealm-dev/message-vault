@@ -1,9 +1,9 @@
 ---
 title: Settings
-description: Account, access, and appearance settings.
+description: Account, access, storage, and appearance settings.
 ---
 
-Settings opens at `/settings/account` with three tabs:
+Settings opens at `/settings/account` with four tabs:
 
 ## Account
 
@@ -20,6 +20,13 @@ Settings opens at `/settings/account` with three tabs:
   shown once; delete and generate it again if needed
 
 New accounts start with view-only mode off. The demo account starts with it on.
+
+## Storage
+
+- **Usage** — total attachment bytes for this account
+- **Import history** — date, import type (source), message count, and
+  attachment count for each recorded vault push or CLI import
+- **Largest attachments** — top attachments by file size
 
 ## Appearance
 

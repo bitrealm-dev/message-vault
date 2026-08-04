@@ -33,6 +33,29 @@ function ensureAccountColumns(db: Database.Database): void {
   `);
 }
 
+function ensureImportIdColumns(db: Database.Database): void {
+  if (tableExists(db, "messages") && !columnExists(db, "messages", "import_id")) {
+    db.exec(
+      `ALTER TABLE messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL`,
+    );
+  }
+  if (
+    tableExists(db, "staging_messages") &&
+    !columnExists(db, "staging_messages", "import_id")
+  ) {
+    db.exec(
+      `ALTER TABLE staging_messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL`,
+    );
+  }
+  if (tableExists(db, "messages")) {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS ix_messages_import_id
+        ON messages (import_id)
+        WHERE import_id IS NOT NULL
+    `);
+  }
+}
+
 export function ensureVaultSchema(db: Database.Database): void {
   db.exec(`PRAGMA foreign_keys = ON;`);
 
@@ -81,6 +104,23 @@ export function ensureVaultSchema(db: Database.Database): void {
       PRIMARY KEY (account_id, key)
     );
 
+    CREATE TABLE IF NOT EXISTS vault_imports (
+      id INTEGER PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      source TEXT NOT NULL,
+      tool TEXT,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      attachment_count INTEGER NOT NULL DEFAULT 0,
+      bytes_uploaded INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
+      ON vault_imports(account_id, started_at DESC);
+
     CREATE TABLE IF NOT EXISTS conversations (
       id INTEGER PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -122,7 +162,8 @@ export function ensureVaultSchema(db: Database.Database): void {
       num_replies INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL,
       content_key TEXT,
-      duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL
+      duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS ix_messages_conversation_timestamp
@@ -139,6 +180,9 @@ export function ensureVaultSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS ix_messages_duplicate_of
       ON messages (duplicate_of)
       WHERE duplicate_of IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS ix_messages_import_id
+      ON messages (import_id)
+      WHERE import_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ix_conversations_account_id
       ON conversations (account_id);
 
@@ -211,7 +255,8 @@ export function ensureVaultSchema(db: Database.Database): void {
       thread_originator_guid TEXT,
       thread_originator_part INTEGER,
       num_replies INTEGER NOT NULL DEFAULT 0,
-      sort_order INTEGER NOT NULL
+      sort_order INTEGER NOT NULL,
+      import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS ix_staging_messages_conversation_timestamp
@@ -308,6 +353,7 @@ export function ensureVaultSchema(db: Database.Database): void {
   `);
 
   ensureAccountColumns(db);
+  ensureImportIdColumns(db);
   ensureMessagesFts(db);
 }
 

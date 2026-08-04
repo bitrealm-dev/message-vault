@@ -78,7 +78,8 @@ CREATE TABLE messages (
     num_replies INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL,
     content_key TEXT,
-    duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL
+    duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
 );
 
 CREATE INDEX ix_messages_conversation_timestamp
@@ -95,6 +96,9 @@ CREATE INDEX ix_messages_content_key
 CREATE INDEX ix_messages_duplicate_of
     ON messages (duplicate_of)
     WHERE duplicate_of IS NOT NULL;
+CREATE INDEX ix_messages_import_id
+    ON messages (import_id)
+    WHERE import_id IS NOT NULL;
 
 CREATE TABLE attachments (
     id INTEGER PRIMARY KEY,
@@ -167,7 +171,8 @@ CREATE TABLE staging_messages (
     thread_originator_guid TEXT,
     thread_originator_part INTEGER,
     num_replies INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL
+    sort_order INTEGER NOT NULL,
+    import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL
 );
 
 CREATE INDEX ix_staging_messages_conversation_timestamp
@@ -297,7 +302,34 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch(CONTACTS_TABLES_DDL)?;
     }
 
+    ensure_import_id_columns(conn)?;
     ensure_messages_fts(conn)?;
+    Ok(())
+}
+
+/// Migrate existing DBs: messages / staging_messages.import_id + indexes.
+fn ensure_import_id_columns(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "messages")? && !column_exists(conn, "messages", "import_id")? {
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL",
+        )?;
+    }
+    if table_exists(conn, "staging_messages")?
+        && !column_exists(conn, "staging_messages", "import_id")?
+    {
+        conn.execute_batch(
+            "ALTER TABLE staging_messages ADD COLUMN import_id INTEGER REFERENCES vault_imports(id) ON DELETE SET NULL",
+        )?;
+    }
+    if table_exists(conn, "messages")? {
+        conn.execute_batch(
+            r#"
+            CREATE INDEX IF NOT EXISTS ix_messages_import_id
+                ON messages (import_id)
+                WHERE import_id IS NOT NULL
+            "#,
+        )?;
+    }
     Ok(())
 }
 
@@ -683,6 +715,23 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS vault_imports (
+            id INTEGER PRIMARY KEY,
+            account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            source TEXT NOT NULL,
+            tool TEXT,
+            mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            attachment_count INTEGER NOT NULL DEFAULT 0,
+            bytes_uploaded INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
+            ON vault_imports(account_id, started_at DESC);
         "#,
     )?;
 
