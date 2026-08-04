@@ -92,3 +92,76 @@ The following are intentionally deferred:
 
 V2 should reuse the APIs and client handlers retained behind the V1 GUI
 capability gate (`web/src/lib/v1Capabilities.ts`).
+
+## Future: VPS hosting and Hanko authentication
+
+Message Vault should support a production VPS deployment with passwordless
+Hanko authentication and one isolated vault account per Hanko user. Dev and
+Access-settings Hanko wiring already exist on main; this section describes
+production identity binding, host layout, and deploy automation still to
+harden.
+
+### Repository boundary
+
+- Keep application code, the release image, Hanko integration, database
+  migrations, and generic architecture documentation in this repository.
+- Keep instance-specific deployment state in a separate private
+  `message-vault-ops` repository: Docker Compose, Caddy routes, Hanko
+  configuration templates, pinned image versions, deployment workflows, and
+  operator runbooks.
+- Keep secrets and persistent state outside both repositories under
+  `/srv/message-vault/`, including the vault SQLite database and media, Hanko
+  PostgreSQL data, and backups.
+
+### Runtime architecture
+
+The VPS stack should contain:
+
+- Caddy for TLS and routing;
+- the Message Vault release container, with the Next.js UI on port 3000 and
+  Rust import API on port 8080;
+- the Hanko public API and a one-shot Hanko migration job;
+- PostgreSQL for Hanko;
+- an external SMTP provider for passwordless email delivery.
+
+Use separate hostnames such as `vault.example.com`, `auth.example.com`, and
+`import.example.com`. Bundle Hanko Elements into the Next.js application.
+Keep the import API's per-account bearer tokens independent from Hanko browser
+sessions.
+
+### Identity model
+
+- Keep a unique mapping from each verified Hanko user ID to one Message Vault
+  account ID (first-login provisioning already exists; harden for production).
+- Prefer Hanko Elements and server-side Hanko session validation over any
+  public account picker when `VAULT_AUTH=hanko`.
+- Derive every browser request's account exclusively from the verified Hanko
+  subject (not from a client-supplied account id).
+- Provision the local account idempotently on first login, then collect any
+  Message Vault profile fields not supplied by Hanko.
+- Preserve the existing `account_id` isolation for messages, contacts,
+  settings, media, and import tokens.
+
+### Build, deployment, and maintenance
+
+- Build and test `Dockerfile.release` in GitHub Actions and publish immutable
+  commit-addressed images to GHCR.
+- Pin Message Vault, Hanko, PostgreSQL, and Caddy image versions in the private
+  `message-vault-ops` repository.
+- Use Renovate to propose image updates. A merge to the ops repository's main
+  branch should deploy over SSH, run Hanko migrations, pull images, apply
+  Compose, and verify health endpoints.
+- Provide idempotent VPS bootstrap, backup/restore, rollback, log inspection,
+  and disaster-recovery procedures.
+- Back up both the vault SQLite/media directory and Hanko PostgreSQL data on a
+  systemd timer.
+
+### Acceptance checks
+
+- Two Hanko identities resolve to different vault accounts and cannot select
+  each other's account.
+- Invalid or expired Hanko sessions are rejected.
+- First-login provisioning is idempotent.
+- Import API tokens remain account-scoped.
+- Compose validation, release image build, migrations, restart persistence,
+  health checks, backup/restore, and image rollback all pass.
