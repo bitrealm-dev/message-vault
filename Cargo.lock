@@ -4007,6 +4007,7 @@ dependencies = [
  "slint-build",
  "sms-backup-plus-exporter",
  "sms-backup-restore-exporter",
+ "vault-pull",
  "vault-push",
  "whatsapp-exporter",
 ]
@@ -7206,6 +7207,23 @@ name = "value-bag"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "068e763e8279de7ab94b6afebded2cb701678af094feb1c12ccb061b4783c1be"
+
+[[package]]
+name = "vault-pull"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "httpmock",
+ "message-ir",
+ "message-vault-io-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "vault-push",
+]
 
 [[package]]
 name = "vault-push"

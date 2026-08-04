@@ -198,7 +198,8 @@ fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
-fn wire_vault_export(ui: &AppWindow, _state: Arc<Mutex<AppState>>) {
+fn wire_vault_export(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
     ui.global::<VaultExportAdapter>().on_date_for_text(|value| {
         let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
             .unwrap_or_else(|_| Local::now().date_naive());
@@ -209,8 +210,25 @@ fn wire_vault_export(ui: &AppWindow, _state: Arc<Mutex<AppState>>) {
         }
     });
 
-    // First pass: form only — export from vault is not implemented yet.
-    ui.global::<VaultExportAdapter>().on_run(move || {});
+    ui.global::<VaultExportAdapter>().on_browse({
+        let ui_weak = ui_weak.clone();
+        move |field_id| {
+            let kind = browse::browse_kind_for_field(&field_id);
+            browse::pick_path(ui_weak.clone(), field_id.to_string(), kind);
+        }
+    });
+
+    ui.global::<VaultExportAdapter>().on_query({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || start::start_vault_export_query(&ui_weak, &state)
+    });
+
+    ui.global::<VaultExportAdapter>().on_run({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || start::start_vault_export(&ui_weak, &state)
+    });
 }
 
 fn wire_contacts(ui: &AppWindow, state: Arc<Mutex<AppState>>) {

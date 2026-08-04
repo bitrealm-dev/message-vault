@@ -29,6 +29,7 @@ message-reexport = { path = "../message/reexport" }
 media = { path = "../message/media" }
 phone = { path = "../message/phone" }
 vault-push = { path = "../vault-push", default-features = false }
+vault-pull = { path = "../vault-pull", default-features = false }
 
 [build-dependencies]
 slint-build = "1.17"

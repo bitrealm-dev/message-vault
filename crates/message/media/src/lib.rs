@@ -13,7 +13,7 @@ mod process;
 mod size;
 mod tools;
 
-pub use process::{MediaReport, process_attachments_dir};
+pub use process::{MediaReport, process_attachments_dir, process_attachments_dir_with_log};
 use size::parse_size;
 pub use tools::ffmpeg_available;
 

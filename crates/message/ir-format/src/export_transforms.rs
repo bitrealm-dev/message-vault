@@ -214,7 +214,13 @@ pub(crate) fn apply_transforms(
     let (media, remap) = if transforms.obfuscate {
         (MediaReport::default(), HashMap::new())
     } else {
-        media::process_attachments_dir(output_dir, transforms.media, &transforms.compress)?
+        let mut log_fn = |line: &str| emit_log(transforms.log.as_ref(), line);
+        media::process_attachments_dir_with_log(
+            output_dir,
+            transforms.media,
+            &transforms.compress,
+            Some(&mut log_fn),
+        )?
     };
     if !remap.is_empty() {
         for doc in docs.iter_mut() {
@@ -303,6 +309,7 @@ mod tests {
                     is_sticker: false,
                     transcription: None,
                     sticker_effect: None,
+                    size_bytes: None,
                     bytes: None,
                 }],
                 imessage: None,

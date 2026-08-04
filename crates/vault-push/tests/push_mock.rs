@@ -426,6 +426,7 @@ fn profiles_attachment_upload_phases() {
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
+        size_bytes: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -539,6 +540,7 @@ fn skips_put_when_head_reports_asset_present() {
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
+        size_bytes: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -636,6 +638,7 @@ fn multipart_upload_when_over_proxy_threshold() {
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
+        size_bytes: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -714,6 +717,7 @@ fn multipart_aborts_on_hash_mismatch_complete() {
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
+        size_bytes: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);

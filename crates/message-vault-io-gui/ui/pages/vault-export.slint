@@ -1,7 +1,7 @@
 import { Button, Date } from "std-widgets.slint";
 import {
     AdvancedSection, AnchoredScrollPage, FormMetrics, PanelTabBar,
-    StackedComboBox, StackedDateEdit, StackedHint
+    StackedComboBox, StackedDateEdit, StackedHint, StackedLineEdit, StackedPathField
 } from "../widgets.slint";
 import { LogPanel } from "log-panel.slint";
 
@@ -14,11 +14,37 @@ export global VaultExportAdapter {
     // Empty start/end means export all data.
     in-out property <string> start-date;
     in-out property <string> end-date;
+    // Optional Fastmail-style operators (with:, has:attachment, …).
+    in-out property <string> search-query;
+    in-out property <string> output;
+    in-out property <bool> skip-attachments: false;
 
     in property <bool> enabled: true;
+    // Set after a successful Query for the current filters; cleared when filters change.
+    in-out property <bool> query-ready: false;
+    in-out property <string> query-summary: "";
 
     callback date-for-text(string) -> Date;
+    callback browse(string);
+    callback query();
     callback run();
+
+    changed exporter-index => {
+        query-ready = false;
+        query-summary = "";
+    }
+    changed start-date => {
+        query-ready = false;
+        query-summary = "";
+    }
+    changed end-date => {
+        query-ready = false;
+        query-summary = "";
+    }
+    changed search-query => {
+        query-ready = false;
+        query-summary = "";
+    }
 }
 
 export component VaultExportPage inherits VerticalLayout {
@@ -45,7 +71,25 @@ export component VaultExportPage inherits VerticalLayout {
                 current-index <=> VaultExportAdapter.exporter-index;
             }
             StackedHint {
-                message: "iMessage covers both iOS backups and macOS Messages.";
+                message: "Pulls matching messages from Message Vault (read-only). Uses the Vault URL and API key from Credentials / Vault Import.";
+            }
+
+            StackedPathField {
+                label: "Output directory";
+                required: true;
+                placeholder: "Folder for message-ir JSONL + attachments/";
+                field-id: "vault_export.output";
+                value <=> VaultExportAdapter.output;
+                browse-requested(id) => { VaultExportAdapter.browse(id); }
+            }
+
+            StackedLineEdit {
+                label: "Search";
+                placeholder: "Optional: with:alice has:attachment source:imessage";
+                value <=> VaultExportAdapter.search-query;
+            }
+            StackedHint {
+                message: "Fastmail-style operators. Leave empty to export all messages (still respects dates below).";
             }
 
             VerticalLayout {
@@ -88,10 +132,21 @@ export component VaultExportPage inherits VerticalLayout {
             spacing: 8px;
             alignment: start;
             Button {
+                text: "Query";
+                enabled: VaultExportAdapter.enabled;
+                clicked => { VaultExportAdapter.query(); }
+            }
+            Button {
                 text: "Export";
                 primary: true;
-                enabled: VaultExportAdapter.enabled;
+                enabled: VaultExportAdapter.enabled && VaultExportAdapter.query-ready;
                 clicked => { VaultExportAdapter.run(); }
+            }
+            if VaultExportAdapter.query-summary != "": Text {
+                text: VaultExportAdapter.query-summary;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
             }
         }
     }

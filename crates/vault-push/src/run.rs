@@ -1147,7 +1147,8 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let source = project::validate_header(&header)?;
     let messages = &doc.messages;
 
-    let mut per_message_digests: Vec<Vec<(usize, String)>> = Vec::with_capacity(messages.len());
+    let mut per_message_digests: Vec<Vec<(usize, String, u64)>> =
+        Vec::with_capacity(messages.len());
     let mut attachment_count = 0u64;
     let mut profile = UploadProfile {
         read_ms,
@@ -1177,6 +1178,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 safe_rel(rel)?;
                 let abs = resolve_attachment(input, rel)
                     .ok_or_else(|| anyhow::anyhow!("{name}: missing attachment {rel}"))?;
+                let file_len = std::fs::metadata(&abs)
+                    .with_context(|| format!("{name}: stat attachment {rel}"))?
+                    .len();
                 let digest = match att
                     .digest_sha256
                     .as_deref()
@@ -1200,7 +1204,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 unique
                     .entry(digest.clone())
                     .or_insert_with(|| (rel.to_string(), att.mime_type.clone()));
-                digests.push((att_i, digest));
+                digests.push((att_i, digest, file_len));
             }
             per_message_digests.push(digests);
         }

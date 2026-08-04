@@ -259,6 +259,7 @@ fn parse_attachments(raw: &str) -> Result<Vec<IrAttachment>> {
             is_sticker: a.is_sticker,
             transcription: a.transcription,
             sticker_effect: a.sticker_effect,
+            size_bytes: None,
             bytes: None,
         })
         .collect())

@@ -13,6 +13,7 @@ use crate::ExtractAdapter;
 use crate::FormatAdapter;
 use crate::ImportAdapter;
 use crate::VaultAdapter;
+use crate::VaultExportAdapter;
 
 #[derive(Debug, Clone, Copy)]
 pub enum BrowseKind {
@@ -35,6 +36,7 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
         "import.db_path" => BrowseKind::Folder,
         "import.attachment_root" => BrowseKind::Folder,
         "extract.whatsapp_backup" => BrowseKind::FileOrFolder,
+        "vault_export.output" => BrowseKind::Folder,
         _ => BrowseKind::Folder,
     }
 }
@@ -174,6 +176,7 @@ fn apply_path(ui: &AppWindow, field_id: &str, path: SharedString) {
         "format.input" => ui.global::<FormatAdapter>().set_input(path),
         "format.output" => ui.global::<FormatAdapter>().set_output(path),
         "vault.input" => ui.global::<VaultAdapter>().set_input(path),
+        "vault_export.output" => ui.global::<VaultExportAdapter>().set_output(path),
         _ => {}
     }
 }

@@ -1,5 +1,7 @@
 import { Button, CheckBox, Date, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
 import { CompactComboBox } from "compact-combo-box.slint";
+// Bundled so log columns align on every platform (generic "monospace" is unreliable in Slint).
+import "./fonts/LiberationMono-Regular.ttf";
 
 // Classic desktop dialog grid:
 //   [ right-aligned label | flexible control | trailing button ]
@@ -373,10 +375,11 @@ export component CheckBoxRow inherits FormRow {
 }
 
 /// Label above the control (guided Import / Credentials layout).
-/// Indented to match `stacked-control-indent` so headings line up with text fields.
+/// When `indent` is true, offset matches `stacked-control-indent` so labels line up with fields.
 export component StackedFieldLabel inherits HorizontalLayout {
     in property <string> label;
     in property <bool> required: false;
+    in property <bool> indent: true;
     spacing: 0;
     padding: 0;
     alignment: start;
@@ -384,7 +387,7 @@ export component StackedFieldLabel inherits HorizontalLayout {
     horizontal-stretch: 1;
     height: 22px;
 
-    Rectangle {
+    if root.indent: Rectangle {
         width: FormMetrics.stacked-control-indent;
         horizontal-stretch: 0;
         vertical-stretch: 0;
@@ -423,6 +426,7 @@ export component StackedLineEdit inherits VerticalLayout {
     in-out property <string> value;
     in property <bool> password: false;
     in property <bool> enabled: true;
+    in property <bool> indent: true;
     spacing: 2px;
     padding: 0;
     vertical-stretch: 0;
@@ -430,6 +434,7 @@ export component StackedLineEdit inherits VerticalLayout {
     StackedFieldLabel {
         label: root.label;
         required: root.required;
+        indent: root.indent;
     }
     HorizontalLayout {
         spacing: 0;
@@ -437,7 +442,7 @@ export component StackedLineEdit inherits VerticalLayout {
         alignment: stretch;
         vertical-stretch: 0;
         height: FormMetrics.row-height;
-        Rectangle {
+        if root.indent: Rectangle {
             width: FormMetrics.stacked-control-indent;
             horizontal-stretch: 0;
         }
@@ -517,6 +522,7 @@ export component StackedComboBox inherits VerticalLayout {
     in property <[string]> model;
     in-out property <int> current-index;
     in property <int> separator-before-index: -1;
+    in property <bool> indent: true;
     callback selected(string);
     spacing: 2px;
     padding: 0;
@@ -525,6 +531,7 @@ export component StackedComboBox inherits VerticalLayout {
     StackedFieldLabel {
         label: root.label;
         required: root.required;
+        indent: root.indent;
     }
     HorizontalLayout {
         spacing: 0;
@@ -532,7 +539,7 @@ export component StackedComboBox inherits VerticalLayout {
         alignment: stretch;
         vertical-stretch: 0;
         height: FormMetrics.row-height;
-        Rectangle {
+        if root.indent: Rectangle {
             width: FormMetrics.stacked-control-indent;
             horizontal-stretch: 0;
         }
@@ -761,10 +768,12 @@ export component StackedDateEdit inherits VerticalLayout {
 
 export component StackedHint inherits HorizontalLayout {
     in property <string> message;
+    // When false, helper text shares the field/heading left edge (credentials).
+    in property <bool> indent: true;
     spacing: 0;
     padding: 0;
     vertical-stretch: 0;
-    Rectangle {
+    if root.indent: Rectangle {
         width: FormMetrics.stacked-hint-indent;
         horizontal-stretch: 0;
     }
@@ -1167,7 +1176,7 @@ export component LogTextView inherits Rectangle {
                 // no-wrap: word-wrap on a multi-MB buffer freezes the UI thread.
                 wrap: no-wrap;
                 color: #e5e7eb;
-                font-family: "monospace";
+                font-family: "Liberation Mono";
                 font-size: 13px;
                 selection-background-color: #2563eb;
                 selection-foreground-color: #ffffff;

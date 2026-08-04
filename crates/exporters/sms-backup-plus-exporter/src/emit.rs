@@ -391,6 +391,7 @@ fn pending_to_document(
                 is_sticker: false,
                 transcription: None,
                 sticker_effect: None,
+                size_bytes: None,
                 bytes: None,
             })
             .collect();

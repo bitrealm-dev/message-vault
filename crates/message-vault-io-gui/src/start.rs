@@ -13,6 +13,10 @@ use message_vault_io_core::{
 use message_reexport::run as run_format;
 use phone::PhoneRegion;
 use slint::ComponentHandle;
+use vault_pull::{
+    ProgressEvent as VaultPullProgressEvent, QueryStats, VaultPullConfig, compose_query,
+    query_stats as run_vault_query_stats, run as run_vault_pull,
+};
 use vault_push::{
     ProgressEvent as VaultProgressEvent, VaultPushConfig, authenticate as vault_authenticate,
     run as run_vault_push,
@@ -20,17 +24,20 @@ use vault_push::{
 
 use crate::AppWindow;
 use crate::CredentialsAdapter;
+use crate::VaultExportAdapter;
 use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
 use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
 use crate::sync;
 
 /// Optional action after a job finishes successfully.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum OnSuccess {
     None,
     GoToImportScreen,
     GoToExportScreen,
+    /// Apply Vault Export query summary (written by the job before finish).
+    VaultExportQuery(Arc<Mutex<Option<String>>>),
 }
 
 pub(crate) fn report_errors(ui: &AppWindow, state: &mut AppState, errors: Vec<String>) {
@@ -138,6 +145,7 @@ fn start_library_job(
             if schedule {
                 let state_clone = Arc::clone(&state_for_done);
                 let pending_ui = Arc::clone(&pending_ui);
+                let on_success = on_success.clone();
                 let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                     let text = {
                         let mut pending = pending_ui.text.lock().expect("pending ui log");
@@ -159,6 +167,12 @@ fn start_library_job(
                         } else if matches!(on_success, OnSuccess::GoToExportScreen) {
                             ui.set_workflow_screen(state::screen::EXPORT);
                             ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
+                        } else if let OnSuccess::VaultExportQuery(slot) = &on_success {
+                            if let Some(summary) = slot.lock().expect("query summary").take() {
+                                let export = ui.global::<VaultExportAdapter>();
+                                export.set_query_summary(summary.into());
+                                export.set_query_ready(true);
+                            }
                         }
                         sync::push_chrome(&ui, &st);
                     }
@@ -441,6 +455,236 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
     };
     if let Some((label, job)) = job_and_label {
         start_library_job(ui_weak, state, label, job, on_success);
+    }
+}
+
+pub(crate) fn start_vault_export_query(
+    ui_weak: &slint::Weak<AppWindow>,
+    state: &Arc<Mutex<AppState>>,
+) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    let (label, job, on_success) = {
+        let mut st = state.lock().expect("state lock");
+        if st.running {
+            return;
+        }
+        sync::pull_credentials(&ui, &mut st);
+        let export = ui.global::<VaultExportAdapter>();
+        export.set_query_ready(false);
+        export.set_query_summary("".into());
+        let url = st.export_ini.vault.url.trim().to_string();
+        let key = st.export_ini.vault.key.trim().to_string();
+        let search = export.get_search_query().trim().to_string();
+        let start = export.get_start_date().trim().to_string();
+        let end = export.get_end_date().trim().to_string();
+        let mut errors = Vec::new();
+        if url.is_empty() {
+            errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
+        }
+        if key.is_empty() {
+            errors.push("Vault key is required. Open Credentials or Vault Import and set it.".into());
+        }
+        if !errors.is_empty() {
+            report_errors(&ui, &mut st, errors);
+            return;
+        }
+        if let Err(error) = st.save_export_ini() {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+        let query = compose_query(
+            &search,
+            (!start.is_empty()).then_some(start.as_str()),
+            (!end.is_empty()).then_some(end.as_str()),
+        );
+        let summary_slot = Arc::new(Mutex::new(None::<String>));
+        let summary_for_job = Arc::clone(&summary_slot);
+        let label = "vault-pull query (library)".to_string();
+        let job: LibraryJob = Box::new(move |cancel, tx| {
+            let cfg = VaultPullConfig {
+                out_dir: PathBuf::new(),
+                base_url: url,
+                username: String::new(),
+                key,
+                query,
+                after: None,
+                before: None,
+                source: None,
+                skip_attachments: true,
+                page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
+                cancel: Some(cancel),
+            };
+            let mut on_progress = |event: VaultPullProgressEvent| match event {
+                VaultPullProgressEvent::Log(line) => {
+                    let _ = tx.send(ProcessEvent::Log(line));
+                }
+                VaultPullProgressEvent::Auth {
+                    account_id,
+                    username,
+                } => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Authenticated as {username} ({account_id})"
+                    )));
+                }
+                VaultPullProgressEvent::Page {
+                    messages,
+                    total_so_far,
+                } => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Page: {messages} message(s) ({total_so_far} total)"
+                    )));
+                }
+                VaultPullProgressEvent::Done(_) => {}
+            };
+            match run_vault_query_stats(&cfg, Some(&mut on_progress)) {
+                Ok(stats) => {
+                    let summary = format_query_summary(&stats);
+                    let _ = tx.send(ProcessEvent::Log(summary.clone()));
+                    *summary_for_job.lock().expect("query summary") = Some(summary);
+                    Ok(())
+                }
+                Err(e) => Err(JobError::detail(format!("{e:#}"))),
+            }
+        });
+        (
+            label,
+            job,
+            OnSuccess::VaultExportQuery(summary_slot),
+        )
+    };
+    start_library_job(ui_weak, state, label, job, on_success);
+}
+
+pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    let job_and_label = {
+        let mut st = state.lock().expect("state lock");
+        if st.running {
+            return;
+        }
+        sync::pull_credentials(&ui, &mut st);
+        let export = ui.global::<VaultExportAdapter>();
+        if !export.get_query_ready() {
+            report_errors(
+                &ui,
+                &mut st,
+                vec!["Run Query first to preview matching messages.".into()],
+            );
+            return;
+        }
+        let url = st.export_ini.vault.url.trim().to_string();
+        let key = st.export_ini.vault.key.trim().to_string();
+        let out = export.get_output().trim().to_string();
+        let search = export.get_search_query().trim().to_string();
+        let start = export.get_start_date().trim().to_string();
+        let end = export.get_end_date().trim().to_string();
+        let skip_attachments = export.get_skip_attachments();
+        let mut errors = Vec::new();
+        if url.is_empty() {
+            errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
+        }
+        if key.is_empty() {
+            errors.push("Vault key is required. Open Credentials or Vault Import and set it.".into());
+        }
+        if out.is_empty() {
+            errors.push("Output directory is required.".into());
+        }
+        if !errors.is_empty() {
+            report_errors(&ui, &mut st, errors);
+            return;
+        }
+        if let Err(error) = st.save_export_ini() {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+        let query = compose_query(
+            &search,
+            (!start.is_empty()).then_some(start.as_str()),
+            (!end.is_empty()).then_some(end.as_str()),
+        );
+        let label = "vault-pull (library)".to_string();
+        let job: LibraryJob = Box::new(move |cancel, tx| {
+            let cfg = VaultPullConfig {
+                out_dir: PathBuf::from(out),
+                base_url: url,
+                username: String::new(),
+                key,
+                query,
+                after: None,
+                before: None,
+                source: None,
+                skip_attachments,
+                page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
+                cancel: Some(cancel),
+            };
+            let mut on_progress = |event: VaultPullProgressEvent| match event {
+                VaultPullProgressEvent::Log(line) => {
+                    let _ = tx.send(ProcessEvent::Log(line));
+                }
+                VaultPullProgressEvent::Auth {
+                    account_id,
+                    username,
+                } => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Authenticated as {username} ({account_id})"
+                    )));
+                }
+                VaultPullProgressEvent::Page {
+                    messages,
+                    total_so_far,
+                } => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Page: {messages} message(s) ({total_so_far} total)"
+                    )));
+                }
+                VaultPullProgressEvent::Done(report) => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Done: {} conversation(s), {} message(s), {} attachment(s) → {}",
+                        report.conversations,
+                        report.messages,
+                        report.attachments_downloaded,
+                        report.out_dir
+                    )));
+                }
+            };
+            match run_vault_pull(&cfg, Some(&mut on_progress)) {
+                Ok(report) if report.ok => Ok(()),
+                Ok(_) => Err(JobError::detail("Vault export finished with errors.")),
+                Err(e) => Err(JobError::detail(format!("{e:#}"))),
+            }
+        });
+        Some((label, job))
+    };
+    if let Some((label, job)) = job_and_label {
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
+    }
+}
+
+fn format_query_summary(stats: &QueryStats) -> String {
+    format!(
+        "{} messages · {} attachments · {}",
+        stats.messages,
+        stats.attachments,
+        format_bytes_human(stats.total_bytes)
+    )
+}
+
+fn format_bytes_human(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{} KB", bytes / KB)
+    } else {
+        format!("{bytes} B")
     }
 }
 

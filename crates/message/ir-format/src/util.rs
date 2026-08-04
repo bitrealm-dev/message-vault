@@ -66,6 +66,7 @@ mod tests {
             is_sticker: false,
             transcription: None,
             sticker_effect: None,
+            size_bytes: None,
             bytes: None,
         }
     }

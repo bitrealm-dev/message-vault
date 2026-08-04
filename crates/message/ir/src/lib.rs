@@ -195,6 +195,9 @@ pub struct IrAttachment {
     pub is_sticker: bool,
     pub transcription: Option<String>,
     pub sticker_effect: Option<String>,
+    /// On-disk / vault asset length in bytes (not file contents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     /// In-memory bytes for EML embedding; never written to JSON.
     #[serde(skip)]
     pub bytes: Option<Vec<u8>>,

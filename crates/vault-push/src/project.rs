@@ -27,12 +27,17 @@ pub fn document_header_line(doc: &ConversationDocument) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Message line with attachment digests filled from upload scan.
-pub fn message_line(msg: &IrMessage, digests: &[(usize, String)]) -> Result<(Vec<u8>, String)> {
+/// Message line with attachment digests and sizes filled from upload scan.
+/// Each entry is `(attachment_index, sha256_hex, size_bytes)`.
+pub fn message_line(
+    msg: &IrMessage,
+    digests: &[(usize, String, u64)],
+) -> Result<(Vec<u8>, String)> {
     let mut msg = msg.clone();
-    for (i, digest) in digests {
+    for (i, digest, size) in digests {
         if let Some(att) = msg.attachments.get_mut(*i) {
             att.digest_sha256 = Some(digest.clone());
+            att.size_bytes = Some(*size);
         }
     }
     serialize_message(&msg)

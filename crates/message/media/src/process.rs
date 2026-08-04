@@ -14,6 +14,9 @@ pub struct MediaReport {
     pub errors: Vec<String>,
 }
 
+/// How often to emit `…n/total` progress lines during convert/compress.
+const MEDIA_PROGRESS_EVERY: usize = 100;
+
 /// Convert or compress media under `output_dir/attachments`.
 ///
 /// Returns a path remap (`old_rel` → `new_rel`, forward-slash relative to
@@ -22,6 +25,16 @@ pub fn process_attachments_dir(
     output_dir: &Path,
     mode: MediaMode,
     compress: &CompressOptions,
+) -> Result<(MediaReport, HashMap<String, String>)> {
+    process_attachments_dir_with_log(output_dir, mode, compress, None)
+}
+
+/// Same as [`process_attachments_dir`], with optional progress lines via `log`.
+pub fn process_attachments_dir_with_log(
+    output_dir: &Path,
+    mode: MediaMode,
+    compress: &CompressOptions,
+    mut log: Option<&mut dyn FnMut(&str)>,
 ) -> Result<(MediaReport, HashMap<String, String>)> {
     if matches!(mode, MediaMode::Clone | MediaMode::Disabled) {
         return Ok((MediaReport::default(), HashMap::new()));
@@ -39,6 +52,21 @@ pub fn process_attachments_dir(
     let mut report = MediaReport::default();
     let mut remap = HashMap::new();
     let files = collect_media_files(&attachments)?;
+    let total = files.len();
+    if total == 0 {
+        return Ok((report, remap));
+    }
+
+    let verb = match mode {
+        MediaMode::Compress => "Compressing",
+        _ => "Converting",
+    };
+    emit(
+        &mut log,
+        &format!("{verb} attachments ({total} file(s))…"),
+    );
+
+    let mut done = 0usize;
     for path in files {
         match process_one(output_dir, &path, mode, compress) {
             Ok(Outcome::Changed { old_rel, new_rel }) => {
@@ -48,12 +76,31 @@ pub fn process_attachments_dir(
             Ok(Outcome::Skipped) => report.skipped += 1,
             Err(err) => report.errors.push(format!("{}: {err}", path.display())),
         }
+        done += 1;
+        if done.is_multiple_of(MEDIA_PROGRESS_EVERY) || done == total {
+            emit(&mut log, &format!("  …{done}/{total}"));
+        }
     }
 
     // Always sweep again so a failed convert cannot leave junk behind.
     remove_msgmedia_temps(&attachments)?;
 
+    let mut summary = format!(
+        "Attachment {mode} done: processed={} skipped={}",
+        report.processed, report.skipped
+    );
+    if !report.errors.is_empty() {
+        summary.push_str(&format!(" errors={}", report.errors.len()));
+    }
+    emit(&mut log, &summary);
+
     Ok((report, remap))
+}
+
+fn emit(log: &mut Option<&mut dyn FnMut(&str)>, line: &str) {
+    if let Some(log) = log.as_mut() {
+        log(line);
+    }
 }
 
 enum Outcome {
@@ -540,5 +587,20 @@ mod tests {
                 .unwrap();
         assert_eq!(report.processed, 0);
         assert!(remap.is_empty());
+    }
+
+    #[test]
+    fn clone_with_log_emits_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lines = Vec::new();
+        let mut log = |line: &str| lines.push(line.to_string());
+        let _ = process_attachments_dir_with_log(
+            dir.path(),
+            MediaMode::Clone,
+            &CompressOptions::default(),
+            Some(&mut log),
+        )
+        .unwrap();
+        assert!(lines.is_empty());
     }
 }

@@ -1,0 +1,30 @@
+[package]
+name = "vault-pull"
+version = "0.1.0"
+edition = "2024"
+description = "Pull messages from a Message Vault export API into a message-ir folder"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "vault-pull"
+path = "src/bin/vault_pull.rs"
+required-features = ["cli"]
+
+[dependencies]
+anyhow = "1.0.103"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.6.1", features = ["derive", "env"], optional = true }
+message-vault-io-core = { path = "../message-vault-io-core" }
+message-ir = { path = "../message/ir" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+vault-push = { path = "../vault-push", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+httpmock = "0.7"
