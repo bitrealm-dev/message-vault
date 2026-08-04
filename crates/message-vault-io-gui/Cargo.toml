@@ -1,6 +1,6 @@
 [package]
 name = "message-vault-io-gui"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Slint desktop GUI for message-vault-io"
 build = "build.rs"
