@@ -19,6 +19,7 @@ use vault_push::{
 };
 
 use crate::AppWindow;
+use crate::CredentialsAdapter;
 use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
 use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
@@ -376,6 +377,10 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
     let Some(ui) = ui_weak.upgrade() else {
         return;
     };
+    // Export is offered in the UI but has no guided flow yet.
+    if ui.global::<CredentialsAdapter>().get_operation_index() != 0 {
+        return;
+    }
     let job_and_label = {
         let mut st = state.lock().expect("state lock");
         if st.running {

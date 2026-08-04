@@ -115,9 +115,15 @@ pub fn region_options() -> ModelRc<SharedString> {
     model_from_labels(["USA".into(), "International".into()])
 }
 
+/// Vault Operation choices on the guided credentials screen.
+/// Index 0 = Import, 1 = Export (Export is a no-op until a flow exists).
+pub fn vault_operation_options() -> ModelRc<SharedString> {
+    model_from_labels(["Import".into(), "Export".into()])
+}
+
 /// Format choices for the guided Import Messages screen.
 pub fn guided_import_format_options() -> ModelRc<SharedString> {
-    model_from_labels(["iPhone - iOS".into(), "iPhone macOS".into()])
+    model_from_labels(["iMessage - iOS".into(), "iMessage - macOS".into()])
 }
 
 /// Guided import format index: 0 = iPhone iOS, 1 = macOS.

@@ -38,6 +38,9 @@ pub fn push_static_option_models(ui: &AppWindow) {
     import.set_format_options(options::guided_import_format_options());
     import.set_attachment_media_options(options::attachment_media_options());
     import.set_max_resolution_options(options::max_resolution_options());
+
+    ui.global::<CredentialsAdapter>()
+        .set_operation_options(options::vault_operation_options());
 }
 
 pub fn push_all(ui: &AppWindow, state: &mut AppState) {

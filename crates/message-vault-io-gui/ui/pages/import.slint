@@ -2,7 +2,7 @@ import { Button, Date } from "std-widgets.slint";
 import {
     StackedDateEdit, StackedLineEdit, StackedPathField, StackedComboBox,
     StackedHint, StackedDangerHint, StackedCheckBox, AdvancedSection,
-    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel
+    AnchoredScrollPage, FormMetrics, PanelTabBar, StackedFieldLabel
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
 import { LogPanel } from "log-panel.slint";
@@ -193,24 +193,61 @@ export component ImportPage inherits VerticalLayout {
                     message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
                 }
             }
-            if ImportAdapter.show-compress-options: OptionGroup {
-                title: "";
-                StackedComboBox {
-                    label: "Target resolution";
-                    model: ImportAdapter.max-resolution-options;
-                    current-index <=> ImportAdapter.max-resolution-index;
+            if ImportAdapter.show-compress-options: HorizontalLayout {
+                spacing: 0;
+                padding: 0;
+                vertical-stretch: 0;
+                // Nest under Message Attachments — extra indent past stacked-control-indent.
+                Rectangle {
+                    width: FormMetrics.stacked-control-indent + 12px;
+                    horizontal-stretch: 0;
                 }
-                StackedLineEdit {
-                    label: "Max FPS";
-                    required: true;
-                    placeholder: "e.g. 30";
-                    value <=> ImportAdapter.media-max-fps;
-                }
-                StackedLineEdit {
-                    label: "Minimum file size (MB)";
-                    required: true;
-                    placeholder: "e.g. 20";
-                    value <=> ImportAdapter.media-min-size;
+                VerticalLayout {
+                    spacing: FormMetrics.section-spacing;
+                    padding: 0;
+                    horizontal-stretch: 1;
+                    vertical-stretch: 0;
+                    VerticalLayout {
+                        spacing: 2px;
+                        padding: 0;
+                        vertical-stretch: 0;
+                        StackedComboBox {
+                            label: "Target resolution";
+                            model: ImportAdapter.max-resolution-options;
+                            current-index <=> ImportAdapter.max-resolution-index;
+                        }
+                        StackedHint {
+                            message: "Maximum video resolution; videos are not upscaled.";
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        padding: 0;
+                        vertical-stretch: 0;
+                        StackedLineEdit {
+                            label: "Max FPS";
+                            required: true;
+                            placeholder: "e.g. 30";
+                            value <=> ImportAdapter.media-max-fps;
+                        }
+                        StackedHint {
+                            message: "Maximum video frame rate; videos are not upscaled to this FPS.";
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        padding: 0;
+                        vertical-stretch: 0;
+                        StackedLineEdit {
+                            label: "Minimum Video File Size";
+                            required: true;
+                            placeholder: "e.g. 20M";
+                            value <=> ImportAdapter.media-min-size;
+                        }
+                        StackedHint {
+                            message: "Only re-encode videos at or above this size. Use K for kilobytes, M for megabytes, G for gigabytes, or no suffix for bytes (for example, 512K or 20M).";
+                        }
+                    }
                 }
             }
         }

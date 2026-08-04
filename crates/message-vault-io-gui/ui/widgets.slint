@@ -849,6 +849,8 @@ export component OptionGroup inherits Rectangle {
 export component AdvancedSection inherits VerticalLayout {
     in-out property <bool> open: false;
     in property <string> title: "Advanced Options";
+    // When true, wrap body fields in a bordered OptionGroup-style panel.
+    in property <bool> grouped: true;
     spacing: FormMetrics.row-spacing;
     // Extra air above the heading so it separates from the prior section's last row.
     padding-top: 8px;
@@ -907,14 +909,22 @@ export component AdvancedSection inherits VerticalLayout {
     }
 
     // @children cannot live inside `if`; clip/height toggles visibility instead.
-    // OptionGroup visually groups the section fields under the heading.
+    // `grouped` applies OptionGroup chrome without duplicating @children.
     Rectangle {
         visible: root.open;
         height: root.open ? self.preferred-height : 0px;
         clip: true;
         vertical-stretch: 0;
-        OptionGroup {
-            title: "";
+        horizontal-stretch: 1;
+        border-width: root.grouped ? 1px : 0px;
+        border-color: Palette.border;
+        border-radius: root.grouped ? 6px : 0px;
+        background: root.grouped ? Palette.alternate-background : transparent;
+
+        VerticalLayout {
+            padding: root.grouped ? 10px : 0px;
+            spacing: FormMetrics.section-spacing;
+            vertical-stretch: 0;
             @children
         }
     }
