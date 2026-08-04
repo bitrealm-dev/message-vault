@@ -122,8 +122,25 @@ fn authenticate_and_push_text_only_conversation() {
             "sources": ["sms-backup-restore"]
         }));
     });
+    let _start_import = server.mock(|when, then| {
+        when.method(POST).path("/v1/imports");
+        then.status(200).json_body(json!({ "ok": true, "id": 42 }));
+    });
+    let _complete_import = server.mock(|when, then| {
+        when.method(POST).path("/v1/imports/42/complete");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "id": 42,
+            "status": "completed",
+            "message_count": 1,
+            "attachment_count": 0,
+            "bytes_uploaded": 0
+        }));
+    });
     let import = server.mock(|when, then| {
-        when.method(POST).path("/v1/import");
+        when.method(POST)
+            .path("/v1/import")
+            .query_param("import_id", "42");
         then.status(200).json_body(json!({
             "ok": true,
             "source": "sms-backup-restore",

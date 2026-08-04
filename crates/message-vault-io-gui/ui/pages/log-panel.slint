@@ -64,5 +64,10 @@ export component LogPanel inherits VerticalLayout {
             enabled: !LogAdapter.running && LogAdapter.text != "";
             clicked => { LogAdapter.clear-view(); }
         }
+        Button {
+            text: "Cancel";
+            enabled: LogAdapter.running;
+            clicked => { LogAdapter.cancel(); }
+        }
     }
 }

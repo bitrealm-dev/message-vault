@@ -480,6 +480,7 @@ impl HttpSession {
         username: &str,
         source: &str,
         mode: &str,
+        import_id: Option<i64>,
         ndjson: Vec<u8>,
     ) -> Result<ImportResponse> {
         let body_len = ndjson.len();
@@ -490,12 +491,15 @@ impl HttpSession {
             );
         }
         let base = base_url.trim_end_matches('/');
-        let url = format!(
+        let mut url = format!(
             "{base}/v1/import?source={}&account={}&mode={}",
             encode(source),
             encode(username),
             encode(mode)
         );
+        if let Some(id) = import_id {
+            url.push_str(&format!("&import_id={id}"));
+        }
         let response = self
             .client
             .post(&url)
@@ -530,6 +534,119 @@ impl HttpSession {
             );
         }
         Ok(parsed)
+    }
+
+    /// Start a vault import session. Returns `None` when the vault is older and
+    /// does not expose `/v1/imports` (push continues without message linking).
+    pub fn start_import(
+        &self,
+        base_url: &str,
+        key: &str,
+        username: &str,
+        source: &str,
+        mode: &str,
+        tool: Option<&str>,
+    ) -> Result<Option<i64>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            ok: bool,
+            #[serde(default)]
+            id: Option<i64>,
+            #[serde(default)]
+            error: Option<String>,
+        }
+        let base = base_url.trim_end_matches('/');
+        let url = format!("{base}/v1/imports");
+        let mut body = serde_json::json!({
+            "source": source,
+            "mode": mode,
+            "account": username,
+        });
+        if let Some(tool) = tool {
+            body["tool"] = serde_json::Value::String(tool.to_string());
+        }
+        let response = self
+            .client
+            .post(&url)
+            .timeout(Duration::from_secs(60))
+            .header("Authorization", format!("Bearer {}", key.trim()))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .with_context(|| format!("POST {url}"))?;
+        let status = response.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        let text = response.text().context("read start-import response")?;
+        let parsed: Resp = serde_json::from_str(&text).unwrap_or(Resp {
+            ok: false,
+            id: None,
+            error: Some(text.clone()),
+        });
+        if !status.is_success() || !parsed.ok {
+            bail!(
+                "{}",
+                parsed
+                    .error
+                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
+            );
+        }
+        Ok(parsed.id)
+    }
+
+    /// Complete a vault import session. Soft-fails with `Ok(())` on 404.
+    pub fn complete_import(
+        &self,
+        base_url: &str,
+        key: &str,
+        import_id: i64,
+        ok: bool,
+        message_count: u64,
+        attachment_count: u64,
+        bytes_uploaded: u64,
+    ) -> Result<()> {
+        #[derive(Deserialize)]
+        struct Resp {
+            ok: bool,
+            #[serde(default)]
+            error: Option<String>,
+        }
+        let base = base_url.trim_end_matches('/');
+        let url = format!("{base}/v1/imports/{import_id}/complete");
+        let body = serde_json::json!({
+            "ok": ok,
+            "message_count": message_count,
+            "attachment_count": attachment_count,
+            "bytes_uploaded": bytes_uploaded,
+        });
+        let response = self
+            .client
+            .post(&url)
+            .timeout(Duration::from_secs(60))
+            .header("Authorization", format!("Bearer {}", key.trim()))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .with_context(|| format!("POST {url}"))?;
+        let status = response.status();
+        if status.as_u16() == 404 {
+            return Ok(());
+        }
+        let text = response.text().context("read complete-import response")?;
+        let parsed: Resp = serde_json::from_str(&text).unwrap_or(Resp {
+            ok: false,
+            error: Some(text.clone()),
+        });
+        if !status.is_success() || !parsed.ok {
+            bail!(
+                "{}",
+                parsed
+                    .error
+                    .unwrap_or_else(|| format!("HTTP {status}: {text}"))
+            );
+        }
+        Ok(())
     }
 }
 

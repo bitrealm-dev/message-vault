@@ -449,6 +449,8 @@ struct RunSetup {
     files: Vec<PathBuf>,
     total: usize,
     batch_size: usize,
+    /// Vault import session id when the server supports `/v1/imports`.
+    import_id: Option<i64>,
 }
 
 fn prepare_run_setup(
@@ -532,6 +534,44 @@ fn prepare_run_setup(
         );
     }
 
+    let source = detect_source(&input)?
+        .unwrap_or_else(|| "unknown".to_string());
+    let import_id = match http.start_import(
+        &url,
+        &cfg.key,
+        &username,
+        &source,
+        &cfg.mode,
+        Some("vault-push"),
+    ) {
+        Ok(id) => {
+            if let Some(id) = id {
+                log.line(&format!("vault import session id={id} source={source}"));
+                if let Some(cb) = progress.as_mut() {
+                    cb(ProgressEvent::Log(format!(
+                        "Recording import session {id} ({source})"
+                    )));
+                }
+            } else {
+                log.line(
+                    "vault import sessions not supported by this server; continuing without import_id",
+                );
+            }
+            id
+        }
+        Err(error) => {
+            log.line(&format!(
+                "warning: could not start vault import session: {error}"
+            ));
+            if let Some(cb) = progress.as_mut() {
+                cb(ProgressEvent::Log(format!(
+                    "Warning: could not start vault import session: {error}"
+                )));
+            }
+            None
+        }
+    };
+
     Ok(RunSetup {
         input,
         report_path,
@@ -545,6 +585,7 @@ fn prepare_run_setup(
         total: files.len(),
         files,
         batch_size: cfg.batch_size.max(1),
+        import_id,
     })
 }
 
@@ -563,6 +604,8 @@ struct FinishRunArgs<'a> {
     assets_uploaded: u64,
     assets_skipped: u64,
     aborted: bool,
+    http: &'a HttpSession,
+    import_id: Option<i64>,
 }
 
 fn finish_run(
@@ -585,6 +628,8 @@ fn finish_run(
         assets_uploaded,
         assets_skipped,
         aborted,
+        http,
+        import_id,
     } = args;
 
     let results: Vec<FileResult> = results.into_iter().flatten().collect();
@@ -604,6 +649,11 @@ fn finish_run(
         .iter()
         .filter(|result| result.status == "ok")
         .map(|result| result.messages)
+        .sum();
+    let attachments: u64 = results
+        .iter()
+        .filter(|result| result.status == "ok")
+        .map(|result| result.attachments)
         .sum();
     if fail_n == 0 && !aborted {
         let _ = journal::compact(&journal_path, &url, &username, &journal);
@@ -635,6 +685,22 @@ fn finish_run(
         serde_json::to_string_pretty(&report).context("serialize report")?,
     )
     .with_context(|| format!("write report {}", report_path.display()))?;
+    if let Some(import_id) = import_id {
+        match http.complete_import(
+            &url,
+            &cfg.key,
+            import_id,
+            report.ok,
+            report.messages,
+            attachments,
+            0,
+        ) {
+            Ok(()) => log.line(&format!("vault import session {import_id} completed")),
+            Err(error) => log.line(&format!(
+                "warning: could not complete vault import session {import_id}: {error}"
+            )),
+        }
+    }
     log.line(&format_push_summary(&report));
     if let Some(cb) = progress.as_mut() {
         cb(ProgressEvent::Finished(report.clone()));
@@ -659,6 +725,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         files,
         total,
         batch_size,
+        import_id,
     } = prepare_run_setup(cfg, &mut progress)?;
 
     let mut results: Vec<Option<FileResult>> = vec![None; total];
@@ -743,7 +810,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         results: &mut results,
                         batcher: &mut batcher,
                         total,
-                        wait: true,
+                        import_id,
+                    wait: true,
                     })?;
                     if !request_ok {
                         aborted = true;
@@ -792,7 +860,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 results: &mut results,
                 batcher: &mut batcher,
                 total,
-                wait: !cfg.continue_on_error,
+                import_id,
+                    wait: !cfg.continue_on_error,
             })?;
             if !request_ok && !cfg.continue_on_error {
                 aborted = true;
@@ -839,6 +908,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     results: &mut results,
                     batcher: &mut batcher,
                     total,
+                    import_id,
                     wait: !cfg.continue_on_error,
                 })?;
                 if !request_ok && !cfg.continue_on_error {
@@ -872,6 +942,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     results: &mut results,
                     batcher: &mut batcher,
                     total,
+                    import_id,
                     wait: !cfg.continue_on_error,
                 })?;
                 if !request_ok && !cfg.continue_on_error {
@@ -925,7 +996,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             results: &mut results,
             batcher: &mut batcher,
             total,
-            wait: true,
+            import_id,
+                    wait: true,
         })?;
         if !request_ok && !cfg.continue_on_error {
             aborted = true;
@@ -968,6 +1040,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             assets_uploaded,
             assets_skipped,
             aborted,
+            http: &http,
+            import_id,
         },
         &mut progress,
         &mut log,
@@ -1560,6 +1634,7 @@ struct FlushImportPipeline<'a, 'p, 'f> {
     total: usize,
     /// When true, wait for the newly spawned import (also used at end-of-run).
     wait: bool,
+    import_id: Option<i64>,
 }
 
 struct JoinInflightImport<'a, 'p, 'f> {
@@ -1616,6 +1691,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
         max_retries: args.cfg.max_retries,
         mode,
         batch,
+        import_id: args.import_id,
     }));
     if args.wait {
         ok = join_inflight_import(JoinInflightImport {
@@ -1644,6 +1720,7 @@ struct SpawnImportHttp {
     max_retries: u32,
     mode: String,
     batch: ImportBatch,
+    import_id: Option<i64>,
 }
 
 fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
@@ -1656,6 +1733,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
             max_retries,
             mode,
             batch,
+            import_id,
         } = args;
         let request_started = Instant::now();
         let body_bytes = batch.body.len();
@@ -1667,6 +1745,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
                 &username,
                 &batch.source,
                 &mode,
+                import_id,
                 batch.body.clone(),
             )
         })
