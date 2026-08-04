@@ -1,6 +1,10 @@
 /**
  * Vault search query parser / composer.
  *
+ * Behavior reference for the shared grammar (Rust must match):
+ * `fixtures/search/parse-cases.json`. After intentional grammar changes, run
+ * `node scripts/regen-search-goldens.mjs` and fix Rust until both golden suites pass.
+ *
  * Supported operators:
  *   search:contacts  handle:  first:  last:  phone:  is:nofirst  is:nolast
  *   is:nameless (legacy → both nofirst and nolast)

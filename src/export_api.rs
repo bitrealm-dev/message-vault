@@ -376,6 +376,20 @@ fn build_message_filters(
         params.push(like.into());
     }
 
+    if let Some(with_person) = &parsed.with_person {
+        where_parts.push(
+            "EXISTS (
+                 SELECT 1 FROM participants p
+                 WHERE p.conversation_id = c.id
+                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+               )"
+            .into(),
+        );
+        let like = format!("%{with_person}%");
+        params.push(like.clone().into());
+        params.push(like.into());
+    }
+
     if let Some(subject) = &parsed.subject {
         where_parts.push("coalesce(m.subject, '') LIKE ? COLLATE NOCASE".into());
         params.push(format!("%{subject}%").into());
@@ -409,7 +423,7 @@ fn build_message_filters(
         params.push(ct.to_string().into());
     }
 
-    if parsed.has_attachment {
+    if parsed.has_attachment == Some(true) {
         where_parts
             .push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)".into());
     }

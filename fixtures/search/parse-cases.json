@@ -1,0 +1,1218 @@
+[
+  {
+    "name": "empty",
+    "input": "",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "free-text-terms-and-phrases",
+    "input": "hello \"exact phrase\" world",
+    "expected": {
+      "mode": "messages",
+      "terms": [
+        "hello",
+        "world"
+      ],
+      "phrases": [
+        "exact phrase"
+      ],
+      "exclude": [],
+      "ftsAst": {
+        "type": "and",
+        "children": [
+          {
+            "type": "term",
+            "value": "hello"
+          },
+          {
+            "type": "phrase",
+            "value": "exact phrase"
+          },
+          {
+            "type": "term",
+            "value": "world"
+          }
+        ]
+      },
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "core-operators",
+    "input": "from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": "alice",
+      "to": null,
+      "with": "bob",
+      "subject": null,
+      "text": null,
+      "hasAttachment": true,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": "2020-01-01",
+      "before": "2021-01-01",
+      "source": "imessage",
+      "conversationType": "group",
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "label-alias-and-in-trash",
+    "input": "label:Work in:trash hello",
+    "expected": {
+      "mode": "messages",
+      "terms": [
+        "hello"
+      ],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": {
+        "type": "term",
+        "value": "hello"
+      },
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": "Work",
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "with-vs-to",
+    "input": "with:alice to:bob",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": "bob",
+      "with": "alice",
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "from-me-and-noattachment",
+    "input": "from:me has:noattachment",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": "me",
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": false,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "filename-filetype-text-in",
+    "input": "filename:invoice filetype:pdf text:hello in:\"Family Chat\"",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": "hello",
+      "hasAttachment": null,
+      "filename": "invoice",
+      "filetype": "document",
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": "Family Chat",
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "size-group-context-sort",
+    "input": "larger:1M smaller:500k group:none context:2 sort:relevance",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": 1048576,
+      "smallerBytes": 512000,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "none",
+      "context": 2,
+      "sort": "relevance",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "group-count-not-swallowed",
+    "input": "group-count:>5",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": {
+        "comparator": ">",
+        "value": 5
+      },
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "negation",
+    "input": "party -cake -\"bad word\"",
+    "expected": {
+      "mode": "messages",
+      "terms": [
+        "party"
+      ],
+      "phrases": [],
+      "exclude": [
+        "cake",
+        "bad word"
+      ],
+      "ftsAst": {
+        "type": "and",
+        "children": [
+          {
+            "type": "term",
+            "value": "party"
+          },
+          {
+            "type": "not",
+            "child": {
+              "type": "term",
+              "value": "cake"
+            }
+          },
+          {
+            "type": "not",
+            "child": {
+              "type": "phrase",
+              "value": "bad word"
+            }
+          }
+        ]
+      },
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "or-and-parens-prefix",
+    "input": "hello OR (world AND vault*)",
+    "expected": {
+      "mode": "messages",
+      "terms": [
+        "hello",
+        "world",
+        "vault"
+      ],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": {
+        "type": "or",
+        "children": [
+          {
+            "type": "term",
+            "value": "hello"
+          },
+          {
+            "type": "and",
+            "children": [
+              {
+                "type": "term",
+                "value": "world"
+              },
+              {
+                "type": "term",
+                "value": "vault",
+                "prefix": true
+              }
+            ]
+          }
+        ]
+      },
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "is-direct",
+    "input": "is:direct",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": "individual",
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "first-contact-gte",
+    "input": "first-contact:>=2020-01-01",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": "2020-01-01",
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "first-contact-lt",
+    "input": "first-contact:<2020-01-01",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": "2020-01-01"
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "first-contact-range",
+    "input": "first-contact:2020-01-01..2020-06-30",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": "2020-01-01",
+        "to": "2020-06-30"
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "last-contact-bare-before",
+    "input": "last-contact:2024-01-15",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": "2024-01-15"
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "first-contact-year",
+    "input": "first-contact:2015",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": "2015-01-01"
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "show-contact-retired",
+    "input": "show:contact",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "contact-mode",
+    "input": "search:contacts within:\"Close Friends\" handle:\"Ann Lee\" group-count:>=2 message-count:<100",
+    "expected": {
+      "mode": "contacts",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": "Close Friends",
+      "handle": "Ann Lee",
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": {
+        "comparator": ">=",
+        "value": 2
+      },
+      "messageCount": {
+        "comparator": "<",
+        "value": 100
+      },
+      "showContact": false
+    }
+  },
+  {
+    "name": "first-last-phone-nofirst-nolast",
+    "input": "search:contacts first:Ann last:Lee phone:\"+1555\" is:nofirst is:nolast",
+    "expected": {
+      "mode": "contacts",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": "Ann",
+      "lastName": "Lee",
+      "phone": "+1555",
+      "noFirstName": true,
+      "noLastName": true,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "is-nameless",
+    "input": "search:contacts is:nameless",
+    "expected": {
+      "mode": "contacts",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": true,
+      "noLastName": true,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "invalid-counts",
+    "input": "group-count:2 message-count:>=-1 message-count:>1.5",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "sort-date-asc",
+    "input": "sort:date-asc",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": null,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-asc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  },
+  {
+    "name": "has-att-alias",
+    "input": "has:att",
+    "expected": {
+      "mode": "messages",
+      "terms": [],
+      "phrases": [],
+      "exclude": [],
+      "ftsAst": null,
+      "from": null,
+      "to": null,
+      "with": null,
+      "subject": null,
+      "text": null,
+      "hasAttachment": true,
+      "filename": null,
+      "filetype": null,
+      "largerBytes": null,
+      "smallerBytes": null,
+      "inConversation": null,
+      "after": null,
+      "before": null,
+      "source": null,
+      "conversationType": null,
+      "groupBy": "conversation",
+      "context": 0,
+      "sort": "date-desc",
+      "within": null,
+      "handle": null,
+      "firstName": null,
+      "lastName": null,
+      "phone": null,
+      "noFirstName": false,
+      "noLastName": false,
+      "lastContact": {
+        "from": null,
+        "to": null
+      },
+      "firstContact": {
+        "from": null,
+        "to": null
+      },
+      "groupCount": null,
+      "messageCount": null,
+      "showContact": false
+    }
+  }
+]

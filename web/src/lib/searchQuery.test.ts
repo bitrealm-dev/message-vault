@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   composeSearchQuery,
@@ -9,69 +11,40 @@ import {
   toFtsMatch,
 } from "./searchQuery";
 
-describe("parseSearchQuery", () => {
-  it("parses free-text terms and phrases", () => {
-    const q = parseSearchQuery('hello "exact phrase" world');
-    assert.deepEqual(q.terms, ["hello", "world"]);
-    assert.deepEqual(q.phrases, ["exact phrase"]);
+type GoldenCase = {
+  name: string;
+  input: string;
+  expected: ReturnType<typeof parseSearchQuery>;
+};
+
+describe("parseSearchQuery goldens", () => {
+  const casesPath = path.join(
+    process.cwd(),
+    "..",
+    "fixtures",
+    "search",
+    "parse-cases.json",
+  );
+  const cases = JSON.parse(fs.readFileSync(casesPath, "utf8")) as GoldenCase[];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      // Round-trip through JSON so `prefix: undefined` matches omitted keys in goldens.
+      const actual = JSON.parse(JSON.stringify(parseSearchQuery(c.input)));
+      assert.deepEqual(actual, c.expected);
+    });
+  }
+
+  it("relative after:7d yields YYYY-MM-DD (not in goldens — clock-dependent)", () => {
+    assert.match(parseSearchQuery("after:7d").after ?? "", /^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("parses operators", () => {
-    const q = parseSearchQuery(
-      "from:alice with:bob has:attachment after:2020-01-01 before:2021 source:imessage is:group",
-    );
-    assert.equal(q.from, "alice");
-    assert.equal(q.with, "bob");
-    assert.equal(q.to, null);
-    assert.equal(q.hasAttachment, true);
-    assert.equal(q.after, "2020-01-01");
-    assert.equal(q.before, "2021-01-01");
-    assert.equal(q.source, "imessage");
-    assert.equal(q.conversationType, "group");
-    assert.equal(q.mode, "messages");
-  });
-
-  it("treats label: as an alias for within: and ignores in:trash", () => {
-    assert.equal(parseSearchQuery("label:Work").within, "Work");
-    const q = parseSearchQuery("in:trash hello");
-    assert.deepEqual(q.terms, ["hello"]);
-    assert.equal(q.inConversation, null);
-  });
-
-  it("splits with: and to:; parses from:me and has:noattachment", () => {
-    assert.equal(parseSearchQuery("with:sam").with, "sam");
-    assert.equal(parseSearchQuery("to:sam").to, "sam");
-    assert.equal(parseSearchQuery("from:me").from, "me");
-    assert.equal(parseSearchQuery("has:noattachment").hasAttachment, false);
-    assert.equal(parseSearchQuery("has:noatt").hasAttachment, false);
-  });
-
-  it("parses filename, filetype, text, in:, and relative dates", () => {
-    const q = parseSearchQuery(
-      'filename:invoice filetype:pdf text:hello in:"Family Chat" after:7d',
-    );
-    assert.equal(q.filename, "invoice");
-    assert.equal(q.filetype, "document");
-    assert.equal(q.text, "hello");
-    assert.equal(q.inConversation, "Family Chat");
-    assert.match(q.after ?? "", /^\d{4}-\d{2}-\d{2}$/);
-  });
-
-  it("parses larger/smaller, group:none, context, and sort", () => {
-    const q = parseSearchQuery(
-      "larger:1M smaller:500k group:none context:2 sort:relevance",
-    );
-    assert.equal(q.largerBytes, 1024 * 1024);
-    assert.equal(q.smallerBytes, 500 * 1024);
-    assert.equal(q.groupBy, "none");
-    assert.equal(q.context, 2);
-    assert.equal(q.sort, "relevance");
-    // group-count must not be swallowed by group:
-    assert.equal(parseSearchQuery("group-count:>5").groupCount?.value, 5);
-    assert.equal(parseSearchQuery("sort:date-asc").sort, "date-asc");
+  it("parseSizeBytes accepts fractional megabytes", () => {
     assert.equal(parseSizeBytes("1.5M"), Math.round(1.5 * 1024 * 1024));
   });
+});
 
+describe("composeSearchQuery", () => {
   it("composes phase-2 message result operators", () => {
     const s = composeSearchQuery({
       hasWords: "hello",
@@ -87,98 +60,6 @@ describe("parseSearchQuery", () => {
     assert.match(s, /\bcontext:3\b/);
     assert.match(s, /\blarger:1M\b/);
     assert.match(s, /\bsmaller:10M\b/);
-  });
-
-  it("parses negation", () => {
-    const q = parseSearchQuery('party -cake -"bad word"');
-    assert.deepEqual(q.terms, ["party"]);
-    assert.deepEqual(q.exclude, ["cake", "bad word"]);
-  });
-
-  it("treats is:direct as individual", () => {
-    const q = parseSearchQuery("is:direct");
-    assert.equal(q.conversationType, "individual");
-  });
-
-  it("reads the three first-contact / last-contact bound forms", () => {
-    assert.deepEqual(parseSearchQuery("first-contact:>=2020-01-01").firstContact, {
-      from: "2020-01-01",
-      to: null,
-    });
-    assert.deepEqual(parseSearchQuery("first-contact:<2020-01-01").firstContact, {
-      from: null,
-      to: "2020-01-01",
-    });
-    assert.deepEqual(
-      parseSearchQuery("first-contact:2020-01-01..2020-06-30").firstContact,
-      { from: "2020-01-01", to: "2020-06-30" },
-    );
-    assert.deepEqual(parseSearchQuery("last-contact:>=2024-01-15").lastContact, {
-      from: "2024-01-15",
-      to: null,
-    });
-  });
-
-  it("keeps bare dates meaning 'before' for older URLs", () => {
-    assert.deepEqual(parseSearchQuery("last-contact:2024-01-15").lastContact, {
-      from: null,
-      to: "2024-01-15",
-    });
-    assert.deepEqual(parseSearchQuery("first-contact:2015").firstContact, {
-      from: null,
-      to: "2015-01-01",
-    });
-    assert.equal(
-      hasSearchCriteria(parseSearchQuery("last-contact:2024-01-01")),
-      true,
-    );
-    assert.equal(
-      hasSearchCriteria(parseSearchQuery("first-contact:2019-06-01")),
-      true,
-    );
-  });
-
-  it("defaults legacy queries to messages and retires show:contact", () => {
-    assert.equal(parseSearchQuery("hello").mode, "messages");
-    assert.equal(parseSearchQuery("show:contact").mode, "messages");
-    assert.equal(parseSearchQuery("show:contact").showContact, false);
-    assert.equal(hasSearchCriteria(parseSearchQuery("show:contact")), false);
-  });
-
-  it("parses explicit contact mode and contact operators", () => {
-    const q = parseSearchQuery(
-      'search:contacts within:"Close Friends" handle:"Ann Lee" group-count:>=2 message-count:<100',
-    );
-    assert.equal(q.mode, "contacts");
-    assert.equal(q.within, "Close Friends");
-    assert.equal(q.handle, "Ann Lee");
-    assert.deepEqual(q.groupCount, { comparator: ">=", value: 2 });
-    assert.deepEqual(q.messageCount, { comparator: "<", value: 100 });
-    assert.equal(hasSearchCriteria(q), true);
-  });
-
-  it("parses first/last/phone and is:nofirst / is:nolast", () => {
-    const q = parseSearchQuery(
-      'search:contacts first:Ann last:Lee phone:"+1555" is:nofirst is:nolast',
-    );
-    assert.equal(q.firstName, "Ann");
-    assert.equal(q.lastName, "Lee");
-    assert.equal(q.phone, "+1555");
-    assert.equal(q.noFirstName, true);
-    assert.equal(q.noLastName, true);
-    assert.equal(hasSearchCriteria(q), true);
-  });
-
-  it("maps legacy is:nameless to nofirst and nolast", () => {
-    const q = parseSearchQuery("search:contacts is:nameless");
-    assert.equal(q.noFirstName, true);
-    assert.equal(q.noLastName, true);
-  });
-
-  it("ignores invalid count comparisons", () => {
-    assert.equal(parseSearchQuery("group-count:2").groupCount, null);
-    assert.equal(parseSearchQuery("message-count:>=-1").messageCount, null);
-    assert.equal(parseSearchQuery("message-count:>1.5").messageCount, null);
   });
 });
 

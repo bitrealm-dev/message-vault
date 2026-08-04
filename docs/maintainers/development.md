@@ -188,6 +188,23 @@ Use `--check` in CI (or locally) to fail if generated outputs are stale:
 node scripts/sync-vault-schema.mjs --check
 ```
 
+## Search grammar
+
+TypeScript [`web/src/lib/searchQuery.ts`](../../web/src/lib/searchQuery.ts) is the
+behavior reference. Rust [`src/search_query.rs`](../../src/search_query.rs) must
+produce the same parse result. Shared cases live in
+[`fixtures/search/parse-cases.json`](../../fixtures/search/parse-cases.json).
+
+After changing the TypeScript grammar:
+
+```text
+node scripts/regen-search-goldens.mjs
+cargo test golden_parse_cases_match_typescript
+cd web && npm test
+```
+
+Commit the updated goldens together with the Rust/TS parser changes.
+
 ## Common checks
 
 Build and test the Rust workspace:
@@ -210,6 +227,13 @@ Confirm the shared schema sync is current:
 
 ```text
 node scripts/sync-vault-schema.mjs --check
+```
+
+Confirm search goldens still match TypeScript (regen is a no-op if unchanged):
+
+```text
+node scripts/regen-search-goldens.mjs
+git diff --exit-code fixtures/search/parse-cases.json
 ```
 
 Verify a running local instance:
