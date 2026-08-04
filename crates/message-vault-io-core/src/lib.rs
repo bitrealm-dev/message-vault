@@ -19,6 +19,6 @@ pub use exporters::{
 };
 pub use pipeline::{RunResult, name_stem, parse_date_range, parse_date_range_tz};
 pub use process::{
-    CancelFlag, LogSink, ProcessControl, ProcessEvent, check_cancel, emit_log, is_cancelled,
-    spawn_job,
+    CancelFlag, JobError, LogSink, ProcessControl, ProcessEvent, check_cancel, emit_log,
+    is_cancelled, spawn_job,
 };

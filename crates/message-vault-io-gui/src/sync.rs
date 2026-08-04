@@ -6,8 +6,7 @@ use message_vault_io_core::{
     ApplePlatform, AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
     contacts_kind_from_path,
 };
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use std::rc::Rc;
+use slint::{ComponentHandle, SharedString};
 use vault_push::detect_source as vault_detect_source;
 
 use crate::options;
@@ -334,23 +333,17 @@ pub fn pull_vault(ui: &AppWindow, state: &mut AppState) {
 }
 
 pub fn set_log_lines(ui: &AppWindow, lines: &[String]) {
-    let model = Rc::new(VecModel::from(
-        lines
-            .iter()
-            .map(|l| SharedString::from(l.as_str()))
-            .collect::<Vec<_>>(),
-    ));
     ui.global::<LogAdapter>()
-        .set_lines(ModelRc::from(model.clone()));
+        .set_text(SharedString::from(lines.join("\n")));
 }
 
 pub fn append_log_line(ui: &AppWindow, line: &str) {
-    let lines = ui.global::<LogAdapter>().get_lines();
-    if let Some(model) = lines.as_any().downcast_ref::<VecModel<SharedString>>() {
-        model.push(SharedString::from(line));
+    let log = ui.global::<LogAdapter>();
+    let current = log.get_text();
+    if current.is_empty() {
+        log.set_text(SharedString::from(line));
     } else {
-        // First line / model not yet a VecModel — replace.
-        set_log_lines(ui, &[line.to_string()]);
+        log.set_text(SharedString::from(format!("{current}\n{line}")));
     }
 }
 

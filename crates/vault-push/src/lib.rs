@@ -2,11 +2,13 @@
 //!
 //! Used by the `vault-push` CLI and the Message Vault GUI Vault tab.
 
+mod auth_error;
 mod http;
 mod journal;
 mod project;
 mod run;
 
+pub use auth_error::AuthError;
 pub use http::AuthInfo;
 pub use journal::{JOURNAL_NAME, LOG_NAME, REPORT_NAME};
 pub use run::{

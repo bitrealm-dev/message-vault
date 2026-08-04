@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use chrono::Local;
 use contacts::{ValidateMode, probe_contacts_input, validate_contacts_file};
-use message_vault_io_core::{Exporter, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job};
+use message_vault_io_core::{
+    Exporter, JobError, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job,
+};
 use message_reexport::run as run_format;
 use phone::PhoneRegion;
 use slint::ComponentHandle;
@@ -63,13 +65,18 @@ fn start_library_job(
     let state_for_done = Arc::clone(state);
     std::thread::spawn(move || {
         while let Ok(event) = rx.recv() {
-            let finished = matches!(event, ProcessEvent::Finished(_) | ProcessEvent::Error(_));
-            let is_error = matches!(event, ProcessEvent::Error(_));
-            let line = match &event {
-                ProcessEvent::Started(s) => format!("$ {s}"),
-                ProcessEvent::Log(s) | ProcessEvent::Finished(s) | ProcessEvent::Error(s) => {
-                    s.clone()
-                }
+            let finished =
+                matches!(event, ProcessEvent::Finished(_) | ProcessEvent::Error { .. });
+            let (line, banner) = match &event {
+                ProcessEvent::Started(s) => (format!("$ {s}"), None),
+                ProcessEvent::Log(s) | ProcessEvent::Finished(s) => (s.clone(), None),
+                ProcessEvent::Error {
+                    detail,
+                    user_message,
+                } => (
+                    detail.clone(),
+                    Some(user_message.clone().unwrap_or_else(|| detail.clone())),
+                ),
             };
             let state_clone = Arc::clone(&state_for_done);
             let _ = ui_weak.upgrade_in_event_loop(move |ui| {
@@ -81,8 +88,8 @@ fn start_library_job(
                 if finished {
                     let mut st = state_clone.lock().expect("state lock");
                     st.running = false;
-                    if is_error {
-                        st.set_errors(vec![line.clone()], source_screen);
+                    if let Some(banner) = banner {
+                        st.set_errors(vec![banner], source_screen);
                     } else if matches!(on_success, OnSuccess::GoToImportScreen) {
                         ui.set_workflow_screen(state::screen::IMPORT);
                         ui.global::<crate::ImportAdapter>().set_panel_tab(0);
@@ -150,7 +157,7 @@ pub(crate) fn start_validate(
                         }
                         Ok(())
                     }
-                    Err(error) => Err(format!("{error:#}")),
+                    Err(error) => Err(JobError::detail(format!("{error:#}"))),
                 },
             );
         drop(st);
@@ -250,17 +257,25 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
         let key = st.export_ini.vault.key.trim().to_string();
         let mut errors = Vec::new();
         if url.is_empty() {
-            errors.push("Vault URL is required.".into());
+            errors.push("Enter the URL for your Message Vault.".into());
         }
         if key.is_empty() {
-            errors.push("Vault key is required.".into());
+            errors.push("Enter your Message Vault API key.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
             return;
         }
         if let Err(error) = st.save_export_ini() {
-            report_errors(&ui, &mut st, vec![error]);
+            st.begin_session_log();
+            st.append_session_log(&error);
+            report_errors(
+                &ui,
+                &mut st,
+                vec![
+                    "Could not save your Vault URL and API key. Check that the app can write to its settings folder.".into(),
+                ],
+            );
             return;
         }
         let label = "vault-push auth".to_string();
@@ -279,7 +294,7 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
                     )));
                     Ok(())
                 }
-                Err(e) => Err(format!("{e:#}")),
+                Err(e) => Err(JobError::with_user_message(e.detail(), e.user_message())),
             }
         });
         Some((label, job))
@@ -304,17 +319,25 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
         let key = st.export_ini.vault.key.trim().to_string();
         let mut errors = Vec::new();
         if url.is_empty() {
-            errors.push("Vault URL is required.".into());
+            errors.push("Enter the URL for your Message Vault.".into());
         }
         if key.is_empty() {
-            errors.push("API Key is required.".into());
+            errors.push("Enter your Message Vault API key.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
             return;
         }
         if let Err(error) = st.save_export_ini() {
-            report_errors(&ui, &mut st, vec![error]);
+            st.begin_session_log();
+            st.append_session_log(&error);
+            report_errors(
+                &ui,
+                &mut st,
+                vec![
+                    "Could not save your Vault URL and API key. Check that the app can write to its settings folder.".into(),
+                ],
+            );
             return;
         }
         let label = "vault-push auth".to_string();
@@ -333,7 +356,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                     )));
                     Ok(())
                 }
-                Err(e) => Err(format!("{e:#}")),
+                Err(e) => Err(JobError::with_user_message(e.detail(), e.user_message())),
             }
         });
         Some((label, job))
@@ -553,7 +576,7 @@ fn run_vault_upload(
     args: VaultUploadArgs,
     cancel: message_vault_io_core::CancelFlag,
     tx: &mpsc::Sender<ProcessEvent>,
-) -> Result<(), String> {
+) -> Result<(), JobError> {
     let cfg = VaultPushConfig {
         input: args.input,
         base_url: args.url,
@@ -608,10 +631,10 @@ fn run_vault_upload(
     };
     match run_vault_push(&cfg, Some(&mut on_progress)) {
         Ok(report) if report.ok => Ok(()),
-        Ok(report) => Err(format!(
+        Ok(report) => Err(JobError::detail(format!(
             "import completed with failures (failed={})",
             report.conversations_failed
-        )),
-        Err(e) => Err(format!("{e:#}")),
+        ))),
+        Err(e) => Err(JobError::detail(format!("{e:#}"))),
     }
 }

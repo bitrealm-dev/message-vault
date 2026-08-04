@@ -10,7 +10,7 @@ export global FormMetrics {
     out property <length> button-width: 36px;
     out property <length> field-spacing: 8px;
     out property <length> page-padding: 12px;
-    out property <length> row-spacing: 4px;
+    out property <length> row-spacing: 10px;
     out property <length> section-spacing: 10px;
     out property <length> row-height: 32px;
 }
@@ -981,6 +981,45 @@ export component PanelTabBar inherits VerticalLayout {
         height: 1px;
         vertical-stretch: 0;
         background: #9ca3af;
+    }
+}
+
+/// Selectable, read-only log buffer with a dark terminal-style look.
+export component LogTextView inherits Rectangle {
+    in property <string> text;
+    in-out property <length> viewport-y <=> scroll-view.viewport-y;
+    out property <length> visible-height <=> scroll-view.visible-height;
+    out property <length> viewport-height <=> scroll-view.viewport-height;
+    callback scrolled <=> scroll-view.scrolled;
+
+    border-width: 1px;
+    border-color: #808080;
+    background: #111827;
+    vertical-stretch: 1;
+    min-height: 160px;
+    clip: true;
+
+    scroll-view := ScrollView {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        height: parent.height - 16px;
+        viewport-width: self.visible-width;
+        viewport-height: max(self.visible-height, text-input.preferred-height);
+
+        text-input := TextInput {
+            width: 100%;
+            text: root.text;
+            read-only: true;
+            single-line: false;
+            wrap: word-wrap;
+            color: #e5e7eb;
+            font-family: "monospace";
+            font-size: 13px;
+            selection-background-color: #2563eb;
+            selection-foreground-color: #ffffff;
+            page-height: scroll-view.visible-height;
+        }
     }
 }
 

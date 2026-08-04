@@ -45,6 +45,18 @@ fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+fn select_main_panel_tab(ui: &AppWindow, screen: i32) {
+    match screen {
+        state::screen::CREDENTIALS => {
+            ui.global::<CredentialsAdapter>().set_panel_tab(0);
+        }
+        state::screen::IMPORT => {
+            ui.global::<ImportAdapter>().set_panel_tab(0);
+        }
+        _ => {}
+    }
+}
+
 fn wire_navigate_back(ui: &AppWindow) {
     let ui_weak = ui.as_weak();
     ui.on_navigate_back(move || {
@@ -52,9 +64,15 @@ fn wire_navigate_back(ui: &AppWindow) {
             return;
         };
         let current = ui.get_workflow_screen();
-        if current > state::screen::HOME {
-            ui.set_workflow_screen(current - 1);
+        if current <= state::screen::HOME {
+            return;
         }
+
+        // Always leave the current screen; never treat Log as a back stop.
+        let previous = current - 1;
+        ui.set_workflow_screen(previous);
+        // Destination opens on its primary (form) tab, not Log.
+        select_main_panel_tab(&ui, previous);
     });
 }
 

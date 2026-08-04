@@ -1,6 +1,6 @@
-import { Button, ListView, Spinner } from "std-widgets.slint";
+import { Button, Spinner } from "std-widgets.slint";
 import {
-    ActionRow, FormMetrics
+    ActionRow, FormMetrics, LogTextView
 } from "../widgets.slint";
 import { LogAdapter } from "log.slint";
 
@@ -12,9 +12,9 @@ export component LogPanel inherits VerticalLayout {
     vertical-stretch: 1;
 
     private property <bool> stick-to-end: true;
-    private property <int> line-count: LogAdapter.lines.length;
+    private property <string> log-text: LogAdapter.text;
 
-    changed line-count => {
+    changed log-text => {
         if root.stick-to-end {
             scroll-timer.running = true;
         }
@@ -56,36 +56,18 @@ export component LogPanel inherits VerticalLayout {
         }
     }
 
-    Rectangle {
-        border-width: 1px;
-        border-color: #808080;
-        background: #111827;
-        vertical-stretch: 1;
-        min-height: 160px;
-
-        log-view := ListView {
-            scrolled => {
-                root.stick-to-end =
-                    log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
-            }
-            for line[i] in LogAdapter.lines: HorizontalLayout {
-                padding: 3px;
-                Text {
-                    text: line;
-                    color: #e5e7eb;
-                    font-family: "monospace";
-                    font-size: 11px;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
-                }
-            }
+    log-view := LogTextView {
+        text: LogAdapter.text;
+        scrolled => {
+            root.stick-to-end =
+                log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
         }
     }
 
     ActionRow {
         Button {
             text: "Clear view";
-            enabled: !LogAdapter.running && LogAdapter.lines.length > 0;
+            enabled: !LogAdapter.running && LogAdapter.text != "";
             clicked => { LogAdapter.clear-view(); }
         }
     }

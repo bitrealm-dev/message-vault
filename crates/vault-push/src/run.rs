@@ -259,7 +259,11 @@ fn safe_rel(rel: &str) -> Result<()> {
 }
 
 /// Authenticate without importing.
-pub fn authenticate(base_url: &str, key: &str, username: &str) -> Result<AuthInfo> {
+pub fn authenticate(
+    base_url: &str,
+    key: &str,
+    username: &str,
+) -> std::result::Result<AuthInfo, crate::AuthError> {
     http::auth_check(base_url, key, username)
 }
 

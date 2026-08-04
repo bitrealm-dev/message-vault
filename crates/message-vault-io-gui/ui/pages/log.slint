@@ -1,10 +1,10 @@
-import { Button, ListView, Spinner } from "std-widgets.slint";
+import { Button, Spinner } from "std-widgets.slint";
 import {
-    ActionRow, PageSummary, FormMetrics
+    ActionRow, PageSummary, FormMetrics, LogTextView
 } from "../widgets.slint";
 
 export global LogAdapter {
-    in property <[string]> lines;
+    in-out property <string> text;
     in property <bool> running;
     in property <string> session-log-name;
     callback cancel();
@@ -18,9 +18,9 @@ export component LogPage inherits VerticalLayout {
 
     // Follow new output unless the user scrolls up to read history.
     private property <bool> stick-to-end: true;
-    private property <int> line-count: LogAdapter.lines.length;
+    private property <string> log-text: LogAdapter.text;
 
-    changed line-count => {
+    changed log-text => {
         if root.stick-to-end {
             scroll-timer.running = true;
         }
@@ -30,7 +30,6 @@ export component LogPage inherits VerticalLayout {
         log-view.viewport-y = min(0px, log-view.visible-height - log-view.viewport-height);
     }
 
-    // ListView geometry often updates a frame after the model; defer the snap.
     scroll-timer := Timer {
         interval: 16ms;
         running: false;
@@ -42,7 +41,6 @@ export component LogPage inherits VerticalLayout {
         }
     }
 
-    // Keep following while a job streams lines (covers layout lag after push).
     follow-timer := Timer {
         interval: 100ms;
         running: LogAdapter.running && root.stick-to-end;
@@ -68,38 +66,18 @@ export component LogPage inherits VerticalLayout {
         }
     }
 
-    Rectangle {
-        border-width: 1px;
-        border-color: #808080;
-        background: #111827;
-        vertical-stretch: 1;
-        min-height: 160px;
-
-        log-view := ListView {
-            scrolled => {
-                // Any upward scroll is user-driven; layout growth only moves
-                // viewport-y more negative when content is appended.
-                root.stick-to-end =
-                    log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
-            }
-            for line[i] in LogAdapter.lines: HorizontalLayout {
-                padding: 3px;
-                Text {
-                    text: line;
-                    color: #e5e7eb;
-                    font-family: "monospace";
-                    font-size: 11px;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
-                }
-            }
+    log-view := LogTextView {
+        text: LogAdapter.text;
+        scrolled => {
+            root.stick-to-end =
+                log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
         }
     }
 
     ActionRow {
         Button {
             text: "Clear view";
-            enabled: !LogAdapter.running && LogAdapter.lines.length > 0;
+            enabled: !LogAdapter.running && LogAdapter.text != "";
             clicked => { LogAdapter.clear-view(); }
         }
         Button {

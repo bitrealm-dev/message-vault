@@ -56,12 +56,73 @@ pub fn check_cancel(cancel: Option<&CancelFlag>) -> Result<(), &'static str> {
     }
 }
 
+/// Failure returned by an in-process GUI job.
+#[derive(Debug, Clone)]
+pub struct JobError {
+    pub detail: String,
+    pub user_message: Option<String>,
+}
+
+impl JobError {
+    pub fn detail(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            user_message: None,
+        }
+    }
+
+    pub fn with_user_message(
+        detail: impl Into<String>,
+        user_message: impl Into<String>,
+    ) -> Self {
+        Self {
+            detail: detail.into(),
+            user_message: Some(user_message.into()),
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.detail.to_ascii_lowercase().contains("cancelled")
+    }
+}
+
+impl From<String> for JobError {
+    fn from(detail: String) -> Self {
+        Self::detail(detail)
+    }
+}
+
+impl From<&str> for JobError {
+    fn from(detail: &str) -> Self {
+        Self::detail(detail.to_string())
+    }
+}
+
+impl fmt::Display for JobError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ProcessEvent {
     Started(String),
     Log(String),
     Finished(String),
-    Error(String),
+    Error {
+        detail: String,
+        user_message: Option<String>,
+    },
+}
+
+impl ProcessEvent {
+    /// Error that uses the same text for the log and the banner.
+    pub fn error_detail(detail: impl Into<String>) -> Self {
+        Self::Error {
+            detail: detail.into(),
+            user_message: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -96,11 +157,11 @@ impl ProcessControl {
 /// Run an in-process job on a background thread; send events on `tx`.
 ///
 /// The job receives the shared cancel flag and a log sender. On success it should
-/// return `Ok(())`; on failure `Err(message)`. Cancelled jobs typically return
-/// an error containing `"cancelled"`.
+/// return `Ok(())`; on failure `Err(JobError)`. Cancelled jobs typically return
+/// an error whose detail contains `"cancelled"`.
 pub fn spawn_job<F>(control: ProcessControl, tx: mpsc::Sender<ProcessEvent>, label: String, job: F)
 where
-    F: FnOnce(CancelFlag, mpsc::Sender<ProcessEvent>) -> Result<(), String> + Send + 'static,
+    F: FnOnce(CancelFlag, mpsc::Sender<ProcessEvent>) -> Result<(), JobError> + Send + 'static,
 {
     control.begin_job();
     let cancel = control.cancel_flag();
@@ -113,10 +174,13 @@ where
                 ));
             }
             Err(error) => {
-                if error.to_ascii_lowercase().contains("cancelled") {
+                if error.is_cancelled() {
                     let _ = tx.send(ProcessEvent::Finished("Cancelled.".to_string()));
                 } else {
-                    let _ = tx.send(ProcessEvent::Error(error));
+                    let _ = tx.send(ProcessEvent::Error {
+                        detail: error.detail,
+                        user_message: error.user_message,
+                    });
                 }
             }
         }

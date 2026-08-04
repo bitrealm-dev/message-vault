@@ -22,7 +22,7 @@ use message_ir::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
-use vault_push::{ProgressEvent, VaultPushConfig, authenticate, run};
+use vault_push::{AuthError, ProgressEvent, VaultPushConfig, authenticate, run};
 
 fn sample_doc() -> ConversationDocument {
     ConversationDocument {
@@ -707,4 +707,50 @@ fn multipart_aborts_on_hash_mismatch_complete() {
     let report = run(&cfg, None).unwrap();
     assert!(!report.ok);
     abort.assert();
+}
+
+#[test]
+fn authenticate_maps_http_failures_to_typed_errors() {
+    let server = MockServer::start();
+
+    let _unauthorized = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(401).body("unauthorized");
+    });
+    let err = authenticate(&server.base_url(), "bad", "").unwrap_err();
+    assert_eq!(err.kind(), "invalid_key");
+    assert!(!err.user_message().contains("unauthorized"));
+    assert!(err.detail().contains("invalid vault key"));
+}
+
+#[test]
+fn authenticate_maps_html_and_status_failures() {
+    let server = MockServer::start();
+    let _html = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200)
+            .body("<!DOCTYPE html><html><body>browse ui</body></html>");
+    });
+    let err = authenticate(&server.base_url(), "mv_test", "").unwrap_err();
+    assert_eq!(err.kind(), "wrong_host");
+    assert!(err.user_message().contains("website"));
+    assert!(err.detail().contains("HTML"));
+
+    // Fresh server for a non-401 status.
+    let server = MockServer::start();
+    let _forbidden = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(403).body("username does not match vault key");
+    });
+    let err = authenticate(&server.base_url(), "mv_test", "").unwrap_err();
+    assert_eq!(err.kind(), "forbidden");
+    assert!(!err.user_message().contains("username does not match"));
+    assert!(err.detail().contains("username does not match vault key"));
+}
+
+#[test]
+fn authenticate_rejects_invalid_url() {
+    let err = authenticate("not a url", "mv_test", "").unwrap_err();
+    assert_eq!(err.kind(), "invalid_url");
+    assert!(matches!(err, AuthError::InvalidUrl { .. }));
 }

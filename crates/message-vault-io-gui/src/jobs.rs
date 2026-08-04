@@ -6,7 +6,7 @@ use go_sms_pro_exporter::run as run_go_sms_pro;
 use imazing_exporter::run as run_imazing;
 use imessage_ir_exporter::run as run_imessage;
 use message_vault_io_core::{
-    CancelFlag, Exporter, ExporterConfig, LogSink, ProcessEvent, RunResult,
+    CancelFlag, Exporter, ExporterConfig, JobError, LogSink, ProcessEvent, RunResult,
 };
 use openextract_exporter::run as run_openextract;
 use sms_backup_plus_exporter::run as run_sms_plus;
@@ -14,7 +14,7 @@ use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
 pub type LibraryJob =
-    Box<dyn FnOnce(CancelFlag, mpsc::Sender<ProcessEvent>) -> Result<(), String> + Send>;
+    Box<dyn FnOnce(CancelFlag, mpsc::Sender<ProcessEvent>) -> Result<(), JobError> + Send>;
 
 fn prepare_config(
     mut config: ExporterConfig,
@@ -65,7 +65,7 @@ pub fn library_job_for_exporter(exporter: Exporter, config: ExporterConfig) -> L
 pub fn run_and_log<R, E: std::fmt::Display>(
     result: Result<R, E>,
     tx: mpsc::Sender<ProcessEvent>,
-) -> Result<(), String>
+) -> Result<(), JobError>
 where
     R: HasMessages,
 {
@@ -76,7 +76,7 @@ where
             }
             Ok(())
         }
-        Err(error) => Err(format!("{error:#}")),
+        Err(error) => Err(JobError::detail(format!("{error:#}"))),
     }
 }
 

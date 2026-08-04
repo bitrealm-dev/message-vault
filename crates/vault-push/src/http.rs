@@ -8,6 +8,8 @@ use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
+use crate::AuthError;
+
 #[derive(Debug, Clone)]
 pub struct AuthInfo {
     pub account_id: String,
@@ -149,10 +151,21 @@ fn encode(s: &str) -> String {
 }
 
 impl HttpSession {
-    pub fn auth_check(&self, base_url: &str, key: &str, username: &str) -> Result<AuthInfo> {
+    pub fn auth_check(
+        &self,
+        base_url: &str,
+        key: &str,
+        username: &str,
+    ) -> std::result::Result<AuthInfo, AuthError> {
         // Validate the token first (no account=). A wrong User ID used to return
         // HTTP 403 "username does not match vault key", which looked like a bad token.
-        let base = base_url.trim_end_matches('/');
+        let base = base_url.trim().trim_end_matches('/');
+        if let Err(error) = reqwest::Url::parse(base) {
+            return Err(AuthError::InvalidUrl {
+                url: base.to_string(),
+                detail: error.to_string(),
+            });
+        }
         let url = format!("{base}/v1/auth/check");
         let response = self
             .client
@@ -160,35 +173,40 @@ impl HttpSession {
             .timeout(Duration::from_secs(15))
             .header("Authorization", format!("Bearer {}", key.trim()))
             .send()
-            .with_context(|| format!("GET {url}"))?;
+            .map_err(|error| classify_auth_transport_error(&url, error))?;
         let status = response.status();
-        let text = response.text().context("read auth/check body")?;
+        let status_code = status.as_u16();
+        let text = response.text().map_err(|error| AuthError::ReadResponse {
+            detail: error.to_string(),
+        })?;
         if looks_like_html(&text) {
-            bail!(
-                "auth/check returned HTML from {url} (HTTP {status}). \
-                 Vault URL must point at the vault host (TLS site or port 8080), \
-                 not the Next.js browse UI alone (port 3000)"
-            );
+            return Err(AuthError::WrongHostHtml {
+                url,
+                status: status_code,
+            });
         }
-        if status.as_u16() == 401 {
-            bail!("invalid vault key");
+        if status_code == 401 {
+            return Err(AuthError::InvalidKey);
         }
         if !status.is_success() {
-            bail!("auth/check failed (HTTP {status}): {text}");
+            return Err(classify_auth_http_status(status_code, text));
         }
-        let parsed: AuthCheckResponse = serde_json::from_str(&text).with_context(|| {
-            format!(
-                "parse auth/check JSON from {url} (HTTP {status}): {}",
-                truncate(&text, 200)
-            )
+        let parsed: AuthCheckResponse = serde_json::from_str(&text).map_err(|_| {
+            AuthError::BadJson {
+                url: url.clone(),
+                status: status_code,
+                snippet: truncate(&text, 200),
+            }
         })?;
         if !parsed.ok {
-            bail!("auth/check rejected: {}", parsed.error.unwrap_or(text));
+            return Err(AuthError::Rejected {
+                message: parsed.error.unwrap_or(text),
+            });
         }
         let account_id = parsed
             .account_id
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("auth/check did not return account_id"))?;
+            .ok_or(AuthError::MissingAccountId)?;
         // Token is authoritative. Ignore a wrong Username field — callers should
         // prefer `AuthInfo.username` for later account= query params.
         let _ = username;
@@ -510,8 +528,50 @@ impl HttpSession {
     }
 }
 
-pub fn auth_check(base_url: &str, key: &str, username: &str) -> Result<AuthInfo> {
-    HttpSession::new()?.auth_check(base_url, key, username)
+fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError {
+    let detail = error.to_string();
+    if error.is_timeout() {
+        AuthError::Timeout {
+            url: url.to_string(),
+            detail,
+        }
+    } else if error.is_builder() {
+        AuthError::InvalidUrl {
+            url: url.to_string(),
+            detail,
+        }
+    } else if error.is_connect() || error.is_request() {
+        AuthError::Network {
+            url: url.to_string(),
+            detail,
+        }
+    } else {
+        AuthError::Network {
+            url: url.to_string(),
+            detail,
+        }
+    }
+}
+
+fn classify_auth_http_status(status: u16, body: String) -> AuthError {
+    match status {
+        403 => AuthError::Forbidden { status, body },
+        404 => AuthError::ApiNotFound { status, body },
+        429 => AuthError::RateLimited { status, body },
+        500..=599 => AuthError::ServerError { status, body },
+        _ => AuthError::HttpStatus { status, body },
+    }
+}
+
+pub fn auth_check(
+    base_url: &str,
+    key: &str,
+    username: &str,
+) -> std::result::Result<AuthInfo, AuthError> {
+    let session = HttpSession::new().map_err(|error| AuthError::Client {
+        detail: format!("{error:#}"),
+    })?;
+    session.auth_check(base_url, key, username)
 }
 
 pub fn with_retries<T, F>(max_retries: u32, mut op: F) -> Result<T>
