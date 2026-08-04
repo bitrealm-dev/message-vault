@@ -163,8 +163,9 @@ body {
   outline-offset: 1px;
 }
 
-/* Hanko auth widget — map vault theme tokens (dark/light via data-theme). */
-hanko-auth {
+/* Hanko auth / profile widgets — map vault theme tokens (dark/light via data-theme). */
+hanko-auth,
+hanko-profile {
   --color: var(--text);
   --color-shade-1: var(--muted);
   --color-shade-2: var(--border);
@@ -185,13 +186,15 @@ hanko-auth {
   --item-height: 2.5rem;
 }
 
-hanko-auth::part(container) {
+hanko-auth::part(container),
+hanko-profile::part(container) {
   border: none;
   box-shadow: none;
   background: transparent;
 }
 
-hanko-auth::part(headline1) {
-  /* Vault login already has a page title above the widget. */
+hanko-auth::part(headline1),
+hanko-profile::part(headline1) {
+  /* Vault settings / login already provide section titles. */
   display: none;
 }

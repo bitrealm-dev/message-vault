@@ -3,6 +3,7 @@
 import { toPhoneE164 } from "@/lib/phoneE164";
 import { MAX_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ContactPhoneList,
@@ -232,8 +233,14 @@ export function SettingsAccountForm() {
 
           {hideLocalPassword ? (
             <p className="text-[13px] text-muted">
-              Sign-in is managed by Hanko. Password settings are not available
-              for this account.
+              Sign-in is managed by Hanko. Add or manage a passkey under{" "}
+              <Link
+                href="/settings/access"
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                Access
+              </Link>
+              .
             </p>
           ) : (
             <div>
