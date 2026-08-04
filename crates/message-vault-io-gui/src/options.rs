@@ -117,7 +117,7 @@ pub fn region_options() -> ModelRc<SharedString> {
 
 /// Format choices for the guided Import Messages screen.
 pub fn guided_import_format_options() -> ModelRc<SharedString> {
-    model_from_labels(["iPhone - iOS".into(), "macOS".into()])
+    model_from_labels(["iPhone - iOS".into(), "iPhone macOS".into()])
 }
 
 /// Guided import format index: 0 = iPhone iOS, 1 = macOS.

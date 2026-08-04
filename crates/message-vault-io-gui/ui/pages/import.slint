@@ -134,18 +134,24 @@ export component ImportPage inherits VerticalLayout {
             if !root.is-macos: StackedPathField {
                 label: "iPhone Backup Directory";
                 required: true;
-                placeholder: "Path to iPhone backup";
+                placeholder: "Path to the root of a device backup";
                 field-id: "import.backup_path";
                 value <=> ImportAdapter.backup-path;
                 browse-requested(id) => { ImportAdapter.browse(id); }
             }
+            if !root.is-macos: StackedHint {
+                message: "Path to the root of a device backup";
+            }
             if root.is-macos: StackedPathField {
                 label: "iMessage database";
                 required: true;
-                placeholder: "Path to chat.db (default ~/Library/Messages/chat.db)";
+                placeholder: "Path to chat.db file.";
                 field-id: "import.db_path";
                 value <=> ImportAdapter.backup-path;
                 browse-requested(id) => { ImportAdapter.browse(id); }
+            }
+            if root.is-macos: StackedHint {
+                message: "Path to chat.db file.";
             }
 
             if !root.is-macos: StackedLineEdit {
@@ -160,6 +166,18 @@ export component ImportPage inherits VerticalLayout {
                 model: ImportAdapter.attachment-media-options;
                 current-index <=> ImportAdapter.attachment-media-index;
                 selected(_) => { ImportAdapter.media-changed(); }
+            }
+            if ImportAdapter.attachment-media-index == 0: StackedHint {
+                message: "Copy all files as is";
+            }
+            if ImportAdapter.attachment-media-index == 1: StackedHint {
+                message: "Convert all files to common formats (.jpg, .mp4, .mp3) at high quality";
+            }
+            if ImportAdapter.attachment-media-index == 2: StackedHint {
+                message: "Re-encodes for smaller file size at the expense of some quality";
+            }
+            if ImportAdapter.attachment-media-index == 3: StackedHint {
+                message: "Do not copy files";
             }
             if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
                 message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
@@ -183,25 +201,6 @@ export component ImportPage inherits VerticalLayout {
                     placeholder: "e.g. 20";
                     value <=> ImportAdapter.media-min-size;
                 }
-            }
-        }
-
-        if !root.is-macos: AdvancedSection {
-            title: "Advanced iOS options";
-            open <=> ImportAdapter.ios-advanced;
-
-            StackedHint {
-                message: "iPhone Backup Directory above is the iMessage database path (--db-path): the root of an iOS device backup. If the backup is encrypted, use the encryption password field.";
-            }
-            StackedPathField {
-                label: "Attachment root";
-                placeholder: "Optional absolute path";
-                field-id: "import.attachment_root";
-                value <=> ImportAdapter.attachment-root;
-                browse-requested(id) => { ImportAdapter.browse(id); }
-            }
-            StackedHint {
-                message: "Custom attachment root has no effect on iOS backups (attachments are read from the backup). Use macOS import format for ~/Library/Messages or a custom Attachments path.";
             }
         }
 
