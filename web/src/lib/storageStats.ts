@@ -1,34 +1,16 @@
 import { getDb, resetDb } from "./dbCore";
+import type {
+  StorageUsage,
+  VaultImportListItem,
+} from "./storageTypes";
 import { openWritableVaultDb } from "./vaultSchema";
 
-export type VaultImportListItem = {
-  id: number;
-  source: string;
-  tool: string | null;
-  mode: string;
-  status: string;
-  startedAt: string;
-  finishedAt: string | null;
-  messageCount: number;
-  attachmentCount: number;
-  bytesUploaded: number;
-};
-
-export type TopAttachmentItem = {
-  id: number;
-  originalName: string | null;
-  mimeType: string | null;
-  sizeBytes: number;
-  conversationId: number;
-  conversationTitle: string | null;
-  chatIdentifier: string;
-};
-
-export type StorageUsage = {
-  totalBytes: number;
-  attachmentCount: number;
-  topAttachments: TopAttachmentItem[];
-};
+export type {
+  StorageUsage,
+  TopAttachmentItem,
+  VaultImportListItem,
+} from "./storageTypes";
+export { formatBytes } from "./storageTypes";
 
 function ensureReadableSchema(): void {
   // Migrate vault_imports / import_id if needed, then reopen readonly cache.
@@ -133,17 +115,4 @@ export function loadStorageUsage(
       chatIdentifier: row.chat_identifier,
     })),
   };
-}
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const digits = value >= 10 || unit === 0 ? 0 : 1;
-  return `${value.toFixed(digits)} ${units[unit]}`;
 }

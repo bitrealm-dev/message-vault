@@ -4,7 +4,7 @@ import {
   formatBytes,
   type TopAttachmentItem,
   type VaultImportListItem,
-} from "@/lib/storageStats";
+} from "@/lib/storageTypes";
 import { useCallback, useEffect, useState } from "react";
 
 function formatImportDate(iso: string | null): string {
