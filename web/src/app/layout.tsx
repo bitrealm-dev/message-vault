@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { HistoryShell } from "@/components/HistoryShell";
 import { SourceFilterProvider } from "@/components/SourceFilter";
 import { ThemeBootScript } from "@/components/ThemeBootScript";
 import { DateTimeFormatProvider } from "@/components/useDateTimeFormat";
@@ -35,7 +36,9 @@ export default function RootLayout({
         <ThemeProvider>
           <DateTimeFormatProvider>
             <MessageBadgePrefsProvider>
-              <SourceFilterProvider>{children}</SourceFilterProvider>
+              <SourceFilterProvider>
+                <HistoryShell>{children}</HistoryShell>
+              </SourceFilterProvider>
             </MessageBadgePrefsProvider>
           </DateTimeFormatProvider>
         </ThemeProvider>

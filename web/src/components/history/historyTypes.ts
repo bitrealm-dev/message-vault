@@ -43,11 +43,68 @@ export type HistoryCommand =
       label: string;
     }
   | {
+      type: "renameLabel";
+      from: string;
+      to: string;
+      label: string;
+    }
+  | {
+      type: "labelMembership";
+      name: string;
+      beforeContactIds: number[];
+      afterContactIds: number[];
+      /** When set, clears all labels on these contacts (undo restores snapshots). */
+      clearSnapshots?: Array<{ contactId: number; labels: string[] }>;
+      label: string;
+    }
+  | {
       type: "deleteLabel";
       name: string;
       memberContactIds: number[];
       label: string;
     };
+
+export function sortedContactIds(ids: number[]): number[] {
+  return [...new Set(ids.filter((id) => Number.isFinite(id)))].sort(
+    (a, b) => a - b,
+  );
+}
+
+export function renameLabelHistoryLabel(from: string, to: string): string {
+  const a = from.trim() || "label";
+  const b = to.trim() || "label";
+  return `Rename label ${a} to ${b}`;
+}
+
+export function labelMembershipHistoryLabel(
+  name: string,
+  before: number[],
+  after: number[],
+): string {
+  const label = name.trim() || "label";
+  const beforeSet = new Set(before);
+  const added = after.filter((id) => !beforeSet.has(id)).length;
+  const removed = before.filter((id) => !after.includes(id)).length;
+  if (added > 0 && removed === 0) {
+    const n = added;
+    return n === 1
+      ? `Add contact to ${label}`
+      : `Add ${n} contacts to ${label}`;
+  }
+  if (removed > 0 && added === 0) {
+    const n = removed;
+    return n === 1
+      ? `Remove contact from ${label}`
+      : `Remove ${n} contacts from ${label}`;
+  }
+  return `Change ${label} membership`;
+}
+
+export function clearContactLabelsHistoryLabel(count: number): string {
+  return count === 1
+    ? "Clear labels for contact"
+    : `Clear labels for ${count} contacts`;
+}
 
 export type HistoryToast = {
   text: string;
@@ -87,6 +144,16 @@ export function toastTextForCommand(cmd: HistoryCommand): string {
       return `Created new contact ${cmd.name.trim() || "contact"}`;
     case "createLabel":
       return `Created label ${cmd.name.trim() || "label"}`;
+    case "renameLabel":
+      return `Renamed label ${cmd.from.trim() || "label"} to ${cmd.to.trim() || "label"}`;
+    case "labelMembership":
+      if (cmd.clearSnapshots?.length) {
+        const n = cmd.clearSnapshots.length;
+        return n === 1
+          ? "Cleared labels for contact"
+          : `Cleared labels for ${n} contacts`;
+      }
+      return labelMembershipToastText(cmd.name, cmd.beforeContactIds, cmd.afterContactIds);
     case "deleteLabel":
       return `Deleted label ${cmd.name.trim() || "label"}`;
     case "trashContacts": {
@@ -139,9 +206,67 @@ export function undoToastTextForCommand(cmd: HistoryCommand): string {
       }
       return `Undeleted ${n} messages ${joinSubjectsPreview(cmd.subjects, "messages")}`;
     }
+    case "renameLabel":
+      return `Renamed label ${cmd.to.trim() || "label"} to ${cmd.from.trim() || "label"}`;
+    case "labelMembership":
+      if (cmd.clearSnapshots?.length) {
+        const n = cmd.clearSnapshots.length;
+        return n === 1
+          ? "Restored labels for contact"
+          : `Restored labels for ${n} contacts`;
+      }
+      return labelMembershipUndoToastText(
+        cmd.name,
+        cmd.beforeContactIds,
+        cmd.afterContactIds,
+      );
     default:
       return `Undid — ${toastTextForCommand(cmd)}`;
   }
+}
+
+function labelMembershipToastText(
+  name: string,
+  before: number[],
+  after: number[],
+): string {
+  const label = name.trim() || "label";
+  const beforeSet = new Set(before);
+  const added = after.filter((id) => !beforeSet.has(id)).length;
+  const removed = before.filter((id) => !after.includes(id)).length;
+  if (added > 0 && removed === 0) {
+    return added === 1
+      ? `Added contact to ${label}`
+      : `Added ${added} contacts to ${label}`;
+  }
+  if (removed > 0 && added === 0) {
+    return removed === 1
+      ? `Removed contact from ${label}`
+      : `Removed ${removed} contacts from ${label}`;
+  }
+  return `Updated ${label} membership`;
+}
+
+function labelMembershipUndoToastText(
+  name: string,
+  before: number[],
+  after: number[],
+): string {
+  const label = name.trim() || "label";
+  const beforeSet = new Set(before);
+  const added = after.filter((id) => !beforeSet.has(id)).length;
+  const removed = before.filter((id) => !after.includes(id)).length;
+  if (added > 0 && removed === 0) {
+    return added === 1
+      ? `Removed contact from ${label}`
+      : `Removed ${added} contacts from ${label}`;
+  }
+  if (removed > 0 && added === 0) {
+    return removed === 1
+      ? `Added contact to ${label}`
+      : `Added ${removed} contacts to ${label}`;
+  }
+  return `Restored ${label} membership`;
 }
 
 /** Snackbar after a successful redo (no nested Undo control). */

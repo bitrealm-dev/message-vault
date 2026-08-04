@@ -1,6 +1,7 @@
 "use client";
 
 import { labelSlug } from "@/lib/labelSlug";
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -20,6 +21,7 @@ import {
 } from "./icons";
 import { IconHoverTarget } from "./IconHoverLabel";
 import { useHistory } from "./history";
+import { renameLabelHistoryLabel } from "./history/historyTypes";
 import { useDismissible } from "./useDismissible";
 
 const navHeadingClass = "px-3 pb-1";
@@ -271,6 +273,12 @@ export function LabelsNav({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "rename failed");
+      pushHistory({
+        type: "renameLabel",
+        from,
+        to: data.name,
+        label: renameLabelHistoryLabel(from, data.name),
+      });
       setRename(null);
       setMenuFor(null);
       router.refresh();
@@ -285,6 +293,7 @@ export function LabelsNav({
   };
 
   const deleteLabel = async (name: string) => {
+    if (isDeletionUiBlocked()) return;
     setBusy(true);
     try {
       const membersRes = await fetch(
@@ -469,7 +478,8 @@ export function LabelsNav({
                     </button>
                     <button
                       type="button"
-                      className="block w-full px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong"
+                      disabled={busy || isDeletionUiBlocked()}
+                      className="block w-full px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
                       onClick={() => void deleteLabel(name)}
                     >
                       Delete

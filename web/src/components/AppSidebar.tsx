@@ -1,7 +1,9 @@
 "use client";
 
-import { isSettingsPath } from "@/lib/settingsNav";
-import { useEffect } from "react";
+import { isSettingsPath, settingsLinkFromLocation } from "@/lib/settingsNav";
+import { isDeletionUiEnabled } from "@/lib/v1Capabilities";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useEffect } from "react";
 import {
   GroupMessagesOutlineIcon,
   HomeIcon,
@@ -152,22 +154,51 @@ export function AppSidebar({
 
         <div className="mt-3" aria-hidden />
 
-        <SidebarNavLink
-          href="/trash"
-          label="Trash"
-          active={active === "/trash"}
-          compact={collapsed}
-          icon={<TrashIcon className="size-5 shrink-0 opacity-80" />}
-        />
-        <SidebarNavLink
-          href="/settings/account"
-          label="Settings"
-          active={settingsActive}
-          compact={collapsed}
-          icon={<SettingsIcon className="size-5 shrink-0 opacity-80" />}
-        />
+        {isDeletionUiEnabled() && (
+          <SidebarNavLink
+            href="/trash"
+            label="Trash"
+            active={active === "/trash"}
+            compact={collapsed}
+            icon={<TrashIcon className="size-5 shrink-0 opacity-80" />}
+          />
+        )}
+        <Suspense
+          fallback={
+            <SidebarNavLink
+              href="/settings/account"
+              label="Settings"
+              active={settingsActive}
+              compact={collapsed}
+              icon={<SettingsIcon className="size-5 shrink-0 opacity-80" />}
+            />
+          }
+        >
+          <SettingsNavLink active={settingsActive} compact={collapsed} />
+        </Suspense>
       </nav>
       {confirmDialog}
     </aside>
+  );
+}
+
+function SettingsNavLink({
+  active,
+  compact,
+}: {
+  active: boolean;
+  compact: boolean;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const href = settingsLinkFromLocation(pathname, searchParams);
+  return (
+    <SidebarNavLink
+      href={href}
+      label="Settings"
+      active={active}
+      compact={compact}
+      icon={<SettingsIcon className="size-5 shrink-0 opacity-80" />}
+    />
   );
 }

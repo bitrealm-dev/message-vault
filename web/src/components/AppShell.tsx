@@ -1,10 +1,6 @@
 "use client";
 
 import { AppSidebar } from "@/components/AppSidebar";
-import {
-  HistoryProvider,
-  HistoryToast,
-} from "@/components/history";
 import { PaneSeparator } from "@/components/PaneSeparator";
 import { usePanelLayoutStorage } from "@/components/panelLayoutStorage";
 import {
@@ -59,43 +55,40 @@ export function AppShell({
   const navMinSize = navAnimating ? 0 : 120;
 
   return (
-    <HistoryProvider>
-      <div className="flex h-full w-full overflow-visible">
-        <Group
-          id="mv-nav"
-          orientation="horizontal"
-          className="min-h-0 min-w-0 flex-1"
-          defaultLayout={defaultLayout}
-          onLayoutChanged={navAnimating ? undefined : onLayoutChanged}
+    <div className="flex h-full w-full overflow-visible">
+      <Group
+        id="mv-nav"
+        orientation="horizontal"
+        className="min-h-0 min-w-0 flex-1"
+        defaultLayout={defaultLayout}
+        onLayoutChanged={navAnimating ? undefined : onLayoutChanged}
+      >
+        <Panel
+          id="nav"
+          panelRef={navPanelRef}
+          defaultSize={200}
+          minSize={navMinSize}
+          maxSize={360}
+          collapsible
+          collapsedSize={NAV_RAIL_PX}
+          className="min-h-0 overflow-hidden"
         >
-          <Panel
-            id="nav"
-            panelRef={navPanelRef}
-            defaultSize={200}
-            minSize={navMinSize}
-            maxSize={360}
-            collapsible
-            collapsedSize={NAV_RAIL_PX}
-            className="min-h-0 overflow-hidden"
-          >
-            <AppSidebar
-              active={active}
-              labels={labels}
-              collapsed={collapsed}
-              animating={navAnim === "collapse"}
-              onHideNav={() => void collapse()}
-              onShowNav={() => void expand()}
-              onExpandLabels={onExpandLabels}
-              focusLabelsToken={focusLabelsToken}
-            />
-          </Panel>
-          <PaneSeparator orientation="vertical" disabled={navCollapsed || navAnimating} />
-          <Panel id="main" minSize="30%" className="min-h-0 min-w-0">
-            {children}
-          </Panel>
-        </Group>
-      </div>
-      <HistoryToast />
-    </HistoryProvider>
+          <AppSidebar
+            active={active}
+            labels={labels}
+            collapsed={collapsed}
+            animating={navAnim === "collapse"}
+            onHideNav={() => void collapse()}
+            onShowNav={() => void expand()}
+            onExpandLabels={onExpandLabels}
+            focusLabelsToken={focusLabelsToken}
+          />
+        </Panel>
+        <PaneSeparator orientation="vertical" disabled={navCollapsed || navAnimating} />
+        <Panel id="main" minSize="30%" className="min-h-0 min-w-0">
+          {children}
+        </Panel>
+      </Group>
+    </div>
   );
 }

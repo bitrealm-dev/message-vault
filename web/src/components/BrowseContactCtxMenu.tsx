@@ -2,6 +2,7 @@
 
 import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import type { RefObject } from "react";
 import { NewContactIcon } from "./BrowseContactList";
 import {
@@ -104,7 +105,12 @@ export function BrowseContactCtxMenu({
           {isNameless && !hasSelection && (
             <button
               type="button"
-              disabled={saving || contactCreating || contactEditing}
+              disabled={
+                isDeletionUiBlocked() ||
+                saving ||
+                contactCreating ||
+                contactEditing
+              }
               className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-hover-strong disabled:opacity-40"
               onMouseEnter={onMouseEnterItem}
               onClick={onMergeInto}
@@ -130,7 +136,7 @@ export function BrowseContactCtxMenu({
           <div className="my-1 border-t border-border/60" />
           <button
             type="button"
-            disabled={saving || groupTrashSaving}
+            disabled={isDeletionUiBlocked() || saving || groupTrashSaving}
             className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] text-text hover:bg-red-500/15 hover:text-red-300 disabled:opacity-50"
             onMouseEnter={onMouseEnterItem}
             onClick={onDelete}

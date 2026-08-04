@@ -9,6 +9,7 @@ import type {
 } from "@/lib/search";
 import type { SearchResultKey } from "@/lib/searchSelection";
 import type { ContactListItem, YearThread } from "@/lib/types";
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import {
   useEffect,
   useRef,
@@ -394,7 +395,7 @@ export function BrowsePeopleTreePane({
             icon: (
               <TrashMessagesIcon className="size-5 shrink-0 opacity-80" />
             ),
-            disabled: trashDisabled,
+            disabled: trashDisabled || isDeletionUiBlocked(),
             danger: true,
             onClick: () => onTrashMessages(),
           } satisfies ListHistoryMenuItem,
@@ -409,7 +410,7 @@ export function BrowsePeopleTreePane({
                 ? "Delete contacts"
                 : "Delete contact",
             icon: <XIcon className="size-5 shrink-0 opacity-80" />,
-            disabled: deleteDisabled,
+            disabled: deleteDisabled || isDeletionUiBlocked(),
             danger: true,
             onClick: () => onTrashContact(),
           } satisfies ListHistoryMenuItem,
@@ -447,7 +448,8 @@ export function BrowsePeopleTreePane({
                       ? "Delete message"
                       : "Delete messages",
                   icon: <TrashMessagesIcon className="size-5 shrink-0 opacity-80" />,
-                  disabled: selectedSearchResultCount === 0,
+                  disabled:
+                    isDeletionUiBlocked() || selectedSearchResultCount === 0,
                   danger: true,
                   onClick: () => onDeleteSearchResults(),
                 } satisfies ListHistoryMenuItem,

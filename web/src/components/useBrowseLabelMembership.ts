@@ -10,6 +10,12 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import type { HistoryCommand } from "./history/historyTypes";
+import {
+  clearContactLabelsHistoryLabel,
+  labelMembershipHistoryLabel,
+  sortedContactIds,
+} from "./history/historyTypes";
 import type { LabelCheckState } from "./LabelsMenu";
 
 export type UseBrowseLabelMembershipOptions = {
@@ -26,6 +32,7 @@ export type UseBrowseLabelMembershipOptions = {
   ctxMenu: { id: number; x: number; y: number } | null;
   trashIdsForContext: (ctxId: number) => number[];
   queueStatusMessage: (message: string) => void;
+  pushHistory: (cmd: HistoryCommand) => void;
 };
 
 export type UseBrowseLabelMembershipResult = {
@@ -47,7 +54,7 @@ export type UseBrowseLabelMembershipResult = {
   flushSelectionDirty: () => void;
 };
 
-/** Contact-label assignment and the labels flyout panel state. */
+/** Contact-label assign/clear/exclude membership + the labels flyout panel state. */
 export function useBrowseLabelMembership(
   options: UseBrowseLabelMembershipOptions,
 ): UseBrowseLabelMembershipResult {
@@ -65,6 +72,7 @@ export function useBrowseLabelMembership(
     ctxMenu,
     trashIdsForContext,
     queueStatusMessage,
+    pushHistory,
   } = options;
 
   const router = useRouter();
@@ -217,10 +225,36 @@ export function useBrowseLabelMembership(
     return result;
   }, [menuLabels, labelTargets]);
 
+  const fetchLabelMemberIds = useCallback(async (name: string) => {
+    const res = await fetch(
+      `/api/contact-labels/members?name=${encodeURIComponent(name)}`,
+    );
+    if (!res.ok) return [] as number[];
+    const data = (await res.json()) as { memberContactIds?: number[] };
+    return sortedContactIds(data.memberContactIds ?? []);
+  }, []);
+
   const applyLabelMembership = useCallback(
     async (name: string, enable: boolean) => {
       const targets = labelTargets;
       if (targets.length === 0) return;
+
+      const beforeContactIds = await fetchLabelMemberIds(name);
+      const beforeSet = new Set(beforeContactIds);
+      const changingIds = targets
+        .filter((person) => {
+          const onServer = beforeSet.has(person.id);
+          return enable ? !onServer : onServer;
+        })
+        .map((person) => person.id);
+      if (changingIds.length === 0) return;
+
+      const afterSet = new Set(beforeContactIds);
+      for (const id of changingIds) {
+        if (enable) afterSet.add(id);
+        else afterSet.delete(id);
+      }
+      const afterContactIds = sortedContactIds([...afterSet]);
 
       let changed = 0;
       for (const person of targets) {
@@ -280,6 +314,17 @@ export function useBrowseLabelMembership(
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "save failed");
+        pushHistory({
+          type: "labelMembership",
+          name,
+          beforeContactIds,
+          afterContactIds,
+          label: labelMembershipHistoryLabel(
+            name,
+            beforeContactIds,
+            afterContactIds,
+          ),
+        });
       } catch (err) {
         console.error(err);
         // Re-sync from server on failure.
@@ -296,6 +341,8 @@ export function useBrowseLabelMembership(
       setLabelOverrides,
       setDetail,
       setThreadsEpoch,
+      pushHistory,
+      fetchLabelMemberIds,
     ],
   );
 
@@ -331,6 +378,11 @@ export function useBrowseLabelMembership(
   const clearAllLabelsForSelection = useCallback(async () => {
     const targets = labelTargets;
     if (targets.length === 0) return;
+
+    const clearSnapshots = targets.map((person) => ({
+      contactId: person.id,
+      labels: [...person.labels],
+    }));
 
     const nextLabelsById = new Map<number, string[]>();
     for (const person of targets) {
@@ -369,6 +421,14 @@ export function useBrowseLabelMembership(
           );
         }
       }
+      pushHistory({
+        type: "labelMembership",
+        name: "",
+        beforeContactIds: sortedContactIds(clearSnapshots.map((s) => s.contactId)),
+        afterContactIds: sortedContactIds(clearSnapshots.map((s) => s.contactId)),
+        clearSnapshots,
+        label: clearContactLabelsHistoryLabel(clearSnapshots.length),
+      });
     } catch (err) {
       console.error(err);
       selectionDirtyRef.current = true;
@@ -383,6 +443,7 @@ export function useBrowseLabelMembership(
     setLabelOverrides,
     setDetail,
     setThreadsEpoch,
+    pushHistory,
   ]);
 
   const canEditLabels = !formOpen && (hasSelection || !!detail);

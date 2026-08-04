@@ -9,6 +9,7 @@ published at <https://bitrealm-dev.github.io/message-vault-rs/>.
 | Doc | Topic |
 |-----|-------|
 | [development.md](development.md) | Windows/Linux setup, checks, troubleshooting |
+| [roadmap.md](roadmap.md) | V1 product boundary and acceptance checks |
 | [../../demo/README.md](../../demo/README.md) | Demo dataset contents and regen |
 | [../../web/STYLE_GUIDE.md](../../web/STYLE_GUIDE.md) | Web UI theme tokens |
 

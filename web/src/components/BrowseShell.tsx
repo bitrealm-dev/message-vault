@@ -27,6 +27,8 @@ import { useVaultSearch } from "./useVaultSearch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SearchConversationHit, SearchMessageHit } from "@/lib/search";
 import { parseSearchQuery } from "@/lib/searchQuery";
+import { settingsLinkFromLocation } from "@/lib/settingsNav";
+import { isDeletionUiBlocked, isDeletionUiEnabled } from "@/lib/v1Capabilities";
 import { ThreadFindBar } from "./ThreadFindBar";
 import { useThreadFind } from "./useThreadFind";
 import {
@@ -565,8 +567,8 @@ export function BrowseShell({
 
   const unlockVaultToEdit = useCallback(() => {
     setCtxMenu(null);
-    router.push("/settings/account");
-  }, [router]);
+    router.push(settingsLinkFromLocation(pathname, searchParams));
+  }, [router, pathname, searchParams]);
 
   const { sorted, grouped } = useBrowseContactListView({
     sortedRaw,
@@ -1274,6 +1276,7 @@ export function BrowseShell({
     ctxMenu,
     trashIdsForContext,
     queueStatusMessage,
+    pushHistory,
   });
   const openSearchResultCtxMenu = useCallback(
     (hit: SearchConversationHit, x: number, y: number) => {
@@ -1407,9 +1410,12 @@ export function BrowseShell({
   );
 
   const canDelete =
-    !contactCreating && (hasSelection || contactId != null);
+    isDeletionUiEnabled() &&
+    !contactCreating &&
+    (hasSelection || contactId != null);
 
   const executeSearchMessageTrash = useCallback(async () => {
+    if (isDeletionUiBlocked()) return;
     if (selectedSearchGroups.length === 0 || vaultReadOnly) return;
     const directGroups = selectedSearchGroups.filter(
       (group) => group.conversationType === "individual",
@@ -1490,6 +1496,7 @@ export function BrowseShell({
 
   const executeTrash = useCallback(
     async (idsOverride?: number[]) => {
+      if (isDeletionUiBlocked()) return;
       const ids = idsOverride ?? deleteTargetIds();
       if (ids.length === 0) return;
       setCtxMenu(null);
@@ -1679,7 +1686,7 @@ export function BrowseShell({
 
   const runMergeInto = useCallback(
     async (intoId: number) => {
-      if (mergeFromId == null || vaultReadOnly) return;
+      if (mergeFromId == null || vaultReadOnly || isDeletionUiBlocked()) return;
       setSaving(true);
       try {
         const res = await fetch("/api/contacts/merge", {
@@ -1718,6 +1725,7 @@ export function BrowseShell({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (isDeletionUiBlocked()) return;
       if (
         ctxMenu != null ||
         searchResultCtxMenu != null ||
@@ -2032,6 +2040,7 @@ export function BrowseShell({
   );
 
   const canTrashGroups =
+    isDeletionUiEnabled() &&
     !vaultReadOnly &&
     (hasGroupSelection || selectedGroupConversationId != null);
 

@@ -1,17 +1,31 @@
 "use client";
 
-import { SETTINGS_TABS, settingsTabActive } from "@/lib/settingsNav";
+import {
+  resolveSettingsReturnTo,
+  SETTINGS_TABS,
+  settingsTabActive,
+  settingsTabHref,
+} from "@/lib/settingsNav";
+import { ChevronRightIcon } from "@/components/icons";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, type ReactNode } from "react";
 
-/** Shared Settings page chrome: title, tabs, and content. */
-export function SettingsFrame({ children }: { children: ReactNode }) {
+function SettingsFrameBody({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const returnTo = resolveSettingsReturnTo(searchParams.get("returnTo"));
 
   return (
     <div className="mx-auto w-full max-w-2xl">
       <header className="mb-6">
+        <Link
+          href={returnTo}
+          className="mb-4 inline-flex items-center gap-1 rounded-md py-1 pr-2 pl-1 text-[13px] font-medium text-muted transition-colors hover:bg-hover hover:text-text"
+        >
+          <ChevronRightIcon className="size-3.5 rotate-180 opacity-80" />
+          Back
+        </Link>
         <h1 className="text-2xl font-semibold tracking-tight text-text">
           Settings
         </h1>
@@ -24,10 +38,14 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
         >
           {SETTINGS_TABS.map((tab) => {
             const active = settingsTabActive(pathname, tab.href);
+            const href = settingsTabHref(
+              tab.href,
+              searchParams.get("returnTo"),
+            );
             return (
               <Link
                 key={tab.href}
-                href={tab.href}
+                href={href}
                 // Avoid caching a logged-out redirect for these tabs (Next can
                 // reuse a pre-login prefetch and bounce back to /login).
                 prefetch={false}
@@ -51,5 +69,25 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
       </header>
       {children}
     </div>
+  );
+}
+
+/** Shared Settings page chrome: title, tabs, and content. */
+export function SettingsFrame({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto w-full max-w-2xl">
+          <header className="mb-6">
+            <h1 className="text-2xl font-semibold tracking-tight text-text">
+              Settings
+            </h1>
+          </header>
+          {children}
+        </div>
+      }
+    >
+      <SettingsFrameBody>{children}</SettingsFrameBody>
+    </Suspense>
   );
 }

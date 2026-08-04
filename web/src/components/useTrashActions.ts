@@ -1,5 +1,6 @@
 "use client";
 
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import { useCallback, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useConfirmDialog } from "./useConfirmDialog";
@@ -101,7 +102,7 @@ export function useTrashActions<TId extends string | number>(options: {
 
   const moveToTrash = useCallback(
     async (override?: TId) => {
-      if (!canTrash) return;
+      if (isDeletionUiBlocked() || !canTrash) return;
       const targets = getTargets(override);
       if (targets.length === 0) return;
       const confirmMsg = confirmTrash?.(targets) ?? null;
@@ -159,7 +160,7 @@ export function useTrashActions<TId extends string | number>(options: {
 
   const permanentlyDeleteFromTrash = useCallback(
     async (override?: TId) => {
-      if (!canRestoreOrDelete) return;
+      if (isDeletionUiBlocked() || !canRestoreOrDelete) return;
       const targets = getTargets(override);
       if (targets.length === 0) return;
       const confirmMsg = confirmPermanent?.(targets) ?? null;

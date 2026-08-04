@@ -35,6 +35,7 @@ import {
   type BrowseGroupChatSortBy,
   type SortOrder,
 } from "./SortByMenu";
+import { isDeletionUiEnabled } from "@/lib/v1Capabilities";
 import { useHistory } from "./history";
 import { useCollapsedGroupChatList } from "./useCollapsedGroupChatList";
 import { useListSelection } from "./useListSelection";
@@ -355,7 +356,8 @@ export function GroupMessagesShell({
     },
   });
 
-  const canTrashGroups = actionTargets.length > 0 && !vaultReadOnly;
+  const canTrashGroups =
+    isDeletionUiEnabled() && actionTargets.length > 0 && !vaultReadOnly;
 
   const participantForm = useParticipantContactForm({
     vaultReadOnly,

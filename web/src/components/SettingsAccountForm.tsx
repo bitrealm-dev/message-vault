@@ -2,6 +2,7 @@
 
 import { toPhoneE164 } from "@/lib/phoneE164";
 import { MAX_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -170,6 +171,7 @@ export function SettingsAccountForm() {
   };
 
   const performDelete = async () => {
+    if (isDeletionUiBlocked()) return;
     setDeleting(true);
     setError(null);
     try {
@@ -189,6 +191,7 @@ export function SettingsAccountForm() {
   };
 
   const deleteAllMessages = async () => {
+    if (isDeletionUiBlocked()) return;
     setDeletingMessages(true);
     setError(null);
     try {
@@ -421,7 +424,12 @@ export function SettingsAccountForm() {
                 </p>
                 <button
                   type="button"
-                  disabled={saving || deleting || deletingMessages}
+                  disabled={
+                    isDeletionUiBlocked() ||
+                    saving ||
+                    deleting ||
+                    deletingMessages
+                  }
                   onClick={() => void deleteAllMessages()}
                   className="w-40 shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                 >
@@ -436,7 +444,12 @@ export function SettingsAccountForm() {
                   </p>
                   <button
                     type="button"
-                    disabled={saving || deleting || deletingMessages}
+                    disabled={
+                      isDeletionUiBlocked() ||
+                      saving ||
+                      deleting ||
+                      deletingMessages
+                    }
                     onClick={() => setDeleteDialogOpen(true)}
                     className="w-40 shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-2 text-[13px] text-red-100 transition-colors hover:bg-red-500/25 disabled:opacity-50"
                   >

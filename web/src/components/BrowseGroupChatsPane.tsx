@@ -2,6 +2,7 @@
 
 import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import type { SearchConversationHit, SearchMessageHit } from "@/lib/search";
+import { isDeletionUiBlocked } from "@/lib/v1Capabilities";
 import type { MouseEvent, RefObject } from "react";
 import {
   DirectConversationRow,
@@ -153,7 +154,7 @@ export function BrowseGroupChatsPane({
                 <button
                   type="button"
                   aria-label="Delete group messages"
-                  disabled={trashDisabled}
+                  disabled={trashDisabled || isDeletionUiBlocked()}
                   onClick={onTrashMessages}
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/15 hover:text-red-300 disabled:pointer-events-none disabled:opacity-40"
                 >
