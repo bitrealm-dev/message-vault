@@ -4,6 +4,8 @@ mod config;
 mod db;
 mod dedupe;
 mod import;
+mod import_cli;
+mod import_media;
 mod jsonl;
 mod models;
 mod process_assets;
@@ -29,24 +31,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import a message-ir JSONL folder for one source (soft-dedupe afterward by default)
+    /// Import a message-ir JSONL folder (source from export.source unless --source)
     Import {
-        /// Source id (lowercase slug; becomes messages.source and asset folder name)
-        source: String,
+        /// Optional source override (forces one source; skips IR export.source)
+        #[arg(long)]
+        source: Option<String>,
 
         /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
         /// Folder of `*.jsonl` conversation files (+ attachments)
-        #[arg(long, visible_aliases = ["staging-dir", "export-dir"])]
-        dir: PathBuf,
+        #[arg(long = "input", visible_aliases = ["dir", "staging-dir", "export-dir"])]
+        input: PathBuf,
 
         /// Output SQLite database path (overrides config)
         #[arg(long)]
         db: Option<PathBuf>,
 
-        /// Originals asset store directory (overrides account/source default)
+        /// Originals asset store directory (overrides account/source default; fixed-source only)
         #[arg(long)]
         assets_dir: Option<PathBuf>,
 
@@ -58,7 +61,11 @@ enum Commands {
         #[arg(long)]
         overwrite_contacts: bool,
 
-        /// Import mode: replace (wipe this source's messages) or append (dedupe by source+guid)
+        /// Attachment handling: copy (default), none, convert, compress
+        #[arg(long, default_value = "copy")]
+        media: String,
+
+        /// Import mode: replace (wipe sources found in input) or append
         #[arg(long, default_value = "replace")]
         mode: String,
 
@@ -171,11 +178,12 @@ fn main() -> Result<()> {
         Commands::Import {
             source,
             config,
-            dir,
+            input,
             db,
             assets_dir,
             contacts,
             overwrite_contacts,
+            media,
             mode,
             skip_dedupe,
             window_secs,
@@ -185,80 +193,71 @@ fn main() -> Result<()> {
             if window_secs < 0 {
                 bail!("--window-secs must be >= 0");
             }
-            validate_source_id(&source)?;
-            let db = db.unwrap_or_else(|| cfg.paths.db.clone());
-            let account = account_profile::resolve_account_ref_at(&db, &account)?;
+            if let Some(ref source) = source {
+                validate_source_id(source)?;
+            }
             let mode = import::ImportMode::parse(&mode)?;
-            let assets =
-                assets_dir.unwrap_or_else(|| cfg.paths.assets_dir_for_account(&account, &source));
+            let media = import_media::MediaMode::parse(&media)?;
+            let db_path = db.clone().unwrap_or_else(|| cfg.paths.db.clone());
+            let account = account_profile::resolve_account_ref_at(&db_path, &account)?;
 
-            if !dir.is_dir() {
-                bail!("import directory does not exist: {}", dir.display());
-            }
-            if !import_dir_has_jsonl(&dir)? {
-                bail!(
-                    "import directory {} has no .jsonl files (message-ir JSONL expected)",
-                    dir.display()
-                );
-            }
-
-            println!("Importing into {}", db.display());
-            println!("  config:        {}", config.display());
-            println!("  account:       {}", account);
-            println!("  source:        {}", source);
-            println!("  dir:           {}", dir.display());
-            println!("  assets:        {}", assets.display());
-            println!("  mode:          {}", mode.as_str());
-            match &contacts {
-                Some(path) => println!("  contacts:      {}", path.display()),
-                None => println!("  contacts:      (none — use --contacts for VCF or vCard CSV)"),
-            }
-
-            let stats = import::import_export(
-                &dir,
-                &db,
-                &assets,
-                contacts.as_deref(),
-                overwrite_contacts,
-                mode,
-                &source,
-                &account,
+            let stats = import_cli::run(
+                &cfg,
+                &import_cli::CliImportOptions {
+                    account_id: account,
+                    input_dir: input,
+                    db_path: db,
+                    assets_dir,
+                    source_override: source,
+                    mode,
+                    media,
+                    contacts,
+                    overwrite_contacts,
+                    skip_dedupe,
+                    window_secs,
+                },
             )?;
 
             println!();
-            println!("Source '{}'", source);
-            if stats.contacts_skipped {
+            println!("Import into {}", db_path.display());
+            println!("  input:         {}", stats.input_dir.display());
+            println!("  sources:       {}", stats.sources.join(", "));
+            if stats.import.contacts_skipped {
                 println!(
                     "  contacts:      (skipped — already loaded or no --contacts; use --overwrite-contacts)"
                 );
             } else {
-                println!("  contacts:      {}", stats.contacts);
-                println!("  contact handles:{}", stats.contact_handles);
-                println!("  contact labels:{}", stats.contact_label_links);
+                println!("  contacts:      {}", stats.import.contacts);
+                println!("  contact handles:{}", stats.import.contact_handles);
+                println!("  contact labels:{}", stats.import.contact_label_links);
             }
-            println!("  files:         {}", stats.files);
-            println!("  conversations: {}", stats.conversations);
-            println!("  participants:  {}", stats.participants);
-            println!("  messages:      {}", stats.messages);
-            println!("  messages deduped: {}", stats.messages_deduped);
-            if stats.mode == "append" {
-                println!("  messages appended: {}", stats.messages_appended);
+            println!("  files:         {}", stats.import.files);
+            println!("  conversations: {}", stats.import.conversations);
+            println!("  participants:  {}", stats.import.participants);
+            println!("  messages:      {}", stats.import.messages);
+            println!("  messages deduped: {}", stats.import.messages_deduped);
+            if stats.import.mode == "append" {
+                println!("  messages appended: {}", stats.import.messages_appended);
             }
-            println!("  attachments:   {}", stats.attachments);
-            println!("  tapbacks:      {}", stats.tapbacks);
-            println!("  assets copied: {}", stats.assets_copied);
-            println!("  assets deduped:{}", stats.assets_deduped);
-            println!("  assets missing:{}", stats.assets_missing);
-
-            if skip_dedupe {
-                println!("Cross-source dedupe skipped (--skip-dedupe)");
-            } else {
-                let d = dedupe::run_dedupe(&db, &account, window_secs)?;
+            println!("  attachments:   {}", stats.import.attachments);
+            println!("  tapbacks:      {}", stats.import.tapbacks);
+            println!("  assets copied: {}", stats.import.assets_copied);
+            println!("  assets deduped:{}", stats.import.assets_deduped);
+            println!("  assets missing:{}", stats.import.assets_missing);
+            if stats.import.unknown_contacts > 0 {
+                println!(
+                    "  unknown contacts created: {}",
+                    stats.import.unknown_contacts
+                );
+            }
+            if let Some(d) = stats.dedupe {
                 println!("Cross-source dedupe");
                 println!("  keys filled:   {}", d.keys_filled);
                 println!("  exact groups:  {}", d.exact_groups);
                 println!("  exact flagged: {}", d.exact_flagged);
                 println!("  near flagged:  {}", d.near_flagged);
+            } else {
+                println!("Cross-source dedupe skipped (--skip-dedupe)");
             }
         }
 
@@ -392,18 +391,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn import_dir_has_jsonl(dir: &std::path::Path) -> Result<bool> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("jsonl"))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

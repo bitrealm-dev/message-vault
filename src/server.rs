@@ -1144,21 +1144,19 @@ async fn run_import_path(
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             drop(conn);
         }
-        let opts = ImportOptions {
-            db_path: &cfg.paths.db,
-            assets_dir: &assets_dir,
-            asset_root: &asset_root_owned,
-            // HTTP import does not reload the address book; use CLI import-contacts / web VCF.
-            contacts: None,
-            overwrite_contacts: false,
+        let opts = ImportOptions::fixed(
+            &cfg.paths.db,
+            &assets_dir,
+            &asset_root_owned,
+            None,
+            false,
             mode,
-            source: &source_id,
-            account_id: &account,
-            // Content keys are only required when the optional post-import dedupe pass runs.
-            fill_content_keys: do_dedupe,
-            backfill_contacts: false,
-            import_id: query_import_id,
-        };
+            &source_id,
+            &account,
+            do_dedupe,
+            false,
+            query_import_id,
+        );
         let mut conn = db
             .lock()
             .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;

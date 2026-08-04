@@ -42,6 +42,7 @@ Request body limit: 512 MiB.
 |-------|--------------|----------------------|
 | `mode` | `append` | `replace` |
 | `dedupe` | `false` | runs dedupe unless `--skip-dedupe` |
+| `source` | Required query param | From each conversation’s IR `export.source` (or `--source`) |
 | `account` | Optional when Bearer token identifies the tenant | Required `--account` |
 
 ## Verify a token

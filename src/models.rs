@@ -24,6 +24,8 @@ pub struct ConversationRecord {
     pub group_title: Option<String>,
     pub participants: Vec<ParticipantRecord>,
     pub exported_at: Option<String>,
+    /// IR `export.source` — used as `messages.source` for directory import.
+    pub export_source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +130,14 @@ fn is_ir_header(value: &Value) -> bool {
 }
 
 fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
+    let export_source = {
+        let s = header.export.source.trim();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    };
     ConversationRecord {
         chat_identifier: header.conversation.chat_identifier.clone(),
         service: None,
@@ -143,6 +153,7 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
             })
             .collect(),
         exported_at: None,
+        export_source,
     }
 }
 

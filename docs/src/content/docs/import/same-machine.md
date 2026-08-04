@@ -1,48 +1,62 @@
 ---
 title: Same machine
-description: Import a local JSONL staging folder without the network push tools.
+description: Import a local JSONL directory without the network push tools.
 ---
 
-If the export folder already lives on the vault machine, import without
-`serve` or `vault-push`. Create a staging directory yourself (for example
-`staging/<source>/`); nothing under that path is committed in the repo.
+If message-ir JSONL already lives on the vault machine, import without `serve` or
+`vault-push`. Point `--input` at any directory of `*.jsonl` files (plus relative
+attachment paths). Source identity comes from each conversation’s IR
+`export.source` — or pass `--source` to force one source for the whole batch.
 
-## One source
+## Import a directory
 
 ```bash
-cargo run --release -- import go-sms-pro \
+cargo run --release -- import \
   --account yourusername \
-  --dir staging/go-sms-pro
+  --input /path/to/jsonl-dir \
+  --mode replace
 ```
 
-`import` loads message-ir JSONL and runs cross-source soft-dedupe afterward
-(unless `--skip-dedupe`). CLI default mode is **replace**.
+`import` loads JSONL into SQLite, copies (or transforms) attachments into the
+account/source asset trees from `config.toml`, then runs cross-source soft-dedupe
+unless `--skip-dedupe`. CLI default mode is **replace** (wipes each distinct
+`export.source` found in the input batch).
 
-`--dir` also accepts the aliases `--staging-dir` and `--export-dir`.
+`--input` also accepts the aliases `--dir`, `--staging-dir`, and `--export-dir`.
 
-## Several sources
+Optional flags:
 
-Run `import` once per source. Use `--skip-dedupe` on every source except the
-last so soft-dedupe runs once:
+- `--source <slug>` — force one source (ignore IR `export.source`)
+- `--contacts contacts.vcf|contacts.csv` — load address book into SQLite
+- `--media copy|none|convert|compress` — attachment handling before the
+  content-addressed store (`copy` is default; `convert`/`compress` need ffmpeg)
+
+## Several sources in one folder
+
+A single `--input` directory may contain conversations from more than one
+`export.source`. Replace mode wipes each of those sources before reload.
+
+To import separate folders one at a time (with soft-dedupe once at the end):
 
 ```bash
-cargo run --release -- import imessage \
+cargo run --release -- import \
   --account yourusername \
-  --dir staging/imessage \
+  --input staging/imessage \
   --skip-dedupe
 
-cargo run --release -- import go-sms-pro \
+cargo run --release -- import \
   --account yourusername \
-  --dir staging/go-sms-pro
-```
+  --input staging/go-sms-pro
 
-Or import each source with `--skip-dedupe`, then:
-
-```bash
+# or:
 cargo run --release -- dedupe-cross-source --account yourusername
 ```
 
 ## Media for the browser
+
+Import-time `--media convert|compress` stores browser-friendly bytes as the
+canonical original for that import. For vaults that already imported originals,
+generate derived sidecars afterward:
 
 ```bash
 cargo run --release -- process-assets

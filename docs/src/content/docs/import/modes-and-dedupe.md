@@ -18,14 +18,14 @@ more than one archive. Rows are never deleted.
 
 | Mode | Behavior |
 |------|----------|
-| **replace** | Wipe that source’s messages for the account, then reload. CLI `import` default. |
+| **replace** | Wipe that source’s messages for the account, then reload. CLI `import` default (wipes each `export.source` found in the input directory, or the `--source` override). |
 | **append** | Keep existing rows. Skip when `(account_id, source, guid)` already exists. HTTP API default. |
 
 Other sources are not touched.
 
 ## Cross-source soft-dedupe
 
-Runs after CLI `import` (unless `--skip-dedupe`), or:
+Runs after CLI `import` unless `--skip-dedupe`, or:
 
 ```bash
 cargo run --release -- dedupe-cross-source --account yourusername

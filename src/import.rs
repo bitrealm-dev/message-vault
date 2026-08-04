@@ -7,12 +7,15 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Statement, Transaction, params};
 use serde::Serialize;
+use tempfile::TempDir;
 
 use crate::assets::{self, AssetStats, StoredAsset};
+use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
+use crate::db::schema;
+use crate::import_media::{self, MediaMode};
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
-use crate::db::schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMode {
@@ -40,7 +43,7 @@ impl ImportMode {
 #[derive(Debug, Clone)]
 pub struct ImportOptions<'a> {
     pub db_path: &'a Path,
-    /// Content-addressed asset store (SHA-named files under account/source).
+    /// Content-addressed asset store when [`Self::source_from_jsonl`] is false.
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
@@ -48,6 +51,7 @@ pub struct ImportOptions<'a> {
     pub contacts: Option<&'a Path>,
     pub overwrite_contacts: bool,
     pub mode: ImportMode,
+    /// Fixed source id (HTTP / `--source` override). Ignored when `source_from_jsonl`.
     pub source: &'a str,
     pub account_id: &'a str,
     /// Fill missing `content_key` values during promote (needed before cross-source dedupe).
@@ -56,9 +60,51 @@ pub struct ImportOptions<'a> {
     pub backfill_contacts: bool,
     /// Optional vault import session id (messages stamped on promote).
     pub import_id: Option<i64>,
+    /// When true, stamp `messages.source` from each conversation's IR `export.source`.
+    pub source_from_jsonl: bool,
+    /// Required when `source_from_jsonl` to resolve per-source asset dirs.
+    pub paths: Option<&'a PathsConfig>,
+    pub media: MediaMode,
+    /// When `source_from_jsonl` + Replace: wipe these sources before import.
+    pub wipe_sources: Option<Vec<String>>,
 }
 
-#[derive(Debug, Default, Serialize)]
+impl<'a> ImportOptions<'a> {
+    /// HTTP / tests / reset-demo: fixed source + assets dir, copy media.
+    pub fn fixed(
+        db_path: &'a Path,
+        assets_dir: &'a Path,
+        asset_root: &'a Path,
+        contacts: Option<&'a Path>,
+        overwrite_contacts: bool,
+        mode: ImportMode,
+        source: &'a str,
+        account_id: &'a str,
+        fill_content_keys: bool,
+        backfill_contacts: bool,
+        import_id: Option<i64>,
+    ) -> Self {
+        Self {
+            db_path,
+            assets_dir,
+            asset_root,
+            contacts,
+            overwrite_contacts,
+            mode,
+            source,
+            account_id,
+            fill_content_keys,
+            backfill_contacts,
+            import_id,
+            source_from_jsonl: false,
+            paths: None,
+            media: MediaMode::Copy,
+            wipe_sources: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct ImportStats {
     pub conversations: u64,
     pub participants: u64,
@@ -139,19 +185,19 @@ pub fn import_export(
     let result = import_jsonl_files_on_conn(
         &mut conn,
         &paths,
-        &ImportOptions {
+        &ImportOptions::fixed(
             db_path,
             assets_dir,
-            asset_root: export_dir,
+            export_dir,
             contacts,
             overwrite_contacts,
             mode,
             source,
             account_id,
-            fill_content_keys: true,
-            backfill_contacts: true,
-            import_id: Some(import_id),
-        },
+            true,
+            true,
+            Some(import_id),
+        ),
         ImportSchemaMode::AssumeReady,
     );
 
@@ -198,9 +244,7 @@ pub enum ImportSchemaMode {
 
 /// Import one or more JSONL files. Attachment relative paths resolve against `opts.asset_root`.
 pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
-    if opts.source.trim().is_empty() {
-        bail!("import source id must not be empty");
-    }
+    validate_import_options(opts)?;
 
     if let Some(parent) = opts.db_path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -217,6 +261,17 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
     import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
 }
 
+fn validate_import_options(opts: &ImportOptions<'_>) -> Result<()> {
+    if opts.source_from_jsonl {
+        if opts.paths.is_none() {
+            bail!("source_from_jsonl requires config paths for per-source assets");
+        }
+    } else if opts.source.trim().is_empty() {
+        bail!("import source id must not be empty");
+    }
+    Ok(())
+}
+
 /// Import onto an existing connection (warm serve path or tests).
 pub fn import_jsonl_files_on_conn(
     mut conn: &mut Connection,
@@ -224,11 +279,11 @@ pub fn import_jsonl_files_on_conn(
     opts: &ImportOptions<'_>,
     schema_mode: ImportSchemaMode,
 ) -> Result<ImportStats> {
-    if opts.source.trim().is_empty() {
-        bail!("import source id must not be empty");
+    validate_import_options(opts)?;
+    if !opts.source_from_jsonl {
+        fs::create_dir_all(opts.assets_dir)
+            .with_context(|| format!("failed to create {}", opts.assets_dir.display()))?;
     }
-    fs::create_dir_all(opts.assets_dir)
-        .with_context(|| format!("failed to create {}", opts.assets_dir.display()))?;
 
     if schema_mode == ImportSchemaMode::Ensure {
         schema::ensure_vault_schema(conn)?;
@@ -265,12 +320,17 @@ pub fn import_jsonl_files_on_conn(
     }
     schema::reset_staging_for_account(conn, opts.account_id)?;
     if opts.mode == ImportMode::Replace {
-        println!(
-            "  sql:      deleting existing messages for source '{}'…",
-            opts.source
-        );
-        let _ = io::stdout().flush();
-        schema::delete_messages_for_source(&conn, opts.account_id, opts.source)?;
+        let wipe: Vec<String> = if opts.source_from_jsonl {
+            opts.wipe_sources.clone().unwrap_or_default()
+        } else {
+            vec![opts.source.to_string()]
+        };
+        for source in &wipe {
+            validate_source_id(source)?;
+            println!("  sql:      deleting existing messages for source '{source}'…");
+            let _ = io::stdout().flush();
+            schema::delete_messages_for_source(&conn, opts.account_id, source)?;
+        }
         println!("  sql:      wipe complete");
     }
     let _ = io::stdout().flush();
@@ -282,12 +342,23 @@ pub fn import_jsonl_files_on_conn(
         if total_files == 1 { "" } else { "s" }
     );
     if opts.mode == ImportMode::Replace {
-        println!(
-            "  import:   wiped existing rows for source '{}'",
-            opts.source
-        );
+        if opts.source_from_jsonl {
+            let wiped = opts
+                .wipe_sources
+                .as_ref()
+                .map(|s| s.join(", "))
+                .unwrap_or_default();
+            println!("  import:   wiped existing rows for source(s) '{wiped}'");
+        } else {
+            println!(
+                "  import:   wiped existing rows for source '{}'",
+                opts.source
+            );
+        }
     }
     let _ = io::stdout().flush();
+
+    let media_work = TempDir::new().context("temp dir for import-time media rewrite")?;
 
     let mut stats = ImportStats {
         contacts: contact_stats.contacts,
@@ -313,11 +384,10 @@ pub fn import_jsonl_files_on_conn(
         let file_stats = import_file_to_staging(
             &tx,
             &mut stmts,
-            opts.asset_root,
-            opts.assets_dir,
+            opts,
             path,
             &mut asset_stats,
-            opts.source,
+            media_work.path(),
         )?;
         stats.merge_file(&file_stats);
         stats.files += 1;
@@ -405,9 +475,45 @@ fn prepare_attachments(
     assets_dir: &Path,
     attachments: Vec<AttachmentRecord>,
     asset_stats: &mut AssetStats,
+    media: MediaMode,
+    media_work: &Path,
 ) -> Result<Vec<PreparedAttachment>> {
+    if media == MediaMode::None {
+        return Ok(Vec::new());
+    }
+
     let mut prepared = Vec::with_capacity(attachments.len());
-    for att in attachments {
+    for mut att in attachments {
+        // Import-time convert/compress: rewrite file before hash/store so digests match bytes.
+        if matches!(media, MediaMode::Convert | MediaMode::Compress) {
+            if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let source = export_dir.join(rel);
+                if source.is_file() {
+                    if let Some(resolved) = import_media::resolve_for_store(
+                        &source,
+                        att.mime_type.as_deref(),
+                        media,
+                        media_work,
+                    )? {
+                        // Store rewritten bytes; drop claimed sha (bytes may have changed).
+                        att.sha256 = None;
+                        att.mime_type = resolved.mime_type.or(att.mime_type.take());
+                        let stored = assets::hash_and_store(
+                            &resolved.path,
+                            assets_dir,
+                            att.mime_type.as_deref(),
+                            asset_stats,
+                        )?;
+                        prepared.push(PreparedAttachment {
+                            record: att,
+                            stored,
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+
         let stored = if let Some(sha) = att
             .sha256
             .as_deref()
@@ -529,6 +635,7 @@ impl<'conn> StagingInserts<'conn> {
     }
 }
 
+/// chat_identifier, service, conversation_type, group_title, exported_at, participants, source
 type ConversationHeader = (
     String,
     Option<String>,
@@ -536,16 +643,52 @@ type ConversationHeader = (
     Option<String>,
     Option<String>,
     Vec<(String, Option<String>)>,
+    String,
 );
+
+fn resolve_conversation_source(
+    opts: &ImportOptions<'_>,
+    path: &Path,
+    chat_identifier: &str,
+    export_source: Option<&str>,
+) -> Result<String> {
+    if opts.source_from_jsonl {
+        let Some(source) = export_source.map(str::trim).filter(|s| !s.is_empty()) else {
+            bail!(
+                "{}: conversation '{}' is missing export.source \
+                 (required for CLI directory import)",
+                path.display(),
+                chat_identifier
+            );
+        };
+        validate_source_id(source)?;
+        Ok(source.to_string())
+    } else {
+        Ok(opts.source.to_string())
+    }
+}
+
+fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathBuf> {
+    if opts.source_from_jsonl {
+        let paths = opts
+            .paths
+            .ok_or_else(|| anyhow::anyhow!("source_from_jsonl requires config paths"))?;
+        let dir = paths.assets_dir_for_account(opts.account_id, source);
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+        Ok(dir)
+    } else {
+        Ok(opts.assets_dir.to_path_buf())
+    }
+}
 
 fn import_file_to_staging(
     tx: &Transaction<'_>,
     stmts: &mut StagingInserts<'_>,
-    asset_root: &Path,
-    assets_dir: &Path,
+    opts: &ImportOptions<'_>,
     path: &Path,
     asset_stats: &mut AssetStats,
-    source: &str,
+    media_work: &Path,
 ) -> Result<ImportStats> {
     let source_file = path
         .file_name()
@@ -570,15 +713,20 @@ fn import_file_to_staging(
                     stats.merge_file(&import_conversation_to_staging(
                         tx,
                         stmts,
-                        asset_root,
-                        assets_dir,
+                        opts,
                         &source_file,
                         header,
                         std::mem::take(&mut messages),
                         asset_stats,
-                        source,
+                        media_work,
                     )?);
                 }
+                let source = resolve_conversation_source(
+                    opts,
+                    path,
+                    &c.chat_identifier,
+                    c.export_source.as_deref(),
+                )?;
                 pending = Some((
                     c.chat_identifier,
                     c.service,
@@ -589,6 +737,7 @@ fn import_file_to_staging(
                         .into_iter()
                         .map(|p| (p.handle, p.name_hint))
                         .collect(),
+                    source,
                 ));
             }
             ExportRecord::Message(m) => {
@@ -607,20 +756,24 @@ fn import_file_to_staging(
         stats.merge_file(&import_conversation_to_staging(
             tx,
             stmts,
-            asset_root,
-            assets_dir,
+            opts,
             &source_file,
             header,
             messages,
             asset_stats,
-            source,
+            media_work,
         )?);
     } else if is_orphaned {
+        if opts.source_from_jsonl {
+            bail!(
+                "{}: orphaned.jsonl without a conversation header cannot supply export.source",
+                path.display()
+            );
+        }
         stats.merge_file(&import_conversation_to_staging(
             tx,
             stmts,
-            asset_root,
-            assets_dir,
+            opts,
             &source_file,
             (
                 "orphaned".to_string(),
@@ -629,10 +782,11 @@ fn import_file_to_staging(
                 None,
                 None,
                 Vec::new(),
+                opts.source.to_string(),
             ),
             messages,
             asset_stats,
-            source,
+            media_work,
         )?);
     } else if messages.is_empty() {
         bail!(
@@ -652,27 +806,36 @@ fn import_file_to_staging(
 fn import_conversation_to_staging(
     tx: &Transaction<'_>,
     stmts: &mut StagingInserts<'_>,
-    asset_root: &Path,
-    assets_dir: &Path,
+    opts: &ImportOptions<'_>,
     source_file: &str,
     conversation: ConversationHeader,
     messages: Vec<MessageRecord>,
     asset_stats: &mut AssetStats,
-    source: &str,
+    media_work: &Path,
 ) -> Result<ImportStats> {
-    let (chat_identifier, service, conversation_type, group_title, exported_at, participants) =
-        conversation;
+    let (
+        chat_identifier,
+        service,
+        conversation_type,
+        group_title,
+        exported_at,
+        participants,
+        source,
+    ) = conversation;
 
+    let assets_dir = assets_dir_for_source(opts, &source)?;
     let mut stats = ImportStats::default();
     let kept_participants = participants;
 
     let mut prepared_messages = Vec::with_capacity(messages.len());
     for mut msg in messages {
         let attachments = prepare_attachments(
-            asset_root,
-            assets_dir,
+            opts.asset_root,
+            &assets_dir,
             std::mem::take(&mut msg.attachments),
             asset_stats,
+            opts.media,
+            media_work,
         )?;
         prepared_messages.push((msg, attachments));
     }
@@ -1206,19 +1369,19 @@ mod tests {
         );
         let first_stats = import_jsonl_files(
             &[first],
-            &ImportOptions {
-                db_path: &db,
-                assets_dir: &assets,
-                asset_root: tmp.path(),
-                contacts: None,
-                overwrite_contacts: false,
-                mode: ImportMode::Replace,
-                source: "sms-backup-restore",
-                account_id: TEST_ACCOUNT,
-                fill_content_keys: true,
-                backfill_contacts: false,
-                import_id: None,
-            },
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Replace,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                true,
+                false,
+                None,
+            ),
         )
         .unwrap();
         assert_eq!(first_stats.messages, 2);
@@ -1234,19 +1397,19 @@ mod tests {
         );
         let second_stats = import_jsonl_files(
             &[second],
-            &ImportOptions {
-                db_path: &db,
-                assets_dir: &assets,
-                asset_root: tmp.path(),
-                contacts: None,
-                overwrite_contacts: false,
-                mode: ImportMode::Append,
-                source: "sms-backup-restore",
-                account_id: TEST_ACCOUNT,
-                fill_content_keys: false,
-                backfill_contacts: false,
-                import_id: None,
-            },
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                false,
+                false,
+                None,
+            ),
         )
         .unwrap();
         assert_eq!(second_stats.messages_appended, 2);
@@ -1310,19 +1473,19 @@ mod tests {
         );
         import_jsonl_files(
             &[path],
-            &ImportOptions {
-                db_path: &db,
-                assets_dir: &assets,
-                asset_root: tmp.path(),
-                contacts: None,
-                overwrite_contacts: false,
-                mode: ImportMode::Append,
-                source: "imessage",
-                account_id: TEST_ACCOUNT,
-                fill_content_keys: false,
-                backfill_contacts: false,
-                import_id: None,
-            },
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "imessage",
+                TEST_ACCOUNT,
+                false,
+                false,
+                None,
+            ),
         )
         .unwrap();
 
@@ -1368,19 +1531,19 @@ mod tests {
         let stats = import_jsonl_files_on_conn(
             &mut conn,
             &[path],
-            &ImportOptions {
-                db_path: &db,
-                assets_dir: &assets,
-                asset_root: tmp.path(),
-                contacts: None,
-                overwrite_contacts: false,
-                mode: ImportMode::Append,
-                source: "imessage",
-                account_id: TEST_ACCOUNT,
-                fill_content_keys: false,
-                backfill_contacts: false,
-                import_id: Some(import_id),
-            },
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "imessage",
+                TEST_ACCOUNT,
+                false,
+                false,
+                Some(import_id),
+            ),
             ImportSchemaMode::AssumeReady,
         )
         .unwrap();
@@ -1425,5 +1588,116 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn source_from_jsonl_stamps_export_source_and_assets() {
+        use crate::config::PathsConfig;
+        use crate::import_media::MediaMode;
+
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let data_dir = tmp.path().join("data");
+        let paths = PathsConfig {
+            db: db.clone(),
+            data_dir: data_dir.clone(),
+            assets_dir: "assets".into(),
+            assets_converted_dir: "assets_converted".into(),
+        };
+        let placeholder = tmp.path().join("unused-assets");
+        fs::create_dir_all(tmp.path().join("media")).unwrap();
+        fs::write(tmp.path().join("media/photo.jpg"), b"jpeg-bytes").unwrap();
+
+        let path = write_jsonl(
+            tmp.path(),
+            "c.jsonl",
+            r#"{"schema_version":3,"export":{"source":"go-sms-pro","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550100","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550100","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g1","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550100","sender_display_name":null,"subject":null,"text":"hi","attachments":[{"path":"media/photo.jpg","original_name":"photo.jpg","mime_type":"image/jpeg","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null}],"imessage":null,"source":null}
+"#,
+        );
+        let stats = import_jsonl_files(
+            &[path],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &placeholder,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: true,
+                backfill_contacts: false,
+                import_id: None,
+                source_from_jsonl: true,
+                paths: Some(&paths),
+                media: MediaMode::Copy,
+                wipe_sources: Some(vec!["go-sms-pro".into()]),
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.messages, 1);
+        assert_eq!(stats.assets_copied, 1);
+
+        let conn = Connection::open(&db).unwrap();
+        let source: String = conn
+            .query_row("SELECT source FROM messages WHERE guid = 'g1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(source, "go-sms-pro");
+        let assets_root = paths.assets_dir_for_account(TEST_ACCOUNT, "go-sms-pro");
+        assert!(assets_root.is_dir());
+    }
+
+    #[test]
+    fn media_none_skips_attachment_copy() {
+        use crate::config::PathsConfig;
+        use crate::import_media::MediaMode;
+
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let data_dir = tmp.path().join("data");
+        let paths = PathsConfig {
+            db: db.clone(),
+            data_dir,
+            assets_dir: "assets".into(),
+            assets_converted_dir: "assets_converted".into(),
+        };
+        let placeholder = tmp.path().join("unused-assets");
+        fs::create_dir_all(tmp.path().join("media")).unwrap();
+        fs::write(tmp.path().join("media/photo.jpg"), b"jpeg-bytes").unwrap();
+
+        let path = write_jsonl(
+            tmp.path(),
+            "c.jsonl",
+            r#"{"schema_version":3,"export":{"source":"sms","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550100","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550100","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g1","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550100","sender_display_name":null,"subject":null,"text":"hi","attachments":[{"path":"media/photo.jpg","original_name":"photo.jpg","mime_type":"image/jpeg","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null}],"imessage":null,"source":null}
+"#,
+        );
+        let stats = import_jsonl_files(
+            &[path],
+            &ImportOptions {
+                db_path: &db,
+                assets_dir: &placeholder,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                backfill_contacts: false,
+                import_id: None,
+                source_from_jsonl: true,
+                paths: Some(&paths),
+                media: MediaMode::None,
+                wipe_sources: Some(vec!["sms".into()]),
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.messages, 1);
+        assert_eq!(stats.attachments, 0);
+        assert_eq!(stats.assets_copied, 0);
     }
 }

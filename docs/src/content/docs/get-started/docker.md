@@ -114,29 +114,30 @@ then use it with
 
 If a `vault.db` already exists on the volume, seeding is skipped.
 
-### Staging drop folder
+### JSONL drop folder
 
 Compose always bind-mounts the host directory `./staging` to `/app/staging`
-inside the container. Copy a JSONL export onto the host — no `docker cp`
-required:
+inside the container (dev and release). Copy a JSONL export onto the host — no
+`docker cp` required:
 
 ```bash
-mkdir -p staging/imessage
-cp -a /path/to/your-export/. staging/imessage/
+mkdir -p staging/import
+cp -a /path/to/your-export/. staging/import/
 ```
 
-Then import from inside the container:
+Then import from inside the container (source comes from each conversation’s IR
+`export.source`, unless you pass `--source`):
 
 ```bash
 # Dev
-docker compose exec vault cargo run --release -- import imessage \
+docker compose exec vault cargo run --release -- import \
   --account yourusername \
-  --dir staging/imessage
+  --input staging/import
 
 # Release (binary is already in the image)
-docker compose -f compose-release.yml exec vault message-vault-rs import imessage \
+docker compose -f compose-release.yml exec vault message-vault-rs import \
   --account yourusername \
-  --dir staging/imessage
+  --input staging/import
 ```
 
 Contents of `staging/` are gitignored; only the empty directory placeholder is
