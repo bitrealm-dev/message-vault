@@ -850,30 +850,64 @@ export component AdvancedSection inherits VerticalLayout {
     in-out property <bool> open: false;
     in property <string> title: "Advanced Options";
     spacing: FormMetrics.row-spacing;
-    padding: 0;
+    // Extra air above the heading so it separates from the prior section's last row.
+    padding-top: 8px;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
     vertical-stretch: 0;
 
-    HorizontalLayout {
-        padding: 0;
+    // Clickable text heading (not a Button) with a rule under the title.
+    VerticalLayout {
         spacing: 0;
-        alignment: start;
+        padding: 0;
         vertical-stretch: 0;
-        Button {
-            text: root.open ? "⌄  " + root.title : "›  " + root.title;
+
+        TouchArea {
+            mouse-cursor: pointer;
             vertical-stretch: 0;
-            horizontal-stretch: 0;
-            height: FormMetrics.row-height;
             clicked => { root.open = !root.open; }
+
+            HorizontalLayout {
+                padding: 0;
+                spacing: 6px;
+                alignment: start;
+                vertical-stretch: 0;
+                height: 30px;
+
+                Text {
+                    text: root.open ? "⌄" : "›";
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: root.title;
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 0;
+                }
+            }
         }
+
         Rectangle {
-            horizontal-stretch: 1;
-            height: FormMetrics.row-height;
+            height: 1px;
+            background: #c0c0c0;
             vertical-stretch: 0;
+            horizontal-stretch: 1;
         }
     }
 
     // @children cannot live inside `if`; clip/height toggles visibility instead.
-    // OptionGroup visually groups the section fields under the collapse button.
+    // OptionGroup visually groups the section fields under the heading.
     Rectangle {
         visible: root.open;
         height: root.open ? self.preferred-height : 0px;

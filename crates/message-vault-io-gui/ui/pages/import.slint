@@ -65,12 +65,6 @@ export component ImportPage inherits VerticalLayout {
 
     if ImportAdapter.panel-tab == 0: AnchoredScrollPage {
         Text {
-            text: "Import Messages";
-            font-size: 16px;
-            font-weight: 700;
-            vertical-stretch: 0;
-        }
-        Text {
             text: "Select your messages.";
             font-size: 12px;
             color: #555555;
@@ -81,7 +75,7 @@ export component ImportPage inherits VerticalLayout {
         Rectangle { height: 8px; vertical-stretch: 0; }
 
         AdvancedSection {
-            title: "Import options";
+            title: "Import Messages";
             open <=> ImportAdapter.source-open;
 
             VerticalLayout {
@@ -131,27 +125,39 @@ export component ImportPage inherits VerticalLayout {
                 }
             }
 
-            if !root.is-macos: StackedPathField {
-                label: "iPhone Backup Directory";
-                required: true;
-                placeholder: "Path to the root of a device backup";
-                field-id: "import.backup_path";
-                value <=> ImportAdapter.backup-path;
-                browse-requested(id) => { ImportAdapter.browse(id); }
+            // Field + hint share a tight layout so helper text sits just under the control
+            // (OptionGroup spacing would otherwise put a full section gap between them).
+            if !root.is-macos: VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedPathField {
+                    label: "iPhone Backup Directory";
+                    required: true;
+                    placeholder: "Path to the root of a device backup";
+                    field-id: "import.backup_path";
+                    value <=> ImportAdapter.backup-path;
+                    browse-requested(id) => { ImportAdapter.browse(id); }
+                }
+                StackedHint {
+                    message: "Path to the root of a device backup";
+                }
             }
-            if !root.is-macos: StackedHint {
-                message: "Path to the root of a device backup";
-            }
-            if root.is-macos: StackedPathField {
-                label: "iMessage database";
-                required: true;
-                placeholder: "Path to chat.db file.";
-                field-id: "import.db_path";
-                value <=> ImportAdapter.backup-path;
-                browse-requested(id) => { ImportAdapter.browse(id); }
-            }
-            if root.is-macos: StackedHint {
-                message: "Path to chat.db file.";
+            if root.is-macos: VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedPathField {
+                    label: "iMessage database";
+                    required: true;
+                    placeholder: "Path to chat.db file.";
+                    field-id: "import.db_path";
+                    value <=> ImportAdapter.backup-path;
+                    browse-requested(id) => { ImportAdapter.browse(id); }
+                }
+                StackedHint {
+                    message: "Path to chat.db file.";
+                }
             }
 
             if !root.is-macos: StackedLineEdit {
@@ -161,26 +167,31 @@ export component ImportPage inherits VerticalLayout {
                 value <=> ImportAdapter.backup-password;
             }
 
-            StackedComboBox {
-                label: "Message Attachments";
-                model: ImportAdapter.attachment-media-options;
-                current-index <=> ImportAdapter.attachment-media-index;
-                selected(_) => { ImportAdapter.media-changed(); }
-            }
-            if ImportAdapter.attachment-media-index == 0: StackedHint {
-                message: "Copy all files as is";
-            }
-            if ImportAdapter.attachment-media-index == 1: StackedHint {
-                message: "Convert all files to common formats (.jpg, .mp4, .mp3) at high quality";
-            }
-            if ImportAdapter.attachment-media-index == 2: StackedHint {
-                message: "Re-encodes for smaller file size at the expense of some quality";
-            }
-            if ImportAdapter.attachment-media-index == 3: StackedHint {
-                message: "Do not copy files";
-            }
-            if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
-                message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedComboBox {
+                    label: "Message Attachments";
+                    model: ImportAdapter.attachment-media-options;
+                    current-index <=> ImportAdapter.attachment-media-index;
+                    selected(_) => { ImportAdapter.media-changed(); }
+                }
+                if ImportAdapter.attachment-media-index == 0: StackedHint {
+                    message: "Copy all files as is";
+                }
+                if ImportAdapter.attachment-media-index == 1: StackedHint {
+                    message: "Convert all files to common formats (.jpg, .mp4, .mp3) at high quality";
+                }
+                if ImportAdapter.attachment-media-index == 2: StackedHint {
+                    message: "Re-encodes for smaller file size at the expense of some quality";
+                }
+                if ImportAdapter.attachment-media-index == 3: StackedHint {
+                    message: "Do not copy files";
+                }
+                if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
+                    message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
+                }
             }
             if ImportAdapter.show-compress-options: OptionGroup {
                 title: "";
@@ -211,15 +222,20 @@ export component ImportPage inherits VerticalLayout {
             StackedHint {
                 message: "iMessage database above is --db-path. Point it at a chat.db file (default ~/Library/Messages/chat.db).";
             }
-            StackedPathField {
-                label: "Attachment root";
-                placeholder: "Optional absolute path (default ~/Library/Messages)";
-                field-id: "import.attachment_root";
-                value <=> ImportAdapter.attachment-root;
-                browse-requested(id) => { ImportAdapter.browse(id); }
-            }
-            StackedHint {
-                message: "Custom path for attachment data when it is stored separately from the database default. Affects Attachments and StickerCache. The path should be absolute. Default is ~/Library/Messages.";
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedPathField {
+                    label: "Attachment root";
+                    placeholder: "Optional absolute path (default ~/Library/Messages)";
+                    field-id: "import.attachment_root";
+                    value <=> ImportAdapter.attachment-root;
+                    browse-requested(id) => { ImportAdapter.browse(id); }
+                }
+                StackedHint {
+                    message: "Custom path for attachment data when it is stored separately from the database default. Affects Attachments and StickerCache. The path should be absolute. Default is ~/Library/Messages.";
+                }
             }
         }
 
@@ -227,31 +243,46 @@ export component ImportPage inherits VerticalLayout {
             title: "Message Filtering";
             open <=> ImportAdapter.advanced;
 
-            StackedLineEdit {
-                label: "Participant Filtering";
-                placeholder: "Comma separated list of names and numbers.";
-                value <=> ImportAdapter.conversation-filter;
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedLineEdit {
+                    label: "Participant Filtering";
+                    placeholder: "Comma separated list of names and numbers.";
+                    value <=> ImportAdapter.conversation-filter;
+                }
+                StackedHint {
+                    message: "Only conversations with the specified participants are exported, including group conversations.";
+                }
             }
-            StackedHint {
-                message: "Only conversations with the specified participants are exported, including group conversations.";
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedDateEdit {
+                    label: "Start Date";
+                    placeholder: "Optional";
+                    value <=> ImportAdapter.start-date;
+                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only import messages on or after this date (YYYY-MM-DD)";
+                }
             }
-            StackedDateEdit {
-                label: "Start Date";
-                placeholder: "Optional";
-                value <=> ImportAdapter.start-date;
-                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-            }
-            StackedHint {
-                message: "Only import messages on or after this date (YYYY-MM-DD)";
-            }
-            StackedDateEdit {
-                label: "End Date";
-                placeholder: "Optional";
-                value <=> ImportAdapter.end-date;
-                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-            }
-            StackedHint {
-                message: "Only import messages before this date (YYYY-MM-DD)";
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedDateEdit {
+                    label: "End Date";
+                    placeholder: "Optional";
+                    value <=> ImportAdapter.end-date;
+                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only import messages before this date (YYYY-MM-DD)";
+                }
             }
         }
 
@@ -267,12 +298,17 @@ export component ImportPage inherits VerticalLayout {
                 text: "Force reprocessing";
                 checked <=> ImportAdapter.force;
             }
-            StackedCheckBox {
-                text: "Obfuscate - All message data is anonymized";
-                checked <=> ImportAdapter.obfuscate;
-            }
-            if ImportAdapter.obfuscate: StackedHint {
-                message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedCheckBox {
+                    text: "Obfuscate - All message data is anonymized";
+                    checked <=> ImportAdapter.obfuscate;
+                }
+                if ImportAdapter.obfuscate: StackedHint {
+                    message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
+                }
             }
         }
     }
