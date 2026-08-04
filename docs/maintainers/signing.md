@@ -59,7 +59,7 @@ base64 -i DeveloperID.p12 | tr -d '\n' > macos-cert.b64   # macOS
 1. **Build** release binaries as today.
 2. **Windows** (`windows-latest` only, when `WINDOWS_CERTIFICATE_BASE64` is non-empty): decode the `.pfx`, locate `signtool.exe`, sign each project `.exe` under `target/release/` with SHA-256 and an RFC 3161 timestamp, then package.
 3. **macOS** (`macos-latest` only, when `MACOS_CERTIFICATE_BASE64` is non-empty): import the `.p12` into a temporary keychain, `codesign --options runtime --timestamp` each project binary, submit a zip of `message-vault-io` to `notarytool --wait`, tear down the keychain, then package.
-4. **Package** still runs `scripts/package-release.sh` (GUI at root; `lib/` for ffmpeg/ffprobe; `cli/` for CLIs + wtsexporter; `licenses/`). Third-party helpers are not re-signed by these steps.
+4. **Package** still runs `scripts/package-release.sh` (GUI at root; `lib/` for ffmpeg/ffprobe; `cli/` for wtsexporter only; `licenses/`). Third-party helpers are not re-signed by these steps.
 
 No further workflow edits are required to enable signing — only the secrets.
 

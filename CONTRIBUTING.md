@@ -56,12 +56,9 @@ Release profile:
 cargo build --workspace --release
 ```
 
-Binaries that are only needed when packaging a release ZIP (not for day-to-day GUI work):
-
-```bash
-cargo build --release -p message-reexport --bin message-reexporter
-cargo build --release -p vault-push --features cli
-```
+Release packaging builds the GUI only (`cargo build --release -p message-vault-io-gui`);
+exporters are linked as libraries. Standalone exporter CLIs are published from
+[message-exporters](https://github.com/bitrealm-dev/message-exporters).
 
 ## Run the app
 
@@ -161,7 +158,7 @@ Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand
 - **Libraries:** under `crates/message/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
 - **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
 - **GUI:** `message-vault-io-gui`
-- **Utilities:** `vault-push`, `message-reexporter` (package `message-reexport`)
+- **In-app libraries (not shipped as CLIs in this product’s release):** `vault-push`, `message-reexport` (package `message-reexport`); standalone CLIs come from message-exporters
 
 Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database` / `crabapple`). The GUI binary therefore includes GPL-licensed code.
 

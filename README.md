@@ -102,7 +102,7 @@ Experimental converters also ship in the GUI and release zip: GO SMS Pro, iMazin
 
 Already exported? The GUI **Format** tab ([`message-reexporter`](crates/message/reexport/docs/REEXPORT.md)) converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 
-Import into Message Vault with the GUI **Vault** tab or the [`vault-push`](crates/vault-push/docs/MANPAGE.md) CLI (JSONL export folder + Import API token).
+Import into Message Vault with the GUI **Vault** tab (JSONL export folder + Import API token). For a standalone `vault-push` CLI or exporter CLIs, use [message-exporters](https://github.com/bitrealm-dev/message-exporters) releases.
 
 ## Contributing
 
@@ -110,7 +110,7 @@ Setup, build, run, test, and contribution rules: [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Releases
 
-Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives (GUI + `lib/` + `cli/` + `licenses/`): [Releases](https://github.com/bitrealm-dev/message-vault-io/releases).
+Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives — **GUI only** plus `lib/` (ffmpeg/ffprobe), `cli/wtsexporter`, and `licenses/`: [Releases](https://github.com/bitrealm-dev/message-vault-io/releases).
 
 Maintainer documentation (architecture, GUI design, signing): [`docs/maintainers/`](docs/maintainers/README.md). Release steps: [Development and releases](docs/maintainers/developing.md).
 

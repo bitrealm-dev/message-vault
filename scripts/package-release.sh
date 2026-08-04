@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Stage a self-contained platform archive for a message-vault-io release.
 #
-# Layout:
+# Layout (GUI-only product — exporters are linked as libraries into the GUI):
 #   root       — message-vault-io (GUI)
 #   lib/       — ffmpeg, ffprobe
-#   cli/       — exporter CLIs, wtsexporter, message-reexporter, vault-push
+#   cli/       — wtsexporter (WhatsApp helper only)
 #   licenses/  — LICENSE + third-party notices
+#
+# Standalone exporter CLIs ship from the message-exporters repo, not here.
 #
 # Usage:
 #   scripts/package-release.sh <version> <artifact_suffix> [ext]
@@ -14,7 +16,7 @@
 #   scripts/package-release.sh 0.3.0 x86_64-unknown-linux-gnu
 #   scripts/package-release.sh 0.3.0 x86_64-pc-windows-msvc .exe
 #
-# Expects release binaries already built under target/release/.
+# Expects the GUI release binary already built under target/release/.
 # Writes:
 #   Linux  → dist/message-vault-io-<version>-<suffix>.tgz
 #   Windows/macOS → dist/message-vault-io-<version>-<suffix>.zip
@@ -48,30 +50,11 @@ fi
 cp "$src" "${STAGE}/${GUI_BIN}"
 chmod +x "${STAGE}/${GUI_BIN}" || true
 
-# --- CLI exporters / utilities under cli/ ---
+# --- helpers only (no Rust exporter CLIs) ---
 CLI_DIR="${STAGE}/cli"
 LIB_DIR="${STAGE}/lib"
 LICENSES_DIR="${STAGE}/licenses"
 mkdir -p "$CLI_DIR" "$LIB_DIR" "$LICENSES_DIR"
-for bin in \
-  go-sms-pro-exporter \
-  sms-backup-restore-exporter \
-  sms-backup-plus-exporter \
-  openextract-exporter \
-  imazing-exporter \
-  imessage-ir-exporter \
-  whatsapp-exporter \
-  message-reexporter \
-  vault-push
-do
-  src="${RELEASE_DIR}/${bin}${EXT}"
-  if [[ ! -f "$src" ]]; then
-    echo "missing release binary: $src" >&2
-    exit 1
-  fi
-  cp "$src" "${CLI_DIR}/${bin}${EXT}"
-  chmod +x "${CLI_DIR}/${bin}${EXT}" || true
-done
 
 # --- third-party helpers (pinned + checksummed) ---
 # wtsexporter 0.13.0 (KnugiHK/WhatsApp-Chat-Exporter)

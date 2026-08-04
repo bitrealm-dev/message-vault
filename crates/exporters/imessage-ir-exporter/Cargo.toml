@@ -10,14 +10,19 @@ repository = "https://github.com/bitrealm-dev/message-vault-io"
 name = "imessage_ir_exporter"
 path = "src/lib.rs"
 
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
 [[bin]]
 name = "imessage-ir-exporter"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 anyhow = "1.0.103"
 chrono = "0.4.44"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive"], optional = true }
 crabapple = { version = "=0.4.7" }
 hex = "0.4.3"
 imessage-database = "4.2.0"

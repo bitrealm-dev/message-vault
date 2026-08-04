@@ -1,8 +1,9 @@
 # Third-party notices
 
-This release archive bundles third-party binaries under `lib/` and `cli/`.
-Keep the extracted folder together so helper discovery works. License texts for
-those tools live in this `licenses/` directory.
+This release archive bundles third-party helper binaries under `lib/` (ffmpeg /
+ffprobe) and `cli/` (wtsexporter only). Rust exporters ship linked into the GUI,
+not as separate CLIs. Keep the extracted folder together so helper discovery
+works. License texts for those tools live in this `licenses/` directory.
 
 ## wtsexporter
 

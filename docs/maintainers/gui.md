@@ -65,8 +65,9 @@ and marshals each line onto the Slint UI thread (`upgrade_in_event_loop`),
 appending to the Log tab's `VecModel` and the session log file.
 
 Contacts, Extract Messages, Format, and Vault are linked libraries (no sibling
-exporter CLIs required). WhatsApp’s `wtsexporter` and media tools `ffmpeg` /
-`ffprobe` still resolve under `lib/` next to the GUI, via `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
+Rust exporter CLIs in the release archive). WhatsApp’s `wtsexporter` resolves
+under `cli/` next to the GUI; media tools `ffmpeg` / `ffprobe` under `lib/`;
+either may also be found via `MESSAGE_VAULT_IO_BIN` or `PATH`.
 
 ## Persistence
 

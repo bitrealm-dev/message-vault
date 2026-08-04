@@ -15,15 +15,16 @@ cargo run -p message-vault-io-gui
 For release:
 
 ```bash
-cargo build --workspace --release
+cargo build --release -p message-vault-io-gui
 ./target/release/message-vault-io
 ```
 
 On Windows the final command is `target\release\message-vault-io.exe`.
 
 The app searches for helpers under `lib/` (`ffmpeg`/`ffprobe`) and `cli/`
-(`wtsexporter`) next to its own executable, then in `MESSAGE_VAULT_IO_BIN`,
-then on `PATH`.
+(`wtsexporter` only) next to its own executable, then in `MESSAGE_VAULT_IO_BIN`,
+then on `PATH`. Exporters are linked as libraries; they are not separate CLIs
+in the message-vault-io release archive.
 
 ## Look and feel
 

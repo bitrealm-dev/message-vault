@@ -41,30 +41,24 @@ Layout (same on every platform):
 
 **Root**
 
-- `message-vault-io` (`.exe` on Windows) — runs exporters, Contacts, Format, and Vault as libraries
+- `message-vault-io` (`.exe` on Windows) — runs exporters, Contacts, Format, and Vault as **libraries** (linked into the GUI; no Rust exporter CLIs in this archive)
 
 **`lib/` — media tools**
 
 - `ffmpeg` / `ffprobe` — eugeneware/ffmpeg-static `b6.1.1` (binaries report FFmpeg `7.0.2-static`)
 
-**`cli/` — exporter / utility CLIs**
+**`cli/` — WhatsApp helper only**
 
 - `wtsexporter` — KnugiHK WhatsApp-Chat-Exporter `0.13.0` (pinned + SHA-256 in `scripts/package-release.sh`)
-- `go-sms-pro-exporter` (MMS PDU decode lives in library crate `go-sms-mms`)
-- `sms-backup-restore-exporter`
-- `sms-backup-plus-exporter`
-- `openextract-exporter`
-- `imazing-exporter`
-- `imessage-ir-exporter`
-- `whatsapp-exporter`
-- `message-reexporter` (package `message-reexport`)
-- `vault-push`
 
 **`licenses/`**
 
 - `LICENSE`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_WTSEXPORTER.LICENSE`, `THIRD_PARTY_FFMPEG.LICENSE`
 
-Contacts Check/Update and message obfuscation run as libraries inside the desktop app (not shipped as `cli/` binaries). The GUI finds `ffmpeg`/`ffprobe` under `lib/` and `wtsexporter` under `cli/`. CLIs under `cli/` look for media tools in `../lib/`. Keep the extracted archive together.
+Standalone exporter CLIs (`*-exporter`, `message-reexport`, `vault-push`) ship from
+[message-exporters](https://github.com/bitrealm-dev/message-exporters) releases, not
+this product. The GUI finds `ffmpeg`/`ffprobe` under `lib/` and `wtsexporter` under
+`cli/`. Keep the extracted archive together.
 
 ### Code signing
 
@@ -73,9 +67,7 @@ Windows Authenticode and macOS codesign / notarization steps are already in the 
 ### Local packaging smoke test
 
 ```bash
-cargo build --workspace --release
-cargo build --release -p message-reexport --bin message-reexporter
-cargo build --release -p vault-push --features cli
+cargo build --release -p message-vault-io-gui
 scripts/package-release.sh 0.0.0-dev x86_64-unknown-linux-gnu
 tar -tzf dist/message-vault-io-0.0.0-dev-x86_64-unknown-linux-gnu.tgz | head
 ```

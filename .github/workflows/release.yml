@@ -89,11 +89,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release binaries
-        run: |
-          cargo build --workspace --release
-          cargo build --release -p message-reexport --bin message-reexporter
-          cargo build --release -p vault-push --features cli
+      - name: Build release GUI
+        run: cargo build --release -p message-vault-io-gui
 
       - name: Sign Windows binaries
         if: matrix.os == 'windows-latest' && env.WINDOWS_CERTIFICATE_BASE64 != ''
@@ -121,32 +118,19 @@ jobs:
           fi
           echo "Using $SIGNTOOL"
 
-          # Sign project binaries that ship in the ZIP (GUI + cli/).
-          for bin in \
-            message-vault-io \
-            go-sms-pro-exporter \
-            sms-backup-restore-exporter \
-            sms-backup-plus-exporter \
-            openextract-exporter \
-            imazing-exporter \
-            imessage-ir-exporter \
-            whatsapp-exporter \
-            message-reexporter \
-            vault-push
-          do
-            path="target/release/${bin}.exe"
-            if [[ ! -f "$path" ]]; then
-              echo "missing binary to sign: $path" >&2
-              exit 1
-            fi
-            "$SIGNTOOL" sign \
-              /f "$CERT_PATH" \
-              /p "$WINDOWS_CERTIFICATE_PASSWORD" \
-              /fd SHA256 \
-              /tr http://timestamp.digicert.com \
-              /td SHA256 \
-              "$path"
-          done
+          # Sign the GUI binary that ships in the ZIP (helpers are third-party).
+          path="target/release/message-vault-io.exe"
+          if [[ ! -f "$path" ]]; then
+            echo "missing binary to sign: $path" >&2
+            exit 1
+          fi
+          "$SIGNTOOL" sign \
+            /f "$CERT_PATH" \
+            /p "$WINDOWS_CERTIFICATE_PASSWORD" \
+            /fd SHA256 \
+            /tr http://timestamp.digicert.com \
+            /td SHA256 \
+            "$path"
 
       - name: Sign and notarize macOS binaries
         if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE_BASE64 != ''
@@ -172,27 +156,14 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          for bin in \
-            message-vault-io \
-            go-sms-pro-exporter \
-            sms-backup-restore-exporter \
-            sms-backup-plus-exporter \
-            openextract-exporter \
-            imazing-exporter \
-            imessage-ir-exporter \
-            whatsapp-exporter \
-            message-reexporter \
-            vault-push
-          do
-            path="target/release/${bin}"
-            if [[ ! -f "$path" ]]; then
-              echo "missing binary to sign: $path" >&2
-              exit 1
-            fi
-            codesign --force --options runtime --timestamp \
-              --sign "$MACOS_SIGNING_IDENTITY" "$path"
-            codesign --verify --verbose "$path"
-          done
+          path="target/release/message-vault-io"
+          if [[ ! -f "$path" ]]; then
+            echo "missing binary to sign: $path" >&2
+            exit 1
+          fi
+          codesign --force --options runtime --timestamp \
+            --sign "$MACOS_SIGNING_IDENTITY" "$path"
+          codesign --verify --verbose "$path"
 
           # Notarize the GUI (standalone Mach-O; stapling is not available without a
           # .app / .pkg / .dmg — Gatekeeper still checks online on first launch).
@@ -251,15 +222,14 @@ jobs:
             --title "Message Vault ${VERSION}" \
             --notes "## Highlights
 
-          - Vault push posts message-ir JSONL as-is (batched multi-conversation bodies supported)
-          - Contacts CSV branding clarified as vCard CSV
-          - \`export.ini\` is written mode \`0600\` and Vault tab fields persist on exit
-          - Same archive layout: GUI at root, \`lib/\`, \`cli/\`, \`licenses/\`
+          - GUI-only archive: exporters run as libraries inside the app (no Rust CLI bins shipped)
+          - Bundled helpers remain: \`lib/ffmpeg\` / \`lib/ffprobe\`, \`cli/wtsexporter\`
+          - Standalone exporter CLIs: use [message-exporters](https://github.com/bitrealm-dev/message-exporters) releases
 
           ## Upgrade notes
 
-          - Drop-in for 0.4.x users: same folder layout; replace the previous extract
           - Extract the whole archive and keep folders together (\`lib/\` and \`cli/\` must stay next to the app)
+          - If you relied on \`cli/*-exporter\` or \`vault-push\` from this archive, install those from message-exporters instead
 
           ## Archives
 
@@ -271,7 +241,7 @@ jobs:
 
           - **Root:** \`message-vault-io\` (GUI; exporters run as libraries)
           - **\`lib/\`:** bundled \`ffmpeg\` / \`ffprobe\` (eugeneware/ffmpeg-static \`b6.1.1\`)
-          - **\`cli/\`:** standalone exporter CLIs, WhatsApp \`wtsexporter\` 0.13.0, \`message-reexporter\`, and \`vault-push\`
+          - **\`cli/\`:** WhatsApp \`wtsexporter\` 0.13.0 only
           - **\`licenses/\`:** project and third-party license notices
 
           ## Notes
