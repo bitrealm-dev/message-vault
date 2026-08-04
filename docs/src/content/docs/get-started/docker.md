@@ -250,6 +250,18 @@ of `cargo run --release --`.
 Host security and persistence live in Compose volumes and the host firewall —
 the processes inside bind `0.0.0.0` so Docker can publish them on the LAN.
 
+### `SQLITE_CANTOPEN` on `/app/data/vault.db`
+
+Release images run as **uid 1000**. If the named `vault-data` volume was created
+as root-owned (common on a fresh Docker volume), SQLite cannot create the DB:
+
+```bash
+docker run --rm -v message-vault-rs_vault-data:/data alpine chown -R 1000:1000 /data
+docker compose -f compose-release.yml restart vault
+```
+
+(Adjust the volume name and compose file to match your project.)
+
 ## Next steps
 
 - [Try the demo](/get-started/try-the-demo/) (native install, no Docker)
