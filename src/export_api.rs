@@ -1,0 +1,788 @@
+//! Read-only message export query used by `GET /v1/export/messages`.
+
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use serde::Serialize;
+
+use crate::search_query::{
+    ConversationTypeFilter, ParsedSearchQuery, SearchMode, has_date_bounds, has_search_criteria,
+    metadata_exclude_terms, metadata_include_terms, parse_search_query,
+};
+
+pub const DEFAULT_EXPORT_LIMIT: usize = 100;
+pub const MAX_EXPORT_LIMIT: usize = 500;
+
+#[derive(Debug, Clone)]
+pub struct ExportPageOpts<'a> {
+    pub account_id: &'a str,
+    pub query: &'a str,
+    pub limit: usize,
+    pub cursor: Option<&'a str>,
+    pub source_override: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportMessagesResponse {
+    pub ok: bool,
+    pub query: String,
+    pub messages: Vec<ExportMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportMessage {
+    pub id: i64,
+    pub source: String,
+    pub guid: Option<String>,
+    pub timestamp: String,
+    pub timestamp_utc: Option<String>,
+    pub sort_order: i64,
+    pub is_from_me: bool,
+    pub sender: Option<String>,
+    pub subject: Option<String>,
+    pub text: Option<String>,
+    pub is_announcement: bool,
+    pub is_reply: bool,
+    pub thread_originator_guid: Option<String>,
+    pub thread_originator_part: Option<i64>,
+    pub num_replies: i64,
+    pub conversation: ExportConversation,
+    pub attachments: Vec<ExportAttachment>,
+    pub tapbacks: Vec<ExportTapback>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportConversation {
+    pub id: i64,
+    pub chat_identifier: String,
+    pub service: Option<String>,
+    pub conversation_type: String,
+    pub group_title: Option<String>,
+    pub participants: Vec<ExportParticipant>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportParticipant {
+    pub handle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportAttachment {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_sticker: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportTapback {
+    pub part_index: i64,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
+    pub is_from_me: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum ExportQueryError {
+    BadRequest(String),
+    Internal(String),
+}
+
+impl ExportQueryError {
+    pub fn bad(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PageCursor {
+    timestamp: String,
+    sort_order: i64,
+    id: i64,
+}
+
+impl PageCursor {
+    fn encode(&self) -> String {
+        format!("{}|{}|{}", self.timestamp, self.sort_order, self.id)
+    }
+
+    fn decode(raw: &str) -> Option<Self> {
+        let mut parts = raw.splitn(3, '|');
+        let timestamp = parts.next()?.to_string();
+        let sort_order: i64 = parts.next()?.parse().ok()?;
+        let id: i64 = parts.next()?.parse().ok()?;
+        if timestamp.is_empty() {
+            return None;
+        }
+        Some(Self {
+            timestamp,
+            sort_order,
+            id,
+        })
+    }
+}
+
+struct BuiltFilters {
+    where_sql: String,
+    params: Vec<rusqlite::types::Value>,
+    dedupe_sql: String,
+}
+
+/// Export messages matching a Fastmail-style query (message mode only).
+///
+/// Empty query (no criteria) returns all non-trashed, non-duplicate messages for the account.
+pub fn export_messages(
+    conn: &Connection,
+    opts: ExportPageOpts<'_>,
+) -> Result<ExportMessagesResponse, ExportQueryError> {
+    let parsed = parse_search_query(opts.query);
+    if parsed.mode == SearchMode::Contacts {
+        return Err(ExportQueryError::bad(
+            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
+        ));
+    }
+
+    let limit = opts.limit.clamp(1, MAX_EXPORT_LIMIT);
+    let cursor = match opts.cursor {
+        Some(raw) if !raw.trim().is_empty() => Some(
+            PageCursor::decode(raw.trim())
+                .ok_or_else(|| ExportQueryError::bad("invalid cursor"))?,
+        ),
+        _ => None,
+    };
+
+    // Empty q with no criteria → export all (date filters alone still apply when present).
+    let _ = has_search_criteria(&parsed);
+
+    let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
+    let fetch_limit = limit + 1;
+
+    let mut sql = format!(
+        "SELECT m.id, m.conversation_id, m.source, m.guid, m.timestamp, m.timestamp_utc,
+                m.sort_order, m.is_from_me, m.sender, m.subject, m.body,
+                m.is_announcement, m.is_reply, m.thread_originator_guid,
+                m.thread_originator_part, m.num_replies,
+                c.chat_identifier, c.service, c.conversation_type, c.group_title
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE {where_sql}{dedupe}",
+        where_sql = filters.where_sql,
+        dedupe = filters.dedupe_sql,
+    );
+
+    let mut params = filters.params;
+    if let Some(cur) = &cursor {
+        sql.push_str(
+            " AND (
+                m.timestamp > ?
+                OR (m.timestamp = ? AND m.sort_order > ?)
+                OR (m.timestamp = ? AND m.sort_order = ? AND m.id > ?)
+              )",
+        );
+        params.push(cur.timestamp.clone().into());
+        params.push(cur.timestamp.clone().into());
+        params.push(cur.sort_order.into());
+        params.push(cur.timestamp.clone().into());
+        params.push(cur.sort_order.into());
+        params.push(cur.id.into());
+    }
+    sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC LIMIT ?");
+    params.push((fetch_limit as i64).into());
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let rows = stmt
+        .query_map(params_from_iter(params.iter().cloned()), |row| {
+            Ok(RawRow {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                source: row.get(2)?,
+                guid: row.get(3)?,
+                timestamp: row.get(4)?,
+                timestamp_utc: row.get(5)?,
+                sort_order: row.get(6)?,
+                is_from_me: row.get::<_, i64>(7)? != 0,
+                sender: row.get(8)?,
+                subject: row.get(9)?,
+                body: row.get(10)?,
+                is_announcement: row.get::<_, i64>(11)? != 0,
+                is_reply: row.get::<_, i64>(12)? != 0,
+                thread_originator_guid: row.get(13)?,
+                thread_originator_part: row.get(14)?,
+                num_replies: row.get(15)?,
+                chat_identifier: row.get(16)?,
+                service: row.get(17)?,
+                conversation_type: row.get(18)?,
+                group_title: row.get(19)?,
+            })
+        })
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+
+    let truncated = rows.len() > limit;
+    let page_rows: Vec<RawRow> = if truncated {
+        rows.into_iter().take(limit).collect()
+    } else {
+        rows
+    };
+
+    let next_cursor = if truncated {
+        page_rows.last().map(|r| {
+            PageCursor {
+                timestamp: r.timestamp.clone(),
+                sort_order: r.sort_order,
+                id: r.id,
+            }
+            .encode()
+        })
+    } else {
+        None
+    };
+
+    let conv_ids: Vec<i64> = {
+        let mut ids: Vec<i64> = page_rows.iter().map(|r| r.conversation_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let participants = load_participants(conn, &conv_ids)?;
+    let msg_ids: Vec<i64> = page_rows.iter().map(|r| r.id).collect();
+    let attachments = load_attachments(conn, &msg_ids)?;
+    let tapbacks = load_tapbacks(conn, &msg_ids)?;
+
+    let messages = page_rows
+        .into_iter()
+        .map(|r| {
+            let parts = participants
+                .get(&r.conversation_id)
+                .cloned()
+                .unwrap_or_default();
+            ExportMessage {
+                id: r.id,
+                source: r.source,
+                guid: r.guid,
+                timestamp: r.timestamp,
+                timestamp_utc: r.timestamp_utc,
+                sort_order: r.sort_order,
+                is_from_me: r.is_from_me,
+                sender: r.sender,
+                subject: r.subject,
+                text: r.body,
+                is_announcement: r.is_announcement,
+                is_reply: r.is_reply,
+                thread_originator_guid: r.thread_originator_guid,
+                thread_originator_part: r.thread_originator_part,
+                num_replies: r.num_replies,
+                conversation: ExportConversation {
+                    id: r.conversation_id,
+                    chat_identifier: r.chat_identifier,
+                    service: r.service,
+                    conversation_type: r.conversation_type,
+                    group_title: r.group_title,
+                    participants: parts,
+                },
+                attachments: attachments.get(&r.id).cloned().unwrap_or_default(),
+                tapbacks: tapbacks.get(&r.id).cloned().unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    Ok(ExportMessagesResponse {
+        ok: true,
+        query: opts.query.to_string(),
+        messages,
+        next_cursor,
+        truncated: truncated.then_some(true),
+    })
+}
+
+struct RawRow {
+    id: i64,
+    conversation_id: i64,
+    source: String,
+    guid: Option<String>,
+    timestamp: String,
+    timestamp_utc: Option<String>,
+    sort_order: i64,
+    is_from_me: bool,
+    sender: Option<String>,
+    subject: Option<String>,
+    body: Option<String>,
+    is_announcement: bool,
+    is_reply: bool,
+    thread_originator_guid: Option<String>,
+    thread_originator_part: Option<i64>,
+    num_replies: i64,
+    chat_identifier: String,
+    service: Option<String>,
+    conversation_type: String,
+    group_title: Option<String>,
+}
+
+fn build_message_filters(
+    conn: &Connection,
+    account_id: &str,
+    parsed: &ParsedSearchQuery,
+    source_override: Option<&str>,
+) -> Result<BuiltFilters, ExportQueryError> {
+    let mut where_parts = vec!["c.account_id = ?".to_string()];
+    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+
+    append_metadata_text_filters(parsed, &mut where_parts, &mut params);
+
+    if let Some(from) = &parsed.from {
+        where_parts.push(
+            "(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
+                 SELECT 1 FROM participants p
+                 WHERE p.conversation_id = c.id
+                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+               )))"
+            .into(),
+        );
+        let like = format!("%{from}%");
+        params.push(like.clone().into());
+        params.push(like.clone().into());
+        params.push(like.into());
+    }
+
+    if let Some(to) = &parsed.to {
+        where_parts.push(
+            "EXISTS (
+                 SELECT 1 FROM participants p
+                 WHERE p.conversation_id = c.id
+                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+               )"
+            .into(),
+        );
+        let like = format!("%{to}%");
+        params.push(like.clone().into());
+        params.push(like.into());
+    }
+
+    if let Some(subject) = &parsed.subject {
+        where_parts.push("coalesce(m.subject, '') LIKE ? COLLATE NOCASE".into());
+        params.push(format!("%{subject}%").into());
+    }
+
+    if let Some(after) = &parsed.after {
+        where_parts.push("m.timestamp >= ?".into());
+        params.push(after.clone().into());
+    }
+    if let Some(before) = &parsed.before {
+        where_parts.push("m.timestamp < ?".into());
+        let before_val = if before.len() == 10 {
+            format!("{before}T23:59:59.999Z")
+        } else {
+            before.clone()
+        };
+        params.push(before_val.into());
+    }
+
+    let source_filter = source_override
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(parsed.source.as_deref());
+    if let Some(source) = source_filter {
+        where_parts.push("m.source = ?".into());
+        params.push(source.to_string().into());
+    }
+
+    if let Some(ct) = parsed.conversation_type {
+        where_parts.push("c.conversation_type = ?".into());
+        params.push(ct.to_string().into());
+    }
+
+    if parsed.has_attachment {
+        where_parts
+            .push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)".into());
+    }
+
+    if let Some(within) = &parsed.within {
+        let ids = list_label_member_contact_ids(conn, account_id, within)?;
+        where_parts.push(involves_contacts_sql(&ids));
+    }
+
+    if has_date_bounds(&parsed.first_contact) {
+        let ids = contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact)?;
+        where_parts.push(involves_contacts_sql(&ids));
+    }
+    if has_date_bounds(&parsed.last_contact) {
+        let ids = contact_ids_within_day_bounds(conn, account_id, "last", &parsed.last_contact)?;
+        where_parts.push(involves_contacts_sql(&ids));
+    }
+
+    where_parts.push(
+        "NOT EXISTS (
+           SELECT 1 FROM trashed_conversations tc
+           WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+         )"
+        .into(),
+    );
+    where_parts.push(
+        "NOT EXISTS (
+           SELECT 1 FROM trashed_handles th
+           WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+         )"
+        .into(),
+    );
+
+    let dedupe_sql = if source_filter.is_some() {
+        String::new()
+    } else if column_exists(conn, "messages", "duplicate_of")? {
+        " AND m.duplicate_of IS NULL".to_string()
+    } else {
+        String::new()
+    };
+
+    Ok(BuiltFilters {
+        where_sql: where_parts.join(" AND "),
+        params,
+        dedupe_sql,
+    })
+}
+
+fn append_metadata_text_filters(
+    parsed: &ParsedSearchQuery,
+    where_parts: &mut Vec<String>,
+    params: &mut Vec<rusqlite::types::Value>,
+) {
+    for term in metadata_include_terms(parsed) {
+        where_parts.push(metadata_term_matches_sql(params, term));
+    }
+    for term in metadata_exclude_terms(parsed) {
+        where_parts.push(format!(
+            "NOT {}",
+            metadata_term_matches_sql(params, term)
+        ));
+    }
+}
+
+fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &str) -> String {
+    let like = format!("%{term}%");
+    for _ in 0..8 {
+        params.push(like.clone().into());
+    }
+    "(
+    coalesce(m.sender, '') LIKE ? COLLATE NOCASE
+    OR EXISTS (
+      SELECT 1 FROM participants p_md
+      WHERE p_md.conversation_id = c.id
+        AND (
+          p_md.handle LIKE ? COLLATE NOCASE
+          OR coalesce(p_md.name_hint, '') LIKE ? COLLATE NOCASE
+        )
+    )
+    OR EXISTS (
+      SELECT 1 FROM contact_handles ch_md
+      JOIN contacts ct_md ON ct_md.id = ch_md.contact_id
+      WHERE ch_md.account_id = c.account_id
+        AND (
+          ch_md.handle LIKE ? COLLATE NOCASE
+          OR coalesce(ct_md.preferred_name, '') LIKE ? COLLATE NOCASE
+        )
+        AND (
+          (c.conversation_type = 'individual' AND ch_md.handle = c.chat_identifier)
+          OR EXISTS (
+            SELECT 1 FROM participants p_md2
+            WHERE p_md2.conversation_id = c.id AND p_md2.handle = ch_md.handle
+          )
+        )
+    )
+    OR EXISTS (
+      SELECT 1 FROM attachments a_md
+      WHERE a_md.message_id = m.id
+        AND (
+          coalesce(a_md.original_name, '') LIKE ? COLLATE NOCASE
+          OR coalesce(a_md.mime_type, '') LIKE ? COLLATE NOCASE
+          OR coalesce(a_md.derived_mime_type, '') LIKE ? COLLATE NOCASE
+        )
+    )
+  )"
+    .into()
+}
+
+fn involves_contacts_sql(contact_ids: &[i64]) -> String {
+    if contact_ids.is_empty() {
+        return "1=0".into();
+    }
+    let ids = contact_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "EXISTS (
+    SELECT 1 FROM contact_handles ch
+    WHERE ch.account_id = c.account_id
+      AND ch.contact_id IN ({ids})
+      AND (
+        ch.handle = c.chat_identifier
+        OR EXISTS (
+          SELECT 1 FROM participants p_link
+          WHERE p_link.conversation_id = c.id AND p_link.handle = ch.handle
+        )
+      )
+  )"
+    )
+}
+
+fn list_label_member_contact_ids(
+    conn: &Connection,
+    account_id: &str,
+    name: &str,
+) -> Result<Vec<i64>, ExportQueryError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !table_exists(conn, "contact_labels")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT clm.contact_id
+             FROM contact_label_members clm
+             JOIN contact_labels cl ON cl.id = clm.label_id
+             WHERE cl.name = ? COLLATE NOCASE AND cl.account_id = ?
+             ORDER BY clm.contact_id",
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    Ok(rows)
+}
+
+fn contact_ids_within_day_bounds(
+    conn: &Connection,
+    account_id: &str,
+    bound: &str,
+    bounds: &crate::search_query::DateBounds,
+) -> Result<Vec<i64>, ExportQueryError> {
+    let day = if bound == "first" { "MIN" } else { "MAX" };
+    let hide_dupes = if column_exists(conn, "messages", "duplicate_of")? {
+        " AND m.duplicate_of IS NULL"
+    } else {
+        ""
+    };
+    let mut having = Vec::new();
+    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+    if let Some(from) = &bounds.from {
+        having.push(format!("{day}(substr(m.timestamp, 1, 10)) >= ?"));
+        params.push(from.clone().into());
+    }
+    if let Some(to) = &bounds.to {
+        having.push(format!("{day}(substr(m.timestamp, 1, 10)) < ?"));
+        let to_val = if to.len() == 10 {
+            // exclusive upper: next day handled by string compare on YYYY-MM-DD
+            to.clone()
+        } else {
+            to.clone()
+        };
+        params.push(to_val.into());
+    }
+    if having.is_empty() {
+        return Ok(Vec::new());
+    }
+    let having_sql = having.join(" AND ");
+    let sql = format!(
+        "SELECT ch.contact_id
+         FROM contact_handles ch
+         JOIN conversations c
+           ON c.account_id = ch.account_id
+          AND c.conversation_type = 'individual'
+          AND c.chat_identifier = ch.handle
+         JOIN messages m ON m.conversation_id = c.id
+         WHERE ch.account_id = ?{hide_dupes}
+         GROUP BY ch.contact_id
+         HAVING {having_sql}"
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let rows = stmt
+        .query_map(params_from_iter(params.iter().cloned()), |r| r.get(0))
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    Ok(rows)
+}
+
+fn load_participants(
+    conn: &Connection,
+    conversation_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ExportQueryError> {
+    let mut map = std::collections::HashMap::new();
+    if conversation_ids.is_empty() {
+        return Ok(map);
+    }
+    for chunk in conversation_ids.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT conversation_id, handle, name_hint
+             FROM participants
+             WHERE conversation_id IN ({placeholders})
+             ORDER BY conversation_id, id"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_from_iter(chunk.iter().copied()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    ExportParticipant {
+                        handle: row.get(1)?,
+                        name_hint: row.get(2)?,
+                    },
+                ))
+            })
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        for row in rows {
+            let (cid, p) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            map.entry(cid).or_insert_with(Vec::new).push(p);
+        }
+    }
+    Ok(map)
+}
+
+fn load_attachments(
+    conn: &Connection,
+    message_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ExportQueryError> {
+    let mut map = std::collections::HashMap::new();
+    if message_ids.is_empty() {
+        return Ok(map);
+    }
+    for chunk in message_ids.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription
+             FROM attachments
+             WHERE message_id IN ({placeholders})
+             ORDER BY message_id, id"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_from_iter(chunk.iter().copied()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    ExportAttachment {
+                        path: row.get(1)?,
+                        original_name: row.get(2)?,
+                        mime_type: row.get(3)?,
+                        sha256: row.get(4)?,
+                        is_sticker: row.get::<_, i64>(5)? != 0,
+                        transcription: row.get(6)?,
+                    },
+                ))
+            })
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        for row in rows {
+            let (mid, att) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            map.entry(mid).or_insert_with(Vec::new).push(att);
+        }
+    }
+    Ok(map)
+}
+
+fn load_tapbacks(
+    conn: &Connection,
+    message_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
+    let mut map = std::collections::HashMap::new();
+    if message_ids.is_empty() || !table_exists(conn, "tapbacks")? {
+        return Ok(map);
+    }
+    for chunk in message_ids.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT message_id, part_index, kind, emoji, is_from_me, sender
+             FROM tapbacks
+             WHERE message_id IN ({placeholders})
+             ORDER BY message_id, id"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_from_iter(chunk.iter().copied()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    ExportTapback {
+                        part_index: row.get(1)?,
+                        kind: row.get(2)?,
+                        emoji: row.get(3)?,
+                        is_from_me: row.get::<_, i64>(4)? != 0,
+                        sender: row.get(5)?,
+                    },
+                ))
+            })
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        for row in rows {
+            let (mid, t) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            map.entry(mid).or_insert_with(Vec::new).push(t);
+        }
+    }
+    Ok(map)
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool, ExportQueryError> {
+    let n: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+            [name],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    Ok(n.is_some())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, ExportQueryError> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+// Silence unused import warning for ConversationTypeFilter in non-test builds if only used via Display
+#[allow(dead_code)]
+fn _ct_used(ct: ConversationTypeFilter) -> String {
+    ct.to_string()
+}

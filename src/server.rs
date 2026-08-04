@@ -21,6 +21,7 @@ use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::dedupe;
+use crate::export_api::{self, DEFAULT_EXPORT_LIMIT, ExportPageOpts, ExportQueryError};
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::db::schema;
 
@@ -159,12 +160,15 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/auth/check", get(auth_check))
+        .route("/v1/export/messages", get(export_messages_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
         .route("/v1/import", post(import_handler))
         .route(
             "/v1/assets/{sha256}",
-            put(asset_put_handler).head(asset_head_handler),
+            get(asset_get_handler)
+                .put(asset_put_handler)
+                .head(asset_head_handler),
         )
         .route(
             "/v1/assets/{sha256}/uploads",
@@ -189,6 +193,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-rs serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
+    eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
+    eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  POST /v1/imports  (start import session; returns id)");
     eprintln!("  POST /v1/imports/{{id}}/complete");
     eprintln!("  HEAD /v1/assets/{{sha256}}?source=&account=  (probe before PUT)");
@@ -201,6 +207,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("       account= optional (must match token); derived from Bearer when omitted");
     eprintln!("       Content-Type: application/jsonl  (body only; assets by sha256)");
     eprintln!("       Content-Type: multipart/form-data   (field jsonl + file parts; remote push)");
+    eprintln!("       Export routes are read-only (no delete); same Bearer token as import");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -685,6 +692,96 @@ async fn asset_head_handler(
         assets_path: stored.assets_path,
         already_present: true,
     }))
+}
+
+/// Download a previously stored content-addressed asset (read-only).
+async fn asset_get_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Response, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+    let Some(stored) = existing else {
+        return Err(ApiError::NotFound("asset not found".into()));
+    };
+
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let path = assets_dir.join(&stored.assets_path);
+    if !path.is_file() {
+        return Err(ApiError::NotFound("asset file missing on disk".into()));
+    }
+
+    let mime = stored
+        .mime_type
+        .clone()
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
+    let len = bytes.len();
+
+    let mut response = bytes.into_response();
+    let headers_mut = response.headers_mut();
+    if let Ok(value) = header::HeaderValue::from_str(&mime) {
+        headers_mut.insert(header::CONTENT_TYPE, value);
+    }
+    headers_mut.insert(header::CONTENT_LENGTH, header::HeaderValue::from(len));
+    Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportMessagesQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+async fn export_messages_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesQuery>,
+) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
+    let q = query.q.clone();
+    let cursor = query.cursor.clone();
+    let source = query.source.clone();
+    let db = Arc::clone(&state.db);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| ExportQueryError::Internal("db lock poisoned".into()))?;
+        export_api::export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: &account,
+                query: &q,
+                limit,
+                cursor: cursor.as_deref(),
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("export task: {e}")))?;
+
+    match result {
+        Ok(body) => Ok(Json(body)),
+        Err(ExportQueryError::BadRequest(m)) => Err(ApiError::BadRequest(m)),
+        Err(ExportQueryError::Internal(m)) => Err(ApiError::Internal(m)),
+    }
 }
 
 async fn asset_put_handler(

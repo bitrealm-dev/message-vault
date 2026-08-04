@@ -3,6 +3,7 @@ mod assets;
 mod config;
 mod db;
 mod dedupe;
+mod export_api;
 mod import;
 mod import_cli;
 mod import_media;
@@ -10,6 +11,7 @@ mod jsonl;
 mod models;
 mod process_assets;
 mod reset_demo;
+mod search_query;
 mod server;
 
 use crate::db::{account_profile, contacts as contacts_db};
