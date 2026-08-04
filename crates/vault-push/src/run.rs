@@ -182,6 +182,155 @@ pub fn format_duration_ms(ms: u64) -> String {
     }
 }
 
+/// Multi-line end-of-run summary for CLI / GUI Log.
+pub fn format_push_summary(report: &PushReport) -> String {
+    let status = if report.ok { "success" } else { "completed with errors" };
+    format!(
+        "Import {status}\n\
+         Conversations: {} ok, {} failed, {} skipped ({} total)\n\
+         Messages: {}\n\
+         Assets: {} uploaded, {} skipped\n\
+         Elapsed: {} ({} ms)",
+        report.conversations_ok,
+        report.conversations_failed,
+        report.conversations_skipped,
+        report.conversations_total,
+        report.messages,
+        report.assets_uploaded,
+        report.assets_skipped,
+        format_duration_ms(report.elapsed_ms),
+        report.elapsed_ms,
+    )
+}
+
+const PROGRESS_BATCH_SIZE: usize = 10;
+
+/// Batches successful file progress so the Log shows every N files, not each one.
+struct ProgressBatcher {
+    total: usize,
+    done: usize,
+    chunk_conversations: u64,
+    chunk_messages: u64,
+    chunk_bytes: u64,
+    chunk_import_ms: u64,
+    chunk_total_ms: u64,
+    chunk_count: usize,
+}
+
+impl ProgressBatcher {
+    fn new(total: usize) -> Self {
+        Self {
+            total,
+            done: 0,
+            chunk_conversations: 0,
+            chunk_messages: 0,
+            chunk_bytes: 0,
+            chunk_import_ms: 0,
+            chunk_total_ms: 0,
+            chunk_count: 0,
+        }
+    }
+
+    fn note_ok(&mut self, messages: u64, profile: &UploadProfile) -> Option<String> {
+        self.done = self.done.saturating_add(1);
+        self.chunk_count = self.chunk_count.saturating_add(1);
+        self.chunk_conversations = self.chunk_conversations.saturating_add(1);
+        self.chunk_messages = self.chunk_messages.saturating_add(messages);
+        self.chunk_bytes = self.chunk_bytes.saturating_add(profile.asset_bytes);
+        self.chunk_import_ms = self
+            .chunk_import_ms
+            .saturating_add(profile.message_import_ms);
+        self.chunk_total_ms = self.chunk_total_ms.saturating_add(profile.total_ms);
+        if self.chunk_count >= PROGRESS_BATCH_SIZE || self.done >= self.total {
+            Some(self.take_chunk_line())
+        } else {
+            None
+        }
+    }
+
+    fn note_skipped(&mut self) -> Option<String> {
+        self.done = self.done.saturating_add(1);
+        self.chunk_count = self.chunk_count.saturating_add(1);
+        self.chunk_conversations = self.chunk_conversations.saturating_add(1);
+        if self.chunk_count >= PROGRESS_BATCH_SIZE || self.done >= self.total {
+            Some(self.take_chunk_line())
+        } else {
+            None
+        }
+    }
+
+    fn note_failed(&mut self) {
+        self.done = self.done.saturating_add(1);
+    }
+
+    fn flush_remainder(&mut self) -> Option<String> {
+        if self.chunk_count == 0 {
+            None
+        } else {
+            Some(self.take_chunk_line())
+        }
+    }
+
+    fn take_chunk_line(&mut self) -> String {
+        let line = format!(
+            "files {}/{} - conversations={} messages={} bytes={} import_ms={} total_ms={}",
+            self.done,
+            self.total,
+            self.chunk_conversations,
+            self.chunk_messages,
+            self.chunk_bytes,
+            self.chunk_import_ms,
+            self.chunk_total_ms,
+        );
+        self.chunk_conversations = 0;
+        self.chunk_messages = 0;
+        self.chunk_bytes = 0;
+        self.chunk_import_ms = 0;
+        self.chunk_total_ms = 0;
+        self.chunk_count = 0;
+        line
+    }
+}
+
+fn emit_progress_line(
+    log: &mut LogWriter,
+    progress: &mut Option<&mut ProgressFn<'_>>,
+    line: String,
+) {
+    log.line(&line);
+    if let Some(cb) = progress.as_mut() {
+        cb(ProgressEvent::Log(line));
+    }
+}
+
+fn emit_file_failure_lines(
+    log: &mut LogWriter,
+    progress: &mut Option<&mut ProgressFn<'_>>,
+    name: &str,
+    error: &str,
+    profile: Option<&UploadProfile>,
+) {
+    let fail_line = format!("fail {name}: {error}");
+    emit_progress_line(log, progress, fail_line);
+    if let Some(profile) = profile {
+        emit_progress_line(log, progress, format_profile_line(name, profile));
+    }
+}
+
+fn format_profile_line(name: &str, profile: &UploadProfile) -> String {
+    format!(
+        "PROFILE {name} read_ms={} attachment_scan_hash_ms={} asset_upload_ms={} \
+         message_import_ms={} total_ms={} unique_assets={} asset_bytes={}",
+        profile.read_ms,
+        profile.attachment_scan_hash_ms,
+        profile.asset_upload_ms,
+        profile.message_import_ms,
+        profile.total_ms,
+        profile.unique_assets,
+        profile.asset_bytes
+    )
+}
+
 fn is_push_artifact(name: &str) -> bool {
     name.eq_ignore_ascii_case(journal::JOURNAL_NAME)
         || name.eq_ignore_ascii_case(journal::REPORT_NAME)
@@ -486,12 +635,7 @@ fn finish_run(
         serde_json::to_string_pretty(&report).context("serialize report")?,
     )
     .with_context(|| format!("write report {}", report_path.display()))?;
-    log.line(&format!(
-        "finished ok={} conversations_ok={ok_n} failed={fail_n} skipped={skip_n} messages={messages} \
-         elapsed_ms={elapsed} ({})",
-        report.ok,
-        format_duration_ms(elapsed)
-    ));
+    log.line(&format_push_summary(&report));
     if let Some(cb) = progress.as_mut() {
         cb(ProgressEvent::Finished(report.clone()));
     }
@@ -526,6 +670,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         std::iter::repeat_with(|| None).take(total).collect();
     let mut pending: Option<ImportBatch> = None;
     let mut inflight: Option<InFlightImport> = None;
+    let mut batcher = ProgressBatcher::new(total);
 
     for (idx, path) in files.iter().enumerate() {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
@@ -543,26 +688,23 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         }
 
         if cfg.mode == "append" && !cfg.force && journal.files.contains(&name) {
-            let msg = format!(
-                "PROGRESS {}/{total} skip {name} (already imported)",
-                idx + 1
-            );
-            log.line(&msg);
-            if let Some(cb) = progress.as_mut() {
-                cb(ProgressEvent::Log(msg));
-                cb(ProgressEvent::FileDone {
-                    file: name.clone(),
-                    status: "skipped".into(),
-                });
-            }
             results[idx] = Some(FileResult {
-                file: name,
+                file: name.clone(),
                 status: "skipped".into(),
                 error: None,
                 messages: 0,
                 attachments: 0,
                 profile: None,
             });
+            if let Some(cb) = progress.as_mut() {
+                cb(ProgressEvent::FileDone {
+                    file: name,
+                    status: "skipped".into(),
+                });
+            }
+            if let Some(line) = batcher.note_skipped() {
+                emit_progress_line(&mut log, &mut progress, line);
+            }
             continue;
         }
 
@@ -599,6 +741,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         log: &mut log,
                         progress: &mut progress,
                         results: &mut results,
+                        batcher: &mut batcher,
                         total,
                         wait: true,
                     })?;
@@ -610,7 +753,6 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 let err = e.to_string();
                 record_file_failure(RecordFileFailure {
                     index: idx,
-                    total,
                     name: &name,
                     error: &err,
                     source: "",
@@ -620,6 +762,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     log: &mut log,
                     progress: &mut progress,
                     results: &mut results,
+                    batcher: &mut batcher,
                 });
                 if !cfg.continue_on_error {
                     aborted = true;
@@ -647,6 +790,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 log: &mut log,
                 progress: &mut progress,
                 results: &mut results,
+                batcher: &mut batcher,
                 total,
                 wait: !cfg.continue_on_error,
             })?;
@@ -693,6 +837,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     log: &mut log,
                     progress: &mut progress,
                     results: &mut results,
+                    batcher: &mut batcher,
                     total,
                     wait: !cfg.continue_on_error,
                 })?;
@@ -725,6 +870,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     log: &mut log,
                     progress: &mut progress,
                     results: &mut results,
+                    batcher: &mut batcher,
                     total,
                     wait: !cfg.continue_on_error,
                 })?;
@@ -750,7 +896,6 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         // when those imports complete (overlapped with the next prepare_file).
         finish_file_if_ready(FinishFile {
             index: idx,
-            total,
             trackers: &mut trackers,
             journal: &mut journal,
             journal_path: &journal_path,
@@ -759,6 +904,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             log: &mut log,
             progress: &mut progress,
             results: &mut results,
+            batcher: &mut batcher,
         })?;
     }
 
@@ -777,6 +923,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             log: &mut log,
             progress: &mut progress,
             results: &mut results,
+            batcher: &mut batcher,
             total,
             wait: true,
         })?;
@@ -796,8 +943,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             log: &mut log,
             progress: &mut progress,
             results: &mut results,
+            batcher: &mut batcher,
             total,
         });
+    }
+
+    if let Some(line) = batcher.flush_remainder() {
+        emit_progress_line(&mut log, &mut progress, line);
     }
 
     finish_run(
@@ -1239,7 +1391,6 @@ fn should_flush_before_chunk(
 
 struct RecordFileFailure<'a, 'p, 'f> {
     index: usize,
-    total: usize,
     name: &'a str,
     error: &'a str,
     source: &'a str,
@@ -1249,17 +1400,14 @@ struct RecordFileFailure<'a, 'p, 'f> {
     log: &'a mut LogWriter,
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
+    batcher: &'a mut ProgressBatcher,
 }
 
 fn record_file_failure(args: RecordFileFailure<'_, '_, '_>) {
-    let msg = format!(
-        "PROGRESS {}/{} fail {} {}",
-        args.index + 1,
-        args.total,
-        args.name,
-        args.error
-    );
-    args.log.line(&msg);
+    if let Some(line) = args.batcher.flush_remainder() {
+        emit_progress_line(args.log, args.progress, line);
+    }
+    args.batcher.note_failed();
     let _ = journal::append(
         args.journal_path,
         &JournalEvent::Fail {
@@ -1273,8 +1421,8 @@ fn record_file_failure(args: RecordFileFailure<'_, '_, '_>) {
             error: args.error.to_string(),
         },
     );
+    emit_file_failure_lines(args.log, args.progress, args.name, args.error, None);
     if let Some(cb) = args.progress.as_mut() {
-        cb(ProgressEvent::Log(msg));
         cb(ProgressEvent::FileDone {
             file: args.name.to_string(),
             status: "failed".into(),
@@ -1292,7 +1440,6 @@ fn record_file_failure(args: RecordFileFailure<'_, '_, '_>) {
 
 struct FinishFile<'a, 'p, 'f> {
     index: usize,
-    total: usize,
     trackers: &'a mut [Option<FileTracker>],
     journal: &'a mut JournalState,
     journal_path: &'a Path,
@@ -1301,6 +1448,7 @@ struct FinishFile<'a, 'p, 'f> {
     log: &'a mut LogWriter,
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
+    batcher: &'a mut ProgressBatcher,
 }
 
 fn finish_file_if_ready(args: FinishFile<'_, '_, '_>) -> Result<()> {
@@ -1338,35 +1486,31 @@ fn finish_file_if_ready(args: FinishFile<'_, '_, '_>) -> Result<()> {
         )?;
         ("ok", messages)
     };
-    let msg = if let Some(error) = error.as_ref() {
-        format!(
-            "PROGRESS {}/{} fail {name} {error}",
-            args.index + 1,
-            args.total
-        )
+
+    if let Some(error) = error.as_ref() {
+        if let Some(line) = args.batcher.flush_remainder() {
+            emit_progress_line(args.log, args.progress, line);
+        }
+        args.batcher.note_failed();
+        emit_file_failure_lines(
+            args.log,
+            args.progress,
+            &name,
+            error,
+            Some(&profile),
+        );
     } else {
-        format!(
-            "PROGRESS {}/{} ok {name} msgs={messages} attachments={attachments}",
-            args.index + 1,
-            args.total
-        )
-    };
-    args.log.line(&msg);
-    let profile_msg = format!(
-        "PROFILE {name} read_ms={} attachment_scan_hash_ms={} asset_upload_ms={} \
-         message_import_ms={} total_ms={} unique_assets={} asset_bytes={}",
-        profile.read_ms,
-        profile.attachment_scan_hash_ms,
-        profile.asset_upload_ms,
-        profile.message_import_ms,
-        profile.total_ms,
-        profile.unique_assets,
-        profile.asset_bytes
-    );
-    args.log.line(&profile_msg);
+        // Keep quiet per-file detail in the on-disk log only.
+        args.log.line(&format!(
+            "ok {name} msgs={result_messages} attachments={attachments}"
+        ));
+        args.log.line(&format_profile_line(&name, &profile));
+        if let Some(line) = args.batcher.note_ok(result_messages, &profile) {
+            emit_progress_line(args.log, args.progress, line);
+        }
+    }
+
     if let Some(cb) = args.progress.as_mut() {
-        cb(ProgressEvent::Log(msg));
-        cb(ProgressEvent::Log(profile_msg));
         cb(ProgressEvent::FileDone {
             file: name.clone(),
             status: status.into(),
@@ -1412,6 +1556,7 @@ struct FlushImportPipeline<'a, 'p, 'f> {
     log: &'a mut LogWriter,
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
+    batcher: &'a mut ProgressBatcher,
     total: usize,
     /// When true, wait for the newly spawned import (also used at end-of-run).
     wait: bool,
@@ -1428,6 +1573,7 @@ struct JoinInflightImport<'a, 'p, 'f> {
     log: &'a mut LogWriter,
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
+    batcher: &'a mut ProgressBatcher,
     total: usize,
 }
 
@@ -1445,6 +1591,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
         log: args.log,
         progress: args.progress,
         results: args.results,
+        batcher: args.batcher,
         total: args.total,
     })?;
     if !ok && !args.cfg.continue_on_error {
@@ -1482,6 +1629,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
             log: args.log,
             progress: args.progress,
             results: args.results,
+            batcher: args.batcher,
             total: args.total,
         })?;
     }
@@ -1558,7 +1706,7 @@ fn join_inflight_import(args: JoinInflightImport<'_, '_, '_>) -> Result<bool> {
         log: args.log,
         progress: args.progress,
         results: args.results,
-        total: args.total,
+        batcher: args.batcher,
     })
 }
 
@@ -1573,7 +1721,7 @@ struct ApplyImportOutcome<'a, 'p, 'f> {
     log: &'a mut LogWriter,
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
-    total: usize,
+    batcher: &'a mut ProgressBatcher,
 }
 
 fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
@@ -1630,9 +1778,6 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 response.messages.max(response.messages_appended),
             );
             args.log.line(&request_line);
-            if let Some(cb) = args.progress.as_mut() {
-                cb(ProgressEvent::Log(request_line));
-            }
             for index in represented {
                 if let Some(tracker) = args.trackers[index].as_mut() {
                     tracker.profile.message_import_ms =
@@ -1640,7 +1785,6 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 }
                 finish_file_if_ready(FinishFile {
                     index,
-                    total: args.total,
                     trackers: args.trackers,
                     journal: args.journal,
                     journal_path: args.journal_path,
@@ -1649,6 +1793,7 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                     log: args.log,
                     progress: args.progress,
                     results: args.results,
+                    batcher: args.batcher,
                 })?;
             }
             Ok(true)
@@ -1662,9 +1807,6 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 batch.source, batch.conversations, message_count,
             );
             args.log.line(&request_line);
-            if let Some(cb) = args.progress.as_mut() {
-                cb(ProgressEvent::Log(request_line));
-            }
             for index in represented {
                 let Some(tracker) = args.trackers[index].as_mut() else {
                     continue;
@@ -1689,7 +1831,6 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 }
                 finish_file_if_ready(FinishFile {
                     index,
-                    total: args.total,
                     trackers: args.trackers,
                     journal: args.journal,
                     journal_path: args.journal_path,
@@ -1698,6 +1839,7 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                     log: args.log,
                     progress: args.progress,
                     results: args.results,
+                    batcher: args.batcher,
                 })?;
             }
             Ok(false)
@@ -1745,5 +1887,63 @@ mod tests {
         let d = "A".repeat(64);
         assert_eq!(normalize_digest_sha256(&d).unwrap(), "a".repeat(64));
         assert!(normalize_digest_sha256("not-a-digest").is_err());
+    }
+
+    #[test]
+    fn progress_batcher_emits_every_ten_and_on_completion() {
+        let mut batcher = ProgressBatcher::new(25);
+        let profile = UploadProfile {
+            message_import_ms: 3,
+            total_ms: 5,
+            asset_bytes: 7,
+            ..UploadProfile::default()
+        };
+        let mut lines = Vec::new();
+        for _ in 0..9 {
+            assert!(batcher.note_ok(2, &profile).is_none());
+        }
+        let tenth = batcher.note_ok(2, &profile).unwrap();
+        assert!(tenth.starts_with("files 10/25 - "));
+        assert!(tenth.contains("conversations=10"));
+        assert!(tenth.contains("messages=20"));
+        assert!(tenth.contains("bytes=70"));
+        lines.push(tenth);
+        for _ in 0..15 {
+            if let Some(line) = batcher.note_ok(1, &profile) {
+                lines.push(line);
+            }
+        }
+        assert_eq!(lines.len(), 3);
+        assert!(lines[1].starts_with("files 20/25 - "));
+        assert!(lines[1].contains("conversations=10"));
+        assert!(lines[2].starts_with("files 25/25 - "));
+        assert!(lines[2].contains("conversations=5"));
+    }
+
+    #[test]
+    fn format_push_summary_is_multiline() {
+        let report = PushReport {
+            ok: true,
+            account: "a".into(),
+            username: "u".into(),
+            mode: "append".into(),
+            started_at: "t0".into(),
+            finished_at: "t1".into(),
+            elapsed_ms: 12_000,
+            conversations_total: 10,
+            conversations_ok: 8,
+            conversations_failed: 1,
+            conversations_skipped: 1,
+            messages: 100,
+            assets_uploaded: 4,
+            assets_skipped: 2,
+            results: vec![],
+        };
+        let summary = format_push_summary(&report);
+        assert!(summary.contains("Import success"));
+        assert!(summary.contains("Conversations: 8 ok, 1 failed, 1 skipped (10 total)"));
+        assert!(summary.contains("Messages: 100"));
+        assert!(summary.contains("Assets: 4 uploaded, 2 skipped"));
+        assert!(summary.contains("Elapsed: 12s (12000 ms)"));
     }
 }

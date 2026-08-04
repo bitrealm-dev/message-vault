@@ -27,9 +27,6 @@ pub struct AppState {
     /// Workflow screen that produced `errors`.
     pub error_source_screen: Option<i32>,
     pub vault_source_note: String,
-    /// When true, delete the staging directory after a successful vault upload.
-    /// Defaults to false so staging data is retained.
-    pub delete_staging_after_success: bool,
     /// Last staging directory created by a guided import (for status/logging).
     pub last_staging_dir: Option<PathBuf>,
 }
@@ -52,7 +49,6 @@ impl AppState {
             errors: load_error.into_iter().collect(),
             error_source_screen,
             vault_source_note: String::new(),
-            delete_staging_after_success: false,
             last_staging_dir: None,
         }
     }

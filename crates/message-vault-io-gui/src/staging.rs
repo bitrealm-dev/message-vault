@@ -3,7 +3,6 @@
 //! Extraction writes JSONL + attachments into a timestamped folder beside
 //! `export.ini`. Vault upload then reads from that same folder.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
@@ -24,31 +23,6 @@ pub fn staging_dir_path(export_ini_path: &Path, importer: &str, now: DateTime<Lo
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     parent.join(staging_dir_name(importer, now))
-}
-
-/// Remove a staging directory after a successful import when the user opted in.
-///
-/// Failures and cancellations always retain staging data. When
-/// `delete_after_success` is false (the default), the directory is kept even
-/// after a successful upload.
-pub fn maybe_cleanup_staging(
-    path: &Path,
-    delete_after_success: bool,
-    succeeded: bool,
-) -> Result<bool, String> {
-    if !succeeded || !delete_after_success {
-        return Ok(false);
-    }
-    if !path.exists() {
-        return Ok(false);
-    }
-    fs::remove_dir_all(path).map_err(|error| {
-        format!(
-            "Could not delete staging directory {}: {error}",
-            path.display()
-        )
-    })?;
-    Ok(true)
 }
 
 #[cfg(test)]
@@ -79,42 +53,5 @@ mod tests {
             path,
             PathBuf::from("/tmp/settings/staging-iphone-ios-260102-030405")
         );
-    }
-
-    #[test]
-    fn cleanup_keeps_staging_by_default() {
-        let dir = tempfile_dir("keep-default");
-        assert!(!maybe_cleanup_staging(&dir, false, true).unwrap());
-        assert!(dir.is_dir());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn cleanup_deletes_only_after_successful_opt_in() {
-        let dir = tempfile_dir("delete-success");
-        assert!(maybe_cleanup_staging(&dir, true, true).unwrap());
-        assert!(!dir.exists());
-    }
-
-    #[test]
-    fn cleanup_retains_staging_after_failure_even_when_opted_in() {
-        let dir = tempfile_dir("retain-failure");
-        assert!(!maybe_cleanup_staging(&dir, true, false).unwrap());
-        assert!(dir.is_dir());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    fn tempfile_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "message-vault-io-gui-staging-{}-{}-{}",
-            label,
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
     }
 }

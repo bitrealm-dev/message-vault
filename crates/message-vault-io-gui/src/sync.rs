@@ -111,7 +111,8 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     import.set_start_date(SharedString::from(form.start_date.as_str()));
     import.set_end_date(SharedString::from(form.end_date.as_str()));
     import.set_obfuscate(form.obfuscate);
-    import.set_delete_staging_after_success(state.delete_staging_after_success);
+    import.set_continue_on_error(state.export_ini.vault.continue_on_error);
+    import.set_force(state.export_ini.vault.force);
 
     let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
     import.set_show_ffmpeg_warning(
@@ -138,7 +139,8 @@ pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
     form.start_date = import.get_start_date().to_string();
     form.end_date = import.get_end_date().to_string();
     form.obfuscate = import.get_obfuscate();
-    state.delete_staging_after_success = import.get_delete_staging_after_success();
+    state.export_ini.vault.continue_on_error = import.get_continue_on_error();
+    state.export_ini.vault.force = import.get_force();
 }
 
 pub fn push_extract(ui: &AppWindow, state: &AppState) {

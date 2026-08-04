@@ -74,7 +74,7 @@ impl AuthError {
                 "This URL points to the Message Vault website, not the vault API. Use the vault server URL (the TLS vault host or port 8080, not port 3000).".into()
             }
             Self::HttpsRequired { .. } => {
-                "This Vault URL uses `http://`, but the server requires `https://`. Change the URL to start with `https://` and try again.".into()
+                "This Vault requires https:// but http:// was specified.".into()
             }
             Self::InvalidKey => {
                 "This API key is not valid for the specified vault. Paste a valid key and try again."

@@ -22,6 +22,7 @@ const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
 pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_error_dismiss(ui, Arc::clone(&state));
     wire_navigate_back(ui);
+    wire_grow_for_advanced(ui);
     wire_home(ui);
     wire_credentials(ui, Arc::clone(&state));
     wire_import(ui, Arc::clone(&state));
@@ -42,6 +43,26 @@ fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
         let mut st = state.lock().expect("state lock");
         st.clear_errors();
         sync::push_chrome(&ui, &st);
+    });
+}
+
+/// Expand the OS window when Advanced Options opens without locking Slint `height`
+/// (assigning `Window.height` makes the window non-resizable).
+fn wire_grow_for_advanced(ui: &AppWindow) {
+    let ui_weak = ui.as_weak();
+    ui.on_grow_for_advanced(move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        let window = ui.window();
+        let size = window.size();
+        let scale = window.scale_factor().max(0.1);
+        let logical_height = (size.height as f32) / scale;
+        const MIN_ADVANCED_HEIGHT: f32 = 1000.0;
+        if logical_height + 0.5 < MIN_ADVANCED_HEIGHT {
+            let logical_width = (size.width as f32) / scale;
+            window.set_size(slint::LogicalSize::new(logical_width, MIN_ADVANCED_HEIGHT));
+        }
     });
 }
 

@@ -3,7 +3,7 @@ import {
 } from "std-widgets.slint";
 import { HomePage } from "pages/home.slint";
 import { CredentialsPage } from "pages/credentials.slint";
-import { ImportPage } from "pages/import.slint";
+import { ImportPage, ImportAdapter } from "pages/import.slint";
 
 // Legacy screens kept for reference until the final deprecation pass.
 // The page components remain in ui/pages/ but are not shown in the guided workflow.
@@ -26,6 +26,15 @@ export component AppWindow inherits Window {
     min-width: 720px;
     min-height: 560px;
     default-font-size: 12px;
+
+    // Grow via Rust set_size (not root.height — that locks manual resize).
+    callback grow-for-advanced();
+    property <bool> import-advanced: ImportAdapter.advanced;
+    changed import-advanced => {
+        if (root.import-advanced && root.workflow-screen == 2) {
+            root.grow-for-advanced();
+        }
+    }
 
     // 0 = Home, 1 = Vault Credentials, 2 = Import Messages
     in-out property <int> workflow-screen: 0;

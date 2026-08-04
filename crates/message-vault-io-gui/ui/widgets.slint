@@ -13,6 +13,10 @@ export global FormMetrics {
     out property <length> row-spacing: 10px;
     out property <length> section-spacing: 10px;
     out property <length> row-height: 32px;
+    // Inset for stacked controls / checkboxes under their labels.
+    out property <length> stacked-control-indent: 12px;
+    // Align helper text with LineEdit content (control indent + field text padding).
+    out property <length> stacked-hint-indent: 20px;
 }
 
 // Right-aligned label sitting in the fixed left column.
@@ -376,6 +380,7 @@ export component StackedFieldLabel inherits HorizontalLayout {
     padding: 0;
     alignment: start;
     vertical-stretch: 0;
+    horizontal-stretch: 1;
     height: 22px;
 
     Text {
@@ -411,22 +416,33 @@ export component StackedLineEdit inherits VerticalLayout {
         label: root.label;
         required: root.required;
     }
-    if !root.password: LineEdit {
-        text <=> root.value;
-        placeholder-text: root.placeholder;
-        enabled: root.enabled;
-        horizontal-stretch: 1;
-        height: FormMetrics.row-height;
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
         vertical-stretch: 0;
-    }
-    if root.password: LineEdit {
-        text <=> root.value;
-        placeholder-text: root.placeholder;
-        enabled: root.enabled;
-        input-type: InputType.password;
-        horizontal-stretch: 1;
         height: FormMetrics.row-height;
-        vertical-stretch: 0;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        if !root.password: LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            enabled: root.enabled;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+        if root.password: LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            enabled: root.enabled;
+            input-type: InputType.password;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
     }
 }
 
@@ -446,24 +462,36 @@ export component StackedPathField inherits VerticalLayout {
         required: root.required;
     }
     HorizontalLayout {
-        spacing: FormMetrics.field-spacing;
+        spacing: 0;
         padding: 0;
         alignment: stretch;
         vertical-stretch: 0;
         height: FormMetrics.row-height;
-        LineEdit {
-            text <=> root.value;
-            placeholder-text: root.placeholder;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        HorizontalLayout {
+            spacing: FormMetrics.field-spacing;
+            padding: 0;
+            alignment: stretch;
+            vertical-stretch: 0;
             horizontal-stretch: 1;
             height: FormMetrics.row-height;
-            vertical-stretch: 0;
-        }
-        Button {
-            text: "Browse…";
-            horizontal-stretch: 0;
-            height: FormMetrics.row-height;
-            vertical-stretch: 0;
-            clicked => { root.browse-requested(root.field-id); }
+            LineEdit {
+                text <=> root.value;
+                placeholder-text: root.placeholder;
+                horizontal-stretch: 1;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+            }
+            Button {
+                text: "Browse…";
+                horizontal-stretch: 0;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+                clicked => { root.browse-requested(root.field-id); }
+            }
         }
     }
 }
@@ -483,20 +511,31 @@ export component StackedComboBox inherits VerticalLayout {
         label: root.label;
         required: root.required;
     }
-    CompactComboBox {
-        model: root.model;
-        current-index <=> root.current-index;
-        separator-before-index: root.separator-before-index;
-        selected(value) => { root.selected(value); }
-        horizontal-stretch: 1;
-        height: FormMetrics.row-height;
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
         vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        CompactComboBox {
+            model: root.model;
+            current-index <=> root.current-index;
+            separator-before-index: root.separator-before-index;
+            selected(value) => { root.selected(value); }
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
     }
 }
 
 export component StackedDateEdit inherits VerticalLayout {
     in property <string> label;
-    in property <string> placeholder: "YYYY-MM-DD (optional)";
+    in property <string> placeholder: "";
     in-out property <string> value;
     private property <Date> picker-date;
     private property <int> display-year;
@@ -563,25 +602,37 @@ export component StackedDateEdit inherits VerticalLayout {
 
     StackedFieldLabel { label: root.label; }
     HorizontalLayout {
-        spacing: FormMetrics.field-spacing;
+        spacing: 0;
         padding: 0;
         alignment: stretch;
         vertical-stretch: 0;
         height: FormMetrics.row-height;
-        LineEdit {
-            text <=> root.value;
-            placeholder-text: root.placeholder;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        HorizontalLayout {
+            spacing: FormMetrics.field-spacing;
+            padding: 0;
+            alignment: stretch;
+            vertical-stretch: 0;
             horizontal-stretch: 1;
             height: FormMetrics.row-height;
-            vertical-stretch: 0;
-        }
-        Button {
-            text: "▦";
-            width: FormMetrics.button-width;
-            height: FormMetrics.row-height;
-            vertical-stretch: 0;
-            horizontal-stretch: 0;
-            clicked => { root.open-picker(); }
+            LineEdit {
+                text <=> root.value;
+                placeholder-text: root.placeholder;
+                horizontal-stretch: 1;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+            }
+            Button {
+                text: "▦";
+                width: FormMetrics.button-width;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+                horizontal-stretch: 0;
+                clicked => { root.open-picker(); }
+            }
         }
     }
 
@@ -693,31 +744,66 @@ export component StackedDateEdit inherits VerticalLayout {
     }
 }
 
-export component StackedHint inherits Text {
+export component StackedHint inherits HorizontalLayout {
     in property <string> message;
-    text: root.message;
-    font-size: 11px;
-    wrap: word-wrap;
-    color: #555555;
-    horizontal-stretch: 1;
+    spacing: 0;
+    padding: 0;
     vertical-stretch: 0;
+    Rectangle {
+        width: FormMetrics.stacked-hint-indent;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        wrap: word-wrap;
+        color: #555555;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
 }
 
-export component StackedDangerHint inherits Text {
+export component StackedDangerHint inherits HorizontalLayout {
     in property <string> message;
-    text: root.message;
-    font-size: 11px;
-    wrap: word-wrap;
-    color: #c0392b;
-    horizontal-stretch: 1;
+    spacing: 0;
+    padding: 0;
     vertical-stretch: 0;
+    Rectangle {
+        width: FormMetrics.stacked-hint-indent;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        wrap: word-wrap;
+        color: #c0392b;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
 }
 
-export component StackedCheckBox inherits CheckBox {
-    // Left-aligned checkbox for stacked forms (no side label column).
-    horizontal-stretch: 1;
+export component StackedCheckBox inherits HorizontalLayout {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    spacing: 0;
+    padding: 0;
+    alignment: stretch;
     vertical-stretch: 0;
     height: FormMetrics.row-height;
+
+    Rectangle {
+        width: FormMetrics.stacked-control-indent;
+        horizontal-stretch: 0;
+    }
+    CheckBox {
+        text: root.text;
+        checked <=> root.checked;
+        enabled: root.enabled;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
 }
 
 /// Bordered group for related options (compress settings, advanced filters, …).
@@ -777,8 +863,10 @@ export component AdvancedSection inherits VerticalLayout {
         height: root.open ? self.preferred-height : 0px;
         clip: true;
         vertical-stretch: 0;
-        OptionGroup {
-            title: "";
+        VerticalLayout {
+            spacing: FormMetrics.row-spacing;
+            padding: 0;
+            vertical-stretch: 0;
             @children
         }
     }

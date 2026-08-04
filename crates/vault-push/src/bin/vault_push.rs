@@ -144,16 +144,7 @@ fn real_main() -> Result<ExitCode> {
         }
     };
     let report = run(&cfg, Some(&mut on_progress))?;
-    println!(
-        "done ok={} conversations_ok={} failed={} skipped={} messages={} elapsed_ms={} ({})",
-        report.ok,
-        report.conversations_ok,
-        report.conversations_failed,
-        report.conversations_skipped,
-        report.messages,
-        report.elapsed_ms,
-        vault_push::format_duration_ms(report.elapsed_ms)
-    );
+    println!("{}", vault_push::format_push_summary(&report));
     Ok(if report.ok {
         ExitCode::SUCCESS
     } else {

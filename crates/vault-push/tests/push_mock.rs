@@ -454,7 +454,7 @@ fn profiles_attachment_upload_phases() {
     assert!(
         progress_lines
             .iter()
-            .any(|line| line.starts_with("PROFILE ") && line.contains("asset_upload_ms="))
+            .any(|line| line.starts_with("files ") && line.contains("import_ms="))
     );
 
     let persisted_report: serde_json::Value =
@@ -465,6 +465,7 @@ fn profiles_attachment_upload_phases() {
     );
     let persisted_log = fs::read_to_string(log_path).unwrap();
     assert!(persisted_log.contains("attachment_scan_hash_ms="));
+    assert!(persisted_log.contains("Import "));
 }
 
 #[test]

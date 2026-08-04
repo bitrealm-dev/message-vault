@@ -518,7 +518,6 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             return;
         }
 
-        let delete_staging = st.delete_staging_after_success;
         let continue_on_error = st.export_ini.vault.continue_on_error;
         let force = st.export_ini.vault.force;
         let skip_attachments = st.export_ini.vault.skip_attachments;
@@ -561,23 +560,10 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                 &tx,
             ) {
                 Ok(()) => {
-                    match staging::maybe_cleanup_staging(&staging, delete_staging, true) {
-                        Ok(true) => {
-                            let _ = tx.send(ProcessEvent::Log(format!(
-                                "Deleted staging directory {}",
-                                staging.display()
-                            )));
-                        }
-                        Ok(false) => {
-                            let _ = tx.send(ProcessEvent::Log(format!(
-                                "Staging data retained at {}",
-                                staging.display()
-                            )));
-                        }
-                        Err(error) => {
-                            let _ = tx.send(ProcessEvent::Log(error));
-                        }
-                    }
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Staging data retained at {}",
+                        staging.display()
+                    )));
                     Ok(())
                 }
                 Err(error) => {
@@ -648,24 +634,11 @@ fn run_vault_upload(
                 "Authenticated as {username} ({account_id})"
             )));
         }
-        VaultProgressEvent::FileStart { index, total, file } => {
-            let _ = tx.send(ProcessEvent::Log(format!("File {index}/{total}: {file}")));
-        }
-        VaultProgressEvent::FileDone { file, status } => {
-            let _ = tx.send(ProcessEvent::Log(format!("{status}: {file}")));
-        }
+        VaultProgressEvent::FileStart { .. } | VaultProgressEvent::FileDone { .. } => {}
         VaultProgressEvent::Finished(report) => {
-            let _ = tx.send(ProcessEvent::Log(format!(
-                "Import finished ok={} conversations_ok={} failed={} skipped={} messages={} \
-                 elapsed_ms={} ({})",
-                report.ok,
-                report.conversations_ok,
-                report.conversations_failed,
-                report.conversations_skipped,
-                report.messages,
-                report.elapsed_ms,
-                vault_push::format_duration_ms(report.elapsed_ms)
-            )));
+            for line in vault_push::format_push_summary(&report).lines() {
+                let _ = tx.send(ProcessEvent::Log(line.to_string()));
+            }
         }
     };
     match run_vault_push(&cfg, Some(&mut on_progress)) {

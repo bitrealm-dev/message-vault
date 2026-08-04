@@ -2,7 +2,8 @@ import { Button, Date } from "std-widgets.slint";
 import {
     StackedDateEdit, StackedLineEdit, StackedPathField, StackedComboBox,
     StackedHint, StackedDangerHint, StackedCheckBox, AdvancedSection,
-    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel
+    AnchoredScrollPage, FormMetrics, OptionGroup, PanelTabBar, StackedFieldLabel,
+    SectionDivider
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
 import { LogPanel } from "log-panel.slint";
@@ -27,7 +28,8 @@ export global ImportAdapter {
     in-out property <string> start-date;
     in-out property <string> end-date;
     in-out property <bool> obfuscate;
-    in-out property <bool> delete-staging-after-success: false;
+    in-out property <bool> continue-on-error: true;
+    in-out property <bool> force: false;
 
     in property <bool> show-ffmpeg-warning;
     in property <bool> show-compress-options;
@@ -71,6 +73,8 @@ export component ImportPage inherits VerticalLayout {
 
         Rectangle { height: 8px; vertical-stretch: 0; }
 
+        SectionDivider { }
+
         VerticalLayout {
             spacing: 2px;
             padding: 0;
@@ -98,12 +102,23 @@ export component ImportPage inherits VerticalLayout {
                     }
                 }
             }
-            CompactComboBox {
-                model: ImportAdapter.format-options;
-                current-index <=> ImportAdapter.format-index;
-                horizontal-stretch: 1;
-                height: FormMetrics.row-height;
+            HorizontalLayout {
+                spacing: 0;
+                padding: 0;
+                alignment: stretch;
                 vertical-stretch: 0;
+                height: FormMetrics.row-height;
+                Rectangle {
+                    width: FormMetrics.stacked-control-indent;
+                    horizontal-stretch: 0;
+                }
+                CompactComboBox {
+                    model: ImportAdapter.format-options;
+                    current-index <=> ImportAdapter.format-index;
+                    horizontal-stretch: 1;
+                    height: FormMetrics.row-height;
+                    vertical-stretch: 0;
+                }
             }
         }
 
@@ -129,9 +144,6 @@ export component ImportPage inherits VerticalLayout {
             current-index <=> ImportAdapter.attachment-media-index;
             selected(_) => { ImportAdapter.media-changed(); }
         }
-        if ImportAdapter.obfuscate: StackedHint {
-            message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
-        }
         if ImportAdapter.show-ffmpeg-warning: StackedDangerHint {
             message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
         }
@@ -156,11 +168,13 @@ export component ImportPage inherits VerticalLayout {
             }
         }
 
+        SectionDivider { }
+
         AdvancedSection {
             open <=> ImportAdapter.advanced;
             StackedLineEdit {
                 label: "Participant Filtering";
-                placeholder: "Comma separate list of names and number.";
+                placeholder: "Comma separated list of names and numbers.";
                 value <=> ImportAdapter.conversation-filter;
             }
             StackedHint {
@@ -171,18 +185,31 @@ export component ImportPage inherits VerticalLayout {
                 value <=> ImportAdapter.start-date;
                 date-for-text(value) => { return ImportAdapter.date-for-text(value); }
             }
+            StackedHint {
+                message: "Only import messages on or after this date (YYYY-MM-DD)";
+            }
             StackedDateEdit {
-                label: "End Date (exclusive)";
+                label: "End Date";
                 value <=> ImportAdapter.end-date;
                 date-for-text(value) => { return ImportAdapter.date-for-text(value); }
             }
-            StackedCheckBox {
-                text: "Obfuscate - All message data is anonymized.";
-                checked <=> ImportAdapter.obfuscate;
+            StackedHint {
+                message: "Only import messages before this date (YYYY-MM-DD)";
             }
             StackedCheckBox {
-                text: "Delete staging data after a successful import";
-                checked <=> ImportAdapter.delete-staging-after-success;
+                text: "Continue importing after failed message conversion";
+                checked <=> ImportAdapter.continue-on-error;
+            }
+            StackedCheckBox {
+                text: "Force re-upload";
+                checked <=> ImportAdapter.force;
+            }
+            StackedCheckBox {
+                text: "Obfuscate - All message data is anonymized";
+                checked <=> ImportAdapter.obfuscate;
+            }
+            if ImportAdapter.obfuscate: StackedHint {
+                message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
             }
         }
     }
