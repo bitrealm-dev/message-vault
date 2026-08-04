@@ -30,6 +30,7 @@ use crate::sync;
 enum OnSuccess {
     None,
     GoToImportScreen,
+    GoToExportScreen,
 }
 
 pub(crate) fn report_errors(ui: &AppWindow, state: &mut AppState, errors: Vec<String>) {
@@ -155,6 +156,9 @@ fn start_library_job(
                             ui.set_workflow_screen(state::screen::IMPORT);
                             ui.global::<crate::ImportAdapter>().set_panel_tab(0);
                             sync::push_import(&ui, &st);
+                        } else if matches!(on_success, OnSuccess::GoToExportScreen) {
+                            ui.set_workflow_screen(state::screen::EXPORT);
+                            ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
                         }
                         sync::push_chrome(&ui, &st);
                     }
@@ -372,15 +376,17 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
     }
 }
 
-/// Verify credentials from the guided workflow, then advance to Import Messages.
+/// Verify credentials from the guided workflow, then advance to Import or Export.
 pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
     };
-    // Export is offered in the UI but has no guided flow yet.
-    if ui.global::<CredentialsAdapter>().get_operation_index() != 0 {
-        return;
-    }
+    let operation = ui.global::<CredentialsAdapter>().get_operation_index();
+    let on_success = if operation == 1 {
+        OnSuccess::GoToExportScreen
+    } else {
+        OnSuccess::GoToImportScreen
+    };
     let job_and_label = {
         let mut st = state.lock().expect("state lock");
         if st.running {
@@ -434,7 +440,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
-        start_library_job(ui_weak, state, label, job, OnSuccess::GoToImportScreen);
+        start_library_job(ui_weak, state, label, job, on_success);
     }
 }
 

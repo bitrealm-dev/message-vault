@@ -13,7 +13,7 @@ use crate::options;
 use crate::state::AppState;
 use crate::{
     AppWindow, ContactsAdapter, CredentialsAdapter, ExtractAdapter, FormatAdapter, HomeAdapter,
-    ImportAdapter, LogAdapter, VaultAdapter,
+    ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
 };
 
 pub fn push_static_option_models(ui: &AppWindow) {
@@ -41,6 +41,9 @@ pub fn push_static_option_models(ui: &AppWindow) {
 
     ui.global::<CredentialsAdapter>()
         .set_operation_options(options::vault_operation_options());
+
+    ui.global::<VaultExportAdapter>()
+        .set_exporter_options(options::vault_export_exporter_options());
 }
 
 pub fn push_all(ui: &AppWindow, state: &mut AppState) {
@@ -62,6 +65,8 @@ pub fn push_chrome(ui: &AppWindow, state: &AppState) {
     ui.global::<CredentialsAdapter>()
         .set_enabled(!state.running);
     ui.global::<ImportAdapter>().set_enabled(!state.running);
+    ui.global::<VaultExportAdapter>()
+        .set_enabled(!state.running);
 
     let extract = ui.global::<ExtractAdapter>();
     extract.set_enabled(!state.running);

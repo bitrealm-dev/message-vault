@@ -14,7 +14,7 @@ use crate::sync;
 use crate::wsl;
 use crate::{
     AppWindow, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter, FormatAdapter,
-    HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter,
+    HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
 };
 
 const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
@@ -26,6 +26,7 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_home(ui);
     wire_credentials(ui, Arc::clone(&state));
     wire_import(ui, Arc::clone(&state));
+    wire_vault_export(ui, Arc::clone(&state));
     // Legacy adapters remain wired for reference until the deprecation pass.
     wire_contacts(ui, Arc::clone(&state));
     wire_extract(ui, Arc::clone(&state));
@@ -74,6 +75,9 @@ fn select_main_panel_tab(ui: &AppWindow, screen: i32) {
         state::screen::IMPORT => {
             ui.global::<ImportAdapter>().set_panel_tab(0);
         }
+        state::screen::EXPORT => {
+            ui.global::<VaultExportAdapter>().set_panel_tab(0);
+        }
         _ => {}
     }
 }
@@ -89,8 +93,13 @@ fn wire_navigate_back(ui: &AppWindow) {
             return;
         }
 
-        // Always leave the current screen; never treat Log as a back stop.
-        let previous = current - 1;
+        // Import and Export both sit after Credentials (not a linear stack).
+        let previous = match current {
+            x if x == state::screen::IMPORT || x == state::screen::EXPORT => {
+                state::screen::CREDENTIALS
+            }
+            _ => current - 1,
+        };
         ui.set_workflow_screen(previous);
         // Destination opens on its primary (form) tab, not Log.
         select_main_panel_tab(&ui, previous);
@@ -187,6 +196,21 @@ fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
         let state = Arc::clone(&state);
         move || start::start_guided_import(&ui_weak, &state)
     });
+}
+
+fn wire_vault_export(ui: &AppWindow, _state: Arc<Mutex<AppState>>) {
+    ui.global::<VaultExportAdapter>().on_date_for_text(|value| {
+        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+            .unwrap_or_else(|_| Local::now().date_naive());
+        Date {
+            year: date.year(),
+            month: i32::try_from(date.month()).expect("month fits in i32"),
+            day: i32::try_from(date.day()).expect("day fits in i32"),
+        }
+    });
+
+    // First pass: form only — export from vault is not implemented yet.
+    ui.global::<VaultExportAdapter>().on_run(move || {});
 }
 
 fn wire_contacts(ui: &AppWindow, state: Arc<Mutex<AppState>>) {

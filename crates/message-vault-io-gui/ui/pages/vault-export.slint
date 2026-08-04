@@ -1,0 +1,98 @@
+import { Button, Date } from "std-widgets.slint";
+import {
+    AdvancedSection, AnchoredScrollPage, FormMetrics, PanelTabBar,
+    StackedComboBox, StackedDateEdit, StackedHint
+} from "../widgets.slint";
+import { LogPanel } from "log-panel.slint";
+
+export global VaultExportAdapter {
+    in-out property <int> panel-tab: 0;
+
+    in-out property <int> exporter-index: 0;
+    in property <[string]> exporter-options;
+
+    // Empty start/end means export all data.
+    in-out property <string> start-date;
+    in-out property <string> end-date;
+
+    in property <bool> enabled: true;
+
+    callback date-for-text(string) -> Date;
+    callback run();
+}
+
+export component VaultExportPage inherits VerticalLayout {
+    padding: 0;
+    spacing: 0;
+    alignment: stretch;
+    vertical-stretch: 1;
+
+    PanelTabBar {
+        current-index <=> VaultExportAdapter.panel-tab;
+        first-title: "Vault Export";
+        second-title: "Log";
+    }
+
+    if VaultExportAdapter.panel-tab == 0: AnchoredScrollPage {
+        AdvancedSection {
+            title: "Vault Export";
+            open: true;
+            grouped: true;
+
+            StackedComboBox {
+                label: "Exporter Type";
+                model: VaultExportAdapter.exporter-options;
+                current-index <=> VaultExportAdapter.exporter-index;
+            }
+            StackedHint {
+                message: "iMessage covers both iOS backups and macOS Messages.";
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedDateEdit {
+                    label: "Start Date";
+                    placeholder: "Optional";
+                    value <=> VaultExportAdapter.start-date;
+                    date-for-text(value) => { return VaultExportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only export messages on or after this date (YYYY-MM-DD). Leave empty for all data.";
+                }
+            }
+            VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedDateEdit {
+                    label: "End Date";
+                    placeholder: "Optional";
+                    value <=> VaultExportAdapter.end-date;
+                    date-for-text(value) => { return VaultExportAdapter.date-for-text(value); }
+                }
+                StackedHint {
+                    message: "Only export messages before this date (YYYY-MM-DD). Leave empty for all data.";
+                }
+            }
+        }
+    }
+
+    if VaultExportAdapter.panel-tab == 1: LogPanel { }
+
+    if VaultExportAdapter.panel-tab == 0: Rectangle {
+        vertical-stretch: 0;
+        HorizontalLayout {
+            padding: FormMetrics.page-padding;
+            spacing: 8px;
+            alignment: start;
+            Button {
+                text: "Export";
+                primary: true;
+                enabled: VaultExportAdapter.enabled;
+                clicked => { VaultExportAdapter.run(); }
+            }
+        }
+    }
+}

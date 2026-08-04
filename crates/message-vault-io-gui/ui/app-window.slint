@@ -4,6 +4,7 @@ import {
 import { HomePage } from "pages/home.slint";
 import { CredentialsPage } from "pages/credentials.slint";
 import { ImportPage, ImportAdapter } from "pages/import.slint";
+import { VaultExportPage } from "pages/vault-export.slint";
 
 // Legacy screens kept for reference until the final deprecation pass.
 // The page components remain in ui/pages/ but are not shown in the guided workflow.
@@ -16,6 +17,7 @@ export { LogAdapter } from "pages/log.slint";
 export { HomeAdapter } from "pages/home.slint";
 export { CredentialsAdapter } from "pages/credentials.slint";
 export { ImportAdapter } from "pages/import.slint";
+export { VaultExportAdapter } from "pages/vault-export.slint";
 
 export component AppWindow inherits Window {
     // OS title bar text; version is filled in from Rust (CARGO_PKG_VERSION).
@@ -39,7 +41,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // 0 = Home, 1 = Vault Credentials, 2 = Import Messages
+    // 0 = Home, 1 = Vault Credentials, 2 = Import Messages, 3 = Vault Export
     in-out property <int> workflow-screen: 0;
     in property <string> error-text;
     // Screen that produced the error; -1 means no active error.
@@ -55,7 +57,7 @@ export component AppWindow inherits Window {
     callback navigate-back();
 
     property <string> back-label:
-        root.workflow-screen == 2 ? "Vault Credentials"
+        root.workflow-screen == 2 || root.workflow-screen == 3 ? "Vault Credentials"
         : root.workflow-screen == 1 ? "Home"
         : "";
 
@@ -117,6 +119,8 @@ export component AppWindow inherits Window {
         if root.workflow-screen == 1: CredentialsPage { }
 
         if root.workflow-screen == 2: ImportPage { }
+
+        if root.workflow-screen == 3: VaultExportPage { }
 
         Rectangle {
             height: 24px;

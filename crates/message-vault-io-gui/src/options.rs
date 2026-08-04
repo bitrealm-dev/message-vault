@@ -116,9 +116,14 @@ pub fn region_options() -> ModelRc<SharedString> {
 }
 
 /// Vault Operation choices on the guided credentials screen.
-/// Index 0 = Import, 1 = Export (Export is a no-op until a flow exists).
+/// Index 0 = Import, 1 = Export.
 pub fn vault_operation_options() -> ModelRc<SharedString> {
     model_from_labels(["Import".into(), "Export".into()])
+}
+
+/// Exporter types on the guided Vault Export screen (iMessage covers iOS and macOS).
+pub fn vault_export_exporter_options() -> ModelRc<SharedString> {
+    model_from_labels(["iMessage".into()])
 }
 
 /// Format choices for the guided Import Messages screen.

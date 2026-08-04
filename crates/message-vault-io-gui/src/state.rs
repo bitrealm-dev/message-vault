@@ -6,11 +6,12 @@ use std::path::PathBuf;
 
 use crate::session_log::SessionLog;
 
-/// Workflow screens for the guided Vault import UI.
+/// Workflow screens for the guided Vault import/export UI.
 pub mod screen {
     pub const HOME: i32 = 0;
     pub const CREDENTIALS: i32 = 1;
     pub const IMPORT: i32 = 2;
+    pub const EXPORT: i32 = 3;
 }
 
 pub struct AppState {
