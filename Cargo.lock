@@ -3989,7 +3989,7 @@ dependencies = [
 
 [[package]]
 name = "message-vault-io-gui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "contacts",

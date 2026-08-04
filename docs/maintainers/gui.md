@@ -149,7 +149,30 @@ Top tab. Two-step workflow after Extract Messages: push message-ir v3 JSONL +
 | Vault key | text | yes | Import API token from Vault Settings; saved to `export.ini` as `[vault] key` (plain text). On Linux/macOS the file is written mode `0600` (owner read/write only). |
 | Input directory | folder | yes | JSONL export folder (prefills from last Extract Messages output when empty) |
 | Continue on error | checkbox | no | Default on |
-| Force re-upload | checkbox | no | Ignore `.vault-import-state.jsonl` |
+| Force reprocessing | checkbox | no | Ignore `.vault-import-state.jsonl` for this run (see below) |
+
+#### Force reprocessing
+
+When off (default), `vault-push` loads `.vault-import-state.jsonl` and skips
+conversations, messages, and assets already recorded for this vault URL +
+username. That makes re-runs resume-safe.
+
+When on, the journal is ignored for the run (`JournalState::default()`), so every
+conversation/message is submitted again and every unique attachment is offered
+for upload again. Import mode stays **append**; this is not a vault database wipe.
+
+Server-side behavior:
+
+- Messages already stored are deduped (`messages_deduped` on the import response).
+- Assets already stored by SHA-256 return `already_present` and are not re-PUT.
+
+Use force when a prior pass left messages without attachments (vault reported
+`assets_missing`, or an asset PUT failed) and the attachment file still exists
+under the export/staging tree. Reprocessing retries the asset upload; a successful
+digest on the vault fills the gap. It cannot repair attachments that are missing
+from disk, or media omitted by skip-attachments / text-only import.
+
+End-user write-up: [Import to Message Vault](../src/content/docs/work-with-exports/import-to-vault.mdx).
 
 Persists under `[vault]` in `export.ini`. See
 [`crates/vault-push/docs/MANPAGE.md`](../../crates/vault-push/docs/MANPAGE.md).

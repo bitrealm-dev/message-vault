@@ -6,6 +6,7 @@ import {
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
 import { LogPanel } from "log-panel.slint";
+import { LogAdapter } from "log.slint";
 
 export global ImportAdapter {
     in-out property <int> panel-tab: 0;
@@ -14,6 +15,7 @@ export global ImportAdapter {
 
     in-out property <string> backup-path;
     in-out property <string> backup-password;
+    in-out property <string> attachment-root;
 
     in-out property <int> attachment-media-index;
     in property <[string]> attachment-media-options;
@@ -22,7 +24,12 @@ export global ImportAdapter {
     in-out property <string> media-max-fps: "30";
     in-out property <string> media-min-size: "20M";
 
+    // Collapsible section open flags (source-open defaults expanded).
+    in-out property <bool> source-open: true;
+    in-out property <bool> ios-advanced: false;
     in-out property <bool> advanced: false;
+    in-out property <bool> processing-open: false;
+
     in-out property <string> conversation-filter;
     in-out property <string> start-date;
     in-out property <string> end-date;
@@ -47,6 +54,7 @@ export component ImportPage inherits VerticalLayout {
     alignment: stretch;
     vertical-stretch: 1;
 
+    property <bool> is-macos: ImportAdapter.format-index == 1;
     property <bool> can-import: ImportAdapter.backup-path != "";
 
     PanelTabBar {
@@ -72,8 +80,9 @@ export component ImportPage inherits VerticalLayout {
 
         Rectangle { height: 8px; vertical-stretch: 0; }
 
-        OptionGroup {
-            title: "";
+        AdvancedSection {
+            title: "Import options";
+            open <=> ImportAdapter.source-open;
 
             VerticalLayout {
                 spacing: 2px;
@@ -122,7 +131,7 @@ export component ImportPage inherits VerticalLayout {
                 }
             }
 
-            StackedPathField {
+            if !root.is-macos: StackedPathField {
                 label: "iPhone Backup Directory";
                 required: true;
                 placeholder: "Path to iPhone backup";
@@ -130,8 +139,16 @@ export component ImportPage inherits VerticalLayout {
                 value <=> ImportAdapter.backup-path;
                 browse-requested(id) => { ImportAdapter.browse(id); }
             }
+            if root.is-macos: StackedPathField {
+                label: "iMessage database";
+                required: true;
+                placeholder: "Path to chat.db (default ~/Library/Messages/chat.db)";
+                field-id: "import.db_path";
+                value <=> ImportAdapter.backup-path;
+                browse-requested(id) => { ImportAdapter.browse(id); }
+            }
 
-            StackedLineEdit {
+            if !root.is-macos: StackedLineEdit {
                 label: "Encryption password";
                 placeholder: "Optional";
                 password: true;
@@ -169,51 +186,94 @@ export component ImportPage inherits VerticalLayout {
             }
         }
 
-        OptionGroup {
-            title: "";
-            AdvancedSection {
-                open <=> ImportAdapter.advanced;
-                StackedLineEdit {
-                    label: "Participant Filtering";
-                    placeholder: "Comma separated list of names and numbers.";
-                    value <=> ImportAdapter.conversation-filter;
-                }
-                StackedHint {
-                    message: "Only conversations with the specified participants are exported, including group conversations.";
-                }
-                StackedDateEdit {
-                    label: "Start Date";
-                    placeholder: "Optional";
-                    value <=> ImportAdapter.start-date;
-                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-                }
-                StackedHint {
-                    message: "Only import messages on or after this date (YYYY-MM-DD)";
-                }
-                StackedDateEdit {
-                    label: "End Date";
-                    placeholder: "Optional";
-                    value <=> ImportAdapter.end-date;
-                    date-for-text(value) => { return ImportAdapter.date-for-text(value); }
-                }
-                StackedHint {
-                    message: "Only import messages before this date (YYYY-MM-DD)";
-                }
-                StackedCheckBox {
-                    text: "Continue importing after failed message conversion (default)";
-                    checked <=> ImportAdapter.continue-on-error;
-                }
-                StackedCheckBox {
-                    text: "Force re-upload";
-                    checked <=> ImportAdapter.force;
-                }
-                StackedCheckBox {
-                    text: "Obfuscate - All message data is anonymized";
-                    checked <=> ImportAdapter.obfuscate;
-                }
-                if ImportAdapter.obfuscate: StackedHint {
-                    message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
-                }
+        if !root.is-macos: AdvancedSection {
+            title: "Advanced iOS options";
+            open <=> ImportAdapter.ios-advanced;
+
+            StackedHint {
+                message: "iPhone Backup Directory above is the iMessage database path (--db-path): the root of an iOS device backup. If the backup is encrypted, use the encryption password field.";
+            }
+            StackedPathField {
+                label: "Attachment root";
+                placeholder: "Optional absolute path";
+                field-id: "import.attachment_root";
+                value <=> ImportAdapter.attachment-root;
+                browse-requested(id) => { ImportAdapter.browse(id); }
+            }
+            StackedHint {
+                message: "Custom attachment root has no effect on iOS backups (attachments are read from the backup). Use macOS import format for ~/Library/Messages or a custom Attachments path.";
+            }
+        }
+
+        if root.is-macos: AdvancedSection {
+            title: "Advanced macOS options";
+            open <=> ImportAdapter.ios-advanced;
+
+            StackedHint {
+                message: "iMessage database above is --db-path. Point it at a chat.db file (default ~/Library/Messages/chat.db).";
+            }
+            StackedPathField {
+                label: "Attachment root";
+                placeholder: "Optional absolute path (default ~/Library/Messages)";
+                field-id: "import.attachment_root";
+                value <=> ImportAdapter.attachment-root;
+                browse-requested(id) => { ImportAdapter.browse(id); }
+            }
+            StackedHint {
+                message: "Custom path for attachment data when it is stored separately from the database default. Affects Attachments and StickerCache. The path should be absolute. Default is ~/Library/Messages.";
+            }
+        }
+
+        AdvancedSection {
+            title: "Message Filtering";
+            open <=> ImportAdapter.advanced;
+
+            StackedLineEdit {
+                label: "Participant Filtering";
+                placeholder: "Comma separated list of names and numbers.";
+                value <=> ImportAdapter.conversation-filter;
+            }
+            StackedHint {
+                message: "Only conversations with the specified participants are exported, including group conversations.";
+            }
+            StackedDateEdit {
+                label: "Start Date";
+                placeholder: "Optional";
+                value <=> ImportAdapter.start-date;
+                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+            }
+            StackedHint {
+                message: "Only import messages on or after this date (YYYY-MM-DD)";
+            }
+            StackedDateEdit {
+                label: "End Date";
+                placeholder: "Optional";
+                value <=> ImportAdapter.end-date;
+                date-for-text(value) => { return ImportAdapter.date-for-text(value); }
+            }
+            StackedHint {
+                message: "Only import messages before this date (YYYY-MM-DD)";
+            }
+        }
+
+        AdvancedSection {
+            title: "Processing Options";
+            open <=> ImportAdapter.processing-open;
+
+            StackedCheckBox {
+                text: "Continue importing after failed message conversion (default)";
+                checked <=> ImportAdapter.continue-on-error;
+            }
+            StackedCheckBox {
+                text: "Force reprocessing";
+                checked <=> ImportAdapter.force;
+            }
+            StackedCheckBox {
+                text: "Obfuscate - All message data is anonymized";
+                checked <=> ImportAdapter.obfuscate;
+            }
+            if ImportAdapter.obfuscate: StackedHint {
+                message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
             }
         }
     }
@@ -231,6 +291,11 @@ export component ImportPage inherits VerticalLayout {
                 primary: true;
                 enabled: ImportAdapter.enabled && root.can-import;
                 clicked => { ImportAdapter.run(); }
+            }
+            Button {
+                text: "Cancel";
+                enabled: LogAdapter.running;
+                clicked => { LogAdapter.cancel(); }
             }
         }
     }

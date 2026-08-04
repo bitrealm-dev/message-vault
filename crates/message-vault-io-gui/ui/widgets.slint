@@ -373,32 +373,47 @@ export component CheckBoxRow inherits FormRow {
 }
 
 /// Label above the control (guided Import / Credentials layout).
+/// Indented to match `stacked-control-indent` so headings line up with text fields.
 export component StackedFieldLabel inherits HorizontalLayout {
     in property <string> label;
     in property <bool> required: false;
-    spacing: 2px;
+    spacing: 0;
     padding: 0;
     alignment: start;
     vertical-stretch: 0;
     horizontal-stretch: 1;
     height: 22px;
 
-    Text {
-        text: root.label;
-        font-size: 12px;
-        font-weight: 600;
-        vertical-alignment: center;
+    Rectangle {
+        width: FormMetrics.stacked-control-indent;
         horizontal-stretch: 0;
+        vertical-stretch: 0;
+        height: 22px;
     }
-    if root.required: Text {
-        text: "*";
-        font-size: 12px;
-        font-weight: 700;
-        color: #c0392b;
-        vertical-alignment: center;
-        horizontal-stretch: 0;
+    HorizontalLayout {
+        spacing: 2px;
+        padding: 0;
+        alignment: start;
+        vertical-stretch: 0;
+        horizontal-stretch: 1;
+        height: 22px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        if root.required: Text {
+            text: "*";
+            font-size: 12px;
+            font-weight: 700;
+            color: #c0392b;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Rectangle { horizontal-stretch: 1; }
     }
-    Rectangle { horizontal-stretch: 1; }
 }
 
 export component StackedLineEdit inherits VerticalLayout {
@@ -858,15 +873,14 @@ export component AdvancedSection inherits VerticalLayout {
     }
 
     // @children cannot live inside `if`; clip/height toggles visibility instead.
+    // OptionGroup visually groups the section fields under the collapse button.
     Rectangle {
         visible: root.open;
         height: root.open ? self.preferred-height : 0px;
         clip: true;
         vertical-stretch: 0;
-        VerticalLayout {
-            spacing: FormMetrics.row-spacing;
-            padding: 0;
-            vertical-stretch: 0;
+        OptionGroup {
+            title: "";
             @children
         }
     }
@@ -1087,27 +1101,52 @@ export component LogTextView inherits Rectangle {
     min-height: 160px;
     clip: true;
 
-    scroll-view := ScrollView {
-        x: 8px;
-        y: 8px;
-        width: parent.width - 16px;
-        height: parent.height - 16px;
-        viewport-width: self.visible-width;
-        viewport-height: max(self.visible-height, text-input.preferred-height);
+    ContextMenuArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
 
-        text-input := TextInput {
-            width: 100%;
-            text: root.text;
-            read-only: true;
-            single-line: false;
-            // no-wrap: word-wrap on a multi-MB buffer freezes the UI thread.
-            wrap: no-wrap;
-            color: #e5e7eb;
-            font-family: "monospace";
-            font-size: 13px;
-            selection-background-color: #2563eb;
-            selection-foreground-color: #ffffff;
-            page-height: scroll-view.visible-height;
+        scroll-view := ScrollView {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 16px;
+            viewport-width: self.visible-width;
+            viewport-height: max(self.visible-height, text-input.preferred-height);
+
+            text-input := TextInput {
+                width: 100%;
+                text: root.text;
+                read-only: true;
+                single-line: false;
+                // no-wrap: word-wrap on a multi-MB buffer freezes the UI thread.
+                wrap: no-wrap;
+                color: #e5e7eb;
+                font-family: "monospace";
+                font-size: 13px;
+                selection-background-color: #2563eb;
+                selection-foreground-color: #ffffff;
+                page-height: scroll-view.visible-height;
+            }
+        }
+
+        Menu {
+            MenuItem {
+                title: "Copy";
+                activated => { text-input.copy(); }
+            }
+            MenuItem {
+                title: "Select All";
+                activated => { text-input.select-all(); }
+            }
+            MenuItem {
+                title: "Copy All";
+                activated => {
+                    text-input.select-all();
+                    text-input.copy();
+                }
+            }
         }
     }
 }

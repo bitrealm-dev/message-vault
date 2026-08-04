@@ -204,6 +204,10 @@ pub fn format_push_summary(report: &PushReport) -> String {
 }
 
 const PROGRESS_BATCH_SIZE: usize = 10;
+/// Start import HTTP before the next prepare once a batch is large enough that
+/// waiting through another conversation's asset upload would hide progress.
+const OVERLAP_FLUSH_MIN_MESSAGES: usize = 100;
+const OVERLAP_FLUSH_MIN_BODY_BYTES: usize = 512 * 1024;
 
 /// Batches successful file progress so the Log shows every N files, not each one.
 struct ProgressBatcher {
@@ -273,14 +277,14 @@ impl ProgressBatcher {
 
     fn take_chunk_line(&mut self) -> String {
         let line = format!(
-            "files {}/{} - conversations={} messages={} bytes={} import_ms={} total_ms={}",
+            "files {}/{} - conversations={} messages={} transfer size={}, import time={}, total time={}",
             self.done,
             self.total,
             self.chunk_conversations,
             self.chunk_messages,
-            self.chunk_bytes,
-            self.chunk_import_ms,
-            self.chunk_total_ms,
+            format_bytes_mb(self.chunk_bytes),
+            format_ms_seconds(self.chunk_import_ms),
+            format_ms_seconds(self.chunk_total_ms),
         );
         self.chunk_conversations = 0;
         self.chunk_messages = 0;
@@ -290,6 +294,14 @@ impl ProgressBatcher {
         self.chunk_count = 0;
         line
     }
+}
+
+fn format_bytes_mb(bytes: u64) -> String {
+    format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+}
+
+fn format_ms_seconds(ms: u64) -> String {
+    format!("{:.1}s", ms as f64 / 1000.0)
 }
 
 fn emit_progress_line(
@@ -741,6 +753,39 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
 
     for (idx, path) in files.iter().enumerate() {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+
+        // If a message batch is already worth shipping, start its HTTP import
+        // before prepare_file so a large attachment upload cannot stall it.
+        // Keep a modest threshold so tiny conversations still batch together.
+        if pending.as_ref().is_some_and(|batch| {
+            batch.messages.len() >= OVERLAP_FLUSH_MIN_MESSAGES
+                || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
+        }) {
+            let request_ok = flush_import_pipeline(FlushImportPipeline {
+                cfg,
+                http: &http,
+                url: &url,
+                username: &username,
+                pending: &mut pending,
+                inflight: &mut inflight,
+                first_import: &mut first_import,
+                trackers: &mut trackers,
+                journal: &mut journal,
+                journal_path: &journal_path,
+                log: &mut log,
+                progress: &mut progress,
+                results: &mut results,
+                batcher: &mut batcher,
+                total,
+                import_id,
+                wait: false,
+            })?;
+            if !request_ok && !cfg.continue_on_error {
+                aborted = true;
+                break;
+            }
+        }
+
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -1972,9 +2017,9 @@ mod tests {
     fn progress_batcher_emits_every_ten_and_on_completion() {
         let mut batcher = ProgressBatcher::new(25);
         let profile = UploadProfile {
-            message_import_ms: 3,
-            total_ms: 5,
-            asset_bytes: 7,
+            message_import_ms: 3_300,
+            total_ms: 5_500,
+            asset_bytes: 700_000,
             ..UploadProfile::default()
         };
         let mut lines = Vec::new();
@@ -1985,7 +2030,12 @@ mod tests {
         assert!(tenth.starts_with("files 10/25 - "));
         assert!(tenth.contains("conversations=10"));
         assert!(tenth.contains("messages=20"));
-        assert!(tenth.contains("bytes=70"));
+        assert!(tenth.contains("transfer size=7.0MB"));
+        assert!(tenth.contains("import time=33.0s"));
+        assert!(tenth.contains("total time=55.0s"));
+        assert!(!tenth.contains("bytes="));
+        assert!(!tenth.contains("import_ms="));
+        assert!(!tenth.contains("total_ms="));
         lines.push(tenth);
         for _ in 0..15 {
             if let Some(line) = batcher.note_ok(1, &profile) {

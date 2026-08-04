@@ -10,6 +10,9 @@ use chrono::{DateTime, Local};
 /// Importer slug used in staging directory names for iPhone / iOS backups.
 pub const IPHONE_IOS_IMPORTER: &str = "iphone-ios";
 
+/// Importer slug used in staging directory names for macOS Messages (`chat.db`).
+pub const MACOS_IMPORTER: &str = "macos";
+
 /// Build `staging-<importer>-YYMMDD-HHMMSS`.
 pub fn staging_dir_name(importer: &str, now: DateTime<Local>) -> String {
     format!("staging-{}-{}", importer, now.format("%y%m%d-%H%M%S"))

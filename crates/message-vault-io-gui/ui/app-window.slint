@@ -29,9 +29,12 @@ export component AppWindow inherits Window {
 
     // Grow via Rust set_size (not root.height — that locks manual resize).
     callback grow-for-advanced();
-    property <bool> import-advanced: ImportAdapter.advanced;
-    changed import-advanced => {
-        if (root.import-advanced && root.workflow-screen == 2) {
+    property <bool> import-section-open:
+        ImportAdapter.ios-advanced
+        || ImportAdapter.advanced
+        || ImportAdapter.processing-open;
+    changed import-section-open => {
+        if (root.import-section-open && root.workflow-screen == 2) {
             root.grow-for-advanced();
         }
     }
@@ -72,47 +75,10 @@ export component AppWindow inherits Window {
                 spacing: 4px;
                 alignment: start;
 
-                back-btn := Rectangle {
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: back-touch.pressed || back-touch.has-hover
-                        ? #9ca3af
-                        : transparent;
-                    background: back-touch.pressed
-                        ? #d1d5db
-                        : back-touch.has-hover
-                            ? #e5e7eb
-                            : transparent;
-                    vertical-stretch: 0;
-                    horizontal-stretch: 0;
-
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        padding-top: 4px;
-                        padding-bottom: 4px;
-                        spacing: 4px;
-                        Text {
-                            text: "←";
-                            font-size: 13px;
-                            font-weight: 700;
-                            color: #111827;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: root.back-label;
-                            font-size: 13px;
-                            font-weight: 600;
-                            color: #111827;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    back-touch := TouchArea {
-                        enabled: root.workflow-enabled;
-                        mouse-cursor: pointer;
-                        clicked => { root.navigate-back(); }
-                    }
+                Button {
+                    text: "← " + root.back-label;
+                    enabled: root.workflow-enabled;
+                    clicked => { root.navigate-back(); }
                 }
             }
         }

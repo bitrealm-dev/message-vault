@@ -1,6 +1,6 @@
 import { Button, Spinner } from "std-widgets.slint";
 import {
-    ActionRow, FormMetrics, LogTextView
+    FormMetrics, LogTextView
 } from "../widgets.slint";
 import { LogAdapter } from "log.slint";
 
@@ -13,6 +13,14 @@ export component LogPanel inherits VerticalLayout {
 
     private property <bool> stick-to-end: true;
     private property <string> log-text: LogAdapter.text;
+
+    // When this panel is created mid-run, text is already populated and
+    // `changed` will not fire — scroll once on mount.
+    init => {
+        if root.stick-to-end {
+            scroll-timer.running = true;
+        }
+    }
 
     changed log-text => {
         if root.stick-to-end {
@@ -33,6 +41,14 @@ export component LogPanel inherits VerticalLayout {
                 root.scroll-to-end();
             }
         }
+    }
+
+    // Keep pinned to the latest lines while a job runs (e.g. after switching
+    // to the Log tab mid-import). Interval is coarse to avoid layout thrash.
+    follow-timer := Timer {
+        interval: 300ms;
+        running: LogAdapter.running && root.stick-to-end;
+        triggered => { root.scroll-to-end(); }
     }
 
     HorizontalLayout {
@@ -58,7 +74,14 @@ export component LogPanel inherits VerticalLayout {
         }
     }
 
-    ActionRow {
+    HorizontalLayout {
+        spacing: 8px;
+        padding-top: FormMetrics.section-spacing;
+        padding-bottom: 0;
+        padding-left: 0;
+        padding-right: 0;
+        alignment: start;
+        vertical-stretch: 0;
         Button {
             text: "Clear view";
             enabled: !LogAdapter.running && LogAdapter.text != "";

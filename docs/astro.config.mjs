@@ -34,6 +34,7 @@ export default defineConfig({
           label: 'Get started',
           items: [
             'get-started/install',
+            'get-started/supported-formats',
             'get-started/first-export',
           ],
         },
@@ -70,6 +71,7 @@ export default defineConfig({
           items: [
             'work-with-exports/output-formats',
             'work-with-exports/convert-format',
+            'work-with-exports/import-to-vault',
             'work-with-exports/contacts',
             'work-with-exports/media-and-privacy',
           ],

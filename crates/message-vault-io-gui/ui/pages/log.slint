@@ -1,6 +1,6 @@
 import { Button, Spinner } from "std-widgets.slint";
 import {
-    ActionRow, PageSummary, FormMetrics, LogTextView
+    PageSummary, FormMetrics, LogTextView
 } from "../widgets.slint";
 
 export global LogAdapter {
@@ -19,6 +19,12 @@ export component LogPage inherits VerticalLayout {
     // Follow new output unless the user scrolls up to read history.
     private property <bool> stick-to-end: true;
     private property <string> log-text: LogAdapter.text;
+
+    init => {
+        if root.stick-to-end {
+            scroll-timer.running = true;
+        }
+    }
 
     changed log-text => {
         if root.stick-to-end {
@@ -39,6 +45,12 @@ export component LogPage inherits VerticalLayout {
                 root.scroll-to-end();
             }
         }
+    }
+
+    follow-timer := Timer {
+        interval: 300ms;
+        running: LogAdapter.running && root.stick-to-end;
+        triggered => { root.scroll-to-end(); }
     }
 
     PageSummary {
@@ -68,7 +80,14 @@ export component LogPage inherits VerticalLayout {
         }
     }
 
-    ActionRow {
+    HorizontalLayout {
+        spacing: 8px;
+        padding-top: FormMetrics.section-spacing;
+        padding-bottom: 0;
+        padding-left: 0;
+        padding-right: 0;
+        alignment: start;
+        vertical-stretch: 0;
         Button {
             text: "Clear view";
             enabled: !LogAdapter.running && LogAdapter.text != "";

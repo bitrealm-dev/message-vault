@@ -117,7 +117,22 @@ pub fn region_options() -> ModelRc<SharedString> {
 
 /// Format choices for the guided Import Messages screen.
 pub fn guided_import_format_options() -> ModelRc<SharedString> {
-    model_from_labels(["iPhone - iOS".into()])
+    model_from_labels(["iPhone - iOS".into(), "macOS".into()])
+}
+
+/// Guided import format index: 0 = iPhone iOS, 1 = macOS.
+pub fn guided_import_format_index(platform: ApplePlatform) -> i32 {
+    match platform {
+        ApplePlatform::MacOs => 1,
+        _ => 0,
+    }
+}
+
+pub fn guided_import_platform_at(index: i32) -> ApplePlatform {
+    match index {
+        1 => ApplePlatform::MacOs,
+        _ => ApplePlatform::Ios,
+    }
 }
 
 pub fn exporter_index(exporter: Exporter) -> i32 {

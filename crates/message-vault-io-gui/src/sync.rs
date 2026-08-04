@@ -3,7 +3,7 @@
 
 use media::ffmpeg_available;
 use message_vault_io_core::{
-    ApplePlatform, AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
+    AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
     contacts_kind_from_path,
 };
 use slint::{ComponentHandle, SharedString};
@@ -99,9 +99,10 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &state.form;
 
-    import.set_format_index(0);
+    import.set_format_index(options::guided_import_format_index(form.apple_platform));
     import.set_backup_path(SharedString::from(form.db_path.as_str()));
     import.set_backup_password(SharedString::from(form.backup_password.as_str()));
+    import.set_attachment_root(SharedString::from(form.attachment_root.as_str()));
     import.set_attachment_media_index(options::attachment_media_index(form.attachment_media));
     import.set_max_resolution_index(options::max_resolution_index(form.media_max_resolution));
     import.set_media_max_fps(SharedString::from(form.media_max_fps.as_str()));
@@ -127,9 +128,10 @@ pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
 
     state.exporter = Exporter::Imessage;
     form.output_format = OutputFormat::Jsonl;
-    form.apple_platform = ApplePlatform::Ios;
+    form.apple_platform = options::guided_import_platform_at(import.get_format_index());
     form.db_path = import.get_backup_path().to_string();
     form.backup_password = import.get_backup_password().to_string();
+    form.attachment_root = import.get_attachment_root().to_string();
     form.attachment_media = options::attachment_media_at(import.get_attachment_media_index());
     form.media_max_resolution = options::max_resolution_at(import.get_max_resolution_index());
     form.media_max_fps = import.get_media_max_fps().to_string();

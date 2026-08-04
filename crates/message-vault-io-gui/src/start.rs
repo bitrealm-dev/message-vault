@@ -1,6 +1,7 @@
 //! Job start helpers and the shared library-job event bridge.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -19,7 +20,7 @@ use vault_push::{
 
 use crate::AppWindow;
 use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
-use crate::staging::{self, IPHONE_IOS_IMPORTER};
+use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
 use crate::sync;
 
@@ -64,10 +65,11 @@ fn start_library_job(
 
     let ui_weak = ui_weak.clone();
     let state_for_done = Arc::clone(state);
+    // Coalesce UI flushes: session log is written immediately; the on-screen
+    // buffer is updated at most once per outstanding event-loop callback.
+    let pending_ui = Arc::new(PendingUiLog::default());
     std::thread::spawn(move || {
         while let Ok(first) = rx.recv() {
-            // Coalesce a short burst so rapid producers don't rebind the whole
-            // log buffer on every line (that freezes TextInput layout).
             let mut batch = vec![first];
             let deadline = Instant::now() + Duration::from_millis(50);
             loop {
@@ -112,34 +114,62 @@ fn start_library_job(
                 }
             }
 
+            {
+                let st = state_for_done.lock().expect("state lock");
+                for line in &lines {
+                    st.append_session_log(line);
+                }
+            }
+
             let chunk = lines.join("\n");
-            let state_clone = Arc::clone(&state_for_done);
-            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-                {
-                    let st = state_clone.lock().expect("state lock");
-                    for line in &lines {
-                        st.append_session_log(line);
-                    }
+            {
+                let mut pending = pending_ui.text.lock().expect("pending ui log");
+                if !pending.is_empty() {
+                    pending.push('\n');
                 }
-                sync::append_log_text(&ui, &chunk);
-                if finished {
-                    let mut st = state_clone.lock().expect("state lock");
-                    st.running = false;
-                    if let Some(banner) = banner {
-                        st.set_errors(vec![banner], source_screen);
-                    } else if matches!(on_success, OnSuccess::GoToImportScreen) {
-                        ui.set_workflow_screen(state::screen::IMPORT);
-                        ui.global::<crate::ImportAdapter>().set_panel_tab(0);
-                        sync::push_import(&ui, &st);
+                pending.push_str(&chunk);
+            }
+
+            // Always flush terminal events; otherwise only schedule if idle.
+            let schedule = finished
+                || !pending_ui.scheduled.swap(true, Ordering::AcqRel);
+            if schedule {
+                let state_clone = Arc::clone(&state_for_done);
+                let pending_ui = Arc::clone(&pending_ui);
+                let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                    let text = {
+                        let mut pending = pending_ui.text.lock().expect("pending ui log");
+                        pending_ui.scheduled.store(false, Ordering::Release);
+                        std::mem::take(&mut *pending)
+                    };
+                    if !text.is_empty() {
+                        sync::append_log_text(&ui, &text);
                     }
-                    sync::push_chrome(&ui, &st);
-                }
-            });
+                    if finished {
+                        let mut st = state_clone.lock().expect("state lock");
+                        st.running = false;
+                        if let Some(banner) = banner {
+                            st.set_errors(vec![banner], source_screen);
+                        } else if matches!(on_success, OnSuccess::GoToImportScreen) {
+                            ui.set_workflow_screen(state::screen::IMPORT);
+                            ui.global::<crate::ImportAdapter>().set_panel_tab(0);
+                            sync::push_import(&ui, &st);
+                        }
+                        sync::push_chrome(&ui, &st);
+                    }
+                });
+            }
             if finished {
                 break;
             }
         }
     });
+}
+
+#[derive(Default)]
+struct PendingUiLog {
+    text: Mutex<String>,
+    scheduled: AtomicBool,
 }
 
 pub(crate) fn start_validate(
@@ -476,6 +506,8 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
         let url = st.export_ini.vault.url.trim().to_string();
         let key = st.export_ini.vault.key.trim().to_string();
         let backup = st.form.db_path.trim().to_string();
+        let is_macos =
+            st.form.apple_platform == message_vault_io_core::ApplePlatform::MacOs;
         let mut errors = Vec::new();
         if url.is_empty() {
             errors.push("Vault URL is required. Go back and verify credentials.".into());
@@ -484,18 +516,26 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             errors.push("API Key is required. Go back and verify credentials.".into());
         }
         if backup.is_empty() {
-            errors.push("iPhone Backup Directory is required.".into());
+            errors.push(if is_macos {
+                "iMessage database path is required.".into()
+            } else {
+                "iPhone Backup Directory is required.".into()
+            });
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
             return;
         }
 
-        let staging =
-            staging::staging_dir_path(&st.export_ini.path, IPHONE_IOS_IMPORTER, Local::now());
+        let importer = if is_macos {
+            MACOS_IMPORTER
+        } else {
+            IPHONE_IOS_IMPORTER
+        };
+        let staging = staging::staging_dir_path(&st.export_ini.path, importer, Local::now());
         st.form.output = staging.display().to_string();
         st.form.output_format = message_vault_io_core::OutputFormat::Jsonl;
-        st.form.apple_platform = message_vault_io_core::ApplePlatform::Ios;
+        // apple_platform already set by pull_import from Import Format.
         st.exporter = Exporter::Imessage;
         st.export_ini.exporter = Exporter::Imessage;
         st.last_staging_dir = Some(staging.clone());
@@ -527,7 +567,14 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                 "Staging directory: {}",
                 staging.display()
             )));
-            send_step_banner(&tx, "Step 1/2: Extracting iPhone backup…");
+            send_step_banner(
+                &tx,
+                if is_macos {
+                    "Step 1/2: Extracting macOS Messages…"
+                } else {
+                    "Step 1/2: Extracting iPhone backup…"
+                },
+            );
 
             let extract_job = library_job_for_exporter(Exporter::Imessage, config);
             if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
@@ -634,7 +681,19 @@ fn run_vault_upload(
                 "Authenticated as {username} ({account_id})"
             )));
         }
-        VaultProgressEvent::FileStart { .. } | VaultProgressEvent::FileDone { .. } => {}
+        VaultProgressEvent::FileStart {
+            index,
+            total,
+            file,
+        } => {
+            // Sparse heartbeat so a long attachment upload doesn't look hung.
+            if index == 1 || index == total || index.is_multiple_of(10) {
+                let _ = tx.send(ProcessEvent::Log(format!(
+                    "Preparing {index}/{total}: {file}"
+                )));
+            }
+        }
+        VaultProgressEvent::FileDone { .. } => {}
         VaultProgressEvent::Finished(report) => {
             for line in vault_push::format_push_summary(&report).lines() {
                 let _ = tx.send(ProcessEvent::Log(line.to_string()));

@@ -26,7 +26,7 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 | `--input` | | JSONL export directory |
 | `--mode append\|replace` | | Default `append` (resume-safe) |
 | `--continue-on-error` | | Keep going after a failed conversation (default true) |
-| `--force` | | Ignore journal; re-upload and re-import |
+| `--force` | | Force reprocessing: ignore the local journal and send again (append + server dedupe; does not wipe the vault). See the [Import to Message Vault](../../../docs/src/content/docs/work-with-exports/import-to-vault.mdx) user guide. |
 | `--skip-attachments` | | Import messages without uploading attachments |
 | `--max-retries N` | | Transient HTTP retries (default 3) |
 | `--batch-size N` | | Target messages per import request across conversations (default 1000; requests also flush near 8 MiB, under Cloudflare’s ~100 MB limit) |
