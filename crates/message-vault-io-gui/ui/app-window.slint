@@ -6,6 +6,7 @@ import { HomePage } from "pages/home.slint";
 import { CredentialsPage } from "pages/credentials.slint";
 import { ImportPage, ImportAdapter } from "pages/import.slint";
 import { VaultExportPage } from "pages/vault-export.slint";
+import { BackupAccountPage, BackupAccountAdapter } from "pages/backup-account.slint";
 
 // Legacy screens kept for reference until the final deprecation pass.
 // The page components remain in ui/pages/ but are not shown in the guided workflow.
@@ -19,6 +20,7 @@ export { HomeAdapter } from "pages/home.slint";
 export { CredentialsAdapter } from "pages/credentials.slint";
 export { ImportAdapter } from "pages/import.slint";
 export { VaultExportAdapter } from "pages/vault-export.slint";
+export { BackupAccountAdapter } from "pages/backup-account.slint";
 export { Theme, AppearanceAdapter } from "theme.slint";
 
 export component AppWindow inherits Window {
@@ -44,7 +46,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // 0 = Home, 1 = Vault Credentials, 2 = Import Messages, 3 = Vault Export
+    // 0 = Home, 1 = Vault Credentials, 2 = Import Messages, 3 = Vault Export, 4 = Backup Account
     in-out property <int> workflow-screen: 0;
     in property <string> error-text;
     // Screen that produced the error; -1 means no active error.
@@ -61,6 +63,7 @@ export component AppWindow inherits Window {
 
     property <string> back-label:
         root.workflow-screen == 2 || root.workflow-screen == 3 ? "Vault Credentials"
+        : root.workflow-screen == 4 ? "Home"
         : root.workflow-screen == 1 ? "Home"
         : "";
 
@@ -124,6 +127,8 @@ export component AppWindow inherits Window {
         if root.workflow-screen == 2: ImportPage { }
 
         if root.workflow-screen == 3: VaultExportPage { }
+
+        if root.workflow-screen == 4: BackupAccountPage { }
 
         Rectangle {
             height: 24px;

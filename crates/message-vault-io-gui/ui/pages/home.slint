@@ -5,6 +5,7 @@ export global HomeAdapter {
     in property <bool> enabled: true;
     callback vault-import();
     callback convert-messages();
+    callback backup-account();
 }
 
 component HomeCard inherits Rectangle {
@@ -117,6 +118,16 @@ export component HomePage inherits VerticalLayout {
             glyph: "✈";
             enabled: HomeAdapter.enabled;
             clicked => { HomeAdapter.vault-import(); }
+        }
+
+        Rectangle { height: 12px; }
+
+        HomeCard {
+            title: "Backup Account";
+            subtitle: "Download your entire message history from Message Vault.";
+            glyph: "↓";
+            enabled: HomeAdapter.enabled;
+            clicked => { HomeAdapter.backup-account(); }
         }
 
         Rectangle { height: 12px; }
