@@ -1,11 +1,12 @@
 //! Folder push: stream message-ir JSONL, upload assets by digest, import batches.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -35,7 +36,14 @@ pub const MAX_PROXY_BODY_BYTES: usize = 90 * 1024 * 1024;
 /// Default max size of one attachment (must match vault `server.asset_max_bytes`).
 pub const DEFAULT_ASSET_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// Default number of simultaneous attachment uploads.
-pub const DEFAULT_ASSET_UPLOAD_WORKERS: usize = 4;
+pub const DEFAULT_ASSET_UPLOAD_WORKERS: usize = 12;
+/// Conversations prepared ahead of the import loop (hash + asset upload).
+pub const DEFAULT_PREPARE_AHEAD: usize = 3;
+/// Worker threads running [`prepare_file`] for the prepare-ahead queue.
+pub const DEFAULT_PREPARE_WORKERS: usize = 2;
+
+/// Run-scoped absolute path → sha256 cache (shared across conversations).
+type DigestCache = Mutex<HashMap<PathBuf, String>>;
 
 #[derive(Debug, Clone)]
 pub struct VaultPushConfig {
@@ -49,8 +57,9 @@ pub struct VaultPushConfig {
     pub force: bool,
     /// Import message text only; do not upload or reference attachments.
     pub skip_attachments: bool,
-    /// When true, re-hash attachment files and compare to export `digest_sha256`.
-    /// Default false: trust export digests (server still verifies on store).
+    /// When true, hash every attachment and fail if on-disk sha256 differs from
+    /// export `digest_sha256`. When false (default), trust a present export digest
+    /// and only hash when the digest is missing (path cache avoids repeat hashes).
     pub verify_digests: bool,
     pub max_retries: u32,
     pub batch_size: usize,
@@ -397,6 +406,50 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Resolve attachment sha256: path cache → trust export digest → hash on disk.
+fn resolve_attachment_digest(
+    abs: &Path,
+    claimed_raw: Option<&str>,
+    verify_digests: bool,
+    cache: &DigestCache,
+    name: &str,
+    rel: &str,
+) -> Result<String> {
+    {
+        let guard = cache.lock().expect("digest cache mutex poisoned");
+        if let Some(digest) = guard.get(abs) {
+            return Ok(digest.clone());
+        }
+    }
+
+    let claimed = match claimed_raw {
+        Some(raw) => Some(normalize_digest_sha256(raw).with_context(|| {
+            format!("{name}: invalid digest_sha256 for {rel}")
+        })?),
+        None => None,
+    };
+
+    let digest = if verify_digests {
+        let disk = hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
+        if let Some(claimed) = claimed.as_ref() {
+            if claimed != &disk {
+                bail!("{name}: sha256 mismatch for {rel}: claimed {claimed}, got {disk}");
+            }
+        }
+        disk
+    } else if let Some(claimed) = claimed {
+        claimed
+    } else {
+        hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?
+    };
+
+    cache
+        .lock()
+        .expect("digest cache mutex poisoned")
+        .insert(abs.to_path_buf(), digest.clone());
+    Ok(digest)
+}
+
 fn resolve_attachment(export_root: &Path, rel: &str) -> Option<PathBuf> {
     let candidate = Path::new(rel);
     if candidate.is_absolute() {
@@ -733,7 +786,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         username,
         http,
         auth,
-        mut journal,
+        journal,
         files,
         total,
         batch_size,
@@ -751,95 +804,77 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     let mut inflight: Option<InFlightImport> = None;
     let mut batcher = ProgressBatcher::new(total);
 
-    for (idx, path) in files.iter().enumerate() {
-        check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+    let digest_cache: Arc<DigestCache> = Arc::new(Mutex::new(HashMap::new()));
+    let shared_journal = Arc::new(Mutex::new(SharedJournal {
+        state: journal,
+        assets_in_flight: HashSet::new(),
+    }));
 
-        // If a message batch is already worth shipping, start its HTTP import
-        // before prepare_file so a large attachment upload cannot stall it.
-        // Keep a modest threshold so tiny conversations still batch together.
-        if pending.as_ref().is_some_and(|batch| {
-            batch.messages.len() >= OVERLAP_FLUSH_MIN_MESSAGES
-                || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
-        }) {
-            let request_ok = flush_import_pipeline(FlushImportPipeline {
-                cfg,
-                http: &http,
-                url: &url,
-                username: &username,
-                pending: &mut pending,
-                inflight: &mut inflight,
-                first_import: &mut first_import,
-                trackers: &mut trackers,
-                journal: &mut journal,
-                journal_path: &journal_path,
-                log: &mut log,
-                progress: &mut progress,
-                results: &mut results,
-                batcher: &mut batcher,
-                total,
-                import_id,
-                wait: false,
-            })?;
-            if !request_ok && !cfg.continue_on_error {
-                aborted = true;
-                break;
-            }
-        }
+    let prepare_ahead = DEFAULT_PREPARE_AHEAD.max(1);
+    let prepare_workers = DEFAULT_PREPARE_WORKERS.max(1).min(prepare_ahead);
+    let (job_tx, job_rx) = mpsc::sync_channel::<Option<PrepareJob>>(prepare_ahead);
+    let (result_tx, result_rx) = mpsc::channel::<PrepareJobResult>();
+    let job_rx = Arc::new(Mutex::new(job_rx));
 
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("?")
-            .to_string();
-        if let Some(cb) = progress.as_mut() {
-            cb(ProgressEvent::FileStart {
-                index: idx + 1,
-                total,
-                file: name.clone(),
+    std::thread::scope(|scope| -> Result<()> {
+        for _ in 0..prepare_workers {
+            let job_rx = Arc::clone(&job_rx);
+            let result_tx = result_tx.clone();
+            let digest_cache = Arc::clone(&digest_cache);
+            let shared_journal = Arc::clone(&shared_journal);
+            let http = http.clone();
+            let input = input.clone();
+            let url = url.clone();
+            let username = username.clone();
+            let journal_path = journal_path.clone();
+            scope.spawn(move || {
+                loop {
+                    let job = {
+                        let rx = job_rx.lock().expect("prepare job mutex poisoned");
+                        rx.recv().unwrap_or(None)
+                    };
+                    let Some(job) = job else {
+                        break;
+                    };
+                    let outcome = prepare_file(PrepareFileArgs {
+                        input: &input,
+                        path: &job.path,
+                        name: &job.name,
+                        cfg,
+                        http: &http,
+                        url: &url,
+                        username: &username,
+                        journal: &shared_journal,
+                        journal_path: &journal_path,
+                        batch_size,
+                        digest_cache: &digest_cache,
+                    });
+                    let _ = result_tx.send(PrepareJobResult {
+                        idx: job.idx,
+                        name: job.name,
+                        outcome,
+                    });
+                }
             });
         }
+        drop(result_tx);
 
-        if cfg.mode == "append" && !cfg.force && journal.files.contains(&name) {
-            results[idx] = Some(FileResult {
-                file: name.clone(),
-                status: "skipped".into(),
-                error: None,
-                messages: 0,
-                attachments: 0,
-                profile: None,
-            });
-            if let Some(cb) = progress.as_mut() {
-                cb(ProgressEvent::FileDone {
-                    file: name,
-                    status: "skipped".into(),
-                });
-            }
-            if let Some(line) = batcher.note_skipped() {
-                emit_progress_line(&mut log, &mut progress, line);
-            }
-            continue;
-        }
+        let mut next_submit = 0usize;
+        let mut next_consume = 0usize;
+        let mut inflight_prepares = 0usize;
+        let mut prepared_buf: BTreeMap<usize, PrepareJobResult> = BTreeMap::new();
+        let mut stop_submitting = false;
 
-        let prepared = prepare_file(PrepareFileArgs {
-            input: &input,
-            path,
-            name: &name,
-            cfg,
-            http: &http,
-            url: &url,
-            username: &username,
-            journal: &mut journal,
-            journal_path: &journal_path,
-            batch_size,
-            assets_uploaded: &mut assets_uploaded,
-            assets_skipped: &mut assets_skipped,
-            log: &mut log,
-        });
-        let prepared = match prepared {
-            Ok(prepared) => prepared,
-            Err(e) => {
-                if !cfg.continue_on_error && (pending.is_some() || inflight.is_some()) {
-                    let request_ok = flush_import_pipeline(FlushImportPipeline {
+        while next_consume < total {
+            check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+
+            if pending.as_ref().is_some_and(|batch| {
+                batch.messages.len() >= OVERLAP_FLUSH_MIN_MESSAGES
+                    || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
+            }) {
+                let request_ok = {
+                    let mut guard = shared_journal.lock().expect("journal mutex poisoned");
+                    flush_import_pipeline(FlushImportPipeline {
                         cfg,
                         http: &http,
                         url: &url,
@@ -848,48 +883,366 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         inflight: &mut inflight,
                         first_import: &mut first_import,
                         trackers: &mut trackers,
-                        journal: &mut journal,
+                        journal: &mut guard.state,
                         journal_path: &journal_path,
                         log: &mut log,
                         progress: &mut progress,
                         results: &mut results,
                         batcher: &mut batcher,
-                        total,
                         import_id,
-                    wait: true,
-                    })?;
-                    if !request_ok {
+                        wait: false,
+                    })?
+                };
+                if !request_ok && !cfg.continue_on_error {
+                    aborted = true;
+                    stop_submitting = true;
+                }
+            }
+
+            while !stop_submitting
+                && !aborted
+                && next_submit < total
+                && inflight_prepares < prepare_ahead
+            {
+                let path = files[next_submit].clone();
+                let idx = next_submit;
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                if let Some(cb) = progress.as_mut() {
+                    cb(ProgressEvent::FileStart {
+                        index: idx + 1,
+                        total,
+                        file: name.clone(),
+                    });
+                }
+
+                let skip = cfg.mode == "append"
+                    && !cfg.force
+                    && shared_journal
+                        .lock()
+                        .expect("journal mutex poisoned")
+                        .state
+                        .files
+                        .contains(&name);
+                if skip {
+                    results[idx] = Some(FileResult {
+                        file: name.clone(),
+                        status: "skipped".into(),
+                        error: None,
+                        messages: 0,
+                        attachments: 0,
+                        profile: None,
+                    });
+                    if let Some(cb) = progress.as_mut() {
+                        cb(ProgressEvent::FileDone {
+                            file: name,
+                            status: "skipped".into(),
+                        });
+                    }
+                    if let Some(line) = batcher.note_skipped() {
+                        emit_progress_line(&mut log, &mut progress, line);
+                    }
+                    // Synthesize an empty ready slot so consume order advances.
+                    prepared_buf.insert(
+                        idx,
+                        PrepareJobResult {
+                            idx,
+                            name: String::new(),
+                            outcome: Ok(PreparedFile {
+                                source: String::new(),
+                                chunks: Vec::new(),
+                                attachments: 0,
+                                profile: UploadProfile::default(),
+                                total_started: Instant::now(),
+                                assets_uploaded: 0,
+                                assets_skipped: 0,
+                                log_lines: Vec::new(),
+                            }),
+                        },
+                    );
+                    next_submit += 1;
+                    continue;
+                }
+
+                job_tx
+                    .send(Some(PrepareJob { idx, path, name }))
+                    .expect("prepare workers alive");
+                inflight_prepares += 1;
+                next_submit += 1;
+            }
+
+            if aborted {
+                break;
+            }
+
+            // Prefer draining already-buffered in-order results; otherwise wait for one.
+            if !prepared_buf.contains_key(&next_consume) {
+                if inflight_prepares == 0 && next_submit >= total {
+                    break;
+                }
+                let job = result_rx
+                    .recv()
+                    .context("prepare worker disconnected")?;
+                inflight_prepares = inflight_prepares.saturating_sub(1);
+                prepared_buf.insert(job.idx, job);
+            }
+
+            while let Some(job) = prepared_buf.remove(&next_consume) {
+                let idx = job.idx;
+                // Skipped files already recorded above (empty name sentinel).
+                if job.name.is_empty() {
+                    next_consume += 1;
+                    continue;
+                }
+                let name = job.name;
+                let prepared = match job.outcome {
+                    Ok(prepared) => prepared,
+                    Err(e) => {
+                        if !cfg.continue_on_error && (pending.is_some() || inflight.is_some()) {
+                            let request_ok = {
+                                let mut guard =
+                                    shared_journal.lock().expect("journal mutex poisoned");
+                                flush_import_pipeline(FlushImportPipeline {
+                                    cfg,
+                                    http: &http,
+                                    url: &url,
+                                    username: &username,
+                                    pending: &mut pending,
+                                    inflight: &mut inflight,
+                                    first_import: &mut first_import,
+                                    trackers: &mut trackers,
+                                    journal: &mut guard.state,
+                                    journal_path: &journal_path,
+                                    log: &mut log,
+                                    progress: &mut progress,
+                                    results: &mut results,
+                                    batcher: &mut batcher,
+                                    import_id,
+                                    wait: true,
+                                })?
+                            };
+                            if !request_ok {
+                                aborted = true;
+                                stop_submitting = true;
+                                break;
+                            }
+                        }
+                        let err = e.to_string();
+                        record_file_failure(RecordFileFailure {
+                            index: idx,
+                            name: &name,
+                            error: &err,
+                            source: "",
+                            url: &url,
+                            username: &username,
+                            journal_path: &journal_path,
+                            log: &mut log,
+                            progress: &mut progress,
+                            results: &mut results,
+                            batcher: &mut batcher,
+                        });
+                        if !cfg.continue_on_error {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
+                        }
+                        next_consume += 1;
+                        continue;
+                    }
+                };
+
+                assets_uploaded += prepared.assets_uploaded;
+                assets_skipped += prepared.assets_skipped;
+                for line in &prepared.log_lines {
+                    log.line(line);
+                }
+
+                if pending
+                    .as_ref()
+                    .is_some_and(|batch| batch.source != prepared.source)
+                {
+                    let request_ok = {
+                        let mut guard = shared_journal.lock().expect("journal mutex poisoned");
+                        flush_import_pipeline(FlushImportPipeline {
+                            cfg,
+                            http: &http,
+                            url: &url,
+                            username: &username,
+                            pending: &mut pending,
+                            inflight: &mut inflight,
+                            first_import: &mut first_import,
+                            trackers: &mut trackers,
+                            journal: &mut guard.state,
+                            journal_path: &journal_path,
+                            log: &mut log,
+                            progress: &mut progress,
+                            results: &mut results,
+                            batcher: &mut batcher,
+                            import_id,
+                            wait: !cfg.continue_on_error,
+                        })?
+                    };
+                    if !request_ok && !cfg.continue_on_error {
                         aborted = true;
+                        stop_submitting = true;
                         break;
                     }
                 }
-                let err = e.to_string();
-                record_file_failure(RecordFileFailure {
-                    index: idx,
-                    name: &name,
-                    error: &err,
-                    source: "",
-                    url: &url,
-                    username: &username,
-                    journal_path: &journal_path,
-                    log: &mut log,
-                    progress: &mut progress,
-                    results: &mut results,
-                    batcher: &mut batcher,
+
+                let message_count = prepared
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.messages.len())
+                    .sum();
+                trackers[idx] = Some(FileTracker {
+                    name: name.clone(),
+                    source: prepared.source.clone(),
+                    attachments: prepared.attachments,
+                    profile: prepared.profile,
+                    total_started: prepared.total_started,
+                    outstanding_messages: message_count,
+                    successful_messages: 0,
+                    queue_complete: false,
+                    failed: None,
+                    done: false,
                 });
-                if !cfg.continue_on_error {
-                    aborted = true;
+
+                for chunk in prepared.chunks {
+                    let must_flush = pending.as_ref().is_some_and(|batch| {
+                        should_flush_before_chunk(batch, &chunk, batch_size, MAX_IMPORT_BODY_BYTES)
+                    });
+                    if must_flush {
+                        let request_ok = {
+                            let mut guard =
+                                shared_journal.lock().expect("journal mutex poisoned");
+                            flush_import_pipeline(FlushImportPipeline {
+                                cfg,
+                                http: &http,
+                                url: &url,
+                                username: &username,
+                                pending: &mut pending,
+                                inflight: &mut inflight,
+                                first_import: &mut first_import,
+                                trackers: &mut trackers,
+                                journal: &mut guard.state,
+                                journal_path: &journal_path,
+                                log: &mut log,
+                                progress: &mut progress,
+                                results: &mut results,
+                                batcher: &mut batcher,
+                                import_id,
+                                wait: !cfg.continue_on_error,
+                            })?
+                        };
+                        if !request_ok && !cfg.continue_on_error {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
+                        }
+                        if trackers[idx]
+                            .as_ref()
+                            .is_some_and(|tracker| tracker.failed.is_some())
+                        {
+                            break;
+                        }
+                    }
+
+                    let batch = pending.get_or_insert_with(|| ImportBatch::new(&prepared.source));
+                    batch.push(idx, chunk);
+                    if batch.messages.len() >= batch_size || batch.body.len() >= MAX_IMPORT_BODY_BYTES
+                    {
+                        let request_ok = {
+                            let mut guard =
+                                shared_journal.lock().expect("journal mutex poisoned");
+                            flush_import_pipeline(FlushImportPipeline {
+                                cfg,
+                                http: &http,
+                                url: &url,
+                                username: &username,
+                                pending: &mut pending,
+                                inflight: &mut inflight,
+                                first_import: &mut first_import,
+                                trackers: &mut trackers,
+                                journal: &mut guard.state,
+                                journal_path: &journal_path,
+                                log: &mut log,
+                                progress: &mut progress,
+                                results: &mut results,
+                                batcher: &mut batcher,
+                                import_id,
+                                wait: !cfg.continue_on_error,
+                            })?
+                        };
+                        if !request_ok && !cfg.continue_on_error {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
+                        }
+                        if trackers[idx]
+                            .as_ref()
+                            .is_some_and(|tracker| tracker.failed.is_some())
+                        {
+                            break;
+                        }
+                    }
+                }
+                if aborted {
                     break;
                 }
-                continue;
+                if let Some(tracker) = trackers[idx].as_mut() {
+                    tracker.queue_complete = true;
+                }
+                {
+                    let mut guard = shared_journal.lock().expect("journal mutex poisoned");
+                    finish_file_if_ready(FinishFile {
+                        index: idx,
+                        trackers: &mut trackers,
+                        journal: &mut guard.state,
+                        journal_path: &journal_path,
+                        url: &url,
+                        username: &username,
+                        log: &mut log,
+                        progress: &mut progress,
+                        results: &mut results,
+                        batcher: &mut batcher,
+                    })?;
+                }
+                next_consume += 1;
+                if stop_submitting {
+                    break;
+                }
             }
-        };
+            if aborted || stop_submitting {
+                break;
+            }
+        }
 
-        if pending
-            .as_ref()
-            .is_some_and(|batch| batch.source != prepared.source)
-        {
-            let request_ok = flush_import_pipeline(FlushImportPipeline {
+        // Stop workers; ignore send errors if they already exited.
+        for _ in 0..prepare_workers {
+            let _ = job_tx.send(None);
+        }
+        // Drain leftover prepare results so workers can finish.
+        while let Ok(job) = result_rx.recv() {
+            inflight_prepares = inflight_prepares.saturating_sub(1);
+            if let Ok(prepared) = job.outcome {
+                assets_uploaded += prepared.assets_uploaded;
+                assets_skipped += prepared.assets_skipped;
+                for line in &prepared.log_lines {
+                    log.line(line);
+                }
+            }
+        }
+        let _ = inflight_prepares;
+        Ok(())
+    })?;
+
+    if !aborted {
+        let request_ok = {
+            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
+            flush_import_pipeline(FlushImportPipeline {
                 cfg,
                 http: &http,
                 url: &url,
@@ -898,162 +1251,26 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 inflight: &mut inflight,
                 first_import: &mut first_import,
                 trackers: &mut trackers,
-                journal: &mut journal,
+                journal: &mut guard.state,
                 journal_path: &journal_path,
                 log: &mut log,
                 progress: &mut progress,
                 results: &mut results,
                 batcher: &mut batcher,
-                total,
                 import_id,
-                    wait: !cfg.continue_on_error,
-            })?;
-            if !request_ok && !cfg.continue_on_error {
-                aborted = true;
-                break;
-            }
-        }
-
-        let message_count = prepared
-            .chunks
-            .iter()
-            .map(|chunk| chunk.messages.len())
-            .sum();
-        trackers[idx] = Some(FileTracker {
-            name: name.clone(),
-            source: prepared.source.clone(),
-            attachments: prepared.attachments,
-            profile: prepared.profile,
-            total_started: prepared.total_started,
-            outstanding_messages: message_count,
-            successful_messages: 0,
-            queue_complete: false,
-            failed: None,
-            done: false,
-        });
-
-        for chunk in prepared.chunks {
-            let must_flush = pending.as_ref().is_some_and(|batch| {
-                should_flush_before_chunk(batch, &chunk, batch_size, MAX_IMPORT_BODY_BYTES)
-            });
-            if must_flush {
-                let request_ok = flush_import_pipeline(FlushImportPipeline {
-                    cfg,
-                    http: &http,
-                    url: &url,
-                    username: &username,
-                    pending: &mut pending,
-                    inflight: &mut inflight,
-                    first_import: &mut first_import,
-                    trackers: &mut trackers,
-                    journal: &mut journal,
-                    journal_path: &journal_path,
-                    log: &mut log,
-                    progress: &mut progress,
-                    results: &mut results,
-                    batcher: &mut batcher,
-                    total,
-                    import_id,
-                    wait: !cfg.continue_on_error,
-                })?;
-                if !request_ok && !cfg.continue_on_error {
-                    aborted = true;
-                    break;
-                }
-                if trackers[idx]
-                    .as_ref()
-                    .is_some_and(|tracker| tracker.failed.is_some())
-                {
-                    break;
-                }
-            }
-
-            let batch = pending.get_or_insert_with(|| ImportBatch::new(&prepared.source));
-            batch.push(idx, chunk);
-            if batch.messages.len() >= batch_size || batch.body.len() >= MAX_IMPORT_BODY_BYTES {
-                let request_ok = flush_import_pipeline(FlushImportPipeline {
-                    cfg,
-                    http: &http,
-                    url: &url,
-                    username: &username,
-                    pending: &mut pending,
-                    inflight: &mut inflight,
-                    first_import: &mut first_import,
-                    trackers: &mut trackers,
-                    journal: &mut journal,
-                    journal_path: &journal_path,
-                    log: &mut log,
-                    progress: &mut progress,
-                    results: &mut results,
-                    batcher: &mut batcher,
-                    total,
-                    import_id,
-                    wait: !cfg.continue_on_error,
-                })?;
-                if !request_ok && !cfg.continue_on_error {
-                    aborted = true;
-                    break;
-                }
-                if trackers[idx]
-                    .as_ref()
-                    .is_some_and(|tracker| tracker.failed.is_some())
-                {
-                    break;
-                }
-            }
-        }
-        if aborted {
-            break;
-        }
-        if let Some(tracker) = trackers[idx].as_mut() {
-            tracker.queue_complete = true;
-        }
-        // File may still have outstanding messages in `pending` / `inflight`; finish runs
-        // when those imports complete (overlapped with the next prepare_file).
-        finish_file_if_ready(FinishFile {
-            index: idx,
-            trackers: &mut trackers,
-            journal: &mut journal,
-            journal_path: &journal_path,
-            url: &url,
-            username: &username,
-            log: &mut log,
-            progress: &mut progress,
-            results: &mut results,
-            batcher: &mut batcher,
-        })?;
-    }
-
-    if !aborted {
-        let request_ok = flush_import_pipeline(FlushImportPipeline {
-            cfg,
-            http: &http,
-            url: &url,
-            username: &username,
-            pending: &mut pending,
-            inflight: &mut inflight,
-            first_import: &mut first_import,
-            trackers: &mut trackers,
-            journal: &mut journal,
-            journal_path: &journal_path,
-            log: &mut log,
-            progress: &mut progress,
-            results: &mut results,
-            batcher: &mut batcher,
-            total,
-            import_id,
-                    wait: true,
-        })?;
+                wait: true,
+            })?
+        };
         if !request_ok && !cfg.continue_on_error {
             aborted = true;
         }
     } else {
-        // Best-effort drain so journal/trackers stay consistent on abort.
+        let mut guard = shared_journal.lock().expect("journal mutex poisoned");
         let _ = join_inflight_import(JoinInflightImport {
             inflight: &mut inflight,
             first_import: &mut first_import,
             trackers: &mut trackers,
-            journal: &mut journal,
+            journal: &mut guard.state,
             journal_path: &journal_path,
             url: &url,
             username: &username,
@@ -1061,13 +1278,18 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             progress: &mut progress,
             results: &mut results,
             batcher: &mut batcher,
-            total,
         });
     }
 
     if let Some(line) = batcher.flush_remainder() {
         emit_progress_line(&mut log, &mut progress, line);
     }
+
+    let journal = Arc::try_unwrap(shared_journal)
+        .expect("prepare workers released journal")
+        .into_inner()
+        .expect("journal mutex poisoned")
+        .state;
 
     finish_run(
         FinishRunArgs {
@@ -1093,6 +1315,18 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     )
 }
 
+struct PrepareJob {
+    idx: usize,
+    path: PathBuf,
+    name: String,
+}
+
+struct PrepareJobResult {
+    idx: usize,
+    name: String,
+    outcome: Result<PreparedFile>,
+}
+
 struct PrepareFileArgs<'a> {
     input: &'a Path,
     path: &'a Path,
@@ -1101,12 +1335,10 @@ struct PrepareFileArgs<'a> {
     http: &'a HttpSession,
     url: &'a str,
     username: &'a str,
-    journal: &'a mut JournalState,
+    journal: &'a Mutex<SharedJournal>,
     journal_path: &'a Path,
     batch_size: usize,
-    assets_uploaded: &'a mut u64,
-    assets_skipped: &'a mut u64,
-    log: &'a mut LogWriter,
+    digest_cache: &'a DigestCache,
 }
 
 struct PreparedFile {
@@ -1115,11 +1347,21 @@ struct PreparedFile {
     attachments: u64,
     profile: UploadProfile,
     total_started: Instant,
+    assets_uploaded: u64,
+    assets_skipped: u64,
+    log_lines: Vec<String>,
 }
 
 struct ImportChunk {
     body: Vec<u8>,
     messages: Vec<JournalMessage>,
+}
+
+/// Journal plus in-flight asset claims for parallel prepare workers.
+#[derive(Debug)]
+struct SharedJournal {
+    state: JournalState,
+    assets_in_flight: HashSet<String>,
 }
 
 fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
@@ -1135,9 +1377,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         journal,
         journal_path,
         batch_size,
-        assets_uploaded,
-        assets_skipped,
-        log,
+        digest_cache,
     } = args;
 
     let read_started = Instant::now();
@@ -1150,6 +1390,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let mut per_message_digests: Vec<Vec<(usize, String, u64)>> =
         Vec::with_capacity(messages.len());
     let mut attachment_count = 0u64;
+    let mut assets_uploaded = 0u64;
+    let mut assets_skipped = 0u64;
+    let mut log_lines = Vec::new();
     let mut profile = UploadProfile {
         read_ms,
         ..UploadProfile::default()
@@ -1160,7 +1403,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         for msg in messages {
             let n = msg.attachments.len() as u64;
             attachment_count += n;
-            *assets_skipped += n;
+            assets_skipped += n;
             per_message_digests.push(Vec::new());
         }
         profile.attachment_scan_hash_ms = elapsed_ms(attachment_scan_hash_started);
@@ -1181,26 +1424,19 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 let file_len = std::fs::metadata(&abs)
                     .with_context(|| format!("{name}: stat attachment {rel}"))?
                     .len();
-                let digest = match att
+                let claimed = att
                     .digest_sha256
                     .as_deref()
                     .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    Some(d) => {
-                        let claimed = normalize_digest_sha256(d).with_context(|| {
-                            format!("{name}: invalid digest_sha256 for {rel}")
-                        })?;
-                        if cfg.verify_digests {
-                            let actual = hash_file(&abs)?;
-                            if actual != claimed {
-                                bail!("{name}: sha256 mismatch for {rel}");
-                            }
-                        }
-                        claimed
-                    }
-                    None => hash_file(&abs)?,
-                };
+                    .filter(|s| !s.is_empty());
+                let digest = resolve_attachment_digest(
+                    &abs,
+                    claimed,
+                    cfg.verify_digests,
+                    digest_cache,
+                    name,
+                    rel,
+                )?;
                 unique
                     .entry(digest.clone())
                     .or_insert_with(|| (rel.to_string(), att.mime_type.clone()));
@@ -1223,12 +1459,12 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
             unique: &unique,
             journal,
             journal_path,
-            assets_uploaded,
-            assets_skipped,
-            log,
         })?;
         profile.asset_upload_ms = elapsed_ms(asset_upload_started);
         profile.asset_bytes = upload_stats.bytes;
+        assets_uploaded = upload_stats.uploaded;
+        assets_skipped = upload_stats.skipped;
+        log_lines = upload_stats.log_lines;
     }
 
     let header_line = project::document_header_line(&doc)?;
@@ -1243,12 +1479,17 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         } else {
             project::message_line(msg, &per_message_digests[i])?
         };
-        if !cfg.force
-            && journal
+        if !cfg.force {
+            let key = JournalState::message_key(name, &guid);
+            let seen = journal
+                .lock()
+                .expect("journal mutex poisoned")
+                .state
                 .messages
-                .contains(&JournalState::message_key(name, &guid))
-        {
-            continue;
+                .contains(&key);
+            if seen {
+                continue;
+            }
         }
         if line.len() > MAX_IMPORT_BODY_BYTES {
             bail!(
@@ -1286,6 +1527,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         attachments: attachment_count,
         profile,
         total_started,
+        assets_uploaded,
+        assets_skipped,
+        log_lines,
     })
 }
 
@@ -1303,6 +1547,9 @@ struct AssetUploadResult {
 #[derive(Default)]
 struct AssetUploadStats {
     bytes: u64,
+    uploaded: u64,
+    skipped: u64,
+    log_lines: Vec<String>,
 }
 
 struct UploadAssets<'a> {
@@ -1314,11 +1561,47 @@ struct UploadAssets<'a> {
     username: &'a str,
     source: &'a str,
     unique: &'a BTreeMap<String, (String, Option<String>)>,
-    journal: &'a mut JournalState,
+    journal: &'a Mutex<SharedJournal>,
     journal_path: &'a Path,
-    assets_uploaded: &'a mut u64,
-    assets_skipped: &'a mut u64,
-    log: &'a mut LogWriter,
+}
+
+fn claim_asset_upload(journal: &Mutex<SharedJournal>, digest: &str, force: bool) -> bool {
+    let mut guard = journal.lock().expect("journal mutex poisoned");
+    if !force
+        && (guard.state.assets.contains(digest) || guard.assets_in_flight.contains(digest))
+    {
+        return false;
+    }
+    guard.assets_in_flight.insert(digest.to_string());
+    true
+}
+
+fn finish_asset_upload(
+    journal: &Mutex<SharedJournal>,
+    journal_path: &Path,
+    url: &str,
+    username: &str,
+    source: &str,
+    digest: &str,
+    ok: bool,
+) -> Result<()> {
+    let mut guard = journal.lock().expect("journal mutex poisoned");
+    guard.assets_in_flight.remove(digest);
+    if !ok {
+        return Ok(());
+    }
+    guard.state.assets.insert(digest.to_string());
+    drop(guard);
+    journal::append(
+        journal_path,
+        &JournalEvent::AssetOk {
+            url: url.to_string(),
+            username: username.to_string(),
+            source: source.to_string(),
+            sha256: digest.to_string(),
+        },
+    )?;
+    Ok(())
 }
 
 fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
@@ -1333,24 +1616,31 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         unique,
         journal,
         journal_path,
-        assets_uploaded,
-        assets_skipped,
-        log,
     } = args;
     let mut jobs = Vec::with_capacity(unique.len());
     let mut stats = AssetUploadStats::default();
     for (digest, (rel, mime)) in unique {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
-        if !cfg.force && journal.assets.contains(digest) {
-            *assets_skipped += 1;
+        if !claim_asset_upload(journal, digest, cfg.force) {
+            stats.skipped += 1;
             continue;
         }
-        let path = resolve_attachment(input, rel)
-            .ok_or_else(|| anyhow::anyhow!("{name}: missing attachment {rel}"))?;
-        let file_len = fs::metadata(&path)
-            .with_context(|| format!("stat {}", path.display()))?
-            .len();
+        let path = match resolve_attachment(input, rel) {
+            Some(path) => path,
+            None => {
+                let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+                bail!("{name}: missing attachment {rel}");
+            }
+        };
+        let file_len = match fs::metadata(&path) {
+            Ok(meta) => meta.len(),
+            Err(error) => {
+                let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+                return Err(error).with_context(|| format!("stat {}", path.display()));
+            }
+        };
         if file_len > cfg.asset_max_bytes {
+            let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
             bail!(
                 "{name}: attachment {rel} is {} bytes ({} MiB), over the configured \
                  asset max of {} MiB. Raise vault [server] asset_max_bytes (and \
@@ -1426,31 +1716,41 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     let mut results = results.into_inner().expect("asset result mutex poisoned");
     for result in results.drain(..) {
         let result = result.expect("every asset job has a result");
-        let uploaded = result.map_err(|error| anyhow::anyhow!("{name}: {error}"))?;
-        journal.assets.insert(uploaded.digest.clone());
-        journal::append(
-            journal_path,
-            &JournalEvent::AssetOk {
-                url: url.to_string(),
-                username: username.to_string(),
-                source: source.to_string(),
-                sha256: uploaded.digest.clone(),
-            },
-        )?;
-        if uploaded.response.already_present {
-            *assets_skipped += 1;
-        } else {
-            *assets_uploaded += 1;
+        match result {
+            Ok(uploaded) => {
+                finish_asset_upload(
+                    journal,
+                    journal_path,
+                    url,
+                    username,
+                    source,
+                    &uploaded.digest,
+                    true,
+                )?;
+                if uploaded.response.already_present {
+                    stats.skipped += 1;
+                } else {
+                    stats.uploaded += 1;
+                }
+                stats.log_lines.push(format!(
+                    "asset {} {}",
+                    if uploaded.response.already_present {
+                        "skip"
+                    } else {
+                        "ok"
+                    },
+                    uploaded.digest
+                ));
+            }
+            Err(error) => {
+                // Best-effort: release in-flight claims for all remaining jobs too.
+                for job in &jobs {
+                    let _ =
+                        finish_asset_upload(journal, journal_path, url, username, source, &job.digest, false);
+                }
+                bail!("{name}: {error}");
+            }
         }
-        log.line(&format!(
-            "asset {} {}",
-            if uploaded.response.already_present {
-                "skip"
-            } else {
-                "ok"
-            },
-            uploaded.digest
-        ));
     }
     Ok(stats)
 }
@@ -1680,7 +1980,6 @@ struct FlushImportPipeline<'a, 'p, 'f> {
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
     batcher: &'a mut ProgressBatcher,
-    total: usize,
     /// When true, wait for the newly spawned import (also used at end-of-run).
     wait: bool,
     import_id: Option<i64>,
@@ -1698,7 +1997,6 @@ struct JoinInflightImport<'a, 'p, 'f> {
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
     batcher: &'a mut ProgressBatcher,
-    total: usize,
 }
 
 /// Join at most one in-flight import, then optionally spawn the current pending batch.
@@ -1716,7 +2014,6 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
         progress: args.progress,
         results: args.results,
         batcher: args.batcher,
-        total: args.total,
     })?;
     if !ok && !args.cfg.continue_on_error {
         *args.pending = None;
@@ -1755,7 +2052,6 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
             progress: args.progress,
             results: args.results,
             batcher: args.batcher,
-            total: args.total,
         })?;
     }
     Ok(ok)

@@ -472,7 +472,7 @@ fn profiles_attachment_upload_phases() {
     assert!(
         progress_lines
             .iter()
-            .any(|line| line.starts_with("files ") && line.contains("import_ms="))
+            .any(|line| line.starts_with("files ") && line.contains("import time="))
     );
 
     let persisted_report: serde_json::Value =
@@ -775,4 +775,127 @@ fn authenticate_rejects_invalid_url() {
     let err = authenticate("not a url", "mv_test", "").unwrap_err();
     assert_eq!(err.kind(), "invalid_url");
     assert!(matches!(err, AuthError::InvalidUrl { .. }));
+}
+
+#[test]
+fn verify_digests_fails_on_mismatch() {
+    const ASSET_BYTES: &[u8] = b"on-disk bytes";
+    let wrong_digest = hex::encode(Sha256::digest(b"other bytes"));
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let put = server.mock(|when, then| {
+        when.method(PUT).path_contains("/v1/assets/");
+        then.status(200).json_body(json!({ "ok": true, "already_present": false }));
+    });
+
+    let dir = tempdir().unwrap();
+    let attachment_dir = dir.path().join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    fs::write(attachment_dir.join("fixture.txt"), ASSET_BYTES).unwrap();
+    let mut doc = sample_doc();
+    doc.messages[0].attachments.push(IrAttachment {
+        path: Some("attachments/fixture.txt".into()),
+        original_name: Some("fixture.txt".into()),
+        mime_type: Some("text/plain".into()),
+        digest_sha256: Some(wrong_digest),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        bytes: None,
+    });
+    write_jsonl(dir.path(), &doc);
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.verify_digests = true;
+    cfg.continue_on_error = false;
+    let report = run(&cfg, None).unwrap();
+    assert!(!report.ok);
+    assert_eq!(report.conversations_failed, 1);
+    assert_eq!(put.hits(), 0, "mismatch must fail before upload");
+}
+
+#[test]
+fn shared_attachment_uploaded_once_across_conversations() {
+    const ASSET_BYTES: &[u8] = b"shared attachment bytes";
+    let digest = hex::encode(Sha256::digest(ASSET_BYTES));
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let head = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{digest}"));
+        then.status(404).json_body(json!({ "ok": false, "error": "asset not found" }));
+    });
+    let put = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{digest}"));
+        then.status(200).json_body(json!({ "ok": true, "already_present": false }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST).path("/v1/import");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 2,
+            "messages_appended": 2
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    let attachment_dir = dir.path().join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    fs::write(attachment_dir.join("shared.txt"), ASSET_BYTES).unwrap();
+
+    let mut doc_a = sample_doc_for("+15555550101", "guid-a");
+    doc_a.messages[0].attachments.push(IrAttachment {
+        path: Some("attachments/shared.txt".into()),
+        original_name: Some("shared.txt".into()),
+        mime_type: Some("text/plain".into()),
+        digest_sha256: Some(digest.clone()),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        bytes: None,
+    });
+    let mut doc_b = sample_doc_for("+15555550102", "guid-b");
+    doc_b.messages[0].attachments.push(IrAttachment {
+        path: Some("attachments/shared.txt".into()),
+        original_name: Some("shared.txt".into()),
+        mime_type: Some("text/plain".into()),
+        digest_sha256: Some(digest),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        bytes: None,
+    });
+    write_jsonl(dir.path(), &doc_a);
+    write_jsonl(dir.path(), &doc_b);
+
+    let cfg = text_only_config(dir.path(), server.base_url());
+    let report = run(&cfg, None).unwrap();
+    assert!(report.ok);
+    assert_eq!(report.conversations_ok, 2);
+    assert_eq!(put.hits(), 1, "shared digest must upload once");
+    assert!(head.hits() >= 1);
+    import.assert();
+    assert_eq!(report.assets_uploaded, 1);
 }

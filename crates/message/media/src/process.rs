@@ -267,14 +267,14 @@ fn process_one(
 
 fn changed(output_dir: &Path, old_rel: &str, new_path: &Path) -> Result<Outcome> {
     let new_rel = rel_path(output_dir, new_path)?;
-    if new_rel == old_rel {
-        Ok(Outcome::Skipped)
-    } else {
-        Ok(Outcome::Changed {
-            old_rel: old_rel.to_string(),
-            new_rel,
-        })
-    }
+    // Always report Changed — even when the relative path is unchanged (e.g. JPG
+    // recompressed in place). Callers must invalidate digest_sha256 for remapped
+    // paths; treating same-path rewrites as Skipped left stale digests in JSONL
+    // and caused vault-push sha256 mismatches after upload.
+    Ok(Outcome::Changed {
+        old_rel: old_rel.to_string(),
+        new_rel,
+    })
 }
 
 fn rel_path(output_dir: &Path, path: &Path) -> Result<String> {
@@ -587,6 +587,23 @@ mod tests {
                 .unwrap();
         assert_eq!(report.processed, 0);
         assert!(remap.is_empty());
+    }
+
+    #[test]
+    fn same_path_rewrite_reports_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let att = dir.path().join("attachments");
+        fs::create_dir_all(&att).unwrap();
+        let file = att.join("photo.jpg");
+        fs::write(&file, b"jpeg-bytes").unwrap();
+        let outcome = changed(dir.path(), "attachments/photo.jpg", &file).unwrap();
+        match outcome {
+            Outcome::Changed { old_rel, new_rel } => {
+                assert_eq!(old_rel, "attachments/photo.jpg");
+                assert_eq!(new_rel, "attachments/photo.jpg");
+            }
+            Outcome::Skipped => panic!("in-place rewrite must not look like Skipped"),
+        }
     }
 
     #[test]

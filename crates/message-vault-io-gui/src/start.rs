@@ -953,7 +953,7 @@ fn run_vault_upload(
         max_retries: 3,
         batch_size: vault_push::DEFAULT_BATCH_SIZE,
         // A bit higher than the CLI default: guided import often has many small assets.
-        asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS.max(8),
+        asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
         report_path: None,

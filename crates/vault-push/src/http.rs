@@ -23,7 +23,9 @@ struct AuthCheckResponse {
     account_id: Option<String>,
     #[serde(default)]
     username: Option<String>,
+    /// Present on some vault versions; accepted for wire compat, unused here.
     #[serde(default)]
+    #[allow(dead_code)]
     account_ok: Option<bool>,
     #[serde(default)]
     error: Option<String>,

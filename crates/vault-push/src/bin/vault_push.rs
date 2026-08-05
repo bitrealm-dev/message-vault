@@ -51,7 +51,7 @@ struct Cli {
     #[arg(long)]
     skip_attachments: bool,
 
-    /// Re-hash attachment files and verify against export digest_sha256
+    /// Hash attachments and fail when on-disk sha256 differs from export digest_sha256
     #[arg(long, default_value_t = false)]
     verify_digests: bool,
 

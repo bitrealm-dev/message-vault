@@ -7,14 +7,17 @@ use message_ir::{
     IrDirection,
     IrParticipant,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
 use media::{CompressOptions, MediaMode, MediaReport};
 use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 /// Options passed into [`crate::FormatSink`] for media and obfuscation.
@@ -75,6 +78,10 @@ pub(crate) fn apply_media_remap(doc: &mut ConversationDocument, remap: &HashMap<
             if let Some(path) = att.path.as_mut() {
                 if let Some(new_rel) = remap.get(path.as_str()) {
                     *path = new_rel.clone();
+                    // Bytes on disk changed (possibly same path); drop stale digests.
+                    att.digest_sha256 = None;
+                    att.size_bytes = None;
+                    att.bytes = None;
                     if let Some(mime) = mime_for_rel(new_rel) {
                         att.mime_type = Some(mime);
                     }
@@ -171,6 +178,49 @@ fn obfuscate_attachment(att: &mut IrAttachment) {
     att.bytes = None;
 }
 
+fn refresh_missing_attachment_digests(
+    docs: &mut [ConversationDocument],
+    output_dir: &Path,
+) -> Result<()> {
+    for doc in docs.iter_mut() {
+        for msg in &mut doc.messages {
+            for att in &mut msg.attachments {
+                if att.digest_sha256.as_deref().is_some_and(|s| !s.is_empty()) {
+                    continue;
+                }
+                let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let abs = output_dir.join(rel);
+                if !abs.is_file() {
+                    continue;
+                }
+                let meta = fs::metadata(&abs)
+                    .with_context(|| format!("stat attachment {}", abs.display()))?;
+                att.size_bytes = Some(meta.len());
+                att.digest_sha256 = Some(hash_file_sha256(&abs)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hash_file_sha256(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn mime_for_rel(rel: &str) -> Option<String> {
     let ext = Path::new(rel)
         .extension()
@@ -226,6 +276,8 @@ pub(crate) fn apply_transforms(
         for doc in docs.iter_mut() {
             apply_media_remap(doc, &remap);
         }
+        // Recompute digests for remapped attachments so JSONL matches bytes on disk.
+        refresh_missing_attachment_digests(docs, output_dir)?;
     }
 
     let mut obfuscated_docs = 0usize;
@@ -317,6 +369,49 @@ mod tests {
             }],
             packaging_stem_suffix: None,
         }
+    }
+
+    #[test]
+    fn media_remap_clears_stale_digest() {
+        let mut doc = doc_with_image_attachment();
+        doc.messages[0].attachments[0].path = Some("attachments/photo.png".into());
+        doc.messages[0].attachments[0].digest_sha256 = Some("a".repeat(64));
+        doc.messages[0].attachments[0].size_bytes = Some(12);
+        let mut remap = HashMap::new();
+        remap.insert(
+            "attachments/photo.png".into(),
+            "attachments/photo.jpg".into(),
+        );
+        apply_media_remap(&mut doc, &remap);
+        let att = &doc.messages[0].attachments[0];
+        assert_eq!(att.path.as_deref(), Some("attachments/photo.jpg"));
+        assert!(att.digest_sha256.is_none());
+        assert!(att.size_bytes.is_none());
+        assert_eq!(att.mime_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn refresh_digests_fills_missing_after_remap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let att_dir = tmp.path().join("attachments");
+        fs::create_dir_all(&att_dir).unwrap();
+        let bytes = b"fresh-jpeg-bytes";
+        fs::write(att_dir.join("photo.jpg"), bytes).unwrap();
+
+        let mut docs = vec![doc_with_image_attachment()];
+        docs[0].messages[0].attachments[0].path = Some("attachments/photo.png".into());
+        docs[0].messages[0].attachments[0].digest_sha256 = Some("b".repeat(64));
+        let mut remap = HashMap::new();
+        remap.insert(
+            "attachments/photo.png".into(),
+            "attachments/photo.jpg".into(),
+        );
+        apply_media_remap(&mut docs[0], &remap);
+        refresh_missing_attachment_digests(&mut docs, tmp.path()).unwrap();
+        let att = &docs[0].messages[0].attachments[0];
+        let expected = hex::encode(Sha256::digest(bytes));
+        assert_eq!(att.digest_sha256.as_deref(), Some(expected.as_str()));
+        assert_eq!(att.size_bytes, Some(bytes.len() as u64));
     }
 
     #[test]

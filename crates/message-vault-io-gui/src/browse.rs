@@ -127,31 +127,74 @@ fn windows_to_wsl_path(path: &Path) -> io::Result<PathBuf> {
     }
 }
 
+// WinForms pickers use an invisible TopMost owner form so ShowDialog appears in
+// front when launched via powershell from WSL (otherwise often opens behind).
+
 const WINDOWS_FILE_PICKER: &str = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'FixedToolWindow'
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-32000, -32000)
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+$owner.Show()
+$owner.Activate()
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = 'Choose file'
 $dialog.CheckFileExists = $true
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-    [Console]::Write($dialog.FileName)
+try {
+    if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+        [Console]::Write($dialog.FileName)
+    }
+} finally {
+    $owner.Close()
+    $owner.Dispose()
 }
 "#;
 
 const WINDOWS_FOLDER_PICKER: &str = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'FixedToolWindow'
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-32000, -32000)
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+$owner.Show()
+$owner.Activate()
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
 $dialog.Description = 'Choose folder'
 $dialog.ShowNewFolderButton = $true
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-    [Console]::Write($dialog.SelectedPath)
+try {
+    if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+        [Console]::Write($dialog.SelectedPath)
+    }
+} finally {
+    $owner.Close()
+    $owner.Dispose()
 }
 "#;
 
 const WINDOWS_FILE_OR_FOLDER_PICKER: &str = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'FixedToolWindow'
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-32000, -32000)
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+$owner.Show()
+$owner.Activate()
 $sentinel = '__MESSAGE_VAULT_IO_SELECT_THIS_FOLDER__'
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = 'Choose file or open a folder and select Choose'
@@ -159,12 +202,17 @@ $dialog.CheckFileExists = $false
 $dialog.CheckPathExists = $true
 $dialog.ValidateNames = $false
 $dialog.FileName = $sentinel
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-    $selected = $dialog.FileName
-    if ([System.IO.Path]::GetFileName($selected) -eq $sentinel) {
-        $selected = [System.IO.Path]::GetDirectoryName($selected)
+try {
+    if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+        $selected = $dialog.FileName
+        if ([System.IO.Path]::GetFileName($selected) -eq $sentinel) {
+            $selected = [System.IO.Path]::GetDirectoryName($selected)
+        }
+        [Console]::Write($selected)
     }
-    [Console]::Write($selected)
+} finally {
+    $owner.Close()
+    $owner.Dispose()
 }
 "#;
 
