@@ -12,6 +12,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -454,7 +455,7 @@ fn pending_to_document(
         .map(|h| IrParticipant {
             handle: h.clone(),
             display_name: None,
-            handle_type: None,
+            handle_type: Some(HandleType::Phone),
         })
         .collect();
 
