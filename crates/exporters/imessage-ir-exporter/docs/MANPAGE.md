@@ -19,7 +19,7 @@ imessage-ir-exporter --output <DIR>
 
 Reads Apple Messages from a macOS `chat.db` or an iOS backup via [`imessage-database`](https://crates.io/crates/imessage-database), builds a common message per conversation, and projects JSON (default), JSONL, CSV, EML, MBOX, or SyncTech XML.
 
-The desktop GUI **iPhone backup** path uses this exporter for every output format. Media modes and obfuscate apply through the shared packaging pipeline. Library entrypoint: `imessage_ir_exporter::run` with `SourceConfig::Apple`.
+The desktop app's iPhone backup path uses this exporter for every output format. Media modes and obfuscation apply through the shared packaging pipeline.
 
 License: GPL-3.0-or-later (same as `imessage-database` / `crabapple`).
 

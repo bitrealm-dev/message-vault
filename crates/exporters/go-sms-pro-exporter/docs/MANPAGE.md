@@ -21,7 +21,7 @@ Reads a **GO SMS Pro** (GOMO / Jiubang) backup folder — `gosms_sys*.xml` for S
 
 PDU decoding is heuristic (MMS Encapsulation / WSP-inspired); many stub PDUs are empty. Owner phone(s) are required for PDU direction and chat grouping — wrong values flip sent/received. Pass `--contacts` or `--vcf` to fill display names.
 
-Library API: `ExporterConfig` / `run` (desktop GUI). Thanks: [python-messaging](https://github.com/pmarti/python-messaging).
+Thanks: [python-messaging](https://github.com/pmarti/python-messaging).
 
 # OPTIONS
 

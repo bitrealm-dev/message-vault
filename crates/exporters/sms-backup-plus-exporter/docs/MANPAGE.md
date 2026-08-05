@@ -24,7 +24,7 @@ Converts offline **SMS Backup+** `.eml` exports (targeted **1.5.11**) into a com
 
 Backups appear as **one file per message** or **archive emails** (many messages in one body). Multiple `--input` roots are merged and path-deduped; duplicate messages are kept once.
 
-Owner phone and email may come from flags or `config/owner.toml` (`phones`, `emails`, optional `source_dirs`). Optional `--name-mapping` defaults to `config/name-mapping.csv` when present. Contacts resolve name↔phone; without `--contacts`/`--vcf`, a warning is printed. The GUI always runs `convert` with `--verbose`.
+Owner phone and email may come from flags or `config/owner.toml` (`phones`, `emails`, optional `source_dirs`). Optional `--name-mapping` defaults to `config/name-mapping.csv` when present. Contacts resolve name↔phone; without `--contacts`/`--vcf`, a warning is printed. The desktop app converts with verbose logging.
 
 # OPTIONS
 
@@ -39,7 +39,7 @@ Owner phone and email may come from flags or `config/owner.toml` (`phones`, `ema
 ## convert
 
 **--input** *PATH*
-: An `.eml` file or directory of EMLs. Repeatable. Default: `source_dirs` from `config/owner.toml` when set. Exactly one path is required by the GUI.
+: An `.eml` file or directory of EMLs. Repeatable. Default: `source_dirs` from `config/owner.toml` when set. The desktop app requires exactly one path.
 
 **--output** *DIR*
 : Destination for packaging output and `attachments/`.
@@ -87,7 +87,7 @@ Non-zero on missing identity/input, convert errors, or total media-tool failure.
 : Output in the selected format. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. Media can be written under `attachments/`. Unresolved peers use an `unknown` conversation stem.
 
 **config/owner.toml**
-: Optional defaults for phones, emails, and `source_dirs` (crate-relative when built from source).
+: Optional defaults for phones, emails, and `source_dirs` (relative to the config directory).
 
 # ENVIRONMENT
 

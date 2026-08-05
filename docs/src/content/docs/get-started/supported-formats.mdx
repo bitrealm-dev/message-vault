@@ -1,11 +1,11 @@
 ---
 title: Supported formats
-description: Choose the right source format and output format for Message Vault exports and imports.
+description: Choose the right source format and output format for Message Exporters exports and imports.
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 
-Message Vault has two format questions: where the messages come from, and what files you want written (or uploaded) afterward.
+Message Exporters has two format questions: where the messages come from, and what files you want written (or uploaded) afterward.
 
 ## Source formats (what you start with)
 
@@ -33,12 +33,12 @@ Use these guides when you are extracting from a phone backup or an existing app 
   The guided **Home → Vault Credentials → Import Messages** flow extracts and uploads Apple Messages as JSONL from an **iPhone backup** or a **macOS `chat.db`**. Use Extract Messages plus the source guides above for WhatsApp, Android, and rescue formats, then [import the JSONL folder to Message Vault](/work-with-exports/import-to-vault/) when you are ready.
 </Aside>
 
-## Output formats (what Message Vault writes)
+## Output formats (what Message Exporters writes)
 
 Extract Messages always writes **JSONL** first. Use the Format tab or the output-format guide when you need another packaging:
 
 - [Choose an output format](/work-with-exports/output-formats/) — CSV, JSON, JSONL, EML, MBOX, Android XML
-- [Convert the format](/work-with-exports/convert-format/) — turn an existing Message Vault folder into another format
+- [Convert the format](/work-with-exports/convert-format/) — turn an existing Message Exporters folder into another format
 - [Export structure](/understand-output/export-structure/) — how folders and attachment paths are laid out
 
 JSONL is also the format Message Vault import expects when you [upload to the vault](/work-with-exports/import-to-vault/).

@@ -21,7 +21,7 @@ whatsapp-exporter --output <DIR> --platform android|ios
 
 Shells out to KnugiHK **wtsexporter** ([WhatsApp-Chat-Exporter](https://github.com/KnugiHK/WhatsApp-Chat-Exporter) ≥ 0.13), then maps its JSON into the common message and projects JSON (default) or another `--format`. Conversation stems use the `__whatsapp` suffix.
 
-Extraction runs in a temp directory under `--output` (removed afterward). `--platform` is required unless `--json` (convert-only, no extract). The GUI does not pass `--input`.
+Extraction runs in a temp directory under `--output` (removed afterward). `--platform` is required unless `--json` (convert-only, no extract).
 
 Install the helper with `pip install 'whatsapp-chat-exporter[android_backup,crypt15]'`, use the release-bundled binary beside this tool, or set `WTSEXPORTER`. Prefer this over iMazing WhatsApp CSV when you have the native DB/backup.
 
@@ -43,10 +43,10 @@ Install the helper with `pip install 'whatsapp-chat-exporter[android_backup,cryp
 : Skip wtsexporter; convert an existing `result.json`.
 
 **--key** *KEY|PATH*
-: Crypt key file path or crypt15 hex string (forwarded as `-k`). Not saved by the GUI to `export.ini`.
+: Crypt key file path or crypt15 hex string (forwarded as `-k`).
 
 **--backup** *PATH*
-: Encrypted Android backup or iOS backup path (forwarded as `-b`). Required for iOS in the GUI.
+: Encrypted Android backup or iOS backup path (forwarded as `-b`). Required for iOS.
 
 **--wa** *PATH*
 : Contacts DB `wa.db` / `ContactsV2.sqlite` (forwarded as `-w`).
@@ -74,7 +74,7 @@ Install the helper with `pip install 'whatsapp-chat-exporter[android_backup,cryp
 
 # EXIT STATUS
 
-Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or media tools fail entirely. Spawn hints for broken pipx shims are printed on failure.
+Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or media tools fail entirely.
 
 # FILES
 

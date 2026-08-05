@@ -16,9 +16,9 @@ Photos and other media are saved next to those files when the format needs them.
 
 Read the full guide (install, desktop app, supported backups, CSV layout):
 
-**https://bitrealm-dev.github.io/message-vault-io/**
+**https://bitrealm-dev.github.io/exporters/**
 
-Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published with Astro Starlight.
+Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
 
 ## Quick start
 

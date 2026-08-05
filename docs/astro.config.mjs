@@ -12,7 +12,7 @@ export default defineConfig({
   base: '/message-vault-io/',
   integrations: [
     starlight({
-      title: 'Message Vault',
+      title: 'Message Exporters',
       description:
         'Turn Apple and Android message backups into files you can keep and open.',
       plugins: [starlightBasePath()],
@@ -93,6 +93,7 @@ export default defineConfig({
             'reference/cli/sms-backup-restore-exporter',
             'reference/cli/whatsapp-exporter',
             'reference/cli/message-reexporter',
+            'reference/cli/vault-push',
             'reference/cli/go-sms-pro-exporter',
             'reference/cli/imazing-exporter',
             'reference/cli/openextract-exporter',

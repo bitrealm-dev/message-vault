@@ -37,4 +37,4 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 ## See also
 
-Message Vault GUI → **Vault** tab.
+The Message Exporters desktop app **Vault** tab, or the [Import to Message Vault](https://bitrealm-dev.github.io/message-vault-io/work-with-exports/import-to-vault/) user guide.

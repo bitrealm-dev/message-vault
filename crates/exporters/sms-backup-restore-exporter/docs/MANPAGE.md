@@ -25,8 +25,6 @@ Reads SyncTech **SMS Backup & Restore** XML (`sms-….xml`, targeted **10.26.003
 
 MMS media lands under `attachments/` when media copy is enabled; EML/MBOX embed bytes instead. Media convert/compress need `ffmpeg`/`ffprobe`. Call logs are not supported. Drafts, failed, and queued messages are skipped.
 
-Library API: `ExporterConfig` / `run` (used by the desktop GUI).
-
 # OPTIONS
 
 **--input** *PATH*
