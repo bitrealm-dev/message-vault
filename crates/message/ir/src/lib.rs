@@ -3,6 +3,10 @@
 //! Source exporters parse vendor formats into [`ConversationDocument`]. Packaging
 //! (FormatSink, readers/writers) lives in `message-ir-format`; directory convert
 //! in `message-reexport`. See the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md).
+//!
+//! Exporters stage parsed rows in the shared [`PendingMessage`] /
+//! [`PendingConversation`] intermediates (with per-exporter metadata in their
+//! `extra` maps) before converting them into [`ConversationDocument`].
 
 use message_csv::conversation_filename;
 use serde::{Deserialize, Serialize};
@@ -362,6 +366,82 @@ impl ConversationHeader {
             export: doc.export.clone(),
             conversation: doc.conversation.clone(),
         }
+    }
+}
+
+/// Intermediate message before conversion to [`IrMessage`].
+///
+/// Exporters parse vendor formats into these, then convert to
+/// [`ConversationDocument`] in their `pending_to_document` functions.
+/// Exporter-specific metadata goes in [`Self::extra`].
+#[derive(Debug, Clone)]
+pub struct PendingMessage {
+    /// Unix timestamp for chronological sort (seconds or milliseconds).
+    pub sort_key: i64,
+    pub is_from_me: bool,
+    pub sender_handle: String,
+    pub sender_display_name: Option<String>,
+    pub text: String,
+    /// Relative paths to staged attachment files.
+    pub attachments: Vec<PendingAttachment>,
+    /// Per-exporter metadata (e.g., key_id, android_type, xml_fields).
+    pub extra: std::collections::BTreeMap<String, String>,
+}
+
+impl PendingMessage {
+    /// Read an exporter-specific string field from [`Self::extra`].
+    pub fn extra_str(&self, key: &str) -> &str {
+        self.extra.get(key).map(String::as_str).unwrap_or("")
+    }
+
+    /// Read a boolean stored in [`Self::extra`] (values `"true"` / `"false"`).
+    pub fn extra_flag(&self, key: &str) -> bool {
+        self.extra.get(key).is_some_and(|v| v == "true")
+    }
+
+    /// Read an optional string field from [`Self::extra`] (empty = `None`).
+    pub fn extra_opt(&self, key: &str) -> Option<String> {
+        let v = self.extra_str(key);
+        (!v.is_empty()).then(|| v.to_string())
+    }
+}
+
+/// Intermediate attachment reference before conversion to [`IrAttachment`].
+#[derive(Debug, Clone)]
+pub struct PendingAttachment {
+    pub rel_path: String,
+    pub content_type: String,
+    pub extension: String,
+    pub digest_sha256: Option<String>,
+    /// Optional SMIL/content-location name.
+    pub name_hint: Option<String>,
+}
+
+impl PendingAttachment {
+    /// MIME type as an option; empty [`Self::content_type`] means `None`.
+    pub fn mime_type(&self) -> Option<String> {
+        (!self.content_type.is_empty()).then(|| self.content_type.clone())
+    }
+}
+
+/// Intermediate conversation before conversion to [`ConversationDocument`].
+#[derive(Debug, Clone)]
+pub struct PendingConversation {
+    pub chat_id: String,
+    pub display_name: Option<String>,
+    pub participant_e164s: Vec<String>,
+    pub messages: Vec<PendingMessage>,
+    pub is_group: bool,
+    /// Whether any message in this conversation has attachments.
+    pub has_attachments: bool,
+    /// Per-exporter metadata.
+    pub extra: std::collections::BTreeMap<String, String>,
+}
+
+impl PendingConversation {
+    /// Read an exporter-specific string field from [`Self::extra`].
+    pub fn extra_str(&self, key: &str) -> &str {
+        self.extra.get(key).map(String::as_str).unwrap_or("")
     }
 }
 
