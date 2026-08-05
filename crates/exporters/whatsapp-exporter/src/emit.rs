@@ -20,6 +20,9 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingAttachment,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
 };
@@ -41,36 +44,13 @@ fn bump(report: &mut ExportReport, key: &str, by: u64) {
     *report.extra.entry(key.to_string()).or_insert(0) += by;
 }
 
-#[derive(Debug)]
-struct PendingAttachment {
-    rel_path: String,
-    original_name: Option<String>,
-    mime_type: Option<String>,
-    is_sticker: bool,
-    digest_hex: String,
-}
-
-#[derive(Debug)]
-struct PendingMessage {
-    /// Unix milliseconds; same-second ties are broken by `key_id` during sort.
-    sort_key: i64,
-    is_from_me: bool,
-    sender_handle: String,
-    sender_display_name: String,
-    text: String,
-    key_id: String,
-    reply_json: String,
-    reactions_json: String,
-    attachments: Vec<PendingAttachment>,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    conversation_type: String,
-    group_title: Option<String>,
-    whatsapp_jid: String,
-    participant_e164s: Vec<String>,
-    messages: Vec<PendingMessage>,
+/// File extension without the leading dot, e.g. `"jpg"` for `"photo.jpg"`.
+fn ext_of(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Convert a wtsexporter `result.json` into per-chat CSV under `output`.
@@ -165,15 +145,17 @@ fn ingest_chat(
     }
 
     let mut pending = PendingConversation {
-        conversation_type: if group {
-            "group".into()
-        } else {
-            "individual".into()
-        },
-        group_title,
-        whatsapp_jid: jid.to_string(),
+        chat_id: chat_id.clone(),
+        display_name: group_title,
         participant_e164s: Vec::new(),
         messages: Vec::new(),
+        is_group: group,
+        has_attachments: false,
+        extra: {
+            let mut e = BTreeMap::new();
+            e.insert("whatsapp_jid".into(), jid.to_string());
+            e
+        },
     };
 
     let display_fallback = chat.name.clone().unwrap_or_default();
@@ -229,15 +211,18 @@ fn ingest_chat(
                     }
                 }
             }
-            Some(src) => vec![PendingAttachment {
-                rel_path: src.to_string(),
-                original_name: Path::new(src)
+            Some(src) => {
+                let name = Path::new(src)
                     .file_name()
-                    .map(|n| n.to_string_lossy().into_owned()),
-                mime_type: msg.mime.clone(),
-                is_sticker: msg.sticker,
-                digest_hex: digest_path_label(src),
-            }],
+                    .map(|n| n.to_string_lossy().into_owned());
+                vec![PendingAttachment {
+                    rel_path: src.to_string(),
+                    content_type: msg.mime.clone().unwrap_or_default(),
+                    extension: name.as_deref().map(ext_of).unwrap_or_default(),
+                    digest_sha256: Some(digest_path_label(src)),
+                    name_hint: name,
+                }]
+            }
             None => Vec::new(),
         };
 
@@ -245,12 +230,24 @@ fn ingest_chat(
             sort_key: timestamp_ms(ts_raw),
             is_from_me,
             sender_handle,
-            sender_display_name,
+            sender_display_name: if sender_display_name.is_empty() {
+                None
+            } else {
+                Some(sender_display_name)
+            },
             text,
-            key_id: key_id_string(msg),
-            reply_json: optional_json(&msg.reply),
-            reactions_json: reactions_json(&msg.reactions),
             attachments,
+            extra: {
+                let mut e = BTreeMap::new();
+                e.insert("key_id".into(), key_id_string(msg));
+                e.insert("reply_json".into(), optional_json(&msg.reply));
+                e.insert("reactions_json".into(), reactions_json(&msg.reactions));
+                e.insert(
+                    "is_sticker".into(),
+                    if msg.sticker { "true" } else { "false" }.into(),
+                );
+                e
+            },
         });
     }
 
@@ -320,10 +317,10 @@ fn copy_media(
     let digest = file_sha256(&dest)?;
     Ok(Some(PendingAttachment {
         rel_path: rel,
-        original_name: Some(original),
-        mime_type: msg.mime.clone(),
-        is_sticker: msg.sticker,
-        digest_hex: digest,
+        content_type: msg.mime.clone().unwrap_or_default(),
+        extension: ext_of(&original),
+        digest_sha256: Some(digest),
+        name_hint: Some(original),
     }))
 }
 
@@ -431,7 +428,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     convo.messages.sort_by(|a, b| {
         a.sort_key
             .cmp(&b.sort_key)
-            .then_with(|| a.key_id.cmp(&b.key_id))
+            .then_with(|| a.extra_str("key_id").cmp(b.extra_str("key_id")))
     });
     convo.messages.retain(|m| {
         if format_local_ts(m.sort_key / 1000).is_some() {
@@ -441,6 +438,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
@@ -481,21 +479,21 @@ fn pending_to_document(
         let mut digests: Vec<String> = msg
             .attachments
             .iter()
-            .map(|a| a.digest_hex.clone())
+            .map(|a| a.digest_sha256.clone().unwrap_or_default())
             .collect();
         // key_id uniquely identifies a WhatsApp message; feed it into the GUID
         // so same-second messages with identical text get distinct GUIDs.
-        digests.push(msg.key_id.clone());
+        digests.push(msg.extra_str("key_id").to_string());
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
             .map(|a| IrAttachment {
                 path: Some(a.rel_path.clone()),
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: Some(a.digest_hex.clone()),
-                is_sticker: a.is_sticker,
+                original_name: a.name_hint.clone(),
+                mime_type: a.mime_type(),
+                digest_sha256: a.digest_sha256.clone(),
+                is_sticker: msg.extra_flag("is_sticker"),
                 transcription: None,
                 sticker_effect: None,
                 size_bytes: None,
@@ -509,30 +507,31 @@ fn pending_to_document(
         };
 
         let mut fields = Map::new();
-        if !convo.whatsapp_jid.is_empty() {
+        let whatsapp_jid = convo.extra_str("whatsapp_jid");
+        if !whatsapp_jid.is_empty() {
             fields.insert(
                 "jid".into(),
-                serde_json::Value::String(convo.whatsapp_jid.clone()),
+                serde_json::Value::String(whatsapp_jid.to_string()),
             );
         }
-        if !msg.key_id.is_empty() {
-            fields.insert(
-                "key_id".into(),
-                serde_json::Value::String(msg.key_id.clone()),
-            );
+        let key_id = msg.extra_str("key_id");
+        if !key_id.is_empty() {
+            fields.insert("key_id".into(), serde_json::Value::String(key_id.to_string()));
         }
-        if !msg.reply_json.is_empty() {
+        let reply_json = msg.extra_str("reply_json");
+        if !reply_json.is_empty() {
             fields.insert(
                 "reply".into(),
-                serde_json::from_str(&msg.reply_json)
-                    .unwrap_or_else(|_| serde_json::Value::String(msg.reply_json.clone())),
+                serde_json::from_str(reply_json)
+                    .unwrap_or_else(|_| serde_json::Value::String(reply_json.to_string())),
             );
         }
-        if !msg.reactions_json.is_empty() {
+        let reactions_json = msg.extra_str("reactions_json");
+        if !reactions_json.is_empty() {
             fields.insert(
                 "reactions".into(),
-                serde_json::from_str(&msg.reactions_json)
-                    .unwrap_or_else(|_| serde_json::Value::String(msg.reactions_json.clone())),
+                serde_json::from_str(reactions_json)
+                    .unwrap_or_else(|_| serde_json::Value::String(reactions_json.to_string())),
             );
         }
         let source = IrSource {
@@ -550,11 +549,7 @@ fn pending_to_document(
                 } else {
                     Some(msg.sender_handle.clone())
                 },
-                if msg.sender_display_name.is_empty() {
-                    None
-                } else {
-                    Some(msg.sender_display_name.clone())
-                },
+                msg.sender_display_name.clone(),
             )
         };
 
@@ -583,8 +578,12 @@ fn pending_to_document(
         export,
         conversation: ConversationMeta {
             chat_identifier: chat_id.to_string(),
-            conversation_type: IrConversationType::parse(&convo.conversation_type),
-            group_title: convo.group_title.clone(),
+            conversation_type: if convo.is_group {
+                IrConversationType::Group
+            } else {
+                IrConversationType::Individual
+            },
+            group_title: convo.display_name.clone(),
             participants,
             stats: ConversationStats::default(),
         },

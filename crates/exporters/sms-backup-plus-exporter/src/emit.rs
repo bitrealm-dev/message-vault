@@ -22,6 +22,9 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingAttachment,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
     parse_android_type,
@@ -29,7 +32,7 @@ use message_ir::{
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{OwnerPhoneSet, to_e164};
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -45,40 +48,6 @@ fn bump(report: &mut ExportReport, key: &str, by: u64) {
 /// Read a per-exporter counter from the report's `extra` map.
 fn count(report: &ExportReport, key: &str) -> u64 {
     report.extra.get(key).copied().unwrap_or(0)
-}
-
-#[derive(Debug, Clone)]
-struct PendingAttachment {
-    rel_path: String,
-    original_name: Option<String>,
-    mime_type: Option<String>,
-    digest_hex: String,
-}
-
-#[derive(Debug, Clone)]
-struct PendingMessage {
-    sort_key: f64,
-    is_from_me: bool,
-    sender_digits: Option<String>,
-    sender_display_name: Option<String>,
-    text: String,
-    attachments: Vec<PendingAttachment>,
-    source_kind: String,
-    smssync_id: String,
-    date_ms: String,
-    contact_name: String,
-    android_type: String,
-    eml_path: String,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    conversation_type: String,
-    group_title: Option<String>,
-    participant_e164s: Vec<String>,
-    messages: Vec<PendingMessage>,
-    /// Fingerprint → index in `messages` (online dedupe; keep earliest `sort_key`).
-    by_identity: HashMap<String, usize>,
 }
 
 fn relative_eml_path(
@@ -131,9 +100,14 @@ fn write_attachments(
         }
         out.push(PendingAttachment {
             rel_path: format!("attachments/{}", blob.filename),
-            original_name: blob.original_name.clone(),
-            mime_type: blob.mime_type.clone(),
-            digest_hex: blob.digest_hex.clone(),
+            content_type: blob.mime_type.clone().unwrap_or_default(),
+            extension: Path::new(&blob.filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_string(),
+            digest_sha256: Some(blob.digest_hex.clone()),
+            name_hint: blob.original_name.clone(),
         });
     }
     out
@@ -142,8 +116,8 @@ fn write_attachments(
 fn ensure_convo<'a>(
     map: &'a mut HashMap<String, PendingConversation>,
     chat_id: &str,
-    conversation_type: &str,
-    group_title: Option<String>,
+    is_group: bool,
+    display_name: Option<String>,
     participant_e164s: Vec<String>,
 ) -> &'a mut PendingConversation {
     // Avoid allocating a new String on every message for an existing chat.
@@ -151,11 +125,13 @@ fn ensure_convo<'a>(
         map.insert(
             chat_id.to_string(),
             PendingConversation {
-                conversation_type: conversation_type.to_string(),
-                group_title,
+                chat_id: chat_id.to_string(),
+                display_name,
                 participant_e164s: Vec::new(),
                 messages: Vec::new(),
-                by_identity: HashMap::new(),
+                is_group,
+                has_attachments: false,
+                extra: BTreeMap::new(),
             },
         );
     }
@@ -175,7 +151,7 @@ fn ensure_convo<'a>(
 
 /// Prefer flat over archive (richer metadata); otherwise keep the earlier timestamp.
 fn should_replace_kept(existing: &PendingMessage, incoming: &ParsedMessage) -> bool {
-    let existing_flat = existing.source_kind == "flat";
+    let existing_flat = existing.extra_str("source_kind") == "flat";
     let incoming_flat = incoming.source_kind == "flat";
     if incoming_flat && !existing_flat {
         return true;
@@ -189,18 +165,21 @@ fn should_replace_kept(existing: &PendingMessage, incoming: &ParsedMessage) -> b
             .smssync_id
             .as_ref()
             .is_some_and(|s| !s.trim().is_empty())
-        && existing.smssync_id.trim().is_empty()
+        && existing.extra_str("smssync_id").trim().is_empty()
     {
         return true;
     }
-    incoming.timestamp_secs < existing.sort_key
+    (incoming.timestamp_secs as i64) < existing.sort_key
 }
 
 /// Union attachment lists by content digest so flat↔archive dedupe does not drop media.
 fn merge_attachments(into: &mut Vec<PendingAttachment>, from: Vec<PendingAttachment>) {
-    let mut seen: HashSet<String> = into.iter().map(|a| a.digest_hex.clone()).collect();
+    let mut seen: HashSet<String> = into
+        .iter()
+        .map(|a| a.digest_sha256.clone().unwrap_or_default())
+        .collect();
     for att in from {
-        if seen.insert(att.digest_hex.clone()) {
+        if seen.insert(att.digest_sha256.clone().unwrap_or_default()) {
             into.push(att);
         }
     }
@@ -210,23 +189,28 @@ fn pending_from_parsed(msg: ParsedMessage, pending_atts: Vec<PendingAttachment>)
     let date_ms = timestamp_ms(msg.timestamp_secs).to_string();
     let name = msg.name_hint.clone().unwrap_or_default();
     PendingMessage {
-        sort_key: msg.timestamp_secs,
+        sort_key: msg.timestamp_secs as i64,
         is_from_me: msg.is_from_me,
-        sender_digits: msg.sender_digits,
+        sender_handle: msg.sender_digits.unwrap_or_default(),
         sender_display_name: msg.name_hint,
         text: msg.text,
         attachments: pending_atts,
-        source_kind: msg.source_kind,
-        smssync_id: msg.smssync_id.unwrap_or_default(),
-        date_ms,
-        contact_name: name,
-        android_type: msg.android_type,
-        eml_path: msg.eml_path,
+        extra: {
+            let mut e = BTreeMap::new();
+            e.insert("source_kind".into(), msg.source_kind);
+            e.insert("smssync_id".into(), msg.smssync_id.unwrap_or_default());
+            e.insert("date_ms".into(), date_ms);
+            e.insert("contact_name".into(), name);
+            e.insert("android_type".into(), msg.android_type);
+            e.insert("eml_path".into(), msg.eml_path);
+            e
+        },
     }
 }
 
 fn add_message(
     conversations: &mut HashMap<String, PendingConversation>,
+    by_identity: &mut HashMap<String, HashMap<String, usize>>,
     msg: ParsedMessage,
     pending_atts: Vec<PendingAttachment>,
     report: &mut ExportReport,
@@ -243,14 +227,19 @@ fn add_message(
     let convo = ensure_convo(
         conversations,
         &chat_id,
-        &msg.conversation_type,
+        msg.conversation_type == "group",
         msg.group_title.clone(),
         peers,
     );
 
     bump(report, "messages_before_dedupe", 1);
 
-    if let Some(&idx) = convo.by_identity.get(&dedupe_key) {
+    // Online dedupe state keyed by chat id: fingerprint → index in `messages`
+    // (keep earliest `sort_key`). The shared PendingConversation carries
+    // document data only.
+    let idx_map = by_identity.entry(chat_id.clone()).or_default();
+
+    if let Some(&idx) = idx_map.get(&dedupe_key) {
         report.duplicates_dropped += 1;
         if should_replace_kept(&convo.messages[idx], &msg) {
             let kept_atts = std::mem::take(&mut convo.messages[idx].attachments);
@@ -264,7 +253,7 @@ fn add_message(
     }
 
     let idx = convo.messages.len();
-    convo.by_identity.insert(dedupe_key, idx);
+    idx_map.insert(dedupe_key, idx);
     convo.messages.push(pending_from_parsed(msg, pending_atts));
 }
 
@@ -272,27 +261,24 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     if convo.messages.is_empty() {
         return false;
     }
-    convo.messages.sort_by(|a, b| {
-        a.sort_key
-            .partial_cmp(&b.sort_key)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    convo.messages.sort_by_key(|m| m.sort_key);
     convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key as i64).is_some() {
+        if format_local_ts(m.sort_key).is_some() {
             true
         } else {
             report.skipped_invalid_date += 1;
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
 fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for msg in &convo.messages {
-        if let Some(digits) = &msg.sender_digits {
-            let handle = to_e164(digits);
+        if !msg.sender_handle.is_empty() {
+            let handle = to_e164(&msg.sender_handle);
             if let Some(name) = msg
                 .sender_display_name
                 .as_deref()
@@ -302,8 +288,8 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
                 names.entry(handle).or_insert_with(|| name.to_string());
             }
         }
-        if convo.conversation_type == "individual" {
-            let name = msg.contact_name.trim();
+        if !convo.is_group {
+            let name = msg.extra_str("contact_name").trim();
             if !name.is_empty() {
                 for peer in &convo.participant_e164s {
                     names
@@ -332,14 +318,14 @@ fn pending_to_document(
             display_name: name_by_handle.get(h).cloned(),
         })
         .collect();
-    if participants.is_empty() && convo.conversation_type == "individual" && !chat_id.is_empty() {
+    if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
             display_name: name_by_handle.get(chat_id).cloned().or_else(|| {
                 convo
                     .messages
                     .iter()
-                    .map(|m| m.contact_name.trim())
+                    .map(|m| m.extra_str("contact_name").trim())
                     .find(|n| !n.is_empty())
                     .map(str::to_string)
             }),
@@ -363,23 +349,27 @@ fn pending_to_document(
             report.received += 1;
         }
         report.messages += 1;
-        let secs = msg.sort_key as i64;
+        let secs = msg.sort_key;
         let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
         let digests: Vec<String> = msg
             .attachments
             .iter()
-            .map(|a| a.digest_hex.clone())
+            .map(|a| a.digest_sha256.clone().unwrap_or_default())
             .collect();
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let timestamp_unix_ms = msg
-            .date_ms
+            .extra_str("date_ms")
             .parse::<i64>()
             .unwrap_or_else(|_| secs.saturating_mul(1000));
         let (sender_handle, sender_display_name) = if msg.is_from_me {
             (owner_sender_handle.clone(), owner_sender_display.clone())
         } else {
             (
-                msg.sender_digits.as_ref().map(|d| to_e164(d)),
+                if msg.sender_handle.is_empty() {
+                    None
+                } else {
+                    Some(to_e164(&msg.sender_handle))
+                },
                 msg.sender_display_name.clone(),
             )
         };
@@ -388,9 +378,9 @@ fn pending_to_document(
             .iter()
             .map(|a| IrAttachment {
                 path: Some(a.rel_path.clone()),
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: Some(a.digest_hex.clone()),
+                original_name: a.name_hint.clone(),
+                mime_type: a.mime_type(),
+                digest_sha256: a.digest_sha256.clone(),
                 is_sticker: false,
                 transcription: None,
                 sticker_effect: None,
@@ -405,25 +395,28 @@ fn pending_to_document(
         };
 
         let mut fields = serde_json::Map::new();
-        if !msg.source_kind.is_empty() {
+        let source_kind = msg.extra_str("source_kind");
+        if !source_kind.is_empty() {
             fields.insert(
                 "source_kind".into(),
-                serde_json::Value::String(msg.source_kind.clone()),
+                serde_json::Value::String(source_kind.to_string()),
             );
         }
-        if !msg.smssync_id.is_empty() {
+        let smssync_id = msg.extra_str("smssync_id");
+        if !smssync_id.is_empty() {
             fields.insert(
                 "smssync_id".into(),
-                serde_json::Value::String(msg.smssync_id.clone()),
+                serde_json::Value::String(smssync_id.to_string()),
             );
         }
-        if !msg.eml_path.is_empty() {
+        let eml_path = msg.extra_str("eml_path");
+        if !eml_path.is_empty() {
             fields.insert(
                 "eml_path".into(),
-                serde_json::Value::String(msg.eml_path.clone()),
+                serde_json::Value::String(eml_path.to_string()),
             );
         }
-        if let Some(title) = convo.group_title.as_deref().filter(|t| !t.is_empty()) {
+        if let Some(title) = convo.display_name.as_deref().filter(|t| !t.is_empty()) {
             // Synthetic group label; kept as data, not used for filenames.
             fields.insert(
                 "android_group_title".into(),
@@ -431,7 +424,7 @@ fn pending_to_document(
             );
         }
         let source = IrSource {
-            android_type: parse_android_type(&msg.android_type),
+            android_type: parse_android_type(msg.extra_str("android_type")),
             fields,
         }
         .into_option();
@@ -461,7 +454,11 @@ fn pending_to_document(
         export,
         conversation: ConversationMeta {
             chat_identifier: chat_id.to_string(),
-            conversation_type: IrConversationType::parse(&convo.conversation_type),
+            conversation_type: if convo.is_group {
+                IrConversationType::Group
+            } else {
+                IrConversationType::Individual
+            },
             // Synthetic Android group titles are not used for filenames.
             group_title: None,
             participants,
@@ -659,6 +656,9 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         .collect();
     let mut report = ExportReport::default();
     let mut conversations: HashMap<String, PendingConversation> = HashMap::new();
+    // Online dedupe state (fingerprint → message index) keyed by chat id;
+    // the shared PendingConversation carries document data only.
+    let mut by_identity: HashMap<String, HashMap<String, usize>> = HashMap::new();
 
     vlog(
         verbose,
@@ -743,7 +743,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                         copy_attachments,
                         &path_display,
                     );
-                    add_message(&mut conversations, msg, atts, &mut report);
+                    add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
                 }
             }
             ParsedEmlKind::Flat { msg, path_display } => {
@@ -763,7 +763,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     copy_attachments,
                     &path_display,
                 );
-                add_message(&mut conversations, msg, atts, &mut report);
+                add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
             }
             ParsedEmlKind::FlatNone => {
                 bump(&mut report, "skipped_parse_error", 1);
@@ -856,27 +856,30 @@ mod tests {
     fn merge_attachments_unions_by_digest() {
         let mut into = vec![PendingAttachment {
             rel_path: "attachments/a.jpg".into(),
-            original_name: Some("a.jpg".into()),
-            mime_type: Some("image/jpeg".into()),
-            digest_hex: "aaa".into(),
+            content_type: "image/jpeg".into(),
+            extension: "jpg".into(),
+            digest_sha256: Some("aaa".into()),
+            name_hint: Some("a.jpg".into()),
         }];
         let from = vec![
             PendingAttachment {
                 rel_path: "attachments/a.jpg".into(),
-                original_name: Some("a.jpg".into()),
-                mime_type: Some("image/jpeg".into()),
-                digest_hex: "aaa".into(),
+                content_type: "image/jpeg".into(),
+                extension: "jpg".into(),
+                digest_sha256: Some("aaa".into()),
+                name_hint: Some("a.jpg".into()),
             },
             PendingAttachment {
                 rel_path: "attachments/b.jpg".into(),
-                original_name: Some("b.jpg".into()),
-                mime_type: Some("image/jpeg".into()),
-                digest_hex: "bbb".into(),
+                content_type: "image/jpeg".into(),
+                extension: "jpg".into(),
+                digest_sha256: Some("bbb".into()),
+                name_hint: Some("b.jpg".into()),
             },
         ];
         merge_attachments(&mut into, from);
         assert_eq!(into.len(), 2);
-        assert_eq!(into[1].digest_hex, "bbb");
+        assert_eq!(into[1].digest_sha256.as_deref(), Some("bbb"));
     }
 
     #[test]
@@ -907,7 +910,7 @@ mod tests {
         // The failing attachment is dropped, the good one survives, and the
         // failure is recorded instead of aborting the whole message.
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].digest_hex, "bbb");
+        assert_eq!(out[0].digest_sha256.as_deref(), Some("bbb"));
         assert!(att_dir.join("ok.jpg").exists());
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("failed to write attachment"));

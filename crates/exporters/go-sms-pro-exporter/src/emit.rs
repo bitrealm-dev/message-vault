@@ -20,6 +20,9 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingAttachment,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
     parse_android_type,
@@ -79,45 +82,6 @@ pub(crate) struct SkippedNoPartyDetail {
     pub is_sent: bool,
     pub has_from: bool,
     pub has_to: bool,
-}
-
-#[derive(Debug, Clone)]
-struct PendingAttachment {
-    /// Relative path under export dir, e.g. `attachments/20200101_000000-I_…_1.jpg`
-    rel_path: String,
-    original_name: Option<String>,
-    mime_type: Option<String>,
-    /// Bytes already written (for guid fingerprint).
-    digest_hex: String,
-}
-
-#[derive(Debug, Clone)]
-struct PendingMessage {
-    sort_key: f64,
-    is_from_me: bool,
-    sender_digits: Option<String>,
-    sender_display_name: Option<String>,
-    text: String,
-    attachments: Vec<PendingAttachment>,
-    /// For within-thread dedupe.
-    dedupe_key: String,
-    source_kind: &'static str,
-    android_type: String,
-    date_ms: String,
-    contact_name: String,
-    pdu_filename: String,
-    xml_fields: BTreeMap<String, String>,
-    pdu_fields: BTreeMap<String, String>,
-    pdu_decode: String,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    conversation_type: String,
-    group_title: Option<String>,
-    /// Non-owner peer E.164s for untitled group filenames.
-    participant_e164s: Vec<String>,
-    messages: Vec<PendingMessage>,
 }
 
 fn mime_for_ext(ext: &str) -> Option<&'static str> {
@@ -190,16 +154,19 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerPhoneSet) -> (Stri
 fn ensure_convo<'a>(
     map: &'a mut BTreeMap<String, PendingConversation>,
     chat_id: &str,
-    conversation_type: &str,
-    group_title: Option<String>,
+    is_group: bool,
+    display_name: Option<String>,
     participant_e164s: Vec<String>,
 ) -> &'a mut PendingConversation {
     map.entry(chat_id.to_string())
         .or_insert_with(|| PendingConversation {
-            conversation_type: conversation_type.to_string(),
-            group_title,
+            chat_id: chat_id.to_string(),
+            display_name,
             participant_e164s,
             messages: Vec::new(),
+            is_group,
+            has_attachments: false,
+            extra: BTreeMap::new(),
         })
 }
 
@@ -209,7 +176,7 @@ fn add_xml_messages(
 ) {
     for msg in msgs {
         let chat_id = chat_id_individual(&msg.other_digits);
-        let convo = ensure_convo(conversations, &chat_id, "individual", None, Vec::new());
+        let convo = ensure_convo(conversations, &chat_id, false, None, Vec::new());
         let dedupe_key = format!(
             "{}|{}|{}|",
             msg.timestamp_secs as i64,
@@ -217,21 +184,25 @@ fn add_xml_messages(
             msg.text
         );
         convo.messages.push(PendingMessage {
-            sort_key: msg.timestamp_secs,
+            sort_key: msg.timestamp_secs as i64,
             is_from_me: msg.is_from_me,
-            sender_digits: msg.sender_digits,
+            sender_handle: msg.sender_digits.unwrap_or_default(),
             sender_display_name: msg.name_hint.clone(),
             text: msg.text,
             attachments: Vec::new(),
-            dedupe_key,
-            source_kind: "xml",
-            android_type: msg.android_type,
-            date_ms: msg.date_ms,
-            contact_name: msg.contact_name,
-            pdu_filename: String::new(),
-            xml_fields: msg.xml_fields,
-            pdu_fields: BTreeMap::new(),
-            pdu_decode: String::new(),
+            extra: {
+                let mut e = BTreeMap::new();
+                e.insert("dedupe_key".into(), dedupe_key);
+                e.insert("source_kind".into(), "xml".to_string());
+                e.insert("android_type".into(), msg.android_type);
+                e.insert("date_ms".into(), msg.date_ms);
+                e.insert("contact_name".into(), msg.contact_name);
+                // XML rows carry no PDU diagnostics; absent keys read back empty.
+                for (k, v) in msg.xml_fields {
+                    e.insert(format!("xml:{k}"), v);
+                }
+                e
+            },
         });
     }
 }
@@ -272,9 +243,10 @@ fn save_pdu_attachments(
         }
         out.push(PendingAttachment {
             rel_path: format!("attachments/{name}"),
-            original_name: att.smil_name.clone().or(Some(name)),
-            mime_type: mime_for_ext(&att.ext).map(|s| s.to_string()),
-            digest_hex,
+            content_type: mime_for_ext(&att.ext).unwrap_or("").to_string(),
+            extension: att.ext.trim_start_matches('.').to_string(),
+            digest_sha256: Some(digest_hex),
+            name_hint: att.smil_name.clone().or(Some(name)),
         });
     }
     Ok(out)
@@ -318,7 +290,7 @@ fn add_pdu_message(
         return;
     }
 
-    let targets: Vec<(String, String, Option<String>, Vec<String>)> = if parsed.is_group {
+    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = if parsed.is_group {
         let (id, title) = chat_id_group(&parsed.participants, owners);
         let peers: Vec<String> = parsed
             .participants
@@ -326,7 +298,7 @@ fn add_pdu_message(
             .filter(|p| !p.is_empty() && !owners.is_owner(p))
             .map(|d| to_e164(d))
             .collect();
-        vec![(id, "group".to_string(), Some(title), peers)]
+        vec![(id, true, Some(title), peers)]
     } else {
         let others: Vec<_> = parsed
             .participants
@@ -350,12 +322,7 @@ fn add_pdu_message(
             return;
         }
         let other = &others[0];
-        vec![(
-            chat_id_individual(other),
-            "individual".to_string(),
-            None,
-            Vec::new(),
-        )]
+        vec![(chat_id_individual(other), false, None, Vec::new())]
     };
 
     bump(report, "pdu_messages", 1);
@@ -386,31 +353,33 @@ fn add_pdu_message(
     };
 
     let pending = PendingMessage {
-        sort_key: parsed.timestamp as f64,
+        sort_key: parsed.timestamp,
         is_from_me: parsed.is_sent,
-        sender_digits,
+        sender_handle: sender_digits.unwrap_or_default(),
         sender_display_name: None,
         text: parsed.body.clone(),
         attachments,
-        dedupe_key,
-        source_kind: "pdu",
-        android_type: String::new(),
-        date_ms: String::new(),
-        contact_name: String::new(),
-        pdu_filename,
-        xml_fields: BTreeMap::new(),
-        pdu_fields: parsed.pdu_fields.clone(),
-        pdu_decode: parsed.decode_quality.to_string(),
+        extra: {
+            let mut e = BTreeMap::new();
+            e.insert("dedupe_key".into(), dedupe_key);
+            e.insert("source_kind".into(), "pdu".to_string());
+            e.insert("android_type".into(), String::new());
+            e.insert("date_ms".into(), String::new());
+            e.insert("contact_name".into(), String::new());
+            e.insert("pdu_filename".into(), pdu_filename);
+            e.insert("pdu_decode".into(), parsed.decode_quality.to_string());
+            if !parsed.pdu_fields.is_empty() {
+                e.insert(
+                    "pdu_fields".into(),
+                    serde_json::to_string(&parsed.pdu_fields).unwrap_or_default(),
+                );
+            }
+            e
+        },
     };
 
-    for (chat_id, conversation_type, group_title, peers) in targets {
-        let convo = ensure_convo(
-            conversations,
-            &chat_id,
-            &conversation_type,
-            group_title,
-            peers,
-        );
+    for (chat_id, is_group, group_title, peers) in targets {
+        let convo = ensure_convo(conversations, &chat_id, is_group, group_title, peers);
         convo.messages.push(pending.clone());
     }
 }
@@ -432,7 +401,7 @@ fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
     let mut seen_base: HashMap<String, usize> = HashMap::new();
     let mut out: Vec<PendingMessage> = Vec::with_capacity(messages.len());
     for m in messages.drain(..) {
-        let base = dedupe_base_key(&m.dedupe_key).to_string();
+        let base = dedupe_base_key(m.extra_str("dedupe_key")).to_string();
         match seen_base.get(&base).copied() {
             None => {
                 seen_base.insert(base, out.len());
@@ -463,21 +432,22 @@ fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     dedupe_messages(&mut convo.messages);
     convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key as i64).is_some() {
+        if format_local_ts(m.sort_key).is_some() {
             true
         } else {
             report.skipped_invalid_date += 1;
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
 fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for msg in &convo.messages {
-        if let Some(digits) = &msg.sender_digits {
-            let handle = to_e164(digits);
+        if !msg.sender_handle.is_empty() {
+            let handle = to_e164(&msg.sender_handle);
             if let Some(name) = msg
                 .sender_display_name
                 .as_deref()
@@ -487,8 +457,8 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
                 names.entry(handle).or_insert_with(|| name.to_string());
             }
         }
-        if convo.conversation_type == "individual" {
-            let name = msg.contact_name.trim();
+        if !convo.is_group {
+            let name = msg.extra_str("contact_name").trim();
             if !name.is_empty() {
                 for peer in &convo.participant_e164s {
                     names
@@ -517,14 +487,14 @@ fn pending_to_document(
             display_name: name_by_handle.get(h).cloned(),
         })
         .collect();
-    if participants.is_empty() && convo.conversation_type == "individual" && !chat_id.is_empty() {
+    if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
             display_name: name_by_handle.get(chat_id).cloned().or_else(|| {
                 convo
                     .messages
                     .iter()
-                    .map(|m| m.contact_name.trim())
+                    .map(|m| m.extra_str("contact_name").trim())
                     .find(|n| !n.is_empty())
                     .map(str::to_string)
             }),
@@ -547,23 +517,27 @@ fn pending_to_document(
         } else {
             report.received += 1;
         }
-        let secs = msg.sort_key as i64;
+        let secs = msg.sort_key;
         let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
         let digests: Vec<String> = msg
             .attachments
             .iter()
-            .map(|a| a.digest_hex.clone())
+            .map(|a| a.digest_sha256.clone().unwrap_or_default())
             .collect();
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let timestamp_unix_ms = msg
-            .date_ms
+            .extra_str("date_ms")
             .parse::<i64>()
             .unwrap_or_else(|_| secs.saturating_mul(1000));
         let (sender_handle, sender_display_name) = if msg.is_from_me {
             (owner_sender_handle.clone(), owner_sender_display.clone())
         } else {
             (
-                msg.sender_digits.as_ref().map(|d| to_e164(d)),
+                if msg.sender_handle.is_empty() {
+                    None
+                } else {
+                    Some(to_e164(&msg.sender_handle))
+                },
                 msg.sender_display_name.clone(),
             )
         };
@@ -572,9 +546,9 @@ fn pending_to_document(
             .iter()
             .map(|a| IrAttachment {
                 path: Some(a.rel_path.clone()),
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: Some(a.digest_hex.clone()),
+                original_name: a.name_hint.clone(),
+                mime_type: a.mime_type(),
+                digest_sha256: a.digest_sha256.clone(),
                 is_sticker: false,
                 transcription: None,
                 sticker_effect: None,
@@ -591,32 +565,37 @@ fn pending_to_document(
         let mut fields = serde_json::Map::new();
         fields.insert(
             "source_kind".into(),
-            serde_json::Value::String(msg.source_kind.to_string()),
+            serde_json::Value::String(msg.extra_str("source_kind").to_string()),
         );
-        if !msg.pdu_filename.is_empty() {
+        let pdu_filename = msg.extra_str("pdu_filename");
+        if !pdu_filename.is_empty() {
             fields.insert(
                 "pdu_filename".into(),
-                serde_json::Value::String(msg.pdu_filename.clone()),
+                serde_json::Value::String(pdu_filename.to_string()),
             );
         }
-        if !msg.pdu_decode.is_empty() {
+        let pdu_decode = msg.extra_str("pdu_decode");
+        if !pdu_decode.is_empty() {
             fields.insert(
                 "pdu_decode".into(),
-                serde_json::Value::String(msg.pdu_decode.clone()),
+                serde_json::Value::String(pdu_decode.to_string()),
             );
         }
-        if !msg.pdu_fields.is_empty() {
+        let pdu_fields = msg.extra_str("pdu_fields");
+        if !pdu_fields.is_empty() {
             fields.insert(
                 "pdu_fields".into(),
-                serde_json::to_value(&msg.pdu_fields).unwrap_or(serde_json::Value::Null),
+                serde_json::from_str(pdu_fields).unwrap_or(serde_json::Value::Null),
             );
         }
-        for (k, v) in &msg.xml_fields {
-            fields
-                .entry(k.clone())
-                .or_insert_with(|| serde_json::Value::String(v.clone()));
+        for (k, v) in &msg.extra {
+            if let Some(k) = k.strip_prefix("xml:") {
+                fields
+                    .entry(k.to_string())
+                    .or_insert_with(|| serde_json::Value::String(v.clone()));
+            }
         }
-        if let Some(title) = convo.group_title.as_deref().filter(|t| !t.is_empty()) {
+        if let Some(title) = convo.display_name.as_deref().filter(|t| !t.is_empty()) {
             // Synthetic Android group label; kept as data, not used for filenames.
             fields.insert(
                 "android_group_title".into(),
@@ -624,7 +603,7 @@ fn pending_to_document(
             );
         }
         let source = IrSource {
-            android_type: parse_android_type(&msg.android_type),
+            android_type: parse_android_type(msg.extra_str("android_type")),
             fields,
         }
         .into_option();
@@ -654,7 +633,11 @@ fn pending_to_document(
         export,
         conversation: ConversationMeta {
             chat_identifier: chat_id.to_string(),
-            conversation_type: IrConversationType::parse(&convo.conversation_type),
+            conversation_type: if convo.is_group {
+                IrConversationType::Group
+            } else {
+                IrConversationType::Individual
+            },
             // Synthetic Android group titles are not used for filenames.
             group_title: None,
             participants,
@@ -666,15 +649,15 @@ fn pending_to_document(
 }
 
 fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMessage) {
-    let phones: Vec<&str> = msg
-        .sender_digits
-        .as_deref()
-        .into_iter()
-        .chain(std::iter::once(chat_id))
-        .collect();
+    let phones: Vec<&str> = if msg.sender_handle.is_empty() {
+        vec![chat_id]
+    } else {
+        vec![msg.sender_handle.as_str(), chat_id]
+    };
     for phone in phones {
-        if let Some(name) = book.enrich_display_name(phone, &msg.contact_name) {
-            msg.contact_name = name;
+        let contact_name = msg.extra_str("contact_name").to_string();
+        if let Some(name) = book.enrich_display_name(phone, &contact_name) {
+            msg.extra.insert("contact_name".into(), name);
         }
         let cur = msg.sender_display_name.as_deref().unwrap_or("");
         if let Some(name) = book.enrich_display_name(phone, cur) {
@@ -955,28 +938,26 @@ mod tests {
 
     fn test_msg(key: &str, attachments: usize) -> PendingMessage {
         PendingMessage {
-            sort_key: 1609459200.0,
+            sort_key: 1609459200,
             is_from_me: false,
-            sender_digits: None,
+            sender_handle: String::new(),
             sender_display_name: None,
             text: String::new(),
             attachments: (0..attachments)
                 .map(|i| PendingAttachment {
                     rel_path: format!("attachments/a{i}.jpg"),
-                    original_name: None,
-                    mime_type: None,
-                    digest_hex: String::new(),
+                    content_type: String::new(),
+                    extension: "jpg".into(),
+                    digest_sha256: None,
+                    name_hint: None,
                 })
                 .collect(),
-            dedupe_key: key.to_string(),
-            source_kind: "xml",
-            android_type: String::new(),
-            date_ms: String::new(),
-            contact_name: String::new(),
-            pdu_filename: String::new(),
-            xml_fields: BTreeMap::new(),
-            pdu_fields: BTreeMap::new(),
-            pdu_decode: String::new(),
+            extra: {
+                let mut e = BTreeMap::new();
+                e.insert("dedupe_key".into(), key.to_string());
+                e.insert("source_kind".into(), "xml".to_string());
+                e
+            },
         }
     }
 
@@ -1002,12 +983,12 @@ mod tests {
         // The same MMS appears in the XML backup (no attachments) and as a PDU
         // row with media. Exact-key dedupe would export it twice.
         let mut pdu_row = test_msg("1609459200|1|hello|attachments/a1.jpg", 1);
-        pdu_row.source_kind = "pdu";
+        pdu_row.extra.insert("source_kind".into(), "pdu".into());
         let mut msgs = vec![test_msg("1609459200|1|hello|", 0), pdu_row];
         dedupe_messages(&mut msgs);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].attachments.len(), 1);
-        assert_eq!(msgs[0].source_kind, "pdu");
+        assert_eq!(msgs[0].extra_str("source_kind"), "pdu");
     }
 
     #[test]
@@ -1037,11 +1018,11 @@ mod tests {
         // Defensive: XML pass runs first, but if a PDU row with media ever
         // precedes its XML twin, the attachment row still wins.
         let mut pdu_row = test_msg("1609459200|1|hello|attachments/a1.jpg", 1);
-        pdu_row.source_kind = "pdu";
+        pdu_row.extra.insert("source_kind".into(), "pdu".into());
         let mut msgs = vec![pdu_row, test_msg("1609459200|1|hello|", 0)];
         dedupe_messages(&mut msgs);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].attachments.len(), 1);
-        assert_eq!(msgs[0].source_kind, "pdu");
+        assert_eq!(msgs[0].extra_str("source_kind"), "pdu");
     }
 }

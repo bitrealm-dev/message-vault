@@ -18,6 +18,8 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
 };
@@ -40,24 +42,6 @@ fn bump(report: &mut ExportReport, key: &str, by: u64) {
 #[cfg(test)]
 fn count(report: &ExportReport, key: &str) -> u64 {
     report.extra.get(key).copied().unwrap_or(0)
-}
-
-#[derive(Debug)]
-struct PendingMessage {
-    sort_key: f64,
-    is_from_me: bool,
-    sender_handle: String,
-    sender_display_name: String,
-    text: String,
-    contact_name: String,
-    date_ms: String,
-    has_attachments: bool,
-    source_kind: SourceKind,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    messages: Vec<PendingMessage>,
 }
 
 /// Convert OpenExtract CSV(s) under `input` using `book` (from VCF/contacts).
@@ -133,17 +117,39 @@ pub(crate) fn convert_export(
             let (sender_handle, sender_display_name) =
                 resolve_sender(book, &row, is_from_me, &chat_id, &contact_name);
 
-            let convo = conversations.entry(chat_id).or_default();
+            let convo = conversations
+                .entry(chat_id.clone())
+                .or_insert_with(|| PendingConversation {
+                    chat_id: chat_id.clone(),
+                    display_name: None,
+                    participant_e164s: Vec::new(),
+                    messages: Vec::new(),
+                    is_group: false,
+                    has_attachments: false,
+                    extra: BTreeMap::new(),
+                });
             convo.messages.push(PendingMessage {
-                sort_key: secs as f64,
+                sort_key: secs,
                 is_from_me,
                 sender_handle,
-                sender_display_name,
+                sender_display_name: if sender_display_name.is_empty() {
+                    None
+                } else {
+                    Some(sender_display_name)
+                },
                 text: row.text,
-                contact_name,
-                date_ms,
-                has_attachments: row.has_attachments,
-                source_kind: row.source_kind,
+                attachments: Vec::new(),
+                extra: {
+                    let mut e = BTreeMap::new();
+                    e.insert("contact_name".into(), contact_name);
+                    e.insert("date_ms".into(), date_ms);
+                    e.insert(
+                        "has_attachments".into(),
+                        if row.has_attachments { "true" } else { "false" }.into(),
+                    );
+                    e.insert("source_kind".into(), row.source_kind.as_str().to_string());
+                    e
+                },
             });
         }
     }
@@ -167,19 +173,16 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     if convo.messages.is_empty() {
         return false;
     }
-    convo.messages.sort_by(|a, b| {
-        a.sort_key
-            .partial_cmp(&b.sort_key)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    convo.messages.sort_by_key(|m| m.sort_key);
     convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key as i64).is_some() {
+        if format_local_ts(m.sort_key).is_some() {
             true
         } else {
             report.skipped_invalid_date += 1;
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
@@ -300,7 +303,7 @@ fn pending_to_document(
     let contact_name = convo
         .messages
         .iter()
-        .map(|m| m.contact_name.trim())
+        .map(|m| m.extra_str("contact_name").trim())
         .find(|n| !n.is_empty())
         .map(str::to_string);
     let participants = if chat_id.is_empty() || chat_id.eq_ignore_ascii_case("unknown") {
@@ -329,17 +332,20 @@ fn pending_to_document(
             report.received += 1;
         }
         report.messages += 1;
-        let secs = msg.sort_key as i64;
+        let secs = msg.sort_key;
         let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &[]);
         let timestamp_unix_ms = msg
-            .date_ms
+            .extra_str("date_ms")
             .parse::<i64>()
             .unwrap_or_else(|_| secs.saturating_mul(1000));
 
         let mut fields = Map::new();
-        fields.insert("source_kind".into(), json!(msg.source_kind.as_str()));
-        fields.insert("has_attachments".into(), json!(msg.has_attachments));
+        fields.insert("source_kind".into(), json!(msg.extra_str("source_kind")));
+        fields.insert(
+            "has_attachments".into(),
+            json!(msg.extra_flag("has_attachments")),
+        );
         let source = IrSource {
             android_type: None,
             fields,
@@ -355,11 +361,7 @@ fn pending_to_document(
                 } else {
                     Some(msg.sender_handle.clone())
                 },
-                if msg.sender_display_name.is_empty() {
-                    None
-                } else {
-                    Some(msg.sender_display_name.clone())
-                },
+                msg.sender_display_name.clone(),
             )
         };
 

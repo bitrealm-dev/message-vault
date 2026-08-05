@@ -13,6 +13,15 @@ pub(crate) enum SourceKind {
     WhatsApp,
 }
 
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Messages => "messages",
+            Self::WhatsApp => "whatsapp",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveredCsv {
     pub path: PathBuf,
