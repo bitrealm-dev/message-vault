@@ -127,7 +127,7 @@ pub struct HttpSession {
 impl HttpSession {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
-            .pool_max_idle_per_host(8)
+            .pool_max_idle_per_host(16)
             .build()
             .context("build HTTP client")?;
         Ok(Self { client })
