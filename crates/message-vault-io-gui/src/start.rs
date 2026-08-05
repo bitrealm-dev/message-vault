@@ -10,7 +10,6 @@ use contacts::{ValidateMode, probe_contacts_input, validate_contacts_file};
 use message_vault_io_core::{
     Exporter, JobError, ProcessEvent, ensure_output_dir, is_cancelled, spawn_job,
 };
-use message_reexport::run as run_format;
 use phone::PhoneRegion;
 use slint::ComponentHandle;
 use vault_pull::{
@@ -25,7 +24,7 @@ use vault_push::{
 use crate::AppWindow;
 use crate::CredentialsAdapter;
 use crate::VaultExportAdapter;
-use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
+use crate::jobs::{LibraryJob, library_job_for_exporter};
 use crate::options;
 use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
@@ -295,7 +294,7 @@ pub(crate) fn start_extract(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<
             return;
         }
         let label = format!("{} (library)", st.exporter.binary());
-        let job = library_job_for_exporter(st.exporter, config);
+        let job = library_job_for_exporter(config);
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
@@ -334,10 +333,7 @@ pub(crate) fn start_format(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<A
             return;
         }
         let label = "Format (library)".to_string();
-        let job: LibraryJob = Box::new(move |cancel, tx| {
-            let config = prepare_library_config(config, cancel, &tx);
-            run_and_log(run_format(&config), tx)
-        });
+        let job = library_job_for_exporter(config);
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
@@ -910,7 +906,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                     },
                 );
 
-                let extract_job = library_job_for_exporter(Exporter::Imessage, config);
+                let extract_job = library_job_for_exporter(config);
                 if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
                     let _ = tx.send(ProcessEvent::Log(format!(
                         "Extraction failed; staging retained at {}",

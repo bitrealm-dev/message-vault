@@ -11,6 +11,7 @@ name = "message-vault-io"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1.0.103"
 chrono = "0.4.44"
 dark-light = "2"
 slint = "1.17"
