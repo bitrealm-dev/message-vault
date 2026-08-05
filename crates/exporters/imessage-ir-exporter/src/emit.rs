@@ -32,6 +32,7 @@ use message_ir::{
     ConversationDocument,
     ConversationMeta,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -217,10 +218,13 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
                 participants: convo
                     .participants
                     .into_iter()
-                    .map(|p| IrParticipant {
-                        handle: p.handle,
-                        display_name: p.display_name,
-                        handle_type: None,
+                    .map(|p| {
+                        let handle_type = handle_type_for(&p.handle);
+                        IrParticipant {
+                            handle: p.handle,
+                            display_name: p.display_name,
+                            handle_type: Some(handle_type),
+                        }
                     })
                     .collect(),
                 stats: Default::default(),
@@ -499,6 +503,16 @@ fn timestamp_unix_ms(message: &Message, offset: i64) -> i64 {
         stamp
     };
     (seconds_since_2001 + offset).saturating_mul(1000)
+}
+
+/// iMessage stores handles as phone numbers or email addresses without
+/// recording which; infer the type from the handle shape.
+fn handle_type_for(handle: &str) -> HandleType {
+    if handle.contains('@') {
+        HandleType::Email
+    } else {
+        HandleType::Phone
+    }
 }
 
 fn raw_handle(session: &MailSession, handle_id: i32) -> Option<String> {
