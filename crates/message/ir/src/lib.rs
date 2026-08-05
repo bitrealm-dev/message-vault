@@ -64,8 +64,8 @@ pub struct ConversationMeta {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ConversationStats {
-    pub message_count: usize,
-    pub attachment_count: usize,
+    pub message_count: u64,
+    pub attachment_count: u64,
     pub first_timestamp_unix_ms: Option<i64>,
     pub last_timestamp_unix_ms: Option<i64>,
 }
@@ -300,8 +300,8 @@ impl ConversationDocument {
 }
 
 fn compute_stats(messages: &[IrMessage]) -> ConversationStats {
-    let message_count = messages.len();
-    let attachment_count = messages.iter().map(|m| m.attachments.len()).sum();
+    let message_count = messages.len() as u64;
+    let attachment_count = messages.iter().map(|m| m.attachments.len() as u64).sum();
     let mut first = None;
     let mut last = None;
     for msg in messages {

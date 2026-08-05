@@ -279,10 +279,16 @@ impl ExportIniState {
 }
 
 /// Write INI contents. On Unix, create/update with mode `0o600` (owner read/write only).
+///
+/// Writes to a temporary file then renames into place for atomicity — a crash
+/// mid-write won't corrupt the existing config.
 fn write_ini_restricted(path: &Path, ini: &Ini) -> Result<(), String> {
     let mut buf = Vec::new();
     ini.write_to(&mut buf)
         .map_err(|e| format!("Could not serialize {}: {e}", path.display()))?;
+
+    // Write to a temp file next to the target, then rename atomically.
+    let tmp = path.with_extension("ini.tmp");
 
     #[cfg(unix)]
     {
@@ -291,30 +297,37 @@ fn write_ini_restricted(path: &Path, ini: &Ini) -> Result<(), String> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)
-            .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+            .open(&tmp)
+            .map_err(|e| format!("Could not open {}: {e}", tmp.display()))?;
         file.write_all(&buf)
-            .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+            .map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
         file.flush()
-            .map_err(|e| format!("Could not flush {}: {e}", path.display()))?;
-        // `.mode()` applies only on create; tighten an existing world-readable file.
-        let mut perms = file
-            .metadata()
+            .map_err(|e| format!("Could not flush {}: {e}", tmp.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut file = fs::File::create(&tmp)
+            .map_err(|e| format!("Could not create {}: {e}", tmp.display()))?;
+        file.write_all(&buf)
+            .map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
+        file.flush()
+            .map_err(|e| format!("Could not flush {}: {e}", tmp.display()))?;
+    }
+
+    // Rename the temp file into place. On most filesystems this is atomic.
+    fs::rename(&tmp, path)
+        .map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+
+    // Set restrictive permissions on the final file (Unix only).
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(path)
             .map_err(|e| format!("Could not stat {}: {e}", path.display()))?
             .permissions();
         perms.set_mode(0o600);
         fs::set_permissions(path, perms)
             .map_err(|e| format!("Could not set permissions on {}: {e}", path.display()))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut file = fs::File::create(path)
-            .map_err(|e| format!("Could not create {}: {e}", path.display()))?;
-        file.write_all(&buf)
-            .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
-        file.flush()
-            .map_err(|e| format!("Could not flush {}: {e}", path.display()))?;
     }
 
     Ok(())

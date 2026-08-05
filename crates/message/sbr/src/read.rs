@@ -7,7 +7,7 @@ use quick_xml::{Reader, XmlVersion, events::Event};
 use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -175,8 +175,8 @@ fn non_null(value: &str) -> String {
     }
 }
 
-fn content_keys(part: &MmsPart) -> HashSet<String> {
-    let mut keys = HashSet::new();
+fn content_keys(part: &MmsPart) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
     for raw in [&part.name, &part.cl, &part.fn_attr] {
         let value = raw.trim();
         if value.is_empty()
