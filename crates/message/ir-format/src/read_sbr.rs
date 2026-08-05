@@ -347,6 +347,7 @@ fn to_document(
         .map(|handle| IrParticipant {
             handle: handle.clone(),
             display_name: names.get(handle).cloned(),
+            handle_type: None,
         })
         .collect();
     let mut document = ConversationDocument {
