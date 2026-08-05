@@ -21,6 +21,7 @@ const COMMON: &str = "common";
 const FORMAT: &str = "format";
 const MESSAGE_REEXPORT_LEGACY: &str = "message-reexport";
 const VAULT: &str = "vault";
+const BACKUP: &str = "backup";
 const APPEARANCE: &str = "appearance";
 const EXPORT_INI_NAME: &str = "export.ini";
 
@@ -80,6 +81,13 @@ impl Default for AppearanceSection {
     }
 }
 
+/// Fields for the Backup Account screen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackupSection {
+    /// Output directory for account backups.
+    pub output: String,
+}
+
 /// Per-exporter path / type-specific fields kept when switching backup types.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ExporterSection {
@@ -108,6 +116,7 @@ pub struct ExportIniState {
     sections: [ExporterSection; 7],
     pub format: FormatSection,
     pub vault: VaultSection,
+    pub backup: BackupSection,
     pub appearance: AppearanceSection,
 }
 
@@ -150,6 +159,7 @@ impl ExportIniState {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            backup: BackupSection::default(),
             appearance: AppearanceSection::default(),
         };
         let mut form = Form::default();
@@ -177,6 +187,7 @@ impl ExportIniState {
         }
         let format = read_format_section(&ini);
         let vault = read_vault_section(&ini);
+        let backup = read_backup_section(&ini);
         let appearance = read_appearance_section(&ini);
 
         let state = Self {
@@ -185,6 +196,7 @@ impl ExportIniState {
             sections,
             format,
             vault,
+            backup,
             appearance,
         };
         state.apply_section_to_form(&mut form);
@@ -496,6 +508,10 @@ fn build_ini(state: &ExportIniState, form: &Form) -> Ini {
             .set("skip_attachments", bool_str(state.vault.skip_attachments));
     }
     {
+        let mut s = ini.with_section(Some(BACKUP));
+        s.set("output", state.backup.output.trim());
+    }
+    {
         let mut s = ini.with_section(Some(APPEARANCE));
         s.set("mode", state.appearance.mode.trim())
             .set("preset", state.appearance.preset.trim());
@@ -546,6 +562,12 @@ fn read_appearance_section(ini: &Ini) -> AppearanceSection {
         } else {
             preset
         },
+    }
+}
+
+fn read_backup_section(ini: &Ini) -> BackupSection {
+    BackupSection {
+        output: get(ini, Some(BACKUP), "output"),
     }
 }
 
@@ -606,6 +628,7 @@ mod tests {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            backup: BackupSection::default(),
             appearance: AppearanceSection::default(),
         };
         state.capture_form_section(&form);
@@ -659,6 +682,7 @@ mod tests {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            backup: BackupSection::default(),
             appearance: AppearanceSection::default(),
         };
         state.capture_form_section(&form);
@@ -744,6 +768,7 @@ apple_platform = ios
                 force: false,
                 skip_attachments: false,
             },
+            backup: BackupSection::default(),
             appearance: AppearanceSection {
                 mode: "system".into(),
                 preset: "ocean".into(),
@@ -784,6 +809,7 @@ apple_platform = ios
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            backup: BackupSection::default(),
             appearance: AppearanceSection::default(),
         };
         let dir = tempfile::tempdir().unwrap();

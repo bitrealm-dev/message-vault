@@ -45,6 +45,7 @@ impl AppState {
         let guided_import_format = GuidedImportFormat::parse(&export_ini.vault.import_format)
             .unwrap_or_else(|| GuidedImportFormat::from_platform(form.apple_platform));
         let error_source_screen = load_error.as_ref().map(|_| screen::HOME);
+        let backup_output = export_ini.backup.output.clone();
         Self {
             export_ini,
             form,
@@ -60,7 +61,7 @@ impl AppState {
             vault_source_note: String::new(),
             last_staging_dir: None,
             guided_import_format,
-            backup_output: String::new(),
+            backup_output,
         }
     }
 
@@ -69,6 +70,7 @@ impl AppState {
             return Ok(());
         }
         self.export_ini.exporter = self.exporter;
+        self.export_ini.backup.output = self.backup_output.clone();
         self.export_ini.save(&self.form)
     }
 
