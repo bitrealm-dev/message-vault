@@ -10,18 +10,18 @@ You run it on a computer you control. Your messages stay in a SQLite database on
 that machine; they are not uploaded to a cloud service by this project.
 
 Turning a phone backup into a **message-ir** JSONL export is done by a separate
-project, [message-exporters](https://bitrealm-dev.github.io/message-exporters/)
-(desktop binary `message-exporter`). Push those message-ir JSONL exports into
+project, [Message Exporters](https://bitrealm-dev.github.io/exporters/)
+(desktop binary `message-vault-io`). Push those message-ir JSONL exports into
 this repository—the vault itself: storage, import, and the browser UI.
 
 ## Docs
 
 Read the full guide (install, demo, import, browse UI, CLI, HTTP API):
 
-**https://bitrealm-dev.github.io/message-vault-rs/**
+**https://bitrealm-dev.github.io/vault/**
 
 Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and
-is published with Astro Starlight.
+is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
 
 Contributor setup and troubleshooting:
 [`docs/maintainers/development.md`](docs/maintainers/development.md).
