@@ -4,7 +4,10 @@ Pull messages from a Message Vault Rust `serve` instance into a local
 **message-ir** export folder (`*.jsonl` + `attachments/`).
 
 Uses the same Import API Bearer token as `vault-push`. Export HTTP routes are
-**read-only** (`GET /v1/export/messages`, `GET /v1/assets/{sha256}`).
+**read-only** (`GET /v1/export/messages`, `GET /v1/export/messages/count`,
+`GET /v1/assets/{sha256}`). The GUI **Query** button prefers the count route
+(falls back to paging on older vaults); **Export** pages messages once and
+downloads attachments.
 
 ```bash
 vault-pull \

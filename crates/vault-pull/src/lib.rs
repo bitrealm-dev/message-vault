@@ -1,6 +1,8 @@
-//! Pull messages from Message Vault `GET /v1/export/messages` into a message-ir folder.
+//! Pull messages from Message Vault into a message-ir folder.
 //!
-//! Used by the `vault-pull` CLI and the Message Vault GUI Vault Export screen.
+//! Query prefers `GET /v1/export/messages/count`, then falls back to paging
+//! `GET /v1/export/messages`. Used by the `vault-pull` CLI and the Message Vault
+//! GUI Vault Export screen.
 
 mod http;
 mod project;

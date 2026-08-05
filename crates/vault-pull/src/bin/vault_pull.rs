@@ -102,6 +102,7 @@ fn real_main() -> Result<ExitCode> {
         source: cli.source,
         skip_attachments: cli.skip_attachments,
         page_limit: cli.page_limit,
+        expected_messages: None,
         cancel: None,
     };
 

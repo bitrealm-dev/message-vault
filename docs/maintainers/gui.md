@@ -193,8 +193,10 @@ Message Vault via `vault-pull` into a timestamped folder.
 | Search | text | no | Fastmail-style operators (`with:`, `has:attachment`, …). |
 | Start / End date | date | no | Optional inclusive/exclusive bounds. |
 
-Run **Query** first to preview counts; **Export** then creates the timestamped
-directory and downloads message-ir JSONL + attachments.
+Run **Query** first to preview counts (uses `GET /v1/export/messages/count`
+when the vault supports it; otherwise pages export messages); **Export** then
+creates the timestamped directory and downloads message-ir JSONL + attachments,
+showing `Fetched k (of N)` when a Query count is available.
 
 ### Vault — `vault-push`
 

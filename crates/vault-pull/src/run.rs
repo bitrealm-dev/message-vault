@@ -29,6 +29,8 @@ pub struct VaultPullConfig {
     pub source: Option<String>,
     pub skip_attachments: bool,
     pub page_limit: usize,
+    /// When set (typically from a prior Query), progress logs include "of N".
+    pub expected_messages: Option<u64>,
     pub cancel: Option<CancelFlag>,
 }
 
@@ -84,7 +86,8 @@ pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> S
     parts.join(" ")
 }
 
-/// Page export messages and aggregate message/attachment counts + known sizes.
+/// Prefer `GET /v1/export/messages/count`; fall back to paging the export
+/// endpoint on older vaults that lack the count route.
 /// Does not download assets or write JSONL. `cfg.out_dir` is ignored.
 pub fn query_stats(
     cfg: &VaultPullConfig,
@@ -134,6 +137,54 @@ pub fn query_stats(
     );
 
     let session = HttpSession::new()?;
+    match session.export_message_count(
+        &cfg.base_url,
+        &cfg.key,
+        &q,
+        &account,
+        cfg.source.as_deref(),
+    )? {
+        Some(count) => {
+            let stats = QueryStats {
+                messages: count.messages,
+                attachments: count.attachments,
+                total_bytes: count.total_bytes,
+            };
+            emit(
+                &mut on_progress,
+                ProgressEvent::Log(format!(
+                    "Query result: {} message(s), {} attachment(s), {} byte(s)",
+                    stats.messages, stats.attachments, stats.total_bytes
+                )),
+            );
+            return Ok(stats);
+        }
+        None => {
+            emit(
+                &mut on_progress,
+                ProgressEvent::Log(
+                    "Count endpoint not available; paging export messages for stats…".into(),
+                ),
+            );
+        }
+    }
+
+    query_stats_by_paging(cfg, &session, &account, &q, &mut on_progress)
+}
+
+fn query_stats_by_paging(
+    cfg: &VaultPullConfig,
+    session: &HttpSession,
+    account: &str,
+    q: &str,
+    on_progress: &mut Option<&mut ProgressFn<'_>>,
+) -> Result<QueryStats> {
+    let emit = |on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent| {
+        if let Some(cb) = on_progress.as_mut() {
+            cb(event);
+        }
+    };
+
     let mut cursor: Option<String> = None;
     let mut total_messages = 0u64;
     // sha256 -> size_bytes (None if unknown / older imports)
@@ -144,22 +195,22 @@ pub fn query_stats(
         let page = session.export_messages(
             &cfg.base_url,
             &cfg.key,
-            &q,
+            q,
             cfg.page_limit.max(1),
             cursor.as_deref(),
-            &account,
+            account,
             cfg.source.as_deref(),
         )?;
         total_messages += page.messages.len() as u64;
         emit(
-            &mut on_progress,
+            on_progress,
             ProgressEvent::Page {
                 messages: page.messages.len(),
                 total_so_far: total_messages,
             },
         );
         emit(
-            &mut on_progress,
+            on_progress,
             ProgressEvent::Log(format!(
                 "Fetched {} message(s) ({} total)",
                 page.messages.len(),
@@ -201,7 +252,7 @@ pub fn query_stats(
         total_bytes,
     };
     emit(
-        &mut on_progress,
+        on_progress,
         ProgressEvent::Log(format!(
             "Query result: {} message(s), {} attachment(s), {} byte(s)",
             stats.messages, stats.attachments, stats.total_bytes
@@ -291,14 +342,20 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
                 total_so_far: total_messages,
             },
         );
-        emit(
-            &mut on_progress,
-            ProgressEvent::Log(format!(
+        let page_log = match cfg.expected_messages {
+            Some(n) => format!(
+                "Fetched {} message(s) ({} of {})",
+                page.messages.len(),
+                total_messages,
+                n
+            ),
+            None => format!(
                 "Fetched {} message(s) ({} total)",
                 page.messages.len(),
                 total_messages
-            )),
-        );
+            ),
+        };
+        emit(&mut on_progress, ProgressEvent::Log(page_log));
 
         for msg in page.messages {
             if !cfg.skip_attachments {

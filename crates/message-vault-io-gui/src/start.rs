@@ -38,7 +38,7 @@ enum OnSuccess {
     GoToImportScreen,
     GoToExportScreen,
     /// Apply Vault Export query summary (written by the job before finish).
-    VaultExportQuery(Arc<Mutex<Option<String>>>),
+    VaultExportQuery(Arc<Mutex<Option<QueryStats>>>),
 }
 
 pub(crate) fn report_errors(ui: &AppWindow, state: &mut AppState, errors: Vec<String>) {
@@ -170,9 +170,10 @@ fn start_library_job(
                             ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
                             sync::push_vault_export(&ui);
                         } else if let OnSuccess::VaultExportQuery(slot) = &on_success {
-                            if let Some(summary) = slot.lock().expect("query summary").take() {
+                            if let Some(stats) = slot.lock().expect("query stats").take() {
                                 let export = ui.global::<VaultExportAdapter>();
-                                export.set_query_summary(summary.into());
+                                export.set_query_summary(format_query_summary(&stats).into());
+                                export.set_query_message_count(stats.messages as i32);
                                 export.set_query_ready(true);
                             }
                         }
@@ -476,6 +477,7 @@ pub(crate) fn start_vault_export_query(
         let export = ui.global::<VaultExportAdapter>();
         export.set_query_ready(false);
         export.set_query_summary("".into());
+        export.set_query_message_count(0);
         let url = st.export_ini.vault.url.trim().to_string();
         let key = st.export_ini.vault.key.trim().to_string();
         let search = export.get_search_query().trim().to_string();
@@ -501,8 +503,8 @@ pub(crate) fn start_vault_export_query(
             (!start.is_empty()).then_some(start.as_str()),
             (!end.is_empty()).then_some(end.as_str()),
         );
-        let summary_slot = Arc::new(Mutex::new(None::<String>));
-        let summary_for_job = Arc::clone(&summary_slot);
+        let stats_slot = Arc::new(Mutex::new(None::<QueryStats>));
+        let stats_for_job = Arc::clone(&stats_slot);
         let label = "vault-pull query (library)".to_string();
         let job: LibraryJob = Box::new(move |cancel, tx| {
             let cfg = VaultPullConfig {
@@ -516,6 +518,7 @@ pub(crate) fn start_vault_export_query(
                 source: None,
                 skip_attachments: true,
                 page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
+                expected_messages: None,
                 cancel: Some(cancel),
             };
             let mut on_progress = |event: VaultPullProgressEvent| match event {
@@ -543,8 +546,8 @@ pub(crate) fn start_vault_export_query(
             match run_vault_query_stats(&cfg, Some(&mut on_progress)) {
                 Ok(stats) => {
                     let summary = format_query_summary(&stats);
-                    let _ = tx.send(ProcessEvent::Log(summary.clone()));
-                    *summary_for_job.lock().expect("query summary") = Some(summary);
+                    let _ = tx.send(ProcessEvent::Log(summary));
+                    *stats_for_job.lock().expect("query stats") = Some(stats);
                     Ok(())
                 }
                 Err(e) => Err(JobError::detail(format!("{e:#}"))),
@@ -553,7 +556,7 @@ pub(crate) fn start_vault_export_query(
         (
             label,
             job,
-            OnSuccess::VaultExportQuery(summary_slot),
+            OnSuccess::VaultExportQuery(stats_slot),
         )
     };
     start_library_job(ui_weak, state, label, job, on_success);
@@ -586,6 +589,14 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         let start = export.get_start_date().trim().to_string();
         let end = export.get_end_date().trim().to_string();
         let skip_attachments = export.get_skip_attachments();
+        let expected_messages = {
+            let n = export.get_query_message_count();
+            if n > 0 {
+                Some(n as u64)
+            } else {
+                None
+            }
+        };
         let mut errors = Vec::new();
         if url.is_empty() {
             errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
@@ -632,6 +643,7 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
                 source: None,
                 skip_attachments,
                 page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
+                expected_messages,
                 cancel: Some(cancel),
             };
             let mut on_progress = |event: VaultPullProgressEvent| match event {
@@ -650,9 +662,15 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
                     messages,
                     total_so_far,
                 } => {
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Page: {messages} message(s) ({total_so_far} total)"
-                    )));
+                    let line = match expected_messages {
+                        Some(n) => format!(
+                            "Page: {messages} message(s) ({total_so_far} of {n})"
+                        ),
+                        None => format!(
+                            "Page: {messages} message(s) ({total_so_far} total)"
+                        ),
+                    };
+                    let _ = tx.send(ProcessEvent::Log(line));
                 }
                 VaultPullProgressEvent::Done(report) => {
                     let _ = tx.send(ProcessEvent::Log(format!(

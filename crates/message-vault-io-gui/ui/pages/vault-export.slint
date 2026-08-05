@@ -23,6 +23,8 @@ export global VaultExportAdapter {
     // Set after a successful Query for the current filters; cleared when filters change.
     in-out property <bool> query-ready: false;
     in-out property <string> query-summary: "";
+    // Message count from the last successful Query (for Export "of N" progress).
+    in-out property <int> query-message-count: 0;
 
     callback date-for-text(string) -> Date;
     callback browse(string);
@@ -32,18 +34,22 @@ export global VaultExportAdapter {
     changed exporter-index => {
         query-ready = false;
         query-summary = "";
+        query-message-count = 0;
     }
     changed start-date => {
         query-ready = false;
         query-summary = "";
+        query-message-count = 0;
     }
     changed end-date => {
         query-ready = false;
         query-summary = "";
+        query-message-count = 0;
     }
     changed search-query => {
         query-ready = false;
         query-summary = "";
+        query-message-count = 0;
     }
 }
 
