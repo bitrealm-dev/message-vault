@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fmt;
 
 use anyhow::{Context, Result, bail};
+use message_ir::HandleType;
 
 /// Minimum digit length after stripping formatting.
 ///
@@ -132,13 +133,71 @@ pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
     }
 }
 
-/// All configured owner phone numbers (normalized digits).
+/// All configured owner handles (normalized, typed).
 #[derive(Debug, Clone)]
+pub struct OwnerHandleSet {
+    handles: HashSet<(String, HandleType)>,
+}
+
+impl OwnerHandleSet {
+    pub fn new(handles: &[(String, HandleType)]) -> Result<Self> {
+        if handles.is_empty() {
+            bail!("owner handle required: pass --owner-phone or --owner-handle");
+        }
+        let mut set = HashSet::new();
+        for (raw, handle_type) in handles {
+            let normalized = match handle_type {
+                HandleType::Phone => {
+                    let d = sanitize_number(raw)
+                        .with_context(|| format!("owner phone has no usable digits: {raw}"))?;
+                    to_e164(&d)
+                }
+                HandleType::Email => raw.trim().to_lowercase(),
+                HandleType::Username | HandleType::Other => raw.trim().to_string(),
+            };
+            set.insert((normalized, *handle_type));
+        }
+        Ok(Self { handles: set })
+    }
+
+    pub fn is_owner(&self, raw: &str, handle_type: HandleType) -> bool {
+        let normalized = match handle_type {
+            HandleType::Phone => {
+                let Some(d) = sanitize_number(raw) else {
+                    return false;
+                };
+                to_e164(&d)
+            }
+            HandleType::Email => raw.trim().to_lowercase(),
+            HandleType::Username | HandleType::Other => raw.trim().to_string(),
+        };
+        self.handles.contains(&(normalized, handle_type))
+    }
+
+    /// Convenience for exporters that only know about phone numbers.
+    pub fn from_phones(phones: &[String]) -> Result<Self> {
+        let handles: Vec<(String, HandleType)> = phones
+            .iter()
+            .map(|p| (p.clone(), HandleType::Phone))
+            .collect();
+        Self::new(&handles)
+    }
+}
+
+/// All configured owner phone numbers (normalized digits).
+///
+/// Deprecated: use [`OwnerHandleSet`], which also covers email and username
+/// handles. Kept as a compatibility wrapper for exporters that haven't
+/// migrated yet.
+#[derive(Debug, Clone)]
+#[deprecated(note = "use OwnerHandleSet")]
 pub struct OwnerPhoneSet {
     pub all_digits: HashSet<String>,
     pub primary_digits: String,
+    handles: OwnerHandleSet,
 }
 
+#[allow(deprecated)]
 impl OwnerPhoneSet {
     pub fn new(phones: &[String]) -> Result<Self> {
         if phones.is_empty() {
@@ -152,14 +211,16 @@ impl OwnerPhoneSet {
         }
         let primary_digits =
             sanitize_number(&phones[0]).context("owner phone has no usable digits")?;
+        let handles = OwnerHandleSet::from_phones(phones)?;
         Ok(Self {
             all_digits,
             primary_digits,
+            handles,
         })
     }
 
     pub fn is_owner(&self, digits: &str) -> bool {
-        sanitize_number(digits).is_some_and(|d| self.all_digits.contains(&d))
+        self.handles.is_owner(digits, HandleType::Phone)
     }
 }
 
@@ -232,7 +293,36 @@ mod tests {
 
     #[test]
     fn owner_set_rejects_empty() {
+        assert!(OwnerHandleSet::new(&[]).is_err());
+        assert!(OwnerHandleSet::from_phones(&[]).is_err());
+        assert!(OwnerHandleSet::from_phones(&["not-a-phone".into()]).is_err());
+    }
+
+    #[test]
+    fn owner_handle_set_matches_typed_handles() {
+        let owners = OwnerHandleSet::new(&[
+            ("(555) 555-0100".into(), HandleType::Phone),
+            ("Person@Example.COM".into(), HandleType::Email),
+        ])
+        .unwrap();
+        assert!(owners.is_owner("+15555550100", HandleType::Phone));
+        assert!(owners.is_owner("5555550100", HandleType::Phone));
+        assert!(!owners.is_owner("5555550199", HandleType::Phone));
+        assert!(owners.is_owner("person@example.com", HandleType::Email));
+        assert!(!owners.is_owner("other@example.com", HandleType::Email));
+        // A phone-shaped handle is not treated as an email or username handle.
+        assert!(!owners.is_owner("(555) 555-0100", HandleType::Email));
+        assert!(!owners.is_owner("Person@Example.COM", HandleType::Username));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_owner_phone_set_still_works() {
+        let owners = OwnerPhoneSet::new(&["(555) 555-0100".into()]).unwrap();
+        assert_eq!(owners.primary_digits, "5555550100");
+        assert!(owners.all_digits.contains("5555550100"));
+        assert!(owners.is_owner("+15555550100"));
+        assert!(!owners.is_owner("5555550199"));
         assert!(OwnerPhoneSet::new(&[]).is_err());
-        assert!(OwnerPhoneSet::new(&["not-a-phone".into()]).is_err());
     }
 }
