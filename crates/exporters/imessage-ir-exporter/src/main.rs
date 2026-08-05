@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use imessage_ir_exporter::run;
-use message_csv::DateRange;
 use message_vault_io_core::{
-    AppleConfig, ApplePlatform, ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat,
-    SourceConfig,
+    AppleConfig, ApplePlatform, CommonCli, ExporterConfig, MediaConfig, OutputFormat, SourceConfig,
+    parse_date_range,
 };
 
 #[derive(Parser, Debug)]
@@ -18,14 +17,6 @@ struct Cli {
     /// Path to chat.db (macOS) or iOS backup root (default: system Messages DB)
     #[arg(long)]
     input: Option<PathBuf>,
-
-    /// Output directory for packaging + attachments/
-    #[arg(long)]
-    output: PathBuf,
-
-    /// Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
-    #[arg(long = "format", default_value = "json", value_name = "FORMAT")]
-    format: String,
 
     /// Platform: `macOS`, `iOS`, or omit to auto-detect
     #[arg(long)]
@@ -39,10 +30,6 @@ struct Cli {
     #[arg(long = "attachment-root")]
     attachment_root: Option<String>,
 
-    /// AddressBook / contacts path (macOS)
-    #[arg(long = "contacts")]
-    contacts: Option<PathBuf>,
-
     /// iOS backup password (cleartext; prompted elsewhere in GUI)
     #[arg(long = "backup-password")]
     backup_password: Option<String>,
@@ -51,22 +38,20 @@ struct Cli {
     #[arg(long = "conversation")]
     conversation: Option<String>,
 
-    /// Only messages on or after this date (YYYY-MM-DD)
-    #[arg(long = "start-date", value_name = "YYYY-MM-DD")]
-    start_date: Option<String>,
-
-    /// Only messages before this date (YYYY-MM-DD)
-    #[arg(long = "end-date", value_name = "YYYY-MM-DD")]
-    end_date: Option<String>,
-
     /// Use destination caller id for outgoing From display name (default on)
     #[arg(long = "use-caller-id", default_value_t = true, action = clap::ArgAction::Set)]
     use_caller_id: bool,
+
+    #[command(flatten)]
+    common: CommonCli,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let output_format = OutputFormat::parse(&cli.format).map_err(anyhow::Error::msg)?;
+    let common = &cli.common;
+    let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
+    let date_range = parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
+        .map_err(anyhow::Error::msg)?;
     let platform = match cli.platform.as_deref() {
         None => None,
         Some(s) if s.eq_ignore_ascii_case("macos") => Some(ApplePlatform::MacOs),
@@ -82,11 +67,13 @@ fn main() -> Result<()> {
 
     let result = run(&ExporterConfig {
         inputs,
-        output: cli.output,
-        date_range: DateRange::default(),
+        output: common.output.clone(),
+        date_range,
         timezone: None,
-        contacts: None,
-        obfuscate: ObfuscateConfig::default(),
+        // `--contacts` carries the macOS AddressBook path; the shared
+        // ContactsConfig (CSV/VCF) is derived from the same flag.
+        contacts: common.contacts_config(),
+        obfuscate: common.obfuscate_config(),
         media: MediaConfig::default(),
         cancel: None,
         log: None,
@@ -95,11 +82,9 @@ fn main() -> Result<()> {
             platform,
             attachment_root: cli.attachment_root,
             copy_method: cli.copy_method,
-            apple_contacts: cli.contacts,
+            apple_contacts: common.contacts.clone(),
             backup_password: cli.backup_password,
             conversation_filter: cli.conversation,
-            start_date: cli.start_date,
-            end_date: cli.end_date,
             use_caller_id: cli.use_caller_id,
             show_progress: false,
             ignore_disk_space: false,

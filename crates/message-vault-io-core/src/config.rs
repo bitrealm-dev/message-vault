@@ -6,8 +6,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use message_csv::DateRange;
 use media::{CompressOptions, MediaMode};
+use message_csv::DateRange;
 
 use crate::exporters::{ApplePlatform, ContactsKind, Exporter, WhatsappPlatform};
 use crate::process::{CancelFlag, LogSink, emit_log};
@@ -249,9 +249,6 @@ pub struct AppleConfig {
     pub apple_contacts: Option<PathBuf>,
     pub backup_password: Option<String>,
     pub conversation_filter: Option<String>,
-    /// Raw `YYYY-MM-DD` for QueryContext (DateRange does not retain strings).
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
     pub use_caller_id: bool,
     pub show_progress: bool,
     pub ignore_disk_space: bool,
@@ -266,8 +263,6 @@ impl Default for AppleConfig {
             apple_contacts: None,
             backup_password: None,
             conversation_filter: None,
-            start_date: None,
-            end_date: None,
             use_caller_id: true,
             show_progress: false,
             ignore_disk_space: false,

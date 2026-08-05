@@ -2,12 +2,12 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use message_csv::DateRange;
 use media::{MaxResolution, MediaMode};
+use message_csv::DateRange;
 
 use crate::config::{
-    AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
-    FormatConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
+    MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
     SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
 };
 
@@ -462,10 +462,7 @@ impl Form {
     ) -> ExporterConfig {
         required_text(&self.output, "Output directory", errors);
         let obfuscate_active = self.obfuscate || !self.obfuscate_seed.trim().is_empty();
-        if !obfuscate_active
-            && self.attachment_media.needs_ffmpeg()
-            && !media::ffmpeg_available()
-        {
+        if !obfuscate_active && self.attachment_media.needs_ffmpeg() && !media::ffmpeg_available() {
             errors.push(
                 "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
             );
@@ -485,10 +482,15 @@ impl Form {
         let inputs = non_empty(self.db_path.trim())
             .map(|p| vec![PathBuf::from(p)])
             .unwrap_or_default();
+        let date_range = parse_date_range_local(
+            non_empty(self.start_date.trim()),
+            non_empty(self.end_date.trim()),
+            errors,
+        );
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range: DateRange::default(),
+            date_range,
             timezone: None,
             contacts: None,
             obfuscate,
@@ -503,8 +505,6 @@ impl Form {
                 apple_contacts: non_empty_path(&self.apple_contacts),
                 backup_password: non_empty(self.backup_password.trim()).map(str::to_string),
                 conversation_filter: non_empty(self.conversation_filter.trim()).map(str::to_string),
-                start_date: non_empty(self.start_date.trim()).map(str::to_string),
-                end_date: non_empty(self.end_date.trim()).map(str::to_string),
                 use_caller_id: true,
                 show_progress: false,
                 ignore_disk_space: false,
