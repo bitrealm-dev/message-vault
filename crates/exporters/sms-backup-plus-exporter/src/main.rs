@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use message_vault_io_core::{
-    ContactsConfig, ContactsKind, ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat,
-    SmsBackupPlusConfig, SourceConfig,
+    CommonCli, ExporterConfig, MediaConfig, OutputFormat, SmsBackupPlusConfig, SourceConfig,
 };
-use media::{MaxResolution, MediaMode, compress_options_from_cli};
+use media::compress_options_from_cli;
 use sms_backup_plus_exporter::{parse_date_range, run};
 
 #[derive(Parser, Debug)]
@@ -37,14 +36,6 @@ enum Commands {
         #[arg(long = "input")]
         input: Vec<PathBuf>,
 
-        /// Output directory for packaging + attachments/
-        #[arg(long)]
-        output: PathBuf,
-
-        /// Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
-        #[arg(long = "format", default_value = "json", value_name = "FORMAT")]
-        format: String,
-
         /// Owner phone (E.164 or digits). Repeat for multiple owner numbers.
         /// Default: `phones` in config/owner.toml
         #[arg(long = "owner-phone")]
@@ -55,59 +46,13 @@ enum Commands {
         #[arg(long = "owner-email", value_name = "EMAIL")]
         owner_emails: Vec<String>,
 
-        /// Contacts file for name↔phone lookup (VCF or vCard CSV; same as contacts-validate).
-        /// Optional; without it (or `--vcf`) phone numbers are not resolved to names.
-        #[arg(long)]
-        contacts: Option<PathBuf>,
-
-        /// Contacts VCF (alternate to `--contacts`).
-        #[arg(long)]
-        vcf: Option<PathBuf>,
-
         /// Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases.
         /// Default: config/name-mapping.csv when that file exists.
         #[arg(long = "name-mapping")]
         name_mapping: Option<PathBuf>,
 
-        /// Rewrite output with stable, non-reversible fake names/numbers/text and placeholder media
-        #[arg(long)]
-        obfuscate: bool,
-
-        /// Optional 8-hex seed for reproducible obfuscation (implies --obfuscate)
-        #[arg(long = "obfuscate-seed")]
-        obfuscate_seed: Option<String>,
-
-        /// Only messages on or after this date (YYYY-MM-DD, local midnight, inclusive)
-        #[arg(long = "start-date", value_name = "YYYY-MM-DD")]
-        start_date: Option<String>,
-
-        /// Only messages before this date (YYYY-MM-DD, local midnight, exclusive)
-        #[arg(long = "end-date", value_name = "YYYY-MM-DD")]
-        end_date: Option<String>,
-
-        /// Attachment media: disabled (no files), clone (default), convert, or compress
-        #[arg(long = "media-mode", default_value = "clone", value_name = "MODE")]
-        media_mode: MediaMode,
-
-        /// Compress only: max long edge (720p, 1080p, 4k)
-        #[arg(
-            long = "media-max-resolution",
-            default_value = "1080p",
-            value_name = "RES"
-        )]
-        media_max_resolution: MaxResolution,
-
-        /// Compress only: max frame rate
-        #[arg(long = "media-max-fps", default_value_t = 30.0)]
-        media_max_fps: f32,
-
-        /// Compress only: only re-encode videos at/above this size (e.g. 20M)
-        #[arg(long = "media-min-size", default_value = "20M")]
-        media_min_size: String,
-
-        /// Compress only: skip already-efficient HEVC under max resolution (default on)
-        #[arg(long = "media-skip-efficient", default_value_t = true, action = clap::ArgAction::Set)]
-        media_skip_efficient: bool,
+        #[command(flatten)]
+        common: CommonCli,
     },
 }
 
@@ -116,54 +61,30 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Convert {
             input,
-            output,
-            format,
             owner_phones,
             owner_emails,
-            contacts,
-            vcf,
             name_mapping,
-            obfuscate,
-            obfuscate_seed,
-            start_date,
-            end_date,
-            media_mode,
-            media_max_resolution,
-            media_max_fps,
-            media_min_size,
-            media_skip_efficient,
+            common,
         } => {
-            let date_range = parse_date_range(start_date.as_deref(), end_date.as_deref())
+            let common = &common;
+            let date_range = parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
                 .map_err(anyhow::Error::msg)?;
-            let output_format = OutputFormat::parse(&format).map_err(anyhow::Error::msg)?;
+            let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
             let compress = compress_options_from_cli(
-                media_max_resolution,
-                media_max_fps,
-                &media_min_size,
-                media_skip_efficient,
+                common.media_max_resolution,
+                common.media_max_fps,
+                &common.media_min_size,
+                common.media_skip_efficient,
             )?;
-            let contacts = match (contacts, vcf) {
-                (Some(path), _) => Some(ContactsConfig {
-                    path,
-                    kind: ContactsKind::Csv,
-                }),
-                (None, Some(path)) => Some(ContactsConfig {
-                    path,
-                    kind: ContactsKind::Vcf,
-                }),
-                (None, None) => None,
-            };
             let result = run(&ExporterConfig {
                 inputs: input,
-                output,
+                output: common.output.clone(),
                 date_range,
-                contacts,
-                obfuscate: ObfuscateConfig {
-                    enabled: obfuscate,
-                    seed: obfuscate_seed,
-                },
+                timezone: None,
+                contacts: common.contacts_config(),
+                obfuscate: common.obfuscate_config(),
                 media: MediaConfig {
-                    mode: media_mode,
+                    mode: common.media_mode,
                     compress,
                 },
                 cancel: None,
@@ -178,16 +99,7 @@ fn main() -> Result<()> {
                 }),
             })?;
 
-            for line in &result.messages {
-                if line.starts_with("Media:")
-                    || line.starts_with("  media ")
-                    || line.starts_with("Obfuscated ")
-                {
-                    eprintln!("{line}");
-                } else {
-                    println!("{line}");
-                }
-            }
+            message_vault_io_core::print_result(&result);
         }
     }
     Ok(())

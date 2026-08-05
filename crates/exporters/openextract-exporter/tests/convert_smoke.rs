@@ -29,7 +29,7 @@ fn convert_all_conversations_with_vcf() {
 
     assert_eq!(report.conversations, 1);
     assert_eq!(report.messages, 2);
-    assert_eq!(report.unresolved_chat_phone, 0);
+    assert_eq!(report.extra.get("unresolved_chat_phone").copied().unwrap_or(0), 0);
 
     let out = tmp.path().join("+15555550122.csv");
     let body = fs::read_to_string(&out).expect("read csv");

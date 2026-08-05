@@ -6,7 +6,7 @@ autotests = false
 
 [features]
 default = ["cli"]
-cli = ["dep:clap"]
+cli = ["dep:clap", "message-vault-io-core/cli"]
 
 [[bin]]
 name = "sms-backup-plus-exporter"

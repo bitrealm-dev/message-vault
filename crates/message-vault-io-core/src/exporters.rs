@@ -2,12 +2,12 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use message_csv::DateRange;
 use media::{MaxResolution, MediaMode};
+use message_csv::DateRange;
 
 use crate::config::{
-    AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
-    FormatConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
+    AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
+    MediaConfig, ObfuscateConfig, OpenExtractConfig, OutputFormat, SmsBackupPlusConfig,
     SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
 };
 
@@ -438,6 +438,7 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(output.trim()),
             date_range: DateRange::default(),
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -461,10 +462,7 @@ impl Form {
     ) -> ExporterConfig {
         required_text(&self.output, "Output directory", errors);
         let obfuscate_active = self.obfuscate || !self.obfuscate_seed.trim().is_empty();
-        if !obfuscate_active
-            && self.attachment_media.needs_ffmpeg()
-            && !media::ffmpeg_available()
-        {
+        if !obfuscate_active && self.attachment_media.needs_ffmpeg() && !media::ffmpeg_available() {
             errors.push(
                 "Convert/Compress require ffmpeg and ffprobe in lib/ (or beside the program), in MESSAGE_VAULT_IO_BIN, or on PATH.".into(),
             );
@@ -484,10 +482,16 @@ impl Form {
         let inputs = non_empty(self.db_path.trim())
             .map(|p| vec![PathBuf::from(p)])
             .unwrap_or_default();
+        let date_range = parse_date_range_local(
+            non_empty(self.start_date.trim()),
+            non_empty(self.end_date.trim()),
+            errors,
+        );
         ExporterConfig {
             inputs,
             output: PathBuf::from(self.output.trim()),
-            date_range: DateRange::default(),
+            date_range,
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -501,8 +505,6 @@ impl Form {
                 apple_contacts: non_empty_path(&self.apple_contacts),
                 backup_password: non_empty(self.backup_password.trim()).map(str::to_string),
                 conversation_filter: non_empty(self.conversation_filter.trim()).map(str::to_string),
-                start_date: non_empty(self.start_date.trim()).map(str::to_string),
-                end_date: non_empty(self.end_date.trim()).map(str::to_string),
                 use_caller_id: true,
                 show_progress: false,
                 ignore_disk_space: false,
@@ -530,6 +532,7 @@ impl Form {
             inputs: Vec::new(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -574,13 +577,14 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: timezone.clone(),
             contacts,
             obfuscate,
             media,
             cancel: None,
             log: None,
             output_format: self.output_format,
-            source: SourceConfig::Imazing(ImazingConfig { timezone }),
+            source: SourceConfig::Imazing(ImazingConfig {}),
         }
     }
 
@@ -602,6 +606,7 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -622,6 +627,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -642,6 +648,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -669,6 +676,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -1092,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn imazing_timezone_is_source_specific() {
+    fn imazing_passes_timezone_to_config() {
         let form = Form {
             input: std::env::current_dir().unwrap().display().to_string(),
             output: "out".into(),
@@ -1101,10 +1109,10 @@ mod tests {
             ..Form::default()
         };
         let config = form.to_config(Exporter::Imazing).unwrap();
-        let SourceConfig::Imazing(imazing) = &config.source else {
+        let SourceConfig::Imazing(_) = &config.source else {
             panic!("expected Imazing");
         };
-        assert_eq!(imazing.timezone.as_deref(), Some("UTC-05:00"));
+        assert_eq!(config.timezone.as_deref(), Some("UTC-05:00"));
     }
 
     #[test]

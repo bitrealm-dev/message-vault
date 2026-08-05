@@ -4015,6 +4015,7 @@ dependencies = [
 name = "message-vault-io-core"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "media",
  "message-csv",
  "rust-ini",
@@ -4025,6 +4026,7 @@ dependencies = [
 name = "message-vault-io-gui"
 version = "0.6.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "contacts",
  "dark-light",

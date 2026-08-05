@@ -40,7 +40,9 @@ fn convert_smoke_writes_csv_not_json() {
     .unwrap();
 
     assert!(report.conversations >= 1);
-    assert!(report.flat_eml >= 1 || report.archive_eml >= 1);
+    let flat = report.extra.get("flat_eml").copied().unwrap_or(0);
+    let archive = report.extra.get("archive_eml").copied().unwrap_or(0);
+    assert!(flat >= 1 || archive >= 1);
 
     let mut csv_files: Vec<_> = fs::read_dir(tmp.path())
         .unwrap()
@@ -119,8 +121,8 @@ fn end_dedupe_collapses_duplicate_flats() {
     )
     .unwrap();
 
-    assert_eq!(report.flat_eml, 2);
-    assert_eq!(report.messages_before_dedupe, 2);
+    assert_eq!(report.extra.get("flat_eml").copied().unwrap_or(0), 2);
+    assert_eq!(report.extra.get("messages_before_dedupe").copied().unwrap_or(0), 2);
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
     assert_eq!(report.conversations, 1);
@@ -189,7 +191,7 @@ Will do\r\n"
     )
     .unwrap();
 
-    assert_eq!(report.messages_before_dedupe, 2);
+    assert_eq!(report.extra.get("messages_before_dedupe").copied().unwrap_or(0), 2);
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
 

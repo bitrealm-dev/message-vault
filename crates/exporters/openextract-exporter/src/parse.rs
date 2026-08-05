@@ -1,6 +1,7 @@
 //! Parse OpenExtract conversation CSV (per-chat or all-conversations).
 
 use anyhow::{Context, Result, bail};
+use message_vault_io_core::discover_files;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -46,16 +47,8 @@ pub(crate) fn discover_csv_files(input: &Path) -> Result<Vec<PathBuf>> {
     if !input.is_dir() {
         bail!("input path not found: {}", input.display());
     }
-    let mut files = Vec::new();
-    for entry in
-        std::fs::read_dir(input).with_context(|| format!("read_dir {}", input.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && is_conversation_csv(&path) {
-            files.push(path);
-        }
-    }
+    let mut files = discover_files(input, &|p| is_conversation_csv(p))
+        .with_context(|| format!("read_dir {}", input.display()))?;
     files.sort();
     if files.is_empty() {
         bail!(

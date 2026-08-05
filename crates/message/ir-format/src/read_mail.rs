@@ -21,6 +21,7 @@ use anyhow::{Context, Result, bail};
 use mail::{
     Direction as MailDirection, MailMessage, mail_message_from_eml_bytes, mail_messages_from_mbox,
 };
+use message_vault_io_core::discover_files;
 use std::fs;
 use std::path::Path;
 
@@ -29,16 +30,12 @@ pub fn read_conversation_eml_dir(dir: &Path) -> Result<ConversationDocument> {
     if !dir.is_dir() {
         bail!("not a directory: {}", dir.display());
     }
-    let mut paths: Vec<_> = fs::read_dir(dir)
-        .with_context(|| format!("read {}", dir.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("eml"))
-        })
-        .collect();
+    let mut paths = discover_files(dir, &|p| {
+        p.extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("eml"))
+    })
+    .with_context(|| format!("read {}", dir.display()))?;
     paths.sort();
     if paths.is_empty() {
         bail!("no .eml files in {}", dir.display());

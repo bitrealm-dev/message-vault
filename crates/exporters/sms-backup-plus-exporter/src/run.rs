@@ -1,6 +1,6 @@
 //! Full export pipeline for CLI and in-process GUI.
 
-use crate::emit::{ExportReport, convert_export};
+use crate::emit::convert_export;
 use anyhow::{Context, Result, bail};
 use contacts::{NameMapping, resolve_contacts_cli};
 use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig};
@@ -99,6 +99,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::SmsBackupPlus(source) = &config.source else {
         bail!("sms-backup-plus-exporter requires SourceConfig::SmsBackupPlus");
     };
+    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
 
     let (owner_phones, owner_emails, default_inputs) =
@@ -143,60 +144,8 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     messages.extend(sink.log_lines());
 
     if source.include_summary {
-        messages.extend(report_summary_lines(&report, &config.output));
+        report.summary_lines(&config.output, &mut messages);
     }
     Ok(RunResult { messages })
-}
-
-/// Format the convert summary the same way the CLI prints it.
-fn report_summary_lines(report: &ExportReport, output: &Path) -> Vec<String> {
-    let mut lines = vec![
-        format!("Wrote {}", output.display()),
-        format!("  conversations:     {}", report.conversations),
-        format!("  flat EMLs:         {}", report.flat_eml),
-        format!("  archive EMLs:      {}", report.archive_eml),
-        format!("  messages (raw):    {}", report.messages_before_dedupe),
-        format!("  messages (deduped):{}", report.messages),
-        format!("  duplicates dropped:{}", report.duplicates_dropped),
-        format!("  attachments:       {}", report.attachments_saved),
-        format!("  sent / received:   {} / {}", report.sent, report.received),
-    ];
-    if report.skipped_invalid_date > 0 {
-        lines.push(format!(
-            "  skipped bad date:  {}",
-            report.skipped_invalid_date
-        ));
-    }
-    if report.skipped_out_of_range > 0 {
-        lines.push(format!(
-            "  skipped date range:{}",
-            report.skipped_out_of_range
-        ));
-    }
-    if report.unknown_chat_messages > 0 {
-        lines.push(format!(
-            "  unknown chat rows: {}",
-            report.unknown_chat_messages
-        ));
-    }
-    if report.skipped_not_sms_backup_plus > 0 {
-        lines.push(format!(
-            "  not SMS Backup+:   {}",
-            report.skipped_not_sms_backup_plus
-        ));
-    }
-    if report.skipped_parse_error > 0 {
-        lines.push(format!(
-            "  parse errors:      {}",
-            report.skipped_parse_error
-        ));
-    }
-    if !report.errors.is_empty() {
-        lines.push(format!("  errors:            {}", report.errors.len()));
-        for err in report.errors.iter().take(10) {
-            lines.push(format!("    {err}"));
-        }
-    }
-    lines
 }
 

@@ -1,11 +1,11 @@
 //! Convert OpenExtract rows → common message → packaging via FormatSink.
 
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -18,54 +18,30 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{sanitize_number, to_e164};
 use serde_json::{Map, json};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "openextract";
 const EXPORT_TOOL: &str = "OpenExtract";
 const EXPORT_TOOL_VERSION: &str = "0.5.1";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub messages: u64,
-    pub sent: u64,
-    pub received: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    /// Rows/chats where peer was a name with no VCF phone (name-only chat id).
-    pub unresolved_chat_phone: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
 }
 
-#[derive(Debug)]
-struct PendingMessage {
-    sort_key: f64,
-    is_from_me: bool,
-    sender_handle: String,
-    sender_display_name: String,
-    text: String,
-    contact_name: String,
-    date_ms: String,
-    has_attachments: bool,
-    source_kind: SourceKind,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    messages: Vec<PendingMessage>,
+/// Read a per-exporter counter from the report's `extra` map (test assertions).
+#[cfg(test)]
+fn count(report: &ExportReport, key: &str) -> u64 {
+    report.extra.get(key).copied().unwrap_or(0)
 }
 
 /// Convert OpenExtract CSV(s) under `input` using `book` (from VCF/contacts).
@@ -81,9 +57,8 @@ pub(crate) fn convert_export(
     output_format: OutputFormat,
     cancel: Option<&CancelFlag>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    clean_previous_ir_output(output)?;
-    let mut sink = FormatSink::open(output, output_format, transforms)?;
+    let (mut sink, _attachments_dir) =
+        FormatSink::open_prepared(output, output_format, transforms)?;
 
     let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
@@ -126,7 +101,7 @@ pub(crate) fn convert_export(
 
             let (chat_id, contact_name, unresolved) = resolve_chat(book, &peer_label);
             if unresolved {
-                report.unresolved_chat_phone += 1;
+                bump(&mut report, "unresolved_chat_phone", 1);
             }
 
             let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
@@ -142,17 +117,39 @@ pub(crate) fn convert_export(
             let (sender_handle, sender_display_name) =
                 resolve_sender(book, &row, is_from_me, &chat_id, &contact_name);
 
-            let convo = conversations.entry(chat_id).or_default();
+            let convo = conversations
+                .entry(chat_id.clone())
+                .or_insert_with(|| PendingConversation {
+                    chat_id: chat_id.clone(),
+                    display_name: None,
+                    participant_e164s: Vec::new(),
+                    messages: Vec::new(),
+                    is_group: false,
+                    has_attachments: false,
+                    extra: BTreeMap::new(),
+                });
             convo.messages.push(PendingMessage {
-                sort_key: secs as f64,
+                sort_key: secs,
                 is_from_me,
                 sender_handle,
-                sender_display_name,
+                sender_display_name: if sender_display_name.is_empty() {
+                    None
+                } else {
+                    Some(sender_display_name)
+                },
                 text: row.text,
-                contact_name,
-                date_ms,
-                has_attachments: row.has_attachments,
-                source_kind: row.source_kind,
+                attachments: Vec::new(),
+                extra: {
+                    let mut e = BTreeMap::new();
+                    e.insert("contact_name".into(), contact_name);
+                    e.insert("date_ms".into(), date_ms);
+                    e.insert(
+                        "has_attachments".into(),
+                        if row.has_attachments { "true" } else { "false" }.into(),
+                    );
+                    e.insert("source_kind".into(), row.source_kind.as_str().to_string());
+                    e
+                },
             });
         }
     }
@@ -176,19 +173,16 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     if convo.messages.is_empty() {
         return false;
     }
-    convo.messages.sort_by(|a, b| {
-        a.sort_key
-            .partial_cmp(&b.sort_key)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    convo.messages.sort_by_key(|m| m.sort_key);
     convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key as i64).is_some() {
+        if format_local_ts(m.sort_key).is_some() {
             true
         } else {
             report.skipped_invalid_date += 1;
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
@@ -309,7 +303,7 @@ fn pending_to_document(
     let contact_name = convo
         .messages
         .iter()
-        .map(|m| m.contact_name.trim())
+        .map(|m| m.extra_str("contact_name").trim())
         .find(|n| !n.is_empty())
         .map(str::to_string);
     let participants = if chat_id.is_empty() || chat_id.eq_ignore_ascii_case("unknown") {
@@ -338,17 +332,20 @@ fn pending_to_document(
             report.received += 1;
         }
         report.messages += 1;
-        let secs = msg.sort_key as i64;
+        let secs = msg.sort_key;
         let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &[]);
         let timestamp_unix_ms = msg
-            .date_ms
+            .extra_str("date_ms")
             .parse::<i64>()
             .unwrap_or_else(|_| secs.saturating_mul(1000));
 
         let mut fields = Map::new();
-        fields.insert("source_kind".into(), json!(msg.source_kind.as_str()));
-        fields.insert("has_attachments".into(), json!(msg.has_attachments));
+        fields.insert("source_kind".into(), json!(msg.extra_str("source_kind")));
+        fields.insert(
+            "has_attachments".into(),
+            json!(msg.extra_flag("has_attachments")),
+        );
         let source = IrSource {
             android_type: None,
             fields,
@@ -364,11 +361,7 @@ fn pending_to_document(
                 } else {
                     Some(msg.sender_handle.clone())
                 },
-                if msg.sender_display_name.is_empty() {
-                    None
-                } else {
-                    Some(msg.sender_display_name.clone())
-                },
+                msg.sender_display_name.clone(),
             )
         };
 
@@ -411,7 +404,7 @@ fn pending_to_document(
 mod tests {
     use super::*;
     use contacts::ContactsBook;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
 
@@ -451,7 +444,7 @@ TEL;TYPE=CELL:+1-555-555-0122\nEND:VCARD\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_chat_phone, 0);
+        assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         let csv_path = out.join("+15555550122.csv");
         let body = fs::read_to_string(&csv_path).unwrap();
         assert!(body.contains("Sam Example"));
@@ -486,7 +479,7 @@ TEL:+15555550999\nEND:VCARD\n",
             None,
         )
         .unwrap();
-        assert!(report.unresolved_chat_phone >= 1);
+        assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         let csv_path = out.join("Cathy_Arp.csv");
         assert!(csv_path.is_file(), "missing {}", csv_path.display());

@@ -5,8 +5,9 @@ use std::sync::mpsc;
 use go_sms_pro_exporter::run as run_go_sms_pro;
 use imazing_exporter::run as run_imazing;
 use imessage_ir_exporter::run as run_imessage;
+use message_reexport::run as run_format;
 use message_vault_io_core::{
-    CancelFlag, Exporter, ExporterConfig, JobError, LogSink, ProcessEvent, RunResult,
+    CancelFlag, ExporterConfig, JobError, LogSink, ProcessEvent, RunResult, SourceConfig,
 };
 use openextract_exporter::run as run_openextract;
 use sms_backup_plus_exporter::run as run_sms_plus;
@@ -29,37 +30,36 @@ fn prepare_config(
     config
 }
 
-pub fn library_job_for_exporter(exporter: Exporter, config: ExporterConfig) -> LibraryJob {
-    match exporter {
-        Exporter::GoSmsPro => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_go_sms_pro(&config), tx)
-        }),
-        Exporter::SmsBackupRestore => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_sms_restore(&config), tx)
-        }),
-        Exporter::SmsBackupPlus => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_sms_plus(&config), tx)
-        }),
-        Exporter::OpenExtract => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_openextract(&config), tx)
-        }),
-        Exporter::Imazing => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_imazing(&config), tx)
-        }),
-        Exporter::Whatsapp => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_whatsapp(&config), tx)
-        }),
-        Exporter::Imessage => Box::new(move |cancel, tx| {
-            let config = prepare_config(config, cancel, &tx);
-            run_and_log(run_imessage(&config), tx)
-        }),
+/// Run the exporter identified by `config.source` in-process (no subprocess).
+///
+/// Single dispatch point for every library runner: the seven exporter crates
+/// plus `message-reexport` (Format tab). `config.source` is authoritative —
+/// `Form::to_config` / `to_format_config` set it from the exporter chosen in
+/// the GUI. Keeping the match here means adding an exporter touches one place
+/// instead of every caller.
+pub fn run_exporter(config: &ExporterConfig) -> anyhow::Result<RunResult> {
+    match &config.source {
+        SourceConfig::GoSmsPro(_) => run_go_sms_pro(config),
+        SourceConfig::SmsBackupRestore(_) => run_sms_restore(config),
+        SourceConfig::SmsBackupPlus(_) => run_sms_plus(config),
+        SourceConfig::OpenExtract(_) => run_openextract(config),
+        SourceConfig::Imazing(_) => run_imazing(config),
+        SourceConfig::Apple(_) => run_imessage(config),
+        SourceConfig::Whatsapp(_) => run_whatsapp(config),
+        SourceConfig::Format(_) => run_format(config),
     }
+}
+
+/// Wrap a runnable [`ExporterConfig`] as a background [`LibraryJob`].
+///
+/// Both the extract tabs and the Format tab build the same kind of job: wire
+/// cancel/log sinks into the config, run it through [`run_exporter`], and
+/// forward the result lines onto the job's event channel.
+pub fn library_job_for_exporter(config: ExporterConfig) -> LibraryJob {
+    Box::new(move |cancel, tx| {
+        let config = prepare_config(config, cancel, &tx);
+        run_and_log(run_exporter(&config), tx)
+    })
 }
 
 pub fn run_and_log<R, E: std::fmt::Display>(
@@ -78,14 +78,6 @@ where
         }
         Err(error) => Err(JobError::detail(format!("{error:#}"))),
     }
-}
-
-pub fn prepare_library_config(
-    config: ExporterConfig,
-    cancel: CancelFlag,
-    tx: &mpsc::Sender<ProcessEvent>,
-) -> ExporterConfig {
-    prepare_config(config, cancel, tx)
 }
 
 pub trait HasMessages {

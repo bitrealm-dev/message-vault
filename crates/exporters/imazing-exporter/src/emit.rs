@@ -5,8 +5,8 @@ use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
 use anyhow::{Context, Result, bail};
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
-use message_csv::{AttachmentCell, DateRange, format_local_ts, parse_utc_offset, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_csv::{DateRange, format_local_ts, parse_utc_offset, stable_guid};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -20,15 +20,13 @@ use message_ir::{
     IrParticipant,
     IrService,
     IrSource,
+    PendingAttachment,
+    PendingConversation,
+    PendingMessage,
     SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{sanitize_number, to_e164};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
@@ -39,59 +37,15 @@ const EXPORT_SOURCE: &str = "imazing";
 const EXPORT_TOOL: &str = "iMazing";
 const EXPORT_TOOL_VERSION: &str = "3.5.5";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub messages: u64,
-    pub sent: u64,
-    pub received: u64,
-    pub notifications: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    pub duplicates_dropped: u64,
-    /// Chats where peer was a name with no contacts phone (name-only chat id).
-    pub unresolved_chat_phone: u64,
-    /// Group roster labels that could not be resolved to a phone/email.
-    pub unresolved_group_participants: u64,
-    pub messages_files: u64,
-    pub whatsapp_files: u64,
-    pub attachments_saved: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
 }
 
-#[derive(Debug)]
-struct PendingMessage {
-    sort_key: i64,
-    is_from_me: bool,
-    is_notification: bool,
-    sender_handle: String,
-    sender_display_name: String,
-    subject: String,
-    text: String,
-    contact_name: String,
-    date_ms: String,
-    service: String,
-    status: String,
-    msg_type: String,
-    reactions: String,
-    replying_to: String,
-    forwarded: String,
-    attachment_info: String,
-    delivered_date: String,
-    read_date: String,
-    edited_date: String,
-    deleted_date: String,
-    sent_date: String,
-    attachments: Vec<AttachmentCell>,
-}
-
-#[derive(Debug, Default)]
-struct PendingConversation {
-    conversation_type: String,
-    group_title: String,
-    source_kind: Option<SourceKind>,
-    messages: Vec<PendingMessage>,
-    seen: HashSet<String>,
+/// Read a per-exporter counter from the report's `extra` map (test assertions).
+#[cfg(test)]
+fn count(report: &ExportReport, key: &str) -> u64 {
+    report.extra.get(key).copied().unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,26 +98,24 @@ pub(crate) fn convert_export(
             input.display()
         );
     }
-    clean_previous_ir_output(&output)?;
     let copy_attachments = transforms.copies_attachments();
-    let attachments_dir = output.join("attachments");
-    if copy_attachments {
-        fs::create_dir_all(&attachments_dir)
-            .with_context(|| format!("create {}", attachments_dir.display()))?;
-    }
+    let (mut sink, attachments_dir) =
+        FormatSink::open_prepared(&output, output_format, transforms)?;
     // Walk the input tree once; per-attachment lookups hit this index.
     let attachment_index = copy_attachments.then(|| AttachmentIndex::build(&input));
-    let mut sink = FormatSink::open(&output, output_format, transforms)?;
 
     let files = discover_csv_files(&input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
+    // Parse-time dedupe state keyed by conversation key (the shared
+    // PendingConversation carries document data only).
+    let mut seen_keys: BTreeMap<String, HashSet<String>> = BTreeMap::new();
 
     for discovered in &files {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match discovered.kind {
-            SourceKind::Messages => report.messages_files += 1,
-            SourceKind::WhatsApp => report.whatsapp_files += 1,
+            SourceKind::Messages => bump(&mut report, "messages_files", 1),
+            SourceKind::WhatsApp => bump(&mut report, "whatsapp_files", 1),
         }
         let rows = match parse_csv_file(&discovered.path, discovered.kind) {
             Ok(r) => r,
@@ -190,27 +142,32 @@ pub(crate) fn convert_export(
         for (session, session_rows) in by_session {
             let peer = collect_peer_info(book, discovered.kind, &session, &session_rows);
             if peer.unresolved_chat {
-                report.unresolved_chat_phone += 1;
+                bump(&mut report, "unresolved_chat_phone", 1);
             }
-            report.unresolved_group_participants += peer.unresolved_roster_labels;
+            bump(&mut report, "unresolved_group_participants", peer.unresolved_roster_labels);
 
             let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
             let convo = conversations
-                .entry(convo_key)
+                .entry(convo_key.clone())
                 .or_insert_with(|| PendingConversation {
-                    conversation_type: if peer.group {
-                        "group".into()
+                    chat_id: peer.chat_id.clone(),
+                    display_name: if peer.group {
+                        Some(session.clone())
                     } else {
-                        "individual".into()
+                        None
                     },
-                    group_title: if peer.group {
-                        session.clone()
-                    } else {
-                        String::new()
-                    },
-                    source_kind: Some(discovered.kind),
+                    participant_e164s: Vec::new(),
                     messages: Vec::new(),
-                    seen: HashSet::new(),
+                    is_group: peer.group,
+                    has_attachments: false,
+                    extra: {
+                        let mut e = BTreeMap::new();
+                        e.insert(
+                            "source_kind".into(),
+                            discovered.kind.as_str().to_string(),
+                        );
+                        e
+                    },
                 });
 
             for row in session_rows {
@@ -234,9 +191,10 @@ pub(crate) fn convert_export(
                 );
 
                 let mut attachments = Vec::new();
+                let mut attachment_extra: BTreeMap<String, String> = BTreeMap::new();
                 if !row.attachment.is_empty() {
                     let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
-                    attachments.push(resolve_attachment_cell(
+                    let cell = resolve_attachment_cell(
                         &row.attachment,
                         &row.attachment_type,
                         csv_parent,
@@ -245,7 +203,33 @@ pub(crate) fn convert_export(
                         copy_attachments,
                         secs,
                         &mut report.attachments_saved,
-                    ));
+                    );
+                    let rel_path = cell.path.clone().unwrap_or_default();
+                    attachments.push(PendingAttachment {
+                        rel_path: rel_path.clone(),
+                        content_type: cell.mime_type.clone().unwrap_or_default(),
+                        extension: Path::new(&rel_path)
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        digest_sha256: cell.digest_sha256.clone(),
+                        name_hint: cell.original_name.clone(),
+                    });
+                    // iMazing rows carry at most one attachment, so sticker
+                    // metadata fits on the message.
+                    attachment_extra.insert(
+                        "is_sticker".into(),
+                        if cell.is_sticker { "true" } else { "false" }.into(),
+                    );
+                    attachment_extra.insert(
+                        "transcription".into(),
+                        cell.transcription.unwrap_or_default(),
+                    );
+                    attachment_extra.insert(
+                        "sticker_effect".into(),
+                        cell.sticker_effect.unwrap_or_default(),
+                    );
                 }
 
                 // sender_id distinguishes same-second same-text rows from
@@ -259,7 +243,11 @@ pub(crate) fn convert_export(
                     row.text,
                     row.attachment
                 );
-                if !convo.seen.insert(dedupe_key) {
+                if !seen_keys
+                    .entry(convo_key.clone())
+                    .or_default()
+                    .insert(dedupe_key)
+                {
                     report.duplicates_dropped += 1;
                     continue;
                 }
@@ -276,26 +264,38 @@ pub(crate) fn convert_export(
                 convo.messages.push(PendingMessage {
                     sort_key: secs,
                     is_from_me,
-                    is_notification,
                     sender_handle,
-                    sender_display_name,
-                    subject: row.subject.clone(),
+                    sender_display_name: if sender_display_name.is_empty() {
+                        None
+                    } else {
+                        Some(sender_display_name)
+                    },
                     text: row.text.clone(),
-                    contact_name: peer.contact_name.clone(),
-                    date_ms,
-                    service,
-                    status: row.status.clone(),
-                    msg_type: row.msg_type.clone(),
-                    reactions: row.reactions.clone(),
-                    replying_to: row.replying_to.clone(),
-                    forwarded: row.forwarded.clone(),
-                    attachment_info: row.attachment_info.clone(),
-                    delivered_date: row.delivered_date.clone(),
-                    read_date: row.read_date.clone(),
-                    edited_date: row.edited_date.clone(),
-                    deleted_date: row.deleted_date.clone(),
-                    sent_date: row.sent_date.clone(),
                     attachments,
+                    extra: {
+                        let mut e = BTreeMap::new();
+                        e.insert(
+                            "is_notification".into(),
+                            if is_notification { "true" } else { "false" }.into(),
+                        );
+                        e.insert("subject".into(), row.subject.clone());
+                        e.insert("contact_name".into(), peer.contact_name.clone());
+                        e.insert("date_ms".into(), date_ms);
+                        e.insert("service".into(), service);
+                        e.insert("imazing_status".into(), row.status.clone());
+                        e.insert("imazing_type".into(), row.msg_type.clone());
+                        e.insert("reactions".into(), row.reactions.clone());
+                        e.insert("replying_to".into(), row.replying_to.clone());
+                        e.insert("forwarded".into(), row.forwarded.clone());
+                        e.insert("attachment_info".into(), row.attachment_info.clone());
+                        e.insert("delivered_date".into(), row.delivered_date.clone());
+                        e.insert("read_date".into(), row.read_date.clone());
+                        e.insert("edited_date".into(), row.edited_date.clone());
+                        e.insert("deleted_date".into(), row.deleted_date.clone());
+                        e.insert("sent_date".into(), row.sent_date.clone());
+                        e.extend(attachment_extra);
+                        e
+                    },
                 });
             }
         }
@@ -591,11 +591,12 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
             false
         }
     });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
 }
 
-fn imazing_peers(conversation_type: &str, chat_id: &str) -> Vec<String> {
-    if conversation_type.eq_ignore_ascii_case("group") {
+fn imazing_peers(is_group: bool, chat_id: &str) -> Vec<String> {
+    if is_group {
         chat_id
             .split(',')
             .map(|s| s.trim().to_string())
@@ -606,8 +607,8 @@ fn imazing_peers(conversation_type: &str, chat_id: &str) -> Vec<String> {
     }
 }
 
-fn imazing_packaging_stem_suffix(source_kind: Option<SourceKind>) -> Option<String> {
-    if source_kind == Some(SourceKind::WhatsApp) {
+fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
+    if source_kind == "whatsapp" {
         Some("__whatsapp".into())
     } else {
         None
@@ -619,7 +620,7 @@ fn pending_to_document(
     convo: &PendingConversation,
     report: &mut ExportReport,
 ) -> Result<ConversationDocument> {
-    let peers = imazing_peers(&convo.conversation_type, chat_id);
+    let peers = imazing_peers(convo.is_group, chat_id);
     let mut participants: Vec<IrParticipant> = peers
         .iter()
         .map(|h| IrParticipant {
@@ -627,21 +628,21 @@ fn pending_to_document(
             display_name: None,
         })
         .collect();
-    if participants.is_empty() && convo.conversation_type == "individual" && !chat_id.is_empty() {
+    if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
             display_name: convo
                 .messages
                 .iter()
-                .map(|m| m.contact_name.trim())
+                .map(|m| m.extra_str("contact_name").trim())
                 .find(|n| !n.is_empty())
                 .map(str::to_string),
         });
     }
-    let packaging_stem_suffix = imazing_packaging_stem_suffix(convo.source_kind);
+    let packaging_stem_suffix = imazing_packaging_stem_suffix(convo.extra_str("source_kind"));
     // Match previous CSV/mail stem: conversation_filename gets None for title
     // (session string is not a real group title).
-    let session_title = convo.group_title.trim();
+    let session_title = convo.display_name.as_deref().unwrap_or("");
 
     let export = ExportMeta {
         source: EXPORT_SOURCE.into(),
@@ -654,8 +655,9 @@ fn pending_to_document(
 
     let mut messages = Vec::with_capacity(convo.messages.len());
     for msg in &convo.messages {
-        if msg.is_notification {
-            report.notifications += 1;
+        let is_notification = msg.extra_flag("is_notification");
+        if is_notification {
+            bump(report, "notifications", 1);
         } else if msg.is_from_me {
             report.sent += 1;
         } else {
@@ -667,24 +669,24 @@ fn pending_to_document(
         let digests: Vec<String> = msg
             .attachments
             .iter()
-            .filter_map(|a| a.path.clone())
+            .map(|a| a.rel_path.clone())
             .collect();
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let timestamp_unix_ms = msg
-            .date_ms
+            .extra_str("date_ms")
             .parse::<i64>()
             .unwrap_or_else(|_| msg.sort_key.saturating_mul(1000));
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
             .map(|a| IrAttachment {
-                path: a.path.clone(),
-                original_name: a.original_name.clone(),
-                mime_type: a.mime_type.clone(),
-                digest_sha256: None,
-                is_sticker: a.is_sticker,
-                transcription: a.transcription.clone(),
-                sticker_effect: a.sticker_effect.clone(),
+                path: Some(a.rel_path.clone()),
+                original_name: a.name_hint.clone(),
+                mime_type: a.mime_type(),
+                digest_sha256: a.digest_sha256.clone(),
+                is_sticker: msg.extra_flag("is_sticker"),
+                transcription: msg.extra_opt("transcription"),
+                sticker_effect: msg.extra_opt("sticker_effect"),
                 size_bytes: None,
                 bytes: None,
             })
@@ -702,19 +704,20 @@ fn pending_to_document(
                 serde_json::Value::String(session_title.to_string()),
             );
         }
-        for (key, val) in [
-            ("imazing_status", msg.status.as_str()),
-            ("imazing_type", msg.msg_type.as_str()),
-            ("reactions", msg.reactions.as_str()),
-            ("replying_to", msg.replying_to.as_str()),
-            ("forwarded", msg.forwarded.as_str()),
-            ("attachment_info", msg.attachment_info.as_str()),
-            ("delivered_date", msg.delivered_date.as_str()),
-            ("read_date", msg.read_date.as_str()),
-            ("edited_date", msg.edited_date.as_str()),
-            ("deleted_date", msg.deleted_date.as_str()),
-            ("sent_date", msg.sent_date.as_str()),
+        for key in [
+            "imazing_status",
+            "imazing_type",
+            "reactions",
+            "replying_to",
+            "forwarded",
+            "attachment_info",
+            "delivered_date",
+            "read_date",
+            "edited_date",
+            "deleted_date",
+            "sent_date",
         ] {
+            let val = msg.extra_str(key);
             if !val.is_empty() {
                 fields.insert(key.into(), serde_json::Value::String(val.to_string()));
             }
@@ -725,7 +728,7 @@ fn pending_to_document(
         }
         .into_option();
 
-        let is_outgoing = msg.is_from_me && !msg.is_notification;
+        let is_outgoing = msg.is_from_me && !is_notification;
         let (sender_handle, sender_display_name) = if is_outgoing {
             (owner_handle.clone(), owner_display.clone())
         } else {
@@ -735,11 +738,7 @@ fn pending_to_document(
                 } else {
                     Some(msg.sender_handle.clone())
                 },
-                if msg.sender_display_name.is_empty() {
-                    None
-                } else {
-                    Some(msg.sender_display_name.clone())
-                },
+                msg.sender_display_name.clone(),
             )
         };
 
@@ -751,15 +750,11 @@ fn pending_to_document(
             } else {
                 IrDirection::Incoming
             },
-            service: IrService::parse(&msg.service),
+            service: IrService::parse(msg.extra_str("service")),
             message_kind,
             sender_handle,
             sender_display_name,
-            subject: if msg.subject.is_empty() {
-                None
-            } else {
-                Some(msg.subject.clone())
-            },
+            subject: msg.extra_opt("subject"),
             text: msg.text.clone(),
             attachments,
             imessage: None,
@@ -772,7 +767,11 @@ fn pending_to_document(
         export,
         conversation: ConversationMeta {
             chat_identifier: chat_id.to_string(),
-            conversation_type: IrConversationType::parse(&convo.conversation_type),
+            conversation_type: if convo.is_group {
+                IrConversationType::Group
+            } else {
+                IrConversationType::Individual
+            },
             // None matches previous CSV/mail stem (session string is not a real group title).
             group_title: None,
             participants,
@@ -830,7 +829,7 @@ Bob,,McRoy,+13212462167,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_chat_phone, 0);
+        assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         assert_eq!(report.messages, 2);
         let csv_path = out.join("+13212462167.csv");
         let body = fs::read_to_string(&csv_path).unwrap();
@@ -869,7 +868,7 @@ Other,,Person,+15555550999,\n",
             None,
         )
         .unwrap();
-        assert!(report.unresolved_chat_phone >= 1);
+        assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         assert!(out.join("Mystery_Person.csv").is_file());
     }
@@ -972,7 +971,7 @@ Carol,,Silent,+15555550133,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_group_participants, 0);
+        assert_eq!(count(&report, "unresolved_group_participants"), 0);
         let body = fs::read_to_string(out.join("group_+15555550111_+15555550122_+15555550133.csv"))
             .unwrap();
         assert!(body.contains("+15555550133") || body.contains("15555550133"));
@@ -1010,7 +1009,7 @@ Bob,,Example,+15555550122,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_group_participants, 1);
+        assert_eq!(count(&report, "unresolved_group_participants"), 1);
     }
 
     #[test]
@@ -1048,8 +1047,8 @@ Bob,,,+15555550100,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 2);
-        assert_eq!(report.messages_files, 1);
-        assert_eq!(report.whatsapp_files, 1);
+        assert_eq!(count(&report, "messages_files"), 1);
+        assert_eq!(count(&report, "whatsapp_files"), 1);
         assert!(out.join("+15555550100.csv").is_file());
         assert!(out.join("+15555550100__whatsapp.csv").is_file());
         let wa = fs::read_to_string(out.join("+15555550100__whatsapp.csv")).unwrap();

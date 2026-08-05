@@ -6,8 +6,8 @@ use imessage_database::{
     tables::table::DEFAULT_PATH_IOS,
     util::{platform::Platform, query_context::QueryContext},
 };
-use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
 
 use crate::error::RuntimeError;
 
@@ -19,6 +19,23 @@ pub(crate) enum AttachmentEmbed {
     Embed,
     /// Skip media bytes (empty attachment parts still possible via other fields).
     Disabled,
+}
+
+/// Map `AppleConfig.copy_method` to attachment handling.
+///
+/// `clone` copies files, `basic` embeds thumbnails, and `full` embeds
+/// originals — all three resolve bytes through the same embed path in this
+/// exporter. `disabled` skips media bytes entirely.
+pub(crate) fn attachment_embed_from_copy_method(
+    copy_method: &str,
+) -> Result<AttachmentEmbed, RuntimeError> {
+    match copy_method.trim().to_ascii_lowercase().as_str() {
+        "disabled" => Ok(AttachmentEmbed::Disabled),
+        "clone" | "basic" | "full" => Ok(AttachmentEmbed::Embed),
+        other => Err(RuntimeError::InvalidOptions(format!(
+            "{other} is not a valid attachment mode! Must be one of <clone, basic, full, disabled>"
+        ))),
+    }
 }
 
 /// Parsed options for one mail export run.

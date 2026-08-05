@@ -3,15 +3,18 @@
 use std::path::PathBuf;
 
 use imessage_database::util::{
-    dirs::default_db_path, platform::Platform, query_context::QueryContext,
+    dates::{TIMESTAMP_FACTOR, get_offset},
+    dirs::default_db_path,
+    platform::Platform,
+    query_context::QueryContext,
 };
-use message_vault_io_core::{RunResult, ApplePlatform, ExporterConfig, SourceConfig};
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::{ApplePlatform, ExporterConfig, RunResult, SourceConfig};
 
 use crate::{
     emit::run_export,
     error::RuntimeError,
-    options::{AttachmentEmbed, MailOptions, validate_export_path},
+    options::{MailOptions, attachment_embed_from_copy_method, validate_export_path},
     session::MailSession,
 };
 
@@ -57,16 +60,18 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
     };
 
     let mut query_context = QueryContext::default();
-    if let Some(start) = &source.start_date
-        && let Err(why) = query_context.set_start(start)
-    {
-        return Err(RuntimeError::InvalidOptions(format!("{why}")));
-    }
-    if let Some(end) = &source.end_date
-        && let Err(why) = query_context.set_end(end)
-    {
-        return Err(RuntimeError::InvalidOptions(format!("{why}")));
-    }
+    // QueryContext stores nanoseconds since the Apple epoch (2001-01-01 UTC);
+    // DateRange stores Unix seconds at local midnight. Convert the same way
+    // `QueryContext::set_start`/`set_end` convert `YYYY-MM-DD` strings.
+    let offset_ns = get_offset() * TIMESTAMP_FACTOR;
+    query_context.start = config
+        .date_range
+        .start_secs
+        .map(|s| s * TIMESTAMP_FACTOR - offset_ns);
+    query_context.end = config
+        .date_range
+        .end_secs
+        .map(|s| s * TIMESTAMP_FACTOR - offset_ns);
 
     let db_path = match config.primary_input() {
         Some(path) if !path.as_os_str().is_empty() => path.to_path_buf(),
@@ -122,15 +127,7 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         }
     }
 
-    let attachment_embed = match source.copy_method.to_ascii_lowercase().as_str() {
-        "disabled" => AttachmentEmbed::Disabled,
-        "clone" | "basic" | "full" => AttachmentEmbed::Embed,
-        other => {
-            return Err(RuntimeError::InvalidOptions(format!(
-                "{other} is not a valid attachment mode! Must be one of <clone, basic, full, disabled>"
-            )));
-        }
-    };
+    let attachment_embed = attachment_embed_from_copy_method(&source.copy_method)?;
 
     let export_path = validate_export_path(&config.output, config.output_format)?;
     std::fs::create_dir_all(&export_path)?;
