@@ -1,11 +1,15 @@
 //! Shared exporter forms, typed config, and process helpers for desktop GUIs.
 
+#[cfg(feature = "cli")]
+mod cli;
 mod config;
 mod export_ini;
 mod exporters;
 mod pipeline;
 mod process;
 
+#[cfg(feature = "cli")]
+pub use cli::CommonCli;
 pub use config::{
     AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
     FormatConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,

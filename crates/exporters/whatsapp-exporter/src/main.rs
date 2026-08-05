@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use message_vault_io_core::{
-    ExporterConfig, MediaConfig, ObfuscateConfig, OutputFormat, SourceConfig, WhatsappConfig,
+    CommonCli, ExporterConfig, MediaConfig, OutputFormat, SourceConfig, WhatsappConfig,
     WhatsappPlatform,
 };
-use media::{MaxResolution, MediaMode, compress_options_from_cli};
+use media::compress_options_from_cli;
 use whatsapp_exporter::{parse_date_range, run};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -36,14 +36,6 @@ struct Cli {
     /// The GUI omits this flag.
     #[arg(long)]
     input: Option<PathBuf>,
-
-    /// Output directory for packaging + attachments/
-    #[arg(long)]
-    output: PathBuf,
-
-    /// Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
-    #[arg(long = "format", default_value = "json", value_name = "FORMAT")]
-    format: String,
 
     /// Android or iOS (required unless --json)
     #[arg(long, value_enum)]
@@ -77,69 +69,33 @@ struct Cli {
     #[arg(long)]
     business: bool,
 
-    /// Rewrite output with stable fake names/numbers/text and placeholder media
-    #[arg(long)]
-    obfuscate: bool,
-
-    /// Optional 8-hex seed for reproducible obfuscation (implies --obfuscate)
-    #[arg(long = "obfuscate-seed")]
-    obfuscate_seed: Option<String>,
-
-    /// Only messages on or after this date (YYYY-MM-DD, local midnight, inclusive)
-    #[arg(long = "start-date", value_name = "YYYY-MM-DD")]
-    start_date: Option<String>,
-
-    /// Only messages before this date (YYYY-MM-DD, local midnight, exclusive)
-    #[arg(long = "end-date", value_name = "YYYY-MM-DD")]
-    end_date: Option<String>,
-
-    /// Attachment media: disabled (no files), clone (default), convert, or compress
-    #[arg(long = "media-mode", default_value = "clone", value_name = "MODE")]
-    media_mode: MediaMode,
-
-    /// Compress only: max long edge (720p, 1080p, 4k)
-    #[arg(
-        long = "media-max-resolution",
-        default_value = "1080p",
-        value_name = "RES"
-    )]
-    media_max_resolution: MaxResolution,
-
-    /// Compress only: max frame rate
-    #[arg(long = "media-max-fps", default_value_t = 30.0)]
-    media_max_fps: f32,
-
-    /// Compress only: only re-encode videos at/above this size (e.g. 20M)
-    #[arg(long = "media-min-size", default_value = "20M")]
-    media_min_size: String,
-
-    /// Compress only: skip already-efficient HEVC under max resolution (default on)
-    #[arg(long = "media-skip-efficient", default_value_t = true, action = clap::ArgAction::Set)]
-    media_skip_efficient: bool,
+    #[command(flatten)]
+    common: CommonCli,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let date_range = parse_date_range(cli.start_date.as_deref(), cli.end_date.as_deref())
-        .map_err(anyhow::Error::msg)?;
-    let output_format = OutputFormat::parse(&cli.format).map_err(anyhow::Error::msg)?;
+    let common = &cli.common;
+    let date_range = parse_date_range(
+        common.start_date.as_deref(),
+        common.end_date.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
     let compress = compress_options_from_cli(
-        cli.media_max_resolution,
-        cli.media_max_fps,
-        &cli.media_min_size,
-        cli.media_skip_efficient,
+        common.media_max_resolution,
+        common.media_max_fps,
+        &common.media_min_size,
+        common.media_skip_efficient,
     )?;
     let result = run(&ExporterConfig {
         inputs: cli.input.into_iter().collect(),
-        output: cli.output,
+        output: common.output.clone(),
         date_range,
         contacts: None,
-        obfuscate: ObfuscateConfig {
-            enabled: cli.obfuscate,
-            seed: cli.obfuscate_seed,
-        },
+        obfuscate: common.obfuscate_config(),
         media: MediaConfig {
-            mode: cli.media_mode,
+            mode: common.media_mode,
             compress,
         },
         cancel: None,

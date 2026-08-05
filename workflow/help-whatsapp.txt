@@ -1,0 +1,98 @@
+warning: function `write_export_sentinel` is never used
+  --> crates/message/ir-format/src/clean.rs:15:8
+   |
+15 | pub fn write_export_sentinel(output_dir: &Path) -> Result<()> {
+   |        ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+CLI arguments common to (nearly) every exporter.
+
+Use with `#[command(flatten)]` in the exporter's `Cli` struct.
+
+Usage: whatsapp-exporter [OPTIONS] --output <OUTPUT>
+
+Options:
+      --input <INPUT>
+          Directory (or msgstore.db file) used to resolve relative defaults such as `msgstore.db` / `wa.db` / `WhatsApp/`. Defaults to the process cwd. Extraction always runs in a temporary directory (not this path). The GUI omits this flag
+
+      --platform <PLATFORM>
+          Android or iOS (required unless --json)
+          
+          [possible values: android, ios]
+
+      --json <JSON>
+          Skip wtsexporter; convert an existing result.json
+
+      --key <KEY>
+          Decryption key file path or crypt15 hex key (forwarded as -k)
+
+      --backup <BACKUP>
+          Encrypted backup / iOS backup path (forwarded as -b)
+
+      --wa <WA>
+          Contacts database wa.db / ContactsV2.sqlite (forwarded as -w)
+
+      --media <MEDIA>
+          WhatsApp media folder (forwarded as -m)
+
+      --db <DB>
+          Explicit msgstore.db path (forwarded as -d)
+
+      --business
+          WhatsApp Business defaults
+
+      --output <OUTPUT>
+          Output directory for packaging + attachments/
+
+      --format <FORMAT>
+          Output format: `json` (default), `jsonl`, `csv`, `eml`, `mbox`, or `xml`
+          
+          [default: json]
+
+      --contacts <CONTACTS>
+          vCard CSV or VCF contacts file for phone→name resolution. Optional; without it phone numbers are not resolved to names
+
+      --vcf <VCF>
+          Contacts VCF (alternate to `--contacts`)
+
+      --obfuscate
+          Rewrite output with stable, non-reversible fake names/numbers/text and placeholder media
+
+      --obfuscate-seed <OBFUSCATE_SEED>
+          Optional seed for reproducible obfuscation (implies --obfuscate)
+
+      --start-date <YYYY-MM-DD>
+          Only messages on or after this date (YYYY-MM-DD, local midnight, inclusive)
+
+      --end-date <YYYY-MM-DD>
+          Only messages before this date (YYYY-MM-DD, local midnight, exclusive)
+
+      --media-mode <MODE>
+          Attachment media: disabled (no files), clone (default), convert, or compress
+          
+          [default: clone]
+
+      --media-max-resolution <RES>
+          Compress only: max long edge (720p, 1080p, 4k)
+          
+          [default: 1080p]
+
+      --media-max-fps <MEDIA_MAX_FPS>
+          Compress only: max frame rate
+          
+          [default: 30]
+
+      --media-min-size <MEDIA_MIN_SIZE>
+          Compress only: only re-encode videos at/above this size (e.g. 20M)
+          
+          [default: 20M]
+
+      --media-skip-efficient <MEDIA_SKIP_EFFICIENT>
+          Compress only: skip already-efficient HEVC under max resolution (default on)
+          
+          [default: true]
+          [possible values: true, false]
+
+  -h, --help
+          Print help (see a summary with '-h')
