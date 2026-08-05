@@ -1,27 +1,28 @@
-//! Bidirectional contacts index (name↔phone).
+//! Bidirectional contacts index (name↔handle), keyed by handle type.
 
 use crate::name::{collapse_inner_whitespace, is_blank_or_unknown_name, normalize_name_key};
 use crate::vcard_csv::read_vcard_csv_rows;
 use crate::vcf::{self, strip_tags};
 use anyhow::{Result, bail};
-use phone::{sanitize_number, to_e164};
+use message_ir::HandleType;
+use phone::sanitize_number;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Name → phone digits and phone → display name.
+/// Bidirectional contacts index (name↔handle), keyed by handle type.
 #[derive(Debug, Default, Clone)]
 pub struct ContactsBook {
-    /// Normalized name key → sanitized phone digits.
-    by_name: HashMap<String, String>,
-    /// Sanitized phone digits → display name (`First Last` or first-only).
-    by_phone: HashMap<String, String>,
+    /// Normalized name key → (normalized handle, handle type).
+    by_name: HashMap<String, (String, HandleType)>,
+    /// (normalized handle, handle type) → display name.
+    by_handle: HashMap<(String, HandleType), String>,
 }
 
 impl ContactsBook {
     pub fn empty() -> Self {
         Self {
             by_name: HashMap::new(),
-            by_phone: HashMap::new(),
+            by_handle: HashMap::new(),
         }
     }
 
@@ -119,18 +120,26 @@ impl ContactsBook {
             return;
         }
         let key = normalize_name_key(&display);
-        if !key.is_empty() {
-            self.by_name.entry(key).or_insert_with(|| phones[0].clone());
-        }
+        // All entries from VCF/vCard CSV are phone type
+        let handle_type = HandleType::Phone;
         for phone in phones {
-            self.by_phone
-                .entry(phone.clone())
+            let Some(digits) = sanitize_number(phone) else {
+                continue;
+            };
+            let normalized = phone::to_e164(&digits);
+            if !key.is_empty() {
+                self.by_name
+                    .entry(key.clone())
+                    .or_insert_with(|| (normalized.clone(), handle_type));
+            }
+            self.by_handle
+                .entry((normalized.clone(), handle_type))
                 .or_insert_with(|| display.clone());
         }
     }
 
-    /// Look up sanitized digits for a display / export name.
-    pub fn lookup_phone_by_name(&self, name: &str) -> Option<String> {
+    /// Look up (normalized handle, type) for a display / export name.
+    pub fn lookup_handle_by_name(&self, name: &str) -> Option<(String, HandleType)> {
         let key = normalize_name_key(name);
         if key.is_empty() {
             return None;
@@ -138,31 +147,39 @@ impl ContactsBook {
         self.by_name.get(&key).cloned()
     }
 
-    /// Look up display name for a phone (raw or sanitized).
-    pub fn lookup_name_by_phone(&self, phone: &str) -> Option<&str> {
-        let digits = sanitize_number(phone)?;
-        self.by_phone.get(&digits).map(String::as_str)
+    /// Look up display name for a (normalized handle, type).
+    pub fn lookup_name_by_handle(&self, normalized: &str, handle_type: HandleType) -> Option<&str> {
+        self.by_handle.get(&(normalized.to_string(), handle_type)).map(String::as_str)
     }
 
-    /// E.164 form of [`lookup_phone_by_name`] when a match exists.
-    pub fn lookup_e164_by_name(&self, name: &str) -> Option<String> {
-        self.lookup_phone_by_name(name).map(|d| to_e164(&d))
-    }
-
-    /// If `name` is blank/unknown and `phone` is in the book, return the display name.
-    pub fn enrich_display_name(&self, phone: &str, name: &str) -> Option<String> {
+    /// If `name` is blank/unknown and `handle` is in the book, return the display name.
+    pub fn enrich_display_name(&self, handle: &str, handle_type: HandleType, name: &str) -> Option<String> {
         if !is_blank_or_unknown_name(name) {
             return None;
         }
-        self.lookup_name_by_phone(phone).map(str::to_string)
+        // Normalize handle based on type before lookup
+        let normalized = normalize_handle(handle, handle_type);
+        self.lookup_name_by_handle(&normalized, handle_type).map(str::to_string)
     }
 
     pub fn len(&self) -> usize {
-        self.by_phone.len()
+        self.by_handle.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_phone.is_empty() && self.by_name.is_empty()
+        self.by_handle.is_empty() && self.by_name.is_empty()
+    }
+}
+
+fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
+    match handle_type {
+        HandleType::Phone => {
+            sanitize_number(raw)
+                .map(|d| phone::to_e164(&d))
+                .unwrap_or_else(|| raw.to_string())
+        }
+        HandleType::Email => raw.trim().to_lowercase(),
+        HandleType::Username | HandleType::Other => raw.trim().to_string(),
     }
 }
 
@@ -284,15 +301,21 @@ Pat,Contact,+15555550133,+15555550144\n",
         );
         let book = ContactsBook::load_vcard_csv(&path).unwrap();
         assert_eq!(
-            book.lookup_phone_by_name("Sam Example").as_deref(),
-            Some("5555550122")
+            book.lookup_handle_by_name("Sam Example"),
+            Some(("+15555550122".to_string(), HandleType::Phone))
         );
         assert_eq!(
-            book.lookup_name_by_phone("+15555550122"),
+            book.lookup_name_by_handle("+15555550122", HandleType::Phone),
             Some("Sam Example")
         );
-        assert_eq!(book.lookup_name_by_phone("5555550133"), Some("Pat Contact"));
-        assert_eq!(book.lookup_name_by_phone("5555550144"), Some("Pat Contact"));
+        assert_eq!(
+            book.lookup_name_by_handle("+15555550133", HandleType::Phone),
+            Some("Pat Contact")
+        );
+        assert_eq!(
+            book.lookup_name_by_handle("+15555550144", HandleType::Phone),
+            Some("Pat Contact")
+        );
     }
 
     #[test]
@@ -306,11 +329,11 @@ TEL;TYPE=CELL:+1-555-555-0100\nEND:VCARD\n",
         );
         let book = ContactsBook::load_vcf(&path).unwrap();
         assert_eq!(
-            book.lookup_phone_by_name("Ada Lovelace").as_deref(),
-            Some("5555550100")
+            book.lookup_handle_by_name("Ada Lovelace"),
+            Some(("+15555550100".to_string(), HandleType::Phone))
         );
         assert_eq!(
-            book.lookup_name_by_phone("5555550100"),
+            book.lookup_name_by_handle("+15555550100", HandleType::Phone),
             Some("Ada Lovelace")
         );
     }
@@ -349,7 +372,7 @@ Ada,Lovelace,+15555550100\n",
         let (book, path) = resolve_contacts_cli(Some(csv), None, None).unwrap();
         assert!(path.is_some());
         assert_eq!(
-            book.lookup_name_by_phone("+15555550100"),
+            book.lookup_name_by_handle("+15555550100", HandleType::Phone),
             Some("Ada Lovelace")
         );
     }
@@ -359,10 +382,13 @@ Ada,Lovelace,+15555550100\n",
         let mut book = ContactsBook::empty();
         book.insert_entry("Sam Example", &["5555550122".into()]);
         assert_eq!(
-            book.enrich_display_name("5555550122", "").as_deref(),
+            book.enrich_display_name("5555550122", HandleType::Phone, "").as_deref(),
             Some("Sam Example")
         );
-        assert_eq!(book.enrich_display_name("5555550122", "Already Set"), None);
+        assert_eq!(
+            book.enrich_display_name("5555550122", HandleType::Phone, "Already Set"),
+            None
+        );
     }
 
     #[test]
@@ -378,14 +404,17 @@ NoPhone,,Person,,,,\n",
         );
         let book = ContactsBook::load_vcard_csv(&path).unwrap();
         assert_eq!(
-            book.lookup_phone_by_name("Bob McRoy").as_deref(),
-            Some("3212462167")
+            book.lookup_handle_by_name("Bob McRoy"),
+            Some(("+13212462167".to_string(), HandleType::Phone))
         );
-        assert_eq!(book.lookup_name_by_phone("+13212462167"), Some("Bob McRoy"));
         assert_eq!(
-            book.lookup_phone_by_name("Kyle").as_deref(),
-            Some("7276875182")
+            book.lookup_name_by_handle("+13212462167", HandleType::Phone),
+            Some("Bob McRoy")
         );
-        assert!(book.lookup_phone_by_name("NoPhone Person").is_none());
+        assert_eq!(
+            book.lookup_handle_by_name("Kyle"),
+            Some(("+17276875182".to_string(), HandleType::Phone))
+        );
+        assert!(book.lookup_handle_by_name("NoPhone Person").is_none());
     }
 }

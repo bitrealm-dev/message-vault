@@ -1261,6 +1261,7 @@ dependencies = [
  "anyhow",
  "clap",
  "csv",
+ "message-ir",
  "phone",
  "tempfile",
 ]

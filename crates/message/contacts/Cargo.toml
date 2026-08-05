@@ -12,6 +12,7 @@ path = "src/bin/contacts_validate.rs"
 anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
 csv = "1.4.0"
+message-ir = { path = "../ir" }
 phone = { path = "../phone" }
 
 [dev-dependencies]
