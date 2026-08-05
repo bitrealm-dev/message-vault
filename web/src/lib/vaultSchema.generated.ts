@@ -21,10 +21,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_account_emails_one_primary
     ON account_emails(account_id)
     WHERE is_primary = 1;
 
-CREATE TABLE IF NOT EXISTS account_phones (
+CREATE TABLE IF NOT EXISTS account_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    phone TEXT NOT NULL,
-    PRIMARY KEY (account_id, phone)
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS account_api_tokens (
@@ -70,13 +70,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
 export const MESSAGES_DDL = `CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
+    chat_handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
     source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
+    UNIQUE(account_id, chat_handle_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_conversations_account_id ON conversations (account_id);
@@ -84,12 +84,14 @@ CREATE INDEX IF NOT EXISTS ix_conversations_account_id ON conversations (account
 CREATE TABLE IF NOT EXISTS participants (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
     name_hint TEXT,
-    UNIQUE(conversation_id, handle)
+    UNIQUE(conversation_id, handle_id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);
+CREATE INDEX IF NOT EXISTS ix_participants_handle_id ON participants (handle_id);
+CREATE INDEX IF NOT EXISTS ix_participants_contact_id ON participants (contact_id);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
@@ -100,7 +102,7 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp TEXT NOT NULL,
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT,
+    sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -131,6 +133,7 @@ CREATE INDEX IF NOT EXISTS ix_messages_duplicate_of
 CREATE INDEX IF NOT EXISTS ix_messages_import_id
     ON messages (import_id)
     WHERE import_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);
 
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY,
@@ -158,31 +161,31 @@ CREATE TABLE IF NOT EXISTS tapbacks (
     kind TEXT NOT NULL,
     emoji TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT
+    sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
-CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);
 `;
 
 export const STAGING_DDL = `CREATE TABLE IF NOT EXISTS staging_conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
+    chat_handle_id INTEGER NOT NULL,
     service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
     source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
+    UNIQUE(account_id, chat_handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS staging_participants (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL,
+    contact_id INTEGER,
     name_hint TEXT,
-    UNIQUE(conversation_id, handle)
+    UNIQUE(conversation_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS staging_messages (
@@ -194,7 +197,7 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     timestamp TEXT NOT NULL,
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT,
+    sender_handle_id INTEGER,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -239,7 +242,7 @@ CREATE TABLE IF NOT EXISTS staging_tapbacks (
     kind TEXT NOT NULL,
     emoji TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT
+    sender_handle_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS ix_staging_tapbacks_message_id ON staging_tapbacks (message_id);
@@ -248,17 +251,30 @@ CREATE INDEX IF NOT EXISTS ix_staging_tapbacks_message_id ON staging_tapbacks (m
 export const CONTACTS_DDL = `CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    preferred_name TEXT,
-    preferred_handle TEXT
+    preferred_name TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
 
+CREATE TABLE IF NOT EXISTS handles (
+    id INTEGER PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    raw TEXT NOT NULL,
+    normalized TEXT NOT NULL,
+    handle_type TEXT NOT NULL,
+    service TEXT,
+    UNIQUE(account_id, normalized, handle_type)
+);
+
+CREATE INDEX IF NOT EXISTS ix_handles_account_id ON handles (account_id);
+CREATE INDEX IF NOT EXISTS ix_handles_normalized ON handles (account_id, normalized);
+
 CREATE TABLE IF NOT EXISTS contact_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    PRIMARY KEY (account_id, handle)
+    name_hint TEXT,
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_contact_handles_contact_id
@@ -279,9 +295,9 @@ CREATE TABLE IF NOT EXISTS contact_label_members (
 
 CREATE TABLE IF NOT EXISTS trashed_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, handle)
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS trashed_conversations (
@@ -299,12 +315,7 @@ CREATE TABLE IF NOT EXISTS trashed_contacts (
 );
 `;
 
-export const FTS_VIRTUAL_DDL = `CREATE TABLE IF NOT EXISTS schema_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+export const FTS_VIRTUAL_DDL = `CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     body,
     subject,
     attachment_text,
@@ -436,21 +447,4 @@ CREATE TRIGGER attachments_fts_au AFTER UPDATE OF original_name, transcription O
         )
     FROM messages m WHERE m.id = new.message_id;
 END;
-`;
-
-export const FTS_BACKFILL_SQL = `INSERT INTO messages_fts(messages_fts) VALUES('delete-all');
-INSERT INTO messages_fts(rowid, body, subject, attachment_text)
-SELECT
-    m.id,
-    coalesce(m.body, ''),
-    coalesce(m.subject, ''),
-    coalesce((
-        SELECT group_concat(
-            trim(coalesce(a.original_name, '') || ' ' || coalesce(a.transcription, '')),
-            ' '
-        )
-        FROM attachments a
-        WHERE a.message_id = m.id
-    ), '')
-FROM messages m;
 `;

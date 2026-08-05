@@ -38,7 +38,6 @@ const PARTS = [
   { file: "fts_virtual.sql", exportName: "FTS_VIRTUAL_DDL" },
   { file: "fts_triggers_drop.sql", exportName: "FTS_TRIGGERS_DROP_SQL" },
   { file: "fts_triggers_create.sql", exportName: "FTS_TRIGGERS_CREATE_SQL" },
-  { file: "fts_backfill.sql", exportName: "FTS_BACKFILL_SQL" },
 ];
 
 const checkOnly = process.argv.includes("--check");
@@ -98,13 +97,9 @@ function refreshFixture() {
   db.exec(fs.readFileSync(path.join(sqlDir, "fts_virtual.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(sqlDir, "fts_triggers_drop.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(sqlDir, "fts_triggers_create.sql"), "utf8"));
-  db.exec(fs.readFileSync(path.join(sqlDir, "fts_backfill.sql"), "utf8"));
   db.prepare(
     `INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, '1')`,
   ).run("messages_fts_triggers_v1");
-  db.prepare(
-    `INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, '1')`,
-  ).run("messages_fts_backfill_v1");
 
   const names = (type) =>
     db
@@ -113,6 +108,12 @@ function refreshFixture() {
       )
       .all(type)
       .map((row) => row.name);
+
+  const metaKeys = () =>
+    db
+      .prepare(`SELECT key FROM schema_meta ORDER BY key`)
+      .all()
+      .map((row) => row.key);
 
   // Preserve fixture order from the previous contract when possible.
   const previous = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
@@ -137,7 +138,7 @@ function refreshFixture() {
       names("index").filter((n) => !n.startsWith("sqlite_")),
     ),
     triggers: bySet(previous.triggers, names("trigger")),
-    metadata: previous.metadata,
+    metadata: bySet(previous.metadata, metaKeys()),
   };
   db.close();
 
