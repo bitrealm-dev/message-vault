@@ -126,23 +126,72 @@ pub fn vault_export_exporter_options() -> ModelRc<SharedString> {
     model_from_labels(["iMessage".into()])
 }
 
-/// Format choices for the guided Import Messages screen.
-pub fn guided_import_format_options() -> ModelRc<SharedString> {
-    model_from_labels(["iMessage - iOS".into(), "iMessage - macOS".into()])
+/// Guided Import Messages format (combo index order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GuidedImportFormat {
+    #[default]
+    Ios,
+    MacOs,
+    ExistingArchive,
 }
 
-/// Guided import format index: 0 = iPhone iOS, 1 = macOS.
-pub fn guided_import_format_index(platform: ApplePlatform) -> i32 {
-    match platform {
-        ApplePlatform::MacOs => 1,
-        _ => 0,
+impl GuidedImportFormat {
+    pub fn as_ini_str(self) -> &'static str {
+        match self {
+            Self::Ios => "ios",
+            Self::MacOs => "macos",
+            Self::ExistingArchive => "existing-archive",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "ios" => Some(Self::Ios),
+            "macos" => Some(Self::MacOs),
+            "existing-archive" => Some(Self::ExistingArchive),
+            _ => None,
+        }
+    }
+
+    pub fn from_platform(platform: ApplePlatform) -> Self {
+        match platform {
+            ApplePlatform::MacOs => Self::MacOs,
+            _ => Self::Ios,
+        }
+    }
+
+    pub fn apple_platform(self) -> Option<ApplePlatform> {
+        match self {
+            Self::Ios => Some(ApplePlatform::Ios),
+            Self::MacOs => Some(ApplePlatform::MacOs),
+            Self::ExistingArchive => None,
+        }
     }
 }
 
-pub fn guided_import_platform_at(index: i32) -> ApplePlatform {
+/// Format choices for the guided Import Messages screen.
+pub fn guided_import_format_options() -> ModelRc<SharedString> {
+    model_from_labels([
+        "iMessage - iOS".into(),
+        "iMessage - macOS".into(),
+        "Existing Archive (.jsonl)".into(),
+    ])
+}
+
+/// Guided import format index: 0 = iOS, 1 = macOS, 2 = existing archive.
+pub fn guided_import_format_index(format: GuidedImportFormat) -> i32 {
+    match format {
+        GuidedImportFormat::Ios => 0,
+        GuidedImportFormat::MacOs => 1,
+        GuidedImportFormat::ExistingArchive => 2,
+    }
+}
+
+pub fn guided_import_format_at(index: i32) -> GuidedImportFormat {
     match index {
-        1 => ApplePlatform::MacOs,
-        _ => ApplePlatform::Ios,
+        1 => GuidedImportFormat::MacOs,
+        2 => GuidedImportFormat::ExistingArchive,
+        _ => GuidedImportFormat::Ios,
     }
 }
 

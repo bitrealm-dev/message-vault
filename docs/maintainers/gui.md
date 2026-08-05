@@ -167,6 +167,20 @@ Persists under `[format]` in `export.ini` (loads legacy `[message-reexport]` if
 present). Mixed or unrecognized input dirs fail with a clear error. See
 [`crates/message/reexport/docs/MESSAGE_REEXPORTER.md`](../../crates/message/reexport/docs/MESSAGE_REEXPORTER.md).
 
+### Guided Import Messages
+
+Workflow screens (Home → Credentials → Import): Import Format choices are
+**iMessage - iOS**, **iMessage - macOS**, and **Existing Archive (.jsonl)**.
+
+- iOS / macOS: extract into a timestamped `staging-*` folder beside `export.ini`,
+  then upload (`vault_push`). Message Attachments, filtering, and Obfuscate apply
+  only to these formats.
+- **Existing Archive (.jsonl):** upload-only. Pick an **Archive Directory**
+  (folder of `.jsonl` files and optional sibling `attachments/`). Processing
+  Options are Continue on error and Force reprocessing (no Obfuscate). Use this
+  to resume a retained staging folder after a failed upload. Persists under
+  `[vault]` as `input` and `import_format=existing-archive`.
+
 ### Vault — `vault-push`
 
 Top tab. Two-step workflow after Extract Messages: push message-ir v3 JSONL +

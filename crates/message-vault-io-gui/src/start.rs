@@ -746,6 +746,7 @@ pub(crate) fn start_vault_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
 }
 
 /// Extract an iPhone backup into a staging directory, then upload it to Message Vault.
+/// For Existing Archive (.jsonl), upload the selected folder with no extract step.
 pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -760,6 +761,9 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
 
         let url = st.export_ini.vault.url.trim().to_string();
         let key = st.export_ini.vault.key.trim().to_string();
+        let is_archive =
+            st.guided_import_format == crate::options::GuidedImportFormat::ExistingArchive;
+        let archive = st.export_ini.vault.input.trim().to_string();
         let backup = st.form.db_path.trim().to_string();
         let is_macos =
             st.form.apple_platform == message_vault_io_core::ApplePlatform::MacOs;
@@ -770,7 +774,11 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
         if key.is_empty() {
             errors.push("API Key is required. Go back and verify credentials.".into());
         }
-        if backup.is_empty() {
+        if is_archive {
+            if archive.is_empty() {
+                errors.push("Archive Directory is required.".into());
+            }
+        } else if backup.is_empty() {
             errors.push(if is_macos {
                 "iMessage database path is required.".into()
             } else {
@@ -782,102 +790,130 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             return;
         }
 
-        let importer = if is_macos {
-            MACOS_IMPORTER
-        } else {
-            IPHONE_IOS_IMPORTER
-        };
-        let staging = staging::staging_dir_path(&st.export_ini.path, importer, Local::now());
-        st.form.output = staging.display().to_string();
-        st.form.output_format = message_vault_io_core::OutputFormat::Jsonl;
-        // apple_platform already set by pull_import from Import Format.
-        st.exporter = Exporter::Imessage;
-        st.export_ini.exporter = Exporter::Imessage;
-        st.last_staging_dir = Some(staging.clone());
-
-        if let Err(error) = st.save_export_ini() {
-            report_errors(&ui, &mut st, vec![error]);
-            return;
-        }
-
-        let result = st.form.to_config(Exporter::Imessage);
-        let config = match result {
-            Ok(config) => config,
-            Err(errors) => {
-                report_errors(&ui, &mut st, errors);
+        if is_archive {
+            if let Err(error) = st.save_export_ini() {
+                report_errors(&ui, &mut st, vec![error]);
                 return;
             }
-        };
-        if let Err(error) = ensure_output_dir(&config.output) {
-            report_errors(&ui, &mut st, vec![error]);
-            return;
+            let continue_on_error = st.export_ini.vault.continue_on_error;
+            let force = st.export_ini.vault.force;
+            let skip_attachments = st.export_ini.vault.skip_attachments;
+            let label = "vault import (existing archive)".to_string();
+            let input = PathBuf::from(archive);
+            let job: LibraryJob = Box::new(move |cancel, tx| {
+                send_step_banner(&tx, "Uploading existing archive to Message Vault…");
+                run_vault_upload(
+                    VaultUploadArgs {
+                        input,
+                        url,
+                        key,
+                        continue_on_error,
+                        force,
+                        skip_attachments,
+                    },
+                    cancel,
+                    &tx,
+                )
+            });
+            Some((label, job))
+        } else {
+            let importer = if is_macos {
+                MACOS_IMPORTER
+            } else {
+                IPHONE_IOS_IMPORTER
+            };
+            let staging = staging::staging_dir_path(&st.export_ini.path, importer, Local::now());
+            st.form.output = staging.display().to_string();
+            st.form.output_format = message_vault_io_core::OutputFormat::Jsonl;
+            // apple_platform already set by pull_import from Import Format.
+            st.exporter = Exporter::Imessage;
+            st.export_ini.exporter = Exporter::Imessage;
+            st.last_staging_dir = Some(staging.clone());
+
+            if let Err(error) = st.save_export_ini() {
+                report_errors(&ui, &mut st, vec![error]);
+                return;
+            }
+
+            let result = st.form.to_config(Exporter::Imessage);
+            let config = match result {
+                Ok(config) => config,
+                Err(errors) => {
+                    report_errors(&ui, &mut st, errors);
+                    return;
+                }
+            };
+            if let Err(error) = ensure_output_dir(&config.output) {
+                report_errors(&ui, &mut st, vec![error]);
+                return;
+            }
+
+            let continue_on_error = st.export_ini.vault.continue_on_error;
+            let force = st.export_ini.vault.force;
+            let skip_attachments = st.export_ini.vault.skip_attachments;
+            let label = "vault import (extract + upload)".to_string();
+            let job: LibraryJob = Box::new(move |cancel, tx| {
+                let _ = tx.send(ProcessEvent::Log(format!(
+                    "Staging directory: {}",
+                    staging.display()
+                )));
+                send_step_banner(
+                    &tx,
+                    if is_macos {
+                        "Step 1/2: Extracting macOS Messages…"
+                    } else {
+                        "Step 1/2: Extracting iPhone backup…"
+                    },
+                );
+
+                let extract_job = library_job_for_exporter(Exporter::Imessage, config);
+                if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Extraction failed; staging retained at {}",
+                        staging.display()
+                    )));
+                    return Err(error);
+                }
+
+                if is_cancelled(Some(&cancel)) {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Cancelled after extraction; staging retained at {}",
+                        staging.display()
+                    )));
+                    return Err("cancelled".into());
+                }
+
+                send_step_banner(&tx, "Step 2/2: Uploading staging data to Message Vault…");
+                match run_vault_upload(
+                    VaultUploadArgs {
+                        input: staging.clone(),
+                        url,
+                        key,
+                        continue_on_error,
+                        force,
+                        skip_attachments,
+                    },
+                    cancel,
+                    &tx,
+                ) {
+                    Ok(()) => {
+                        let _ = tx.send(ProcessEvent::Log(format!(
+                            "Staging data retained at {}",
+                            staging.display()
+                        )));
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let _ = tx.send(ProcessEvent::Log(format!(
+                            "Upload failed; staging retained at {}",
+                            staging.display()
+                        )));
+                        Err(error)
+                    }
+                }
+            });
+            Some((label, job))
         }
-
-        let continue_on_error = st.export_ini.vault.continue_on_error;
-        let force = st.export_ini.vault.force;
-        let skip_attachments = st.export_ini.vault.skip_attachments;
-        let label = "vault import (extract + upload)".to_string();
-        let job: LibraryJob = Box::new(move |cancel, tx| {
-            let _ = tx.send(ProcessEvent::Log(format!(
-                "Staging directory: {}",
-                staging.display()
-            )));
-            send_step_banner(
-                &tx,
-                if is_macos {
-                    "Step 1/2: Extracting macOS Messages…"
-                } else {
-                    "Step 1/2: Extracting iPhone backup…"
-                },
-            );
-
-            let extract_job = library_job_for_exporter(Exporter::Imessage, config);
-            if let Err(error) = extract_job(cancel.clone(), tx.clone()) {
-                let _ = tx.send(ProcessEvent::Log(format!(
-                    "Extraction failed; staging retained at {}",
-                    staging.display()
-                )));
-                return Err(error);
-            }
-
-            if is_cancelled(Some(&cancel)) {
-                let _ = tx.send(ProcessEvent::Log(format!(
-                    "Cancelled after extraction; staging retained at {}",
-                    staging.display()
-                )));
-                return Err("cancelled".into());
-            }
-
-            send_step_banner(&tx, "Step 2/2: Uploading staging data to Message Vault…");
-            match run_vault_upload(
-                VaultUploadArgs {
-                    input: staging.clone(),
-                    url,
-                    key,
-                    continue_on_error,
-                    force,
-                    skip_attachments,
-                },
-                cancel,
-                &tx,
-            ) {
-                Ok(()) => {
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Staging data retained at {}",
-                        staging.display()
-                    )));
-                    Ok(())
-                }
-                Err(error) => {
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Upload failed; staging retained at {}",
-                        staging.display()
-                    )));
-                    Err(error)
-                }
-            }
-        });
-        Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
         start_library_job(ui_weak, state, label, job, OnSuccess::None);
@@ -916,7 +952,8 @@ fn run_vault_upload(
         verify_digests: false,
         max_retries: 3,
         batch_size: vault_push::DEFAULT_BATCH_SIZE,
-        asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
+        // A bit higher than the CLI default: guided import often has many small assets.
+        asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS.max(8),
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
         report_path: None,

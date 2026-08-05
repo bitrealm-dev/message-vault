@@ -4,6 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::{ComponentHandle, SharedString, Weak};
 
@@ -14,6 +15,10 @@ use crate::FormatAdapter;
 use crate::ImportAdapter;
 use crate::VaultAdapter;
 use crate::VaultExportAdapter;
+
+/// Ensures only one native picker is open at a time (Browse can fire again while
+/// the dialog is still up because it runs off the UI thread).
+static PICKER_OPEN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
 pub enum BrowseKind {
@@ -34,6 +39,7 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
         "extract.db_path" => BrowseKind::FileOrFolder,
         "import.backup_path" => BrowseKind::Folder,
         "import.db_path" => BrowseKind::Folder,
+        "import.archive_path" => BrowseKind::Folder,
         "import.attachment_root" => BrowseKind::Folder,
         "extract.whatsapp_backup" => BrowseKind::FileOrFolder,
         "vault_export.output" => BrowseKind::Folder,
@@ -43,8 +49,15 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
 
 /// Spawn a background dialog, then apply the picked path on the UI thread.
 pub fn pick_path(ui_weak: Weak<AppWindow>, field_id: String, kind: BrowseKind) {
+    if PICKER_OPEN
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
     std::thread::spawn(move || {
         let picked = pick_path_blocking(kind);
+        PICKER_OPEN.store(false, Ordering::Release);
         let Some(path) = picked else {
             return;
         };
@@ -172,6 +185,7 @@ fn apply_path(ui: &AppWindow, field_id: &str, path: SharedString) {
         "import.backup_path" | "import.db_path" => {
             ui.global::<ImportAdapter>().set_backup_path(path)
         }
+        "import.archive_path" => ui.global::<ImportAdapter>().set_archive_path(path),
         "import.attachment_root" => ui.global::<ImportAdapter>().set_attachment_root(path),
         "format.input" => ui.global::<FormatAdapter>().set_input(path),
         "format.output" => ui.global::<FormatAdapter>().set_output(path),

@@ -40,6 +40,8 @@ pub struct VaultSection {
     /// Import API token (persisted in `[vault] key`; treat `export.ini` as secret).
     pub key: String,
     pub input: String,
+    /// Guided Import format: `ios` | `macos` | `existing-archive` (empty = derive from platform).
+    pub import_format: String,
     pub continue_on_error: bool,
     pub force: bool,
     pub skip_attachments: bool,
@@ -52,6 +54,7 @@ impl Default for VaultSection {
             username: String::new(),
             key: String::new(),
             input: String::new(),
+            import_format: String::new(),
             continue_on_error: true,
             force: false,
             skip_attachments: false,
@@ -474,6 +477,7 @@ fn build_ini(state: &ExportIniState, form: &Form) -> Ini {
             .set("username", state.vault.username.trim())
             .set("key", state.vault.key.trim())
             .set("input", state.vault.input.trim())
+            .set("import_format", state.vault.import_format.trim())
             .set("continue_on_error", bool_str(state.vault.continue_on_error))
             .set("force", bool_str(state.vault.force))
             .set("skip_attachments", bool_str(state.vault.skip_attachments));
@@ -507,6 +511,7 @@ fn read_vault_section(ini: &Ini) -> VaultSection {
         username: get(ini, Some(VAULT), "username"),
         key: get(ini, Some(VAULT), "key"),
         input: get(ini, Some(VAULT), "input"),
+        import_format: get(ini, Some(VAULT), "import_format"),
         continue_on_error: parse_bool(&get(ini, Some(VAULT), "continue_on_error"), true),
         force: parse_bool(&get(ini, Some(VAULT), "force"), false),
         skip_attachments: parse_bool(&get(ini, Some(VAULT), "skip_attachments"), false),
@@ -721,6 +726,7 @@ apple_platform = ios
                 username: "alice".into(),
                 key: "secret-import-token".into(),
                 input: "/data/jsonl".into(),
+                import_format: "existing-archive".into(),
                 continue_on_error: true,
                 force: false,
                 skip_attachments: false,
@@ -739,6 +745,7 @@ apple_platform = ios
         assert_eq!(loaded.vault.username, "alice");
         assert_eq!(loaded.vault.key, "secret-import-token");
         assert_eq!(loaded.vault.input, "/data/jsonl");
+        assert_eq!(loaded.vault.import_format, "existing-archive");
         assert_eq!(loaded.appearance.mode, "system");
         assert_eq!(loaded.appearance.preset, "ocean");
         let text = fs::read_to_string(file.path()).unwrap();

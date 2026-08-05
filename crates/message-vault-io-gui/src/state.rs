@@ -4,6 +4,7 @@
 use message_vault_io_core::{ExportIniState, Exporter, Form, ProcessControl};
 use std::path::PathBuf;
 
+use crate::options::GuidedImportFormat;
 use crate::session_log::SessionLog;
 
 /// Workflow screens for the guided Vault import/export UI.
@@ -30,12 +31,16 @@ pub struct AppState {
     pub vault_source_note: String,
     /// Last staging directory created by a guided import (for status/logging).
     pub last_staging_dir: Option<PathBuf>,
+    /// Guided Import Messages format (iOS / macOS / existing archive).
+    pub guided_import_format: GuidedImportFormat,
 }
 
 impl AppState {
     pub fn load() -> Self {
         let (export_ini, form, load_error) = ExportIniState::load_or_default();
         let exporter = export_ini.exporter;
+        let guided_import_format = GuidedImportFormat::parse(&export_ini.vault.import_format)
+            .unwrap_or_else(|| GuidedImportFormat::from_platform(form.apple_platform));
         let error_source_screen = load_error.as_ref().map(|_| screen::HOME);
         Self {
             export_ini,
@@ -51,6 +56,7 @@ impl AppState {
             error_source_screen,
             vault_source_note: String::new(),
             last_staging_dir: None,
+            guided_import_format,
         }
     }
 

@@ -15,6 +15,7 @@ export global ImportAdapter {
     in property <[string]> format-options;
 
     in-out property <string> backup-path;
+    in-out property <string> archive-path;
     in-out property <string> backup-password;
     in-out property <string> attachment-root;
 
@@ -55,8 +56,11 @@ export component ImportPage inherits VerticalLayout {
     alignment: stretch;
     vertical-stretch: 1;
 
-    property <bool> is-macos: ImportAdapter.format-index == 1;
-    property <bool> can-import: ImportAdapter.backup-path != "";
+    property <bool> is-archive: ImportAdapter.format-index == 2;
+    property <bool> is-macos: !root.is-archive && ImportAdapter.format-index == 1;
+    property <bool> can-import: root.is-archive
+        ? ImportAdapter.archive-path != ""
+        : ImportAdapter.backup-path != "";
 
     PanelTabBar {
         current-index <=> ImportAdapter.panel-tab;
@@ -128,7 +132,23 @@ export component ImportPage inherits VerticalLayout {
 
             // Field + hint share a tight layout so helper text sits just under the control
             // (OptionGroup spacing would otherwise put a full section gap between them).
-            if !root.is-macos: VerticalLayout {
+            if root.is-archive: VerticalLayout {
+                spacing: 2px;
+                padding: 0;
+                vertical-stretch: 0;
+                StackedPathField {
+                    label: "Archive Directory";
+                    required: true;
+                    placeholder: "Folder of .jsonl files (and optional attachments/)";
+                    field-id: "import.archive_path";
+                    value <=> ImportAdapter.archive-path;
+                    browse-requested(id) => { ImportAdapter.browse(id); }
+                }
+                StackedHint {
+                    message: "Folder of .jsonl files (and optional attachments/)";
+                }
+            }
+            if !root.is-archive && !root.is-macos: VerticalLayout {
                 spacing: 2px;
                 padding: 0;
                 vertical-stretch: 0;
@@ -161,14 +181,14 @@ export component ImportPage inherits VerticalLayout {
                 }
             }
 
-            if !root.is-macos: StackedLineEdit {
+            if !root.is-archive && !root.is-macos: StackedLineEdit {
                 label: "Encryption password";
                 placeholder: "Optional";
                 password: true;
                 value <=> ImportAdapter.backup-password;
             }
 
-            VerticalLayout {
+            if !root.is-archive: VerticalLayout {
                 spacing: 2px;
                 padding: 0;
                 vertical-stretch: 0;
@@ -194,7 +214,7 @@ export component ImportPage inherits VerticalLayout {
                     message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
                 }
             }
-            if ImportAdapter.show-compress-options: HorizontalLayout {
+            if !root.is-archive && ImportAdapter.show-compress-options: HorizontalLayout {
                 spacing: 0;
                 padding: 0;
                 vertical-stretch: 0;
@@ -277,7 +297,7 @@ export component ImportPage inherits VerticalLayout {
             }
         }
 
-        AdvancedSection {
+        if !root.is-archive: AdvancedSection {
             title: "Message Filtering";
             open <=> ImportAdapter.advanced;
 
@@ -336,7 +356,7 @@ export component ImportPage inherits VerticalLayout {
                 text: "Force reprocessing";
                 checked <=> ImportAdapter.force;
             }
-            VerticalLayout {
+            if !root.is-archive: VerticalLayout {
                 spacing: 2px;
                 padding: 0;
                 vertical-stretch: 0;

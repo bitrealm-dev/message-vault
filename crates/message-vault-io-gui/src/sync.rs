@@ -107,8 +107,9 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &state.form;
 
-    import.set_format_index(options::guided_import_format_index(form.apple_platform));
+    import.set_format_index(options::guided_import_format_index(state.guided_import_format));
     import.set_backup_path(SharedString::from(form.db_path.as_str()));
+    import.set_archive_path(SharedString::from(state.export_ini.vault.input.as_str()));
     import.set_backup_password(SharedString::from(form.backup_password.as_str()));
     import.set_attachment_root(SharedString::from(form.attachment_root.as_str()));
     import.set_attachment_media_index(options::attachment_media_index(form.attachment_media));
@@ -124,19 +125,39 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     import.set_force(state.export_ini.vault.force);
 
     let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
+    let show_media_warnings =
+        state.guided_import_format != options::GuidedImportFormat::ExistingArchive;
     import.set_show_ffmpeg_warning(
-        !obfuscate_active && form.attachment_media.needs_ffmpeg() && !ffmpeg_available(),
+        show_media_warnings
+            && !obfuscate_active
+            && form.attachment_media.needs_ffmpeg()
+            && !ffmpeg_available(),
     );
-    import.set_show_compress_options(form.attachment_media == AttachmentMedia::Compress);
+    import.set_show_compress_options(
+        show_media_warnings && form.attachment_media == AttachmentMedia::Compress,
+    );
 }
 
 pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &mut state.form;
 
+    let format = options::guided_import_format_at(import.get_format_index());
+    state.guided_import_format = format;
+    state.export_ini.vault.import_format = format.as_ini_str().to_string();
+    state.export_ini.vault.continue_on_error = import.get_continue_on_error();
+    state.export_ini.vault.force = import.get_force();
+
+    if format == options::GuidedImportFormat::ExistingArchive {
+        state.export_ini.vault.input = import.get_archive_path().to_string();
+        return;
+    }
+
     state.exporter = Exporter::Imessage;
     form.output_format = OutputFormat::Jsonl;
-    form.apple_platform = options::guided_import_platform_at(import.get_format_index());
+    if let Some(platform) = format.apple_platform() {
+        form.apple_platform = platform;
+    }
     form.db_path = import.get_backup_path().to_string();
     form.backup_password = import.get_backup_password().to_string();
     form.attachment_root = import.get_attachment_root().to_string();
@@ -149,8 +170,6 @@ pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
     form.start_date = import.get_start_date().to_string();
     form.end_date = import.get_end_date().to_string();
     form.obfuscate = import.get_obfuscate();
-    state.export_ini.vault.continue_on_error = import.get_continue_on_error();
-    state.export_ini.vault.force = import.get_force();
 }
 
 pub fn push_extract(ui: &AppWindow, state: &AppState) {
