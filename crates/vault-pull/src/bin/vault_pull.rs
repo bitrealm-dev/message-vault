@@ -6,7 +6,8 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::Parser;
 use vault_pull::{
-    DEFAULT_PAGE_LIMIT, ProgressEvent, VaultPullConfig, authenticate, compose_query, run,
+    DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, VaultPullConfig,
+    authenticate, compose_query, run,
 };
 
 #[derive(Debug, Parser)]
@@ -104,6 +105,9 @@ fn real_main() -> Result<ExitCode> {
         page_limit: cli.page_limit,
         expected_messages: None,
         cancel: None,
+        asset_download_workers: DEFAULT_ASSET_DOWNLOAD_WORKERS,
+        force: false,
+        journal_path: None,
     };
 
     let mut on_progress = |event: ProgressEvent| {

@@ -12,7 +12,7 @@ pub mod journal; // new
 pub use http::ExportMessage;
 pub use journal::{PullJournalState, PullJournalEvent, PULL_JOURNAL_NAME, journal_path};
 pub use run::{
-    DEFAULT_PAGE_LIMIT, ProgressEvent, ProgressFn, PullReport, QueryStats, VaultPullConfig,
-    compose_query, query_stats, run,
+    DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, ProgressFn, PullReport,
+    QueryStats, VaultPullConfig, compose_query, query_stats, run,
 };
 pub use vault_push::{AuthError, AuthInfo, authenticate};

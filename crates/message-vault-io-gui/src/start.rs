@@ -529,6 +529,9 @@ pub(crate) fn start_vault_export_query(
                 page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
                 expected_messages: None,
                 cancel: Some(cancel),
+                asset_download_workers: vault_pull::DEFAULT_ASSET_DOWNLOAD_WORKERS,
+                force: false,
+                journal_path: None,
             };
             let mut on_progress = |event: VaultPullProgressEvent| match event {
                 VaultPullProgressEvent::Log(line) => {
@@ -654,6 +657,9 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
                 page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
                 expected_messages,
                 cancel: Some(cancel),
+                asset_download_workers: vault_pull::DEFAULT_ASSET_DOWNLOAD_WORKERS,
+                force: false,
+                journal_path: None,
             };
             let mut on_progress = |event: VaultPullProgressEvent| match event {
                 VaultPullProgressEvent::Log(line) => {

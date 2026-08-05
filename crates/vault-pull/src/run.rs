@@ -18,6 +18,8 @@ use crate::http::{ExportMessage, HttpSession};
 use crate::project::{build_document, conversation_key, to_ir_message};
 
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
+/// Default number of parallel asset download workers.
+pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct VaultPullConfig {
@@ -35,6 +37,12 @@ pub struct VaultPullConfig {
     /// When set (typically from a prior Query), progress logs include "of N".
     pub expected_messages: Option<u64>,
     pub cancel: Option<CancelFlag>,
+    /// Number of parallel asset download workers (default 8).
+    pub asset_download_workers: usize,
+    /// Ignore the journal and re-download everything.
+    pub force: bool,
+    /// Path to the pull journal file. Defaults to out_dir/.vault-pull-state.jsonl.
+    pub journal_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
