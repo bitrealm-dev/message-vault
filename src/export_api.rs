@@ -87,6 +87,8 @@ pub struct ExportParticipant {
     pub handle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handle_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -193,13 +195,13 @@ pub fn export_messages(
 
     let mut sql = format!(
         "SELECT m.id, m.conversation_id, m.source, m.guid, m.timestamp, m.timestamp_utc,
-                m.sort_order, m.is_from_me, m.sender, m.subject, m.body,
+                m.sort_order, m.is_from_me, hs.raw AS sender, m.subject, m.body,
                 m.is_announcement, m.is_reply, m.thread_originator_guid,
                 m.thread_originator_part, m.num_replies,
-                c.chat_identifier, c.service, c.conversation_type, c.group_title
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+                hc.raw AS chat_identifier, c.service, c.conversation_type, c.group_title
+         {messages_from_sql}
          WHERE {where_sql}{dedupe}",
+        messages_from_sql = messages_from_sql(),
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
@@ -352,9 +354,9 @@ pub fn export_message_count(
 
     let msg_sql = format!(
         "SELECT COUNT(*)
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+         {messages_from_sql}
          WHERE {where_sql}{dedupe}",
+        messages_from_sql = messages_from_sql(),
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
@@ -377,13 +379,14 @@ pub fn export_message_count(
            SELECT {size_expr} AS sz
            FROM attachments a
            JOIN messages m ON m.id = a.message_id
-           JOIN conversations c ON c.id = m.conversation_id
+           {conversation_join_sql}
            WHERE {where_sql}{dedupe}
              AND a.sha256 IS NOT NULL
              AND length(trim(a.sha256)) > 0
            GROUP BY lower(trim(a.sha256))
          )",
         size_expr = size_expr,
+        conversation_join_sql = conversation_join_sql(),
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
@@ -427,6 +430,22 @@ struct RawRow {
     group_title: Option<String>,
 }
 
+/// FROM clause for message queries: wires the handles joins the filter SQL
+/// references (`hc` = conversation chat handle, `hs` = message sender handle).
+fn messages_from_sql() -> String {
+    format!("FROM messages m\n{}", conversation_join_sql())
+}
+
+/// Handles joins for a query already anchored on `messages m`.
+/// `hc` supplies `c.chat_handle_id` raw text; `hs` supplies `m.sender_handle_id`
+/// raw text (LEFT, since outgoing messages carry no sender handle).
+fn conversation_join_sql() -> String {
+    "JOIN conversations c ON c.id = m.conversation_id
+     JOIN handles hc ON hc.id = c.chat_handle_id
+     LEFT JOIN handles hs ON hs.id = m.sender_handle_id"
+        .into()
+}
+
 fn build_message_filters(
     conn: &Connection,
     account_id: &str,
@@ -440,10 +459,11 @@ fn build_message_filters(
 
     if let Some(from) = &parsed.from {
         where_parts.push(
-            "(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
+            "(m.is_from_me = 0 AND (hs.raw LIKE ? OR EXISTS (
                  SELECT 1 FROM participants p
+                 JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
                )))"
             .into(),
         );
@@ -457,8 +477,9 @@ fn build_message_filters(
         where_parts.push(
             "EXISTS (
                  SELECT 1 FROM participants p
+                 JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
                )"
             .into(),
         );
@@ -471,8 +492,9 @@ fn build_message_filters(
         where_parts.push(
             "EXISTS (
                  SELECT 1 FROM participants p
+                 JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
                )"
             .into(),
         );
@@ -543,7 +565,7 @@ fn build_message_filters(
     where_parts.push(
         "NOT EXISTS (
            SELECT 1 FROM trashed_handles th
-           WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+           WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
          )"
         .into(),
     );
@@ -585,28 +607,30 @@ fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &st
         params.push(like.clone().into());
     }
     "(
-    coalesce(m.sender, '') LIKE ? COLLATE NOCASE
+    coalesce(hs.raw, '') LIKE ? COLLATE NOCASE
     OR EXISTS (
       SELECT 1 FROM participants p_md
+      JOIN handles hp ON hp.id = p_md.handle_id
       WHERE p_md.conversation_id = c.id
         AND (
-          p_md.handle LIKE ? COLLATE NOCASE
+          hp.raw LIKE ? COLLATE NOCASE
           OR coalesce(p_md.name_hint, '') LIKE ? COLLATE NOCASE
         )
     )
     OR EXISTS (
       SELECT 1 FROM contact_handles ch_md
       JOIN contacts ct_md ON ct_md.id = ch_md.contact_id
+      JOIN handles hm ON hm.id = ch_md.handle_id
       WHERE ch_md.account_id = c.account_id
         AND (
-          ch_md.handle LIKE ? COLLATE NOCASE
+          hm.raw LIKE ? COLLATE NOCASE
           OR coalesce(ct_md.preferred_name, '') LIKE ? COLLATE NOCASE
         )
         AND (
-          (c.conversation_type = 'individual' AND ch_md.handle = c.chat_identifier)
+          (c.conversation_type = 'individual' AND hm.id = c.chat_handle_id)
           OR EXISTS (
             SELECT 1 FROM participants p_md2
-            WHERE p_md2.conversation_id = c.id AND p_md2.handle = ch_md.handle
+            WHERE p_md2.conversation_id = c.id AND p_md2.handle_id = ch_md.handle_id
           )
         )
     )
@@ -638,10 +662,10 @@ fn involves_contacts_sql(contact_ids: &[i64]) -> String {
     WHERE ch.account_id = c.account_id
       AND ch.contact_id IN ({ids})
       AND (
-        ch.handle = c.chat_identifier
+        ch.handle_id = c.chat_handle_id
         OR EXISTS (
           SELECT 1 FROM participants p_link
-          WHERE p_link.conversation_id = c.id AND p_link.handle = ch.handle
+          WHERE p_link.conversation_id = c.id AND p_link.handle_id = ch.handle_id
         )
       )
   )"
@@ -715,7 +739,7 @@ fn contact_ids_within_day_bounds(
          JOIN conversations c
            ON c.account_id = ch.account_id
           AND c.conversation_type = 'individual'
-          AND c.chat_identifier = ch.handle
+          AND c.chat_handle_id = ch.handle_id
          JOIN messages m ON m.conversation_id = c.id
          WHERE ch.account_id = ?{hide_dupes}
          GROUP BY ch.contact_id
@@ -743,10 +767,11 @@ fn load_participants(
     for chunk in conversation_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT conversation_id, handle, name_hint
-             FROM participants
-             WHERE conversation_id IN ({placeholders})
-             ORDER BY conversation_id, id"
+            "SELECT p.conversation_id, h.raw AS handle, p.name_hint, h.handle_type
+             FROM participants p
+             JOIN handles h ON h.id = p.handle_id
+             WHERE p.conversation_id IN ({placeholders})
+             ORDER BY p.conversation_id, p.id"
         );
         let mut stmt = conn
             .prepare(&sql)
@@ -758,6 +783,7 @@ fn load_participants(
                     ExportParticipant {
                         handle: row.get(1)?,
                         name_hint: row.get(2)?,
+                        handle_type: row.get(3)?,
                     },
                 ))
             })
@@ -823,10 +849,12 @@ fn load_tapbacks(
     for chunk in message_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT message_id, part_index, kind, emoji, is_from_me, sender
-             FROM tapbacks
-             WHERE message_id IN ({placeholders})
-             ORDER BY message_id, id"
+            "SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me,
+                    hs.raw AS sender
+             FROM tapbacks t
+             LEFT JOIN handles hs ON hs.id = t.sender_handle_id
+             WHERE t.message_id IN ({placeholders})
+             ORDER BY t.message_id, t.id"
         );
         let mut stmt = conn
             .prepare(&sql)
