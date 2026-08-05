@@ -37,3 +37,7 @@ config/export-to-vault.sh
 
 # Local release packaging output
 /dist/
+
+# Local CLI / GUI run artifacts
+*.log
+/staging-*/
