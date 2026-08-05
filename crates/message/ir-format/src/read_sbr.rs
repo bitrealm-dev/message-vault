@@ -186,10 +186,13 @@ fn add_record(
             messages: Vec::new(),
         });
     let names: Vec<_> = attachments.iter().map(|a| a.rel_path.as_str()).collect();
+    // Include the full fractional timestamp and sender to avoid false deduplication
+    // of distinct messages within the same second.
     let dedupe_key = format!(
-        "{}|{}|{}|{}",
-        record.timestamp_secs as i64,
+        "{}|{}|{}|{}|{}",
+        record.timestamp_secs,
         u8::from(record.is_from_me),
+        record.sender_digits.as_deref().unwrap_or(""),
         record.text,
         names.join(",")
     );

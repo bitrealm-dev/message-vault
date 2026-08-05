@@ -5,10 +5,13 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use std::io::Read;
+
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
 use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use vault_push::authenticate;
 
 use crate::http::{ExportMessage, HttpSession};
@@ -189,6 +192,8 @@ fn query_stats_by_paging(
     let mut total_messages = 0u64;
     // sha256 -> size_bytes (None if unknown / older imports)
     let mut unique_assets: HashMap<String, Option<u64>> = HashMap::new();
+    let mut seen_cursors: BTreeSet<String> = BTreeSet::new();
+    const MAX_PAGES: usize = 10_000;
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -239,7 +244,22 @@ fn query_stats_by_paging(
         }
 
         match page.next_cursor {
-            Some(next) if !next.is_empty() => cursor = Some(next),
+            Some(next) if !next.is_empty() => {
+                if seen_cursors.contains(&next) {
+                    bail!(
+                        "pagination loop detected: cursor {next} was already seen. \
+                         The vault may be returning the same cursor repeatedly."
+                    );
+                }
+                if seen_cursors.len() >= MAX_PAGES {
+                    bail!(
+                        "pagination limit reached ({MAX_PAGES} pages). \
+                         Use a narrower query to export fewer messages at once."
+                    );
+                }
+                seen_cursors.insert(next.clone());
+                cursor = Some(next);
+            }
             _ => break,
         }
     }
@@ -310,6 +330,29 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
 
     fs::create_dir_all(&cfg.out_dir)
         .with_context(|| format!("create {}", cfg.out_dir.display()))?;
+    // Warn if the output directory already contains conversation JSONL files
+    // (re-pulling truncates existing conversations — there is no append/resume).
+    let existing_jsonl: Vec<_> = std::fs::read_dir(&cfg.out_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.ends_with(".jsonl"))
+        })
+        .collect();
+    if !existing_jsonl.is_empty() {
+        emit(
+            &mut on_progress,
+            ProgressEvent::Log(format!(
+                "Note: {} existing .jsonl file(s) in output directory will be overwritten. \
+                 vault-pull always writes full conversations from the current query. \
+                 Use a fresh output directory to keep old exports.",
+                existing_jsonl.len()
+            )),
+        );
+    }
     let attachments_dir = cfg.out_dir.join("attachments");
     if !cfg.skip_attachments {
         fs::create_dir_all(&attachments_dir)?;
@@ -322,6 +365,8 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     // sha256 -> (source, relative path under out_dir)
     let mut assets: HashMap<String, (String, String)> = HashMap::new();
     let mut total_messages = 0u64;
+    let mut seen_cursors: BTreeSet<String> = BTreeSet::new();
+    const MAX_PAGES: usize = 10_000;
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -373,6 +418,16 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
                             .filter(|s| !s.is_empty())
                             .map(|p| p.trim_start_matches('/').to_string())
                             .unwrap_or_else(|| format!("attachments/{sha}"));
+                        // Validate the server-provided path before use.
+                        if let Err(e) = safe_rel(&rel) {
+                            emit(
+                                &mut on_progress,
+                                ProgressEvent::Log(format!(
+                                    "Skipping asset {sha}: {e}"
+                                )),
+                            );
+                            continue;
+                        }
                         assets
                             .entry(sha.to_string())
                             .or_insert_with(|| (msg.source.clone(), rel));
@@ -387,7 +442,20 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
         }
 
         match page.next_cursor {
-            Some(next) if !next.is_empty() => cursor = Some(next),
+            Some(next) if !next.is_empty() => {
+                if seen_cursors.contains(&next) {
+                    bail!(
+                        "pagination loop detected: cursor {next} was already seen"
+                    );
+                }
+                if seen_cursors.len() >= MAX_PAGES {
+                    bail!(
+                        "pagination limit reached ({MAX_PAGES} pages)"
+                    );
+                }
+                seen_cursors.insert(next.clone());
+                cursor = Some(next);
+            }
             _ => break,
         }
     }
@@ -403,22 +471,40 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
                 continue;
             }
             let dest = cfg.out_dir.join(rel);
+
+            // Only skip if the file exists AND matches the expected digest.
             if dest.is_file() {
-                attachments_skipped += 1;
-                continue;
+                match verify_sha256(&dest, sha) {
+                    Ok(()) => {
+                        attachments_skipped += 1;
+                        continue;
+                    }
+                    Err(_) => {
+                        // Hash mismatch — re-download. Write to temp file
+                        // to avoid leaving a partial download in place.
+                    }
+                }
             }
             emit(
                 &mut on_progress,
                 ProgressEvent::Log(format!("Downloading asset {sha}…")),
             );
+            // Download to a temp file, verify the hash, then rename into place.
+            let tmp = dest.with_extension("tmp.download");
             session.download_asset(
                 &cfg.base_url,
                 &cfg.key,
                 &account,
                 source,
                 sha,
-                &dest,
+                &tmp,
             )?;
+            if let Err(e) = verify_sha256(&tmp, sha) {
+                let _ = std::fs::remove_file(&tmp);
+                bail!("downloaded asset {sha} failed hash check: {e}");
+            }
+            std::fs::rename(&tmp, &dest)
+                .with_context(|| format!("rename {} → {}", tmp.display(), dest.display()))?;
             attachments_downloaded += 1;
         }
     }
@@ -475,6 +561,47 @@ fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Resul
             "{}",
             serde_json::to_string(msg).context("serialize message")?
         )?;
+    }
+    Ok(())
+}
+
+/// Reject paths that could escape the output directory (absolute paths or `..`).
+fn safe_rel(rel: &str) -> Result<()> {
+    let path = std::path::Path::new(rel);
+    if path.is_absolute() {
+        bail!("attachment path must be relative: {rel}");
+    }
+    for comp in path.components() {
+        if matches!(comp, std::path::Component::ParentDir) {
+            bail!("unsafe attachment path (contains ..): {rel}");
+        }
+    }
+    Ok(())
+}
+
+/// Verify that a downloaded file matches the expected SHA-256 digest.
+fn verify_sha256(path: &std::path::Path, expected_hex: &str) -> Result<()> {
+    let expected = expected_hex.trim();
+    if expected.is_empty() || expected.len() != 64 {
+        bail!("invalid SHA-256 digest: {expected}");
+    }
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("open for hash check: {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let actual = hex::encode(hasher.finalize());
+    if actual != expected {
+        bail!(
+            "SHA-256 mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        );
     }
     Ok(())
 }

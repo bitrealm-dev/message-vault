@@ -263,8 +263,13 @@ impl HttpSession {
         sha256: &str,
         dest: &Path,
     ) -> Result<()> {
+        // Validate sha256 is a 64-char hex string before putting it in the URL.
+        let sha_clean = sha256.trim();
+        if sha_clean.len() != 64 || !sha_clean.chars().all(|c| c.is_ascii_hexdigit()) {
+            bail!("invalid SHA-256 digest for asset download: {sha256}");
+        }
         let base = base_url.trim().trim_end_matches('/');
-        let mut url = reqwest::Url::parse(&format!("{base}/v1/assets/{sha256}"))
+        let mut url = reqwest::Url::parse(&format!("{base}/v1/assets/{sha_clean}"))
             .with_context(|| format!("invalid vault URL {base}"))?;
         {
             let mut qp = url.query_pairs_mut();

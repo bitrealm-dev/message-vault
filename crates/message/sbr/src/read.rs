@@ -17,6 +17,8 @@ const MMS_ADDR_FROM: &str = "137";
 const MMS_BOX_SENT: &str = "2";
 const MMS_BOX_DRAFT: &str = "3";
 const MMS_BOX_OUTBOX: &str = "4";
+const MMS_BOX_FAILED: &str = "5";
+const MMS_BOX_QUEUED: &str = "6";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConversationKind {
@@ -410,7 +412,10 @@ fn parse_mms(
             None
         })?;
     let msg_box = get(attrs, "msg_box").trim().to_string();
-    if msg_box == MMS_BOX_DRAFT || msg_box == MMS_BOX_OUTBOX {
+    if matches!(
+        msg_box.as_str(),
+        MMS_BOX_DRAFT | MMS_BOX_OUTBOX | MMS_BOX_FAILED | MMS_BOX_QUEUED
+    ) {
         stats.skipped_draft_or_outbox += 1;
         return None;
     }

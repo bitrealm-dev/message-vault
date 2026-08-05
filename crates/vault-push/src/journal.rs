@@ -90,7 +90,18 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
         }
         let event: JournalEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                // Truncated/corrupt line — log a warning so users know
+                // the journal is damaged rather than silently skipping state.
+                eprintln!(
+                    "warning: journal {} line {} is corrupt ({}). \
+                     The affected entries will be re-submitted (server dedup is safe).",
+                    path.display(),
+                    i + 1,
+                    e
+                );
+                continue;
+            }
         };
         match event {
             JournalEvent::AssetOk {

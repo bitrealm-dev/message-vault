@@ -202,9 +202,13 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
         bail!("empty timestamp");
     }
     if let Ok(ms) = t.parse::<i64>() {
-        // Heuristic: seconds vs millis
-        return Ok(if ms.abs() < 1_000_000_000_000 {
-            ms * 1000
+        // Heuristic: seconds vs millis.
+        // Any numeric value below 10^10 is a seconds timestamp (year 2286 in
+        // seconds, well beyond any real SMS data). Values at or above 10^10
+        // are millisecond timestamps (1973-03-03 in ms, still before SMS but
+        // close enough that real data won't hit the ambiguity).
+        return Ok(if ms.abs() < 10_000_000_000 {
+            ms.saturating_mul(1000)
         } else {
             ms
         });

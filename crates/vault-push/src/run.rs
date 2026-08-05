@@ -170,6 +170,7 @@ pub struct PushReport {
     pub messages: u64,
     pub assets_uploaded: u64,
     pub assets_skipped: u64,
+    pub assets_bytes: u64,
     pub results: Vec<FileResult>,
 }
 
@@ -792,6 +793,7 @@ struct FinishRunArgs<'a> {
     results: Vec<Option<FileResult>>,
     assets_uploaded: u64,
     assets_skipped: u64,
+    assets_bytes: u64,
     aborted: bool,
     http: &'a HttpSession,
     import_id: Option<i64>,
@@ -817,6 +819,7 @@ fn finish_run(
         results,
         assets_uploaded,
         assets_skipped,
+        assets_bytes,
         aborted,
         http,
         import_id,
@@ -866,6 +869,7 @@ fn finish_run(
         messages,
         assets_uploaded,
         assets_skipped,
+        assets_bytes,
         results,
     };
     if let Some(parent) = report_path.parent() {
@@ -884,7 +888,7 @@ fn finish_run(
             report.ok,
             report.messages,
             attachments,
-            0,
+            assets_bytes,
         ) {
             Ok(()) => log.line(&format!("vault import session {import_id} completed")),
             Err(error) => log.line(&format!(
@@ -936,6 +940,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     let mut results: Vec<Option<FileResult>> = vec![None; total];
     let mut assets_uploaded = 0u64;
     let mut assets_skipped = 0u64;
+    let mut assets_bytes = 0u64;
     // First import in replace mode may use mode=replace; later ones use append.
     let mut first_import = true;
     let mut aborted = false;
@@ -1114,6 +1119,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                                 total_started: Instant::now(),
                                 assets_uploaded: 0,
                                 assets_skipped: 0,
+                                assets_bytes: 0,
                                 log_lines: Vec::new(),
                             }),
                         },
@@ -1212,6 +1218,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
 
                 assets_uploaded += prepared.assets_uploaded;
                 assets_skipped += prepared.assets_skipped;
+                assets_bytes += prepared.assets_bytes;
                 for line in &prepared.log_lines {
                     log.line(line);
                 }
@@ -1387,6 +1394,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             if let Ok(prepared) = job.outcome {
                 assets_uploaded += prepared.assets_uploaded;
                 assets_skipped += prepared.assets_skipped;
+                assets_bytes += prepared.assets_bytes;
                 for line in &prepared.log_lines {
                     log.line(line);
                 }
@@ -1465,6 +1473,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             results,
             assets_uploaded,
             assets_skipped,
+            assets_bytes,
             aborted,
             http: &http,
             import_id,
@@ -1511,6 +1520,7 @@ struct PreparedFile {
     total_started: Instant,
     assets_uploaded: u64,
     assets_skipped: u64,
+    assets_bytes: u64,
     log_lines: Vec<String>,
 }
 
@@ -1566,6 +1576,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let mut attachment_count = 0u64;
     let mut assets_uploaded = 0u64;
     let mut assets_skipped = 0u64;
+    let mut assets_bytes = 0u64;
     let mut log_lines = Vec::new();
     let mut profile = UploadProfile {
         read_ms,
@@ -1639,6 +1650,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         profile.asset_bytes = upload_stats.bytes;
         assets_uploaded = upload_stats.uploaded;
         assets_skipped = upload_stats.skipped;
+        assets_bytes = upload_stats.bytes;
         log_lines = upload_stats.log_lines;
     }
 
@@ -1709,6 +1721,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         total_started,
         assets_uploaded,
         assets_skipped,
+        assets_bytes,
         log_lines,
     })
 }
@@ -2600,6 +2613,7 @@ mod tests {
             messages: 100,
             assets_uploaded: 4,
             assets_skipped: 2,
+            assets_bytes: 1_048_576,
             results: vec![],
         };
         let summary = format_push_summary(&report);

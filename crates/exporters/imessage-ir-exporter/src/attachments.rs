@@ -30,7 +30,16 @@ pub(crate) fn load_attachment_bytes(
         && backup.is_encrypted()
     {
         let temp = decrypt_file(backup, &source)?;
-        let bytes = fs::read(&temp).unwrap_or_default();
+        let bytes = match fs::read(&temp) {
+            Ok(b) => b,
+            Err(e) => {
+                session.options.emit_log(format!(
+                    "warning: failed to read decrypted attachment {}: {e}",
+                    temp.display()
+                ));
+                Vec::new()
+            }
+        };
         if let Err(why) = fs::remove_file(&temp) {
             session.options.emit_log(format!(
                 "Unable to remove encrypted temp file {}: {why}",
@@ -41,7 +50,16 @@ pub(crate) fn load_attachment_bytes(
     }
 
     if source.is_file() {
-        Ok(fs::read(&source).unwrap_or_default())
+        match fs::read(&source) {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                session.options.emit_log(format!(
+                    "warning: failed to read attachment {}: {e}",
+                    source.display()
+                ));
+                Ok(Vec::new())
+            }
+        }
     } else {
         Ok(Vec::new())
     }

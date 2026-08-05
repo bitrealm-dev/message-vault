@@ -374,6 +374,10 @@ impl Obfuscator {
 }
 
 /// Same-length letter/digit filler; whitespace and punctuation kept in place.
+///
+/// ASCII letters/digits are replaced with deterministic ASCII substitutes.
+/// Non-ASCII alphabetic characters (CJK, Cyrillic, accented Latin, etc.) are
+/// also replaced to prevent leaking message content in non-English languages.
 fn shape_preserving_filler(raw: &str, digest: &[u8; 32], digest_offset: usize) -> String {
     let len = raw.chars().count();
     let mut out = String::with_capacity(raw.len());
@@ -388,6 +392,12 @@ fn shape_preserving_filler(raw: &str, digest: &[u8; 32], digest_offset: usize) -
             let b = digest[i % digest.len()];
             i += 1;
             out.push(char::from(b'0' + (b % 10)));
+        } else if ch.is_alphabetic() {
+            // Non-ASCII alphabetic (CJK, Cyrillic, accented Latin, Arabic, etc.)
+            // — replace with a deterministic ASCII letter to prevent content leaks.
+            let b = digest[i % digest.len()];
+            i += 1;
+            out.push(char::from(b'a' + (b % 26)));
         } else {
             out.push(ch);
         }
@@ -536,9 +546,11 @@ pub fn materialize_placeholders(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Seed length: 4 bytes → exactly 8 hex characters.
-pub const OBFUSCATE_SEED_BYTES: usize = 4;
-pub const OBFUSCATE_SEED_HEX_LEN: usize = 8;
+/// Seed length: 32 bytes → 64 hex characters (2^256 key space).
+/// Backward-compatible: shorter hex seeds (e.g. legacy 8-char) are still
+/// accepted; their bytes are hashed into the 32-byte working key.
+pub const OBFUSCATE_SEED_BYTES: usize = 32;
+pub const OBFUSCATE_SEED_HEX_LEN: usize = 64;
 
 fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
     let dig = Sha256::digest(bytes);
@@ -560,9 +572,12 @@ pub fn resolve_obfuscator_with_log(
     let key = match seed_hex {
         Some(s) => {
             let s = s.trim();
-            if s.len() != OBFUSCATE_SEED_HEX_LEN {
+            // Accept any hex seed from 8 to 64 chars for backward compatibility
+            // (legacy seeds were 8 chars / 4 bytes). All seeds are hashed via
+            // SHA-256 into a 32-byte working key.
+            if s.len() < 8 || s.len() > 64 || s.len() % 2 != 0 {
                 bail!(
-                    "--obfuscate-seed must be exactly {OBFUSCATE_SEED_HEX_LEN} hex characters (got {})",
+                    "--obfuscate-seed must be 8–64 hex characters (even length), got {}",
                     s.len()
                 );
             }
@@ -1154,7 +1169,16 @@ mod tests {
 
     #[test]
     fn seed_rejects_wrong_length() {
+        // Too short (< 8 hex chars)
         assert!(resolve_obfuscator(Some("abcd")).is_err());
-        assert!(resolve_obfuscator(Some("0123456789abcdef")).is_err());
+        assert!(resolve_obfuscator(Some("abcdef")).is_err());
+        // Odd length (must be even for valid hex)
+        assert!(resolve_obfuscator(Some("abcde")).is_err());
+        // Too long (> 64 hex chars)
+        let long = "a".repeat(66);
+        assert!(resolve_obfuscator(Some(&long)).is_err());
+        // Valid lengths: legacy 8-char and modern 64-char
+        assert!(resolve_obfuscator(Some("01234567")).is_ok());
+        assert!(resolve_obfuscator(Some("0123456789abcdef")).is_ok());
     }
 }

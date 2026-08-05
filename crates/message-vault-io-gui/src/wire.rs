@@ -326,7 +326,7 @@ fn wire_extract(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
                 .exporter
                 .product_url()
                 .to_string();
-            if let Err(error) = open::that(&url)
+            if let Err(error) = wsl::open_url(&url)
                 && let Some(ui) = ui_weak.upgrade()
             {
                 let mut st = state.lock().expect("state lock");

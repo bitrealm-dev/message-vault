@@ -470,10 +470,15 @@ fn guid_prefix8(guid: &str) -> String {
         .collect();
     if hex.len() >= 8 {
         hex[..8].to_string()
-    } else if guid.len() >= 8 {
-        guid[..8].to_string()
     } else {
-        format!("{guid:0<8}")
+        // Fall back to first 8 chars (not bytes) to avoid panicking on
+        // multi-byte UTF-8 characters. Pad with zeros if shorter.
+        let prefix: String = guid.chars().take(8).collect();
+        if prefix.chars().count() >= 8 {
+            prefix
+        } else {
+            format!("{prefix:0<8}")
+        }
     }
 }
 

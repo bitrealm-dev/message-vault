@@ -1,16 +1,58 @@
 //! Remove prior IR packaging artifacts under an export directory.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use mail::clean_previous_mail_output;
 use std::fs;
 use std::path::Path;
 
+/// Sentinel file written into export directories so `clean_previous_ir_output` can
+/// distinguish a real export directory from a user directory that was pointed at
+/// by mistake.
+pub const EXPORT_SENTINEL: &str = ".message-vault-export";
+
+/// Write a sentinel file marking `output_dir` as an export target.
+/// Callers should run this after `create_dir_all` on a fresh export.
+pub fn write_export_sentinel(output_dir: &Path) -> Result<()> {
+    fs::write(output_dir.join(EXPORT_SENTINEL), "")?;
+    Ok(())
+}
+
 /// Delete previous CSV / JSON / JSONL / meta / `smses.xml` / temps, then mail archives.
 ///
-/// Leaves `attachments/` alone. Safe when `output_dir` does not exist.
+/// Only cleans directories that contain the sentinel file `.message-vault-export`
+/// or are empty or already contain recognizable export artifacts. This prevents
+/// accidentally deleting unrelated user files when the output path is pointed at
+/// a non-export directory by mistake.
 pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
     if !output_dir.is_dir() {
         return Ok(());
+    }
+    let has_sentinel = output_dir.join(EXPORT_SENTINEL).is_file();
+    if !has_sentinel {
+        // Check if the directory looks like an export directory (contains files
+        // matching our known patterns) or is empty. If neither, refuse to clean.
+        let mut has_export_files = false;
+        let mut has_other_files = false;
+        for entry in
+            fs::read_dir(output_dir).with_context(|| format!("read {}", output_dir.display()))?
+        {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().unwrap_or("");
+            if is_export_artifact(name) {
+                has_export_files = true;
+            } else if name != EXPORT_SENTINEL {
+                has_other_files = true;
+            }
+        }
+        if !has_export_files && has_other_files {
+            bail!(
+                "output directory {} exists but does not appear to contain export files. \
+                 Refusing to clean unrecognized content. Use an empty directory or one \
+                 previously used for exports.",
+                output_dir.display()
+            );
+        }
     }
     for entry in
         fs::read_dir(output_dir).with_context(|| format!("read {}", output_dir.display()))?
@@ -20,22 +62,28 @@ pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
         if !path.is_file() {
             continue;
         }
-        let remove = name.ends_with(".csv")
-            || name.ends_with(".csv.tmp")
-            || name.ends_with(".meta.json")
-            || name.ends_with(".meta.json.tmp")
-            || name.ends_with(".json")
-            || name.ends_with(".json.tmp")
-            || name.ends_with(".jsonl")
-            || name.ends_with(".jsonl.tmp")
-            || name == "smses.xml"
-            || name.ends_with(".xml.tmp")
-            || name.ends_with(".xml.sbrbody");
-        if remove {
+        if is_export_artifact(name) {
             fs::remove_file(&path)
                 .with_context(|| format!("remove previous {}", path.display()))?;
         }
     }
     clean_previous_mail_output(output_dir)?;
+    // Write the sentinel so future runs know this is a safe export directory.
+    let _ = fs::write(output_dir.join(EXPORT_SENTINEL), "");
     Ok(())
+}
+
+/// Returns true when `name` matches a known export artifact pattern.
+fn is_export_artifact(name: &str) -> bool {
+    name.ends_with(".csv")
+        || name.ends_with(".csv.tmp")
+        || name.ends_with(".meta.json")
+        || name.ends_with(".meta.json.tmp")
+        || name.ends_with(".json")
+        || name.ends_with(".json.tmp")
+        || name.ends_with(".jsonl")
+        || name.ends_with(".jsonl.tmp")
+        || name == "smses.xml"
+        || name.ends_with(".xml.tmp")
+        || name.ends_with(".xml.sbrbody")
 }

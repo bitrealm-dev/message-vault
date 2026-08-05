@@ -76,7 +76,15 @@ impl DataSource {
                         get_decrypted_message_database(&backup, log.as_ref())?,
                         log.clone(),
                     );
-                    let contacts_path = get_decrypted_contacts_database(&backup, log.as_ref())?;
+                    let contacts_path = get_decrypted_contacts_database(&backup, log.as_ref())
+                        .ok();
+                    if contacts_path.is_none() {
+                        emit_log(
+                            log.as_ref(),
+                            "No Contacts database found in iOS backup (AddressBook absent); \
+                             continuing without contacts".to_string(),
+                        );
+                    }
 
                     emit_log(
                         log.as_ref(),
@@ -88,17 +96,19 @@ impl DataSource {
                     );
 
                     let contacts_index =
-                        Self::get_contacts_index(Some(&contacts_path), log.as_ref())
+                        Self::get_contacts_index(contacts_path.as_deref(), log.as_ref())
                             .unwrap_or_default();
 
-                    if let Err(e) = remove_file(&contacts_path) {
-                        emit_log(
-                            log.as_ref(),
-                            format!(
-                                "warning: failed to remove temporary contacts database at {}: {e}",
-                                contacts_path.display()
-                            ),
-                        );
+                    if let Some(ref cp) = contacts_path {
+                        if let Err(e) = remove_file(cp) {
+                            emit_log(
+                                log.as_ref(),
+                                format!(
+                                    "warning: failed to remove temporary contacts database at {}: {e}",
+                                    cp.display()
+                                ),
+                            );
+                        }
                     }
 
                     let messages_connection = get_connection(messages_db.path())?;

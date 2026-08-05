@@ -35,6 +35,10 @@ pub(crate) fn load_attachment_bytes_strict(
 ///
 /// Missing paths yield `Ok(None)`. IO failures return an error (strict) — callers
 /// that want lenient behavior map with `.ok().flatten()`.
+///
+/// The relative path is validated to prevent directory traversal (no `..` or
+/// absolute paths). This defends against malicious CSV/JSON input crafted to
+/// read arbitrary files during EML/MBOX/XML embedding.
 pub(crate) fn read_attachment_file(
     att: &IrAttachment,
     output_dir: &Path,
@@ -42,6 +46,16 @@ pub(crate) fn read_attachment_file(
     let Some(rel) = att.path.as_deref() else {
         return Ok(None);
     };
+    // Reject paths that could escape the export folder.
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        anyhow::bail!("attachment path must be relative: {rel}");
+    }
+    for comp in rel_path.components() {
+        if matches!(comp, std::path::Component::ParentDir) {
+            anyhow::bail!("unsafe attachment path (contains ..): {rel}");
+        }
+    }
     let path = output_dir.join(rel);
     if !path.is_file() {
         return Ok(None);

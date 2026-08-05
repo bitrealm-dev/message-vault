@@ -125,7 +125,7 @@ fn start_library_job(
             }
 
             {
-                let st = state_for_done.lock().expect("state lock");
+                let mut st = state_for_done.lock().expect("state lock");
                 for line in &lines {
                     st.append_session_log(line);
                 }
@@ -185,6 +185,19 @@ fn start_library_job(
                 break;
             }
         }
+        // The channel closed without a Finished or Error event. This means the job
+        // thread panicked or was aborted abnormally. Reset state and report the error
+        // so the UI doesn't stay wedged in "Running" state.
+        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+            let mut st = state_for_done.lock().expect("state lock");
+            st.running = false;
+            st.set_errors(
+                vec!["The job stopped unexpectedly (the worker may have panicked). \
+                      Check the session log for details.".into()],
+                source_screen,
+            );
+            sync::push_chrome(&ui, &st);
+        });
     });
 }
 
