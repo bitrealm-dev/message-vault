@@ -312,9 +312,9 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     emit(
         &mut on_progress,
         ProgressEvent::Log(if q.is_empty() {
-            "Export query: (all messages)".into()
+            "Backup query: (all messages)".into()
         } else {
-            format!("Export query: {q}")
+            format!("Backup query: {q}")
         }),
     );
 
@@ -323,6 +323,26 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     let attachments_dir = cfg.out_dir.join("attachments");
     if !cfg.skip_attachments {
         fs::create_dir_all(&attachments_dir)?;
+    }
+
+    // --- resume journal ---
+    let journal_path = cfg
+        .journal_path
+        .clone()
+        .unwrap_or_else(|| crate::journal::journal_path(&cfg.out_dir));
+    let journal_state = if cfg.force {
+        crate::journal::PullJournalState::default()
+    } else {
+        crate::journal::load(&journal_path, &cfg.base_url, &username)?
+    };
+
+    if journal_state.backup_complete && !cfg.force {
+        emit(
+            &mut on_progress,
+            ProgressEvent::Log(
+                "Previous backup completed successfully. Running to check for new messages…".into(),
+            ),
+        );
     }
 
     let session = HttpSession::new()?;
@@ -405,36 +425,75 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     let mut attachments_downloaded = 0u64;
     let mut attachments_skipped = 0u64;
 
-    if !cfg.skip_attachments && !assets.is_empty() {
-        emit(
-            &mut on_progress,
-            ProgressEvent::Log(format!(
-                "Downloading {} unique asset(s) with {} worker(s)…",
-                assets.len(),
-                cfg.asset_download_workers
-            )),
-        );
-        let dl_stats = download_assets_parallel(
-            &session,
-            &cfg.base_url,
-            &cfg.key,
-            &account,
-            &assets,
-            &cfg.out_dir,
-            cfg.asset_download_workers,
-            cfg.cancel.as_ref(),
-        )?;
-        attachments_downloaded = dl_stats.downloaded;
-        attachments_skipped = dl_stats.skipped;
-        emit(
-            &mut on_progress,
-            ProgressEvent::Log(format!(
-                "Assets: {} downloaded, {} skipped ({} total bytes)",
-                attachments_downloaded,
-                attachments_skipped,
-                format_bytes_human(dl_stats.bytes)
-            )),
-        );
+    if !cfg.skip_attachments {
+        // Filter out assets already in the journal that exist on disk.
+        let total_assets = assets.len() as u64;
+        let to_download: HashMap<String, (String, String)> = assets
+            .iter()
+            .filter(|(sha, (_source, rel))| {
+                if journal_state.assets.contains(*sha) {
+                    let dest = cfg.out_dir.join(rel);
+                    if dest.is_file() {
+                        return false; // skip: journaled + on disk
+                    }
+                }
+                true
+            })
+            .map(|(sha, tuple)| (sha.clone(), tuple.clone()))
+            .collect();
+        let skipped_by_journal = total_assets - to_download.len() as u64;
+        let assets = to_download;
+
+        if !assets.is_empty() {
+            emit(
+                &mut on_progress,
+                ProgressEvent::Log(format!(
+                    "Downloading {} unique asset(s) with {} worker(s) ({} skipped from journal)…",
+                    assets.len(),
+                    cfg.asset_download_workers,
+                    skipped_by_journal
+                )),
+            );
+            let dl_stats = download_assets_parallel(
+                &session,
+                &cfg.base_url,
+                &cfg.key,
+                &account,
+                &assets,
+                &cfg.out_dir,
+                cfg.asset_download_workers,
+                cfg.cancel.as_ref(),
+            )?;
+            attachments_downloaded = dl_stats.downloaded;
+            attachments_skipped = dl_stats.skipped + skipped_by_journal;
+
+            // Journal each successfully present asset (downloaded or already on disk)
+            // so a resume skips it.
+            for (sha, (_source, _rel)) in &assets {
+                if !journal_state.assets.contains(sha) {
+                    let event = crate::journal::PullJournalEvent::AssetOk {
+                        url: cfg.base_url.clone(),
+                        username: username.clone(),
+                        sha256: sha.clone(),
+                        path: String::new(),
+                        size_bytes: 0,
+                    };
+                    let _ = crate::journal::append(&journal_path, &event);
+                }
+            }
+
+            emit(
+                &mut on_progress,
+                ProgressEvent::Log(format!(
+                    "Assets: {} downloaded, {} skipped ({} total bytes)",
+                    attachments_downloaded,
+                    attachments_skipped,
+                    format_bytes_human(dl_stats.bytes)
+                )),
+            );
+        } else {
+            attachments_skipped = skipped_by_journal;
+        }
     }
 
     let mut conversations = 0u64;
@@ -444,6 +503,26 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
         write_conversation_jsonl(&cfg.out_dir, &doc)?;
         conversations += 1;
     }
+
+    // --- journal completion ---
+    let event = crate::journal::PullJournalEvent::BackupComplete {
+        url: cfg.base_url.clone(),
+        username: username.clone(),
+        conversations,
+        messages: total_messages,
+        assets: attachments_downloaded + attachments_skipped,
+    };
+    crate::journal::append(&journal_path, &event)?;
+    // Compact after clean run
+    let final_state = crate::journal::PullJournalState {
+        assets: {
+            let mut s = journal_state.assets.clone();
+            s.extend(assets.keys().cloned());
+            s
+        },
+        backup_complete: true,
+    };
+    let _ = crate::journal::compact(&journal_path, &cfg.base_url, &username, &final_state);
 
     let report = PullReport {
         ok: true,
