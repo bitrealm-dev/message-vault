@@ -755,6 +755,7 @@ pub(crate) fn start_account_backup(
 
         if output_raw.is_empty() {
             adapter.set_output(out_dir.display().to_string().into());
+            st.backup_output = out_dir.display().to_string();
         }
 
         if let Err(error) = st.save_export_ini() {

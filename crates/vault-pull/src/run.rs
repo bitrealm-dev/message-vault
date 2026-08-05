@@ -608,13 +608,13 @@ fn download_assets_parallel(
         for _ in 0..worker_count {
             scope.spawn(|| {
                 loop {
-                    check_cancel(cancel).ok(); // best-effort cancel check
                     let index = next_job.fetch_add(1, Ordering::Relaxed);
                     if index >= jobs.len() {
                         break;
                     }
                     let job = &jobs[index];
                     let result = (|| -> Result<u64> {
+                        check_cancel(cancel).map_err(|e| anyhow::anyhow!("{e}"))?;
                         session.download_asset(
                             base_url,
                             key,

@@ -301,11 +301,16 @@ impl HttpSession {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("mkdir {}", parent.display()))?;
         }
+        // Write to a temp file then rename, so a partial download (crash, cancel,
+        // network drop) never leaves a truncated file at the destination path.
+        let tmp = dest.with_extension("part");
         let mut file =
-            File::create(dest).with_context(|| format!("create {}", dest.display()))?;
+            File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         std::io::copy(&mut response, &mut file)
-            .with_context(|| format!("write {}", dest.display()))?;
+            .with_context(|| format!("write {}", tmp.display()))?;
         file.flush()?;
+        std::fs::rename(&tmp, dest)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
         Ok(())
     }
 }
