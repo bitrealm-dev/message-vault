@@ -3,7 +3,7 @@
 use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
 };
@@ -17,7 +17,35 @@ use message_ir_format::{
 };
 use std::path::Path;
 
-pub(crate) type ExportReport = SbrReadReport;
+/// Map the ir-format read report onto the shared [`ExportReport`] shape,
+/// moving reader-specific counters into `extra`.
+fn to_core_report(report: SbrReadReport) -> ExportReport {
+    let mut out = ExportReport {
+        conversations: report.conversations,
+        sent: report.sent,
+        received: report.received,
+        attachments_saved: report.attachments_saved,
+        skipped_invalid_date: report.skipped_invalid_date,
+        skipped_out_of_range: report.skipped_out_of_range,
+        errors: report.errors,
+        ..ExportReport::default()
+    };
+    out.extra.insert("sms_seen".into(), report.sms_seen);
+    out.extra.insert("mms_seen".into(), report.mms_seen);
+    out.extra
+        .insert("skipped_unknown_address".into(), report.skipped_unknown_address);
+    out.extra
+        .insert("skipped_unknown_type".into(), report.skipped_unknown_type);
+    out.extra
+        .insert("skipped_draft_or_outbox".into(), report.skipped_draft_or_outbox);
+    out.extra.insert(
+        "skipped_empty_participants".into(),
+        report.skipped_empty_participants,
+    );
+    out.extra
+        .insert("skipped_bad_attachment".into(), report.skipped_bad_attachment);
+    out
+}
 
 fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) {
     for document in documents {
@@ -70,5 +98,5 @@ pub(crate) fn convert_export(
     for document in documents {
         sink.write_document(document)?;
     }
-    Ok((report, sink.finish()?))
+    Ok((to_core_report(report), sink.finish()?))
 }

@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -48,42 +48,21 @@ fn push_skip_detail<T>(details: &mut Vec<T>, more: &mut u64, item: T) {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    /// XML `<SMS>` rows seen while parsing (before write / dedupe).
-    pub xml_messages_seen: u64,
-    /// PDU files that produced a pending message (before write / dedupe).
-    pub pdu_messages: u64,
-    pub pdu_group_messages: u64,
-    pub attachments_saved: u64,
-    /// Rows written to CSV after dedupe (outgoing).
-    pub sent: u64,
-    /// Rows written to CSV after dedupe (incoming).
-    pub received: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    pub skipped_unknown_type: u64,
-    pub skipped_unknown_address: u64,
-    /// One row per invalid-address XML SMS (`skipped_invalid_address.csv` / stderr sample),
-    /// capped at [`MAX_SKIP_DETAILS`] entries.
-    pub skipped_unknown_address_details: Vec<SkippedBadAddrDetail>,
-    /// Invalid-address rows dropped past the cap (`skipped_invalid_address.csv`).
-    pub skipped_unknown_address_details_more: u64,
-    pub skipped_unparseable_pdu: u64,
-    /// Hollow PDU stub (no addresses, body, or attachments) — e.g. `application/smil\0` only.
-    pub skipped_empty_pdu: u64,
-    pub skipped_empty_pdu_details: Vec<SkippedEmptyPduDetail>,
-    /// Empty-PDU rows dropped past the cap (`skipped_empty_pdu.csv`).
-    pub skipped_empty_pdu_details_more: u64,
-    /// PDU parsed but no non-owner participant (self-only / empty PLMN set).
-    pub skipped_no_other_party: u64,
-    /// One row per `skipped_no_other_party` (for `skipped_no_party.csv` / stderr sample),
-    /// capped at [`MAX_SKIP_DETAILS`] entries.
-    pub skipped_no_other_party_details: Vec<SkippedNoPartyDetail>,
-    /// No-party rows dropped past the cap (`skipped_no_party.csv`).
-    pub skipped_no_other_party_details_more: u64,
-    pub errors: Vec<String>,
+/// Skipped-row diagnostics kept out of the shared [`ExportReport`]: only used
+/// to write the `skipped_*` CSV files at the end of [`convert_export`].
+#[derive(Default)]
+struct SkipDetails {
+    invalid_address: Vec<SkippedBadAddrDetail>,
+    invalid_address_more: u64,
+    empty_pdu: Vec<SkippedEmptyPduDetail>,
+    empty_pdu_more: u64,
+    no_party: Vec<SkippedNoPartyDetail>,
+    no_party_more: u64,
+}
+
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
 }
 
 /// Diagnostic row for an empty/stub PDU file.
@@ -325,12 +304,13 @@ fn add_pdu_message(
     attachments: Vec<PendingAttachment>,
     owners: &OwnerPhoneSet,
     report: &mut ExportReport,
+    skips: &mut SkipDetails,
 ) {
     if is_empty_pdu(&parsed) {
-        report.skipped_empty_pdu += 1;
+        bump(report, "skipped_empty_pdu", 1);
         push_skip_detail(
-            &mut report.skipped_empty_pdu_details,
-            &mut report.skipped_empty_pdu_details_more,
+            &mut skips.empty_pdu,
+            &mut skips.empty_pdu_more,
             SkippedEmptyPduDetail {
                 pdu_filename: pdu_basename(&parsed),
             },
@@ -355,10 +335,10 @@ fn add_pdu_message(
             .cloned()
             .collect();
         if others.is_empty() {
-            report.skipped_no_other_party += 1;
+            bump(report, "skipped_no_other_party", 1);
             push_skip_detail(
-                &mut report.skipped_no_other_party_details,
-                &mut report.skipped_no_other_party_details_more,
+                &mut skips.no_party,
+                &mut skips.no_party_more,
                 SkippedNoPartyDetail {
                     pdu_filename: pdu_basename(&parsed),
                     participants: parsed.participants.join(";"),
@@ -378,9 +358,9 @@ fn add_pdu_message(
         )]
     };
 
-    report.pdu_messages += 1;
+    bump(report, "pdu_messages", 1);
     if parsed.is_group {
-        report.pdu_group_messages += 1;
+        bump(report, "pdu_group_messages", 1);
     }
 
     let att_names: Vec<String> = attachments.iter().map(|a| a.rel_path.clone()).collect();
@@ -740,6 +720,7 @@ pub(crate) fn convert_export(
     let owners = OwnerPhoneSet::new(owner_phones)?;
     let owner_handle = to_e164(&owners.primary_digits);
     let mut report = ExportReport::default();
+    let mut skips = SkipDetails::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     // Clean previous CSV / mail artifacts (keep attachments if re-run; rewrite as needed).
@@ -758,18 +739,13 @@ pub(crate) fn convert_export(
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_xml_file(&xml_path) {
             Ok((msgs, stats)) => {
-                report.xml_messages_seen += stats.messages;
+                bump(&mut report, "xml_messages_seen", stats.messages);
                 report.skipped_invalid_date += stats.skipped_invalid_date;
-                report.skipped_unknown_type += stats.skipped_unknown_type;
-                report.skipped_unknown_address += stats.skipped_unknown_address;
-                report.skipped_unknown_address_details_more +=
-                    stats.skipped_unknown_address_details_more;
+                bump(&mut report, "skipped_unknown_type", stats.skipped_unknown_type);
+                bump(&mut report, "skipped_unknown_address", stats.skipped_unknown_address);
+                skips.invalid_address_more += stats.skipped_unknown_address_details_more;
                 for d in stats.skipped_unknown_address_details {
-                    push_skip_detail(
-                        &mut report.skipped_unknown_address_details,
-                        &mut report.skipped_unknown_address_details_more,
-                        d,
-                    );
+                    push_skip_detail(&mut skips.invalid_address, &mut skips.invalid_address_more, d);
                 }
                 let msgs: Vec<_> = msgs
                     .into_iter()
@@ -801,7 +777,7 @@ pub(crate) fn convert_export(
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_pdu_file(&pdu_path, &owners.all_digits, &owners.primary_digits) {
             Ok(None) => {
-                report.skipped_unparseable_pdu += 1;
+                bump(&mut report, "skipped_unparseable_pdu", 1);
                 if report.errors.len() < 20 {
                     report
                         .errors
@@ -815,9 +791,14 @@ pub(crate) fn convert_export(
                 }
                 match save_pdu_attachments(&parsed, &attachments_dir, &mut report, copy_attachments)
                 {
-                    Ok(atts) => {
-                        add_pdu_message(&mut conversations, parsed, atts, &owners, &mut report)
-                    }
+                    Ok(atts) => add_pdu_message(
+                        &mut conversations,
+                        parsed,
+                        atts,
+                        &owners,
+                        &mut report,
+                        &mut skips,
+                    ),
                     Err(err) => report
                         .errors
                         .push(format!("{}: {err:#}", pdu_path.display())),
@@ -845,21 +826,9 @@ pub(crate) fn convert_export(
 
     let sink_result = sink.finish()?;
 
-    write_skipped_invalid_address_csv(
-        &output_dir,
-        &report.skipped_unknown_address_details,
-        report.skipped_unknown_address_details_more,
-    )?;
-    write_skipped_empty_pdu_csv(
-        &output_dir,
-        &report.skipped_empty_pdu_details,
-        report.skipped_empty_pdu_details_more,
-    )?;
-    write_skipped_no_party_csv(
-        &output_dir,
-        &report.skipped_no_other_party_details,
-        report.skipped_no_other_party_details_more,
-    )?;
+    write_skipped_invalid_address_csv(&output_dir, &skips.invalid_address, skips.invalid_address_more)?;
+    write_skipped_empty_pdu_csv(&output_dir, &skips.empty_pdu, skips.empty_pdu_more)?;
+    write_skipped_no_party_csv(&output_dir, &skips.no_party, skips.no_party_more)?;
 
     Ok((report, sink_result))
 }

@@ -6,7 +6,7 @@ use crate::parse::{
 };
 use anyhow::{Context, Result};
 use message_csv::{DateRange, format_local_ts, json_cell, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -36,17 +36,9 @@ const EXPORT_TOOL: &str = "WhatsApp Chat Exporter";
 /// Pinned documented upstream version (JSON convert path; shell-out may differ).
 pub(crate) const EXPORT_TOOL_VERSION: &str = "0.13.0";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub messages: u64,
-    pub sent: u64,
-    pub received: u64,
-    pub attachments_saved: u64,
-    pub attachments_missing: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
 }
 
 #[derive(Debug)]
@@ -228,7 +220,7 @@ fn ingest_chat(
                         vec![att]
                     }
                     Ok(None) => {
-                        report.attachments_missing += 1;
+                        bump(&mut *report, "attachments_missing", 1);
                         Vec::new()
                     }
                     Err(e) => {

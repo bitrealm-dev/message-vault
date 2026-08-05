@@ -1,13 +1,12 @@
 //! Full export pipeline (wtsexporter/JSON convert) for CLI and GUI.
 
-use crate::emit::{ExportReport, convert_json};
+use crate::emit::convert_json;
 use crate::wtsexporter::{Platform, WtsexporterArgs, resolve_wtsexporter, run_wtsexporter};
 use anyhow::{Context, Result, bail};
 use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig, WhatsappPlatform as CorePlatform};
 use message_ir_format::ExportTransforms;
 use std::env;
 use std::fs;
-use std::path::Path;
 
 /// Resolve JSON (via wtsexporter or `--json`), convert, apply media/obfuscate via FormatSink.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
@@ -121,46 +120,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     }
     messages.extend(sink.log_lines());
 
-    messages.extend(report_summary_lines(&report, &config.output));
+    report.summary_lines(&config.output, &mut messages);
     Ok(RunResult { messages })
-}
-
-/// Format the convert summary the same way the CLI prints it.
-fn report_summary_lines(report: &ExportReport, output: &Path) -> Vec<String> {
-    let mut lines = vec![
-        format!("Wrote {}", output.display()),
-        format!("  conversations:      {}", report.conversations),
-        format!("  messages:           {}", report.messages),
-        format!("  attachments:        {}", report.attachments_saved),
-    ];
-    if report.attachments_missing > 0 {
-        lines.push(format!(
-            "  attachments missing:{}",
-            report.attachments_missing
-        ));
-    }
-    lines.push(format!(
-        "  sent / received:    {} / {}",
-        report.sent, report.received
-    ));
-    if report.skipped_invalid_date > 0 {
-        lines.push(format!(
-            "  skipped bad date:   {}",
-            report.skipped_invalid_date
-        ));
-    }
-    if report.skipped_out_of_range > 0 {
-        lines.push(format!(
-            "  skipped date range: {}",
-            report.skipped_out_of_range
-        ));
-    }
-    if !report.errors.is_empty() {
-        lines.push(format!("  errors:             {}", report.errors.len()));
-        for err in report.errors.iter().take(10) {
-            lines.push(format!("    {err}"));
-        }
-    }
-    lines
 }
 

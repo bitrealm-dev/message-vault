@@ -52,12 +52,6 @@ fn main() -> Result<()> {
         source: SourceConfig::OpenExtract(OpenExtractConfig {}),
     })?;
 
-    for line in &result.messages {
-        if line.starts_with("Obfuscated ") {
-            eprintln!("{line}");
-        } else {
-            println!("{line}");
-        }
-    }
+    message_vault_io_core::print_result(&result);
     Ok(())
 }

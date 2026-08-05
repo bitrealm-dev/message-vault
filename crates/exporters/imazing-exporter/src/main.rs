@@ -59,17 +59,6 @@ fn main() -> Result<()> {
         source: SourceConfig::Imazing(ImazingConfig {}),
     })?;
 
-    for line in &result.messages {
-        if line.starts_with("Media:")
-            || line.starts_with("  media ")
-            || line.starts_with("Obfuscated ")
-            || line.starts_with("warning:")
-            || line.starts_with("  - ")
-        {
-            eprintln!("{line}");
-        } else {
-            println!("{line}");
-        }
-    }
+    message_vault_io_core::print_result(&result);
     Ok(())
 }

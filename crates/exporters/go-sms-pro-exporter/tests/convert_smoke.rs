@@ -33,7 +33,7 @@ fn convert_smoke_writes_csv_not_json() {
     )
     .expect("convert_export should succeed");
     assert!(report.conversations >= 1);
-    assert!(report.xml_messages_seen >= 2);
+    assert!(report.extra.get("xml_messages_seen").copied().unwrap_or(0) >= 2);
 
     let mut csv_files: Vec<_> = fs::read_dir(tmp.path())
         .unwrap()

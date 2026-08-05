@@ -1,11 +1,11 @@
 //! Convert OpenExtract rows → common message → packaging via FormatSink.
 
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -31,17 +31,15 @@ const EXPORT_SOURCE: &str = "openextract";
 const EXPORT_TOOL: &str = "OpenExtract";
 const EXPORT_TOOL_VERSION: &str = "0.5.1";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub messages: u64,
-    pub sent: u64,
-    pub received: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    /// Rows/chats where peer was a name with no VCF phone (name-only chat id).
-    pub unresolved_chat_phone: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
+}
+
+/// Read a per-exporter counter from the report's `extra` map (test assertions).
+#[cfg(test)]
+fn count(report: &ExportReport, key: &str) -> u64 {
+    report.extra.get(key).copied().unwrap_or(0)
 }
 
 #[derive(Debug)]
@@ -119,7 +117,7 @@ pub(crate) fn convert_export(
 
             let (chat_id, contact_name, unresolved) = resolve_chat(book, &peer_label);
             if unresolved {
-                report.unresolved_chat_phone += 1;
+                bump(&mut report, "unresolved_chat_phone", 1);
             }
 
             let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
@@ -444,7 +442,7 @@ TEL;TYPE=CELL:+1-555-555-0122\nEND:VCARD\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_chat_phone, 0);
+        assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         let csv_path = out.join("+15555550122.csv");
         let body = fs::read_to_string(&csv_path).unwrap();
         assert!(body.contains("Sam Example"));
@@ -479,7 +477,7 @@ TEL:+15555550999\nEND:VCARD\n",
             None,
         )
         .unwrap();
-        assert!(report.unresolved_chat_phone >= 1);
+        assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         let csv_path = out.join("Cathy_Arp.csv");
         assert!(csv_path.is_file(), "missing {}", csv_path.display());

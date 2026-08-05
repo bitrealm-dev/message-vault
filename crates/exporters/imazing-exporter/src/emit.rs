@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{AttachmentCell, DateRange, format_local_ts, parse_utc_offset, stable_guid};
-use message_vault_io_core::{CancelFlag, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -34,24 +34,15 @@ const EXPORT_SOURCE: &str = "imazing";
 const EXPORT_TOOL: &str = "iMazing";
 const EXPORT_TOOL_VERSION: &str = "3.5.5";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub messages: u64,
-    pub sent: u64,
-    pub received: u64,
-    pub notifications: u64,
-    pub skipped_invalid_date: u64,
-    pub skipped_out_of_range: u64,
-    pub duplicates_dropped: u64,
-    /// Chats where peer was a name with no contacts phone (name-only chat id).
-    pub unresolved_chat_phone: u64,
-    /// Group roster labels that could not be resolved to a phone/email.
-    pub unresolved_group_participants: u64,
-    pub messages_files: u64,
-    pub whatsapp_files: u64,
-    pub attachments_saved: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
+}
+
+/// Read a per-exporter counter from the report's `extra` map (test assertions).
+#[cfg(test)]
+fn count(report: &ExportReport, key: &str) -> u64 {
+    report.extra.get(key).copied().unwrap_or(0)
 }
 
 #[derive(Debug)]
@@ -152,8 +143,8 @@ pub(crate) fn convert_export(
     for discovered in &files {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match discovered.kind {
-            SourceKind::Messages => report.messages_files += 1,
-            SourceKind::WhatsApp => report.whatsapp_files += 1,
+            SourceKind::Messages => bump(&mut report, "messages_files", 1),
+            SourceKind::WhatsApp => bump(&mut report, "whatsapp_files", 1),
         }
         let rows = match parse_csv_file(&discovered.path, discovered.kind) {
             Ok(r) => r,
@@ -180,9 +171,9 @@ pub(crate) fn convert_export(
         for (session, session_rows) in by_session {
             let peer = collect_peer_info(book, discovered.kind, &session, &session_rows);
             if peer.unresolved_chat {
-                report.unresolved_chat_phone += 1;
+                bump(&mut report, "unresolved_chat_phone", 1);
             }
-            report.unresolved_group_participants += peer.unresolved_roster_labels;
+            bump(&mut report, "unresolved_group_participants", peer.unresolved_roster_labels);
 
             let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
             let convo = conversations
@@ -645,7 +636,7 @@ fn pending_to_document(
     let mut messages = Vec::with_capacity(convo.messages.len());
     for msg in &convo.messages {
         if msg.is_notification {
-            report.notifications += 1;
+            bump(report, "notifications", 1);
         } else if msg.is_from_me {
             report.sent += 1;
         } else {
@@ -820,7 +811,7 @@ Bob,,McRoy,+13212462167,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_chat_phone, 0);
+        assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         assert_eq!(report.messages, 2);
         let csv_path = out.join("+13212462167.csv");
         let body = fs::read_to_string(&csv_path).unwrap();
@@ -859,7 +850,7 @@ Other,,Person,+15555550999,\n",
             None,
         )
         .unwrap();
-        assert!(report.unresolved_chat_phone >= 1);
+        assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         assert!(out.join("Mystery_Person.csv").is_file());
     }
@@ -962,7 +953,7 @@ Carol,,Silent,+15555550133,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_group_participants, 0);
+        assert_eq!(count(&report, "unresolved_group_participants"), 0);
         let body = fs::read_to_string(out.join("group_+15555550111_+15555550122_+15555550133.csv"))
             .unwrap();
         assert!(body.contains("+15555550133") || body.contains("15555550133"));
@@ -1000,7 +991,7 @@ Bob,,Example,+15555550122,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 1);
-        assert_eq!(report.unresolved_group_participants, 1);
+        assert_eq!(count(&report, "unresolved_group_participants"), 1);
     }
 
     #[test]
@@ -1038,8 +1029,8 @@ Bob,,,+15555550100,\n",
         )
         .unwrap();
         assert_eq!(report.conversations, 2);
-        assert_eq!(report.messages_files, 1);
-        assert_eq!(report.whatsapp_files, 1);
+        assert_eq!(count(&report, "messages_files"), 1);
+        assert_eq!(count(&report, "whatsapp_files"), 1);
         assert!(out.join("+15555550100.csv").is_file());
         assert!(out.join("+15555550100__whatsapp.csv").is_file());
         let wa = fs::read_to_string(out.join("+15555550100__whatsapp.csv")).unwrap();

@@ -46,6 +46,65 @@ pub struct RunResult {
     pub messages: Vec<String>,
 }
 
+/// Export run statistics. Per-exporter extension counters (PDU counts,
+/// dedupe counts, etc.) are stored in the `extra` map.
+#[derive(Debug, Default, Clone)]
+pub struct ExportReport {
+    pub conversations: u64,
+    pub messages: u64,
+    pub sent: u64,
+    pub received: u64,
+    pub skipped_invalid_date: u64,
+    pub skipped_out_of_range: u64,
+    pub duplicates_dropped: u64,
+    pub attachments_saved: u64,
+    /// Human-readable error/warning lines (capped by each exporter).
+    pub errors: Vec<String>,
+    /// Per-exporter extension counters keyed by name.
+    pub extra: std::collections::BTreeMap<String, u64>,
+}
+
+impl ExportReport {
+    /// Append one or more summary lines to `out`.
+    pub fn summary_lines(&self, output: &std::path::Path, out: &mut Vec<String>) {
+        out.push(format!("Wrote {} export under {}", crate::name_stem(output.to_string_lossy().as_ref()), output.display()));
+        if self.skipped_invalid_date > 0 {
+            out.push(format!("  skipped {} invalid-date rows", self.skipped_invalid_date));
+        }
+        if self.skipped_out_of_range > 0 {
+            out.push(format!("  skipped {} out-of-range rows", self.skipped_out_of_range));
+        }
+        if self.duplicates_dropped > 0 {
+            out.push(format!("  dropped {} duplicate rows", self.duplicates_dropped));
+        }
+        if self.attachments_saved > 0 {
+            out.push(format!("  saved {} attachments", self.attachments_saved));
+        }
+        for (key, count) in &self.extra {
+            out.push(format!("  {key}: {count}"));
+        }
+        for err in &self.errors {
+            out.push(format!("  error: {err}"));
+        }
+    }
+}
+
+/// Print `RunResult` lines with the standard stdout/stderr split:
+/// media/obfuscate/warning lines → stderr, summary lines → stdout.
+pub fn print_result(result: &RunResult) {
+    for line in &result.messages {
+        if line.starts_with("Media:")
+            || line.starts_with("  media ")
+            || line.starts_with("Obfuscated ")
+            || line.starts_with("warning:")
+        {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
+    }
+}
+
 /// Parse optional start/end date strings into a [`DateRange`].
 pub fn parse_date_range(
     start_date: Option<&str>,

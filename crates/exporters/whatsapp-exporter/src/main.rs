@@ -114,17 +114,6 @@ fn main() -> Result<()> {
         }),
     })?;
 
-    for line in &result.messages {
-        // Media / obfuscate / wtsexporter log → stderr; convert summary → stdout.
-        if line.starts_with("Media:")
-            || line.starts_with("  media ")
-            || line.starts_with("Obfuscated ")
-            || !(line.starts_with("Wrote ") || line.starts_with("  "))
-        {
-            eprintln!("{line}");
-        } else {
-            println!("{line}");
-        }
-    }
+    message_vault_io_core::print_result(&result);
     Ok(())
 }

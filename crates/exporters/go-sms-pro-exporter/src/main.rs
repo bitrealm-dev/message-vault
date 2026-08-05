@@ -59,16 +59,6 @@ fn main() -> Result<()> {
         }),
     })?;
 
-    for line in &result.messages {
-        // Media / obfuscate notes historically went to stderr; summary to stdout.
-        if line.starts_with("Media:")
-            || line.starts_with("  media ")
-            || line.starts_with("Obfuscated ")
-        {
-            eprintln!("{line}");
-        } else {
-            println!("{line}");
-        }
-    }
+    message_vault_io_core::print_result(&result);
     Ok(())
 }

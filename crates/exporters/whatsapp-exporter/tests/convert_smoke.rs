@@ -91,7 +91,7 @@ fn copies_ios_style_media_true_data_paths() {
     .expect("convert");
 
     assert_eq!(report.attachments_saved, 1);
-    assert_eq!(report.attachments_missing, 0);
+    assert_eq!(report.extra.get("attachments_missing").copied().unwrap_or(0), 0);
     let csv = out.path().join("+15555550999__whatsapp.csv");
     let body = fs::read_to_string(&csv).expect("csv");
     assert!(body.contains("look at this"));

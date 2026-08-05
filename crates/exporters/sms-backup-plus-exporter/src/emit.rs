@@ -8,7 +8,7 @@ use crate::types::{AttachmentBlob, ParsedMessage};
 use anyhow::{Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, emit_log};
 use message_ir::{
     ConversationDocument,
     ConversationMeta,
@@ -37,28 +37,14 @@ const EXPORT_SOURCE: &str = "sms-backup-plus";
 const EXPORT_TOOL: &str = "SMS Backup+";
 const EXPORT_TOOL_VERSION: &str = "1.5.11";
 
-#[derive(Debug, Default)]
-pub(crate) struct ExportReport {
-    pub conversations: u64,
-    pub flat_eml: u64,
-    pub archive_eml: u64,
-    pub messages: u64,
-    pub messages_before_dedupe: u64,
-    pub duplicates_dropped: u64,
-    pub attachments_saved: u64,
-    /// Rows written with outgoing direction (after dedupe).
-    pub sent: u64,
-    /// Rows written with incoming direction (after dedupe).
-    pub received: u64,
-    /// `.eml` files that are not SMS Backup+ shaped.
-    pub skipped_out_of_range: u64,
-    pub skipped_not_sms_backup_plus: u64,
-    /// SMS Backup+-looking files that failed to parse.
-    pub skipped_parse_error: u64,
-    /// Messages kept under the `unknown` chat stem (no usable peer phone).
-    pub unknown_chat_messages: u64,
-    pub skipped_invalid_date: u64,
-    pub errors: Vec<String>,
+/// Bump a per-exporter counter in the report's `extra` map.
+fn bump(report: &mut ExportReport, key: &str, by: u64) {
+    *report.extra.entry(key.to_string()).or_insert(0) += by;
+}
+
+/// Read a per-exporter counter from the report's `extra` map.
+fn count(report: &ExportReport, key: &str) -> u64 {
+    report.extra.get(key).copied().unwrap_or(0)
 }
 
 #[derive(Debug, Clone)]
@@ -262,7 +248,7 @@ fn add_message(
         peers,
     );
 
-    report.messages_before_dedupe += 1;
+    bump(report, "messages_before_dedupe", 1);
 
     if let Some(&idx) = convo.by_identity.get(&dedupe_key) {
         report.duplicates_dropped += 1;
@@ -739,7 +725,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 skipped_dates,
                 path_display,
             } => {
-                report.archive_eml += 1;
+                bump(&mut report, "archive_eml", 1);
                 report.skipped_invalid_date += skipped_dates;
                 for msg in msgs {
                     if !date_range.contains_secs_f64(msg.timestamp_secs) {
@@ -747,7 +733,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                         continue;
                     }
                     if msg.chat_key.is_empty() {
-                        report.unknown_chat_messages += 1;
+                        bump(&mut report, "unknown_chat_messages", 1);
                     }
                     // Keep the message even when some attachments fail to write.
                     let atts = write_attachments(
@@ -761,13 +747,13 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 }
             }
             ParsedEmlKind::Flat { msg, path_display } => {
-                report.flat_eml += 1;
+                bump(&mut report, "flat_eml", 1);
                 if !date_range.contains_secs_f64(msg.timestamp_secs) {
                     report.skipped_out_of_range += 1;
                     continue;
                 }
                 if msg.chat_key.is_empty() {
-                    report.unknown_chat_messages += 1;
+                    bump(&mut report, "unknown_chat_messages", 1);
                 }
                 // Keep the message even when some attachments fail to write.
                 let atts = write_attachments(
@@ -780,16 +766,16 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 add_message(&mut conversations, msg, atts, &mut report);
             }
             ParsedEmlKind::FlatNone => {
-                report.skipped_parse_error += 1;
+                bump(&mut report, "skipped_parse_error", 1);
             }
             ParsedEmlKind::NotSms => {
-                report.skipped_not_sms_backup_plus += 1;
+                bump(&mut report, "skipped_not_sms_backup_plus", 1);
             }
             ParsedEmlKind::IoError(msg) => {
                 report.errors.push(msg);
             }
             ParsedEmlKind::ParseError(msg) => {
-                report.skipped_parse_error += 1;
+                bump(&mut report, "skipped_parse_error", 1);
                 report.errors.push(msg);
             }
         }
@@ -800,12 +786,12 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
         log,
         format!(
             "parsed: flat_eml={} archive_eml={} messages={} unknown_chat={} skipped_not_sms_backup_plus={} skipped_parse_error={} skipped_bad_date={}",
-            report.flat_eml,
-            report.archive_eml,
-            report.messages_before_dedupe,
-            report.unknown_chat_messages,
-            report.skipped_not_sms_backup_plus,
-            report.skipped_parse_error,
+            count(&report, "flat_eml"),
+            count(&report, "archive_eml"),
+            count(&report, "messages_before_dedupe"),
+            count(&report, "unknown_chat_messages"),
+            count(&report, "skipped_not_sms_backup_plus"),
+            count(&report, "skipped_parse_error"),
             report.skipped_invalid_date
         ),
     );
