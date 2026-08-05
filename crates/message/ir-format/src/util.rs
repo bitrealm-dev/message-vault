@@ -1,9 +1,35 @@
 //! Small shared helpers for IR readers / projectors.
 
-use message_ir::IrAttachment;
+use message_ir::{HandleType, IrAttachment};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
+
+/// Guess the handle type of a raw handle string when no type is known.
+///
+/// Rules (mirrored by the CSV `handle_type` cell and the EML/mbox reader):
+/// - empty → [`HandleType::Other`]
+/// - contains `@` → [`HandleType::Email`]
+/// - digit-heavy string (digits, `+`, `-`, spaces, parentheses, dots, `#`,
+///   `*`) → [`HandleType::Phone`]
+/// - anything else → [`HandleType::Other`]
+pub(crate) fn infer_handle_type(handle: &str) -> HandleType {
+    let h = handle.trim();
+    if h.is_empty() {
+        return HandleType::Other;
+    }
+    if h.contains('@') {
+        return HandleType::Email;
+    }
+    let has_digit = h.bytes().any(|b| b.is_ascii_digit());
+    let all_phone_chars = h.bytes().all(|b| {
+        b.is_ascii_digit() || matches!(b, b'+' | b'-' | b' ' | b'(' | b')' | b'.' | b'#' | b'*')
+    });
+    if has_digit && all_phone_chars {
+        return HandleType::Phone;
+    }
+    HandleType::Other
+}
 
 /// Stem packaging suffix used for WhatsApp exports (`__whatsapp`).
 pub(crate) fn packaging_suffix_from_stem(stem: &str) -> Option<String> {
@@ -116,5 +142,15 @@ mod tests {
         let att = att_with_path("attachments/missing.bin");
         let dir = tempfile::tempdir().unwrap();
         assert!(read_attachment_file(&att, dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn infer_handle_type_covers_email_phone_and_other() {
+        use message_ir::HandleType;
+        assert_eq!(infer_handle_type("alice@example.com"), HandleType::Email);
+        assert_eq!(infer_handle_type("+15555550101"), HandleType::Phone);
+        assert_eq!(infer_handle_type("1 (555) 555-0101"), HandleType::Phone);
+        assert_eq!(infer_handle_type("alice"), HandleType::Other);
+        assert_eq!(infer_handle_type(""), HandleType::Other);
     }
 }

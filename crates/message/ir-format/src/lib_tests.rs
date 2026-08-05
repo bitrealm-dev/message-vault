@@ -2,9 +2,9 @@ use super::*;
 use mail::clean_previous_mail_output;
 use message_vault_io_core::OutputFormat;
 use message_ir::{
-    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrConversationType,
-    IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService, IrSource,
-    SCHEMA_VERSION,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, SCHEMA_VERSION,
 };
 use serde_json::{Map, Value, json};
 use std::fs;
@@ -26,6 +26,7 @@ fn sample_doc() -> ConversationDocument {
             participants: vec![IrParticipant {
                 handle: "+15555550101".into(),
                 display_name: Some("Sam".into()),
+                handle_type: Some(HandleType::Phone),
             }],
             stats: ConversationStats::default(),
         },
@@ -153,6 +154,7 @@ fn sample_imessage_doc() -> ConversationDocument {
             participants: vec![IrParticipant {
                 handle: "+15555550101".into(),
                 display_name: Some("Sam".into()),
+                handle_type: Some(HandleType::Phone),
             }],
             stats: ConversationStats::default(),
         },
@@ -404,6 +406,44 @@ fn roundtrip_json_and_jsonl() {
         let back_jsonl = read_conversation_jsonl(&jsonl_path).unwrap();
         assert_docs_equal_after_normalize(doc, back_jsonl);
     }
+}
+
+#[test]
+fn csv_serializes_handle_type_in_cell_and_column() {
+    fn first_row_cols(csv: &str) -> (Vec<String>, csv::StringRecord) {
+        let mut lines = csv.lines();
+        let headers = lines.next().unwrap().to_string();
+        let cols: Vec<String> = headers.split(',').map(str::to_string).collect();
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(lines.next().unwrap().as_bytes());
+        let row = rdr.records().next().unwrap().unwrap();
+        (cols, row)
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let csv_path = write_conversation_csv(tmp.path(), &sample_doc()).unwrap();
+    let csv = fs::read_to_string(&csv_path).unwrap();
+    let (cols, row) = first_row_cols(&csv);
+    let participants_idx = cols.iter().position(|c| c == "participants_json").unwrap();
+    let handle_type_idx = cols.iter().position(|c| c == "handle_type").unwrap();
+    // Participants cell carries the typed participant.
+    assert!(
+        row.get(participants_idx)
+            .unwrap()
+            .contains(r#""handle_type":"phone""#),
+        "participants_json must carry handle_type"
+    );
+    // Dedicated column carries the sender handle type.
+    assert_eq!(row.get(handle_type_idx).unwrap(), "phone");
+    // Empty sender handle yields an empty cell, never "other".
+    let mut doc = sample_doc();
+    doc.messages[0].sender_handle = None;
+    let csv_path = write_conversation_csv(tmp.path(), &doc).unwrap();
+    let csv = fs::read_to_string(&csv_path).unwrap();
+    let (cols, row) = first_row_cols(&csv);
+    let handle_type_idx = cols.iter().position(|c| c == "handle_type").unwrap();
+    assert_eq!(row.get(handle_type_idx).unwrap(), "");
 }
 
 #[test]

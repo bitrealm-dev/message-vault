@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
 use message_vault_io_core::OutputFormat;
 use message_ir::{
-    ConversationDocument, ConversationHeader, IrDirection, IrImessage, IrMessageKind,
+    ConversationDocument, ConversationHeader, HandleType, IrDirection, IrImessage, IrMessageKind,
 };
 use mail::{
     Direction as MailDirection, MailAttachment, MailMessage, MailPackage, Participant,
@@ -38,6 +38,7 @@ pub const CSV_HEADERS: &[&str] = &[
     "service",
     "sender_handle",
     "sender_display_name",
+    "handle_type",
     "subject",
     "text",
     "attachments_json",
@@ -191,6 +192,17 @@ fn value_as_string(v: Option<&Value>) -> Option<String> {
 struct ParticipantCell {
     handle: String,
     display_name: String,
+    handle_type: Option<HandleType>,
+}
+
+/// CSV `handle_type` cell: the sender's handle type, inferred from the sender
+/// handle with the same rules the EML/mbox reader uses on re-import. Empty
+/// when the message has no sender handle.
+fn sender_handle_type_cell(sender_handle: Option<&str>) -> &'static str {
+    match sender_handle {
+        Some(handle) => crate::util::infer_handle_type(handle).as_str(),
+        None => "",
+    }
 }
 
 /// Per-conversation CSV using the unified [`CSV_HEADERS`] contract.
@@ -226,6 +238,7 @@ pub(crate) fn write_conversation_csv(output_dir: &Path, doc: &ConversationDocume
             .map(|p| ParticipantCell {
                 handle: p.handle.clone(),
                 display_name: p.display_name.clone().unwrap_or_default(),
+                handle_type: p.handle_type,
             })
             .collect::<Vec<_>>(),
     );
@@ -313,6 +326,7 @@ pub(crate) fn write_conversation_csv(output_dir: &Path, doc: &ConversationDocume
             msg.service.as_str(),
             msg.sender_handle.as_deref().unwrap_or(""),
             msg.sender_display_name.as_deref().unwrap_or(""),
+            sender_handle_type_cell(msg.sender_handle.as_deref()),
             msg.subject.as_deref().unwrap_or(""),
             msg.text.as_str(),
             attachments_json.as_str(),

@@ -112,6 +112,9 @@ fn document_from_mail_messages(
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
+            // EML/mbox carries no handle type, so infer it from the handle
+            // string (@ → email, digit-heavy → phone, else other).
+            handle_type: Some(crate::util::infer_handle_type(&p.handle)),
         })
         .collect();
 

@@ -7,6 +7,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -33,6 +34,25 @@ struct ParticipantCell {
     handle: String,
     #[serde(default)]
     display_name: String,
+    /// Absent (legacy cells) → `Some(HandleType::Other)`; explicit `null` →
+    /// `None`; any other string is parsed leniently via [`HandleType::parse`].
+    #[serde(
+        default = "default_participant_handle_type",
+        deserialize_with = "deserialize_handle_type"
+    )]
+    handle_type: Option<HandleType>,
+}
+
+fn default_participant_handle_type() -> Option<HandleType> {
+    Some(HandleType::Other)
+}
+
+fn deserialize_handle_type<'de, D>(de: D) -> Result<Option<HandleType>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = Option::<String>::deserialize(de)?;
+    Ok(s.map(|s| HandleType::parse(&s)))
 }
 
 /// Read a conversation CSV written by [`crate::write_conversation_csv`].
@@ -89,7 +109,16 @@ pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
 
 fn header_from_row(headers: &[String], row: &csv::StringRecord) -> Result<ConversationHeader> {
     let get = |name: &str| cell(headers, row, name).unwrap_or("");
-    let participants = parse_participants(get("participants_json"));
+    let mut participants = parse_participants(get("participants_json"));
+    // Legacy files predate handle_type in the participants cell. For
+    // single-participant conversations, fall back to the per-row
+    // `handle_type` column (the sender's inferred type) so the peer keeps
+    // a type. Group chats have no single type, so they are left untouched.
+    if participants.len() == 1 && participants[0].handle_type.is_none() {
+        if let Some(t) = parse_handle_type_cell(get("handle_type")) {
+            participants[0].handle_type = Some(t);
+        }
+    }
     let group_title = {
         let t = get("group_title");
         if t.is_empty() {
@@ -239,8 +268,19 @@ fn parse_participants(raw: &str) -> Vec<IrParticipant> {
             } else {
                 Some(p.display_name)
             },
+            handle_type: p.handle_type,
         })
         .collect()
+}
+
+/// Parse the dedicated `handle_type` column cell (empty → `None`).
+fn parse_handle_type_cell(raw: &str) -> Option<HandleType> {
+    let t = raw.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(HandleType::parse(t))
+    }
 }
 
 fn parse_attachments(raw: &str) -> Result<Vec<IrAttachment>> {
