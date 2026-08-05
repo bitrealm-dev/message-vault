@@ -57,10 +57,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
             .tempdir_in(&config.output)
             .context("create temp dir for wtsexporter")?;
         let json_out = work.path().join("result.json");
-        // Obfuscate replaces media with placeholders — do not extract real files.
-        let move_media = ExportTransforms::from_configs(&config.media, &config.obfuscate)
-            .copies_attachments()
-            && source.media.is_some();
 
         // Cooperative only: we check cancel before and after the external process.
         // Killing wtsexporter mid-run is not implemented.
@@ -77,7 +73,6 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
                 media: source.media.clone(),
                 db: source.db.clone(),
                 business: source.business,
-                move_media,
             },
             &json_out,
         )?;

@@ -98,11 +98,16 @@ pub(crate) fn media_path(msg: &MessageJson) -> Option<&str> {
     }
 }
 
+/// Normalize wtsexporter timestamp to Unix milliseconds.
+pub(crate) fn timestamp_ms(ts: f64) -> i64 {
+    if ts > 9_999_999_999.0 {
+        ts as i64
+    } else {
+        (ts * 1000.0) as i64
+    }
+}
+
 /// Normalize wtsexporter timestamp to Unix seconds.
 pub(crate) fn timestamp_secs(ts: f64) -> i64 {
-    if ts > 9_999_999_999.0 {
-        (ts / 1000.0) as i64
-    } else {
-        ts as i64
-    }
+    timestamp_ms(ts) / 1000
 }

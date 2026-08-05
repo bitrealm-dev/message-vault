@@ -119,6 +119,9 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         Message::stream_rows(session.data_source.db(), &session.options.query_context)?;
 
     for message in Message::rows(&mut statement, [])? {
+        // Cheap AtomicBool load; abort promptly when the user cancels.
+        message_vault_io_core::check_cancel(session.options.cancel.as_ref())
+            .map_err(|msg| RuntimeError::InvalidOptions(msg.to_string()))?;
         let mut msg = message?;
 
         if msg.rowid == current_message_row {
@@ -151,7 +154,10 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
             }
         }
         current_message += 1;
-        if current_message.is_multiple_of(message_progress_every(format)) {
+        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
+        // but this crate's MSRV is 1.85.
+        #[allow(clippy::manual_is_multiple_of)]
+        if current_message % message_progress_every(format) == 0 {
             session
                 .options
                 .emit_log(format!("  …{current_message}/{total_messages}"));
@@ -177,6 +183,9 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
     let mut written = 0u64;
     for (chat_identifier, convo) in conversations {
+        // Cheap AtomicBool load; abort promptly when the user cancels.
+        message_vault_io_core::check_cancel(session.options.cancel.as_ref())
+            .map_err(|msg| RuntimeError::InvalidOptions(msg.to_string()))?;
         written += 1;
         if convo.messages.is_empty() {
             continue;
@@ -226,7 +235,10 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
                 document_id
             ))
         })?;
-        if written.is_multiple_of(CONVERSATION_PROGRESS_EVERY) || written == total_conversations
+        // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
+        // but this crate's MSRV is 1.85.
+        #[allow(clippy::manual_is_multiple_of)]
+        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total_conversations
         {
             session.options.emit_log(format!(
                 "  wrote {written}/{total_conversations} conversations"
@@ -506,9 +518,10 @@ fn display_name_for(session: &MailSession, handle_id: i32) -> Option<String> {
 
 fn participants_for(session: &MailSession, chatroom: &Chat) -> (Vec<Participant>, &'static str) {
     let mut records = Vec::new();
+    // Only non-empty handles are emitted, so only count those; a raw handle
+    // row count over-counts empty handles and misclassifies the chat.
     let mut count = 0;
     if let Some(handles) = session.chatroom_participants.get(&chatroom.rowid) {
-        count = handles.len();
         for handle_id in handles {
             let name = session.resolve_participant(*handle_id);
             let (handle, display_name) = match name {
@@ -527,10 +540,17 @@ fn participants_for(session: &MailSession, chatroom: &Chat) -> (Vec<Participant>
                     handle,
                     display_name,
                 });
+                count += 1;
             }
         }
     }
-    let conversation_type = if count > 1 { "group" } else { "individual" };
+    // A user-named chat is a group even when it has shrunk to two members.
+    let named = chatroom.display_name().is_some();
+    let conversation_type = if count > 1 || named {
+        "group"
+    } else {
+        "individual"
+    };
     (records, conversation_type)
 }
 

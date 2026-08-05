@@ -32,7 +32,7 @@ use message_ir_format::{
 };
 use phone::{OwnerPhoneSet, to_e164};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +40,18 @@ const EXPORT_SOURCE: &str = "go-sms-pro";
 const EXPORT_TOOL: &str = "GO SMS Pro";
 /// Upstream app version not pinned yet (empty in CSV).
 const EXPORT_TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Cap on retained skip-detail rows; overflow is counted and reported.
+pub(crate) const MAX_SKIP_DETAILS: usize = 20;
+
+/// Push one diagnostic row, keeping at most [`MAX_SKIP_DETAILS`] entries so
+/// huge backups cannot grow the detail vectors without bound.
+fn push_skip_detail<T>(details: &mut Vec<T>, more: &mut u64, item: T) {
+    if details.len() < MAX_SKIP_DETAILS {
+        details.push(item);
+    } else {
+        *more += 1;
+    }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct ExportReport {
@@ -58,16 +70,24 @@ pub(crate) struct ExportReport {
     pub skipped_out_of_range: u64,
     pub skipped_unknown_type: u64,
     pub skipped_unknown_address: u64,
-    /// One row per invalid-address XML SMS (`skipped_invalid_address.csv` / stderr sample).
+    /// One row per invalid-address XML SMS (`skipped_invalid_address.csv` / stderr sample),
+    /// capped at [`MAX_SKIP_DETAILS`] entries.
     pub skipped_unknown_address_details: Vec<SkippedBadAddrDetail>,
+    /// Invalid-address rows dropped past the cap (`skipped_invalid_address.csv`).
+    pub skipped_unknown_address_details_more: u64,
     pub skipped_unparseable_pdu: u64,
     /// Hollow PDU stub (no addresses, body, or attachments) — e.g. `application/smil\0` only.
     pub skipped_empty_pdu: u64,
     pub skipped_empty_pdu_details: Vec<SkippedEmptyPduDetail>,
+    /// Empty-PDU rows dropped past the cap (`skipped_empty_pdu.csv`).
+    pub skipped_empty_pdu_details_more: u64,
     /// PDU parsed but no non-owner participant (self-only / empty PLMN set).
     pub skipped_no_other_party: u64,
-    /// One row per `skipped_no_other_party` (for `skipped_no_party.csv` / stderr sample).
+    /// One row per `skipped_no_other_party` (for `skipped_no_party.csv` / stderr sample),
+    /// capped at [`MAX_SKIP_DETAILS`] entries.
     pub skipped_no_other_party_details: Vec<SkippedNoPartyDetail>,
+    /// No-party rows dropped past the cap (`skipped_no_party.csv`).
+    pub skipped_no_other_party_details_more: u64,
     pub errors: Vec<String>,
 }
 
@@ -313,11 +333,13 @@ fn add_pdu_message(
 ) {
     if is_empty_pdu(&parsed) {
         report.skipped_empty_pdu += 1;
-        report
-            .skipped_empty_pdu_details
-            .push(SkippedEmptyPduDetail {
+        push_skip_detail(
+            &mut report.skipped_empty_pdu_details,
+            &mut report.skipped_empty_pdu_details_more,
+            SkippedEmptyPduDetail {
                 pdu_filename: pdu_basename(&parsed),
-            });
+            },
+        );
         return;
     }
 
@@ -339,15 +361,17 @@ fn add_pdu_message(
             .collect();
         if others.is_empty() {
             report.skipped_no_other_party += 1;
-            report
-                .skipped_no_other_party_details
-                .push(SkippedNoPartyDetail {
+            push_skip_detail(
+                &mut report.skipped_no_other_party_details,
+                &mut report.skipped_no_other_party_details_more,
+                SkippedNoPartyDetail {
                     pdu_filename: pdu_basename(&parsed),
                     participants: parsed.participants.join(";"),
                     is_sent: parsed.is_sent,
                     has_from: parsed.has_from,
                     has_to: parsed.has_to,
-                });
+                },
+            );
             return;
         }
         let other = &others[0];
@@ -416,14 +440,49 @@ fn add_pdu_message(
     }
 }
 
+/// Key prefix shared by XML and PDU rows: `secs|direction|text` up to the
+/// trailing attachment section. The XML key (`…|text|`) is a strict prefix of
+/// the PDU key (`…|body|att_names`) for the same message, so exact-key dedupe
+/// alone would let both rows through and export the MMS twice.
+fn dedupe_base_key(key: &str) -> &str {
+    key.rsplit_once('|').map(|(base, _)| base).unwrap_or(key)
+}
+
 fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
     messages.sort_by(|a, b| {
         a.sort_key
             .partial_cmp(&b.sort_key)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let mut seen = HashSet::new();
-    messages.retain(|m| seen.insert(m.dedupe_key.clone()));
+    let mut seen_base: HashMap<String, usize> = HashMap::new();
+    let mut out: Vec<PendingMessage> = Vec::with_capacity(messages.len());
+    for m in messages.drain(..) {
+        let base = dedupe_base_key(&m.dedupe_key).to_string();
+        match seen_base.get(&base).copied() {
+            None => {
+                seen_base.insert(base, out.len());
+                out.push(m);
+            }
+            Some(idx) => {
+                let existing = &out[idx];
+                if existing.attachments.is_empty() && !m.attachments.is_empty() {
+                    // Same message in the XML backup (no attachments) and its
+                    // PDU file (with media): keep the row that carries them.
+                    out[idx] = m;
+                } else if existing.attachments.is_empty() || m.attachments.is_empty() {
+                    // Exact duplicate or an attachment-less row shadowed by a
+                    // richer one already kept: drop it.
+                } else {
+                    // Two attachment-bearing rows with the same prefix are
+                    // distinct MMS (same second, direction, and caption but
+                    // different media): keep both.
+                    seen_base.insert(base, out.len());
+                    out.push(m);
+                }
+            }
+        }
+    }
+    *messages = out;
 }
 
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
@@ -667,22 +726,37 @@ pub(crate) fn convert_export(
         bail!("input is not a directory: {}", input_dir.display());
     }
 
+    fs::create_dir_all(output_dir)?;
+    // Canonicalize so relative paths resolve and so output/input identity is
+    // checked on resolved paths. Cleaning the output before reading the input
+    // would otherwise delete the backup itself when both paths are the same.
+    let input_dir =
+        fs::canonicalize(input_dir).with_context(|| format!("resolve {}", input_dir.display()))?;
+    let output_dir =
+        fs::canonicalize(output_dir).with_context(|| format!("resolve {}", output_dir.display()))?;
+    if output_dir == input_dir || input_dir.starts_with(&output_dir) {
+        bail!(
+            "output {} must not be the same as, or contain, the input {}",
+            output_dir.display(),
+            input_dir.display()
+        );
+    }
+
     let owners = OwnerPhoneSet::new(owner_phones)?;
     let owner_handle = to_e164(&owners.primary_digits);
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     // Clean previous CSV / mail artifacts (keep attachments if re-run; rewrite as needed).
-    fs::create_dir_all(output_dir)?;
-    clean_previous_ir_output(output_dir)?;
+    clean_previous_ir_output(&output_dir)?;
     let copy_attachments = transforms.copies_attachments();
     let attachments_dir = output_dir.join("attachments");
     if copy_attachments {
         fs::create_dir_all(&attachments_dir)?;
     }
-    let mut sink = FormatSink::open(output_dir, output_format, transforms)?;
+    let mut sink = FormatSink::open(&output_dir, output_format, transforms)?;
 
-    let mut xml_paths: Vec<PathBuf> = fs::read_dir(input_dir)?
+    let mut xml_paths: Vec<PathBuf> = fs::read_dir(&input_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -701,9 +775,15 @@ pub(crate) fn convert_export(
                 report.skipped_invalid_date += stats.skipped_invalid_date;
                 report.skipped_unknown_type += stats.skipped_unknown_type;
                 report.skipped_unknown_address += stats.skipped_unknown_address;
-                report
-                    .skipped_unknown_address_details
-                    .extend(stats.skipped_unknown_address_details);
+                report.skipped_unknown_address_details_more +=
+                    stats.skipped_unknown_address_details_more;
+                for d in stats.skipped_unknown_address_details {
+                    push_skip_detail(
+                        &mut report.skipped_unknown_address_details,
+                        &mut report.skipped_unknown_address_details_more,
+                        d,
+                    );
+                }
                 let msgs: Vec<_> = msgs
                     .into_iter()
                     .filter(|msg| {
@@ -723,7 +803,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    let mut pdu_paths: Vec<PathBuf> = fs::read_dir(input_dir)?
+    let mut pdu_paths: Vec<PathBuf> = fs::read_dir(&input_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -782,9 +862,21 @@ pub(crate) fn convert_export(
 
     let sink_result = sink.finish()?;
 
-    write_skipped_invalid_address_csv(output_dir, &report.skipped_unknown_address_details)?;
-    write_skipped_empty_pdu_csv(output_dir, &report.skipped_empty_pdu_details)?;
-    write_skipped_no_party_csv(output_dir, &report.skipped_no_other_party_details)?;
+    write_skipped_invalid_address_csv(
+        &output_dir,
+        &report.skipped_unknown_address_details,
+        report.skipped_unknown_address_details_more,
+    )?;
+    write_skipped_empty_pdu_csv(
+        &output_dir,
+        &report.skipped_empty_pdu_details,
+        report.skipped_empty_pdu_details_more,
+    )?;
+    write_skipped_no_party_csv(
+        &output_dir,
+        &report.skipped_no_other_party_details,
+        report.skipped_no_other_party_details_more,
+    )?;
 
     Ok((report, sink_result))
 }
@@ -798,11 +890,12 @@ fn remove_if_exists(path: &Path) {
 fn write_skipped_invalid_address_csv(
     output_dir: &Path,
     details: &[SkippedBadAddrDetail],
+    more: u64,
 ) -> Result<()> {
     let path = output_dir.join("skipped_invalid_address.csv");
     // Remove legacy filename from earlier builds.
     remove_if_exists(&output_dir.join("skipped_bad_addr.csv"));
-    if details.is_empty() {
+    if details.is_empty() && more == 0 {
         remove_if_exists(&path);
         return Ok(());
     }
@@ -826,13 +919,27 @@ fn write_skipped_invalid_address_csv(
             d.body.as_str(),
         ])?;
     }
+    if more > 0 {
+        wtr.write_record([
+            "",
+            "",
+            "",
+            "",
+            "",
+            &format!("...and {more} more entries not shown"),
+        ])?;
+    }
     wtr.flush()?;
     Ok(())
 }
 
-fn write_skipped_empty_pdu_csv(output_dir: &Path, details: &[SkippedEmptyPduDetail]) -> Result<()> {
+fn write_skipped_empty_pdu_csv(
+    output_dir: &Path,
+    details: &[SkippedEmptyPduDetail],
+    more: u64,
+) -> Result<()> {
     let path = output_dir.join("skipped_empty_pdu.csv");
-    if details.is_empty() {
+    if details.is_empty() && more == 0 {
         remove_if_exists(&path);
         return Ok(());
     }
@@ -842,13 +949,20 @@ fn write_skipped_empty_pdu_csv(output_dir: &Path, details: &[SkippedEmptyPduDeta
     for d in details {
         wtr.write_record([d.pdu_filename.as_str()])?;
     }
+    if more > 0 {
+        wtr.write_record([&format!("...and {more} more entries not shown")])?;
+    }
     wtr.flush()?;
     Ok(())
 }
 
-fn write_skipped_no_party_csv(output_dir: &Path, details: &[SkippedNoPartyDetail]) -> Result<()> {
+fn write_skipped_no_party_csv(
+    output_dir: &Path,
+    details: &[SkippedNoPartyDetail],
+    more: u64,
+) -> Result<()> {
     let path = output_dir.join("skipped_no_party.csv");
-    if details.is_empty() {
+    if details.is_empty() && more == 0 {
         remove_if_exists(&path);
         return Ok(());
     }
@@ -870,6 +984,112 @@ fn write_skipped_no_party_csv(output_dir: &Path, details: &[SkippedNoPartyDetail
             if d.has_to { "1" } else { "0" },
         ])?;
     }
+    if more > 0 {
+        wtr.write_record([
+            "",
+            "",
+            "",
+            "",
+            &format!("...and {more} more entries not shown"),
+        ])?;
+    }
     wtr.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_msg(key: &str, attachments: usize) -> PendingMessage {
+        PendingMessage {
+            sort_key: 1609459200.0,
+            is_from_me: false,
+            sender_digits: None,
+            sender_display_name: None,
+            text: String::new(),
+            attachments: (0..attachments)
+                .map(|i| PendingAttachment {
+                    rel_path: format!("attachments/a{i}.jpg"),
+                    original_name: None,
+                    mime_type: None,
+                    digest_hex: String::new(),
+                })
+                .collect(),
+            dedupe_key: key.to_string(),
+            source_kind: "xml",
+            android_type: String::new(),
+            date_ms: String::new(),
+            contact_name: String::new(),
+            pdu_filename: String::new(),
+            xml_fields: BTreeMap::new(),
+            pdu_fields: BTreeMap::new(),
+            pdu_decode: String::new(),
+        }
+    }
+
+    #[test]
+    fn dedupe_base_key_prefix() {
+        assert_eq!(
+            dedupe_base_key("1609459200|1|hello|"),
+            "1609459200|1|hello"
+        );
+        assert_eq!(
+            dedupe_base_key("1609459200|1|hello|attachments/a1.jpg"),
+            "1609459200|1|hello"
+        );
+        // Pipes inside the text must not split the base key.
+        assert_eq!(
+            dedupe_base_key("1609459200|1|he|llo|attachments/a1.jpg"),
+            "1609459200|1|he|llo"
+        );
+    }
+
+    #[test]
+    fn xml_and_pdu_mms_rows_collapse_keeping_attachments() {
+        // The same MMS appears in the XML backup (no attachments) and as a PDU
+        // row with media. Exact-key dedupe would export it twice.
+        let mut pdu_row = test_msg("1609459200|1|hello|attachments/a1.jpg", 1);
+        pdu_row.source_kind = "pdu";
+        let mut msgs = vec![test_msg("1609459200|1|hello|", 0), pdu_row];
+        dedupe_messages(&mut msgs);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].attachments.len(), 1);
+        assert_eq!(msgs[0].source_kind, "pdu");
+    }
+
+    #[test]
+    fn distinct_mms_with_same_prefix_both_kept() {
+        // Two MMS sharing second, direction, and caption but with different
+        // media are distinct messages: both rows survive.
+        let mut msgs = vec![
+            test_msg("1609459200|1|photo|attachments/a1.jpg", 1),
+            test_msg("1609459200|1|photo|attachments/a2.jpg", 1),
+        ];
+        dedupe_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn plain_sms_duplicates_dropped() {
+        let mut msgs = vec![
+            test_msg("1609459200|1|hi|", 0),
+            test_msg("1609459200|1|hi|", 0),
+        ];
+        dedupe_messages(&mut msgs);
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn pdu_row_shadowed_by_xml_row_keeps_attachments() {
+        // Defensive: XML pass runs first, but if a PDU row with media ever
+        // precedes its XML twin, the attachment row still wins.
+        let mut pdu_row = test_msg("1609459200|1|hello|attachments/a1.jpg", 1);
+        pdu_row.source_kind = "pdu";
+        let mut msgs = vec![pdu_row, test_msg("1609459200|1|hello|", 0)];
+        dedupe_messages(&mut msgs);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].attachments.len(), 1);
+        assert_eq!(msgs[0].source_kind, "pdu");
+    }
 }

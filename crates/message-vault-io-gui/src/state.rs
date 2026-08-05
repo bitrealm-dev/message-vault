@@ -107,14 +107,21 @@ impl AppState {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("."));
             self.session_log = Some(SessionLog::new(&dir));
-        } else if let Some(log) = &self.session_log {
+        } else if let Some(log) = &mut self.session_log {
             log.truncate();
         }
     }
 
-    pub fn append_session_log(&self, line: &str) {
-        if let Some(log) = &self.session_log {
+    pub fn append_session_log(&mut self, line: &str) {
+        if let Some(log) = &mut self.session_log {
             log.append(line);
+        }
+    }
+
+    /// Flush any buffered session log writes to disk.
+    pub fn flush_session_log(&mut self) {
+        if let Some(log) = &mut self.session_log {
+            log.flush();
         }
     }
 

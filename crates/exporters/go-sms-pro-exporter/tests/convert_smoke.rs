@@ -69,3 +69,28 @@ fn convert_smoke_writes_csv_not_json() {
     assert!(header.contains("attachments_json"));
     assert!(!header.contains("export_schema"));
 }
+
+#[test]
+fn output_equals_input_bails_before_cleaning() {
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_export");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let contacts = empty_contacts(&tmp);
+    let err = convert_export(
+        input.as_path(),
+        input.as_path(),
+        &["+15555550100".into()],
+        &contacts,
+        &DateRange::default(),
+        ExportTransforms::none(),
+        OutputFormat::Csv,
+        None,
+    )
+    .expect_err("output == input must fail");
+    assert!(
+        err.to_string().contains("must not be the same as, or contain"),
+        "unexpected error: {err}"
+    );
+    // The backup directory must not have been cleaned by the failed run.
+    assert!(input.join("gosms_sys_smoke.xml").is_file());
+    assert!(input.join("I_1609459200_recv.pdu").is_file());
+}

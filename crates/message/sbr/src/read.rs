@@ -7,7 +7,7 @@ use quick_xml::{Reader, XmlVersion, events::Event};
 use regex::Regex;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -17,6 +17,8 @@ const MMS_ADDR_FROM: &str = "137";
 const MMS_BOX_SENT: &str = "2";
 const MMS_BOX_DRAFT: &str = "3";
 const MMS_BOX_OUTBOX: &str = "4";
+const MMS_BOX_FAILED: &str = "5";
+const MMS_BOX_QUEUED: &str = "6";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConversationKind {
@@ -173,8 +175,8 @@ fn non_null(value: &str) -> String {
     }
 }
 
-fn content_keys(part: &MmsPart) -> HashSet<String> {
-    let mut keys = HashSet::new();
+fn content_keys(part: &MmsPart) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
     for raw in [&part.name, &part.cl, &part.fn_attr] {
         let value = raw.trim();
         if value.is_empty()
@@ -364,6 +366,13 @@ fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<
     let (is_from_me, sender_digits) = match android_type.as_str() {
         "1" => (false, Some(address.clone())),
         "2" => (true, None),
+        // Draft (3) and outbox (4) SMS carry no delivered content; count them
+        // with the descriptive counter used for MMS drafts/outbox/failed/queued
+        // instead of the catch-all unknown-type counter.
+        "3" | "4" => {
+            stats.skipped_draft_or_outbox += 1;
+            return None;
+        }
         _ => {
             stats.skipped_unknown_type += 1;
             return None;
@@ -410,7 +419,10 @@ fn parse_mms(
             None
         })?;
     let msg_box = get(attrs, "msg_box").trim().to_string();
-    if msg_box == MMS_BOX_DRAFT || msg_box == MMS_BOX_OUTBOX {
+    if matches!(
+        msg_box.as_str(),
+        MMS_BOX_DRAFT | MMS_BOX_OUTBOX | MMS_BOX_FAILED | MMS_BOX_QUEUED
+    ) {
         stats.skipped_draft_or_outbox += 1;
         return None;
     }
@@ -530,6 +542,11 @@ fn parse_mms(
             peers.len() - 4
         )
     };
+    // Group chats are keyed by the sorted participant set because the format
+    // has no stable thread ID. When the roster changes (someone is added or
+    // removed), messages before and after the change land in different
+    // conversations — an inherent limitation of the source, documented in
+    // crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md.
     let raw_key = format!("group-{}", peers.join("_"));
     let chat_key = if raw_key.len() > 180 {
         format!(
@@ -559,6 +576,15 @@ fn parse_mms(
     })
 }
 
+/// Parse one XML file into records.
+///
+/// Memory note: every record — including fully decoded attachment payloads
+/// held as `Arc<[u8]>` — is buffered in the returned `Vec` before callers
+/// stage the blobs to disk, so peak usage is roughly the sum of all
+/// attachment bytes in the file. The base64 `data` strings are already dropped
+/// from `source_fields` (see [`part_fields`]), so the decoded blobs dominate.
+/// A future refactor should stream decode → stage per message so each blob can
+/// be dropped as soon as it is written.
 pub fn parse_file(path: &Path, owners: &HashSet<String>) -> Result<(Vec<Record>, ParseStats)> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     parse_reader(std::io::BufReader::new(file), owners)

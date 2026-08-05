@@ -599,6 +599,14 @@ fn infer_pdu_direction(
     }
 
     // Raw PLMN lists without From/To headers (e.g. sent one-to-one dumps).
+    // Owner presence is the primary direction signal: a sent group MMS (owner +
+    // ≥ 2 recipients, no headers) must not be read as received just because the
+    // participant list is long. "Received" is only inferred when no participant
+    // is an owner number, so the >= 3 branch below never sees an all-owner list.
+    if unique_parts.iter().any(|p| is_owner_digit(p, owners)) {
+        return (true, primary_digits.to_string());
+    }
+
     if unique_parts.len() >= 3 {
         let sender = unique_parts
             .iter()
@@ -606,10 +614,6 @@ fn infer_pdu_direction(
             .cloned()
             .unwrap_or_else(|| unique_parts[0].clone());
         return (false, sender);
-    }
-
-    if unique_parts.iter().any(|p| is_owner_digit(p, owners)) {
-        return (true, primary_digits.to_string());
     }
 
     (false, unique_parts[0].clone())
@@ -870,6 +874,59 @@ mod tests {
                 "5555550100".to_string()
             ]
         );
+        assert!(!parsed.is_sent);
+        assert_eq!(parsed.sender_number, "5551112222");
+    }
+
+    #[test]
+    fn sent_group_without_headers_is_sent() {
+        // Owner + 2 recipients, no From/To/Cc headers. The long participant
+        // list alone must not flip the direction to "received".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("I_1609459200_sentgrp.pdu");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"+15555550100/TYPE=PLMN"); // owner
+        bytes.extend_from_slice(b"+15551112222/TYPE=PLMN"); // recipient 1
+        bytes.extend_from_slice(b"+15552223333/TYPE=PLMN"); // recipient 2
+        bytes.extend_from_slice(&[0x8e]);
+        bytes.extend_from_slice(b"text.txt\0Group sent MMS");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let (owners, primary) = test_owners();
+        let parsed = parse_pdu_file(&path, &owners, &primary)
+            .unwrap()
+            .expect("parsed");
+        assert!(parsed.is_group);
+        assert!(parsed.is_sent);
+        assert_eq!(
+            parsed.participants,
+            vec![
+                "5555550100".to_string(),
+                "5551112222".to_string(),
+                "5552223333".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn received_group_without_headers_stays_received() {
+        // No owner among the participants: still a received group MMS from the
+        // first listed number.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("I_1609459200_recvgrp.pdu");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"+15551112222/TYPE=PLMN");
+        bytes.extend_from_slice(b"+15552223333/TYPE=PLMN");
+        bytes.extend_from_slice(b"+15553334444/TYPE=PLMN");
+        bytes.extend_from_slice(&[0x8e]);
+        bytes.extend_from_slice(b"text.txt\0Group recv MMS");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let (owners, primary) = test_owners();
+        let parsed = parse_pdu_file(&path, &owners, &primary)
+            .unwrap()
+            .expect("parsed");
+        assert!(parsed.is_group);
         assert!(!parsed.is_sent);
         assert_eq!(parsed.sender_number, "5551112222");
     }

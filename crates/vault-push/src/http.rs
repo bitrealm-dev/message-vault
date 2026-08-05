@@ -264,17 +264,28 @@ impl HttpSession {
         // Prefer JSON body when present; some servers omit HEAD bodies.
         let text = response.text().unwrap_or_default();
         if text.trim().is_empty() {
+            // No body — treat as present (common for simple HEAD responders).
             return Ok(Some(AssetPutResponse {
                 ok: true,
                 already_present: true,
                 error: None,
             }));
         }
-        let parsed: AssetPutResponse = serde_json::from_str(&text).unwrap_or(AssetPutResponse {
-            ok: true,
-            already_present: true,
-            error: None,
-        });
+        let parsed: AssetPutResponse = match serde_json::from_str(&text) {
+            Ok(p) => p,
+            Err(_) => {
+                // Non-JSON body from a 2xx — treat as present.
+                return Ok(Some(AssetPutResponse {
+                    ok: true,
+                    already_present: true,
+                    error: None,
+                }));
+            }
+        };
+        // Only treat as present when the server confirms it.
+        if !parsed.ok || !parsed.already_present {
+            return Ok(None);
+        }
         Ok(Some(parsed))
     }
 
@@ -714,6 +725,41 @@ pub fn auth_check(
     session.auth_check(base_url, key, username)
 }
 
+/// Returns true when an error is likely to succeed on retry (network, timeout, 5xx).
+/// Permanent errors (4xx auth, 413, malformed input) should not be retried.
+fn is_transient_error(error: &anyhow::Error) -> bool {
+    let msg = error.to_string().to_ascii_lowercase();
+    // Never retry auth failures.
+    if msg.contains("invalid vault key")
+        || msg.contains("username does not match")
+        || msg.contains("401")
+        || msg.contains("403")
+    {
+        return false;
+    }
+    // Never retry payload-too-large (413) — it will never succeed.
+    if msg.contains("413") || msg.contains("payload too large") {
+        return false;
+    }
+    // Never retry path-not-found or missing-file errors.
+    if msg.contains("no such file") || msg.contains("not found") && msg.contains("404") {
+        return false;
+    }
+    // Connection, timeout, and transient errors are worth retrying.
+    if error
+        .downcast_ref::<reqwest::Error>()
+        .is_some_and(|e| e.is_timeout() || e.is_connect() || e.is_request())
+    {
+        return true;
+    }
+    // Server errors (5xx) are transient.
+    if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") {
+        return true;
+    }
+    // Default: retry once for unknown errors, but not aggressively.
+    true
+}
+
 pub fn with_retries<T, F>(max_retries: u32, mut op: F) -> Result<T>
 where
     F: FnMut() -> Result<T>,
@@ -724,13 +770,28 @@ where
         match op() {
             Ok(v) => return Ok(v),
             Err(e) => {
-                if attempt > max_retries {
+                if attempt > max_retries || !is_transient_error(&e) {
                     return Err(e);
                 }
-                thread::sleep(Duration::from_secs(u64::from(attempt)));
+                // Exponential backoff with jitter.
+                let base_ms = 500u64 * 2u64.saturating_pow(attempt.saturating_sub(1));
+                let jitter_ms = (base_ms / 4).min(5000);
+                let wait_ms = base_ms + (jitter_ms / 2)
+                    + (jitter_ms as f64 * rand_factor()) as u64;
+                thread::sleep(Duration::from_millis(wait_ms.min(30_000)));
             }
         }
     }
+}
+
+/// Deterministic pseudo-random factor in [0.0, 1.0) for retry jitter.
+fn rand_factor() -> f64 {
+    use std::time::SystemTime;
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    (nanos % 1000) as f64 / 1000.0
 }
 
 #[cfg(test)]

@@ -30,11 +30,11 @@ pub fn build_document(
             display_name: p.name_hint.clone(),
         })
         .collect::<Vec<_>>();
-    let mut attachment_count = 0usize;
+    let mut attachment_count = 0u64;
     let mut first_ts = None;
     let mut last_ts = None;
     for m in &messages {
-        attachment_count += m.attachments.len();
+        attachment_count += m.attachments.len() as u64;
         first_ts = Some(first_ts.map_or(m.timestamp_unix_ms, |t: i64| t.min(m.timestamp_unix_ms)));
         last_ts = Some(last_ts.map_or(m.timestamp_unix_ms, |t: i64| t.max(m.timestamp_unix_ms)));
     }
@@ -54,7 +54,7 @@ pub fn build_document(
             group_title: seed.conversation.group_title.clone(),
             participants,
             stats: ConversationStats {
-                message_count: messages.len(),
+                message_count: messages.len() as u64,
                 attachment_count,
                 first_timestamp_unix_ms: first_ts,
                 last_timestamp_unix_ms: last_ts,
@@ -202,9 +202,13 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
         bail!("empty timestamp");
     }
     if let Ok(ms) = t.parse::<i64>() {
-        // Heuristic: seconds vs millis
-        return Ok(if ms.abs() < 1_000_000_000_000 {
-            ms * 1000
+        // Heuristic: seconds vs millis.
+        // Any numeric value below 10^10 is a seconds timestamp (year 2286 in
+        // seconds, well beyond any real SMS data). Values at or above 10^10
+        // are millisecond timestamps (1973-03-03 in ms, still before SMS but
+        // close enough that real data won't hit the ambiguity).
+        return Ok(if ms.abs() < 10_000_000_000 {
+            ms.saturating_mul(1000)
         } else {
             ms
         });

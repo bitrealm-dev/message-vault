@@ -288,7 +288,7 @@ fn looks_like_ir_json(path: &Path) -> Result<bool> {
         Err(_) => return Ok(false),
     };
     Ok(
-        value.get("schema_version").and_then(|value| value.as_u64()) == Some(3)
+        value.get("schema_version").and_then(|value| value.as_u64()) == Some(message_ir::SCHEMA_VERSION as u64)
             && value.get("export").is_some()
             && value.get("conversation").is_some()
             && value.get("messages").is_some(),
@@ -305,7 +305,7 @@ fn looks_like_ir_jsonl(path: &Path) -> Result<bool> {
         Err(_) => return Ok(false),
     };
     Ok(
-        value.get("schema_version").and_then(|value| value.as_u64()) == Some(3)
+        value.get("schema_version").and_then(|value| value.as_u64()) == Some(message_ir::SCHEMA_VERSION as u64)
             && value.get("export").is_some()
             && value.get("conversation").is_some()
             && value.get("messages").is_none(),

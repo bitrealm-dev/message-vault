@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use std::env;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -36,7 +37,6 @@ pub(crate) struct WtsexporterArgs {
     pub media: Option<PathBuf>,
     pub db: Option<PathBuf>,
     pub business: bool,
-    pub move_media: bool,
 }
 
 /// Resolve `wtsexporter`: `WTSEXPORTER` → sibling of this exe → `cli/` next to the GUI →
@@ -150,8 +150,19 @@ pub(crate) fn run_wtsexporter(
     if let Some(db) = &paths.db {
         cmd.arg("-d").arg(db);
     }
-    if let Some(key) = paths.key.as_deref() {
-        cmd.arg("-k").arg(key);
+    match paths.key.as_deref() {
+        // Key file path — the path itself is not secret, forward as-is.
+        Some(key) if looks_like_path(key) => {
+            cmd.arg("-k").arg(key);
+        }
+        // Hex key material — write the decoded bytes to a 0600 file in the
+        // scratch work dir and pass the path, so the secret never appears in
+        // the process command line (/proc/<pid>/cmdline).
+        Some(key) => {
+            let key_path = write_key_file(&args.work_dir, key)?;
+            cmd.arg("-k").arg(&key_path);
+        }
+        None => {}
     }
     push_opt(&mut cmd, "-b", paths.backup.as_deref());
     push_opt(&mut cmd, "-w", paths.wa.as_deref());
@@ -159,9 +170,9 @@ pub(crate) fn run_wtsexporter(
     if args.business {
         cmd.arg("--business");
     }
-    if args.move_media {
-        cmd.arg("-c");
-    }
+    // Never pass `-c` (--move-media): wtsexporter would shutil.move the user's
+    // media directory into the scratch work dir, which is deleted when the run
+    // finishes — permanently destroying the original media. Always copy.
 
     let output = cmd.output().map_err(|err| {
         let hint = if err.kind() == std::io::ErrorKind::NotFound {
@@ -291,4 +302,31 @@ fn push_opt(cmd: &mut Command, flag: &str, path: Option<&Path>) {
     if let Some(p) = path {
         cmd.arg(flag).arg(p);
     }
+}
+
+/// Write hex-encoded decryption key bytes to a 0600 file in the scratch work dir.
+///
+/// wtsexporter's `-k` accepts a hex string or a key file path (there is no
+/// stdin key support upstream), so the file path is forwarded instead of the
+/// hex string itself. The file lives in the disposable scratch dir and is
+/// removed with it when the run finishes.
+fn write_key_file(work_dir: &Path, hex_key: &str) -> Result<PathBuf> {
+    let cleaned: String = hex_key.chars().filter(|c| !c.is_whitespace()).collect();
+    // Deliberately do not echo the key material in the error message.
+    let raw = hex::decode(&cleaned)
+        .with_context(|| "decryption key is not a hex string".to_string())?;
+    let path = work_dir.join("decryption.key");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts
+        .open(&path)
+        .with_context(|| format!("create {}", path.display()))?;
+    file.write_all(&raw)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
 }

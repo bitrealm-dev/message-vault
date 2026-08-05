@@ -120,20 +120,32 @@ fn relative_eml_path(
     eml_path.display().to_string()
 }
 
+/// Write attachment blobs, returning the ones that succeeded.
+///
+/// A single failing attachment (disk full, permissions, ENAMETOOLONG) must not
+/// drop the whole message: the failure is recorded in `report.errors` and the
+/// message is kept without that attachment.
 fn write_attachments(
     blobs: &[AttachmentBlob],
     attachments_dir: &Path,
     report: &mut ExportReport,
     copy_attachments: bool,
-) -> Result<Vec<PendingAttachment>> {
+    path_display: &str,
+) -> Vec<PendingAttachment> {
     if !copy_attachments {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let mut out = Vec::with_capacity(blobs.len());
     for blob in blobs {
         let path = attachments_dir.join(&blob.filename);
         if !path.exists() {
-            fs::write(&path, &blob.data)?;
+            if let Err(err) = fs::write(&path, &blob.data) {
+                report.errors.push(format!(
+                    "{path_display}: failed to write attachment {}: {err}",
+                    blob.filename
+                ));
+                continue;
+            }
             report.attachments_saved += 1;
         }
         out.push(PendingAttachment {
@@ -143,7 +155,7 @@ fn write_attachments(
             digest_hex: blob.digest_hex.clone(),
         });
     }
-    Ok(out)
+    out
 }
 
 fn ensure_convo<'a>(
@@ -160,14 +172,24 @@ fn ensure_convo<'a>(
             PendingConversation {
                 conversation_type: conversation_type.to_string(),
                 group_title,
-                participant_e164s,
+                participant_e164s: Vec::new(),
                 messages: Vec::new(),
                 by_identity: HashMap::new(),
             },
         );
     }
-    map.get_mut(chat_id)
-        .expect("just inserted or already present")
+    let convo = map
+        .get_mut(chat_id)
+        .expect("just inserted or already present");
+    // Union rosters across messages: group membership changes over time, and a
+    // later message's smaller roster must not shrink the participant list. (A
+    // roster change that yields a different chat_key still splits the
+    // conversation into fragments; this keeps each fragment's participant list
+    // complete within that key.)
+    convo.participant_e164s.extend(participant_e164s);
+    convo.participant_e164s.sort();
+    convo.participant_e164s.dedup();
+    convo
 }
 
 /// Prefer flat over archive (richer metadata); otherwise keep the earlier timestamp.
@@ -748,15 +770,15 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     if msg.chat_key.is_empty() {
                         report.unknown_chat_messages += 1;
                     }
-                    match write_attachments(
+                    // Keep the message even when some attachments fail to write.
+                    let atts = write_attachments(
                         &msg.attachments,
                         &attachments_dir,
                         &mut report,
                         copy_attachments,
-                    ) {
-                        Ok(atts) => add_message(&mut conversations, msg, atts, &mut report),
-                        Err(err) => report.errors.push(format!("{path_display}: {err:#}")),
-                    }
+                        &path_display,
+                    );
+                    add_message(&mut conversations, msg, atts, &mut report);
                 }
             }
             ParsedEmlKind::Flat { msg, path_display } => {
@@ -768,15 +790,15 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                 if msg.chat_key.is_empty() {
                     report.unknown_chat_messages += 1;
                 }
-                match write_attachments(
+                // Keep the message even when some attachments fail to write.
+                let atts = write_attachments(
                     &msg.attachments,
                     &attachments_dir,
                     &mut report,
                     copy_attachments,
-                ) {
-                    Ok(atts) => add_message(&mut conversations, msg, atts, &mut report),
-                    Err(err) => report.errors.push(format!("{path_display}: {err:#}")),
-                }
+                    &path_display,
+                );
+                add_message(&mut conversations, msg, atts, &mut report);
             }
             ParsedEmlKind::FlatNone => {
                 report.skipped_parse_error += 1;
@@ -891,5 +913,40 @@ mod tests {
         merge_attachments(&mut into, from);
         assert_eq!(into.len(), 2);
         assert_eq!(into[1].digest_hex, "bbb");
+    }
+
+    #[test]
+    fn write_attachments_keeps_message_on_single_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        // A NUL byte is never a valid path component, so this write always
+        // fails (EINVAL on Unix, invalid name on Windows).
+        let blobs = vec![
+            AttachmentBlob {
+                filename: "bad\u{0}name.jpg".into(),
+                original_name: None,
+                mime_type: None,
+                digest_hex: "aaa".into(),
+                data: vec![1, 2, 3],
+            },
+            AttachmentBlob {
+                filename: "ok.jpg".into(),
+                original_name: None,
+                mime_type: None,
+                digest_hex: "bbb".into(),
+                data: vec![4, 5, 6],
+            },
+        ];
+        let mut report = ExportReport::default();
+        let out = write_attachments(&blobs, &att_dir, &mut report, true, "msg.eml");
+        // The failing attachment is dropped, the good one survives, and the
+        // failure is recorded instead of aborting the whole message.
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].digest_hex, "bbb");
+        assert!(att_dir.join("ok.jpg").exists());
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0].contains("failed to write attachment"));
+        assert_eq!(report.attachments_saved, 1);
     }
 }

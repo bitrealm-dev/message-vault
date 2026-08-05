@@ -37,7 +37,7 @@ Apple-only columns (`parts_json`, tapbacks, balloons, …) stay empty.
 
 - `address` → `chat_identifier` / participant handle (after phone normalization)
 - `date` → `timestamp*` and `timestamp_unix_ms` (invalid or missing dates are skipped)
-- `type` `1` / `2` → `direction` incoming / outgoing; other types are skipped; raw value in `android_type`
+- `type` `1` / `2` → `direction` incoming / outgoing; `3` (draft) and `4` (outbox) are skipped and counted as `skipped_draft_or_outbox`; other types are skipped and counted as `skipped_unknown_type`; raw value in `android_type`
 - `body` → `text` (HTML entities decoded)
 - `subject` → `subject` when present
 - `contact_name` → `sender_display_name` for incoming (not a separate CSV column)
@@ -58,6 +58,8 @@ Example: `<sms address="+15555550101" date="1400773261000" type="1" body="hello 
 - Empty participant lists and undecodable attachment base64 are skipped and counted in the run report
 
 Example group address string: `+15555550101~+15555550102` with two From/To addrs becomes a group chat titled from those two numbers.
+
+**Group chat identity limitation:** the format has no stable thread ID, so a group conversation is keyed by the sorted set of participant numbers (`chat-group-…`). When the roster changes (someone is added or removed), messages before and after the change are grouped into two separate conversations. This is inherent to the source data and cannot be recovered.
 
 ## `source_fields_json`
 

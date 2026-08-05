@@ -51,15 +51,34 @@ fn extension_for(ctype: &str, filename: Option<&str>) -> String {
     }
 }
 
+/// Cap for the basename portion of generated attachment filenames. The name
+/// is prefixed with ~46 bytes of file-key/timestamp/digest, so 160 keeps the
+/// total well under ext4's 255-byte NAME_MAX and avoids ENAMETOOLONG.
+const MAX_BASENAME_BYTES: usize = 160;
+
 fn safe_basename(name: &str) -> String {
     let re = SAFE_RE.get_or_init(|| Regex::new(r"[^\w.\-]+").expect("safe"));
     let cleaned = re.replace_all(name, "_");
     let trimmed = cleaned.trim_matches(|c| c == '.' || c == '_');
     if trimmed.is_empty() {
-        "attachment".into()
-    } else {
-        trimmed.to_string()
+        return "attachment".into();
     }
+    let mut base = trimmed.to_string();
+    if base.len() > MAX_BASENAME_BYTES {
+        // Keep a short extension, then truncate the stem on a char boundary
+        // so multi-byte UTF-8 names don't end with a cut character.
+        let (stem, ext) = match base.rfind('.') {
+            Some(dot) if dot > 0 => (base[..dot].to_string(), base[dot..].to_string()),
+            _ => (base.clone(), String::new()),
+        };
+        let budget = MAX_BASENAME_BYTES.saturating_sub(ext.len());
+        let mut end = budget.min(stem.len());
+        while end > 0 && !stem.is_char_boundary(end) {
+            end -= 1;
+        }
+        base = format!("{}{}", &stem[..end], ext);
+    }
+    base
 }
 
 fn mime_for_ext(ext: &str) -> Option<&'static str> {
@@ -152,4 +171,33 @@ pub(crate) fn extract_attachments(
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_basename_caps_length_and_keeps_extension() {
+        let base = safe_basename(&format!("{}.jpg", "a".repeat(400)));
+        assert!(base.len() <= MAX_BASENAME_BYTES);
+        assert!(base.ends_with(".jpg"));
+        assert!(base.len() > 100);
+    }
+
+    #[test]
+    fn safe_basename_truncates_on_char_boundary() {
+        // 60 CJK chars = 180 bytes; truncation must not split a character.
+        let name = "中".repeat(60);
+        let base = safe_basename(&name);
+        assert!(base.len() <= MAX_BASENAME_BYTES);
+        assert!(base.len().is_multiple_of(3), "char boundary truncation failed");
+        assert!(base.chars().all(|c| c == '中'));
+    }
+
+    #[test]
+    fn safe_basename_short_names_unchanged() {
+        assert_eq!(safe_basename("photo.jpg"), "photo.jpg");
+        assert_eq!(safe_basename("a b/c"), "a_b_c");
+    }
 }

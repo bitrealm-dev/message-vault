@@ -131,9 +131,21 @@ fn is_sent(headers: &MailHeaders, owner_emails: &[String]) -> bool {
         return false;
     }
     let from = headers.from.to_ascii_lowercase();
+    // Compare against the bare addr-spec, not a substring: owner
+    // `ce@example.com` would otherwise match `alice@example.com`.
+    let from_addr = if let Some(start) = from.find('<') {
+        if let Some(end) = from.find('>') {
+            &from[start + 1..end]
+        } else {
+            &from[start + 1..]
+        }
+    } else {
+        &from
+    };
+    let from_addr = from_addr.trim();
     owner_emails
         .iter()
-        .any(|e| !e.is_empty() && from.contains(e.as_str()))
+        .any(|e| !e.is_empty() && from_addr == e.as_str())
 }
 
 /// First `text/plain` body in the MIME tree, with newlines normalized to `\n`.
@@ -194,7 +206,16 @@ fn group_chat_id(others: &[String]) -> (String, String) {
             sorted.len() - 4
         )
     };
-    let key = format!("group-{}", sorted.join("_"));
+    // Length-prefix each number so `["12","34"]` and `["123","4"]` cannot
+    // both become `group-12_34`.
+    let key = format!(
+        "group-{}",
+        sorted
+            .iter()
+            .map(|d| format!("{}:{}", d.len(), d))
+            .collect::<Vec<_>>()
+            .join("_")
+    );
     let key = if key.len() > 180 {
         let digest = hex::encode(Sha256::digest(key.as_bytes()));
         format!("group-{}", &digest[..16])
@@ -436,5 +457,46 @@ old message\r\n"
             .unwrap()
             .unwrap();
         assert!((msg.timestamp_secs - 978_307_200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn sent_detection_uses_exact_owner_email() {
+        fn headers_with_from(from: &str) -> MailHeaders {
+            MailHeaders {
+                smssync_type: String::new(),
+                smssync_address: String::new(),
+                smssync_date: String::new(),
+                smssync_id: String::new(),
+                subject: String::new(),
+                from: from.into(),
+                to: String::new(),
+                date: String::new(),
+            }
+        }
+        // `ce@example.com` is a substring of `alice@example.com`; substring
+        // matching would misclassify this received message as sent.
+        assert!(!is_sent(
+            &headers_with_from("alice@example.com"),
+            &["ce@example.com".into()]
+        ));
+        // Exact addr-spec matches still detect sent mail, including the
+        // `Name <addr>` form.
+        assert!(is_sent(
+            &headers_with_from("alice@example.com"),
+            &["alice@example.com".into()]
+        ));
+        assert!(is_sent(
+            &headers_with_from("Alice <alice@example.com>"),
+            &["alice@example.com".into()]
+        ));
+    }
+
+    #[test]
+    fn group_chat_id_does_not_collide_on_digit_split() {
+        let (k1, _) = group_chat_id(&["12".to_string(), "34".to_string()]);
+        let (k2, _) = group_chat_id(&["123".to_string(), "4".to_string()]);
+        assert_ne!(k1, k2);
+        assert_eq!(k1, "group-2:12_2:34");
+        assert_eq!(k2, "group-3:123_1:4");
     }
 }
