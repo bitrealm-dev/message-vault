@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
+use anyhow::Context;
 use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -34,11 +35,13 @@ struct AuthIdentity {
 #[derive(Clone)]
 struct AppState {
     cfg: Arc<Config>,
-    /// Warm SQLite writer used by HTTP import (schema ensured at serve startup).
+    /// Warm connection for short import-session SQL only (`POST /v1/imports`,
+    /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
+    /// export open their own connections so they do not hold this mutex.
     db: Arc<StdMutex<Connection>>,
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows for that tenant are not wiped mid-run. Different accounts may overlap
-    /// at the lock layer; the shared `db` mutex still serializes writers.
+    /// at the lock layer; SQLite WAL + busy_timeout serialize writers.
     account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same digest.
@@ -740,12 +743,13 @@ async fn export_messages_handler(
     let q = query.q.clone();
     let cursor = query.cursor.clone();
     let source = query.source.clone();
-    let db = Arc::clone(&state.db);
+    let db_path = state.cfg.paths.db.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| ExportQueryError::Internal("db lock poisoned".into()))?;
+        let conn = Connection::open(&db_path)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        schema::configure_connection(&conn)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
         export_api::export_messages(
             &conn,
             ExportPageOpts {
@@ -1256,9 +1260,11 @@ async fn run_import_path(
             false,
             import_id,
         );
-        let mut conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        // Dedicated connection for the long import so we do not hold `state.db`
+        // across JSONL / asset IO / promote (export and session SQL stay free).
+        let mut conn = Connection::open(&cfg.paths.db)
+            .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
+        schema::configure_connection(&conn)?;
         let import_result = import::import_jsonl_files_on_conn(
             &mut conn,
             &[jsonl_path],

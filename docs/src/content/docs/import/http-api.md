@@ -36,6 +36,11 @@ import history. Messages promoted during that session store `messages.import_id`
 If `import_id` is omitted on `POST /v1/import`, the server starts and finishes a
 one-shot session for that request so Storage still records the import.
 
+Bulk `POST /v1/import` opens its own SQLite connection for staging/promote so it
+does not hold the serve process’s short session mutex across JSONL and asset
+work. Same-account imports stay serialized; export and auth open their own
+connections and can proceed under WAL while an import runs.
+
 ## Export (read-only)
 
 ### `GET /v1/export/messages`
