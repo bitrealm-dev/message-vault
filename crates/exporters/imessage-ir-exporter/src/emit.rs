@@ -92,10 +92,11 @@ struct PendingConversation {
 /// Stream chat.db into per-conversation CSV, EML, MBOX, JSON, or JSONL.
 pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, RuntimeError> {
     let format = session.options.output_format;
+    session.options.emit_log("");
     session.options.emit_log(format!(
-        "Preparing messages in {} as {}",
+        "Preparing {} messages in {}",
+        format.as_str(),
         session.options.export_path.display(),
-        format.as_str()
     ));
 
     let attachments_dir = session.options.export_path.join("attachments");
@@ -164,6 +165,7 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     }
 
     let total_conversations = conversations.len() as u64;
+    session.options.emit_log("");
     session
         .options
         .emit_log(format!("Writing {total_conversations} conversation file(s)..."));
