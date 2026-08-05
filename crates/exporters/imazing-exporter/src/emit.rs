@@ -12,6 +12,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -364,7 +365,7 @@ fn collect_peer_info(
                 handles.insert(to_e164(&digits));
                 continue;
             }
-            if let Some(e164) = book.lookup_e164_by_name(label) {
+            if let Some((e164, _)) = book.lookup_handle_by_name(label) {
                 handles.insert(e164);
             } else {
                 unresolved_roster_labels += 1;
@@ -487,7 +488,9 @@ fn resolve_chat_identifier(
 
     if let Some(handle) = peer_handles.first() {
         let contact_name = if let Some(digits) = sanitize_number(handle) {
-            book.lookup_name_by_phone(&digits).unwrap_or("").to_string()
+            book.lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
+                .unwrap_or("")
+                .to_string()
         } else {
             String::new()
         };
@@ -510,10 +513,13 @@ fn resolve_chat_identifier(
     }
     if let Some(digits) = sanitize_number(session) {
         let e164 = to_e164(&digits);
-        let name = book.lookup_name_by_phone(&digits).unwrap_or("").to_string();
+        let name = book
+            .lookup_name_by_handle(&e164, HandleType::Phone)
+            .unwrap_or("")
+            .to_string();
         return (e164, name, false);
     }
-    if let Some(e164) = book.lookup_e164_by_name(session) {
+    if let Some((e164, _)) = book.lookup_handle_by_name(session) {
         return (e164, session.to_string(), false);
     }
     (message_vault_io_core::name_stem(session), session.to_string(), true)
@@ -560,7 +566,7 @@ fn resolve_sender(
                 .unwrap_or_default()
         };
     } else if !row.sender_name.is_empty() {
-        if let Some(e164) = book.lookup_e164_by_name(&row.sender_name) {
+        if let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name) {
             handle = e164;
         }
     }
@@ -568,7 +574,10 @@ fn resolve_sender(
     let mut display = row.sender_name.trim().to_string();
     if display.is_empty() {
         if let Some(digits) = sanitize_number(&handle) {
-            display = book.lookup_name_by_phone(&digits).unwrap_or("").to_string();
+            display = book
+                .lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
+                .unwrap_or("")
+                .to_string();
         }
     }
     if display.is_empty() && !contact_name.is_empty() {
@@ -593,6 +602,16 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     });
     convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
     !convo.messages.is_empty()
+}
+
+/// iMazing identifiers are E.164 phones, emails, or (rarely) name stems;
+/// infer the type from the handle shape.
+fn handle_type_for(handle: &str) -> HandleType {
+    if handle.contains('@') {
+        HandleType::Email
+    } else {
+        HandleType::Phone
+    }
 }
 
 fn imazing_peers(is_group: bool, chat_id: &str) -> Vec<String> {
@@ -626,7 +645,7 @@ fn pending_to_document(
         .map(|h| IrParticipant {
             handle: h.clone(),
             display_name: None,
-            handle_type: None,
+            handle_type: Some(handle_type_for(h)),
         })
         .collect();
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
@@ -638,7 +657,7 @@ fn pending_to_document(
                 .map(|m| m.extra_str("contact_name").trim())
                 .find(|n| !n.is_empty())
                 .map(str::to_string),
-            handle_type: None,
+            handle_type: Some(handle_type_for(chat_id)),
         });
     }
     let packaging_stem_suffix = imazing_packaging_stem_suffix(convo.extra_str("source_kind"));
