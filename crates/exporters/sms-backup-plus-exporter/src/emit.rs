@@ -14,6 +14,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -316,7 +317,7 @@ fn pending_to_document(
         .map(|h| IrParticipant {
             handle: h.clone(),
             display_name: name_by_handle.get(h).cloned(),
-            handle_type: None,
+            handle_type: Some(HandleType::Phone),
         })
         .collect();
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
@@ -330,7 +331,7 @@ fn pending_to_document(
                     .find(|n| !n.is_empty())
                     .map(str::to_string)
             }),
-            handle_type: None,
+            handle_type: Some(HandleType::Phone),
         });
     }
 

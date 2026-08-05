@@ -2,6 +2,7 @@
 
 use crate::types::ParsedMessage;
 use contacts::{ContactsBook, NameMapping};
+use message_ir::HandleType;
 
 /// Fill empty peer phone from the contacts book using current `name_hint`.
 ///
@@ -20,7 +21,7 @@ pub(crate) fn fill_unknown_phone(
         .map(str::trim)
         .filter(|s| !s.is_empty())?
         .to_string();
-    let phone = book.lookup_phone_by_name(&display)?;
+    let (phone, _) = book.lookup_handle_by_name(&display)?;
     msg.chat_key = phone.clone();
     if !msg.is_from_me {
         msg.sender_digits = Some(phone.clone());
@@ -47,8 +48,10 @@ pub(crate) fn apply_name_mapping(
         .map(str::trim)
         .filter(|s| !s.is_empty())?
         .to_string();
-    let phone = mapping.phone_for_incorrect_name(&raw)?.to_string();
-    let display = book.lookup_name_by_phone(&phone).map(str::to_string);
+    let (phone, handle_type) = mapping.handle_for_incorrect_name(&raw)?.clone();
+    let display = book
+        .lookup_name_by_handle(&phone, handle_type)
+        .map(str::to_string);
     msg.chat_key = phone.clone();
     if !msg.is_from_me {
         msg.sender_digits = Some(phone.clone());
@@ -62,21 +65,26 @@ pub(crate) fn apply_name_mapping(
 /// Fill blank/unknown display names from phone→name when the peer phone is known.
 pub(crate) fn enrich_display_names(msg: &mut ParsedMessage, book: &ContactsBook) {
     if let Some(ref digits) = msg.sender_digits {
-        if let Some(name) = book.enrich_display_name(digits, msg.name_hint.as_deref().unwrap_or(""))
-        {
+        if let Some(name) = book.enrich_display_name(
+            digits,
+            HandleType::Phone,
+            msg.name_hint.as_deref().unwrap_or(""),
+        ) {
             msg.name_hint = Some(name);
         }
     }
     if !msg.chat_key.is_empty() {
-        if let Some(name) =
-            book.enrich_display_name(&msg.chat_key, msg.name_hint.as_deref().unwrap_or(""))
-        {
+        if let Some(name) = book.enrich_display_name(
+            &msg.chat_key,
+            HandleType::Phone,
+            msg.name_hint.as_deref().unwrap_or(""),
+        ) {
             msg.name_hint = Some(name);
         }
     }
     for (digits, name) in &mut msg.participant_digits {
         let current = name.as_deref().unwrap_or("");
-        if let Some(resolved) = book.enrich_display_name(digits, current) {
+        if let Some(resolved) = book.enrich_display_name(digits, HandleType::Phone, current) {
             *name = Some(resolved);
         }
     }
@@ -131,8 +139,8 @@ Jordan,Alias,15555550144\n",
             eml_path: String::new(),
         };
         let mapped = apply_name_mapping(&mut msg, &mapping, &book).unwrap();
-        assert_eq!(mapped.1, "5555550144");
-        assert_eq!(msg.chat_key, "5555550144");
+        assert_eq!(mapped.1, "+15555550144");
+        assert_eq!(msg.chat_key, "+15555550144");
         assert_eq!(msg.name_hint.as_deref(), Some("Jordan Alias"));
     }
 }
