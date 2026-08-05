@@ -45,3 +45,7 @@ config/export-to-vault.sh
 *.log
 /staging-*/
 /export-*/
+
+# Frontend (web/) dependencies and build output
+/web/node_modules/
+/web/dist/
