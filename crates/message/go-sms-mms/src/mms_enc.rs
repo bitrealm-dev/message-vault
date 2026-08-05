@@ -1286,11 +1286,47 @@ fn is_text_part_name(name: &str) -> bool {
     !stem.is_empty() && stem.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Text-part payload end: advance through valid UTF-8 bytes so non-ASCII text
+/// (accented Latin, Cyrillic, CJK) survives. Stops at the first byte that cannot
+/// be part of a UTF-8 sequence — in GO dumps that is the next MMS header byte
+/// (e.g. `0x8c`), a next named-part marker (`0x8e`), or a truncated sequence.
+fn text_part_payload_end(data: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while end < data.len() {
+        let b = data[end];
+        if b < 0x80 {
+            end += 1;
+        } else if (0xc2..=0xdf).contains(&b)
+            && end + 1 < data.len()
+            && data[end + 1] & 0xc0 == 0x80
+        {
+            end += 2;
+        } else if (0xe0..=0xef).contains(&b)
+            && end + 2 < data.len()
+            && data[end + 1] & 0xc0 == 0x80
+            && data[end + 2] & 0xc0 == 0x80
+        {
+            end += 3;
+        } else if (0xf0..=0xf4).contains(&b)
+            && end + 3 < data.len()
+            && data[end + 1] & 0xc0 == 0x80
+            && data[end + 2] & 0xc0 == 0x80
+            && data[end + 3] & 0xc0 == 0x80
+        {
+            end += 4;
+        } else {
+            break;
+        }
+    }
+    end
+}
+
 /// Scan GO named parts: wire `0x8e` + NUL-terminated filename + payload.
 ///
 /// This is **not** WAP-209 Message-Size (same wire id). Text parts end at the
-/// next short-integer header byte; media parts end at the next `0x8e` name (or
-/// EOF) so JPEG high bytes are kept intact.
+/// next byte that cannot be part of a UTF-8 text payload (a header byte or the
+/// next `0x8e` marker); media parts end at the next `0x8e` name (or EOF) so
+/// JPEG high bytes are kept intact.
 pub(crate) fn scan_named_parts(data: &[u8]) -> Vec<NamedPart> {
     let mut parts = Vec::new();
     let mut i = 0;
@@ -1300,11 +1336,7 @@ pub(crate) fn scan_named_parts(data: &[u8]) -> Vec<NamedPart> {
             continue;
         };
         let payload_end = if is_text_part_name(&name) {
-            let mut end = payload_start;
-            while end < data.len() && data[end] & 0x80 == 0 {
-                end += 1;
-            }
-            end
+            text_part_payload_end(data, payload_start)
         } else {
             find_next_cloc_name(data, payload_start).unwrap_or(data.len())
         };
@@ -1778,6 +1810,35 @@ mod tests {
         assert_eq!(msg.named_parts.len(), 1);
         assert_eq!(msg.named_parts[0].name, "text.txt");
         assert_eq!(msg.named_parts[0].data, b"Hello body");
+    }
+
+    #[test]
+    fn named_text_part_keeps_non_ascii_utf8() {
+        // Continuation bytes (>= 0x80) are part of the text, not part terminators.
+        let mut bytes = Vec::new();
+        bytes.push(0x8e);
+        bytes.extend_from_slice(b"text.txt\0");
+        bytes.extend_from_slice("Héllo — привет, 世界 🌍".as_bytes());
+        bytes.push(0x8c); // trailing header byte, as in real GO dumps
+        let named = scan_named_parts(&bytes);
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].name, "text.txt");
+        assert_eq!(named[0].data, "Héllo — привет, 世界 🌍".as_bytes());
+    }
+
+    #[test]
+    fn named_text_part_stops_at_header_byte() {
+        // ASCII payload followed by a high-bit header byte: payload ends at the
+        // header byte, which is not valid UTF-8 on its own.
+        let mut bytes = Vec::new();
+        bytes.push(0x8e);
+        bytes.extend_from_slice(b"text.txt\0Hello");
+        bytes.push(0x8c);
+        bytes.extend_from_slice(&[0xff, 0xd8]); // JPEG SOI after the header byte
+        let named = scan_named_parts(&bytes);
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].name, "text.txt");
+        assert_eq!(named[0].data, b"Hello");
     }
 
     #[test]

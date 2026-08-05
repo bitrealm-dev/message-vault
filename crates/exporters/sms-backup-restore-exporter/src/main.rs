@@ -34,7 +34,7 @@ struct Cli {
 
     /// Contacts file for phone→name fill (VCF or vCard CSV; same as contacts-validate).
     /// Optional; without it (or `--vcf`) phone numbers are not resolved to names.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "vcf")]
     contacts: Option<PathBuf>,
 
     /// Contacts VCF (alternate to `--contacts`).

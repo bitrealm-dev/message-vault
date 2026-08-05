@@ -38,7 +38,13 @@ fn archive_subject_re() -> &'static Regex {
 /// Strip a leading `with` and a trailing `(year-year)` so contacts lookup can match.
 fn clean_archive_contact_name(raw: &str) -> String {
     let mut name = raw.trim();
-    if name.len() >= 5 && name[..5].eq_ignore_ascii_case("with ") {
+    // `name[..5]` would panic when byte 5 lands mid-character in a multi-byte
+    // UTF-8 name (e.g. `SMS archive 中文名`). "with " is 5 ASCII bytes, so a
+    // match at a char boundary is always a real prefix.
+    if name.len() >= 5
+        && name.is_char_boundary(5)
+        && name[..5].eq_ignore_ascii_case("with ")
+    {
         name = name[5..].trim();
     }
     static YEAR_RANGE: OnceLock<Regex> = OnceLock::new();
@@ -71,7 +77,7 @@ fn phone_from_from_header(from_hdr: &str) -> String {
 }
 
 fn parse_archive_timestamp(date_str: &str) -> Option<f64> {
-    use chrono::{Local, TimeZone};
+    use chrono::{Local, LocalResult, TimeZone};
     for fmt in [
         "%Y-%m-%d %H:%M:%S",
         "%Y/%m/%d %H:%M:%S",
@@ -79,11 +85,15 @@ fn parse_archive_timestamp(date_str: &str) -> Option<f64> {
         "%Y-%m-%dT%H:%M:%S",
     ] {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(date_str, fmt) {
-            // Archive body times are local wall-clock, not UTC.
-            return Local
-                .from_local_datetime(&naive)
-                .single()
-                .map(|dt| dt.timestamp() as f64);
+            // Archive body times are local wall-clock, not UTC. DST transitions
+            // make some wall-clock times ambiguous (fall-back) or nonexistent
+            // (spring-forward); keep the earliest interpretation instead of
+            // silently dropping the message.
+            return match Local.from_local_datetime(&naive) {
+                LocalResult::Single(dt) => Some(dt.timestamp() as f64),
+                LocalResult::Ambiguous(earliest, _) => Some(earliest.timestamp() as f64),
+                LocalResult::None => None,
+            };
         }
     }
     None
@@ -278,7 +288,10 @@ pub(crate) fn parse_archive_eml_mail(
             continue;
         }
 
-        if date_only_re().is_match(stripped) {
+        // A date-only line is a separator only between messages (or in the
+        // preamble, handled above). Once a message body is open the line is
+        // content — a text that is just a date must not lose its text.
+        if date_only_re().is_match(stripped) && current_date.is_none() {
             continue;
         }
 
@@ -344,6 +357,38 @@ Thanks\r\n",
             "Alice"
         );
         assert_eq!(clean_archive_contact_name("Alice"), "Alice");
+        // Non-ASCII names: byte 5 can land mid-character (H5). Must not panic
+        // and must not strip a `with` that is not actually there.
+        assert_eq!(clean_archive_contact_name("with 中文名"), "中文名");
+        assert_eq!(clean_archive_contact_name("SMS 中文名"), "SMS 中文名");
+    }
+
+    #[test]
+    fn date_only_line_inside_message_body_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("archive.eml");
+        std::fs::write(
+            &path,
+            b"From: <4075551234@sms-backup-plus.local>\r\n\
+To: me@example.com\r\n\
+Subject: SMS archive Alice\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Alice\r\n\
+2020-01-01 12:00:00 - Me\r\n\
+2020-01-02\r\n\
+2020-01-01 12:01:00 - Alice\r\n\
+Thanks\r\n",
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let mail = mailparse::parse_mail(&bytes).unwrap();
+        let headers = MailHeaders::from_mail(&mail);
+        let (msgs, _) = parse_archive_eml_mail(&path, &mail, &headers).unwrap();
+        assert_eq!(msgs.len(), 2);
+        // A text that is just a date is content, not a separator.
+        assert_eq!(msgs[0].text, "2020-01-02");
+        assert_eq!(msgs[1].text, "Thanks");
     }
 
     #[test]

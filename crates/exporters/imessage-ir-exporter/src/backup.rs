@@ -5,6 +5,8 @@ use std::{
     fs::File,
     io::{BufWriter, IsTerminal, Write, copy, stdin},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crabapple::{
@@ -17,6 +19,34 @@ use message_vault_io_core::{LogSink, emit_log};
 use crate::{contacts, error::RuntimeError, options::MailOptions};
 
 const MAX_IN_MEMORY_DECRYPT: u64 = 25 * 1024 * 1024;
+
+/// Process-unique temp file suffix (PID + timestamp + monotonic counter) so
+/// concurrent exports never collide on the same `/tmp` file name. The counter
+/// guards against same-process collisions where the clock tick is coarse.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_suffix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{nanos}-{counter}", std::process::id())
+}
+
+/// Restrict a freshly created temp file to the current user (0600) on Unix;
+/// decrypted backup contents must not be world-readable in shared `/tmp`.
+#[cfg(unix)]
+fn restrict_permissions(file: &File) -> Result<(), RuntimeError> {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_file: &File) -> Result<(), RuntimeError> {
+    Ok(())
+}
 
 /// Open the iOS backup, prompting for a password if encrypted and none was provided.
 ///
@@ -82,8 +112,9 @@ pub(crate) fn get_decrypted_message_database(
     let file = backup.get_file(file_id)?;
     let mut decrypted_chat_db = backup.decrypt_entry_stream(&file)?;
 
-    let tmp_path = temp_dir().join("crabapple-sms.db");
+    let tmp_path = temp_dir().join(format!("crabapple-sms-{}.db", unique_suffix()));
     let mut file = File::create(&tmp_path)?;
+    restrict_permissions(&file)?;
 
     emit_log(log, "  [3/5] Decrypting messages database...");
     copy(&mut decrypted_chat_db, &mut file)?;
@@ -100,8 +131,9 @@ pub(crate) fn get_decrypted_contacts_database(
     let file = backup.get_file(file_id)?;
     let mut decrypted_contacts_db = backup.decrypt_entry_stream(&file)?;
 
-    let tmp_path = temp_dir().join("crabapple-contacts.db");
+    let tmp_path = temp_dir().join(format!("crabapple-contacts-{}.db", unique_suffix()));
     let mut file = File::create(&tmp_path)?;
+    restrict_permissions(&file)?;
 
     emit_log(log, "  [5/5] Decrypting contacts database...");
     copy(&mut decrypted_contacts_db, &mut file)?;
@@ -124,8 +156,9 @@ pub(crate) fn decrypt_file(backup: &Backup, from: &Path) -> Result<PathBuf, Runt
             })?,
     ) {
         Ok(file) => {
-            let temp_path = temp_dir().join(&file.file_id);
+            let temp_path = temp_dir().join(format!("{}-{}.attachment", file.file_id, unique_suffix()));
             let mut temp_file = File::create(&temp_path)?;
+            restrict_permissions(&temp_file)?;
 
             let file_size = file.metadata.size;
             if file_size > MAX_IN_MEMORY_DECRYPT {

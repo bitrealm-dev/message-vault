@@ -1,9 +1,9 @@
 //! Convert iMazing Messages / WhatsApp rows → common message → packaging via FormatSink.
 
-use crate::attachments::resolve_attachment_cell;
+use crate::attachments::{AttachmentIndex, resolve_attachment_cell};
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result};
-use chrono::{FixedOffset, Local, NaiveDateTime, TimeZone};
+use anyhow::{Context, Result, bail};
+use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{AttachmentCell, DateRange, format_local_ts, parse_utc_offset, stable_guid};
 use message_vault_io_core::{CancelFlag, OutputFormat};
@@ -133,16 +133,29 @@ pub(crate) fn convert_export(
 ) -> Result<(ExportReport, FormatSinkResult)> {
     let tz = resolve_tz(timezone)?;
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    clean_previous_ir_output(output)?;
+    // Canonicalize so relative inputs resolve and `parent()` below is absolute,
+    // and so output/input identity is checked on resolved paths.
+    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
+    let output = fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
+    if output == input || input.starts_with(&output) {
+        bail!(
+            "output {} must not be the same as, or contain, the input {}",
+            output.display(),
+            input.display()
+        );
+    }
+    clean_previous_ir_output(&output)?;
     let copy_attachments = transforms.copies_attachments();
     let attachments_dir = output.join("attachments");
     if copy_attachments {
         fs::create_dir_all(&attachments_dir)
             .with_context(|| format!("create {}", attachments_dir.display()))?;
     }
-    let mut sink = FormatSink::open(output, output_format, transforms)?;
+    // Walk the input tree once; per-attachment lookups hit this index.
+    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(&input));
+    let mut sink = FormatSink::open(&output, output_format, transforms)?;
 
-    let files = discover_csv_files(input)?;
+    let files = discover_csv_files(&input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
@@ -227,7 +240,7 @@ pub(crate) fn convert_export(
                         &row.attachment,
                         &row.attachment_type,
                         csv_parent,
-                        input,
+                        attachment_index.as_ref(),
                         &attachments_dir,
                         copy_attachments,
                         secs,
@@ -235,11 +248,14 @@ pub(crate) fn convert_export(
                     ));
                 }
 
+                // sender_id distinguishes same-second same-text rows from
+                // different senders in group chats.
                 let dedupe_key = format!(
-                    "{}|{}|{}|{}|{}",
+                    "{}|{}|{}|{}|{}|{}",
                     peer.chat_id,
                     secs,
                     if is_from_me { "1" } else { "0" },
+                    row.sender_id,
                     row.text,
                     row.attachment
                 );
@@ -320,12 +336,12 @@ fn collect_peer_info(
     let mut handles: HashSet<String> = HashSet::new();
     for row in rows {
         let sid = row.sender_id.trim();
-        if is_phone_or_email(sid) {
-            if let Some(digits) = sanitize_number(sid) {
-                handles.insert(to_e164(&digits));
-            } else {
-                handles.insert(sid.to_string());
-            }
+        // Email first: a sender like `bob2024@gmail.com` has 4+ digits and
+        // must never be reduced to a phone number.
+        if sid.contains('@') {
+            handles.insert(sid.to_string());
+        } else if let Some(digits) = sanitize_number(sid) {
+            handles.insert(to_e164(&digits));
         }
         for phone in phones_in_text(&row.chat_session) {
             handles.insert(phone);
@@ -340,12 +356,12 @@ fn collect_peer_info(
             if label.is_empty() {
                 continue;
             }
-            if let Some(digits) = sanitize_number(label) {
-                handles.insert(to_e164(&digits));
+            if label.contains('@') {
+                handles.insert(label.to_string());
                 continue;
             }
-            if is_phone_or_email(label) {
-                handles.insert(label.to_string());
+            if let Some(digits) = sanitize_number(label) {
+                handles.insert(to_e164(&digits));
                 continue;
             }
             if let Some(e164) = book.lookup_e164_by_name(label) {
@@ -401,8 +417,18 @@ fn parse_message_date(raw: &str, tz: &TzMode) -> Option<(i64, String)> {
         .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M"))
         .ok()?;
     let secs = match tz {
-        TzMode::Local => Local.from_local_datetime(&naive).single()?.timestamp(),
-        TzMode::Fixed(offset) => offset.from_local_datetime(&naive).single()?.timestamp(),
+        // Ambiguous (DST fall-back) hours resolve to the earliest instant
+        // instead of silently dropping the message.
+        TzMode::Local => match Local.from_local_datetime(&naive) {
+            LocalResult::Single(dt) => dt.timestamp(),
+            LocalResult::Ambiguous(earliest, _latest) => earliest.timestamp(),
+            LocalResult::None => return None,
+        },
+        TzMode::Fixed(offset) => match offset.from_local_datetime(&naive) {
+            LocalResult::Single(dt) => dt.timestamp(),
+            LocalResult::Ambiguous(earliest, _latest) => earliest.timestamp(),
+            LocalResult::None => return None,
+        },
     };
     Some((secs, (secs * 1000).to_string()))
 }
@@ -416,13 +442,6 @@ fn is_outgoing(msg_type: &str) -> bool {
 
 fn is_notification(msg_type: &str) -> bool {
     msg_type.trim().eq_ignore_ascii_case("notification")
-}
-
-fn is_phone_or_email(handle: &str) -> bool {
-    if sanitize_number(handle).is_some() {
-        return true;
-    }
-    handle.contains('@') && handle.contains('.')
 }
 
 fn phones_in_text(text: &str) -> Vec<String> {
@@ -484,6 +503,11 @@ fn resolve_chat_identifier(
     if session.is_empty() {
         return ("unknown".to_string(), String::new(), true);
     }
+    // Email first: an address like `bob2024@gmail.com` has 4+ digits and must
+    // not be treated as a phone number.
+    if session.contains('@') {
+        return (session.to_string(), String::new(), false);
+    }
     if let Some(digits) = sanitize_number(session) {
         let e164 = to_e164(&digits);
         let name = book.lookup_name_by_phone(&digits).unwrap_or("").to_string();
@@ -508,10 +532,12 @@ fn resolve_sender(
     }
     if is_notification {
         // Keep any available identity from the notification row; often empty.
-        let handle = if let Some(digits) = sanitize_number(&row.sender_id) {
-            to_e164(&digits)
-        } else if is_phone_or_email(&row.sender_id) {
+        // Email first: an address like `bob2024@gmail.com` has 4+ digits and
+        // must not be reduced to a phone number.
+        let handle = if row.sender_id.contains('@') {
             row.sender_id.trim().to_string()
+        } else if let Some(digits) = sanitize_number(&row.sender_id) {
+            to_e164(&digits)
         } else {
             String::new()
         };
@@ -519,11 +545,13 @@ fn resolve_sender(
     }
 
     let mut handle = String::new();
-    if let Some(digits) = sanitize_number(&row.sender_id) {
-        handle = to_e164(&digits);
-    } else if is_phone_or_email(&row.sender_id) {
+    if row.sender_id.contains('@') {
         handle = row.sender_id.trim().to_string();
-    } else if chat_id.starts_with('+') || sanitize_number(chat_id).is_some() {
+    } else if let Some(digits) = sanitize_number(&row.sender_id) {
+        handle = to_e164(&digits);
+    } else if !chat_id.contains('@')
+        && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
+    {
         handle = if chat_id.starts_with('+') {
             chat_id.to_string()
         } else {
@@ -1068,5 +1096,99 @@ Bob McRoy,2020-01-01 12:00:00,,,,,SMS,Incoming,+15555550100,Bob,Read,,,Hi,,image
         assert_eq!(count, 1);
         let body = fs::read_to_string(out.join("+15555550100.csv")).unwrap();
         assert!(body.contains("attachments/"));
+    }
+
+    #[test]
+    fn email_sender_with_digits_stays_email() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir,
+            "Messages - Bob.csv",
+            "Chat Session,Message Date,Service,Type,Sender ID,Sender Name,Status,Replying to,Subject,Text,Reactions,Attachment,Attachment type\n\
+Bob McRoy,2020-01-01 12:00:00,iMessage,Incoming,bob2024@gmail.com,Bob McRoy,Read,,,Hello,,,\n\
+Bob McRoy,2020-01-01 12:01:00,iMessage,Outgoing,,,Read,,,Hi,,,\n",
+        );
+        let book = ContactsBook::empty();
+        let out = dir.path().join("out");
+        let (report, _) = convert_export(
+            dir.path(),
+            &out,
+            &book,
+            Some("UTC"),
+            &DateRange::default(),
+            ExportTransforms::none(),
+            OutputFormat::Csv,
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.conversations, 1);
+        assert_eq!(report.messages, 2);
+        // Chat id stays the full email; the CSV filename stems `@` to `_`.
+        let csv_path = out.join("bob2024_gmail_com.csv");
+        assert!(
+            csv_path.is_file(),
+            "expected email chat file; got {}",
+            out.read_dir()
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let body = fs::read_to_string(csv_path).unwrap();
+        assert!(body.contains("bob2024@gmail.com"));
+        assert!(!body.contains("12024"));
+    }
+
+    #[test]
+    fn same_text_same_second_different_senders_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir,
+            "Messages.csv",
+            "Chat Session,Message Date,Service,Type,Sender ID,Sender Name,Status,Replying to,Subject,Text,Reactions,Attachment,Attachment type\n\
+Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550111,Alice,Read,,,Same,,,\n\
+Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550122,Bob,Read,,,Same,,,\n",
+        );
+        let book = ContactsBook::empty();
+        let out = dir.path().join("out");
+        let (report, _) = convert_export(
+            dir.path(),
+            &out,
+            &book,
+            Some("UTC"),
+            &DateRange::default(),
+            ExportTransforms::none(),
+            OutputFormat::Csv,
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.messages, 2);
+        assert_eq!(report.duplicates_dropped, 0);
+    }
+
+    #[test]
+    fn output_equals_input_bails_before_cleaning() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir,
+            "Messages - Bob.csv",
+            "Chat Session,Message Date,Service,Type,Sender ID,Sender Name,Status,Replying to,Subject,Text,Reactions,Attachment,Attachment type\n\
+Bob,2020-01-01 12:00:00,SMS,Incoming,+13212462167,Bob,Read,,,Hello,,,\n",
+        );
+        let book = ContactsBook::empty();
+        let err = convert_export(
+            dir.path(),
+            dir.path(),
+            &book,
+            Some("UTC"),
+            &DateRange::default(),
+            ExportTransforms::none(),
+            OutputFormat::Csv,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must not be the same as"), "{err}");
+        // Source CSV must survive the refused run.
+        assert!(dir.path().join("Messages - Bob.csv").is_file());
     }
 }

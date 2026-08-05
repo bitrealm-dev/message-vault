@@ -6,7 +6,7 @@ use imessage_database::{
     tables::table::DEFAULT_PATH_IOS,
     util::{platform::Platform, query_context::QueryContext},
 };
-use message_vault_io_core::{LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{CancelFlag, LogSink, OutputFormat, emit_log};
 use message_ir_format::ExportTransforms;
 
 use crate::error::RuntimeError;
@@ -40,6 +40,8 @@ pub(crate) struct MailOptions {
     pub output_format: OutputFormat,
     /// Mid-run progress / warnings (GUI sink or stderr).
     pub log: Option<LogSink>,
+    /// Cooperative cancel flag, checked periodically inside long loops.
+    pub cancel: Option<CancelFlag>,
 }
 
 impl MailOptions {

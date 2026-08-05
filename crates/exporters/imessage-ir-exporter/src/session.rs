@@ -1,6 +1,9 @@
 //! Session caches (chats, handles, contacts, tapbacks).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap, HashSet},
+};
 
 use imessage_database::{
     tables::{
@@ -27,6 +30,8 @@ pub(crate) struct MailSession {
     pub real_participants: HashMap<i32, i32>,
     /// Tapbacks keyed by target message GUID → part index → reactions.
     pub tapbacks: HashMap<String, HashMap<usize, Vec<Message>>>,
+    /// Chat IDs already reported as having no handle rows (avoids log spam).
+    logged_handleless_chats: RefCell<HashSet<i32>>,
 }
 
 impl MailSession {
@@ -60,6 +65,7 @@ impl MailSession {
             real_participants,
             participants: participants_map,
             tapbacks,
+            logged_handleless_chats: RefCell::new(HashSet::new()),
             options,
             offset: get_offset(),
             data_source,
@@ -70,7 +76,21 @@ impl MailSession {
         match message.chat_id.or(message.deleted_from) {
             Some(chat_id) => {
                 if let Some(chatroom) = self.chatrooms.get(&chat_id) {
-                    self.real_chatrooms.get(&chat_id).map(|id| (chatroom, id))
+                    match self.real_chatrooms.get(&chat_id) {
+                        Some(real_id) => Some((chatroom, real_id)),
+                        // Chat row exists but has no handle rows: no chat
+                        // context is available, so messages land in ORPHANED.
+                        // Report it once per chat so users can see why.
+                        None => {
+                            if self.logged_handleless_chats.borrow_mut().insert(chat_id) {
+                                self.options.emit_log(format!(
+                                    "Chat ID {chat_id} has no participant handles; \
+                                     its messages will be exported under ORPHANED"
+                                ));
+                            }
+                            None
+                        }
+                    }
                 } else {
                     self.options
                         .emit_log(format!("Chat ID {chat_id} does not exist in chat table!"));

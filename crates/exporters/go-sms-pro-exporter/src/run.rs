@@ -82,10 +82,11 @@ fn report_summary_lines(report: &ExportReport, output: &Path) -> Vec<String> {
                 d.xml_file, d.address, d.contact_name, d.android_type, d.date_ms, d.body,
             ));
         }
-        if report.skipped_unknown_address_details.len() > 10 {
+        let extra = report.skipped_unknown_address_details.len().saturating_sub(10) as u64
+            + report.skipped_unknown_address_details_more;
+        if extra > 0 {
             lines.push(format!(
-                "    … and {} more (see skipped_invalid_address.csv)",
-                report.skipped_unknown_address_details.len() - 10
+                "    … and {extra} more (see skipped_invalid_address.csv)"
             ));
         }
     }
@@ -111,10 +112,11 @@ fn report_summary_lines(report: &ExportReport, output: &Path) -> Vec<String> {
                 d.pdu_filename, d.participants, d.is_sent as u8, d.has_from as u8, d.has_to as u8,
             ));
         }
-        if report.skipped_no_other_party_details.len() > 10 {
+        let extra = report.skipped_no_other_party_details.len().saturating_sub(10) as u64
+            + report.skipped_no_other_party_details_more;
+        if extra > 0 {
             lines.push(format!(
-                "    … and {} more (see skipped_no_party.csv)",
-                report.skipped_no_other_party_details.len() - 10
+                "    … and {extra} more (see skipped_no_party.csv)"
             ));
         }
     }

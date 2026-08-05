@@ -14,7 +14,7 @@ use sbr::{
     SbrBackupWriter, SbrMessage, default_backup_path, encode_part_data, ensure_attr, set_attr,
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -374,36 +374,70 @@ fn contact_name_hint(doc: &ConversationDocument, msg: &IrMessage) -> Option<Stri
         .filter(|s| !s.is_empty())
 }
 
+/// Rehydrate base64 `data` on MMS parts whose payloads were staged as files.
+///
+/// Parts are matched to attachments by payload digest rather than by position.
+/// The reader (`part_fields` in `message-sbr`) records the decoded payload
+/// digest as `data_sha256` on each part and drops the base64 string, and
+/// staged files are content-addressed by that same digest, so a digest lookup
+/// is exact. Positional pairing drifts whenever the part list and attachment
+/// list diverge: parts with empty or undecodable base64 never produced an
+/// attachment, and identical payloads dedupe into a single attachment that
+/// several parts share. Parts whose digest matches no attachment (e.g. media
+/// transforms rewrote the bytes and rehashed the digest) fall back to the next
+/// unconsumed attachment in list order.
 fn inject_attachment_data(
     parts: &mut [BTreeMap<String, String>],
     attachments: &[IrAttachment],
     output_dir: &Path,
 ) -> Result<()> {
-    let mut att_idx = 0usize;
+    // Digest → attachment index for exact matching. An attachment is keyed by
+    // the digest that named its staged file; transforms clear it and rehash,
+    // which is exactly when the fallback below takes over.
+    let mut by_digest: HashMap<&str, usize> = HashMap::new();
+    let mut consumed = vec![false; attachments.len()];
+    for (index, att) in attachments.iter().enumerate() {
+        if let Some(digest) = att.digest_sha256.as_deref().filter(|d| !d.is_empty()) {
+            by_digest.entry(digest).or_insert(index);
+        }
+    }
+    // First unconsumed attachment for the positional fallback.
+    let mut next_unconsumed = 0usize;
     for part in parts.iter_mut() {
-        let ct = part.get("ct").map(|s| s.as_str()).unwrap_or("");
+        let ct = part.get("ct").map(String::as_str).unwrap_or("");
         let is_text = ct.starts_with("text/") || ct.eq_ignore_ascii_case("application/smil");
-        let has_data = part
-            .get("data")
-            .map(|s| !s.trim().is_empty() && !s.eq_ignore_ascii_case("null"))
-            .unwrap_or(false);
-        if is_text || has_data {
-            // Drop CSV-only digest placeholders.
-            part.remove("data_len");
-            part.remove("data_sha256");
-            part.remove("data_decode_error");
-            continue;
-        }
-        if att_idx >= attachments.len() {
-            part.remove("data_len");
-            part.remove("data_sha256");
-            continue;
-        }
-        let bytes = load_attachment_bytes_strict(&attachments[att_idx], output_dir)?;
-        att_idx += 1;
+        let decode_error = part.get("data_decode_error").is_some_and(|v| v == "true");
+        let digest = part.get("data_sha256").cloned();
+        // Drop CSV-only digest placeholders.
         part.remove("data_len");
         part.remove("data_sha256");
         part.remove("data_decode_error");
+        if is_text || decode_error || digest.as_deref().is_none_or(|s| s.trim().is_empty()) {
+            // Text parts carry their own text. Parts whose base64 was empty or
+            // undecodable have no staged attachment; leave `data` unset instead
+            // of consuming another part's attachment.
+            continue;
+        }
+        let index = match by_digest.get(digest.as_deref().unwrap_or("")).copied() {
+            Some(index) => Some(index),
+            None => {
+                // No exact digest match (attachment rewritten by a media
+                // transform, or attachment list shorter than the part list).
+                while next_unconsumed < attachments.len() && consumed[next_unconsumed] {
+                    next_unconsumed += 1;
+                }
+                (next_unconsumed < attachments.len()).then(|| {
+                    let index = next_unconsumed;
+                    next_unconsumed += 1;
+                    index
+                })
+            }
+        };
+        let Some(index) = index else {
+            continue;
+        };
+        consumed[index] = true;
+        let bytes = load_attachment_bytes_strict(&attachments[index], output_dir)?;
         if !bytes.is_empty() {
             set_attr(part, "data", encode_part_data(&bytes));
         }

@@ -2,7 +2,7 @@
 
 use crate::jid::{chat_id_from_jid, is_group_jid, jid_to_e164};
 use crate::parse::{
-    ChatJson, MessageJson, load_chat_store, media_path, message_text, timestamp_secs,
+    ChatJson, MessageJson, load_chat_store, media_path, message_text, timestamp_ms, timestamp_secs,
 };
 use anyhow::{Context, Result};
 use message_csv::{DateRange, format_local_ts, json_cell, stable_guid};
@@ -33,6 +33,7 @@ use serde_json::Map;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const EXPORT_SOURCE: &str = "whatsapp";
@@ -64,7 +65,8 @@ struct PendingAttachment {
 
 #[derive(Debug)]
 struct PendingMessage {
-    sort_key: f64,
+    /// Unix milliseconds; same-second ties are broken by `key_id` during sort.
+    sort_key: i64,
     is_from_me: bool,
     sender_handle: String,
     sender_display_name: String,
@@ -256,7 +258,7 @@ fn ingest_chat(
         };
 
         pending.messages.push(PendingMessage {
-            sort_key: secs as f64,
+            sort_key: timestamp_ms(ts_raw),
             is_from_me,
             sender_handle,
             sender_display_name,
@@ -287,19 +289,13 @@ fn resolve_sender(
         return (String::new(), String::new());
     }
     if group {
-        let handle = msg
-            .sender
-            .as_deref()
-            .and_then(jid_to_e164)
-            .or_else(|| msg.sender.clone())
-            .unwrap_or_default();
-        let display = msg
-            .sender
-            .as_deref()
-            .filter(|s| jid_to_e164(s).is_none())
-            .unwrap_or("")
-            .to_string();
-        (handle, display)
+        // Real JID / phone sender → E.164 handle. Display-name senders (e.g. a
+        // group member's name) leave the handle empty; only the display name is set.
+        let sender = msg.sender.as_deref().unwrap_or_default();
+        match jid_to_e164(sender) {
+            Some(e164) => (e164, String::new()),
+            None => (String::new(), sender.to_string()),
+        }
     } else {
         let handle = if chat_id.starts_with('+') {
             chat_id.to_string()
@@ -383,11 +379,8 @@ fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson
         return base;
     }
     let suffix = key_id_string(msg);
-    let short = if suffix.len() > 12 {
-        &suffix[..12]
-    } else {
-        &suffix
-    };
+    // Truncate at a UTF-8 char boundary (never byte-slice a String).
+    let short: String = suffix.chars().take(12).collect();
     format!("{chat_stem}_{short}_{original}")
 }
 
@@ -406,9 +399,18 @@ fn sanitize_att_stem(chat_id: &str) -> String {
 }
 
 fn file_sha256(path: &Path) -> Result<String> {
-    let bytes = fs::read(path)?;
+    // Stream in 64KB chunks so large media never loads fully into RAM.
+    let file = fs::File::open(path)?;
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -444,11 +446,11 @@ fn reactions_json(v: &serde_json::Value) -> String {
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     convo.messages.sort_by(|a, b| {
         a.sort_key
-            .partial_cmp(&b.sort_key)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .cmp(&b.sort_key)
+            .then_with(|| a.key_id.cmp(&b.key_id))
     });
     convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key as i64).is_some() {
+        if format_local_ts(m.sort_key / 1000).is_some() {
             true
         } else {
             report.skipped_invalid_date += 1;
@@ -490,13 +492,16 @@ fn pending_to_document(
         } else {
             report.received += 1;
         }
-        let secs = msg.sort_key as i64;
+        let secs = msg.sort_key / 1000;
         let (ts_local, _, _) = format_local_ts(secs).expect("timestamp validated above");
-        let digests: Vec<String> = msg
+        let mut digests: Vec<String> = msg
             .attachments
             .iter()
             .map(|a| a.digest_hex.clone())
             .collect();
+        // key_id uniquely identifies a WhatsApp message; feed it into the GUID
+        // so same-second messages with identical text get distinct GUIDs.
+        digests.push(msg.key_id.clone());
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let attachments: Vec<IrAttachment> = msg
             .attachments
@@ -571,7 +576,7 @@ fn pending_to_document(
 
         messages.push(IrMessage {
             guid,
-            timestamp_unix_ms: secs.saturating_mul(1000),
+            timestamp_unix_ms: msg.sort_key,
             direction: if msg.is_from_me {
                 IrDirection::Outgoing
             } else {

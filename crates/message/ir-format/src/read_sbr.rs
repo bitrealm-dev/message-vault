@@ -140,7 +140,14 @@ fn stage_attachments(
             if let Some(dir) = options.attachments_dir {
                 let path = dir.join(&blob.filename);
                 if !path.exists() {
-                    fs::write(&path, blob.data.as_ref())?;
+                    // Stage atomically: a crash mid-write would otherwise leave
+                    // a truncated file under the content-addressed name, which
+                    // every later run would see as already staged and reuse
+                    // forever. Media transforms skip *.tmp names, and the next
+                    // run's cleanup drops the whole attachments/ directory.
+                    let tmp = path.with_extension("tmp");
+                    fs::write(&tmp, blob.data.as_ref())?;
+                    fs::rename(&tmp, &path)?;
                     report.attachments_saved += 1;
                 }
             }
@@ -373,8 +380,22 @@ pub fn read_sbr_documents(
     let paths = collect_xml_paths(input)?;
     let mut owner_phones = options.owner_phones.to_vec();
     if owner_phones.is_empty() {
+        // Owner inference is best-effort: the main pass below already reports
+        // per-file parse errors, so one malformed file must not abort the whole
+        // export. Only give up when no file could be parsed at all.
+        let mut parse_errors = Vec::new();
         for path in &paths {
-            owner_phones.extend(infer_owner_phones(path)?);
+            match infer_owner_phones(path) {
+                Ok(phones) => owner_phones.extend(phones),
+                Err(error) => parse_errors.push(format!("{}: {error:#}", path.display())),
+            }
+        }
+        if owner_phones.is_empty() && !parse_errors.is_empty() && parse_errors.len() == paths.len()
+        {
+            bail!(
+                "could not infer owner phones from any input file ({}), and none were supplied",
+                parse_errors.join("; ")
+            );
         }
         owner_phones.sort();
         owner_phones.dedup();
@@ -476,5 +497,65 @@ mod tests {
         assert!(xml.contains(r#"extra="yes""#));
         assert!(xml.contains(r#"data="aGVsbG8=""#));
         assert!(xml.contains(r#"charset="106""#));
+    }
+
+    #[test]
+    fn write_back_matches_parts_to_attachments_by_digest() {
+        // An empty-data part must not consume the next part's attachment, and
+        // identical payloads dedupe into one staged file that both parts share.
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input.xml");
+        fs::write(
+            &input,
+            r#"<smses><mms date="1400773400000" msg_box="2" address="+15555550101"><parts><part seq="0" ct="image/jpeg" name="empty.jpg" data=""/><part seq="1" ct="image/jpeg" name="pic.jpg" data="aGVsbG8="/><part seq="2" ct="image/jpeg" name="pic-copy.jpg" data="aGVsbG8="/></parts><addrs><addr address="+15555550100" type="137" charset="106"/><addr address="+15555550101" type="151"/></addrs></mms></smses>"#,
+        )
+        .unwrap();
+        let output = dir.path().join("output");
+        let stage = output.join("attachments");
+        let (docs, report) = read_sbr_documents(
+            &input,
+            SbrReadOptions {
+                owner_phones: &[],
+                date_range: &DateRange::default(),
+                attachments_dir: Some(&stage),
+                copy_attachments: true,
+                keep_attachment_bytes: false,
+                cancel: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.attachments_saved, 1);
+        let mut writer = SbrBackupSession::create(&output).unwrap();
+        writer.append_document(&docs[0]).unwrap();
+        let xml = fs::read_to_string(writer.finish().unwrap()).unwrap();
+        // Both payload parts carry the decoded bytes; the empty part does not.
+        assert_eq!(xml.match_indices(r#"data="aGVsbG8=""#).count(), 2);
+    }
+
+    #[test]
+    fn owner_inference_tolerates_malformed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(
+            input.join("ok.xml"),
+            r#"<smses><mms date="1400773400000" msg_box="2" address="+15555550101"><parts/><addrs><addr address="+15555550100" type="137"/><addr address="+15555550101" type="151"/></addrs></mms></smses>"#,
+        )
+        .unwrap();
+        fs::write(input.join("broken.xml"), "<smses><mms date=").unwrap();
+        let (docs, report) = read_sbr_documents(
+            &input,
+            SbrReadOptions {
+                owner_phones: &[],
+                date_range: &DateRange::default(),
+                attachments_dir: None,
+                copy_attachments: false,
+                keep_attachment_bytes: false,
+                cancel: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(docs[0].export.owner_handle.as_deref(), Some("+15555550100"));
+        assert_eq!(report.errors.len(), 1);
     }
 }

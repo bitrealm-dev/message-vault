@@ -153,5 +153,6 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         },
         output_format: config.output_format,
         log: config.log.clone(),
+        cancel: config.cancel.clone(),
     })
 }

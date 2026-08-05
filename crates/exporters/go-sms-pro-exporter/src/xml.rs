@@ -1,5 +1,6 @@
 //! Parse GO SMS Pro `gosms_sys*.xml` SMS backups.
 
+use crate::emit::MAX_SKIP_DETAILS;
 use crate::phone::parse_google_voice_voicemail_caller;
 use go_sms_mms::decode_gosms_emojis;
 use anyhow::{Context, Result};
@@ -54,7 +55,9 @@ pub(crate) struct XmlParseStats {
     pub skipped_invalid_date: u64,
     pub skipped_unknown_type: u64,
     pub skipped_unknown_address: u64,
+    /// Capped at [`MAX_SKIP_DETAILS`] entries; overflow counted here.
     pub skipped_unknown_address_details: Vec<SkippedBadAddrDetail>,
+    pub skipped_unknown_address_details_more: u64,
 }
 
 pub(crate) fn parse_xml_file(path: &Path) -> Result<(Vec<XmlMessage>, XmlParseStats)> {
@@ -83,7 +86,12 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
         let contact = fields.get("contactName").cloned().unwrap_or_default();
         let body_raw = fields.get("body").map(String::as_str).unwrap_or("");
         let body = decode_gosms_emojis(body_raw);
-        let date_ms = fields.get("date").cloned().unwrap_or_else(|| "0".into());
+        // A missing `<date>` must not become a fake 1970-01-01 row: all such
+        // messages would share timestamp 0 and could falsely deduplicate.
+        let Some(date_ms) = fields.get("date").cloned() else {
+            stats.skipped_invalid_date += 1;
+            continue;
+        };
         let timestamp_secs = match date_ms.parse::<f64>() {
             Ok(ms) => ms / 1000.0,
             Err(_) => {
@@ -187,16 +195,20 @@ fn push_bad_addr(
 ) {
     stats.skipped_unknown_address += 1;
     let body_preview: String = body.chars().take(160).collect();
-    stats
-        .skipped_unknown_address_details
-        .push(SkippedBadAddrDetail {
-            xml_file: String::new(),
-            address: fields.get("address").cloned().unwrap_or_default(),
-            contact_name: contact.to_string(),
-            android_type: typ.to_string(),
-            date_ms: date_ms.to_string(),
-            body: body_preview,
-        });
+    if stats.skipped_unknown_address_details.len() < MAX_SKIP_DETAILS {
+        stats
+            .skipped_unknown_address_details
+            .push(SkippedBadAddrDetail {
+                xml_file: String::new(),
+                address: fields.get("address").cloned().unwrap_or_default(),
+                contact_name: contact.to_string(),
+                android_type: typ.to_string(),
+                date_ms: date_ms.to_string(),
+                body: body_preview,
+            });
+    } else {
+        stats.skipped_unknown_address_details_more += 1;
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +244,32 @@ mod tests {
         assert_eq!(msgs[0].text, "hello 😂");
         assert_eq!(msgs[0].other_digits, "4075551234");
         assert!(msgs[1].is_from_me);
+    }
+
+    #[test]
+    fn missing_date_skips_message() {
+        let xml = r#"<?xml version="1.0"?>
+<GoSms>
+  <SMS>
+    <address>+14075551234</address>
+    <contactName>Alice</contactName>
+    <type>1</type>
+    <body>no date here</body>
+  </SMS>
+  <SMS>
+    <address>+14075551234</address>
+    <contactName>Alice</contactName>
+    <date>1400773261000</date>
+    <type>1</type>
+    <body>dated</body>
+  </SMS>
+</GoSms>"#;
+        let (msgs, stats) = parse_xml_str(xml).unwrap();
+        assert_eq!(stats.messages, 2);
+        assert_eq!(stats.skipped_invalid_date, 1);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "dated");
+        assert!(msgs[0].date_ms.starts_with("1400773261"));
     }
 
     #[test]

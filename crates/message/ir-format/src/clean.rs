@@ -17,7 +17,8 @@ pub fn write_export_sentinel(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Delete previous CSV / JSON / JSONL / meta / `smses.xml` / temps, then mail archives.
+/// Delete previous CSV / JSON / JSONL / meta / `smses.xml` / temps / staged
+/// attachments, then mail archives.
 ///
 /// Only cleans directories that contain the sentinel file `.message-vault-export`
 /// or are empty or already contain recognizable export artifacts. This prevents
@@ -66,6 +67,19 @@ pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
             fs::remove_file(&path)
                 .with_context(|| format!("remove previous {}", path.display()))?;
         }
+    }
+    // Drop staged attachments from previous runs. Content-addressed digest
+    // files that the new run does not reference would otherwise accumulate
+    // forever, and media transforms reprocess every file under attachments/,
+    // so stale files can fail re-runs. Every caller re-stages (or re-copies)
+    // the attachments it needs after this function.
+    let attachments = output_dir.join("attachments");
+    if attachments.is_dir() {
+        fs::remove_dir_all(&attachments)
+            .with_context(|| format!("remove previous {}", attachments.display()))?;
+    } else if attachments.is_file() {
+        fs::remove_file(&attachments)
+            .with_context(|| format!("remove previous {}", attachments.display()))?;
     }
     clean_previous_mail_output(output_dir)?;
     // Write the sentinel so future runs know this is a safe export directory.
