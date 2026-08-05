@@ -124,7 +124,6 @@ pub struct ImportStats {
     pub contacts_skipped: bool,
     pub messages_deduped: u64,
     pub messages_appended: u64,
-    pub unknown_contacts: u64,
     pub mode: String,
 }
 
@@ -446,21 +445,6 @@ pub fn import_jsonl_files_on_conn(
     }
 
     schema::clear_staging_for_account(conn, opts.account_id)?;
-
-    if opts.backfill_contacts {
-        let unknown = contacts::ensure_unknown_contacts(conn, opts.account_id)?;
-        stats.unknown_contacts = unknown;
-        if unknown > 0 {
-            println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
-        }
-        let named =
-            contacts::fill_empty_contact_names_from_participants(conn, opts.account_id)?;
-        if named > 0 {
-            println!(
-                "  sql:      filled names on {named} contact(s) from participant display names"
-            );
-        }
-    }
 
     stats.assets_copied = asset_stats.copied;
     stats.assets_deduped = asset_stats.deduped;

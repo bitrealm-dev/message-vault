@@ -246,12 +246,6 @@ fn main() -> Result<()> {
             println!("  assets copied: {}", stats.import.assets_copied);
             println!("  assets deduped:{}", stats.import.assets_deduped);
             println!("  assets missing:{}", stats.import.assets_missing);
-            if stats.import.unknown_contacts > 0 {
-                println!(
-                    "  unknown contacts created: {}",
-                    stats.import.unknown_contacts
-                );
-            }
             if let Some(d) = stats.dedupe {
                 println!("Cross-source dedupe");
                 println!("  keys filled:   {}", d.keys_filled);
