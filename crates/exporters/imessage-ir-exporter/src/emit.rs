@@ -220,6 +220,7 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
                     .map(|p| IrParticipant {
                         handle: p.handle,
                         display_name: p.display_name,
+                        handle_type: None,
                     })
                     .collect(),
                 stats: Default::default(),

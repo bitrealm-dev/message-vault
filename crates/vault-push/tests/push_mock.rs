@@ -41,6 +41,7 @@ fn sample_doc() -> ConversationDocument {
             participants: vec![IrParticipant {
                 handle: "+15555550101".into(),
                 display_name: Some("Sam".into()),
+                handle_type: None,
             }],
             stats: ConversationStats::default(),
         },

@@ -626,6 +626,7 @@ fn pending_to_document(
         .map(|h| IrParticipant {
             handle: h.clone(),
             display_name: None,
+            handle_type: None,
         })
         .collect();
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
@@ -637,6 +638,7 @@ fn pending_to_document(
                 .map(|m| m.extra_str("contact_name").trim())
                 .find(|n| !n.is_empty())
                 .map(str::to_string),
+            handle_type: None,
         });
     }
     let packaging_stem_suffix = imazing_packaging_stem_suffix(convo.extra_str("source_kind"));

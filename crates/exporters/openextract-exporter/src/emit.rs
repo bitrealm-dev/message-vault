@@ -312,6 +312,7 @@ fn pending_to_document(
         vec![IrParticipant {
             handle: chat_id.to_string(),
             display_name: contact_name,
+            handle_type: None,
         }]
     };
 

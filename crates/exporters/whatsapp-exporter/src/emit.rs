@@ -454,6 +454,7 @@ fn pending_to_document(
         .map(|h| IrParticipant {
             handle: h.clone(),
             display_name: None,
+            handle_type: None,
         })
         .collect();
 
