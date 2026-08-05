@@ -38,6 +38,17 @@ impl PhoneRegion {
             _ => None,
         }
     }
+
+    /// Region for a loader-side raw value: a `+`-prefixed value is already
+    /// unambiguous E.164 (international rules apply); anything else is treated
+    /// as a US national number (this crate's home region).
+    pub fn for_raw(raw: &str) -> Self {
+        if raw.trim().starts_with('+') {
+            Self::International
+        } else {
+            Self::Usa
+        }
+    }
 }
 
 /// Strip non-digits and a leading US country code `1`.
@@ -128,6 +139,34 @@ pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
                 "international needs 8–15 digits after +".into()
             } else {
                 "unexpected: looked certain".into()
+            }
+        }
+    }
+}
+
+/// Result of [`normalize_guarded`]: the canonical value plus, when the value
+/// is ambiguous, a human-readable reason for the review note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardedNormalize {
+    pub normalized: String,
+    pub note: Option<String>,
+}
+
+/// E.164 when unambiguous for `region`, else digits-as-is plus a note.
+///
+/// Policy: normalize only when the parse is certain; otherwise store the
+/// digits without fabricating a `+` prefix (a trunk-zero national number like
+/// `020 7946 0000` would otherwise become the invalid `+02079460000`) and
+/// flag the value with a human-readable reason so the vault can surface it
+/// for review.
+pub fn normalize_guarded(raw: &str, region: PhoneRegion) -> GuardedNormalize {
+    match normalize_certain(raw, region) {
+        Some(e164) => GuardedNormalize { normalized: e164, note: None },
+        None => {
+            let digits = sanitize_number(raw).unwrap_or_default();
+            GuardedNormalize {
+                normalized: digits.clone(),
+                note: Some(normalize_uncertain_reason(raw, region)),
             }
         }
     }
@@ -272,6 +311,50 @@ mod tests {
             "too short for USA certainty"
         );
         assert_eq!(normalize_certain("+442071838750", PhoneRegion::Usa), None);
+    }
+
+    #[test]
+    fn guarded_certain_usa() {
+        let g = normalize_guarded("5555550100", PhoneRegion::Usa);
+        assert_eq!(g.normalized, "+15555550100");
+        assert_eq!(g.note, None);
+        let g = normalize_guarded("15555550100", PhoneRegion::Usa);
+        assert_eq!(g.normalized, "+15555550100");
+        assert_eq!(g.note, None);
+    }
+
+    #[test]
+    fn guarded_certain_plus_prefixed() {
+        let g = normalize_guarded("+44 20 7183 8750", PhoneRegion::International);
+        assert_eq!(g.normalized, "+442071838750");
+        assert_eq!(g.note, None);
+    }
+
+    #[test]
+    fn guarded_trunk_zero_stays_digits_with_note() {
+        // `020 7946 0000` (11 digits not starting with 1): never `+02079460000`.
+        let g = normalize_guarded("020 7946 0000", PhoneRegion::Usa);
+        assert_eq!(g.normalized, "02079460000");
+        assert_eq!(
+            g.note.as_deref(),
+            Some("USA needs 10 digits or 11 starting with 1")
+        );
+        // `442079460000` without `+`: ambiguous in both regions.
+        let g = normalize_guarded("442079460000", PhoneRegion::International);
+        assert_eq!(g.normalized, "442079460000");
+        assert_eq!(
+            g.note.as_deref(),
+            Some("international mode requires a leading +")
+        );
+    }
+
+    #[test]
+    fn guarded_region_for_raw() {
+        assert_eq!(PhoneRegion::for_raw("+15555550100"), PhoneRegion::International);
+        assert_eq!(PhoneRegion::for_raw("  +44 20 7183 8750 "), PhoneRegion::International);
+        assert_eq!(PhoneRegion::for_raw("5555550100"), PhoneRegion::Usa);
+        assert_eq!(PhoneRegion::for_raw("020 7946 0000"), PhoneRegion::Usa);
+        assert_eq!(PhoneRegion::for_raw(""), PhoneRegion::Usa);
     }
 
     #[test]

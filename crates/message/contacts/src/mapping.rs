@@ -79,7 +79,10 @@ impl NameMapping {
                     let Some(digits) = sanitize_number(handle_raw) else {
                         continue;
                     };
-                    phone::to_e164(&digits)
+                    // Guarded policy: digits-as-is when the value is ambiguous
+                    // (never fabricate a `+0…` value); the note is produced
+                    // server-side, where the handles table stores it.
+                    phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized
                 }
                 HandleType::Email => handle_raw.trim().to_lowercase(),
                 HandleType::Username | HandleType::Other => handle_raw.trim().to_string(),

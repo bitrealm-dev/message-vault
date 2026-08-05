@@ -126,7 +126,12 @@ impl ContactsBook {
             let Some(digits) = sanitize_number(phone) else {
                 continue;
             };
-            let normalized = phone::to_e164(&digits);
+            // Guarded policy: digits-as-is when the value is ambiguous for the
+            // US-centric book (a trunk-zero `020 7946 0000` must never become
+            // the invalid `+02079460000`). The review note is produced
+            // server-side, where the handles table stores it.
+            let normalized =
+                phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
             if !key.is_empty() {
                 self.by_name
                     .entry(key.clone())
@@ -175,7 +180,7 @@ fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
     match handle_type {
         HandleType::Phone => {
             sanitize_number(raw)
-                .map(|d| phone::to_e164(&d))
+                .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
                 .unwrap_or_else(|| raw.to_string())
         }
         HandleType::Email => raw.trim().to_lowercase(),
