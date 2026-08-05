@@ -7,6 +7,7 @@ What each converter writes (and where it falls short). Marks: **yes** / **partia
 All converters build a **common message** per conversation (`ConversationDocument`, schema v3 in [`message-ir`](../../crates/message/ir/)), then project the user-picked format via `FormatSink` in [`message-ir-format`](../../crates/message/ir-format/) (default **JSON**). When packaging is CSV, columns follow [`CSV_HEADERS`](../../crates/message/ir-format/src/write.rs). Across the board:
 
 - The peer is `chat_identifier` — there is **no** dedicated receiver-phone column
+- Every participant is a **typed handle**: `handle_type` (`phone` / `email` / `username` / `other`) on each JSON/JSONL participant and inside `participants_json`; the CSV `handle_type` column carries the sender's type, inferred from the handle when the source doesn't supply it
 - Direction is `direction` (`incoming` / `outgoing`) — there is **no** `is_from_me` column
 - Outgoing rows fill `sender_handle` / `sender_display_name` from owner identity (`owner_handle` / `owner_display_name` columns)
 - Vendor leftovers live in `source_fields_json` (not `xml_fields_json`)
@@ -43,12 +44,18 @@ All converters build a **common message** per conversation (`ConversationDocumen
 | | GO SMS Pro | SMS Backup & Restore | SMS Backup+ | OpenExtract | iMazing | WhatsApp | iMessage |
 |---|---|---|---|---|---|---|---|
 | **WhatsApp** | no | no | no | no | yes (CSV) | yes (native DB) | no |
+| **Discord** | no | no | no | no | no | no | no |
+| **Signal** | no | no | no | no | no | no | no |
+| **Telegram** | no | no | no | no | no | no | no |
+| **Slack** | no | no | no | no | no | no | no |
 | **`participants_json`** | yes (unified CSV) | yes | yes | yes | yes | yes | yes |
 | **Reactions / tapbacks** | no | no | no | no | free-text in `source_fields_json` | reactions in `source_fields_json` | structured `tapbacks_json` |
 | **Edits / replies** | no | no | no | no | raw dates / free-text | reply in `source_fields_json` | `edits_json` / thread GUIDs |
 | **Source extras** | `pdu_*` (in `source_fields_json`) | `subject`, `message_kind`, `source_fields_json` | `smssync_id`, `eml_path` (in `source_fields_json`) | `source_kind`, `has_attachments` (in `source_fields_json`) | vendor cols (in `source_fields_json`) | `jid` / `key_id` (in `source_fields_json`) | `parts_json`, `app_json`, … |
 | **Timezone** | XML/PDU epoch | XML epoch | EML dates | vendor `Date` | naive + `--timezone` | epoch from wtsexporter | DB epoch + offset |
 | **Skip diagnostics** | `skipped_*.csv` (invalid address, empty PDU, no party) | counters on stderr | counters on stderr | unresolved phone count | counters on stderr | counters on stderr | counters on stderr |
+
+Discord, Signal, Telegram, and Slack are recognized services in the shared model (`IrService`), but no exporter parses those backup sources yet — they are future sources, listed as **no** until an exporter lands.
 
 ## Technical docs
 
