@@ -57,6 +57,35 @@ impl IrConversationType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HandleType {
+    Phone,
+    Email,
+    Username,
+    Other,
+}
+
+impl HandleType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Email => "email",
+            Self::Username => "username",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "phone" => Self::Phone,
+            "email" => Self::Email,
+            "username" => Self::Username,
+            _ => Self::Other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationMeta {
     pub chat_identifier: String,
@@ -78,6 +107,8 @@ pub struct ConversationStats {
 pub struct IrParticipant {
     pub handle: String,
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_type: Option<HandleType>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +119,10 @@ pub enum IrService {
     IMessage,
     Whatsapp,
     Rcs,
+    Discord,
+    Signal,
+    Telegram,
+    Slack,
     Unknown,
 }
 
@@ -98,6 +133,10 @@ impl IrService {
             Self::IMessage => "imessage",
             Self::Whatsapp => "whatsapp",
             Self::Rcs => "rcs",
+            Self::Discord => "discord",
+            Self::Signal => "signal",
+            Self::Telegram => "telegram",
+            Self::Slack => "slack",
             Self::Unknown => "unknown",
         }
     }
@@ -108,6 +147,10 @@ impl IrService {
             "imessage" => Self::IMessage,
             "whatsapp" => Self::Whatsapp,
             "rcs" => Self::Rcs,
+            "discord" => Self::Discord,
+            "signal" => Self::Signal,
+            "telegram" => Self::Telegram,
+            "slack" => Self::Slack,
             _ => Self::Unknown,
         }
     }
