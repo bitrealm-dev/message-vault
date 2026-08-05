@@ -259,6 +259,7 @@ dependencies = [
  "anyhow",
  "clap",
  "csv",
+ "message-ir",
  "phone",
 ]
 
@@ -821,6 +822,7 @@ name = "phone"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "message-ir",
 ]
 
 [[package]]

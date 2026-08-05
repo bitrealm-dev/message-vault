@@ -3,9 +3,10 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone, Utc};
 use message_ir::{
-    ConversationHeader, IrAttachment, IrDirection, IrImessage, IrMessage, IrMessageKind, IrService,
-    SCHEMA_VERSION,
+    ConversationHeader, HandleType, IrAttachment, IrDirection, IrImessage, IrMessage,
+    IrMessageKind, IrService, SCHEMA_VERSION,
 };
+use phone::sanitize_number;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -32,6 +33,8 @@ pub struct ConversationRecord {
 pub struct ParticipantRecord {
     pub handle: String,
     pub name_hint: Option<String>,
+    #[allow(dead_code)] // consumed by import-time handle resolution
+    pub handle_type: Option<HandleType>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +44,8 @@ pub struct MessageRecord {
     pub timestamp_utc: Option<String>,
     pub is_from_me: bool,
     pub sender: Option<String>,
+    #[allow(dead_code)] // sender identity for import-time handle resolution
+    pub sender_handle_type: Option<HandleType>,
     #[allow(dead_code)] // retained from IR for future per-message service UI
     pub service: Option<String>,
     pub subject: Option<String>,
@@ -150,6 +155,7 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
             .map(|p| ParticipantRecord {
                 handle: p.handle.clone(),
                 name_hint: p.display_name.clone(),
+                handle_type: p.handle_type,
             })
             .collect(),
         exported_at: None,
@@ -208,6 +214,11 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         } else {
             msg.sender_handle.clone()
         },
+        sender_handle_type: if is_from_me {
+            None
+        } else {
+            infer_sender_handle_type(msg.sender_handle.as_deref(), msg.service)
+        },
         service: Some(service_label(msg.service)),
         subject: msg.subject.clone().filter(|s| !s.is_empty()),
         text,
@@ -223,6 +234,31 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
             .and_then(|i| i.num_replies.map(i64::from))
             .unwrap_or(0),
     })
+}
+
+/// Infer the sender's handle type for import records.
+///
+/// IR participants carry an explicit `handle_type` when the source knows it;
+/// message rows only carry a raw sender handle, so the type is inferred here
+/// from the handle shape plus the service. Handles containing `@` are emails;
+/// SMS/iMessage/WhatsApp/RCS handles that sanitize as phone numbers are
+/// phones; anything else is `Other`.
+fn infer_sender_handle_type(sender_handle: Option<&str>, service: IrService) -> Option<HandleType> {
+    let handle = sender_handle?.trim();
+    if handle.is_empty() {
+        return None;
+    }
+    if handle.contains('@') {
+        return Some(HandleType::Email);
+    }
+    if matches!(
+        service,
+        IrService::Sms | IrService::IMessage | IrService::Whatsapp | IrService::Rcs
+    ) && sanitize_number(handle).is_some()
+    {
+        return Some(HandleType::Phone);
+    }
+    Some(HandleType::Other)
 }
 
 fn attachment_from_ir(a: &IrAttachment) -> AttachmentRecord {
@@ -288,6 +324,10 @@ fn service_label(service: IrService) -> String {
         IrService::IMessage => "iMessage".into(),
         IrService::Whatsapp => "WhatsApp".into(),
         IrService::Rcs => "RCS".into(),
+        IrService::Discord => "Discord".into(),
+        IrService::Signal => "Signal".into(),
+        IrService::Telegram => "Telegram".into(),
+        IrService::Slack => "Slack".into(),
         IrService::Unknown => "Unknown".into(),
     }
 }
@@ -323,6 +363,7 @@ mod tests {
                 assert!(!m.is_from_me);
                 assert_eq!(m.text.as_deref(), Some("hello"));
                 assert_eq!(m.service.as_deref(), Some("SMS"));
+                assert_eq!(m.sender_handle_type, Some(HandleType::Phone));
                 assert!(m.tapbacks.is_empty());
                 assert!(!m.is_reply);
             }
@@ -358,5 +399,26 @@ mod tests {
             ExportRecord::Conversation(c) => assert_eq!(c.chat_identifier, "+15555550102"),
             _ => panic!("expected conversation"),
         }
+    }
+
+    #[test]
+    fn infers_sender_handle_type_from_handle_and_service() {
+        assert_eq!(
+            infer_sender_handle_type(Some("alice@example.com"), IrService::Unknown),
+            Some(HandleType::Email)
+        );
+        assert_eq!(
+            infer_sender_handle_type(Some("+15555550101"), IrService::Sms),
+            Some(HandleType::Phone)
+        );
+        assert_eq!(
+            infer_sender_handle_type(Some("+15555550101"), IrService::Signal),
+            Some(HandleType::Other)
+        );
+        assert_eq!(
+            infer_sender_handle_type(Some("alice_discord"), IrService::Discord),
+            Some(HandleType::Other)
+        );
+        assert_eq!(infer_sender_handle_type(None, IrService::Sms), None);
     }
 }
