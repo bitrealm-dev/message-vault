@@ -92,7 +92,8 @@ fn main() -> Result<()> {
         inputs: cli.input.into_iter().collect(),
         output: common.output.clone(),
         date_range,
-        contacts: None,
+        timezone: None,
+        contacts: common.contacts_config(),
         obfuscate: common.obfuscate_config(),
         media: MediaConfig {
             mode: common.media_mode,

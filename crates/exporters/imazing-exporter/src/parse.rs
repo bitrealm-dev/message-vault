@@ -1,6 +1,7 @@
 //! Parse iMazing Messages and WhatsApp CSV exports.
 
 use anyhow::{Context, Result, bail};
+use message_vault_io_core::discover_files;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -62,7 +63,22 @@ pub(crate) fn discover_csv_files(input: &Path) -> Result<Vec<DiscoveredCsv>> {
     }
 
     let mut files = Vec::new();
-    walk_dir(input, &mut files)?;
+    let paths = discover_files(input, &|p| {
+        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        let lower = name.to_ascii_lowercase();
+        lower.ends_with(".csv")
+            // Skip Contacts exports and attachment sidecars by name.
+            && !lower.starts_with("contacts")
+            && !lower.contains("attachment")
+    })
+    .with_context(|| format!("read_dir {}", input.display()))?;
+    for path in paths {
+        if let Some(kind) = classify_imazing_csv(&path)? {
+            files.push(DiscoveredCsv { path, kind });
+        }
+    }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     if files.is_empty() {
         bail!(
@@ -71,39 +87,6 @@ pub(crate) fn discover_csv_files(input: &Path) -> Result<Vec<DiscoveredCsv>> {
         );
     }
     Ok(files)
-}
-
-fn walk_dir(dir: &Path, out: &mut Vec<DiscoveredCsv>) -> Result<()> {
-    for entry in std::fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            walk_dir(&path, out)?;
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let lower = name.to_ascii_lowercase();
-        if !lower.ends_with(".csv") {
-            continue;
-        }
-        // Skip Contacts exports and attachment sidecars by name.
-        if lower.starts_with("contacts") || lower.contains("attachment") {
-            continue;
-        }
-        if let Some(kind) = classify_imazing_csv(&path)? {
-            out.push(DiscoveredCsv { path, kind });
-        }
-    }
-    Ok(())
 }
 
 fn classify_imazing_csv(path: &Path) -> Result<Option<SourceKind>> {

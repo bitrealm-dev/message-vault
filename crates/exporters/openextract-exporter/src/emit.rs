@@ -21,16 +21,10 @@ use message_ir::{
     SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{sanitize_number, to_e164};
 use serde_json::{Map, json};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "openextract";
@@ -81,9 +75,8 @@ pub(crate) fn convert_export(
     output_format: OutputFormat,
     cancel: Option<&CancelFlag>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    clean_previous_ir_output(output)?;
-    let mut sink = FormatSink::open(output, output_format, transforms)?;
+    let (mut sink, _attachments_dir) =
+        FormatSink::open_prepared(output, output_format, transforms)?;
 
     let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
@@ -411,7 +404,7 @@ fn pending_to_document(
 mod tests {
     use super::*;
     use contacts::ContactsBook;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
 

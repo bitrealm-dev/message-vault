@@ -438,6 +438,7 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(output.trim()),
             date_range: DateRange::default(),
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -488,6 +489,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range: DateRange::default(),
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -530,6 +532,7 @@ impl Form {
             inputs: Vec::new(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts: None,
             obfuscate,
             media,
@@ -574,13 +577,14 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: timezone.clone(),
             contacts,
             obfuscate,
             media,
             cancel: None,
             log: None,
             output_format: self.output_format,
-            source: SourceConfig::Imazing(ImazingConfig { timezone }),
+            source: SourceConfig::Imazing(ImazingConfig {}),
         }
     }
 
@@ -602,6 +606,7 @@ impl Form {
             inputs: input.into_iter().collect(),
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -622,6 +627,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -642,6 +648,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -669,6 +676,7 @@ impl Form {
             inputs,
             output: PathBuf::from(self.output.trim()),
             date_range,
+            timezone: None,
             contacts,
             obfuscate,
             media,
@@ -1092,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn imazing_timezone_is_source_specific() {
+    fn imazing_passes_timezone_to_config() {
         let form = Form {
             input: std::env::current_dir().unwrap().display().to_string(),
             output: "out".into(),
@@ -1101,10 +1109,10 @@ mod tests {
             ..Form::default()
         };
         let config = form.to_config(Exporter::Imazing).unwrap();
-        let SourceConfig::Imazing(imazing) = &config.source else {
+        let SourceConfig::Imazing(_) = &config.source else {
             panic!("expected Imazing");
         };
-        assert_eq!(imazing.timezone.as_deref(), Some("UTC-05:00"));
+        assert_eq!(config.timezone.as_deref(), Some("UTC-05:00"));
     }
 
     #[test]

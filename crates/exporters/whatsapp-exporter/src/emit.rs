@@ -23,12 +23,7 @@ use message_ir::{
     SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use serde_json::Map;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,15 +98,12 @@ pub(crate) fn convert_json(
 ) -> Result<(ExportReport, FormatSinkResult)> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
     // Load the chat store BEFORE cleaning the output directory. The JSON may live
-    // inside the output dir (e.g. wtsexporter_result.json) and clean_previous_ir_output
+    // inside the output dir (e.g. wtsexporter_result.json) and cleaning
     // deletes all *.json files.
     let store = load_chat_store(json_path)?;
-    clean_previous_ir_output(output)?;
     let copy_attachments = transforms.copies_attachments();
-    if copy_attachments {
-        fs::create_dir_all(output.join("attachments"))?;
-    }
-    let mut sink = FormatSink::open(output, output_format, transforms)?;
+    let (mut sink, _attachments_dir) =
+        FormatSink::open_prepared(output, output_format, transforms)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 

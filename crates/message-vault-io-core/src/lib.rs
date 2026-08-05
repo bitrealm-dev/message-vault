@@ -21,7 +21,9 @@ pub use exporters::{
     Exporter, Form, MAX_RESOLUTIONS, WHATSAPP_PLATFORMS, WhatsappPlatform, contacts_kind_from_path,
     ensure_output_dir,
 };
-pub use pipeline::{RunResult, name_stem, parse_date_range, parse_date_range_tz};
+pub use pipeline::{
+    RunResult, discover_files, name_stem, parse_date_range, parse_date_range_tz,
+};
 pub use process::{
     CancelFlag, JobError, LogSink, ProcessControl, ProcessEvent, check_cancel, emit_log,
     is_cancelled, spawn_job,

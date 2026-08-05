@@ -4,6 +4,41 @@
 //! errors at the edge when needed.
 
 use message_csv::DateRange;
+use std::path::{Path, PathBuf};
+
+/// Recursively walk `root`, collecting files that match `predicate`.
+/// Skips symlinks (both files and directories). Directories are
+/// traversed depth-first with no explicit depth limit (callers
+/// should use this on trusted local input trees).
+pub fn discover_files(
+    root: &Path,
+    predicate: &dyn Fn(&Path) -> bool,
+) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut out = Vec::new();
+    discover_files_into(root, predicate, &mut out)?;
+    Ok(out)
+}
+
+fn discover_files_into(
+    dir: &Path,
+    predicate: &dyn Fn(&Path) -> bool,
+    out: &mut Vec<PathBuf>,
+) -> Result<(), std::io::Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if ft.is_dir() {
+            discover_files_into(&path, predicate, out)?;
+        } else if ft.is_file() && predicate(&path) {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
 
 /// Result of a successful exporter [`crate`]-style `run`: human-readable log lines.
 #[derive(Debug, Default)]
@@ -64,5 +99,35 @@ mod tests {
     fn parse_date_range_rejects_bad() {
         let err = parse_date_range(Some("not-a-date"), None).unwrap_err();
         assert!(err.starts_with("invalid date range:"));
+    }
+
+    #[test]
+    fn discover_files_walks_and_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.xml"), b"<x/>").unwrap();
+        std::fs::write(root.join("b.txt"), b"x").unwrap();
+        std::fs::write(root.join("sub").join("c.xml"), b"<x/>").unwrap();
+        std::fs::write(root.join("sub").join("d.eml"), b"").unwrap();
+        let files = discover_files(root, &|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("xml")
+        })
+        .unwrap();
+        let mut names: Vec<PathBuf> = files
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_path_buf())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![PathBuf::from("a.xml"), PathBuf::from("sub").join("c.xml")]
+        );
+    }
+
+    #[test]
+    fn discover_files_missing_root_errors() {
+        let err = discover_files(Path::new("/no/such/dir"), &|_| true).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 }

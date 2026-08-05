@@ -13,10 +13,8 @@ use message_ir_format::{
     FormatSinkResult,
     SbrReadOptions,
     SbrReadReport,
-    clean_previous_ir_output,
     read_sbr_documents,
 };
-use std::fs;
 use std::path::Path;
 
 pub(crate) type ExportReport = SbrReadReport;
@@ -52,10 +50,9 @@ pub(crate) fn convert_export(
     output_format: OutputFormat,
     cancel: Option<&CancelFlag>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    fs::create_dir_all(output_dir)?;
-    clean_previous_ir_output(output_dir)?;
-    let attachments_dir = output_dir.join("attachments");
     let copy_attachments = transforms.copies_attachments();
+    let (mut sink, attachments_dir) =
+        FormatSink::open_prepared(output_dir, output_format, transforms)?;
     let (mut documents, report) = read_sbr_documents(
         input,
         SbrReadOptions {
@@ -70,7 +67,6 @@ pub(crate) fn convert_export(
     )?;
     enrich_contacts(contacts, &mut documents);
 
-    let mut sink = FormatSink::open(output_dir, output_format, transforms)?;
     for document in documents {
         sink.write_document(document)?;
     }

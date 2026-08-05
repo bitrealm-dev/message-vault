@@ -9,9 +9,10 @@ use std::path::Path;
 
 /// Load contacts, convert, apply media/obfuscate via FormatSink.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
-    let SourceConfig::Imazing(source) = &config.source else {
+    let SourceConfig::Imazing(_) = &config.source else {
         bail!("imazing-exporter requires SourceConfig::Imazing");
     };
+    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
     let (contacts_csv, contacts_vcf) = config.contacts_csv_vcf();
@@ -40,7 +41,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         input,
         &config.output,
         &book,
-        source.timezone.as_deref(),
+        config.timezone.as_deref(),
         &config.date_range,
         transforms,
         config.output_format,

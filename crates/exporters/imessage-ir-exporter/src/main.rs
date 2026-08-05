@@ -84,6 +84,7 @@ fn main() -> Result<()> {
         inputs,
         output: cli.output,
         date_range: DateRange::default(),
+        timezone: None,
         contacts: None,
         obfuscate: ObfuscateConfig::default(),
         media: MediaConfig::default(),

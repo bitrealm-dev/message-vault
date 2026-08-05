@@ -12,6 +12,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::SmsBackupRestore(source) = &config.source else {
         bail!("sms-backup-restore-exporter requires SourceConfig::SmsBackupRestore");
     };
+    message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
     let input = config.require_input().map_err(anyhow::Error::msg)?;
     let mut messages = Vec::new();
     let (contacts_path, vcf) = config.contacts_csv_vcf();

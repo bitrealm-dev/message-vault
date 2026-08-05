@@ -429,6 +429,7 @@ mod tests {
             inputs: vec![input.to_path_buf()],
             output: output.to_path_buf(),
             date_range: Default::default(),
+            timezone: None,
             contacts: None,
             obfuscate: ObfuscateConfig::default(),
             media: MediaConfig::default(),

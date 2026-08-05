@@ -70,6 +70,7 @@ fn main() -> Result<()> {
         inputs: vec![cli.input],
         output: cli.output,
         date_range: Default::default(),
+        timezone: None,
         contacts: None,
         obfuscate: ObfuscateConfig {
             enabled: cli.obfuscate || cli.obfuscate_seed.is_some(),

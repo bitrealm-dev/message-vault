@@ -1,10 +1,11 @@
 //! Unified per-export writer for IR packaging formats.
 
+use crate::clean::clean_previous_ir_output;
 use crate::export_transforms::{ExportTransforms, apply_transforms};
 use crate::write_sbr::SbrBackupSession;
 use crate::write::write_format;
 use message_ir::ConversationDocument;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use message_vault_io_core::OutputFormat;
 use media::MediaReport;
 use std::fs;
@@ -70,6 +71,28 @@ impl FormatSink {
             transforms,
             docs: Vec::new(),
         })
+    }
+
+    /// Prepare `output` for a fresh export, then open a sink into it.
+    ///
+    /// Creates the output directory, removes artifacts from previous exports
+    /// via [`clean_previous_ir_output`], creates `attachments/` when the
+    /// transforms copy media, and returns the sink together with the
+    /// attachments directory path (created or not).
+    pub fn open_prepared(
+        output: &Path,
+        format: OutputFormat,
+        transforms: ExportTransforms,
+    ) -> Result<(Self, PathBuf)> {
+        fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
+        clean_previous_ir_output(output)?;
+        let att_dir = output.join("attachments");
+        if transforms.copies_attachments() {
+            fs::create_dir_all(&att_dir)
+                .with_context(|| format!("create {}", att_dir.display()))?;
+        }
+        let sink = Self::open(output, format, transforms)?;
+        Ok((sink, att_dir))
     }
 
     pub fn format(&self) -> OutputFormat {

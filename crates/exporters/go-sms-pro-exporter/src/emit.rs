@@ -24,17 +24,12 @@ use message_ir::{
     owner_sender,
     parse_android_type,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{OwnerPhoneSet, to_e164};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const EXPORT_SOURCE: &str = "go-sms-pro";
 const EXPORT_TOOL: &str = "GO SMS Pro";
@@ -748,23 +743,15 @@ pub(crate) fn convert_export(
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
 
     // Clean previous CSV / mail artifacts (keep attachments if re-run; rewrite as needed).
-    clean_previous_ir_output(&output_dir)?;
     let copy_attachments = transforms.copies_attachments();
-    let attachments_dir = output_dir.join("attachments");
-    if copy_attachments {
-        fs::create_dir_all(&attachments_dir)?;
-    }
-    let mut sink = FormatSink::open(&output_dir, output_format, transforms)?;
+    let (mut sink, attachments_dir) =
+        FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
-    let mut xml_paths: Vec<PathBuf> = fs::read_dir(&input_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
-        })
-        .collect();
+    let mut xml_paths = message_vault_io_core::discover_files(&input_dir, &|p| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
+    })?;
     xml_paths.sort();
 
     for xml_path in xml_paths {
@@ -803,15 +790,11 @@ pub(crate) fn convert_export(
         }
     }
 
-    let mut pdu_paths: Vec<PathBuf> = fs::read_dir(&input_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("I_") && n.ends_with(".pdu"))
-        })
-        .collect();
+    let mut pdu_paths = message_vault_io_core::discover_files(&input_dir, &|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("I_") && n.ends_with(".pdu"))
+    })?;
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {

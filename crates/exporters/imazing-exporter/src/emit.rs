@@ -23,12 +23,7 @@ use message_ir::{
     SCHEMA_VERSION,
     owner_sender,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{sanitize_number, to_e164};
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
@@ -144,16 +139,11 @@ pub(crate) fn convert_export(
             input.display()
         );
     }
-    clean_previous_ir_output(&output)?;
     let copy_attachments = transforms.copies_attachments();
-    let attachments_dir = output.join("attachments");
-    if copy_attachments {
-        fs::create_dir_all(&attachments_dir)
-            .with_context(|| format!("create {}", attachments_dir.display()))?;
-    }
+    let (mut sink, attachments_dir) =
+        FormatSink::open_prepared(&output, output_format, transforms)?;
     // Walk the input tree once; per-attachment lookups hit this index.
     let attachment_index = copy_attachments.then(|| AttachmentIndex::build(&input));
-    let mut sink = FormatSink::open(&output, output_format, transforms)?;
 
     let files = discover_csv_files(&input)?;
     let mut report = ExportReport::default();

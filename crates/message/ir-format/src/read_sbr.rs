@@ -18,7 +18,7 @@ use message_ir::{
 };
 use anyhow::{Result, bail};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, check_cancel};
+use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
 use phone::{OwnerPhoneSet, to_e164};
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file,
@@ -100,14 +100,11 @@ fn collect_xml_paths(input: &Path) -> Result<Vec<PathBuf>> {
     if !input.is_dir() {
         bail!("input is not a file or directory: {}", input.display());
     }
-    let mut paths: Vec<_> = fs::read_dir(input)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
-        })
-        .collect();
+    let mut paths = discover_files(input, &|p| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
+    })?;
     paths.sort();
     if paths.is_empty() {
         bail!("no .xml files found in {}", input.display());

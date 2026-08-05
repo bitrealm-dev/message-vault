@@ -26,12 +26,7 @@ use message_ir::{
     owner_sender,
     parse_android_type,
 };
-use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    clean_previous_ir_output,
-};
+use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use phone::{OwnerPhoneSet, to_e164};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -499,32 +494,14 @@ fn collect_eml_paths<P: AsRef<Path>>(
         bail!("at least one --input path is required");
     }
 
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>, cancel: Option<&CancelFlag>) -> Result<()> {
-        for entry in fs::read_dir(dir)? {
-            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-            let entry = entry?;
-            let ft = entry.file_type()?;
-            let path = entry.path();
-            if ft.is_dir() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if matches!(name.as_str(), "duplicate" | "exclude" | ".git") {
-                    continue;
-                }
-                walk(&path, out, cancel)?;
-            } else if ft.is_file()
-                && path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
-            {
-                out.push(path);
-            }
-        }
-        Ok(())
+    // Preserve the previous behavior of never descending into these directories.
+    fn in_skipped_dir(path: &Path) -> bool {
+        path.components().any(|c| {
+            matches!(
+                c.as_os_str().to_str().map(str::to_ascii_lowercase).as_deref(),
+                Some("duplicate" | "exclude" | ".git")
+            )
+        })
     }
 
     let mut paths = Vec::new();
@@ -546,7 +523,13 @@ fn collect_eml_paths<P: AsRef<Path>>(
         if !input.is_dir() {
             bail!("input is not a file or directory: {}", input.display());
         }
-        walk(input, &mut paths, cancel)?;
+        let mut found = message_vault_io_core::discover_files(input, &|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
+        })?;
+        found.retain(|p| !in_skipped_dir(p));
+        paths.extend(found);
     }
 
     // Stable order for deterministic CSV dedupe winners when timestamps tie.
@@ -708,13 +691,9 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     );
     vlog(verbose, log, format!("output: {}", output_dir.display()));
 
-    fs::create_dir_all(output_dir)?;
-    clean_previous_ir_output(output_dir)?;
     let copy_attachments = transforms.copies_attachments();
-    let attachments_dir = output_dir.join("attachments");
-    if copy_attachments {
-        fs::create_dir_all(&attachments_dir)?;
-    }
+    let (mut sink, attachments_dir) =
+        FormatSink::open_prepared(output_dir, output_format, transforms)?;
 
     let input_roots: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let file_inputs: HashSet<PathBuf> = input_roots
@@ -840,7 +819,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
             report.duplicates_dropped
         ),
     );
-    let mut sink = FormatSink::open(output_dir, output_format, transforms)?;
     let mut written = 0u64;
     for (chat_id, mut convo) in conversations {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;

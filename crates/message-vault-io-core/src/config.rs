@@ -97,6 +97,9 @@ pub struct ExporterConfig {
     pub inputs: Vec<PathBuf>,
     pub output: PathBuf,
     pub date_range: DateRange,
+    /// Optional fixed UTC offset for naive timestamps, e.g. `UTC-05:00`.
+    /// When `None`, dates are interpreted in host-local time.
+    pub timezone: Option<String>,
     pub contacts: Option<ContactsConfig>,
     pub obfuscate: ObfuscateConfig,
     /// Attachment handling for FormatSink (none / copy / convert / compress).
@@ -235,10 +238,7 @@ pub struct SmsBackupPlusConfig {
 pub struct OpenExtractConfig {}
 
 #[derive(Debug, Clone, Default)]
-pub struct ImazingConfig {
-    /// Fixed UTC offset for date midnight, e.g. `UTC-05:00`.
-    pub timezone: Option<String>,
-}
+pub struct ImazingConfig {}
 
 #[derive(Debug, Clone)]
 pub struct AppleConfig {

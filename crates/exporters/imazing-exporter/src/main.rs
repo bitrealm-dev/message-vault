@@ -46,6 +46,7 @@ fn main() -> Result<()> {
         inputs: vec![cli.input],
         output: common.output.clone(),
         date_range,
+        timezone: cli.timezone.clone(),
         contacts: common.contacts_config(),
         obfuscate: common.obfuscate_config(),
         media: MediaConfig {
@@ -55,9 +56,7 @@ fn main() -> Result<()> {
         cancel: None,
         log: None,
         output_format,
-        source: SourceConfig::Imazing(ImazingConfig {
-            timezone: cli.timezone,
-        }),
+        source: SourceConfig::Imazing(ImazingConfig {}),
     })?;
 
     for line in &result.messages {

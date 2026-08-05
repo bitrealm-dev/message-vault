@@ -39,6 +39,7 @@ fn main() -> Result<()> {
         inputs: vec![cli.input],
         output: common.output.clone(),
         date_range,
+        timezone: None,
         contacts: common.contacts_config(),
         obfuscate: common.obfuscate_config(),
         media: MediaConfig {
