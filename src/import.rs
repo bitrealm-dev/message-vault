@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, Statement, Transaction, params};
+use message_ir::HandleType;
+use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params};
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -58,8 +59,6 @@ pub struct ImportOptions<'a> {
     pub account_id: &'a str,
     /// Fill missing `content_key` values during promote (needed before cross-source dedupe).
     pub fill_content_keys: bool,
-    /// Create unknown contacts / fill empty names after promote.
-    pub backfill_contacts: bool,
     /// Optional vault import session id (messages stamped on promote).
     pub import_id: Option<i64>,
     /// When true, stamp `messages.source` from each conversation's IR `export.source`.
@@ -84,7 +83,6 @@ impl<'a> ImportOptions<'a> {
         source: &'a str,
         account_id: &'a str,
         fill_content_keys: bool,
-        backfill_contacts: bool,
         import_id: Option<i64>,
     ) -> Self {
         Self {
@@ -97,7 +95,6 @@ impl<'a> ImportOptions<'a> {
             source,
             account_id,
             fill_content_keys,
-            backfill_contacts,
             import_id,
             source_from_jsonl: false,
             paths: None,
@@ -197,7 +194,6 @@ pub fn import_export(
             mode,
             source,
             account_id,
-            true,
             true,
             Some(import_id),
         ),
@@ -563,6 +559,78 @@ fn prepare_attachments(
     Ok(prepared)
 }
 
+/// Canonical form of a handle for identity matching, per type.
+///
+/// Phone: sanitized digits formatted as E.164 (matches the address-book
+/// normalization in `db/contacts.rs`). Email: lowercased. Username/Other:
+/// verbatim (trimmed).
+fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
+    match handle_type {
+        HandleType::Phone => phone::sanitize_number(raw)
+            .map(|digits| phone::to_e164(&digits))
+            .unwrap_or_else(|| raw.trim().to_string()),
+        HandleType::Email => raw.trim().to_lowercase(),
+        HandleType::Username | HandleType::Other => raw.trim().to_string(),
+    }
+}
+
+/// Infer a handle type from the handle's shape when the source does not say.
+///
+/// Mirrors the shared rule in message-ir-format: `@` → Email; digit-heavy
+/// phone-shaped strings → Phone (covers SMS/iMessage/WhatsApp numbers);
+/// anything else (Discord usernames, group chat ids) → Other.
+fn infer_handle_type(handle: &str) -> HandleType {
+    let h = handle.trim();
+    if h.contains('@') {
+        return HandleType::Email;
+    }
+    let has_digit = h.bytes().any(|b| b.is_ascii_digit());
+    let all_phone_chars = h.bytes().all(|b| {
+        b.is_ascii_digit() || matches!(b, b'+' | b'-' | b' ' | b'(' | b')' | b'.' | b'#' | b'*')
+    });
+    if !h.is_empty() && has_digit && all_phone_chars {
+        return HandleType::Phone;
+    }
+    HandleType::Other
+}
+
+/// Resolve or create a handle row. Returns the handle id.
+fn resolve_handle(
+    conn: &Connection,
+    account_id: &str,
+    raw: &str,
+    handle_type: HandleType,
+    service: Option<&str>,
+) -> Result<i64> {
+    let normalized = normalize_handle(raw, handle_type);
+    conn.execute(
+        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![account_id, raw, normalized, handle_type.as_str(), service],
+    )?;
+    let id: i64 = conn.query_row(
+        "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
+        params![account_id, normalized, handle_type.as_str()],
+        |row| row.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Contact linked to a handle via `contact_handles`, if any.
+fn contact_id_for_handle(
+    conn: &Connection,
+    account_id: &str,
+    handle_id: i64,
+) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
+            params![account_id, handle_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 struct StagingInserts<'conn> {
     account_id: String,
     import_id: Option<i64>,
@@ -585,21 +653,21 @@ impl<'conn> StagingInserts<'conn> {
             conv: tx.prepare(
                 r#"
                 INSERT INTO staging_conversations (
-                    account_id, chat_identifier, service, conversation_type, group_title, exported_at, source_file
+                    account_id, chat_handle_id, service, conversation_type, group_title, exported_at, source_file
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 "#,
             )?,
             part: tx.prepare(
                 r#"
-                INSERT INTO staging_participants (conversation_id, handle, name_hint)
-                VALUES (?1, ?2, ?3)
+                INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_hint)
+                VALUES (?1, ?2, ?3, ?4)
                 "#,
             )?,
             msg: tx.prepare(
                 r#"
                 INSERT OR IGNORE INTO staging_messages (
-                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
-                    subject, body, is_announcement, is_reply, thread_originator_guid,
+                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                    sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
                     thread_originator_part, num_replies, sort_order, import_id
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
@@ -617,7 +685,7 @@ impl<'conn> StagingInserts<'conn> {
             tap: tx.prepare(
                 r#"
                 INSERT INTO staging_tapbacks (
-                    message_id, part_index, kind, emoji, is_from_me, sender
+                    message_id, part_index, kind, emoji, is_from_me, sender_handle_id
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 "#,
             )?,
@@ -626,13 +694,14 @@ impl<'conn> StagingInserts<'conn> {
 }
 
 /// chat_identifier, service, conversation_type, group_title, exported_at, participants, source
+/// Participants are (handle, name_hint, handle_type).
 type ConversationHeader = (
     String,
     Option<String>,
     String,
     Option<String>,
     Option<String>,
-    Vec<(String, Option<String>)>,
+    Vec<(String, Option<String>, Option<HandleType>)>,
     String,
 );
 
@@ -725,7 +794,7 @@ fn import_file_to_staging(
                     c.exported_at,
                     c.participants
                         .into_iter()
-                        .map(|p| (p.handle, p.name_hint))
+                        .map(|p| (p.handle, p.name_hint, p.handle_type))
                         .collect(),
                     source,
                 ));
@@ -831,9 +900,19 @@ fn import_conversation_to_staging(
         prepared_messages.push((msg, attachments));
     }
 
+    // Conversation identity: the chat handle, typed from its shape (Phone for
+    // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
+    let chat_handle_id = resolve_handle(
+        tx,
+        &stmts.account_id,
+        &chat_identifier,
+        infer_handle_type(&chat_identifier),
+        service.as_deref(),
+    )?;
+
     stmts.conv.execute(params![
         stmts.account_id,
-        chat_identifier,
+        chat_handle_id,
         service,
         conversation_type,
         group_title,
@@ -843,10 +922,20 @@ fn import_conversation_to_staging(
     let conversation_id = tx.last_insert_rowid();
     stats.conversations = 1;
 
-    for (handle, name_hint) in kept_participants {
+    for (handle, name_hint, handle_type) in kept_participants {
+        // Prefer the source-provided type; fall back to shape inference.
+        let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
+        let handle_id = resolve_handle(
+            tx,
+            &stmts.account_id,
+            &handle,
+            handle_type,
+            service.as_deref(),
+        )?;
+        let contact_id = contact_id_for_handle(tx, &stmts.account_id, handle_id)?;
         stmts
             .part
-            .execute(params![conversation_id, handle, name_hint])?;
+            .execute(params![conversation_id, handle_id, contact_id, name_hint])?;
         stats.participants += 1;
     }
 
@@ -857,6 +946,28 @@ fn import_conversation_to_staging(
             clean_body(msg.text.as_deref())
         };
 
+        // Sender identity: resolved to a handle row (NULL for own messages).
+        let sender_handle_id = if !msg.is_from_me
+            && let Some(sender) = msg
+                .sender
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            let handle_type = msg
+                .sender_handle_type
+                .unwrap_or_else(|| infer_handle_type(sender));
+            Some(resolve_handle(
+                tx,
+                &stmts.account_id,
+                sender,
+                handle_type,
+                msg.service.as_deref(),
+            )?)
+        } else {
+            None
+        };
+
         let inserted = stmts.msg.execute(params![
             conversation_id,
             &stmts.account_id,
@@ -865,7 +976,7 @@ fn import_conversation_to_staging(
             msg.timestamp,
             msg.timestamp_utc,
             msg.is_from_me as i64,
-            msg.sender,
+            sender_handle_id,
             msg.subject,
             body,
             msg.is_announcement as i64,
@@ -916,13 +1027,32 @@ fn import_conversation_to_staging(
         }
 
         for tap in msg.tapbacks {
+            // Tapback sender: resolved to a handle row (NULL for own tapbacks,
+            // matching the message `sender_handle_id` convention).
+            let sender_handle_id = if !tap.is_from_me
+                && let Some(sender) = tap
+                    .sender
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            {
+                Some(resolve_handle(
+                    tx,
+                    &stmts.account_id,
+                    sender,
+                    infer_handle_type(sender),
+                    msg.service.as_deref(),
+                )?)
+            } else {
+                None
+            };
             stmts.tap.execute(params![
                 message_id,
                 tap.part_index,
                 tap.kind,
                 tap.emoji,
                 tap.is_from_me as i64,
-                tap.sender,
+                sender_handle_id,
             ])?;
             stats.tapbacks += 1;
         }
@@ -979,15 +1109,15 @@ fn promote_append(
     tx.execute(
         r#"
         INSERT INTO conversations (
-            account_id, chat_identifier, service, conversation_type,
+            account_id, chat_handle_id, service, conversation_type,
             group_title, exported_at, source_file
         )
         SELECT
-            account_id, chat_identifier, service, conversation_type,
+            account_id, chat_handle_id, service, conversation_type,
             group_title, exported_at, source_file
         FROM staging_conversations
         WHERE account_id = ?1
-        ON CONFLICT(account_id, chat_identifier) DO UPDATE SET
+        ON CONFLICT(account_id, chat_handle_id) DO UPDATE SET
             service = COALESCE(excluded.service, conversations.service),
             conversation_type = excluded.conversation_type,
             group_title = COALESCE(excluded.group_title, conversations.group_title),
@@ -1003,7 +1133,7 @@ fn promote_append(
         FROM staging_conversations sc
         JOIN conversations c
           ON c.account_id = sc.account_id
-         AND c.chat_identifier = sc.chat_identifier
+         AND c.chat_handle_id = sc.chat_handle_id
         WHERE sc.account_id = ?1
         "#,
         params![account_id],
@@ -1034,8 +1164,8 @@ fn promote_append(
     let _ = io::stdout().flush();
     stats.participants = u64::try_from(tx.execute(
         r#"
-        INSERT OR IGNORE INTO participants (conversation_id, handle, name_hint)
-        SELECT cm.prod_id, sp.handle, sp.name_hint
+        INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_hint)
+        SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_hint
         FROM staging_participants sp
         JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
         "#,
@@ -1076,13 +1206,13 @@ fn promote_append(
         let inserted = tx.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
-                subject, body, is_announcement, is_reply, thread_originator_guid,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
                 thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
                 sm.import_id
             FROM staging_messages sm
@@ -1130,13 +1260,13 @@ fn promote_append(
         let inserted_guided = tx.execute(
             r#"
             INSERT OR IGNORE INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
-                subject, body, is_announcement, is_reply, thread_originator_guid,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
                 thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
                 sm.import_id
             FROM staging_messages sm
@@ -1153,13 +1283,13 @@ fn promote_append(
         let inserted_empty = tx.execute(
             r#"
             INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me, sender,
-                subject, body, is_announcement, is_reply, thread_originator_guid,
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
                 thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
                 sm.import_id
             FROM staging_messages sm
@@ -1280,10 +1410,10 @@ fn promote_append(
     let tap_inserted = tx.execute(
         r#"
         INSERT INTO tapbacks (
-            message_id, part_index, kind, emoji, is_from_me, sender
+            message_id, part_index, kind, emoji, is_from_me, sender_handle_id
         )
         SELECT
-            mm.prod_id, st.part_index, st.kind, st.emoji, st.is_from_me, st.sender
+            mm.prod_id, st.part_index, st.kind, st.emoji, st.is_from_me, st.sender_handle_id
         FROM staging_tapbacks st
         JOIN _promote_msg_map mm ON mm.staging_id = st.message_id
         "#,
@@ -1370,7 +1500,6 @@ mod tests {
                 "sms-backup-restore",
                 TEST_ACCOUNT,
                 true,
-                false,
                 None,
             ),
         )
@@ -1397,7 +1526,6 @@ mod tests {
                 ImportMode::Append,
                 "sms-backup-restore",
                 TEST_ACCOUNT,
-                false,
                 false,
                 None,
             ),
@@ -1474,7 +1602,6 @@ mod tests {
                 "imessage",
                 TEST_ACCOUNT,
                 false,
-                false,
                 None,
             ),
         )
@@ -1531,7 +1658,6 @@ mod tests {
                 ImportMode::Append,
                 "imessage",
                 TEST_ACCOUNT,
-                false,
                 false,
                 Some(import_id),
             ),
@@ -1618,7 +1744,6 @@ mod tests {
                 source: "",
                 account_id: TEST_ACCOUNT,
                 fill_content_keys: true,
-                backfill_contacts: false,
                 import_id: None,
                 source_from_jsonl: true,
                 paths: Some(&paths),
@@ -1678,7 +1803,6 @@ mod tests {
                 source: "",
                 account_id: TEST_ACCOUNT,
                 fill_content_keys: false,
-                backfill_contacts: false,
                 import_id: None,
                 source_from_jsonl: true,
                 paths: Some(&paths),

@@ -1310,7 +1310,6 @@ async fn run_import_path(
             &source_id,
             &account,
             do_dedupe,
-            false,
             import_id,
         );
         // Dedicated connection for the long import so we do not hold `state.db`
