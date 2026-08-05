@@ -15,7 +15,7 @@ import {
   searchVaultContacts,
 } from "./search";
 import { dbPath } from "./paths";
-import { ensureVaultSchema, MESSAGES_FTS_BACKFILL_META_KEY } from "./vaultSchema";
+import { ensureVaultSchema } from "./vaultSchema";
 
 describe("vault search + FTS", () => {
   const prevVaultDb = process.env.VAULT_DB;
@@ -42,14 +42,23 @@ describe("vault search + FTS", () => {
     const db = new Database(dbPath());
     try {
       ensureVaultSchema(db);
-      const marker = db
-        .prepare(`SELECT value FROM schema_meta WHERE key = ?`)
-        .get(MESSAGES_FTS_BACKFILL_META_KEY) as { value: string } | undefined;
-      assert.equal(marker?.value, "1");
-
+      const resolveHandle = (raw: string, handleType = "phone"): number => {
+        db.prepare(
+          `INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
+           VALUES (?, ?, ?, ?, 'iMessage')`,
+        ).run(accountId, raw, raw, handleType);
+        return Number(
+          db
+            .prepare(
+              `SELECT id FROM handles WHERE account_id = ? AND raw = ?`,
+            )
+            .pluck()
+            .get(accountId, raw),
+        );
+      };
       const insertConv = db.prepare(
         `INSERT INTO conversations (
-           account_id, chat_identifier, service, conversation_type,
+           account_id, chat_handle_id, service, conversation_type,
            group_title, exported_at, source_file
          ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 't.json')`,
       );
@@ -60,19 +69,17 @@ describe("vault search + FTS", () => {
          ) VALUES (?, ?, 'imessage', ?, ?, 0, 0, ?, NULL)`,
       );
       const insertContact = db.prepare(
-        `INSERT INTO contacts (
-           account_id, preferred_name, preferred_handle
-         ) VALUES (?, ?, ?)`,
+        `INSERT INTO contacts (account_id, preferred_name) VALUES (?, ?)`,
       );
       const insertHandle = db.prepare(
-        `INSERT INTO contact_handles (account_id, handle, contact_id)
+        `INSERT INTO contact_handles (account_id, handle_id, contact_id)
          VALUES (?, ?, ?)`,
       );
       const assignContact = (handle: string, name: string) => {
         const contactId = Number(
-          insertContact.run(accountId, name, handle).lastInsertRowid,
+          insertContact.run(accountId, name).lastInsertRowid,
         );
-        insertHandle.run(accountId, handle, contactId);
+        insertHandle.run(accountId, resolveHandle(handle), contactId);
         return contactId;
       };
       const addToLabel = (contactId: number, label: string) => {
@@ -98,7 +105,7 @@ describe("vault search + FTS", () => {
         new Date(Date.now() - days * 86_400_000).toISOString();
 
       const ftsConvId = Number(
-        insertConv.run(accountId, "+15555550999").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555550999")).lastInsertRowid,
       );
       insertMsg.run(
         ftsConvId,
@@ -110,7 +117,7 @@ describe("vault search + FTS", () => {
 
       // Long-known + still active: first ~10y ago, last ~5d ago.
       const activeConvId = Number(
-        insertConv.run(accountId, "+15555551001").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555551001")).lastInsertRowid,
       );
       assignContact("+15555551001", "Active");
       insertMsg.run(
@@ -130,7 +137,7 @@ describe("vault search + FTS", () => {
 
       // Stale + old: first ~10y ago, last ~400d ago.
       const staleConvId = Number(
-        insertConv.run(accountId, "+15555551002").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555551002")).lastInsertRowid,
       );
       assignContact("+15555551002", "Stale");
       insertMsg.run(
@@ -150,7 +157,7 @@ describe("vault search + FTS", () => {
 
       // Entirely recent: first and last within the last week.
       const recentConvId = Number(
-        insertConv.run(accountId, "+15555551003").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555551003")).lastInsertRowid,
       );
       assignContact("+15555551003", "Recent");
       insertMsg.run(
@@ -170,7 +177,7 @@ describe("vault search + FTS", () => {
 
       // Two labeled contacts, one of them inactive, sharing a group chat.
       labeledConvId = Number(
-        insertConv.run(accountId, "+15555551004").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555551004")).lastInsertRowid,
       );
       const labeledId = assignContact("+15555551004", "Labeled");
       addToLabel(labeledId, "Family");
@@ -183,7 +190,7 @@ describe("vault search + FTS", () => {
       );
 
       const inactiveConvId = Number(
-        insertConv.run(accountId, "+15555551005").lastInsertRowid,
+        insertConv.run(accountId, resolveHandle("+15555551005")).lastInsertRowid,
       );
       const inactiveId = assignContact("+15555551005", "Inactive");
       addToLabel(inactiveId, "Family");
@@ -199,18 +206,18 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_identifier, service, conversation_type,
+               account_id, chat_handle_id, service, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, 'chat-kumquat', 'iMessage', 'group', 'Kumquat Crew', NULL, 't.json')`,
+             ) VALUES (?, ?, 'iMessage', 'group', 'Kumquat Crew', NULL, 't.json')`,
           )
-          .run(accountId).lastInsertRowid,
+          .run(accountId, resolveHandle("chat-kumquat", "other")).lastInsertRowid,
       );
       const insertParticipant = db.prepare(
-        `INSERT INTO participants (conversation_id, handle, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_hint)
          VALUES (?, ?, ?)`,
       );
-      insertParticipant.run(groupConvId, "+15555551004", "Labeled");
-      insertParticipant.run(groupConvId, "+15555551005", "Inactive");
+      insertParticipant.run(groupConvId, resolveHandle("+15555551004"), "Labeled");
+      insertParticipant.run(groupConvId, resolveHandle("+15555551005"), "Inactive");
       insertMsg.run(
         groupConvId,
         accountId,
@@ -392,32 +399,49 @@ describe("vault search + FTS", () => {
       );
 
       const db = new Database(dbPath());
+      db.prepare(
+        `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+         VALUES (?, '+15555551999', '+15555551999', 'phone', NULL),
+                (?, '+15555551998', '+15555551998', 'phone', NULL)`,
+      ).run(accountId, accountId);
+      const namelessHandleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND raw = '+15555551999'`,
+          )
+          .pluck()
+          .get(accountId),
+      );
+      const noLastHandleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND raw = '+15555551998'`,
+          )
+          .pluck()
+          .get(accountId),
+      );
       const namelessId = Number(
         db
           .prepare(
-            `INSERT INTO contacts (
-               account_id, preferred_name, preferred_handle
-             ) VALUES (?, NULL, ?)`,
+            `INSERT INTO contacts (account_id, preferred_name) VALUES (?, '')`,
           )
-          .run(accountId, "+15555551999").lastInsertRowid,
+          .run(accountId).lastInsertRowid,
       );
       db.prepare(
-        `INSERT INTO contact_handles (account_id, handle, contact_id)
+        `INSERT INTO contact_handles (account_id, handle_id, contact_id)
          VALUES (?, ?, ?)`,
-      ).run(accountId, "+15555551999", namelessId);
+      ).run(accountId, namelessHandleId, namelessId);
       const noLastId = Number(
         db
           .prepare(
-            `INSERT INTO contacts (
-               account_id, preferred_name, preferred_handle
-             ) VALUES (?, ?, ?)`,
+            `INSERT INTO contacts (account_id, preferred_name) VALUES (?, ?)`,
           )
-          .run(accountId, "OnlyFirst", "+15555551998").lastInsertRowid,
+          .run(accountId, "OnlyFirst").lastInsertRowid,
       );
       db.prepare(
-        `INSERT INTO contact_handles (account_id, handle, contact_id)
+        `INSERT INTO contact_handles (account_id, handle_id, contact_id)
          VALUES (?, ?, ?)`,
-      ).run(accountId, "+15555551998", noLastId);
+      ).run(accountId, noLastHandleId, noLastId);
       db.close();
 
       const bothEmpty = searchVaultContacts(

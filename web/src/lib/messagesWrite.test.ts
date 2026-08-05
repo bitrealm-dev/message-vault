@@ -41,15 +41,27 @@ describe("deleteAllMessagesForAccount", () => {
     const db = new Database(dbPath());
     try {
       ensureVaultSchema(db);
+      db.prepare(
+        `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+         VALUES (?, '+15555550999', '+15555550999', 'phone', 'iMessage')`,
+      ).run(accountId);
+      const handleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND raw = '+15555550999'`,
+          )
+          .pluck()
+          .get(accountId),
+      );
       const conversationId = Number(
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_identifier, service, conversation_type,
+               account_id, chat_handle_id, service, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, '+15555550999', 'iMessage', 'individual', NULL, NULL, 'test.json')`,
+             ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 'test.json')`,
           )
-          .run(accountId).lastInsertRowid,
+          .run(accountId, handleId).lastInsertRowid,
       );
       const messageId = Number(
         db

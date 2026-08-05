@@ -35,6 +35,7 @@ function GroupMessageHeader({
       : selectedRow.participantNames.map((name, i) => ({
           name,
           handle: selectedRow.participantHandles[i] ?? name,
+          handleType: null as GroupParticipant["handleType"],
           contactId: null as number | null,
         }));
   const dateLabel = selectedRow.spansMultipleYears

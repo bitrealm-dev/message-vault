@@ -7,6 +7,7 @@ import {
   resetDb,
   usefulNameHint,
 } from "./dbCore";
+import type { HandleType } from "./handleKind";
 import { formatPhoneDisplay } from "./phoneE164";
 import {
   contactMessageSourceCountsForConversations,
@@ -29,6 +30,7 @@ export function listTrashedHandles(): UnassignedHandle[] {
 
 export type GroupParticipantHandle = {
   handle: string;
+  handleType: HandleType | null;
   nameHint: string | null;
 };
 
@@ -37,8 +39,8 @@ export type GroupParticipantHandle = {
  *
  * Kept separate from {@link listUnassignedHandles} because that drives the
  * Unassigned and Trash views, which only ever list 1:1 handles. These handles
- * have no 1:1 conversation at all, so the 1:1 backfill never reaches them and
- * their group messages would otherwise belong to no contact.
+ * have no 1:1 conversation at all, so they only surface through group
+ * participation. A participant with `contact_id IS NULL` has no contact.
  */
 export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[] {
   const accountId = currentAccountId();
@@ -46,7 +48,7 @@ export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[
   const trashHandleFilter = hasTrashedHandlesTable(db)
     ? `AND NOT EXISTS (
          SELECT 1 FROM trashed_handles th
-         WHERE th.handle = p.handle AND th.account_id = c.account_id
+         WHERE th.handle_id = p.handle_id AND th.account_id = c.account_id
        )`
     : "";
   const trashConvFilter = hasTrashedConversationsTable(db)
@@ -58,28 +60,33 @@ export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[
 
   const rows = db
     .prepare(
-      `SELECT p.handle AS handle, MAX(p.name_hint) AS name_hint
+      `SELECT h.raw AS handle, h.handle_type AS handle_type, MAX(p.name_hint) AS name_hint
        FROM participants p
        JOIN conversations c ON c.id = p.conversation_id
+       JOIN handles h ON h.id = p.handle_id
+       LEFT JOIN contact_handles cp
+         ON cp.handle_id = p.handle_id AND cp.account_id = c.account_id
        WHERE c.account_id = ?
          AND c.conversation_type = 'group'
-         AND trim(coalesce(p.handle, '')) <> ''
-         AND NOT EXISTS (
-           SELECT 1 FROM contact_handles cp
-           WHERE cp.handle = p.handle AND cp.account_id = c.account_id
-         )
+         AND trim(coalesce(h.raw, '')) <> ''
+         AND cp.contact_id IS NULL
          AND EXISTS (
            SELECT 1 FROM messages m WHERE m.conversation_id = c.id
          )
          ${trashHandleFilter}
          ${trashConvFilter}
-       GROUP BY p.handle
-       ORDER BY p.handle COLLATE NOCASE`,
+       GROUP BY p.handle_id
+       ORDER BY h.raw COLLATE NOCASE`,
     )
-    .all(accountId) as Array<{ handle: string; name_hint: string | null }>;
+    .all(accountId) as Array<{
+    handle: string;
+    handle_type: string | null;
+    name_hint: string | null;
+  }>;
 
   return rows.map((r) => ({
     handle: r.handle.trim(),
+    handleType: (r.handle_type as HandleType | null) ?? null,
     nameHint: usefulNameHint(r.name_hint, r.handle),
   }));
 }
@@ -97,39 +104,41 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
     : section === "trash"
       ? `AND EXISTS (
            SELECT 1 FROM trashed_handles th
-           WHERE th.handle = c.chat_identifier AND th.account_id = c.account_id
+           WHERE th.handle_id = c.chat_handle_id AND th.account_id = c.account_id
          )`
       : `AND NOT EXISTS (
            SELECT 1 FROM trashed_handles th
-           WHERE th.handle = c.chat_identifier AND th.account_id = c.account_id
+           WHERE th.handle_id = c.chat_handle_id AND th.account_id = c.account_id
          )`;
 
   const trashedAtSelect =
     section === "trash" && hasTrash
       ? `, (
            SELECT th.trashed_at FROM trashed_handles th
-           WHERE th.handle = c.chat_identifier AND th.account_id = c.account_id
+           WHERE th.handle_id = c.chat_handle_id AND th.account_id = c.account_id
            LIMIT 1
          ) AS trashed_at`
       : `, NULL AS trashed_at`;
 
   const rows = db
     .prepare(
-      `SELECT c.chat_identifier AS handle,
+      `SELECT h.raw AS handle,
+              h.handle_type AS handle_type,
               MAX(p.name_hint) AS name_hint,
               COUNT(m.id) AS message_count,
               MIN(substr(m.timestamp, 1, 10)) AS date_start,
               MAX(substr(m.timestamp, 1, 10)) AS date_end
               ${trashedAtSelect}
        FROM conversations c
+       JOIN handles h ON h.id = c.chat_handle_id
        JOIN messages m ON m.conversation_id = c.id
        LEFT JOIN participants p
-         ON p.conversation_id = c.id AND p.handle = c.chat_identifier
+         ON p.conversation_id = c.id AND p.handle_id = c.chat_handle_id
        WHERE c.account_id = ?
          AND c.conversation_type = 'individual'
          AND NOT EXISTS (
            SELECT 1 FROM contact_handles cp
-           WHERE cp.handle = c.chat_identifier AND cp.account_id = c.account_id
+           WHERE cp.handle_id = c.chat_handle_id AND cp.account_id = c.account_id
          )
          ${trashFilter}${hideDupes}
        GROUP BY c.id
@@ -138,6 +147,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
     )
     .all(accountId) as Array<{
     handle: string;
+    handle_type: string | null;
     name_hint: string | null;
     message_count: number;
     date_start: string | null;
@@ -154,6 +164,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
       const letter = ch >= "A" && ch <= "Z" ? ch : "#";
       return {
         handle: r.handle,
+        handleType: (r.handle_type as HandleType | null) ?? null,
         displayName,
         nameHint: hintUseful,
         messageCount: r.message_count,
@@ -182,6 +193,7 @@ export function unassignedThreadsBundle(
   opts?: { includeTrashed?: boolean },
 ): {
   handle: string;
+  handleType: HandleType | null;
   yearly: YearThread[];
   groupChats: GroupChatThread[];
   messageSources: string[];
@@ -193,20 +205,23 @@ export function unassignedThreadsBundle(
   const db = getDb();
   const conv = db
     .prepare(
-      `SELECT id FROM conversations
-       WHERE account_id = ? AND conversation_type = 'individual' AND chat_identifier = ?`,
+      `SELECT c.id AS id, h.handle_type AS handle_type
+       FROM conversations c
+       JOIN handles h ON h.id = c.chat_handle_id
+       WHERE c.account_id = ? AND c.conversation_type = 'individual' AND h.raw = ?`,
     )
-    .get(accountId, trimmed) as { id: number } | undefined;
+    .get(accountId, trimmed) as { id: number; handle_type: string } | undefined;
   if (!conv) return null;
 
-  if (!opts?.includeTrashed) {
-    const owned = db
-      .prepare(
-        `SELECT 1 AS ok FROM contact_handles WHERE account_id = ? AND handle = ?`,
-      )
-      .get(accountId, trimmed) as { ok: number } | undefined;
-    if (owned) return null;
-  }
+  const owned = db
+    .prepare(
+      `SELECT 1 AS ok
+       FROM contact_handles cp
+       JOIN handles h ON h.id = cp.handle_id
+       WHERE cp.account_id = ? AND h.raw = ?`,
+    )
+    .get(accountId, trimmed) as { ok: number } | undefined;
+  if (!opts?.includeTrashed && owned) return null;
 
   const hasMsgs = db
     .prepare(
@@ -229,6 +244,7 @@ export function unassignedThreadsBundle(
 
   return {
     handle: trimmed,
+    handleType: (conv.handle_type as HandleType | null) ?? null,
     yearly: contactYearlyThreadsForPhones(phones, source, {
       includeTrashed: opts?.includeTrashed,
     }),

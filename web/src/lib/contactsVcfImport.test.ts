@@ -59,19 +59,31 @@ describe("contactsVcfImport preview/commit", () => {
     const db = new Database(dbPath());
     try {
       ensureVaultSchema(db);
+      db.prepare(
+        `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+         VALUES (?, ?, ?, 'phone', 'SMS')`,
+      ).run(acct, phone, phone);
+      const handleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND raw = ?`,
+          )
+          .pluck()
+          .get(acct, phone),
+      );
       const result = db
         .prepare(
           `INSERT INTO conversations (
-             account_id, chat_identifier, service, conversation_type,
+             account_id, chat_handle_id, service, conversation_type,
              group_title, exported_at, source_file
            ) VALUES (?, ?, 'SMS', 'individual', NULL, NULL, 't.json')`,
         )
-        .run(acct, phone);
+        .run(acct, handleId);
       const cid = Number(result.lastInsertRowid);
       db.prepare(
-        `INSERT INTO participants (conversation_id, handle, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_hint)
          VALUES (?, ?, NULL)`,
-      ).run(cid, phone);
+      ).run(cid, handleId);
       db.prepare(
         `INSERT INTO messages (
            conversation_id, account_id, source, guid, timestamp,

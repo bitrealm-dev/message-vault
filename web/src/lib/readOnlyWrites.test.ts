@@ -54,14 +54,26 @@ describe("read-only web vault mutations", () => {
     const db = new Database(dbPath());
     try {
       ensureVaultSchema(db);
+      db.prepare(
+        `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+         VALUES (?, ?, ?, 'other', 'iMessage')`,
+      ).run(accountId, chatId, chatId);
+      const handleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND raw = ?`,
+          )
+          .pluck()
+          .get(accountId, chatId),
+      );
       const result = db
         .prepare(
           `INSERT INTO conversations (
-             account_id, chat_identifier, service, conversation_type,
+             account_id, chat_handle_id, service, conversation_type,
              group_title, exported_at, source_file
            ) VALUES (?, ?, 'iMessage', 'group', 'Friends', NULL, 't.json')`,
         )
-        .run(accountId, chatId);
+        .run(accountId, handleId);
       return Number(result.lastInsertRowid);
     } finally {
       db.close();
@@ -75,7 +87,7 @@ describe("read-only web vault mutations", () => {
           createContact({
             firstName: "Pat",
             lastName: "Lee",
-            phones: ["+15555550111"],
+            handles: [{ raw: "+15555550111", handle_type: "phone" }],
           }),
         (err: unknown) =>
           err instanceof Error && err.message === VAULT_READ_ONLY_MESSAGE,
@@ -107,7 +119,7 @@ describe("read-only web vault mutations", () => {
       const contact = createContact({
         firstName: "Pat",
         lastName: "Lee",
-        phones: ["+15555550111"],
+        handles: [{ raw: "+15555550111", handle_type: "phone" }],
       });
       assert.ok(contact.id > 0);
       const deleted = deleteAllMessagesForAccount(accountId);

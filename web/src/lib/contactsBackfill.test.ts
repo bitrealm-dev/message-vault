@@ -44,25 +44,39 @@ describe("unknown contact backfill", () => {
            is_from_me, sort_order, body, subject
          ) VALUES (?, ?, 'imessage', ?, ?, 0, 0, ?, NULL)`,
       );
+      const resolveHandle = (raw: string, handleType = "phone"): number => {
+        db.prepare(
+          `INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
+           VALUES (?, ?, ?, ?, NULL)`,
+        ).run(accountId, raw, raw, handleType);
+        return Number(
+          db
+            .prepare(
+              `SELECT id FROM handles WHERE account_id = ? AND raw = ?`,
+            )
+            .pluck()
+            .get(accountId, raw),
+        );
+      };
 
       // Group chat whose members are the owner plus two others.
       const groupId = Number(
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_identifier, service, conversation_type,
+               account_id, chat_handle_id, service, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, 'chat-crew', 'iMessage', 'group', 'Crew', NULL, 't.json')`,
+             ) VALUES (?, ?, 'iMessage', 'group', 'Crew', NULL, 't.json')`,
           )
-          .run(accountId).lastInsertRowid,
+          .run(accountId, resolveHandle("chat-crew", "other")).lastInsertRowid,
       );
       const insertParticipant = db.prepare(
-        `INSERT INTO participants (conversation_id, handle, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_hint)
          VALUES (?, ?, ?)`,
       );
-      insertParticipant.run(groupId, OWNER_PHONE, "Vault Owner");
-      insertParticipant.run(groupId, GROUP_ONLY_PHONE, "Group Only");
-      insertParticipant.run(groupId, DIRECT_PHONE, "Direct Friend");
+      insertParticipant.run(groupId, resolveHandle(OWNER_PHONE), "Vault Owner");
+      insertParticipant.run(groupId, resolveHandle(GROUP_ONLY_PHONE), "Group Only");
+      insertParticipant.run(groupId, resolveHandle(DIRECT_PHONE), "Direct Friend");
       insertMsg.run(groupId, accountId, "g-crew-1", "2023-06-01T10:00:00Z", "hi crew");
 
       // The same 1:1 handle the old backfill already covered.
@@ -70,11 +84,11 @@ describe("unknown contact backfill", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_identifier, service, conversation_type,
+               account_id, chat_handle_id, service, conversation_type,
                group_title, exported_at, source_file
              ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 't.json')`,
           )
-          .run(accountId, DIRECT_PHONE).lastInsertRowid,
+          .run(accountId, resolveHandle(DIRECT_PHONE)).lastInsertRowid,
       );
       insertMsg.run(
         directId,

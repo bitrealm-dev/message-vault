@@ -3,12 +3,14 @@ import { loadAccountProfile } from "./accountProfile";
 import {
   combinedDedupeSql,
   getDb,
+  handleIdsForRaws,
   hasDuplicateOfColumn,
   hasTrashedConversationsTable,
   looksLikePhone,
   resetDb,
   usefulNameHint,
 } from "./dbCore";
+import type { HandleType } from "./handleKind";
 import { formatPhoneDisplay } from "./phoneE164";
 import type { GroupChatThread, GroupParticipant, GroupYearRow } from "./types";
 
@@ -126,17 +128,22 @@ function groupPeopleTitles(
 
   const rows = db
     .prepare(
-      `SELECT p.conversation_id, p.handle, p.name_hint,
+      `SELECT p.conversation_id,
+              ph.raw AS handle,
+              ph.handle_type AS handle_type,
+              p.name_hint,
               c.id AS contact_id, c.preferred_name
        FROM participants p
        JOIN conversations conv ON conv.id = p.conversation_id
-       LEFT JOIN contact_handles cp ON cp.handle = p.handle AND cp.account_id = conv.account_id
+       JOIN handles ph ON ph.id = p.handle_id
+       LEFT JOIN contact_handles cp ON cp.handle_id = p.handle_id AND cp.account_id = conv.account_id
        LEFT JOIN contacts c ON c.id = cp.contact_id AND c.account_id = cp.account_id
        WHERE conv.account_id = ? AND p.conversation_id IN (${placeholders})`,
     )
     .all(accountId, ...conversationIds) as Array<{
     conversation_id: number;
     handle: string;
+    handle_type: string | null;
     name_hint: string | null;
     contact_id: number | null;
     preferred_name: string | null;
@@ -148,6 +155,7 @@ function groupPeopleTitles(
       name: string;
       unknown: boolean;
       handle: string;
+      handleType: HandleType | null;
       contactId: number | null;
     }>
   >();
@@ -158,6 +166,7 @@ function groupPeopleTitles(
     list.push({
       ...participantLabel(r),
       handle,
+      handleType: (r.handle_type as HandleType | null) ?? null,
       contactId: r.contact_id ?? null,
     });
     byConv.set(r.conversation_id, list);
@@ -176,6 +185,7 @@ function groupPeopleTitles(
       participants.push({
         name: e.name,
         handle: e.handle,
+        handleType: e.handleType,
         contactId: e.contactId,
       });
     }
@@ -227,11 +237,15 @@ export function contactGroupChatThreadsForPhoneSets(
   const params: Array<string | number> = [accountId];
   const existsSql = sets
     .map((phones) => {
-      const placeholders = phones.map(() => "?").join(",");
-      params.push(...phones);
+      const ids = handleIdsForRaws(db, accountId, phones);
+      if (ids.length === 0) {
+        return `AND 1 = 0`;
+      }
+      const placeholders = ids.map(() => "?").join(",");
+      params.push(...ids);
       return `AND EXISTS (
            SELECT 1 FROM participants p
-           WHERE p.conversation_id = c.id AND p.handle IN (${placeholders})
+           WHERE p.conversation_id = c.id AND p.handle_id IN (${placeholders})
          )`;
     })
     .join("\n         ");
@@ -368,12 +382,13 @@ function groupParticipantFingerprints(
   const placeholders = conversationIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT p.conversation_id, p.handle
+      `SELECT p.conversation_id, ph.raw AS handle
        FROM participants p
        JOIN conversations c ON c.id = p.conversation_id
+       JOIN handles ph ON ph.id = p.handle_id
        WHERE c.account_id = ? AND p.conversation_id IN (${placeholders})
-         AND p.handle IS NOT NULL AND p.handle != ''
-       ORDER BY p.conversation_id, p.handle`,
+         AND ph.raw IS NOT NULL AND ph.raw != ''
+       ORDER BY p.conversation_id, ph.raw`,
     )
     .all(accountId, ...conversationIds) as Array<{ conversation_id: number; handle: string }>;
   const byConv = new Map<number, string[]>();

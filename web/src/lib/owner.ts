@@ -1,6 +1,6 @@
 import { loadAccount } from "./accounts";
 import { currentAccountId } from "./accountScope";
-import { isEmailHandle } from "./handleKind";
+import { inferHandleType, normalizeHandle } from "./handleKind";
 import { loadAccountProfile } from "./accountProfile";
 
 /** Strip non-digits; drop leading US country code 1 when 11 digits. */
@@ -42,6 +42,10 @@ export function mutationErrorStatus(
  * Owner-handle predicate that loads the account and owner profile once.
  * Prefer this over calling {@link isOwnerHandle} in a loop: each account read
  * opens its own connection.
+ *
+ * Owner handles come from `account_handles JOIN handles` (phones, E.164) and
+ * `account_emails` (lowercased). Matching is handle-type aware: the candidate
+ * is normalized the same way before comparison.
  */
 export function ownerHandleMatcher(): (handle: string) => boolean {
   const accountId = currentAccountId();
@@ -49,15 +53,18 @@ export function ownerHandleMatcher(): (handle: string) => boolean {
     loadAccount(accountId).emails.map((entry) => entry.email.toLowerCase()),
   );
   const phones = new Set(
-    loadAccountProfile(accountId).phones.map(phoneDigits).filter(Boolean),
+    loadAccountProfile(accountId).phones
+      .map((p) => normalizeHandle(p, "phone"))
+      .filter(Boolean),
   );
 
   return (handle: string) => {
     const trimmed = handle.trim();
     if (!trimmed) return false;
-    if (isEmailHandle(trimmed)) return emails.has(trimmed.toLowerCase());
-    const digits = phoneDigits(trimmed);
-    return digits ? phones.has(digits) : false;
+    const type = inferHandleType(trimmed);
+    if (type === "email") return emails.has(normalizeHandle(trimmed, "email"));
+    if (type === "phone") return phones.has(normalizeHandle(trimmed, "phone"));
+    return false;
   };
 }
 

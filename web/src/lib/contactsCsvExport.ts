@@ -35,9 +35,11 @@ export function exportContactsCsvFromDb(
     }>;
 
     const handleStmt = db.prepare(
-      `SELECT handle FROM contact_handles
-       WHERE contact_id = ? AND account_id = ?
-       ORDER BY handle`,
+      `SELECT h.raw AS handle
+       FROM contact_handles cp
+       JOIN handles h ON h.id = cp.handle_id
+       WHERE cp.contact_id = ? AND cp.account_id = ?
+       ORDER BY h.raw`,
     );
     const labelStmt = db.prepare(
       `SELECT cl.name FROM contact_label_members clm

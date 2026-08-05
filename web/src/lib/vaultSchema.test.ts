@@ -62,7 +62,14 @@ describe("fresh vault schema", () => {
       "id",
       "account_id",
       "preferred_name",
-      "preferred_handle",
+    ]);
+    assert.deepEqual(columns(db, "handles"), [
+      "id",
+      "account_id",
+      "raw",
+      "normalized",
+      "handle_type",
+      "service",
     ]);
     for (const column of ["account_id", "source", "content_key", "duplicate_of"]) {
       assert.ok(columns(db, "messages").includes(column));
@@ -117,10 +124,23 @@ describe("fresh vault schema", () => {
       "alice",
     );
     db.prepare(
+      `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+       VALUES (?, '+15555550100', '+15555550100', 'phone', NULL)`,
+    ).run(ACCOUNT_ID);
+    const handleId = Number(
+      db
+        .prepare(
+          `SELECT id FROM handles
+           WHERE account_id = ? AND normalized = '+15555550100' AND handle_type = 'phone'`,
+        )
+        .pluck()
+        .get(ACCOUNT_ID),
+    );
+    db.prepare(
       `INSERT INTO conversations (
-         account_id, chat_identifier, conversation_type, source_file
+         account_id, chat_handle_id, conversation_type, source_file
        ) VALUES (?, ?, 'individual', 'test.json')`,
-    ).run(ACCOUNT_ID, "+15555550100");
+    ).run(ACCOUNT_ID, handleId);
     const conversationId = Number(
       db.prepare(`SELECT id FROM conversations`).pluck().get(),
     );

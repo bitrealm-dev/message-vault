@@ -170,15 +170,25 @@ function loadConversationMessages(
 
   const rows = db
     .prepare(
-      `SELECT m.id, m.conversation_id, m.source, m.timestamp, m.sort_order, m.is_from_me, m.sender, m.body, m.is_announcement,
-              c.preferred_name, c.preferred_handle,
+      `SELECT m.id, m.conversation_id, m.source, m.timestamp, m.sort_order, m.is_from_me,
+              m_h.raw AS sender, m.body, m.is_announcement,
+              c.preferred_name,
+              (
+                SELECT ch2_h.raw
+                FROM contact_handles ch2
+                JOIN handles ch2_h ON ch2_h.id = ch2.handle_id
+                WHERE ch2.contact_id = c.id AND ch2.account_id = c.account_id
+                ORDER BY CASE ch2_h.handle_type WHEN 'phone' THEN 0 ELSE 1 END, ch2_h.raw
+                LIMIT 1
+              ) AS preferred_handle,
               p.name_hint
        FROM messages m
        JOIN conversations conv ON conv.id = m.conversation_id
-       LEFT JOIN contact_handles cp ON cp.handle = m.sender AND cp.account_id = conv.account_id
+       LEFT JOIN handles m_h ON m_h.id = m.sender_handle_id
+       LEFT JOIN contact_handles cp ON cp.handle_id = m.sender_handle_id AND cp.account_id = conv.account_id
        LEFT JOIN contacts c ON c.id = cp.contact_id AND c.account_id = cp.account_id
        LEFT JOIN participants p
-         ON p.conversation_id = m.conversation_id AND p.handle = m.sender
+         ON p.conversation_id = m.conversation_id AND p.handle_id = m.sender_handle_id
        WHERE conv.account_id = ? AND m.conversation_id IN (${placeholders})${yearSql}${beforeSql}${sourceSql}${combinedDedupeSql(opts.source, "m")}
        ${orderSql}${limitSql}`,
     )

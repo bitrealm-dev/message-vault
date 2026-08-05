@@ -83,10 +83,11 @@ export function loadStorageUsage(
               COALESCE(a.size_bytes, 0) AS size_bytes,
               c.id AS conversation_id,
               c.group_title,
-              c.chat_identifier
+              c_h.raw AS chat_identifier
        FROM attachments a
        JOIN messages m ON m.id = a.message_id
        JOIN conversations c ON c.id = m.conversation_id
+       JOIN handles c_h ON c_h.id = c.chat_handle_id
        WHERE m.account_id = ?
          AND COALESCE(a.size_bytes, 0) > 0
        ORDER BY a.size_bytes DESC, a.id DESC

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 
 import { getDb, resetDb } from "./dbCore";
+import { resolveHandleId } from "./handlesWrite";
 import { parsePhoneE164 } from "./phoneE164";
 import { openWritableVaultDb } from "./vaultSchema";
 
@@ -45,7 +46,11 @@ function readProfileFromDb(
   const phones = (
     db
       .prepare(
-        `SELECT phone FROM account_phones WHERE account_id = ? ORDER BY phone`,
+        `SELECT h.raw AS phone
+         FROM account_handles ah
+         JOIN handles h ON h.id = ah.handle_id
+         WHERE ah.account_id = ? AND h.handle_type = 'phone'
+         ORDER BY h.raw`,
       )
       .all(accountId) as Array<{ phone: string }>
   ).map((r) => r.phone);
@@ -80,11 +85,12 @@ export function createAccountProfile(
     accountId,
   );
 
-  const insertPhone = db.prepare(
-    `INSERT INTO account_phones (account_id, phone) VALUES (?, ?)`,
+  const insertHandle = db.prepare(
+    `INSERT OR IGNORE INTO account_handles (account_id, handle_id) VALUES (?, ?)`,
   );
   for (const phone of phones) {
-    insertPhone.run(accountId, phone);
+    const handleId = resolveHandleId(db, accountId, phone, "phone");
+    insertHandle.run(accountId, handleId);
   }
   invalidateAccountProfileCache(accountId);
 }
@@ -138,12 +144,13 @@ export function saveAccountProfile(
       accountId,
     );
 
-    db.prepare(`DELETE FROM account_phones WHERE account_id = ?`).run(accountId);
-    const insertPhone = db.prepare(
-      `INSERT INTO account_phones (account_id, phone) VALUES (?, ?)`,
+    db.prepare(`DELETE FROM account_handles WHERE account_id = ?`).run(accountId);
+    const insertHandle = db.prepare(
+      `INSERT OR IGNORE INTO account_handles (account_id, handle_id) VALUES (?, ?)`,
     );
     for (const phone of next.phones) {
-      insertPhone.run(accountId, phone);
+      const handleId = resolveHandleId(db, accountId, phone, "phone");
+      insertHandle.run(accountId, handleId);
     }
 
     resetDb();

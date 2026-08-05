@@ -1,8 +1,17 @@
+import type { HandleType } from "./handleKind";
+
 export type ContactSection =
   | "all"
   | "no-messages"
   | "no-label"
   | { label: string };
+
+/** One handle attached to a contact. */
+export type ContactHandle = {
+  raw: string;
+  handle_type: HandleType;
+  service: string | null;
+};
 
 export type ContactListItem = {
   id: number;
@@ -10,6 +19,8 @@ export type ContactListItem = {
   /** Stored display name. */
   preferredName: string | null;
   preferredHandle: string | null;
+  /** Type of {@link preferredHandle} (null when the contact has no handles). */
+  handleType: HandleType | null;
   /** Derived from preferredName (first space split) for search/API compat. */
   firstName: string | null;
   /** Derived from preferredName (first space split) for search/API compat. */
@@ -29,6 +40,9 @@ export type ContactListItem = {
 };
 
 export type ContactDetail = ContactListItem & {
+  /** Every handle on the contact with its type (phones first). */
+  handles: ContactHandle[];
+  /** All handle raws (legacy name; equals handles.map(h => h.raw)). */
   phones: string[];
 };
 
@@ -45,6 +59,7 @@ export type YearThread = {
 export type GroupParticipant = {
   name: string;
   handle: string;
+  handleType: HandleType | null;
   contactId: number | null;
 };
 
@@ -114,6 +129,8 @@ export type MessageRow = {
 
 export type UnassignedHandle = {
   handle: string;
+  /** Handle type from the handles table (null when unknown). */
+  handleType?: HandleType | null;
   displayName: string;
   nameHint: string | null;
   messageCount: number;

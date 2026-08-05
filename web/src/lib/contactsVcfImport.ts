@@ -57,17 +57,19 @@ export function messagePhoneHandles(accountId: string): Set<string> {
   try {
     const rows = db
       .prepare(
-        `SELECT DISTINCT handle FROM (
-           SELECT c.chat_identifier AS handle
+        `SELECT DISTINCT raw AS handle FROM (
+           SELECT ch.raw AS raw
            FROM conversations c
+           JOIN handles ch ON ch.id = c.chat_handle_id
            JOIN messages m ON m.conversation_id = c.id
-           WHERE c.account_id = ?
+           WHERE c.account_id = ? AND ch.handle_type = 'phone'
            UNION
-           SELECT p.handle
+           SELECT ph.raw
            FROM participants p
            JOIN conversations c ON c.id = p.conversation_id
+           JOIN handles ph ON ph.id = p.handle_id
            JOIN messages m ON m.conversation_id = c.id
-           WHERE c.account_id = ?
+           WHERE c.account_id = ? AND ph.handle_type = 'phone'
          )`,
       )
       .all(accountId, accountId) as Array<{ handle: string }>;
@@ -75,7 +77,7 @@ export function messagePhoneHandles(accountId: string): Set<string> {
     const out = new Set<string>();
     for (const row of rows) {
       const handle = row.handle?.trim();
-      if (!handle || handle.includes("@")) continue;
+      if (!handle) continue;
       const e164 = toPhoneE164(handle);
       if (e164) out.add(e164);
       else out.add(handle);
@@ -91,7 +93,10 @@ function findContactIdByPhone(phone: string, accountId: string): number | null {
   try {
     const row = db
       .prepare(
-        `SELECT contact_id FROM contact_handles WHERE account_id = ? AND handle = ?`,
+        `SELECT cp.contact_id AS contact_id
+         FROM handles h
+         JOIN contact_handles cp ON cp.handle_id = h.id AND cp.account_id = h.account_id
+         WHERE h.account_id = ? AND h.normalized = ? AND h.handle_type = 'phone'`,
       )
       .get(accountId, phone) as { contact_id: number } | undefined;
     return row?.contact_id ?? null;

@@ -1796,6 +1796,7 @@ export function BrowseShell({
         next.push({
           name: c.displayName || c.preferredHandle || "Contact",
           handle: c.preferredHandle ?? "",
+          handleType: c.handleType ?? null,
           contactId: c.id,
         });
       }

@@ -1,6 +1,7 @@
 import fs from "fs";
 
 import Database from "better-sqlite3";
+import { inferHandleType, normalizeHandle, type HandleType } from "./handleKind";
 import { formatPhoneDisplay } from "./phoneE164";
 import { ensureDbParentDir } from "./paths";
 
@@ -127,11 +128,20 @@ export function splitNameParts(name: string | null | undefined): {
 export function displayName(row: {
   preferred_name?: string | null;
   preferred_handle?: string | null;
+  preferred_handle_type?: HandleType | null;
 }): string {
   const preferred = row.preferred_name?.trim();
   if (preferred) return preferred;
-  if (row.preferred_handle?.trim()) {
-    return formatPhoneDisplay(row.preferred_handle);
+  const handle = row.preferred_handle?.trim();
+  if (handle) {
+    // Phones get international display formatting; emails/usernames pass through.
+    if (
+      !row.preferred_handle_type ||
+      row.preferred_handle_type === "phone"
+    ) {
+      return formatPhoneDisplay(handle);
+    }
+    return handle;
   }
   return "Unknown";
 }
@@ -184,6 +194,117 @@ export function hasTrashedContactsTable(db: Database.Database): boolean {
     )
     .get() as { n: number };
   return row.n > 0;
+}
+
+/** One handle row as exposed by the shared contact_handles join. */
+export type ContactHandleRow = {
+  handle_id: number;
+  raw: string;
+  handle_type: HandleType;
+  service: string | null;
+};
+
+/** Every handle on the given contacts, phones first, keyed by contact id. */
+export function contactHandlesByContact(
+  db: Database.Database,
+  accountId: string,
+  contactIds: number[],
+): Map<number, ContactHandleRow[]> {
+  const out = new Map<number, ContactHandleRow[]>();
+  const ids = [...new Set(contactIds.filter((id) => Number.isFinite(id)))];
+  if (!ids.length) return out;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT ch.contact_id AS contact_id,
+              h.id AS handle_id,
+              h.raw AS raw,
+              h.handle_type AS handle_type,
+              h.service AS service
+       FROM contact_handles ch
+       JOIN handles h ON h.id = ch.handle_id
+       WHERE ch.account_id = ? AND ch.contact_id IN (${placeholders})
+       ORDER BY CASE h.handle_type WHEN 'phone' THEN 0 ELSE 1 END, h.raw`,
+    )
+    .all(accountId, ...ids) as Array<
+    ContactHandleRow & { contact_id: number }
+  >;
+  for (const r of rows) {
+    const list = out.get(r.contact_id) ?? [];
+    list.push({
+      handle_id: r.handle_id,
+      raw: r.raw,
+      handle_type: r.handle_type,
+      service: r.service,
+    });
+    out.set(r.contact_id, list);
+  }
+  return out;
+}
+
+/** First handle (phones first), used wherever preferred_handle used to live. */
+export function preferredHandleOf(handles: ContactHandleRow[]): string | null {
+  const first = handles[0];
+  return first ? first.raw : null;
+}
+
+/** Handle type of the preferred handle, if any. */
+export function preferredHandleTypeOf(
+  handles: ContactHandleRow[],
+): HandleType | null {
+  const first = handles[0];
+  return first ? first.handle_type : null;
+}
+
+/**
+ * Resolve raw handles to handle ids for an account, dropping raws with no
+ * handle row. Matching is by (normalized, handle_type) — the handles table's
+ * identity key — so differently-formatted raws of the same handle share a row.
+ */
+export function handleIdsForRaws(
+  db: Database.Database,
+  accountId: string,
+  raws: string[],
+): number[] {
+  const seen = new Map<string, { type: HandleType; normalized: string }>();
+  for (const raw of raws) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const type = inferHandleType(trimmed);
+    const normalized = normalizeHandle(trimmed, type);
+    seen.set(`${type}\0${normalized}`, { type, normalized });
+  }
+  const needles = [...seen.values()];
+  if (!needles.length) return [];
+  const where = needles
+    .map(() => `(h.normalized = ? AND h.handle_type = ?)`)
+    .join(" OR ");
+  const params: unknown[] = [accountId];
+  for (const n of needles) params.push(n.normalized, n.type);
+  const rows = db
+    .prepare(
+      `SELECT h.id AS id
+       FROM handles h
+       WHERE h.account_id = ? AND (${where})`,
+    )
+    .all(...params) as Array<{ id: number }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * NOT EXISTS filter: the handle row (by id expression) is not soft-trashed.
+ * `handleIdExpr` and `accountExpr` are SQL expressions from the outer query.
+ */
+export function notTrashedHandleSql(
+  handleIdExpr: string,
+  accountExpr: string,
+): string {
+  const db = getDb();
+  if (!hasTrashedHandlesTable(db)) return "";
+  return `AND NOT EXISTS (
+    SELECT 1 FROM trashed_handles th
+    WHERE th.handle_id = ${handleIdExpr} AND th.account_id = ${accountExpr}
+  )`;
 }
 
 function looksLikePhone(value: string): boolean {

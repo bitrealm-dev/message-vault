@@ -18,6 +18,7 @@ function contact(id: number, name = `C${id}`): ContactListItem {
     displayName: name,
     preferredName: name,
     preferredHandle: null,
+    handleType: null,
     firstName: name,
     lastName: null,
     sortFirst: name,

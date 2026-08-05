@@ -53,6 +53,7 @@ function inspectorParticipants(
   return labels.map((name, i) => ({
     name,
     handle: handles[i] ?? name,
+    handleType: null,
     contactId: null,
   }));
 }

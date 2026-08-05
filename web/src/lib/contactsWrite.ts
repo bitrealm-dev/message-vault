@@ -1,14 +1,14 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
-import { joinPreferredName } from "./dbCore";
+import { contactHandlesByContact, getDb, joinPreferredName } from "./dbCore";
 import { getContact, resetDb } from "./db";
 import { openWritableVaultDb } from "./vaultSchema";
 import {
-  isEmailHandle,
-  phoneHandlesOnly,
-  preferredPhoneHandle,
+  inferHandleType,
+  normalizeHandle,
+  type HandleType,
 } from "./handleKind";
-import { clearTrashedHandles } from "./handlesWrite";
+import { clearTrashedHandles, resolveHandleId } from "./handlesWrite";
 import type { ContactDetail } from "./types";
 import {
   isReservedLabelName,
@@ -25,6 +25,31 @@ import {
   listUnassignedHandles,
 } from "./unassignedRead";
 
+/** One handle input for contact create/update. */
+export type ContactHandleInput = {
+  raw: string;
+  /** Optional; inferred from the handle's shape when omitted. */
+  handle_type?: HandleType;
+};
+
+function normalizeHandleInputs(input: ContactHandleInput[]): Array<{
+  raw: string;
+  handle_type: HandleType;
+}> {
+  const out: Array<{ raw: string; handle_type: HandleType }> = [];
+  const seen = new Set<string>();
+  for (const h of input) {
+    const raw = h.raw.trim();
+    if (!raw) continue;
+    const handle_type = h.handle_type ?? inferHandleType(raw);
+    const key = `${handle_type}\0${normalizeHandle(raw, handle_type)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ raw, handle_type });
+  }
+  return out;
+}
+
 export type ContactPatch = {
   labels?: string[];
   preferredName?: string | null;
@@ -32,7 +57,10 @@ export type ContactPatch = {
   firstName?: string | null;
   /** @deprecated Prefer preferredName; joined with firstName when preferredName omitted. */
   lastName?: string | null;
+  /** Handles as raw strings (legacy alias for handles; types are inferred). */
   phones?: string[];
+  /** Handles with types; replaces phones when both are given. */
+  handles?: ContactHandleInput[];
 };
 
 function assertAllowedLabelName(name: string): void {
@@ -47,7 +75,10 @@ export type ContactCreate = {
   firstName?: string | null;
   /** @deprecated Prefer preferredName; joined with firstName when preferredName omitted. */
   lastName?: string | null;
+  /** Handles as raw strings (legacy alias for handles; types are inferred). */
   phones?: string[];
+  /** Handles with types; replaces phones when both are given. */
+  handles?: ContactHandleInput[];
   labels?: string[];
 };
 
@@ -75,49 +106,59 @@ export function createContact(input: ContactCreate): ContactDetail {
   if (!preferredName) {
     throw new Error("display name required");
   }
-  const phones = (input.phones ?? []).map((p) => p.trim()).filter(Boolean);
-  if (phoneHandlesOnly(phones).length === 0) {
-    throw new Error(
-      "at least one phone number required (emails alone cannot create a contact)",
-    );
+  const handles = normalizeHandleInputs(
+    input.handles ??
+      (input.phones ?? []).map((p) => ({ raw: p })),
+  );
+  if (handles.length === 0) {
+    throw new Error("at least one handle (phone or email) required");
   }
-  const preferredHandle = preferredPhoneHandle(phones);
   const labels = (input.labels ?? [])
     .map((t) => t.trim())
     .filter(Boolean)
     .filter((t) => !RESERVED_LABEL_NAMES.has(t.toLowerCase()));
 
-  for (const phone of phones) {
-    assertNotOwnerHandle(phone);
+  for (const handle of handles) {
+    assertNotOwnerHandle(handle.raw);
   }
 
   let newId = 0;
   const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
-      for (const phone of phones) {
-        const owner = phoneOwner(writeDb, phone, accountId);
+      for (const handle of handles) {
+        const owner = handleOwner(writeDb, handle.raw, handle.handle_type, accountId);
         if (owner != null) {
-          throw new Error(`phone ${phone} already belongs to another contact`);
+          throw new Error(`handle ${handle.raw} already belongs to another contact`);
         }
       }
 
       const result = writeDb
         .prepare(
           `INSERT INTO contacts (
-             account_id, preferred_name, preferred_handle
-           ) VALUES (?, ?, ?)`,
+             account_id, preferred_name
+           ) VALUES (?, ?)`,
         )
-        .run(accountId, preferredName, preferredHandle);
+        .run(accountId, preferredName);
       newId = Number(result.lastInsertRowid);
 
-      const insertPhone = writeDb.prepare(
-        `INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?, ?, ?)`,
+      const insertHandle = writeDb.prepare(
+        `INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?, ?, ?)`,
       );
-      for (const phone of phones) {
-        insertPhone.run(accountId, phone, newId);
+      for (const handle of handles) {
+        const handleId = resolveHandleId(
+          writeDb,
+          accountId,
+          handle.raw,
+          handle.handle_type,
+        );
+        insertHandle.run(accountId, handleId, newId);
       }
-      clearTrashedHandles(writeDb, phones, accountId);
+      clearTrashedHandles(
+        writeDb,
+        handles.map((h) => h.raw),
+        accountId,
+      );
 
       if (labels.length > 0) {
         const insertMember = writeDb.prepare(
@@ -316,91 +357,104 @@ export function deleteLabel(name: string): void {
   resetDb();
 }
 
-function phoneOwner(
+/** Contact that owns a handle (by normalized identity), if any. */
+function handleOwner(
   db: Database.Database,
-  phone: string,
+  raw: string,
+  handleType: HandleType,
   accountId: string,
 ): number | null {
+  const normalized = normalizeHandle(raw, handleType);
   const row = db
     .prepare(
-      `SELECT contact_id FROM contact_handles WHERE account_id = ? AND handle = ?`,
+      `SELECT cp.contact_id AS contact_id
+       FROM handles h
+       JOIN contact_handles cp ON cp.handle_id = h.id AND cp.account_id = h.account_id
+       WHERE h.account_id = ? AND h.normalized = ? AND h.handle_type = ?`,
     )
-    .get(accountId, phone) as { contact_id: number } | undefined;
+    .get(accountId, normalized, handleType) as { contact_id: number } | undefined;
   return row?.contact_id ?? null;
 }
 
 /**
- * Retarget message/conversation handles when a contact phone changes so the
- * person stays linked to their threads (list filters require phone↔message join).
+ * Retarget message/conversation handle links when a contact handle changes so
+ * the person stays linked to their threads (list filters require handle joins).
  */
-function remapPhoneHandle(
+function remapHandle(
   db: Database.Database,
   contactId: number,
-  from: string,
-  to: string,
+  from: { raw: string; handle_type: HandleType },
+  to: { raw: string; handle_type: HandleType },
   accountId: string,
 ): void {
-  if (from === to) return;
+  if (from.raw === to.raw && from.handle_type === to.handle_type) return;
 
-  const owner = phoneOwner(db, to, accountId);
+  const owner = handleOwner(db, to.raw, to.handle_type, accountId);
   if (owner != null && owner !== contactId) {
-    throw new Error(`phone ${to} already belongs to another contact`);
+    throw new Error(`handle ${to.raw} already belongs to another contact`);
   }
 
-  // Prefer updating the PK in place; if `to` already exists on this contact,
-  // drop the old row instead (merge).
+  const fromId = resolveHandleId(db, accountId, from.raw, from.handle_type);
+  const toId = resolveHandleId(db, accountId, to.raw, to.handle_type);
+
+  // Prefer updating in place; if `to` already exists on this contact, drop the
+  // old link instead (merge).
   if (owner === contactId) {
     db.prepare(
-      `DELETE FROM contact_handles WHERE account_id = ? AND handle = ?`,
-    ).run(accountId, from);
+      `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ?`,
+    ).run(accountId, fromId);
   } else {
     db.prepare(
-      `UPDATE contact_handles SET handle = ? WHERE account_id = ? AND handle = ?`,
-    ).run(to, accountId, from);
+      `UPDATE contact_handles SET handle_id = ?
+       WHERE account_id = ? AND handle_id = ?`,
+    ).run(toId, accountId, fromId);
   }
 
   db.prepare(
-    `UPDATE conversations SET chat_identifier = ?
-     WHERE account_id = ? AND chat_identifier = ?`,
-  ).run(to, accountId, from);
-  db.prepare(`UPDATE participants SET handle = ? WHERE handle = ?`).run(to, from);
-  db.prepare(`UPDATE messages SET sender = ? WHERE sender = ?`).run(to, from);
-  db.prepare(`UPDATE tapbacks SET sender = ? WHERE sender = ?`).run(to, from);
+    `UPDATE conversations SET chat_handle_id = ?
+     WHERE account_id = ? AND chat_handle_id = ?`,
+  ).run(toId, accountId, fromId);
+  db.prepare(`UPDATE participants SET handle_id = ? WHERE handle_id = ?`).run(toId, fromId);
+  db.prepare(`UPDATE messages SET sender_handle_id = ? WHERE sender_handle_id = ?`).run(toId, fromId);
+  db.prepare(`UPDATE tapbacks SET sender_handle_id = ? WHERE sender_handle_id = ?`).run(toId, fromId);
 }
 
-function syncContactPhones(
+function syncContactHandles(
   db: Database.Database,
   contactId: number,
-  oldPhones: string[],
-  newPhones: string[],
+  oldHandles: Array<{ raw: string; handle_type: HandleType }>,
+  newHandles: Array<{ raw: string; handle_type: HandleType }>,
   accountId: string,
 ): void {
-  const shared = Math.min(oldPhones.length, newPhones.length);
+  const shared = Math.min(oldHandles.length, newHandles.length);
   for (let i = 0; i < shared; i++) {
-    const from = oldPhones[i]!;
-    const to = newPhones[i]!;
-    if (from !== to) {
-      remapPhoneHandle(db, contactId, from, to, accountId);
+    const from = oldHandles[i]!;
+    const to = newHandles[i]!;
+    if (from.raw !== to.raw || from.handle_type !== to.handle_type) {
+      remapHandle(db, contactId, from, to, accountId);
     }
   }
 
-  for (let i = shared; i < oldPhones.length; i++) {
+  for (let i = shared; i < oldHandles.length; i++) {
+    const old = oldHandles[i]!;
+    const oldId = resolveHandleId(db, accountId, old.raw, old.handle_type);
     db.prepare(
-      `DELETE FROM contact_handles WHERE account_id = ? AND handle = ?`,
-    ).run(accountId, oldPhones[i]);
+      `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ?`,
+    ).run(accountId, oldId);
   }
 
   const insert = db.prepare(
-    `INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?, ?, ?)`,
+    `INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?, ?, ?)`,
   );
-  for (let i = shared; i < newPhones.length; i++) {
-    const phone = newPhones[i]!;
-    const owner = phoneOwner(db, phone, accountId);
+  for (let i = shared; i < newHandles.length; i++) {
+    const next = newHandles[i]!;
+    const owner = handleOwner(db, next.raw, next.handle_type, accountId);
     if (owner != null && owner !== contactId) {
-      throw new Error(`phone ${phone} already belongs to another contact`);
+      throw new Error(`handle ${next.raw} already belongs to another contact`);
     }
     if (owner == null) {
-      insert.run(accountId, phone, contactId);
+      const handleId = resolveHandleId(db, accountId, next.raw, next.handle_type);
+      insert.run(accountId, handleId, contactId);
     }
   }
 }
@@ -429,38 +483,51 @@ export function patchContact(
     );
   }
 
-  const phones =
-    patch.phones !== undefined
-      ? patch.phones.map((p) => p.trim()).filter(Boolean)
-      : existing.phones;
-  const preferredHandle = preferredPhoneHandle(phones);
+  const handlesChanged =
+    patch.handles !== undefined || patch.phones !== undefined;
+  const nextHandles = handlesChanged
+    ? normalizeHandleInputs(
+        patch.handles ??
+          (patch.phones ?? []).map((p) => ({ raw: p })),
+      )
+    : existing.handles.map((h) => ({ raw: h.raw, handle_type: h.handle_type }));
 
-  if (patch.phones !== undefined && phoneHandlesOnly(phones).length === 0) {
-    throw new Error(
-      "at least one phone number required (emails alone cannot be a contact)",
-    );
+  if (nextHandles.length === 0) {
+    throw new Error("at least one handle (phone or email) required");
   }
-  if (patch.phones !== undefined) {
-    for (const phone of phones) {
-      assertNotOwnerHandle(phone);
+  if (handlesChanged) {
+    for (const handle of nextHandles) {
+      assertNotOwnerHandle(handle.raw);
     }
   }
 
   const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
-      if (patch.phones) {
-        syncContactPhones(writeDb, id, existing.phones, phones, accountId);
-        clearTrashedHandles(writeDb, phones, accountId);
+      if (handlesChanged) {
+        syncContactHandles(
+          writeDb,
+          id,
+          existing.handles.map((h) => ({ raw: h.raw, handle_type: h.handle_type })),
+          nextHandles,
+          accountId,
+        );
+        clearTrashedHandles(
+          writeDb,
+          nextHandles.map((h) => h.raw),
+          accountId,
+        );
       }
 
       writeDb
         .prepare(
           `UPDATE contacts
-           SET preferred_name = ?, preferred_handle = ?
+           SET preferred_name = ?
            WHERE id = ? AND account_id = ?`,
         )
-        .run(preferredName, preferredHandle, id, accountId);
+        // preferred_name is NOT NULL; an empty string renders as "no name"
+        // (displayName falls back to the preferred handle).
+        .run(preferredName ?? "", id, accountId);
 
       if (patch.labels) {
         writeDb
@@ -489,7 +556,7 @@ export function patchContact(
   return updated;
 }
 
-/** Append a phone/email handle to an existing contact (for Unassigned assign). */
+/** Append a handle to an existing contact (for Unassigned assign). */
 export function addPhoneToContact(id: number, phone: string): ContactDetail {
   assertVaultWritable();
   const accountId = currentAccountId();
@@ -500,36 +567,34 @@ export function addPhoneToContact(id: number, phone: string): ContactDetail {
   assertNotOwnerHandle(trimmed);
   if (existing.phones.includes(trimmed)) return existing;
 
-  if (isEmailHandle(trimmed)) {
-    const writeDb = openWritableVaultDb();
-    try {
-      const owner = phoneOwner(writeDb, trimmed, accountId);
-      if (owner != null && owner !== id) {
-        throw new Error(`phone ${trimmed} already belongs to another contact`);
-      }
-      if (owner == null) {
-        writeDb
-          .prepare(
-            `INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?, ?, ?)`,
-          )
-          .run(accountId, trimmed, id);
-        clearTrashedHandles(writeDb, [trimmed], accountId);
-      }
-    } finally {
-      writeDb.close();
+  const writeDb = openWritableVaultDb();
+  try {
+    const handleType = inferHandleType(trimmed);
+    const owner = handleOwner(writeDb, trimmed, handleType, accountId);
+    if (owner != null && owner !== id) {
+      throw new Error(`handle ${trimmed} already belongs to another contact`);
     }
-    resetDb();
-    const updated = getContact(id);
-    if (!updated) throw new Error("contact missing after update");
-    return updated;
+    if (owner == null) {
+      const handleId = resolveHandleId(writeDb, accountId, trimmed, handleType);
+      writeDb
+        .prepare(
+          `INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?, ?, ?)`,
+        )
+        .run(accountId, handleId, id);
+      clearTrashedHandles(writeDb, [trimmed], accountId);
+    }
+  } finally {
+    writeDb.close();
   }
-
-  return patchContact(id, { phones: [...existing.phones, trimmed] });
+  resetDb();
+  const updated = getContact(id);
+  if (!updated) throw new Error("contact missing after update");
+  return updated;
 }
 
 /**
- * Remove a phone/email handle from a contact. Does not delete conversations
- * or messages. Used to undo assign-from-unassigned.
+ * Remove a handle from a contact. Does not delete conversations or messages.
+ * Used to undo assign-from-unassigned.
  */
 export function removePhoneFromContact(
   id: number,
@@ -545,40 +610,26 @@ export function removePhoneFromContact(
     throw new Error("handle not on contact");
   }
 
-  if (isEmailHandle(trimmed)) {
-    const writeDb = openWritableVaultDb();
-    try {
-      const owner = phoneOwner(writeDb, trimmed, accountId);
-      if (owner != null && owner !== id) {
-        throw new Error(`phone ${trimmed} already belongs to another contact`);
-      }
-      writeDb
-        .prepare(`DELETE FROM contact_handles WHERE account_id = ? AND handle = ?`)
-        .run(accountId, trimmed);
-      const preferred = preferredPhoneHandle(
-        existing.phones.filter((p) => p !== trimmed),
-      );
-      writeDb
-        .prepare(
-          `UPDATE contacts SET preferred_handle = ? WHERE id = ? AND account_id = ?`,
-        )
-        .run(preferred, id, accountId);
-    } finally {
-      writeDb.close();
+  const writeDb = openWritableVaultDb();
+  try {
+    const handleType = inferHandleType(trimmed);
+    const owner = handleOwner(writeDb, trimmed, handleType, accountId);
+    if (owner != null && owner !== id) {
+      throw new Error(`handle ${trimmed} already belongs to another contact`);
     }
-    resetDb();
-    const updated = getContact(id);
-    if (!updated) throw new Error("contact missing after update");
-    return updated;
+    const handleId = resolveHandleId(writeDb, accountId, trimmed, handleType);
+    writeDb
+      .prepare(
+        `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ?`,
+      )
+      .run(accountId, handleId);
+  } finally {
+    writeDb.close();
   }
-
-  const nextPhones = existing.phones.filter((p) => p !== trimmed);
-  if (phoneHandlesOnly(nextPhones).length === 0) {
-    throw new Error(
-      "cannot remove last phone number (emails alone cannot be a contact)",
-    );
-  }
-  return patchContact(id, { phones: nextPhones });
+  resetDb();
+  const updated = getContact(id);
+  if (!updated) throw new Error("contact missing after update");
+  return updated;
 }
 
 /**
@@ -628,45 +679,59 @@ export function ensureUnknownContacts(): number {
   const candidates = [
     ...listUnassignedHandles().map((row) => ({
       handle: row.handle,
+      handleType: row.handleType,
       nameHint: row.nameHint,
     })),
     ...listUnassignedGroupParticipantHandles(),
   ];
-  const byHandle = new Map<string, string | null>();
+  const byIdentity = new Map<
+    string,
+    { raw: string; handleType: HandleType; nameHint: string | null }
+  >();
   for (const candidate of candidates) {
-    const handle = candidate.handle.trim();
-    if (!handle || isOwner(handle)) continue;
+    const raw = candidate.handle.trim();
+    if (!raw || isOwner(raw)) continue;
+    const handleType = candidate.handleType ?? inferHandleType(raw);
+    const key = `${handleType}\0${normalizeHandle(raw, handleType)}`;
     const hint = candidate.nameHint?.trim() || null;
-    if (!byHandle.has(handle) || (!byHandle.get(handle) && hint)) {
-      byHandle.set(handle, hint);
+    const prev = byIdentity.get(key);
+    if (!prev || (!prev.nameHint && hint)) {
+      byIdentity.set(key, { raw, handleType, nameHint: hint });
     }
   }
-  if (byHandle.size === 0) return 0;
+  if (byIdentity.size === 0) return 0;
 
   let created = 0;
   const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
-      for (const [handle, preferredName] of byHandle) {
-        const owner = phoneOwner(writeDb, handle, accountId);
+      for (const entry of byIdentity.values()) {
+        const owner = handleOwner(writeDb, entry.raw, entry.handleType, accountId);
         if (owner != null) continue;
 
         const result = writeDb
           .prepare(
             `INSERT INTO contacts (
-               account_id, preferred_name, preferred_handle
-             ) VALUES (?, ?, ?)`,
+               account_id, preferred_name
+             ) VALUES (?, ?)`,
           )
-          .run(accountId, preferredName, handle);
+          // preferred_name is NOT NULL; an empty string keeps the contact
+          // nameless (display falls back to the handle).
+          .run(accountId, entry.nameHint ?? "");
         const newId = Number(result.lastInsertRowid);
+        const handleId = resolveHandleId(
+          writeDb,
+          accountId,
+          entry.raw,
+          entry.handleType,
+        );
         writeDb
           .prepare(
-            `INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?, ?, ?)`,
+            `INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?, ?, ?)`,
           )
-          .run(accountId, handle, newId);
-        clearTrashedHandles(writeDb, [handle], accountId);
+          .run(accountId, handleId, newId);
+        clearTrashedHandles(writeDb, [entry.raw], accountId);
         created += 1;
-
       }
     });
     tx();
@@ -679,7 +744,8 @@ export function ensureUnknownContacts(): number {
 
 /**
  * Move all handles from a nameless source contact onto a named target, then
- * delete the source. Messages stay linked via handles.
+ * delete the source. Messages stay linked via handle ids; group participants
+ * are re-pointed at the target contact.
  */
 export function mergeContacts(fromId: number, intoId: number): ContactDetail {
   assertVaultWritable();
@@ -698,32 +764,46 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
   }
 
   const accountId = currentAccountId();
-  const mergedPhones = [
-    ...new Set([...target.phones, ...source.phones].map((p) => p.trim()).filter(Boolean)),
-  ];
+  // Handle rows carry handle_id (ContactDetail.handles does not); resolve them
+  // from the shared readonly connection before the write transaction opens.
+  const sourceHandles =
+    contactHandlesByContact(getDb(), accountId, [fromId]).get(fromId) ?? [];
 
   const writeDb = openWritableVaultDb();
   try {
     const tx = writeDb.transaction(() => {
-      for (const handle of source.phones) {
-        const owner = phoneOwner(writeDb, handle, accountId);
+      for (const handle of sourceHandles) {
+        const owner = handleOwner(writeDb, handle.raw, handle.handle_type, accountId);
         if (owner != null && owner !== fromId && owner !== intoId) {
-          throw new Error(`handle ${handle} already belongs to another contact`);
+          throw new Error(`handle ${handle.raw} already belongs to another contact`);
         }
         if (owner === intoId) {
           writeDb
             .prepare(
-              `DELETE FROM contact_handles WHERE account_id = ? AND handle = ? AND contact_id = ?`,
+              `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ? AND contact_id = ?`,
             )
-            .run(accountId, handle, fromId);
+            .run(accountId, handle.handle_id, fromId);
           continue;
         }
         writeDb
           .prepare(
             `UPDATE contact_handles SET contact_id = ?
-             WHERE account_id = ? AND handle = ? AND contact_id = ?`,
+             WHERE account_id = ? AND handle_id = ? AND contact_id = ?`,
           )
-          .run(intoId, accountId, handle, fromId);
+          .run(intoId, accountId, handle.handle_id, fromId);
+      }
+      // Participants pointing at the source contact follow the merge; any
+      // unassigned participant of a moved handle is claimed by the target.
+      writeDb
+        .prepare(`UPDATE participants SET contact_id = ? WHERE contact_id = ?`)
+        .run(intoId, fromId);
+      for (const handle of sourceHandles) {
+        writeDb
+          .prepare(
+            `UPDATE participants SET contact_id = ?
+             WHERE handle_id = ? AND (contact_id IS NULL OR contact_id = ?)`,
+          )
+          .run(intoId, handle.handle_id, fromId);
       }
       writeDb
         .prepare(`DELETE FROM contact_label_members WHERE contact_id = ?`)
@@ -731,16 +811,6 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
       writeDb
         .prepare(`DELETE FROM contacts WHERE id = ? AND account_id = ?`)
         .run(fromId, accountId);
-
-      const preferred =
-        target.preferredHandle && mergedPhones.includes(target.preferredHandle)
-          ? target.preferredHandle
-          : preferredPhoneHandle(mergedPhones) ?? target.preferredHandle;
-      writeDb
-        .prepare(
-          `UPDATE contacts SET preferred_handle = ? WHERE id = ? AND account_id = ?`,
-        )
-        .run(preferred, intoId, accountId);
     });
     tx();
   } finally {

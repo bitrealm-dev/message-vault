@@ -1,20 +1,27 @@
 import { currentAccountId } from "./accountScope";
 import {
   combinedDedupeSql,
+  contactHandlesByContact,
   displayName,
   getDb,
+  handleIdsForRaws,
   hasDuplicateOfColumn,
   hasTrashedContactsTable,
   hasTrashedConversationsTable,
   hasTrashedHandlesTable,
+  notTrashedHandleSql,
+  preferredHandleOf,
+  preferredHandleTypeOf,
   sortFields,
   splitNameParts,
+  type ContactHandleRow,
 } from "./dbCore";
 import { labelSlug } from "./labelSlug";
 import { contactGroupChatThreadsForPhones, contactGroupChatThreadsForPhoneSets } from "./groupChatsRead";
 import { RESERVED_LABEL_NAMES } from "./reservedLabels";
 import type {
   ContactDetail,
+  ContactHandle,
   ContactListItem,
   ContactSection,
   GroupChatThread,
@@ -86,18 +93,10 @@ function notTrashedContactSql(alias = "c"): string {
   )`;
 }
 
-function notTrashedHandleSql(handleExpr: string, accountExpr: string): string {
-  const db = getDb();
-  if (!hasTrashedHandlesTable(db)) return "";
-  return `AND NOT EXISTS (
-    SELECT 1 FROM trashed_handles th
-    WHERE th.handle = ${handleExpr} AND th.account_id = ${accountExpr}
-  )`;
-}
-
 /** Contact has visible (non-trashed) 1:1 messages or any group participation. */
 function contactHasMessagesSql(): string {
-  const trashOnHandle = notTrashedHandleSql("cp.handle", "cp.account_id");
+  const trashOnHandle = notTrashedHandleSql("cv.chat_handle_id", "cv.account_id");
+  const trashOnParticipant = notTrashedHandleSql("p.handle_id", "gcv.account_id");
   return `
   EXISTS (
     SELECT 1
@@ -109,7 +108,7 @@ function contactHasMessagesSql(): string {
           FROM conversations cv
           JOIN messages m ON m.conversation_id = cv.id
           WHERE cv.conversation_type = 'individual'
-            AND cv.chat_identifier = cp.handle
+            AND cv.chat_handle_id = cp.handle_id
             AND cv.account_id = cp.account_id
             ${trashOnHandle}
         )
@@ -119,8 +118,9 @@ function contactHasMessagesSql(): string {
           JOIN conversations gcv ON gcv.id = p.conversation_id
             AND gcv.conversation_type = 'group'
           JOIN messages m ON m.conversation_id = p.conversation_id
-          WHERE p.handle = cp.handle
+          WHERE p.handle_id = cp.handle_id
             AND gcv.account_id = cp.account_id
+            ${trashOnParticipant}
         )
       )
   )
@@ -192,7 +192,6 @@ function sectionSql(section: ContactSection): { sql: string; params: unknown[] }
 type ContactRow = {
   id: number;
   preferred_name: string | null;
-  preferred_handle: string | null;
 };
 
 function derivedNameParts(preferred: string | null | undefined): {
@@ -227,7 +226,7 @@ export function listContactsByIds(contactIds: number[]): ContactListItem[] {
   const placeholders = contactIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, preferred_name, preferred_handle
+      `SELECT id, preferred_name
        FROM contacts
        WHERE account_id = ? AND id IN (${placeholders})`,
     )
@@ -260,21 +259,33 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
   }
 
   const contactIds = rows.map((r) => r.id);
+  const handlesByContact = contactHandlesByContact(db, accountId, contactIds);
   const messageCounts = contactMessageCountsById(contactIds);
   const groupMessageCounts = contactGroupMessageCountsById(contactIds);
   const dateRanges = contactDateRangesById(contactIds);
 
   return rows
     .map((row) => {
-      const name = displayName(row);
-      const sorts = sortFields(row);
+      const handles = handlesByContact.get(row.id) ?? [];
+      const preferredHandle = preferredHandleOf(handles);
+      const preferredHandleType = preferredHandleTypeOf(handles);
+      const name = displayName({
+        preferred_name: row.preferred_name,
+        preferred_handle: preferredHandle,
+        preferred_handle_type: preferredHandleType,
+      });
+      const sorts = sortFields({
+        preferred_name: row.preferred_name,
+        preferred_handle: preferredHandle,
+      });
       const range = dateRanges.get(row.id);
       const parts = derivedNameParts(row.preferred_name);
       return {
         id: row.id,
         displayName: name,
         preferredName: row.preferred_name?.trim() || null,
-        preferredHandle: row.preferred_handle,
+        preferredHandle,
+        handleType: preferredHandleType,
         firstName: parts.firstName,
         lastName: parts.lastName,
         labels: groupsByContact.get(row.id) ?? [],
@@ -292,30 +303,35 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
     );
 }
 
+function toContactHandles(rows: ContactHandleRow[]): ContactHandle[] {
+  return rows.map((r) => ({
+    raw: r.raw,
+    handle_type: r.handle_type,
+    service: r.service,
+  }));
+}
+
 export function getContact(id: number): ContactDetail | null {
   const accountId = currentAccountId();
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name, preferred_handle
+      `SELECT id, preferred_name
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(id, accountId) as
     | {
         id: number;
         preferred_name: string | null;
-        preferred_handle: string | null;
       }
     | undefined;
   if (!row) return null;
 
-  const phones = db
-    .prepare(
-      `SELECT handle FROM contact_handles WHERE contact_id = ? AND account_id = ? ORDER BY handle`,
-    )
-    .all(id, accountId) as Array<{ handle: string }>;
+  const handles = contactHandlesByContact(db, accountId, [id]).get(id) ?? [];
+  const phoneList = handles.map((h) => h.raw);
+  const handleIds = handles.map((h) => h.handle_id);
 
-  const groups = db
+  const labels = db
     .prepare(
       `SELECT cl.name FROM contact_label_members clm
        JOIN contact_labels cl ON cl.id = clm.label_id
@@ -324,23 +340,33 @@ export function getContact(id: number): ContactDetail | null {
     )
     .all(id, accountId) as Array<{ name: string }>;
 
-  const phoneList = phones.map((p) => p.handle);
-  const dateRange = contactDateRange(phoneList);
+  const preferredHandle = preferredHandleOf(handles);
+  const preferredHandleType = preferredHandleTypeOf(handles);
+  const dateRange = contactDateRange(handleIds);
   const messageCount = contactMessageSourceCountsForConversations(
-    contactIndividualConversationIds(phoneList),
+    contactIndividualConversationIds(handleIds),
   ).all;
   const groupMessageCount = contactGroupMessageCountsById([id]).get(id) ?? 0;
 
-  const sorts = sortFields(row);
+  const sorts = sortFields({
+    preferred_name: row.preferred_name,
+    preferred_handle: preferredHandle,
+  });
   const parts = derivedNameParts(row.preferred_name);
   return {
     id: row.id,
-    displayName: displayName(row),
+    displayName: displayName({
+      preferred_name: row.preferred_name,
+      preferred_handle: preferredHandle,
+      preferred_handle_type: preferredHandleType,
+    }),
     preferredName: row.preferred_name?.trim() || null,
-    preferredHandle: row.preferred_handle,
+    preferredHandle,
+    handleType: preferredHandleType,
     firstName: parts.firstName,
     lastName: parts.lastName,
-    labels: groups.map((t) => t.name),
+    labels: labels.map((t) => t.name),
+    handles: toContactHandles(handles),
     phones: phoneList,
     dateStart: dateRange?.start ?? null,
     dateEnd: dateRange?.end ?? null,
@@ -351,14 +377,14 @@ export function getContact(id: number): ContactDetail | null {
 }
 
 function contactDateRange(
-  phones: string[],
+  handleIds: number[],
 ): { start: string; end: string } | null {
-  if (!phones.length) return null;
+  if (!handleIds.length) return null;
   const accountId = currentAccountId();
   const db = getDb();
-  const placeholders = phones.map(() => "?").join(",");
+  const placeholders = handleIds.map(() => "?").join(",");
   const hideDupes = hasDuplicateOfColumn() ? " AND m.duplicate_of IS NULL" : "";
-  const trashFilter = notTrashedHandleSql("c.chat_identifier", "c.account_id");
+  const trashFilter = notTrashedHandleSql("c.chat_handle_id", "c.account_id");
   const row = db
     .prepare(
       `SELECT MIN(substr(m.timestamp, 1, 10)) AS start, MAX(substr(m.timestamp, 1, 10)) AS end
@@ -366,9 +392,9 @@ function contactDateRange(
        JOIN conversations c ON c.id = m.conversation_id
        WHERE c.conversation_type = 'individual'
          AND c.account_id = ?
-         AND c.chat_identifier IN (${placeholders})${trashFilter}${hideDupes}`,
+         AND c.chat_handle_id IN (${placeholders})${trashFilter}${hideDupes}`,
     )
-    .get(accountId, ...phones) as { start: string | null; end: string | null } | undefined;
+    .get(accountId, ...handleIds) as { start: string | null; end: string | null } | undefined;
   if (!row?.start || !row?.end) return null;
   return { start: row.start, end: row.end };
 }
@@ -379,52 +405,55 @@ function contactPhones(contactId: number): string[] {
   return (
     db
       .prepare(
-        `SELECT handle FROM contact_handles WHERE contact_id = ? AND account_id = ?`,
+        `SELECT h.raw AS handle
+         FROM contact_handles cp
+         JOIN handles h ON h.id = cp.handle_id
+         WHERE cp.contact_id = ? AND cp.account_id = ?`,
       )
       .all(contactId, accountId) as Array<{ handle: string }>
   ).map((r) => r.handle);
 }
 
 function contactIndividualConversationIds(
-  phones: string[],
+  handleIds: number[],
   opts?: { includeTrashed?: boolean },
 ): number[] {
-  if (!phones.length) return [];
+  if (!handleIds.length) return [];
   const accountId = currentAccountId();
   const db = getDb();
-  const placeholders = phones.map(() => "?").join(",");
+  const placeholders = handleIds.map(() => "?").join(",");
   const trashFilter = opts?.includeTrashed
     ? ""
-    : notTrashedHandleSql("chat_identifier", "account_id");
+    : notTrashedHandleSql("chat_handle_id", "account_id");
   return (
     db
       .prepare(
         `SELECT id FROM conversations
          WHERE account_id = ?
-           AND conversation_type = 'individual' AND chat_identifier IN (${placeholders})
+           AND conversation_type = 'individual' AND chat_handle_id IN (${placeholders})
            ${trashFilter}`,
       )
-      .all(accountId, ...phones) as Array<{ id: number }>
+      .all(accountId, ...handleIds) as Array<{ id: number }>
   ).map((r) => r.id);
 }
 
 function contactConversationIds(
-  phones: string[],
+  handleIds: number[],
   opts?: { includeTrashed?: boolean },
 ): number[] {
   const accountId = currentAccountId();
   const db = getDb();
-  const placeholders = phones.map(() => "?").join(",");
-  const individual = contactIndividualConversationIds(phones, opts);
+  const placeholders = handleIds.map(() => "?").join(",");
+  const individual = contactIndividualConversationIds(handleIds, opts);
   const groups = db
     .prepare(
       `SELECT DISTINCT c.id AS id
        FROM conversations c
        JOIN participants p ON p.conversation_id = c.id
        WHERE c.account_id = ?
-         AND c.conversation_type = 'group' AND p.handle IN (${placeholders})`,
+         AND c.conversation_type = 'group' AND p.handle_id IN (${placeholders})`,
     )
-    .all(accountId, ...phones) as Array<{ id: number }>;
+    .all(accountId, ...handleIds) as Array<{ id: number }>;
   const ids = new Set<number>(individual);
   for (const r of groups) ids.add(r.id);
   return [...ids];
@@ -490,12 +519,12 @@ function contactMessageCountsById(
       `SELECT cp.contact_id AS contact_id, COUNT(m.id) AS n
        FROM contact_handles cp
        JOIN conversations c
-         ON c.chat_identifier = cp.handle
+         ON c.chat_handle_id = cp.handle_id
         AND c.conversation_type = 'individual'
         AND c.account_id = cp.account_id
        JOIN messages m ON m.conversation_id = c.id
        WHERE cp.account_id = ? AND cp.contact_id IN (${placeholders})${hideDupes}
-         ${notTrashedHandleSql("cp.handle", "cp.account_id")}
+         ${notTrashedHandleSql("c.chat_handle_id", "c.account_id")}
        GROUP BY cp.contact_id`,
     )
     .all(accountId, ...contactIds) as Array<{ contact_id: number; n: number }>;
@@ -522,13 +551,13 @@ function contactGroupMessageCountsById(
     .prepare(
       `SELECT cp.contact_id AS contact_id, COUNT(DISTINCT c.id) AS n
        FROM contact_handles cp
-       JOIN participants p ON p.handle = cp.handle
+       JOIN participants p ON p.handle_id = cp.handle_id
        JOIN conversations c
          ON c.id = p.conversation_id
         AND c.conversation_type = 'group'
         AND c.account_id = cp.account_id
        WHERE cp.account_id = ? AND cp.contact_id IN (${placeholders})
-         ${notTrashedHandleSql("cp.handle", "cp.account_id")}
+         ${notTrashedHandleSql("p.handle_id", "cp.account_id")}
          ${trashFilter}
        GROUP BY cp.contact_id`,
     )
@@ -556,12 +585,12 @@ function contactDateRangesById(
               MAX(substr(m.timestamp, 1, 10)) AS end
        FROM contact_handles cp
        JOIN conversations c
-         ON c.chat_identifier = cp.handle
+         ON c.chat_handle_id = cp.handle_id
         AND c.conversation_type = 'individual'
         AND c.account_id = cp.account_id
        JOIN messages m ON m.conversation_id = c.id
        WHERE cp.account_id = ? AND cp.contact_id IN (${placeholders})${hideDupes}
-         ${notTrashedHandleSql("cp.handle", "cp.account_id")}
+         ${notTrashedHandleSql("c.chat_handle_id", "c.account_id")}
        GROUP BY cp.contact_id`,
     )
     .all(accountId, ...contactIds) as Array<{
@@ -622,25 +651,20 @@ export function loadContactThreadsPage(
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name, preferred_handle
+      `SELECT id, preferred_name
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(contactId, accountId) as
     | {
         id: number;
         preferred_name: string | null;
-        preferred_handle: string | null;
       }
     | undefined;
   if (!row) return null;
 
-  const phones = (
-    db
-      .prepare(
-        `SELECT handle FROM contact_handles WHERE contact_id = ? AND account_id = ? ORDER BY handle`,
-      )
-      .all(contactId, accountId) as Array<{ handle: string }>
-  ).map((p) => p.handle);
+  const handles = contactHandlesByContact(db, accountId, [contactId]).get(contactId) ?? [];
+  const phones = handles.map((h) => h.raw);
+  const handleIds = handles.map((h) => h.handle_id);
 
   const labels = (
     db
@@ -653,12 +677,14 @@ export function loadContactThreadsPage(
       .all(contactId, accountId) as Array<{ name: string }>
   ).map((t) => t.name);
 
-  const dateRange = contactDateRange(phones);
-  const individualIds = contactIndividualConversationIds(phones, opts);
+  const preferredHandle = preferredHandleOf(handles);
+  const preferredHandleType = preferredHandleTypeOf(handles);
+  const dateRange = contactDateRange(handleIds);
+  const individualIds = contactIndividualConversationIds(handleIds, opts);
   const sourceCounts =
     contactMessageSourceCountsForConversations(individualIds);
-  const allConvIds = phones.length
-    ? contactConversationIds(phones, opts)
+  const allConvIds = handleIds.length
+    ? contactConversationIds(handleIds, opts)
     : [];
   // Enable sources that appear in 1:1 or groups so group-only archives stay selectable.
   const anySourceCounts =
@@ -667,18 +693,27 @@ export function loadContactThreadsPage(
       : contactMessageSourceCountsForConversations(allConvIds);
   const groupMessageCount =
     contactGroupMessageCountsById([contactId]).get(contactId) ?? 0;
-  const sorts = sortFields(row);
+  const sorts = sortFields({
+    preferred_name: row.preferred_name,
+    preferred_handle: preferredHandle,
+  });
   const parts = derivedNameParts(row.preferred_name);
 
   return {
     contact: {
       id: row.id,
-      displayName: displayName(row),
+      displayName: displayName({
+        preferred_name: row.preferred_name,
+        preferred_handle: preferredHandle,
+        preferred_handle_type: preferredHandleType,
+      }),
       preferredName: row.preferred_name?.trim() || null,
-      preferredHandle: row.preferred_handle,
+      preferredHandle,
+      handleType: preferredHandleType,
       firstName: parts.firstName,
       lastName: parts.lastName,
       labels,
+      handles: toContactHandles(handles),
       phones,
       dateStart: dateRange?.start ?? null,
       dateEnd: dateRange?.end ?? null,
@@ -718,13 +753,15 @@ export function contactYearlyThreadsForPhones(
   if (!phones.length) return [];
   const accountId = currentAccountId();
   const db = getDb();
-  const placeholders = phones.map(() => "?").join(",");
+  const handleIds = handleIdsForRaws(db, accountId, phones);
+  if (!handleIds.length) return [];
+  const placeholders = handleIds.map(() => "?").join(",");
   const sourceSql = source ? " AND m.source = ?" : "";
-  const params: Array<string | number> = [accountId, ...phones];
+  const params: Array<string | number> = [accountId, ...handleIds];
   if (source) params.push(source);
   const trashFilter = opts?.includeTrashed
     ? ""
-    : notTrashedHandleSql("c.chat_identifier", "c.account_id");
+    : notTrashedHandleSql("c.chat_handle_id", "c.account_id");
   const rows = db
     .prepare(
       `SELECT CAST(substr(m.timestamp, 1, 4) AS INTEGER) AS year,
@@ -738,7 +775,7 @@ export function contactYearlyThreadsForPhones(
        LEFT JOIN attachments a ON a.message_id = m.id
        WHERE c.account_id = ?
          AND c.conversation_type = 'individual'
-         AND c.chat_identifier IN (${placeholders})${sourceSql}${combinedDedupeSql(source, "m")}
+         AND c.chat_handle_id IN (${placeholders})${sourceSql}${combinedDedupeSql(source, "m")}
          ${trashFilter}
        GROUP BY year
        ORDER BY year DESC`,
@@ -790,7 +827,6 @@ export function listTrashedContacts(): TrashedContactItem[] {
     .prepare(
       `SELECT c.id AS id,
               c.preferred_name AS preferred_name,
-              c.preferred_handle AS preferred_handle,
               tc.trashed_at AS trashed_at,
               (SELECT COUNT(*) FROM contact_handles cp
                WHERE cp.contact_id = c.id AND cp.account_id = c.account_id) AS handle_count,
@@ -798,7 +834,7 @@ export function listTrashedContacts(): TrashedContactItem[] {
                 SELECT COUNT(m.id)
                 FROM contact_handles cp
                 JOIN conversations cv
-                  ON cv.chat_identifier = cp.handle
+                  ON cv.chat_handle_id = cp.handle_id
                  AND cv.conversation_type = 'individual'
                  AND cv.account_id = cp.account_id
                 JOIN messages m ON m.conversation_id = cv.id
@@ -812,31 +848,32 @@ export function listTrashedContacts(): TrashedContactItem[] {
     .all(accountId) as Array<{
     id: number;
     preferred_name: string | null;
-    preferred_handle: string | null;
     trashed_at: string;
     handle_count: number;
     message_count: number;
   }>;
 
+  const handlesByContact = contactHandlesByContact(db, accountId, rows.map((r) => r.id));
+
   return rows.map((row) => {
-    const name = displayName(row);
-    const sorts = sortFields(row);
+    const handles = handlesByContact.get(row.id) ?? [];
+    const preferredHandle = preferredHandleOf(handles);
+    const preferredHandleType = preferredHandleTypeOf(handles);
+    const name = displayName({
+      preferred_name: row.preferred_name,
+      preferred_handle: preferredHandle,
+      preferred_handle_type: preferredHandleType,
+    });
+    const sorts = sortFields({
+      preferred_name: row.preferred_name,
+      preferred_handle: preferredHandle,
+    });
     const parts = derivedNameParts(row.preferred_name);
-    let preferred = row.preferred_handle;
-    if (!preferred) {
-      const first = db
-        .prepare(
-          `SELECT handle FROM contact_handles
-           WHERE contact_id = ? AND account_id = ? ORDER BY handle LIMIT 1`,
-        )
-        .get(row.id, accountId) as { handle: string } | undefined;
-      preferred = first?.handle ?? null;
-    }
     return {
       kind: "contact" as const,
       contactId: row.id,
       displayName: name,
-      preferredHandle: preferred,
+      preferredHandle,
       handleCount: row.handle_count,
       messageCount: row.message_count,
       sortKey: `${sorts.sortLast}\0${sorts.sortFirst}`,
@@ -868,36 +905,41 @@ export function listTrashedContactMessages(): TrashedContactMessagesItem[] {
   const rows = db
     .prepare(
       `SELECT cp.contact_id AS contact_id,
-              cp.handle AS handle,
+              thh.raw AS handle,
               c.preferred_name AS preferred_name,
-              c.preferred_handle AS preferred_handle,
               MAX(th.trashed_at) AS trashed_at,
               COUNT(m.id) AS message_count
        FROM trashed_handles th
-       JOIN contact_handles cp ON cp.handle = th.handle AND cp.account_id = th.account_id
+       JOIN handles thh ON thh.id = th.handle_id
+       JOIN contact_handles cp ON cp.handle_id = th.handle_id AND cp.account_id = th.account_id
        JOIN contacts c ON c.id = cp.contact_id AND c.account_id = cp.account_id
        JOIN conversations cv
-         ON cv.chat_identifier = cp.handle
+         ON cv.chat_handle_id = th.handle_id
         AND cv.conversation_type = 'individual'
-        AND cv.account_id = cp.account_id
+        AND cv.account_id = th.account_id
        JOIN messages m ON m.conversation_id = cv.id
        WHERE th.account_id = ? ${notTrashedContact}${hideDupes}
-       GROUP BY cp.contact_id, cp.handle, c.preferred_name, c.preferred_handle
+       GROUP BY cp.contact_id, thh.raw, c.preferred_name
        HAVING message_count > 0
-       ORDER BY trashed_at DESC, cp.handle COLLATE NOCASE`,
+       ORDER BY trashed_at DESC, thh.raw COLLATE NOCASE`,
     )
     .all(accountId) as Array<{
     contact_id: number;
     handle: string;
     preferred_name: string | null;
-    preferred_handle: string | null;
     trashed_at: string;
     message_count: number;
   }>;
 
   return rows.map((row) => {
-    const name = displayName(row);
-    const sorts = sortFields(row);
+    const name = displayName({
+      preferred_name: row.preferred_name,
+      preferred_handle: row.handle,
+    });
+    const sorts = sortFields({
+      preferred_name: row.preferred_name,
+      preferred_handle: row.handle,
+    });
     const parts = derivedNameParts(row.preferred_name);
     return {
       kind: "messages_only" as const,

@@ -181,13 +181,14 @@ function conversationTitle(
 
 /**
  * A contact is linked to a conversation by being its 1:1 handle or one of its
- * participants, so group filters reach every member.
+ * participants, so group filters reach every member. Handles are compared by
+ * handle_id — the handles table's identity key.
  */
 const CONTACT_LINKED_SQL = `(
-  ch.handle = c.chat_identifier
+  ch.handle_id = c.chat_handle_id
   OR EXISTS (
     SELECT 1 FROM participants p_link
-    WHERE p_link.conversation_id = c.id AND p_link.handle = ch.handle
+    WHERE p_link.conversation_id = c.id AND p_link.handle_id = ch.handle_id
   )
 )`;
 
@@ -217,7 +218,7 @@ function contactIdsWithinDayBounds(
       `SELECT cp.contact_id AS contact_id
        FROM contact_handles cp
        JOIN conversations cv
-         ON cv.chat_identifier = cp.handle
+         ON cv.chat_handle_id = cp.handle_id
         AND cv.conversation_type = 'individual'
         AND cv.account_id = cp.account_id
        JOIN messages m ON m.conversation_id = cv.id
@@ -266,8 +267,7 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
   const rows = db
     .prepare(
       `SELECT c.id AS id,
-              c.preferred_name AS preferred_name,
-              c.preferred_handle AS preferred_handle
+              c.preferred_name AS preferred_name
        FROM contacts c
        WHERE c.account_id = ?
          AND NOT EXISTS (
@@ -278,14 +278,14 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
     .all(accountId) as Array<{
     id: number;
     preferred_name: string | null;
-    preferred_handle: string | null;
   }>;
 
   const handleRows = db
     .prepare(
-      `SELECT contact_id, handle
-       FROM contact_handles
-       WHERE account_id = ?`,
+      `SELECT cp.contact_id AS contact_id, h.raw AS handle
+       FROM contact_handles cp
+       JOIN handles h ON h.id = cp.handle_id
+       WHERE cp.account_id = ?`,
     )
     .all(accountId) as Array<{ contact_id: number; handle: string }>;
   const handlesByContact = new Map<number, string[]>();
@@ -320,10 +320,9 @@ function contactIdsMatchingPersonFilters(parsed: ParsedSearchQuery): number[] {
         return false;
       }
       if (phoneNeedles.length) {
-        const phoneValues = [
-          contact.preferred_handle ?? "",
-          ...(handlesByContact.get(contact.id) ?? []),
-        ].map((v) => v.toLocaleLowerCase());
+        const phoneValues = (handlesByContact.get(contact.id) ?? []).map(
+          (v) => v.toLocaleLowerCase(),
+        );
         if (
           !phoneNeedles.some((needle) =>
             phoneValues.some((value) => value.includes(needle)),
@@ -364,8 +363,12 @@ function buildSearchFilters(
   const where: string[] = ["c.account_id = ?"];
 
   // JOIN FTS when present so ORDER BY bm25(messages_fts) works for relevance.
-  let fromSql =
-    "messages m JOIN conversations c ON c.id = m.conversation_id";
+  // Handles are joined up front: c_h.raw is the conversation chat identifier,
+  // m_h.raw the sender — the old TEXT columns live in the handles table now.
+  let fromSql = `messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    JOIN handles c_h ON c_h.id = c.chat_handle_id
+    LEFT JOIN handles m_h ON m_h.id = m.sender_handle_id`;
   if (fts) {
     fromSql += " JOIN messages_fts ON messages_fts.rowid = m.id";
     where.push(`messages_fts MATCH ?`);
@@ -381,10 +384,11 @@ function buildSearchFilters(
       for (const n of needles) {
         const like = `%${n}%`;
         parts.push(
-          `(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
+          `(m.is_from_me = 0 AND (m_h.raw LIKE ? OR EXISTS (
              SELECT 1 FROM participants p
+             JOIN handles p_h ON p_h.id = p.handle_id
              WHERE p.conversation_id = c.id
-               AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+               AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
            )))`,
         );
         params.push(like, like, like);
@@ -404,11 +408,12 @@ function buildSearchFilters(
         const like = `%${n}%`;
         parts.push(
           `(m.is_from_me = 1 AND (
-             c.chat_identifier LIKE ?
+             c_h.raw LIKE ?
              OR EXISTS (
                SELECT 1 FROM participants p
+               JOIN handles p_h ON p_h.id = p.handle_id
                WHERE p.conversation_id = c.id
-                 AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                 AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
              )
            ))`,
         );
@@ -425,11 +430,12 @@ function buildSearchFilters(
     for (const n of needles) {
       const like = `%${n}%`;
       parts.push(
-        `(c.chat_identifier LIKE ?
+        `(c_h.raw LIKE ?
           OR EXISTS (
             SELECT 1 FROM participants p
+            JOIN handles p_h ON p_h.id = p.handle_id
             WHERE p.conversation_id = c.id
-              AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+              AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
           ))`,
       );
       params.push(like, like, like);
@@ -525,11 +531,12 @@ function buildSearchFilters(
     const like = `%${parsed.inConversation.trim()}%`;
     where.push(
       `(coalesce(c.group_title, '') LIKE ?
-        OR c.chat_identifier LIKE ?
+        OR c_h.raw LIKE ?
         OR EXISTS (
           SELECT 1 FROM participants p
+          JOIN handles p_h ON p_h.id = p.handle_id
           WHERE p.conversation_id = c.id
-            AND (p.handle LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+            AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
         ))`,
     );
     params.push(like, like, like, like);
@@ -567,7 +574,7 @@ function buildSearchFilters(
   where.push(
     `NOT EXISTS (
        SELECT 1 FROM trashed_handles th
-       WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+       WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
      )`,
   );
 
@@ -681,7 +688,7 @@ export function searchVault(
          FROM ${fromSql}
          JOIN contact_handles ch
            ON ch.account_id = c.account_id
-          AND ch.handle = c.chat_identifier
+          AND ch.handle_id = c.chat_handle_id
          WHERE ${whereSql}${dedupe}
            AND c.conversation_type = 'individual'
          GROUP BY c.id, ch.contact_id
@@ -750,16 +757,16 @@ function searchVaultMessages(
          m.timestamp AS timestamp,
          m.body AS body,
          m.is_from_me AS is_from_me,
-         m.sender AS sender,
+         m_h.raw AS sender,
          c.id AS conversation_id,
          c.conversation_type AS conversation_type,
          c.group_title AS group_title,
-         c.chat_identifier AS chat_identifier,
+         c_h.raw AS chat_identifier,
          (
            SELECT ch.contact_id
            FROM contact_handles ch
            WHERE ch.account_id = c.account_id
-             AND ch.handle = c.chat_identifier
+             AND ch.handle_id = c.chat_handle_id
              AND c.conversation_type = 'individual'
            LIMIT 1
          ) AS contact_id
@@ -790,7 +797,11 @@ function searchVaultMessages(
   const messageHits = msgRows.map((row) => {
     const participants = db
       .prepare(
-        `SELECT handle, name_hint FROM participants WHERE conversation_id = ? ORDER BY id`,
+        `SELECT h.raw AS handle, p.name_hint
+         FROM participants p
+         JOIN handles h ON h.id = p.handle_id
+         WHERE p.conversation_id = ?
+         ORDER BY p.id`,
       )
       .all(row.conversation_id) as Array<{
       handle: string;
@@ -877,8 +888,11 @@ export function messageContext(
   if (n <= 0) return { before: [], after: [] };
   const anchor = db
     .prepare(
-      `SELECT id, conversation_id, timestamp, body, is_from_me, sender
-       FROM messages WHERE id = ?`,
+      `SELECT m.id, m.conversation_id, m.timestamp, m.body, m.is_from_me,
+              h.raw AS sender
+       FROM messages m
+       LEFT JOIN handles h ON h.id = m.sender_handle_id
+       WHERE m.id = ?`,
     )
     .get(messageId) as
     | {
@@ -908,11 +922,12 @@ export function messageContext(
 
   const before = db
     .prepare(
-      `SELECT id, timestamp, body, is_from_me, sender
-       FROM messages
-       WHERE conversation_id = ?
-         AND (timestamp < ? OR (timestamp = ? AND id < ?))
-       ORDER BY timestamp DESC, id DESC
+      `SELECT m.id, m.timestamp, m.body, m.is_from_me, h.raw AS sender
+       FROM messages m
+       LEFT JOIN handles h ON h.id = m.sender_handle_id
+       WHERE m.conversation_id = ?
+         AND (m.timestamp < ? OR (m.timestamp = ? AND m.id < ?))
+       ORDER BY m.timestamp DESC, m.id DESC
        LIMIT ?`,
     )
     .all(
@@ -931,11 +946,12 @@ export function messageContext(
 
   const after = db
     .prepare(
-      `SELECT id, timestamp, body, is_from_me, sender
-       FROM messages
-       WHERE conversation_id = ?
-         AND (timestamp > ? OR (timestamp = ? AND id > ?))
-       ORDER BY timestamp ASC, id ASC
+      `SELECT m.id, m.timestamp, m.body, m.is_from_me, h.raw AS sender
+       FROM messages m
+       LEFT JOIN handles h ON h.id = m.sender_handle_id
+       WHERE m.conversation_id = ?
+         AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))
+       ORDER BY m.timestamp ASC, m.id ASC
        LIMIT ?`,
     )
     .all(
@@ -989,12 +1005,12 @@ const CONVERSATION_HIT_COLUMNS = `
   c.id AS conversation_id,
   c.conversation_type AS conversation_type,
   c.group_title AS group_title,
-  c.chat_identifier AS chat_identifier,
+  c_h.raw AS chat_identifier,
   (
     SELECT ch.contact_id
     FROM contact_handles ch
     WHERE ch.account_id = c.account_id
-      AND ch.handle = c.chat_identifier
+      AND ch.handle_id = c.chat_handle_id
       AND c.conversation_type = 'individual'
     LIMIT 1
   ) AS contact_id,
@@ -1018,7 +1034,11 @@ function buildHits(
   return convRows.map((row) => {
     const participants = db
       .prepare(
-        `SELECT handle, name_hint FROM participants WHERE conversation_id = ? ORDER BY id`,
+        `SELECT h.raw AS handle, p.name_hint
+         FROM participants p
+         JOIN handles h ON h.id = p.handle_id
+         WHERE p.conversation_id = ?
+         ORDER BY p.id`,
       )
       .all(row.conversation_id) as Array<{
       handle: string;
@@ -1029,9 +1049,10 @@ function buildHits(
     let topMatch: SearchHitMessage | null = null;
     const msg = db
       .prepare(
-        `SELECT id, timestamp, body, is_from_me, sender
-         FROM messages
-         WHERE id = ?`,
+        `SELECT m.id, m.timestamp, m.body, m.is_from_me, h.raw AS sender
+         FROM messages m
+         LEFT JOIN handles h ON h.id = m.sender_handle_id
+         WHERE m.id = ?`,
       )
       .get(row.sample_message_id) as
       | {
@@ -1048,8 +1069,9 @@ function buildHits(
     if (fts && highlightTerms.length > 0) {
       const candidates = db
         .prepare(
-          `SELECT m.id, m.timestamp, m.body, m.is_from_me, m.sender
+          `SELECT m.id, m.timestamp, m.body, m.is_from_me, h.raw AS sender
            FROM messages m
+           LEFT JOIN handles h ON h.id = m.sender_handle_id
            WHERE m.conversation_id = ?
              AND m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)
            ORDER BY m.timestamp DESC
@@ -1160,7 +1182,10 @@ function ownerContactIds(db: Database.Database): Set<number> {
   const accountId = currentAccountId();
   const rows = db
     .prepare(
-      `SELECT handle, contact_id FROM contact_handles WHERE account_id = ?`,
+      `SELECT h.raw AS handle, cp.contact_id AS contact_id
+       FROM contact_handles cp
+       JOIN handles h ON h.id = cp.handle_id
+       WHERE cp.account_id = ?`,
     )
     .all(accountId) as Array<{ handle: string; contact_id: number }>;
   const isOwner = ownerHandleMatcher();
@@ -1241,10 +1266,11 @@ export function searchVaultContacts(
 
   const handleRows = db
     .prepare(
-      `SELECT contact_id, handle
-       FROM contact_handles
-       WHERE account_id = ?
-       ORDER BY contact_id, handle`,
+      `SELECT cp.contact_id AS contact_id, h.raw AS handle
+       FROM contact_handles cp
+       JOIN handles h ON h.id = cp.handle_id
+       WHERE cp.account_id = ?
+       ORDER BY cp.contact_id, h.raw`,
     )
     .all(accountId) as Array<{ contact_id: number; handle: string }>;
   const handlesByContact = new Map<number, string[]>();
@@ -1345,12 +1371,12 @@ export function searchVaultContacts(
        JOIN conversations c
          ON c.account_id = ch.account_id
         AND (
-          (c.conversation_type = 'individual' AND c.chat_identifier = ch.handle)
+          (c.conversation_type = 'individual' AND c.chat_handle_id = ch.handle_id)
           OR (
             c.conversation_type = 'group'
             AND EXISTS (
               SELECT 1 FROM participants p
-              WHERE p.conversation_id = c.id AND p.handle = ch.handle
+              WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
             )
           )
         )
@@ -1362,7 +1388,7 @@ export function searchVaultContacts(
          )
          AND NOT EXISTS (
            SELECT 1 FROM trashed_handles th
-           WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+           WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
          )`,
     )
     .all(accountId, ...pageIds) as Array<{
@@ -1380,6 +1406,7 @@ export function searchVaultContacts(
             `SELECT ${CONVERSATION_HIT_COLUMNS}
              FROM messages m
              JOIN conversations c ON c.id = m.conversation_id
+             JOIN handles c_h ON c_h.id = c.chat_handle_id
              WHERE c.account_id = ?
                AND c.id IN (${conversationIds.map(() => "?").join(",")})
                ${combinedDedupeSql(null, "m")}
@@ -1456,7 +1483,7 @@ export function searchVaultByContact(
     .prepare(
       `WITH matched AS (
          SELECT c.id AS conversation_id,
-                c.chat_identifier AS chat_identifier,
+                c.chat_handle_id AS chat_handle_id,
                 MAX(m.timestamp) AS last_ts
          FROM ${fromSql}
          WHERE ${whereSql}${dedupe}
@@ -1465,13 +1492,13 @@ export function searchVaultByContact(
        SELECT ch.contact_id AS contact_id, mt.conversation_id, mt.last_ts
        FROM matched mt
        JOIN contact_handles ch
-         ON ch.account_id = ? AND ch.handle = mt.chat_identifier
+         ON ch.account_id = ? AND ch.handle_id = mt.chat_handle_id
        UNION
        SELECT ch.contact_id AS contact_id, mt.conversation_id, mt.last_ts
        FROM matched mt
        JOIN participants p ON p.conversation_id = mt.conversation_id
        JOIN contact_handles ch
-         ON ch.account_id = ? AND ch.handle = p.handle
+         ON ch.account_id = ? AND ch.handle_id = p.handle_id
        ORDER BY last_ts DESC`,
     )
     .all(...params, accountId, accountId) as Array<{

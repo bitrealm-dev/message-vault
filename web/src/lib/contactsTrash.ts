@@ -6,6 +6,20 @@ import { trashHandlesInDb } from "./handlesWrite";
 import { assertVaultWritable } from "./owner";
 import { openWritableVaultDb } from "./vaultSchema";
 
+function contactHandleIds(
+  db: Database.Database,
+  contactId: number,
+  accountId: string,
+): number[] {
+  return (
+    db
+      .prepare(
+        `SELECT handle_id FROM contact_handles WHERE contact_id = ? AND account_id = ?`,
+      )
+      .all(contactId, accountId) as Array<{ handle_id: number }>
+  ).map((r) => r.handle_id);
+}
+
 function contactHandles(
   db: Database.Database,
   contactId: number,
@@ -14,7 +28,10 @@ function contactHandles(
   return (
     db
       .prepare(
-        `SELECT handle FROM contact_handles WHERE contact_id = ? AND account_id = ?`,
+        `SELECT h.raw AS handle
+         FROM contact_handles cp
+         JOIN handles h ON h.id = cp.handle_id
+         WHERE cp.contact_id = ? AND cp.account_id = ?`,
       )
       .all(contactId, accountId) as Array<{ handle: string }>
   ).map((r) => r.handle);
@@ -29,15 +46,16 @@ function contactHandlesWithMessages(
   return (
     db
       .prepare(
-        `SELECT cp.handle AS handle
+        `SELECT h.raw AS handle
          FROM contact_handles cp
+         JOIN handles h ON h.id = cp.handle_id
          WHERE cp.contact_id = ? AND cp.account_id = ?
            AND EXISTS (
              SELECT 1
              FROM conversations c
              JOIN messages m ON m.conversation_id = c.id
              WHERE c.conversation_type = 'individual'
-               AND c.chat_identifier = cp.handle
+               AND c.chat_handle_id = cp.handle_id
                AND c.account_id = cp.account_id
            )`,
       )
@@ -128,7 +146,7 @@ export function restoreTrashedContacts(ids: number[]): number {
       `DELETE FROM trashed_contacts WHERE account_id = ? AND contact_id = ?`,
     );
     const delHandle = writeDb.prepare(
-      `DELETE FROM trashed_handles WHERE account_id = ? AND handle = ?`,
+      `DELETE FROM trashed_handles WHERE account_id = ? AND handle_id = ?`,
     );
     const tx = writeDb.transaction(() => {
       for (const id of unique) {
@@ -140,10 +158,10 @@ export function restoreTrashedContacts(ids: number[]): number {
         if (!trashed) {
           throw new Error(`contact ${id} is not in trash`);
         }
-        const handles = contactHandles(writeDb, id, accountId);
+        const handleIds = contactHandleIds(writeDb, id, accountId);
         delContact.run(accountId, id);
-        for (const handle of handles) {
-          delHandle.run(accountId, handle);
+        for (const handleId of handleIds) {
+          delHandle.run(accountId, handleId);
         }
       }
     });
@@ -170,10 +188,10 @@ export function permanentlyDeleteTrashedContacts(ids: number[]): number {
     writeDb.pragma("foreign_keys = ON");
     const delConv = writeDb.prepare(
       `DELETE FROM conversations
-       WHERE account_id = ? AND conversation_type = 'individual' AND chat_identifier = ?`,
+       WHERE account_id = ? AND conversation_type = 'individual' AND chat_handle_id = ?`,
     );
     const delHandle = writeDb.prepare(
-      `DELETE FROM trashed_handles WHERE account_id = ? AND handle = ?`,
+      `DELETE FROM trashed_handles WHERE account_id = ? AND handle_id = ?`,
     );
     const delContactTrash = writeDb.prepare(
       `DELETE FROM trashed_contacts WHERE account_id = ? AND contact_id = ?`,
@@ -188,10 +206,10 @@ export function permanentlyDeleteTrashedContacts(ids: number[]): number {
         if (!trashed) {
           throw new Error(`contact ${id} is not in trash`);
         }
-        const handles = contactHandles(writeDb, id, accountId);
-        for (const handle of handles) {
-          delConv.run(accountId, handle);
-          delHandle.run(accountId, handle);
+        const handleIds = contactHandleIds(writeDb, id, accountId);
+        for (const handleId of handleIds) {
+          delConv.run(accountId, handleId);
+          delHandle.run(accountId, handleId);
         }
         delContactTrash.run(accountId, id);
       }

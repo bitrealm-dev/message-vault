@@ -3,7 +3,6 @@ import { ensureDbParentDir } from "./paths";
 import {
   ACCOUNTS_DDL,
   CONTACTS_DDL,
-  FTS_BACKFILL_SQL,
   FTS_TRIGGERS_CREATE_SQL,
   FTS_TRIGGERS_DROP_SQL,
   FTS_VIRTUAL_DDL,
@@ -23,9 +22,12 @@ function tableExists(db: Database.Database, name: string): boolean {
 export function ensureVaultSchema(db: Database.Database): void {
   db.exec(`PRAGMA foreign_keys = ON;`);
   db.exec(ACCOUNTS_DDL);
+  // CONTACTS_DDL carries the handles + contact_handles tables; conversations,
+  // participants, and trashed_handles reference handles(id), so it must exist
+  // before MESSAGES_DDL is applied.
+  db.exec(CONTACTS_DDL);
   db.exec(MESSAGES_DDL);
   db.exec(STAGING_DDL);
-  db.exec(CONTACTS_DDL);
   ensureMessagesFts(db);
 }
 
@@ -44,8 +46,6 @@ export function openWritableVaultDb(): Database.Database {
   }
 }
 
-/** Marker for the one-time FTS5 backfill of existing messages. */
-export const MESSAGES_FTS_BACKFILL_META_KEY = "messages_fts_backfill_v1";
 /** Marker that current FTS sync trigger definitions are installed. */
 export const MESSAGES_FTS_TRIGGERS_META_KEY = "messages_fts_triggers_v1";
 
@@ -65,19 +65,4 @@ function ensureMessagesFts(db: Database.Database): void {
       `INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, '1')`,
     ).run(MESSAGES_FTS_TRIGGERS_META_KEY);
   }
-
-  backfillMessagesFts(db);
-}
-
-function backfillMessagesFts(db: Database.Database): void {
-  if (!tableExists(db, "schema_meta")) return;
-  const already = db
-    .prepare(`SELECT COUNT(*) AS n FROM schema_meta WHERE key = ?`)
-    .get(MESSAGES_FTS_BACKFILL_META_KEY) as { n: number };
-  if (already.n > 0) return;
-
-  db.exec(FTS_BACKFILL_SQL);
-  db.prepare(`INSERT INTO schema_meta (key, value) VALUES (?, '1')`).run(
-    MESSAGES_FTS_BACKFILL_META_KEY,
-  );
 }
