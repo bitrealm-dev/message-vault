@@ -42,8 +42,17 @@ export function normalizeHandle(raw: string, handleType: HandleType): string {
       const digits = stripPhoneFormatting(trimmed).replace(/\D/g, "");
       if (!digits) return trimmed;
       if (trimmed.startsWith("+")) {
-        if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
-        // A + with an implausible length is still ambiguous — keep digits.
+        // E.164 country codes never start with 0 (0 is the trunk prefix), so
+        // a `+0…` value is fabricated, not certain.
+        if (
+          digits.length >= 8 &&
+          digits.length <= 15 &&
+          !digits.startsWith("0")
+        ) {
+          return `+${digits}`;
+        }
+        // A + with an implausible length or a leading-0 country code is
+        // still ambiguous — keep digits.
         return digits;
       }
       if (digits.length === 10) return `+1${digits}`;
@@ -58,6 +67,26 @@ export function normalizeHandle(raw: string, handleType: HandleType): string {
     case "other":
       return trimmed;
   }
+}
+
+/**
+ * Review note for a phone raw under the guarded policy, mirroring the vault's
+ * `phone::normalize_uncertain_reason`. Null when the raw normalizes to
+ * unambiguous E.164 (or has no usable digits).
+ */
+export function phoneReviewNote(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (normalizeHandle(trimmed, "phone").startsWith("+")) return null;
+  const digits = stripPhoneFormatting(trimmed).replace(/\D/g, "");
+  if (!digits) return null;
+  if (trimmed.startsWith("+")) {
+    if (digits.startsWith("0")) {
+      return "international country code cannot start with 0";
+    }
+    return "international needs 8–15 digits after +";
+  }
+  return "USA needs 10 digits or 11 starting with 1";
 }
 
 /** Handles safe for contacts.csv `phones` column. */

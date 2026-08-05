@@ -222,4 +222,77 @@ END:VCARD
       assert.deepEqual(detail?.labels, ["Family", "Work"]);
     });
   });
+
+  it("matches trunk-zero VCF phones to flagged message handles", () => {
+    // Simulate the vault import's flagged handle row for a trunk-zero number.
+    const db = new Database(dbPath());
+    try {
+      ensureVaultSchema(db);
+      db.prepare(
+        `INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+         VALUES (?, ?, ?, ?, 'phone', 'SMS')`,
+      ).run(
+        accountId,
+        "020 7946 0000",
+        "02079460000",
+        "USA needs 10 digits or 11 starting with 1",
+      );
+      const handleId = Number(
+        db
+          .prepare(
+            `SELECT id FROM handles WHERE account_id = ? AND normalized = ?`,
+          )
+          .pluck()
+          .get(accountId, "02079460000"),
+      );
+      const result = db
+        .prepare(
+          `INSERT INTO conversations (
+             account_id, chat_handle_id, service, conversation_type,
+             group_title, exported_at, source_file
+           ) VALUES (?, ?, 'SMS', 'individual', NULL, NULL, 't.json')`,
+        )
+        .run(accountId, handleId);
+      const cid = Number(result.lastInsertRowid);
+      db.prepare(
+        `INSERT INTO participants (conversation_id, handle_id, name_hint)
+         VALUES (?, ?, NULL)`,
+      ).run(cid, handleId);
+      db.prepare(
+        `INSERT INTO messages (
+           conversation_id, account_id, source, guid, timestamp,
+           is_from_me, sort_order, body
+         ) VALUES (?, ?, 'sms', ?, '2020-01-01T00:00:00Z', 0, 0, 'hi')`,
+      ).run(cid, accountId, `g-${accountId}-trunk-zero`);
+    } finally {
+      db.close();
+    }
+
+    const vcf = `BEGIN:VCARD
+VERSION:3.0
+FN:UK Peer
+N:Peer;UK;;;
+TEL:020 7946 0000
+END:VCARD
+`;
+    runWithAccount(accountId, () => {
+      const summary = commitContactsFromVcf(vcf, []);
+      assert.equal(summary.matched, 1);
+      assert.equal(summary.created, 1);
+
+      const ukPeer = listContacts("all").find(
+        (contact) => contact.preferredHandle === "020 7946 0000",
+      );
+      assert.ok(ukPeer);
+      const detail = getContact(ukPeer.id);
+      assert.ok(detail);
+      assert.deepEqual(detail.phones, ["020 7946 0000"]);
+      // The flagged row was reused (INSERT OR IGNORE by normalized identity),
+      // so the needs-review note survives the VCF import.
+      assert.equal(
+        detail.handles[0]?.normalizedNote,
+        "USA needs 10 digits or 11 starting with 1",
+      );
+    });
+  });
 });

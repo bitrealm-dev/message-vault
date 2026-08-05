@@ -124,7 +124,14 @@ export function toPhoneE164FromParts(
   return E164_RE.test(full) ? full : null;
 }
 
-/** Format user input as E.164 when possible; returns null if invalid. */
+/**
+ * Build E.164 from user input, but only when the value is unambiguous
+ * (guarded policy, mirroring the vault's `phone::normalize_certain`):
+ * `+`-prefixed values (8–15 digits, country code not starting with 0) and
+ * US national numbers (10 digits, or 11 starting with 1). Anything else —
+ * trunk-zero nationals like `020 7946 0000`, foreign nationals without `+`,
+ * short codes — returns null instead of fabricating a `+0…` value.
+ */
 export function toPhoneE164(input: string): string | null {
   const trimmed = trimPhoneWhitespace(input);
   if (!trimmed) return null;
@@ -137,14 +144,20 @@ export function toPhoneE164(input: string): string | null {
     return trimmed;
   }
 
+  if (trimmed.startsWith("+")) {
+    // Formatted +-prefixed value: certain when the digit count (country code
+    // included) is 8–15 and the country code does not start with 0.
+    const digits = stripPhoneFormatting(trimmed).replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 15 && !digits.startsWith("0")) {
+      return `+${digits}`;
+    }
+    return null;
+  }
+
+  // US national numbers only: 10 digits, or 11 starting with 1
+  // (sanitizePhoneDigits strips the leading 1).
   const digits = sanitizePhoneDigits(stripPhoneFormatting(trimmed));
-  if (digits.length === 10) {
-    return `+1${digits}`;
-  }
-  if (digits.length >= 11) {
-    if (digits.length > E164_MAX_DIGITS) return null;
-    return `+${digits}`;
-  }
+  if (digits.length === 10) return `+1${digits}`;
   return null;
 }
 

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { inferHandleType, normalizeHandle } from "./handleKind";
+import {
+  inferHandleType,
+  normalizeHandle,
+  phoneReviewNote,
+} from "./handleKind";
 
 describe("normalizeHandle guarded phone policy", () => {
   it("normalizes unambiguous US and +-prefixed values to E.164", () => {
@@ -16,8 +20,24 @@ describe("normalizeHandle guarded phone policy", () => {
     // the review-flagged row is found, instead of fabricating +02079460000.
     assert.equal(normalizeHandle("020 7946 0000", "phone"), "02079460000");
     assert.equal(normalizeHandle("442079460000", "phone"), "442079460000");
+    // A fabricated +0… value is never accepted as certain E.164.
+    assert.equal(normalizeHandle("+02079460000", "phone"), "02079460000");
     // Short codes stay as-is.
     assert.equal(normalizeHandle("7535", "phone"), "7535");
+  });
+
+  it("computes review notes mirroring the server's reasons", () => {
+    assert.equal(
+      phoneReviewNote("020 7946 0000"),
+      "USA needs 10 digits or 11 starting with 1",
+    );
+    assert.equal(
+      phoneReviewNote("+02079460000"),
+      "international country code cannot start with 0",
+    );
+    assert.equal(phoneReviewNote("+15555550100"), null);
+    assert.equal(phoneReviewNote(""), null);
+    assert.equal(phoneReviewNote("person@example.com"), null);
   });
 
   it("infers handle types from shape", () => {

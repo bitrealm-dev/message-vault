@@ -1,7 +1,12 @@
 import Database from "better-sqlite3";
 import { currentAccountId } from "./accountScope";
 import { handleIdsForRaws, resetDb } from "./dbCore";
-import { inferHandleType, normalizeHandle, type HandleType } from "./handleKind";
+import {
+  inferHandleType,
+  normalizeHandle,
+  phoneReviewNote,
+  type HandleType,
+} from "./handleKind";
 import { assertVaultWritable } from "./owner";
 import { openWritableVaultDb } from "./vaultSchema";
 
@@ -20,10 +25,14 @@ export function resolveHandleId(
   const trimmed = raw.trim();
   if (!trimmed) throw new Error("handle required");
   const normalized = normalizeHandle(trimmed, handleType);
+  // Guarded policy: ambiguous phone values carry a review note (mirroring the
+  // import-time note), so web-created handles surface the same needs-review
+  // badge. Rows created by an import keep their existing note.
+  const note = handleType === "phone" ? phoneReviewNote(trimmed) : null;
   db.prepare(
-    `INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
-     VALUES (?, ?, ?, ?, NULL)`,
-  ).run(accountId, trimmed, normalized, handleType);
+    `INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+     VALUES (?, ?, ?, ?, ?, NULL)`,
+  ).run(accountId, trimmed, normalized, note, handleType);
   const row = db
     .prepare(
       `SELECT id FROM handles

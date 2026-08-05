@@ -3,8 +3,8 @@ import { currentAccountId } from "./accountScope";
 import { createContact, patchContact } from "./contactsWrite";
 import { getContact } from "./contactsRead";
 import { dbPath } from "./paths";
-import { toPhoneE164 } from "./phoneE164";
 import { assertVaultWritable } from "./owner";
+import { normalizeHandle } from "./handleKind";
 import { isReservedLabelName, reservedLabelError } from "./reservedLabels";
 import { cardToDraft, parseVcfText } from "./vcfParse";
 
@@ -44,9 +44,12 @@ export type VcfImportSummary = {
 function normalizePhones(raw: string[]): string[] {
   const out: string[] = [];
   for (const p of raw) {
-    const e164 = toPhoneE164(p);
-    if (!e164) continue;
-    if (!out.includes(e164)) out.push(e164);
+    // Guarded policy: E.164 when unambiguous, digits-as-is otherwise, so
+    // trunk-zero VCF numbers match the review-flagged message handles the
+    // import wrote instead of being dropped or fabricated into +0….
+    const normalized = normalizeHandle(p, "phone");
+    if (!normalized) continue;
+    if (!out.includes(normalized)) out.push(normalized);
   }
   return out;
 }
@@ -78,9 +81,9 @@ export function messagePhoneHandles(accountId: string): Set<string> {
     for (const row of rows) {
       const handle = row.handle?.trim();
       if (!handle) continue;
-      const e164 = toPhoneE164(handle);
-      if (e164) out.add(e164);
-      else out.add(handle);
+      // Guarded normalization (matching normalizePhones): a flagged handle
+      // like `02079460000` matches a VCF card with the same digits.
+      out.add(normalizeHandle(handle, "phone"));
     }
     return out;
   } finally {
