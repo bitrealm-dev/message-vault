@@ -1,4 +1,37 @@
-//! Folder push: stream message-ir JSONL, upload assets by digest, import batches.
+//! Upload a folder of conversation files into Message Vault.
+//!
+//! # What this module does
+//!
+//! An export folder has one `.jsonl` file per conversation, plus an
+//! `attachments/` folder of media files. This code:
+//!
+//! 1. Logs in to the vault with the API key.
+//! 2. For each conversation file, finds attachments, uploads any the vault
+//!    does not already have, then sends the messages in batches.
+//! 3. Remembers progress in a journal file so a later run can skip work that
+//!    already succeeded.
+//!
+//! # Why it is built this way (upload performance)
+//!
+//! - **Attachments first, then messages.** Messages point at attachments by a
+//!   content fingerprint (sha256). The vault must already have that file, or
+//!   the import would fail. So we upload media before we send message text.
+//! - **Fingerprint = sha256.** Same bytes always produce the same hex string.
+//!   The vault stores one copy per fingerprint, so the same photo shared in
+//!   many chats is uploaded once.
+//! - **Prepare ahead.** Reading a chat and uploading its media can take a long
+//!   time. While the main loop waits on a message-import HTTP request, other
+//!   threads can already prepare the next few conversations. That hides disk
+//!   and upload work behind network wait time.
+//! - **Several attachment uploads at once.** Small files are slow if sent one
+//!   after another (network round trips dominate). Workers upload several at
+//!   the same time.
+//! - **One message-import request at a time.** Imports update shared vault
+//!   state; running many imports in parallel is harder to reason about and
+//!   can confuse the journal. Attachments stay parallel; message batches do not.
+//! - **Size limits on each request.** Cloudflare (and similar proxies) reject
+//!   huge single uploads. We split message batches and use multipart for large
+//!   attachments so a big chat or video does not hit that wall.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -25,50 +58,65 @@ use crate::http::{self, AssetPutRequest, AuthInfo, HttpSession};
 use crate::journal::{self, JournalEvent, JournalMessage, JournalState};
 use crate::project;
 
-/// Default messages per HTTP import request.
+/// How many messages to pack into one import HTTP request when size is not the limit.
 pub const DEFAULT_BATCH_SIZE: usize = 1_000;
-/// Soft target for one import NDJSON body. Kept well under Cloudflare's 100 MB
-/// proxy upload limit (Free/Pro) so large threads are split into many requests.
+/// Soft max size of one import request body (about 8 MiB).
+///
+/// Kept far under Cloudflare's ~100 MiB upload cap so a large group chat is
+/// split into several requests instead of one giant one that gets rejected.
 pub const MAX_IMPORT_BODY_BYTES: usize = 8 * 1024 * 1024;
-/// Hard ceiling for any single non-chunked request body through a typical
-/// Cloudflare proxy. Assets larger than this use multipart upload.
+/// Max size for uploading an attachment in a single HTTP PUT.
+///
+/// Bigger files use multipart upload (many smaller pieces), which proxies
+/// accept more reliably than one huge body.
 pub const MAX_PROXY_BODY_BYTES: usize = 90 * 1024 * 1024;
-/// Default max size of one attachment (must match vault `server.asset_max_bytes`).
+/// Refuse attachments larger than this (must match the vault server setting).
 pub const DEFAULT_ASSET_MAX_BYTES: u64 = 512 * 1024 * 1024;
-/// Default number of simultaneous attachment uploads.
-pub const DEFAULT_ASSET_UPLOAD_WORKERS: usize = 12;
-/// Conversations prepared ahead of the import loop (hash + asset upload).
+/// How many attachment uploads may run at the same time.
+pub const DEFAULT_ASSET_UPLOAD_WORKERS: usize = 8;
+/// How many conversations we may prepare (read + upload media) ahead of the
+/// import loop. Higher uses more memory/disk bandwidth; lower leaves the CPU
+/// idle while waiting on the network.
 pub const DEFAULT_PREPARE_AHEAD: usize = 3;
-/// Worker threads running [`prepare_file`] for the prepare-ahead queue.
+/// Worker threads that run [`prepare_file`] for that prepare-ahead queue.
 pub const DEFAULT_PREPARE_WORKERS: usize = 2;
 
-/// Run-scoped absolute path → sha256 cache (shared across conversations).
+/// Shared map: absolute file path → sha256 hex string.
+///
+/// The same attachment file can appear in many chats. Caching the hash means
+/// we only read and hash that file once per push run.
 type DigestCache = Mutex<HashMap<PathBuf, String>>;
 
+/// Settings for one full push run (paths, URL, flags, limits).
 #[derive(Debug, Clone)]
 pub struct VaultPushConfig {
     pub input: PathBuf,
     pub base_url: String,
     pub username: String,
     pub key: String,
-    /// "append" (default) or "replace"
+    /// `"append"` adds to existing data; `"replace"` clears then imports (with force).
     pub mode: String,
+    /// If true, keep going after one conversation fails. If false, stop early.
     pub continue_on_error: bool,
+    /// If true, ignore the journal and upload/import everything again.
     pub force: bool,
-    /// Import message text only; do not upload or reference attachments.
+    /// Text-only import: do not upload or attach media.
     pub skip_attachments: bool,
-    /// When true, hash every attachment and fail if on-disk sha256 differs from
-    /// export `digest_sha256`. When false (default), trust a present export digest
-    /// and only hash when the digest is missing (path cache avoids repeat hashes).
+    /// If true, always re-hash files and fail when the export's claimed sha256
+    /// does not match the bytes on disk.
+    ///
+    /// If false (default), trust a sha256 already written in the JSONL when it
+    /// is present. That skips a slow full-file hash for every attachment. We
+    /// still hash when the export left the digest empty. A path cache avoids
+    /// hashing the same file twice when several chats share it.
     pub verify_digests: bool,
     pub max_retries: u32,
     pub batch_size: usize,
-    /// Maximum simultaneous attachment uploads. Message import requests remain serialized.
+    /// Max parallel attachment uploads. Message imports stay one-at-a-time.
     pub asset_upload_workers: usize,
-    /// Assets larger than this (bytes) use vault multipart upload instead of a single PUT.
-    /// Defaults to [`MAX_PROXY_BODY_BYTES`]; tests may lower it to force the multipart path.
+    /// Files larger than this use multipart upload instead of one PUT.
     pub asset_multipart_threshold: usize,
-    /// Refuse attachments larger than this even with multipart (match vault `asset_max_bytes`).
+    /// Hard max attachment size we will attempt to upload.
     pub asset_max_bytes: u64,
     pub report_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
@@ -76,6 +124,7 @@ pub struct VaultPushConfig {
     pub cancel: Option<CancelFlag>,
 }
 
+/// Per-conversation outcome written into the final report JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileResult {
     pub file: String,
@@ -88,6 +137,10 @@ pub struct FileResult {
     pub profile: Option<UploadProfile>,
 }
 
+/// Timing and size stats for one conversation (used for PROFILE log lines).
+///
+/// These numbers help answer "why was this chat slow?" — reading JSONL,
+/// hashing/scanning attachments, uploading media, or importing messages.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UploadProfile {
     pub read_ms: u64,
@@ -99,6 +152,7 @@ pub struct UploadProfile {
     pub asset_bytes: u64,
 }
 
+/// Final summary of a whole push (also written to disk as the report file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushReport {
     pub ok: bool,
@@ -107,7 +161,7 @@ pub struct PushReport {
     pub mode: String,
     pub started_at: String,
     pub finished_at: String,
-    /// Wall-clock duration of the full push (auth through last import).
+    /// Wall-clock time from start of auth through the last import.
     pub elapsed_ms: u64,
     pub conversations_total: u64,
     pub conversations_ok: u64,
@@ -119,6 +173,7 @@ pub struct PushReport {
     pub results: Vec<FileResult>,
 }
 
+/// Events the GUI/CLI can show while a push is running.
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
     Log(String),
@@ -138,13 +193,16 @@ pub enum ProgressEvent {
     Finished(PushReport),
 }
 
+/// Callback type for live progress (GUI log panel, CLI stderr, tests).
 pub type ProgressFn<'a> = dyn FnMut(ProgressEvent) + Send + 'a;
 
+/// Append-only log file next to the export (also mirrored to progress callbacks).
 struct LogWriter {
     file: File,
 }
 
 impl LogWriter {
+    /// Create or open the log file, making parent folders if needed.
     fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -157,12 +215,14 @@ impl LogWriter {
         Ok(Self { file })
     }
 
+    /// Write one line and flush so a crash still leaves the last message on disk.
     fn line(&mut self, msg: &str) {
         let _ = writeln!(self.file, "{msg}");
         let _ = self.file.flush();
     }
 }
 
+/// Unix time in seconds as a string (for report timestamps).
 fn now_stamp() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -170,11 +230,12 @@ fn now_stamp() -> String {
         .unwrap_or_else(|_| "0".into())
 }
 
+/// Milliseconds since `started` (for PROFILE timing fields).
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Human-readable duration for summary lines, e.g. `34m12s` or `1h02m03s`.
+/// Turn a millisecond count into a short human string like `34m12s` or `1h02m03s`.
 pub fn format_duration_ms(ms: u64) -> String {
     let total_secs = ms / 1000;
     let hours = total_secs / 3600;
@@ -191,7 +252,7 @@ pub fn format_duration_ms(ms: u64) -> String {
     }
 }
 
-/// Multi-line end-of-run summary for CLI / GUI Log.
+/// Build the multi-line "Import success / completed with errors" blurb for the log.
 pub fn format_push_summary(report: &PushReport) -> String {
     let status = if report.ok { "success" } else { "completed with errors" };
     format!(
@@ -212,13 +273,20 @@ pub fn format_push_summary(report: &PushReport) -> String {
     )
 }
 
+/// How many finished conversations we group into one "files N/M …" log line.
+/// Printing every single chat would flood the log on a big import.
 const PROGRESS_BATCH_SIZE: usize = 10;
-/// Start import HTTP before the next prepare once a batch is large enough that
-/// waiting through another conversation's asset upload would hide progress.
+/// If the pending message batch is at least this many messages, start its HTTP
+/// import now instead of waiting until we finish preparing the next chat.
+///
+/// Why: preparing the next chat may upload many attachments. If we hold a large
+/// ready batch until that finishes, the UI looks stuck and we waste time when
+/// the network could already be importing.
 const OVERLAP_FLUSH_MIN_MESSAGES: usize = 100;
+/// Same idea as [`OVERLAP_FLUSH_MIN_MESSAGES`], but for batch body size in bytes.
 const OVERLAP_FLUSH_MIN_BODY_BYTES: usize = 512 * 1024;
 
-/// Batches successful file progress so the Log shows every N files, not each one.
+/// Collects successes and emits one progress line every [`PROGRESS_BATCH_SIZE`] files.
 struct ProgressBatcher {
     total: usize,
     done: usize,
@@ -244,6 +312,7 @@ impl ProgressBatcher {
         }
     }
 
+    /// Record one successful conversation. Returns a log line when the batch is full.
     fn note_ok(&mut self, messages: u64, profile: &UploadProfile) -> Option<String> {
         self.done = self.done.saturating_add(1);
         self.chunk_count = self.chunk_count.saturating_add(1);
@@ -261,6 +330,7 @@ impl ProgressBatcher {
         }
     }
 
+    /// Record a conversation skipped because the journal says it already imported.
     fn note_skipped(&mut self) -> Option<String> {
         self.done = self.done.saturating_add(1);
         self.chunk_count = self.chunk_count.saturating_add(1);
@@ -272,10 +342,12 @@ impl ProgressBatcher {
         }
     }
 
+    /// Count a failure toward "done" without adding it to the success chunk totals.
     fn note_failed(&mut self) {
         self.done = self.done.saturating_add(1);
     }
 
+    /// Emit any leftover partial batch at the end of the run.
     fn flush_remainder(&mut self) -> Option<String> {
         if self.chunk_count == 0 {
             None
@@ -284,6 +356,7 @@ impl ProgressBatcher {
         }
     }
 
+    /// Format the current chunk line, then zero the counters for the next chunk.
     fn take_chunk_line(&mut self) -> String {
         let line = format!(
             "files {}/{} - conversations={} messages={} transfer size={}, import time={}, total time={}",
@@ -313,6 +386,7 @@ fn format_ms_seconds(ms: u64) -> String {
     format!("{:.1}s", ms as f64 / 1000.0)
 }
 
+/// Write a line to the log file and, if present, to the live progress callback.
 fn emit_progress_line(
     log: &mut LogWriter,
     progress: &mut Option<&mut ProgressFn<'_>>,
@@ -324,6 +398,7 @@ fn emit_progress_line(
     }
 }
 
+/// Log a conversation failure, plus optional PROFILE timing so slow fails are diagnosable.
 fn emit_file_failure_lines(
     log: &mut LogWriter,
     progress: &mut Option<&mut ProgressFn<'_>>,
@@ -338,6 +413,7 @@ fn emit_file_failure_lines(
     }
 }
 
+/// One PROFILE line with per-phase timings for a conversation.
 fn format_profile_line(name: &str, profile: &UploadProfile) -> String {
     format!(
         "PROFILE {name} read_ms={} attachment_scan_hash_ms={} asset_upload_ms={} \
@@ -352,6 +428,7 @@ fn format_profile_line(name: &str, profile: &UploadProfile) -> String {
     )
 }
 
+/// True for files vault-push itself writes (journal/report/log), not conversations.
 fn is_push_artifact(name: &str) -> bool {
     name.eq_ignore_ascii_case(journal::JOURNAL_NAME)
         || name.eq_ignore_ascii_case(journal::REPORT_NAME)
@@ -360,6 +437,7 @@ fn is_push_artifact(name: &str) -> bool {
         || name.starts_with('.')
 }
 
+/// List conversation `.jsonl` files in `dir`, sorted, skipping journal/report/log.
 fn list_jsonl_files(dir: &Path, exclude: &[&Path]) -> Result<Vec<PathBuf>> {
     let mut paths: Vec<PathBuf> = fs::read_dir(dir)
         .with_context(|| format!("read {}", dir.display()))?
@@ -380,10 +458,12 @@ fn list_jsonl_files(dir: &Path, exclude: &[&Path]) -> Result<Vec<PathBuf>> {
                 .is_some_and(|e| e.eq_ignore_ascii_case("jsonl"))
         })
         .collect();
+    // Stable order so progress "3/681" is repeatable across runs.
     paths.sort();
     Ok(paths)
 }
 
+/// Check that a sha256 string is exactly 64 hex digits; return lowercase form.
 fn normalize_digest_sha256(digest: &str) -> Result<String> {
     let s = digest.trim().to_ascii_lowercase();
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -392,6 +472,11 @@ fn normalize_digest_sha256(digest: &str) -> Result<String> {
     Ok(s)
 }
 
+/// Read a whole file and return its sha256 as a lowercase hex string.
+///
+/// "Hashing" here means feeding every byte into the SHA-256 algorithm. The
+/// result is a fingerprint: same file bytes → same hex string. We stream the
+/// file in 64 KiB chunks so a large video does not have to sit entirely in RAM.
 fn hash_file(path: &Path) -> Result<String> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -406,7 +491,15 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Resolve attachment sha256: path cache → trust export digest → hash on disk.
+/// Decide which sha256 hex string to use for an attachment file.
+///
+/// Order of preference (for speed, unless `verify_digests` is on):
+/// 1. Value already in the path cache from an earlier chat in this run.
+/// 2. Digest written into the export JSONL (trusted when verify is off).
+/// 3. Hash the file on disk (slow, but correct when the export left it blank).
+///
+/// When `verify_digests` is on we always hash the file and fail if the export
+/// claim does not match. That catches stale digests after media convert/compress.
 fn resolve_attachment_digest(
     abs: &Path,
     claimed_raw: Option<&str>,
@@ -415,6 +508,7 @@ fn resolve_attachment_digest(
     name: &str,
     rel: &str,
 ) -> Result<String> {
+    // Fast path: another conversation already hashed this absolute path.
     {
         let guard = cache.lock().expect("digest cache mutex poisoned");
         if let Some(digest) = guard.get(abs) {
@@ -438,6 +532,7 @@ fn resolve_attachment_digest(
         }
         disk
     } else if let Some(claimed) = claimed {
+        // Trust the export — avoids re-reading large media on every push.
         claimed
     } else {
         hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?
@@ -450,6 +545,7 @@ fn resolve_attachment_digest(
     Ok(digest)
 }
 
+/// Turn an attachment path from JSONL into a real file path under the export folder.
 fn resolve_attachment(export_root: &Path, rel: &str) -> Option<PathBuf> {
     let candidate = Path::new(rel);
     if candidate.is_absolute() {
@@ -459,6 +555,7 @@ fn resolve_attachment(export_root: &Path, rel: &str) -> Option<PathBuf> {
     under.is_file().then_some(under)
 }
 
+/// Reject paths that could escape the export folder (absolute paths or `..`).
 fn safe_rel(rel: &str) -> Result<()> {
     let path = Path::new(rel);
     if path.is_absolute() {
@@ -472,7 +569,7 @@ fn safe_rel(rel: &str) -> Result<()> {
     Ok(())
 }
 
-/// Authenticate without importing.
+/// Check the API key against the vault without importing any messages.
 pub fn authenticate(
     base_url: &str,
     key: &str,
@@ -481,7 +578,9 @@ pub fn authenticate(
     http::auth_check(base_url, key, username)
 }
 
-/// Peek `export.source` from the first JSONL header in a directory.
+/// Read the first conversation file's header and return its `export.source` string.
+///
+/// The GUI uses this to label the import session (for example `imessage`).
 pub fn detect_source(input: &Path) -> Result<Option<String>> {
     let dir = if input.is_file() {
         input.parent().unwrap_or(input)
@@ -501,6 +600,7 @@ pub fn detect_source(input: &Path) -> Result<Option<String>> {
     Ok(Some(project::validate_header(&header)?))
 }
 
+/// Everything `run` needs after login and scanning the export folder.
 struct RunSetup {
     input: PathBuf,
     report_path: PathBuf,
@@ -514,14 +614,18 @@ struct RunSetup {
     files: Vec<PathBuf>,
     total: usize,
     batch_size: usize,
-    /// Vault import session id when the server supports `/v1/imports`.
+    /// Id from `/v1/imports` when the server supports import sessions; else `None`.
     import_id: Option<i64>,
 }
 
+/// Log in, open log/journal paths, list conversation files, start an import session.
+///
+/// This is the "setup" half of a push. The heavy upload loop lives in [`run`].
 fn prepare_run_setup(
     cfg: &VaultPushConfig,
     progress: &mut Option<&mut ProgressFn<'_>>,
 ) -> Result<RunSetup> {
+    // Accept either a folder or a file path; we always work from the folder.
     let input = if cfg.input.is_file() {
         cfg.input
             .parent()
@@ -554,7 +658,8 @@ fn prepare_run_setup(
 
     check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
     let auth = http.auth_check(&url, &cfg.key, &username)?;
-    // Token binds the account; Username field is optional.
+    // The API key decides which account we are. Prefer the username the server
+    // returns; fall back to the account id string if username is empty.
     let username = auth
         .username
         .as_deref()
@@ -585,6 +690,7 @@ fn prepare_run_setup(
         }
     }
 
+    // Fresh empty journal when forcing a full re-upload or replace mode.
     let journal = if cfg.force || cfg.mode == "replace" {
         JournalState::default()
     } else {
@@ -599,6 +705,8 @@ fn prepare_run_setup(
         );
     }
 
+    // Best-effort: tell the vault "a new import run is starting" so Storage UI
+    // can show sessions. Older servers may not support this; we continue anyway.
     let source = detect_source(&input)?
         .unwrap_or_else(|| "unknown".to_string());
     let import_id = match http.start_import(
@@ -673,6 +781,7 @@ struct FinishRunArgs<'a> {
     import_id: Option<i64>,
 }
 
+/// Count successes/failures, write the report JSON, compact the journal, notify progress.
 fn finish_run(
     args: FinishRunArgs<'_>,
     progress: &mut Option<&mut ProgressFn<'_>>,
@@ -720,6 +829,7 @@ fn finish_run(
         .filter(|result| result.status == "ok")
         .map(|result| result.attachments)
         .sum();
+    // Only shrink/rewrite the journal after a clean run so a failed run can retry.
     if fail_n == 0 && !aborted {
         let _ = journal::compact(&journal_path, &url, &username, &journal);
     }
@@ -774,6 +884,17 @@ fn finish_run(
 }
 
 /// Push every `.jsonl` conversation under `cfg.input`.
+/// Run a full folder push: prepare conversations (with media upload), then import messages.
+///
+/// High-level flow:
+/// 1. Setup (login, list files) via [`prepare_run_setup`].
+/// 2. Start a few **prepare workers**. Each worker reads one chat file, uploads
+///    its attachments, and builds message chunks. That work is slow (disk + network).
+/// 3. The main thread **consumes prepare results in file order**, packs message
+///    chunks into import batches, and sends those batches over HTTP.
+/// 4. Message imports are mostly one-at-a-time, but we can start an import while
+///    prepare workers keep working on later chats (overlap for speed).
+/// 5. [`finish_run`] writes the report and cleans up.
 pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> Result<PushReport> {
     let run_started = Instant::now();
     let started_at = now_stamp();
@@ -793,23 +914,29 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         import_id,
     } = prepare_run_setup(cfg, &mut progress)?;
 
+    // One slot per conversation file; filled as we finish or skip each one.
     let mut results: Vec<Option<FileResult>> = vec![None; total];
     let mut assets_uploaded = 0u64;
     let mut assets_skipped = 0u64;
+    // First import in replace mode may use mode=replace; later ones use append.
     let mut first_import = true;
     let mut aborted = false;
     let mut trackers: Vec<Option<FileTracker>> =
         std::iter::repeat_with(|| None).take(total).collect();
+    // Messages waiting to be sent, and the HTTP import currently in flight (if any).
     let mut pending: Option<ImportBatch> = None;
     let mut inflight: Option<InFlightImport> = None;
     let mut batcher = ProgressBatcher::new(total);
 
+    // Shared across prepare workers: hash cache + journal of already-uploaded assets.
     let digest_cache: Arc<DigestCache> = Arc::new(Mutex::new(HashMap::new()));
     let shared_journal = Arc::new(Mutex::new(SharedJournal {
         state: journal,
         assets_in_flight: HashSet::new(),
     }));
 
+    // Bounded queue: at most `prepare_ahead` jobs waiting/running so we do not
+    // prepare hundreds of chats (and hold their data) before the import loop catches up.
     let prepare_ahead = DEFAULT_PREPARE_AHEAD.max(1);
     let prepare_workers = DEFAULT_PREPARE_WORKERS.max(1).min(prepare_ahead);
     let (job_tx, job_rx) = mpsc::sync_channel::<Option<PrepareJob>>(prepare_ahead);
@@ -817,6 +944,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     let job_rx = Arc::new(Mutex::new(job_rx));
 
     std::thread::scope(|scope| -> Result<()> {
+        // Prepare workers: pull jobs until they receive `None` (shutdown signal).
         for _ in 0..prepare_workers {
             let job_rx = Arc::clone(&job_rx);
             let result_tx = result_tx.clone();
@@ -857,8 +985,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 }
             });
         }
+        // Drop our clone so workers' sends finish cleanly when they exit.
         drop(result_tx);
 
+        // Submit conversations for prepare, and consume finished prepares in order.
+        // Workers may finish out of order; `prepared_buf` holds early results until
+        // we are ready for that index (keeps import order stable for the journal).
         let mut next_submit = 0usize;
         let mut next_consume = 0usize;
         let mut inflight_prepares = 0usize;
@@ -868,6 +1000,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         while next_consume < total {
             check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
 
+            // If we already have a large pending import batch, start its HTTP
+            // request now (without waiting) so prepare workers keep the pipeline full.
             if pending.as_ref().is_some_and(|batch| {
                 batch.messages.len() >= OVERLAP_FLUSH_MIN_MESSAGES
                     || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
@@ -899,6 +1033,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 }
             }
 
+            // Fill the prepare queue up to `prepare_ahead` outstanding jobs.
             while !stop_submitting
                 && !aborted
                 && next_submit < total
@@ -919,6 +1054,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     });
                 }
 
+                // Journal says this whole file already imported successfully — skip work.
                 let skip = cfg.mode == "append"
                     && !cfg.force
                     && shared_journal
@@ -945,7 +1081,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     if let Some(line) = batcher.note_skipped() {
                         emit_progress_line(&mut log, &mut progress, line);
                     }
-                    // Synthesize an empty ready slot so consume order advances.
+                    // Placeholder so the consume side still advances in index order.
+                    // Empty `name` is the signal "already handled as skipped".
                     prepared_buf.insert(
                         idx,
                         PrepareJobResult {
@@ -978,7 +1115,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 break;
             }
 
-            // Prefer draining already-buffered in-order results; otherwise wait for one.
+            // Wait for the next prepare result if we do not already have index `next_consume`.
             if !prepared_buf.contains_key(&next_consume) {
                 if inflight_prepares == 0 && next_submit >= total {
                     break;
@@ -990,6 +1127,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 prepared_buf.insert(job.idx, job);
             }
 
+            // Process every consecutive ready index starting at `next_consume`.
             while let Some(job) = prepared_buf.remove(&next_consume) {
                 let idx = job.idx;
                 // Skipped files already recorded above (empty name sentinel).
@@ -1220,11 +1358,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             }
         }
 
-        // Stop workers; ignore send errors if they already exited.
+        // Tell every prepare worker to exit (`None` is the stop signal).
         for _ in 0..prepare_workers {
             let _ = job_tx.send(None);
         }
-        // Drain leftover prepare results so workers can finish.
+        // Pull any leftover prepare results so workers are not stuck sending.
+        // We still count their asset stats even if we aborted the import loop.
         while let Ok(job) = result_rx.recv() {
             inflight_prepares = inflight_prepares.saturating_sub(1);
             if let Ok(prepared) = job.outcome {
@@ -1240,6 +1379,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     })?;
 
     if !aborted {
+        // End of run: send any leftover pending batch and wait for the last import.
         let request_ok = {
             let mut guard = shared_journal.lock().expect("journal mutex poisoned");
             flush_import_pipeline(FlushImportPipeline {
@@ -1265,6 +1405,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             aborted = true;
         }
     } else {
+        // Aborted: still wait for the in-flight import so the journal stays consistent.
         let mut guard = shared_journal.lock().expect("journal mutex poisoned");
         let _ = join_inflight_import(JoinInflightImport {
             inflight: &mut inflight,
@@ -1315,12 +1456,14 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     )
 }
 
+/// One conversation handed to a prepare worker.
 struct PrepareJob {
     idx: usize,
     path: PathBuf,
     name: String,
 }
 
+/// Result coming back from a prepare worker (may finish out of order).
 struct PrepareJobResult {
     idx: usize,
     name: String,
@@ -1341,6 +1484,7 @@ struct PrepareFileArgs<'a> {
     digest_cache: &'a DigestCache,
 }
 
+/// Output of preparing one conversation: uploaded media + message chunks ready to import.
 struct PreparedFile {
     source: String,
     chunks: Vec<ImportChunk>,
@@ -1352,18 +1496,29 @@ struct PreparedFile {
     log_lines: Vec<String>,
 }
 
+/// One piece of an import request: NDJSON body bytes plus the message ids in it.
 struct ImportChunk {
     body: Vec<u8>,
     messages: Vec<JournalMessage>,
 }
 
-/// Journal plus in-flight asset claims for parallel prepare workers.
+/// Shared journal state for parallel prepare workers.
+///
+/// `assets_in_flight` stops two workers from uploading the same sha256 at once
+/// when two chats share a file that is not in the journal yet.
 #[derive(Debug)]
 struct SharedJournal {
     state: JournalState,
     assets_in_flight: HashSet<String>,
 }
 
+/// Read one conversation JSONL, upload its attachments, split messages into import chunks.
+///
+/// This is the expensive per-chat step. Design choices:
+/// - Collect **unique** attachment digests first, then upload each digest once
+///   (a photo sent twice in the same chat should not be uploaded twice).
+/// - Upload media **before** building message lines that reference those digests.
+/// - Split messages into chunks sized for Cloudflare-safe import requests.
 fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let total_started = Instant::now();
     let PrepareFileArgs {
@@ -1387,6 +1542,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let source = project::validate_header(&header)?;
     let messages = &doc.messages;
 
+    // For each message: list of (attachment index, sha256, file size).
     let mut per_message_digests: Vec<Vec<(usize, String, u64)>> =
         Vec::with_capacity(messages.len());
     let mut attachment_count = 0u64;
@@ -1400,6 +1556,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let attachment_scan_hash_started = Instant::now();
 
     if cfg.skip_attachments {
+        // Count attachments as skipped but do not upload or reference them.
         for msg in messages {
             let n = msg.attachments.len() as u64;
             attachment_count += n;
@@ -1408,7 +1565,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         }
         profile.attachment_scan_hash_ms = elapsed_ms(attachment_scan_hash_started);
     } else {
-        // digest -> (rel path, mime)
+        // Map: sha256 → (relative path, mime). BTreeMap keeps a stable upload order.
         let mut unique: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
 
         for msg in messages {
@@ -1467,6 +1624,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         log_lines = upload_stats.log_lines;
     }
 
+    // Build import chunks: each chunk is "header line + many message lines" as NDJSON bytes.
     let header_line = project::document_header_line(&doc)?;
     let mut chunks = Vec::new();
     let mut chunk_body = header_line.clone();
@@ -1477,6 +1635,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         let (line, guid) = if cfg.skip_attachments {
             project::message_line_without_attachments(msg)?
         } else {
+            // Rewrite attachment fields to the digests we just uploaded.
             project::message_line(msg, &per_message_digests[i])?
         };
         if !cfg.force {
@@ -1488,9 +1647,11 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 .messages
                 .contains(&key);
             if seen {
+                // Already imported this message id on a previous successful push.
                 continue;
             }
         }
+        // A single message larger than the chunk limit cannot be split further.
         if line.len() > MAX_IMPORT_BODY_BYTES {
             bail!(
                 "{name}: message {guid} encodes to {} bytes alone, which exceeds the \
@@ -1499,6 +1660,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 MAX_IMPORT_BODY_BYTES / (1024 * 1024)
             );
         }
+        // Start a new chunk when this message would blow the count or byte budget.
         if !chunk_messages.is_empty()
             && (chunk_messages.len() >= batch_size
                 || chunk_body.len() + line.len() > MAX_IMPORT_BODY_BYTES)
@@ -1565,6 +1727,8 @@ struct UploadAssets<'a> {
     journal_path: &'a Path,
 }
 
+/// Try to reserve this sha256 for upload. Returns false if another worker
+/// already uploaded it or is uploading it (unless `force`).
 fn claim_asset_upload(journal: &Mutex<SharedJournal>, digest: &str, force: bool) -> bool {
     let mut guard = journal.lock().expect("journal mutex poisoned");
     if !force
@@ -1576,6 +1740,7 @@ fn claim_asset_upload(journal: &Mutex<SharedJournal>, digest: &str, force: bool)
     true
 }
 
+/// Clear the in-flight claim. On success, mark the digest as uploaded in the journal.
 fn finish_asset_upload(
     journal: &Mutex<SharedJournal>,
     journal_path: &Path,
@@ -1604,6 +1769,11 @@ fn finish_asset_upload(
     Ok(())
 }
 
+/// Upload each unique attachment for one conversation (several workers in parallel).
+///
+/// For each digest we first ask the vault with HEAD "do you already have this?".
+/// If yes, we skip the PUT. That makes re-runs and shared media much faster than
+/// always re-sending file bytes.
 fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     let UploadAssets {
         input,
@@ -1619,6 +1789,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     } = args;
     let mut jobs = Vec::with_capacity(unique.len());
     let mut stats = AssetUploadStats::default();
+    // Build the work list: skip digests already in the journal / claimed by another worker.
     for (digest, (rel, mime)) in unique {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
         if !claim_asset_upload(journal, digest, cfg.force) {
@@ -1661,6 +1832,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         return Ok(stats);
     }
 
+    // Work-stealing style: workers pull the next job index from a shared counter.
     let worker_count = cfg.asset_upload_workers.max(1).min(jobs.len());
     let next_job = AtomicUsize::new(0);
     let results = Mutex::new(
@@ -1681,6 +1853,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                         .map_err(|_| "cancelled".to_string())
                         .and_then(|_| {
                             http::with_retries(cfg.max_retries, || {
+                                // Cheap existence check before sending file bytes.
                                 if let Some(existing) = http.head_asset(
                                     url,
                                     &cfg.key,
@@ -1690,6 +1863,9 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                                 )? {
                                     return Ok(existing);
                                 }
+                                // PUT (or multipart for large files) sends the bytes.
+                                // The URL includes the sha256; the server re-hashes and
+                                // rejects the upload if the bytes do not match.
                                 http.put_asset(AssetPutRequest {
                                     base_url: url,
                                     key: &cfg.key,
@@ -1713,6 +1889,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         }
     });
 
+    // Apply journal updates in a stable order after all workers finish.
     let mut results = results.into_inner().expect("asset result mutex poisoned");
     for result in results.drain(..) {
         let result = result.expect("every asset job has a result");
@@ -1743,7 +1920,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                 ));
             }
             Err(error) => {
-                // Best-effort: release in-flight claims for all remaining jobs too.
+                // Release every in-flight claim so a retry is not stuck forever.
                 for job in &jobs {
                     let _ =
                         finish_asset_upload(journal, journal_path, url, username, source, &job.digest, false);
@@ -1755,6 +1932,7 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     Ok(stats)
 }
 
+/// Tracks one conversation from "prepared" until all its import chunks succeed or fail.
 struct FileTracker {
     name: String,
     source: String,
@@ -1790,6 +1968,7 @@ impl ImportBatch {
         }
     }
 
+    /// Append one prepared chunk onto this batch (body bytes + message ids).
     fn push(&mut self, file_index: usize, chunk: ImportChunk) {
         self.body.extend_from_slice(&chunk.body);
         self.messages
@@ -1801,6 +1980,9 @@ impl ImportBatch {
     }
 }
 
+/// True if adding `chunk` would exceed the message count or byte size limit.
+///
+/// In that case the caller should send the current batch first, then start a new one.
 fn should_flush_before_chunk(
     batch: &ImportBatch,
     chunk: &ImportChunk,
@@ -1826,7 +2008,9 @@ struct RecordFileFailure<'a, 'p, 'f> {
     batcher: &'a mut ProgressBatcher,
 }
 
+/// Mark one conversation failed during prepare (before any import chunks were queued).
 fn record_file_failure(args: RecordFileFailure<'_, '_, '_>) {
+    // Flush any pending "files N/M" success line so failure text is not mixed into it.
     if let Some(line) = args.batcher.flush_remainder() {
         emit_progress_line(args.log, args.progress, line);
     }
@@ -1874,6 +2058,11 @@ struct FinishFile<'a, 'p, 'f> {
     batcher: &'a mut ProgressBatcher,
 }
 
+/// If this conversation has no remaining import chunks (or already failed), write its result.
+///
+/// A chat can be "queue complete" (all chunks handed to the import pipeline) while
+/// some HTTP imports are still in flight. We only mark the file done when the last
+/// outstanding message count hits zero, or when a hard failure was recorded.
 fn finish_file_if_ready(args: FinishFile<'_, '_, '_>) -> Result<()> {
     let Some(tracker) = args.trackers[args.index].as_mut() else {
         return Ok(());
@@ -1999,8 +2188,14 @@ struct JoinInflightImport<'a, 'p, 'f> {
     batcher: &'a mut ProgressBatcher,
 }
 
-/// Join at most one in-flight import, then optionally spawn the current pending batch.
-/// With `wait=false` and `continue_on_error`, prepare of later files overlaps the HTTP import.
+/// Finish the current in-flight import (if any), then start the pending batch (if any).
+///
+/// `wait = false` means: start the HTTP request on a background thread and return
+/// so the caller can keep preparing more chats. That overlap is a major reason
+/// large imports feel faster than "upload everything, then import everything".
+///
+/// `wait = true` means: block until this import finishes (used at end of run or
+/// when we must not continue on error).
 fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> {
     let mut ok = join_inflight_import(JoinInflightImport {
         inflight: args.inflight,
@@ -2068,6 +2263,10 @@ struct SpawnImportHttp {
     import_id: Option<i64>,
 }
 
+/// Start one message-import HTTP request on a background thread and return immediately.
+///
+/// Running the POST off the main thread lets prepare workers keep hashing/uploading
+/// attachments while we wait on the network. Only one import is in flight at a time.
 fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
     let handle = std::thread::spawn(move || {
         let SpawnImportHttp {
@@ -2111,6 +2310,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
     InFlightImport { handle }
 }
 
+/// Wait for the background import thread (if any) and apply its success or failure.
 fn join_inflight_import(args: JoinInflightImport<'_, '_, '_>) -> Result<bool> {
     let Some(job) = args.inflight.take() else {
         return Ok(true);
@@ -2148,6 +2348,10 @@ struct ApplyImportOutcome<'a, 'p, 'f> {
     batcher: &'a mut ProgressBatcher,
 }
 
+/// Update journal + per-file trackers after one import HTTP request finishes.
+///
+/// On success: record each message id so a later push can skip them.
+/// On failure: mark every conversation that contributed to this batch as failed.
 fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
     let ImportHttpOutcome {
         batch,

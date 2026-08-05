@@ -240,7 +240,10 @@ pub struct DerivedPalette {
     pub tab_bar: Rgb,
     pub tab_inactive: Rgb,
     pub tab_active: Rgb,
+    /// Always a dark terminal surface (independent of light/dark UI mode).
     pub log_bg: Rgb,
+    /// Always light text for [`log_bg`] readability.
+    pub log_text: Rgb,
     pub glyph_bg: Rgb,
     pub glyph_fg: Rgb,
     pub chrome: Rgb,
@@ -293,6 +296,9 @@ pub fn derive_palette(seeds: ThemeSeeds, resolved: ResolvedTheme) -> DerivedPale
         ResolvedTheme::Dark => (seeds.dark_header, seeds.dark_accent),
         ResolvedTheme::Light => (seeds.light_header, seeds.light_accent),
     };
+    // Log pane stays terminal-style in every theme (dark bg + light text).
+    let log_bg = Rgb::from_hex(0x121416);
+    let log_text = Rgb::from_hex(0xe8eaed);
 
     match resolved {
         ResolvedTheme::Dark => {
@@ -327,7 +333,8 @@ pub fn derive_palette(seeds: ThemeSeeds, resolved: ResolvedTheme) -> DerivedPale
                 tab_bar: panel,
                 tab_inactive: mix(header, BLACK, 90.0),
                 tab_active: elevated,
-                log_bg: mix(header, BLACK, 40.0),
+                log_bg,
+                log_text,
                 glyph_bg: mix(accent, header, 22.0),
                 glyph_fg: mix(accent, WHITE, 55.0),
                 chrome: header,
@@ -366,7 +373,8 @@ pub fn derive_palette(seeds: ThemeSeeds, resolved: ResolvedTheme) -> DerivedPale
                 tab_bar: mix(header, WHITE, 70.0),
                 tab_inactive: mix(header, WHITE, 55.0),
                 tab_active: panel,
-                log_bg: mix(header, BLACK, 25.0),
+                log_bg,
+                log_text,
                 glyph_bg: mix(accent, WHITE, 18.0),
                 glyph_fg: mix(accent, BLACK, 55.0),
                 chrome: header,
@@ -427,6 +435,7 @@ pub fn apply_to_ui(ui: &AppWindow, mode: ThemeMode, preset: &ThemePreset) {
     theme.set_tab_inactive(palette.tab_inactive.brush());
     theme.set_tab_active(palette.tab_active.brush());
     theme.set_log_bg(palette.log_bg.brush());
+    theme.set_log_text(palette.log_text.brush());
     theme.set_glyph_bg(palette.glyph_bg.brush());
     theme.set_glyph_fg(palette.glyph_fg.brush());
     theme.set_chrome(palette.chrome.brush());
@@ -461,6 +470,16 @@ mod tests {
         let p = derive_palette(DEFAULT_SEEDS, ResolvedTheme::Light);
         assert_eq!(p.panel, WHITE);
         assert!(!p.is_dark);
+    }
+
+    #[test]
+    fn log_pane_stays_dark_with_light_text_in_light_theme() {
+        let p = derive_palette(DEFAULT_SEEDS, ResolvedTheme::Light);
+        let bg_luma = p.log_bg.r as u16 + p.log_bg.g as u16 + p.log_bg.b as u16;
+        let text_luma = p.log_text.r as u16 + p.log_text.g as u16 + p.log_text.b as u16;
+        assert!(bg_luma < 80 * 3, "log background must stay dark");
+        assert!(text_luma > 180 * 3, "log text must stay light");
+        assert!(text_luma > bg_luma);
     }
 
     #[test]

@@ -11,6 +11,10 @@ use crate::{CompressOptions, MediaMode};
 pub struct MediaReport {
     pub processed: usize,
     pub skipped: usize,
+    /// Total bytes under `attachments/` before convert/compress (non-temp files).
+    pub bytes_before: u64,
+    /// Total bytes under `attachments/` after convert/compress (non-temp files).
+    pub bytes_after: u64,
     pub errors: Vec<String>,
 }
 
@@ -57,13 +61,18 @@ pub fn process_attachments_dir_with_log(
         return Ok((report, remap));
     }
 
+    report.bytes_before = attachments_dir_bytes(&attachments)?;
     let verb = match mode {
         MediaMode::Compress => "Compressing",
         _ => "Converting",
     };
+    emit(&mut log, "");
     emit(
         &mut log,
-        &format!("{verb} attachments ({total} file(s))…"),
+        &format!(
+            "{verb} attachments ({total} file(s), {})…",
+            format_bytes(report.bytes_before)
+        ),
     );
 
     let mut done = 0usize;
@@ -84,10 +93,14 @@ pub fn process_attachments_dir_with_log(
 
     // Always sweep again so a failed convert cannot leave junk behind.
     remove_msgmedia_temps(&attachments)?;
+    report.bytes_after = attachments_dir_bytes(&attachments)?;
 
     let mut summary = format!(
-        "Attachment {mode} done: processed={} skipped={}",
-        report.processed, report.skipped
+        "Attachment {mode} done: processed={} skipped={} size {} → {}",
+        report.processed,
+        report.skipped,
+        format_bytes(report.bytes_before),
+        format_bytes(report.bytes_after),
     );
     if !report.errors.is_empty() {
         summary.push_str(&format!(" errors={}", report.errors.len()));
@@ -100,6 +113,45 @@ pub fn process_attachments_dir_with_log(
 fn emit(log: &mut Option<&mut dyn FnMut(&str)>, line: &str) {
     if let Some(log) = log.as_mut() {
         log(line);
+    }
+}
+
+/// Sum sizes of non-temp files under `attachments/` (folder-level total).
+fn attachments_dir_bytes(attachments: &Path) -> Result<u64> {
+    let mut total = 0u64;
+    let mut stack = vec![attachments.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if !is_msgmedia_temp(&path) {
+                total = total.saturating_add(
+                    entry
+                        .metadata()
+                        .with_context(|| format!("stat {}", path.display()))?
+                        .len(),
+                );
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1000.0;
+    const MB: f64 = KB * 1000.0;
+    const GB: f64 = MB * 1000.0;
+    let n = bytes as f64;
+    if n >= GB {
+        format!("{:.1} GB", n / GB)
+    } else if n >= MB {
+        format!("{:.1} MB", n / MB)
+    } else if n >= KB {
+        format!("{:.1} KB", n / KB)
+    } else {
+        format!("{bytes} B")
     }
 }
 
@@ -604,6 +656,25 @@ mod tests {
             }
             Outcome::Skipped => panic!("in-place rewrite must not look like Skipped"),
         }
+    }
+
+    #[test]
+    fn format_bytes_scales() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(12_500), "12.5 KB");
+        assert_eq!(format_bytes(1_500_000), "1.5 MB");
+        assert_eq!(format_bytes(2_500_000_000), "2.5 GB");
+    }
+
+    #[test]
+    fn attachments_dir_bytes_sums_non_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let att = dir.path().join("attachments");
+        fs::create_dir_all(&att).unwrap();
+        fs::write(att.join("a.jpg"), vec![0u8; 1000]).unwrap();
+        fs::write(att.join("b.mp4"), vec![0u8; 2500]).unwrap();
+        fs::write(att.join("orphan.msgmedia.tmp.jpg"), vec![0u8; 9999]).unwrap();
+        assert_eq!(attachments_dir_bytes(&att).unwrap(), 3500);
     }
 
     #[test]
