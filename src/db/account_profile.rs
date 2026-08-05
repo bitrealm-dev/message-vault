@@ -4,8 +4,11 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::schema;
 
+/// Account identity loaded only by tests: the handles migration replaced the
+/// load-for-matching path with direct joins through `account_handles`/`handles`,
+/// so this struct/loader now exists to pin the soft-default behavior.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // handle_ids/emails loaded for handle matching; export uses display_name
 pub struct AccountProfile {
     pub display_name: String,
     pub handle_ids: Vec<i64>,
@@ -14,6 +17,7 @@ pub struct AccountProfile {
 
 /// Load account identity (preferred name + linked handle ids) and optional email handles.
 /// Soft-defaults when the row is missing or name/handles are empty (`"Me"`, empty sets).
+#[cfg(test)]
 pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
     let preferred_name: Option<Option<String>> = conn
         .query_row(

@@ -28,18 +28,11 @@ bind = "${BIND}"
 EOF
 
 # Seed account + hashed Import API token (no host admin token).
+# Use the shared accounts DDL so seeded tables match the server schema;
+# hand-rolled minimal tables would break ix_accounts_hanko_user_id at serve startup.
 sqlite3 "$TMP/data/vault.db" <<SQL
 PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS accounts (
-  id TEXT PRIMARY KEY,
-  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  read_only INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS account_api_tokens (
-  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-  token_hash TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL
-);
+$(cat "$ROOT/schema/sql/accounts.sql")
 INSERT INTO accounts (id, username, read_only) VALUES ('${ACCOUNT}', 'smoke', 0);
 INSERT INTO account_api_tokens (account_id, token_hash, created_at)
 VALUES ('${ACCOUNT}', '${TOKEN_HASH}', 'smoke');
