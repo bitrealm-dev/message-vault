@@ -104,7 +104,7 @@ fn expected_part_count(bytes: u64, part_size: usize) -> u32 {
         return 0;
     }
     let ps = part_size as u64;
-    ((bytes + ps - 1) / ps) as u32
+    bytes.div_ceil(ps) as u32
 }
 
 fn expected_part_len(bytes: u64, part_size: usize, part: u32) -> u64 {

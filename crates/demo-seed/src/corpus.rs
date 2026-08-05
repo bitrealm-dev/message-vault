@@ -80,9 +80,8 @@ fn extract_sentences(text: &str) -> Vec<String> {
 
     let mut out = Vec::new();
     let mut start = 0usize;
-    let bytes = flat.as_bytes();
-    for i in 0..bytes.len() {
-        let c = bytes[i] as char;
+    for (i, &b) in flat.as_bytes().iter().enumerate() {
+        let c = b as char;
         if matches!(c, '.' | '!' | '?') {
             let end = i + 1;
             if let Some(s) = normalize_sentence(&flat[start..end]) {

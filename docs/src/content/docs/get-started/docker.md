@@ -266,4 +266,4 @@ docker compose -f compose-release.yml restart vault
 
 - [Try the demo](/get-started/try-the-demo/) (native install, no Docker)
 - [First personal import](/get-started/first-personal-import/)
-- [HTTP import API](/import/http-api/)
+- [HTTP import API](/reference/api/)

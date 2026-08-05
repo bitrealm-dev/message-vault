@@ -77,5 +77,5 @@ or **Combined**. Optionally run media conversion:
 cargo run --release -- process-assets
 ```
 
-See also [HTTP import API](/import/http-api/) and
+See also [HTTP import API](/reference/api/) and
 [import modes and dedupe](/import/modes-and-dedupe/).

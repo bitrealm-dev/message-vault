@@ -167,6 +167,7 @@ enum Outcome {
     Skipped,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_one(
     conn: &mut Connection,
     opts: &ProcessAssetsOptions,

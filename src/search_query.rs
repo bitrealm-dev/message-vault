@@ -38,6 +38,12 @@ impl SearchMode {
     }
 }
 
+impl fmt::Display for SearchMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConversationTypeFilter {
@@ -68,6 +74,12 @@ impl CountComparator {
             Self::Lt => "<",
             Self::Lte => "<=",
         }
+    }
+}
+
+impl fmt::Display for CountComparator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -333,7 +345,7 @@ fn append_fts_lexemes(token: &str, out: &mut Vec<FtsLex>) {
 fn parse_fts_lexemes(lexemes: &[FtsLex]) -> Option<FtsNode> {
     let mut i = 0usize;
 
-    fn peek<'a>(lexemes: &'a [FtsLex], i: usize) -> Option<&'a FtsLex> {
+    fn peek(lexemes: &[FtsLex], i: usize) -> Option<&FtsLex> {
         lexemes.get(i)
     }
 
@@ -465,9 +477,9 @@ fn normalize_date(raw: &str) -> Option<String> {
         let unit = bytes[bytes.len() - 1].to_ascii_lowercase();
         if matches!(unit, b'd' | b'w' | b'm' | b'y') {
             let num = &t[..t.len() - 1];
-            if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
-                if let Ok(n) = num.parse::<i64>() {
-                    if n >= 0 {
+            if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit())
+                && let Ok(n) = num.parse::<i64>()
+                    && n >= 0 {
                         let today = Local::now().date_naive();
                         let d = match unit {
                             b'd' => today
@@ -509,8 +521,6 @@ fn normalize_date(raw: &str) -> Option<String> {
                         };
                         return Some(d.format("%Y-%m-%d").to_string());
                     }
-                }
-            }
         }
     }
     if t.len() == 10
@@ -577,10 +587,9 @@ fn parse_count_comparison(raw: &str) -> Option<CountComparison> {
         (CountComparator::Gt, rest)
     } else if let Some(rest) = t.strip_prefix('<') {
         (CountComparator::Lt, rest)
-    } else if let Some(rest) = t.strip_prefix('=') {
-        (CountComparator::Eq, rest)
     } else {
-        return None;
+        let rest = t.strip_prefix('=')?;
+        (CountComparator::Eq, rest)
     };
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;

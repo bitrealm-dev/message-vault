@@ -176,8 +176,8 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         }
     };
     let mut tapbacks = tapbacks_from_im(im, is_from_me, msg.sender_handle.as_deref());
-    if tapbacks.is_empty() {
-        if let Some(kind) = im
+    if tapbacks.is_empty()
+        && let Some(kind) = im
             .and_then(|i| i.tapback_kind.as_ref())
             .filter(|s| !s.is_empty())
         {
@@ -193,7 +193,6 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
                 },
             });
         }
-    }
 
     Ok(MessageRecord {
         guid: if msg.guid.trim().is_empty() {

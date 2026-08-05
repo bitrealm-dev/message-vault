@@ -32,7 +32,7 @@ cargo run --release -- dedupe-cross-source --account yourusername
 ```
 
 HTTP import defaults to `dedupe=false`; pass `dedupe=true` to run this pass
-after a remote push. See [HTTP import API](/import/http-api/).
+after a remote push. See [HTTP import API](/reference/api/).
 
 ### Content key
 

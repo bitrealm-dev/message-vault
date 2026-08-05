@@ -142,6 +142,7 @@ pub fn write_all(
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_individual(
     staging: &Path,
     chat_id: &str,
@@ -175,18 +176,10 @@ fn write_individual(
 
     let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
     let mut origin_guid: Option<String> = None;
-    for i in 0..msg_count {
+    for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
-        let mut msg = text_message(
-            &guid,
-            timestamps[i],
-            from_me,
-            chat_id,
-            cfg,
-            corpus,
-            rng,
-        );
+        let mut msg = text_message(&guid, ts, from_me, chat_id, cfg, corpus, rng);
         decorate_message(&mut msg, i, msg_count, chat_id, from_me, cfg, rng, stats, &mut origin_guid);
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -227,12 +220,12 @@ fn write_unassigned(
 
     let span_years = 1.5;
     let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
-    for i in 0..msg_count {
+    for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 4 == 0;
         let guid = format!("unassigned-{chat_id}-{i}");
         let mut msg = text_message(
             &guid,
-            timestamps[i],
+            ts,
             from_me,
             chat_id,
             cfg,
@@ -404,11 +397,11 @@ fn write_orphaned(
         n,
     )?;
     let timestamps = bursty_timestamps(n, 2.0, sample_direct_day_burst, rng);
-    for i in 0..n {
+    for (i, &ts) in timestamps.iter().enumerate() {
         let guid = format!("orphan-{i}");
         let mut msg = text_message(
             &guid,
-            timestamps[i],
+            ts,
             i % 2 == 0,
             ORPHAN_SENDER,
             cfg,
@@ -442,6 +435,7 @@ fn write_header_only(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decorate_message(
     msg: &mut IrMessage,
     i: usize,
@@ -455,7 +449,7 @@ fn decorate_message(
 ) {
     if should_attach_jpg(i, msg_count, cfg) {
         add_jpg_attachment(msg, i, stats);
-        if i > 0 && i % 40 == 0 {
+        if i > 0 && i.is_multiple_of(40) {
             msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
         }
     } else if should_attach_photo_only(i, msg_count, cfg) {
@@ -465,14 +459,14 @@ fn decorate_message(
         add_attachment(msg, i, stats, OTHER_ATTACHMENTS);
     }
     if cfg.messages.tapback_stride > 0
-        && i % cfg.messages.tapback_stride == 0
+        && i.is_multiple_of(cfg.messages.tapback_stride)
         && !from_me
         && msg_count >= 20
     {
         push_tapback(msg, "loved", None, peer, false);
     }
     if cfg.messages.reply_stride > 0
-        && i % cfg.messages.reply_stride == 0
+        && i.is_multiple_of(cfg.messages.reply_stride)
         && origin_guid.is_some()
         && msg_count >= 25
     {
@@ -481,12 +475,12 @@ fn decorate_message(
         im.in_reply_to_guid = origin_guid.clone();
         im.thread_originator_part = Some(0);
     }
-    if i % (cfg.messages.reply_stride.max(1) + 29) == 0 {
+    if i.is_multiple_of(cfg.messages.reply_stride.max(1) + 29) {
         *origin_guid = Some(msg.guid.clone());
         let im = msg.imessage.get_or_insert_with(IrImessage::default);
         im.num_replies = Some(rng.random_range(1..4));
     }
-    if i % 120 == 0 {
+    if i.is_multiple_of(120) {
         msg.service = match *SERVICES.choose(rng).unwrap() {
             "SMS" => IrService::Sms,
             "RCS" => IrService::Rcs,
@@ -610,15 +604,14 @@ fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
             // Spread collisions so bursts aren't identical timestamps.
             let spaced = secs + (i as i64) * rng.random_range(8..45);
             let mut dt = day_start + Duration::seconds(spaced.min(23 * 3600 + 3599));
-            if let Some(&prev) = out.last() {
-                if dt.timestamp_millis() <= prev {
+            if let Some(&prev) = out.last()
+                && dt.timestamp_millis() <= prev {
                     dt = Utc
                         .timestamp_millis_opt(prev)
                         .single()
                         .unwrap_or(now)
                         + Duration::seconds(rng.random_range(12..90));
                 }
-            }
             let local = offset.from_utc_datetime(&dt.naive_utc());
             out.push(local.timestamp_millis());
         }
@@ -670,7 +663,7 @@ fn should_attach_jpg(i: usize, total: usize, cfg: &SeedConfig) -> bool {
         return false;
     }
     let stride = (cfg.messages.jpg_base_stride + total / 50).max(20);
-    i > 0 && i % stride == 0
+    i > 0 && i.is_multiple_of(stride)
 }
 
 fn should_attach_photo_only(i: usize, total: usize, cfg: &SeedConfig) -> bool {
@@ -686,7 +679,7 @@ fn should_attach_other(i: usize, total: usize, cfg: &SeedConfig) -> bool {
         return false;
     }
     let stride = (cfg.messages.other_base_stride + total / 30).max(50);
-    i > 0 && i % stride == 0
+    i > 0 && i.is_multiple_of(stride)
 }
 
 fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {

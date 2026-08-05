@@ -1,19 +1,50 @@
 ---
 title: Install
-description: Requirements and tools for running Message Vault locally.
+description: Every way to run Message Vault — Docker image, Compose, or build from source.
 ---
 
-Message Vault has two local components:
+Message Vault has two components: a Rust server (import/export API and CLI) and a Next.js web UI (browse and search). You can run both with Docker, or build them from source.
 
-- a **Rust** workspace for importing, storing, and serving message data
-- a **Next.js** app in `web/` for browsing the SQLite vault
+## Docker (recommended)
 
-## Requirements
+The published Docker image bundles the server, web UI, and FFmpeg into one container. No Rust or Node toolchain needed.
 
-- Rust 1.95 or newer (edition 2024; also required by `rusqlite` / `libsqlite3-sys`)
+### Quick start (prebuilt image)
+
+```bash
+docker run -d --name message-vault \
+  -p 3000:3000 -p 8080:8080 \
+  -e VAULT_MODE=demo \
+  -v message-vault-data:/app/data \
+  mbeisser1/message-vault:latest
+```
+
+Open http://localhost:3000/login. See the [Quick start](/get-started/quick-start/) page for the full walkthrough.
+
+### Compose (build from checkout)
+
+Clone the repo and use the bundled Compose file:
+
+```bash
+git clone https://github.com/bitrealm-dev/message-vault-rs.git
+cd message-vault-rs
+docker compose up
+```
+
+This uses `compose-dev.yml` (bind-mounts your checkout so edits take effect live). For the slim release image, set `COMPOSE_FILE=compose-release.yml` in `.env` or use `docker compose -f compose-release.yml up`.
+
+See the [Docker guide](/get-started/docker/) for Windows/Linux setup, volume details, sqlite-web on port 8081, and troubleshooting.
+
+## Build from source
+
+If you prefer to run without containers, you need the Rust and Node toolchains.
+
+### Requirements
+
+- Rust 1.95 or newer (edition 2024; required by `rusqlite` / `libsqlite3-sys`)
 - Node.js 20.9 or newer and npm
 - A native C/C++ build toolchain
-- Optional: FFmpeg for video/audio/HEIC conversion (`cargo run --release -- process-assets`)
+- Optional: FFmpeg for video/audio/HEIC conversion
 
 Verify:
 
@@ -25,7 +56,9 @@ npm --version
 ffmpeg -version
 ```
 
-## Clone and build
+Full OS-specific prerequisite steps (Visual Studio workloads on Windows, `apt` packages on Linux) are in the maintainer guide: [`docs/maintainers/development.md`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/docs/maintainers/development.md).
+
+### Build
 
 ```bash
 git clone https://github.com/bitrealm-dev/message-vault-rs.git
@@ -38,27 +71,31 @@ For the web UI:
 ```bash
 cd web
 npm ci
+npm run build
 ```
 
-## Docker (optional)
+### Start
 
-Prefer not to install Rust and Node on the host? Use Compose instead. Install
-Docker Desktop (Windows) or Docker Engine (Linux), then:
+Start the import API:
 
 ```bash
-docker compose up
+cargo run --release -- serve
 ```
 
-See [Docker](/get-started/docker/) for Windows and Linux install steps, the
-default **compose-dev.yml** (pull `main`, bind-mounted source), and
-**compose-release.yml**.
+In a second terminal, start the web UI:
+
+```bash
+cd web
+npm run dev
+```
+
+Open http://localhost:3000. Create an account and generate an Import API token under **Settings → Access**.
+
+There is no standalone prebuilt binary for the vault server yet. The Docker image is the closest thing to a one-step install. The desktop app (Message Exporters) does ship as a prebuilt binary — see its [install guide](https://bitrealm-dev.github.io/message-exporters/get-started/install/).
 
 ## Next steps
 
 - No real backup yet? [Try the demo](/get-started/try-the-demo/).
-- Prefer containers? [Docker](/get-started/docker/) (includes Windows/Linux setup).
+- [Quick start with Docker](/get-started/quick-start/) — 5-minute setup.
+- [Docker guide](/get-started/docker/) — all Compose and volume options.
 - Ready to import your own messages? [First personal import](/get-started/first-personal-import/).
-
-Full Windows and Linux prerequisite install steps (Visual Studio workloads,
-`winget`, `apt`, troubleshooting) live in the in-repo maintainer guide:
-[`docs/maintainers/development.md`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/docs/maintainers/development.md).

@@ -147,6 +147,7 @@ pub fn complete_import(
 }
 
 /// List imports for an account, newest first.
+#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn list_imports_for_account(
     conn: &Connection,
     account_id: &str,
@@ -183,6 +184,7 @@ pub fn list_imports_for_account(
 }
 
 /// Total attachment bytes for an account (original size_bytes).
+#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i64> {
     let n: i64 = conn.query_row(
         r#"
@@ -210,6 +212,7 @@ pub struct TopAttachment {
 }
 
 /// Largest attachments for an account.
+#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn top_attachments_by_size(
     conn: &Connection,
     account_id: &str,

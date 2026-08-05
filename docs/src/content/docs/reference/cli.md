@@ -20,6 +20,7 @@ Most tenant-scoped commands take:
 
 - `--config` (default `config/config.toml`)
 - `--account <username|uuid>`
+- `--db <path>` — override the database path from config (available on `import`, `dedupe-cross-source`, `import-contacts`, `process-assets`)
 
 ## `import`
 
@@ -37,11 +38,50 @@ cargo run --release -- import \
 
 - **`--input`**: directory of `*.jsonl` files (aliases: `--dir`, `--staging-dir`, `--export-dir`). Attachment paths resolve relative to that directory.
 - **Source**: from each conversation’s IR `export.source` by default. A directory may mix sources; `--mode replace` wipes each source found in the batch. Pass `--source` to force one source for every conversation.
-- **`--contacts`**: load VCF or vCard CSV into SQLite (same as `import-contacts`).
+- **`--contacts`** (alias `--contacts-csv`): load VCF or vCard CSV into SQLite (same as `import-contacts`).
+- **`--overwrite-contacts`**: reload contacts even if the contacts table is non-empty. The default behavior skips with a hint when contacts are already loaded.
+- **`--assets-dir <dir>`**: override the per-account originals store. Only meaningful with `--source` (fixed-source mode).
 - **`--media`**: `copy` (default), `none` (skip attachments), `convert`, or `compress` (ffmpeg required for convert/compress). Rewrites happen before files land in `assets/`.
 - Soft-dedupe runs after import unless `--skip-dedupe`.
 
 HTTP `serve` import is unchanged and still takes `source` as a query parameter.
+
+## `process-assets`
+
+Generate browser-friendly derived media under `assets_converted/`. Requires ffmpeg.
+
+```bash
+cargo run --release -- process-assets [--force] [--dry-run] \
+  [--skip-image] [--skip-video] [--skip-audio] \
+  [--source <id>] [--db <path>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Re-convert even if a converted asset already exists |
+| `--dry-run` | Convert and log, but do not write to disk |
+| `--skip-image` | Skip image conversion |
+| `--skip-video` | Skip video conversion |
+| `--skip-audio` | Skip audio conversion |
+| `--source <id>` | Process a single source only (omit for all sources) |
+| `--db <path>` | Override the database path from config |
+
+## `reset-demo`
+
+Regenerate the demo bundle, clear demo account data, import, and process assets.
+
+```bash
+cargo run --release -- reset-demo \
+  [--bundle demo] \
+  [--config config/config.toml]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--bundle` | Bundle directory (default `demo`) |
+| `--config` | Config path (default `config/config.toml` — **overwrites** it with the demo config, which comments out `[server]`) |
+
+After running `reset-demo`, copy `config/config.toml.example` back (or uncomment `[server]`) before running `serve`.
 
 ## Examples
 

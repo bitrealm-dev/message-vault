@@ -154,3 +154,121 @@ curl -sS "http://127.0.0.1:8080/v1/auth/check" \
 ```
 
 Health check: <http://127.0.0.1:8080/health>
+
+## Multipart asset upload
+
+Large attachments (over ~90 MiB) are uploaded in parts. The server advertises a chunk size (`part_size`) and the client splits the declared byte count into that many parts.
+
+### `POST /v1/assets/{sha256}/uploads?source=&account=`
+
+Start a multipart upload session. Request body:
+
+```json
+{ "mime": "image/jpeg", "bytes": 268435456 }
+```
+
+| Field | Required | Description |
+|-------|:--------:|-------------|
+| `mime` | no | MIME type recorded with the asset |
+| `bytes` | yes | Declared total size in bytes. Must not exceed `asset_max_bytes` (default 512 MiB). |
+
+Response when the asset is not yet stored:
+
+```json
+{ "ok": true, "upload_id": "…", "part_size": 67108864 }
+```
+
+`part_size` is the per-part byte limit (default 64 MiB). The client calculates the part count from `ceil(bytes / part_size)`.
+
+Response when the asset already exists (SHA-256 match):
+
+```json
+{ "ok": true, "sha256": "…", "assets_path": "…", "already_present": true }
+```
+
+No upload is needed — the asset is already stored.
+
+### `PUT /v1/assets/{sha256}/uploads/{upload_id}/parts/{part}`
+
+Upload one part. `part` is 1-indexed and must be at least 1. The body is the raw part bytes. Each part must not exceed the `part_size` advertised at session start.
+
+Response:
+
+```json
+{ "ok": true, "part": 1, "bytes": 67108864 }
+```
+
+Parts can be uploaded in any order. The server stores each part in a temporary staging directory keyed by `upload_id`.
+
+### `POST /v1/assets/{sha256}/uploads/{upload_id}/complete`
+
+Assemble all uploaded parts, verify the SHA-256 of the combined bytes, and store the asset. This endpoint handles a race with a concurrent single-PUT safely — if another upload finishes first, the multipart result is dropped and the already-stored digest is returned.
+
+Response:
+
+```json
+{ "ok": true, "sha256": "…", "assets_path": "…", "already_present": false }
+```
+
+### `DELETE /v1/assets/{sha256}/uploads/{upload_id}`
+
+Abort an in-progress multipart upload. Staged parts are removed. Idempotent — calling it on an already-completed or already-aborted session returns `{ "ok": true }`.
+
+## Export message fields
+
+Messages returned by `GET /v1/export/messages` have this shape:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `guid` | string | Unique message identifier |
+| `timestamp` | string | ISO-8601 timestamp with timezone offset |
+| `timestamp_utc` | string | UTC ISO-8601 timestamp |
+| `timestamp_unix_ms` | number | Unix epoch in milliseconds |
+| `direction` | string | `incoming` or `outgoing` |
+| `service` | string | `sms`, `imessage`, `whatsapp`, `rcs`, or `unknown` |
+| `sender` | string | Sender phone number or handle |
+| `sender_display` | string | Resolved sender display name |
+| `is_from_me` | boolean | True for outgoing messages |
+| `subject` | string or null | MMS/email subject line |
+| `text` | string | Message body text |
+| `is_announcement` | boolean | True for group announcement/name-change messages |
+| `announcement` | string or null | The announcement text |
+| `is_reply` | boolean | True if this message is a reply to another |
+| `thread_originator_guid` | string or null | GUID of the message being replied to |
+| `thread_originator_part` | number or null | Part index of the replied-to content |
+| `num_replies` | number | Count of replies to this message |
+| `attachments` | array | List of attachment objects (see below) |
+| `tapbacks` | array | List of tapback/reaction objects (see below) |
+
+Each attachment:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | Original relative path (e.g. `attachments/photo.jpg`) |
+| `original_name` | string | Original filename on the device |
+| `mime_type` | string or null | Detected MIME type |
+| `sha256` | string | SHA-256 hex digest of the file contents |
+| `is_sticker` | boolean | True if the attachment is a sticker |
+| `transcription` | string or null | Audio message transcription text |
+
+Each tapback (reaction):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `part_index` | number | Which attachment or message part the reaction applies to |
+| `kind` | string | Tapback type (varies by platform) |
+| `emoji` | string or null | Emoji character for the reaction |
+| `is_from_me` | boolean | True if the reaction is from the account owner |
+| `sender` | string | Handle of the person who reacted |
+
+## Configuration reference
+
+`[server]` in `config/config.toml` controls the import/export API:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `bind` | `127.0.0.1:8080` | Address the HTTP API listens on |
+| `asset_max_bytes` | `536870912` (512 MiB) | Maximum size of a single attachment (single PUT body or multipart total). Must be greater than 0. |
+| `asset_part_size` | `67108864` (64 MiB) | Multipart chunk size advertised to clients. Must not exceed `asset_max_bytes`. Keep under ~100 MiB for Cloudflare-proxied setups. |
+
+The environment variable `VAULT_ASSET_PART_SIZE` can override the advertised part size at runtime (it is clamped to `1..=asset_part_size`). Set it before starting the server. This is primarily a test and operations knob — end users should use `config.toml` instead.

@@ -42,6 +42,8 @@ impl ImportMode {
 
 #[derive(Debug, Clone)]
 pub struct ImportOptions<'a> {
+    /// Used by [`import_jsonl_files`] (CLI/tests). Warm HTTP path opens its own connection.
+    #[allow(dead_code)]
     pub db_path: &'a Path,
     /// Content-addressed asset store when [`Self::source_from_jsonl`] is false.
     pub assets_dir: &'a Path,
@@ -71,6 +73,7 @@ pub struct ImportOptions<'a> {
 
 impl<'a> ImportOptions<'a> {
     /// HTTP / tests / reset-demo: fixed source + assets dir, copy media.
+    #[allow(clippy::too_many_arguments)]
     pub fn fixed(
         db_path: &'a Path,
         assets_dir: &'a Path,
@@ -142,6 +145,7 @@ struct PreparedAttachment {
 }
 
 /// Import every `*.jsonl` file under `export_dir` (CLI staging path).
+#[allow(clippy::too_many_arguments)]
 pub fn import_export(
     export_dir: &Path,
     db_path: &Path,
@@ -247,15 +251,15 @@ pub enum ImportSchemaMode {
 }
 
 /// Import one or more JSONL files. Attachment relative paths resolve against `opts.asset_root`.
+#[allow(dead_code)] // CLI/tests; HTTP serve uses [`import_jsonl_files_on_conn`]
 pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
     validate_import_options(opts)?;
 
-    if let Some(parent) = opts.db_path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = opts.db_path.parent()
+        && !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-    }
 
     let mut conn = Connection::open(opts.db_path)
         .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
@@ -278,7 +282,7 @@ fn validate_import_options(opts: &ImportOptions<'_>) -> Result<()> {
 
 /// Import onto an existing connection (warm serve path or tests).
 pub fn import_jsonl_files_on_conn(
-    mut conn: &mut Connection,
+    conn: &mut Connection,
     paths: &[PathBuf],
     opts: &ImportOptions<'_>,
     schema_mode: ImportSchemaMode,
@@ -333,7 +337,7 @@ pub fn import_jsonl_files_on_conn(
             validate_source_id(source)?;
             println!("  sql:      deleting existing messages for source '{source}'…");
             let _ = io::stdout().flush();
-            schema::delete_messages_for_source(&conn, opts.account_id, source)?;
+            schema::delete_messages_for_source(conn, opts.account_id, source)?;
         }
         println!("  sql:      wipe complete");
     }
@@ -426,7 +430,7 @@ pub fn import_jsonl_files_on_conn(
     );
     let _ = io::stdout().flush();
     let promote_stats = promote_append(
-        &mut conn,
+        conn,
         opts.mode,
         opts.account_id,
         opts.fill_content_keys,
@@ -441,16 +445,16 @@ pub fn import_jsonl_files_on_conn(
         stats.tapbacks = promote_stats.tapbacks;
     }
 
-    schema::clear_staging_for_account(&conn, opts.account_id)?;
+    schema::clear_staging_for_account(conn, opts.account_id)?;
 
     if opts.backfill_contacts {
-        let unknown = contacts::ensure_unknown_contacts(&mut conn, opts.account_id)?;
+        let unknown = contacts::ensure_unknown_contacts(conn, opts.account_id)?;
         stats.unknown_contacts = unknown;
         if unknown > 0 {
             println!("  sql:      created {unknown} contact(s) for previously unassigned handles");
         }
         let named =
-            contacts::fill_empty_contact_names_from_participants(&mut conn, opts.account_id)?;
+            contacts::fill_empty_contact_names_from_participants(conn, opts.account_id)?;
         if named > 0 {
             println!(
                 "  sql:      filled names on {named} contact(s) from participant display names"
@@ -489,11 +493,11 @@ fn prepare_attachments(
     let mut prepared = Vec::with_capacity(attachments.len());
     for mut att in attachments {
         // Import-time convert/compress: rewrite file before hash/store so digests match bytes.
-        if matches!(media, MediaMode::Convert | MediaMode::Compress) {
-            if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if matches!(media, MediaMode::Convert | MediaMode::Compress)
+            && let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 let source = export_dir.join(rel);
-                if source.is_file() {
-                    if let Some(resolved) = import_media::resolve_for_store(
+                if source.is_file()
+                    && let Some(resolved) = import_media::resolve_for_store(
                         &source,
                         att.mime_type.as_deref(),
                         media,
@@ -514,9 +518,7 @@ fn prepare_attachments(
                         });
                         continue;
                     }
-                }
             }
-        }
 
         let stored = if let Some(sha) = att
             .sha256
@@ -807,6 +809,7 @@ fn import_file_to_staging(
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn import_conversation_to_staging(
     tx: &Transaction<'_>,
     stmts: &mut StagingInserts<'_>,
@@ -1581,7 +1584,7 @@ mod tests {
             .unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].source, "imessage");
-        assert_eq!(listed[0].started_at.is_empty(), false);
+        assert!(!listed[0].started_at.is_empty());
         assert!(listed[0].finished_at.is_some());
         assert_eq!(
             crate::db::vault_imports::account_attachment_bytes(&conn, TEST_ACCOUNT).unwrap(),

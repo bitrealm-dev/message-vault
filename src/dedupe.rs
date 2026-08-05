@@ -234,7 +234,7 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows: Vec<(
+    type ExactDedupeRow = (
         i64,
         i64,
         String,
@@ -243,7 +243,8 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         Option<String>,
         String,
         Option<String>,
-    )> = stmt
+    );
+    let rows: Vec<ExactDedupeRow> = stmt
         .query_map(params![account_id], |row| {
             Ok((
                 row.get(0)?,
@@ -589,7 +590,7 @@ fn flag_near_time_dupes(
           AND m.duplicate_of IS NULL
         "#,
     )?;
-    let msg_rows: Vec<(
+    type NearDedupeRow = (
         i64,
         i64,
         String,
@@ -597,7 +598,8 @@ fn flag_near_time_dupes(
         Option<String>,
         String,
         Option<String>,
-    )> = msg_stmt
+    );
+    let msg_rows: Vec<NearDedupeRow> = msg_stmt
         .query_map(params![account_id], |row| {
             Ok((
                 row.get(0)?,
@@ -850,6 +852,7 @@ mod tests {
         conn
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_msg(
         conn: &Connection,
         source: &str,
