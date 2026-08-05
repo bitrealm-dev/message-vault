@@ -511,7 +511,7 @@ fn write_conversation_header(
             group_title,
             participants,
             stats: ConversationStats {
-                message_count,
+                message_count: message_count as u64,
                 attachment_count: 0,
                 first_timestamp_unix_ms: None,
                 last_timestamp_unix_ms: None,
@@ -693,6 +693,7 @@ fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {
         transcription: None,
         sticker_effect: None,
         bytes: None,
+        size_bytes: None,
     });
     stats.attachment_refs += 1;
 }
@@ -718,6 +719,7 @@ fn add_attachment(
         transcription,
         sticker_effect: None,
         bytes: None,
+        size_bytes: None,
     });
     stats.attachment_refs += 1;
 }
