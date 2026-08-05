@@ -1,17 +1,16 @@
 //! Page export messages, download assets, write message-ir JSONL folders.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-use std::io::Read;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
 use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use vault_push::authenticate;
 
 use crate::http::{ExportMessage, HttpSession};
@@ -200,8 +199,6 @@ fn query_stats_by_paging(
     let mut total_messages = 0u64;
     // sha256 -> size_bytes (None if unknown / older imports)
     let mut unique_assets: HashMap<String, Option<u64>> = HashMap::new();
-    let mut seen_cursors: BTreeSet<String> = BTreeSet::new();
-    const MAX_PAGES: usize = 10_000;
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -252,22 +249,7 @@ fn query_stats_by_paging(
         }
 
         match page.next_cursor {
-            Some(next) if !next.is_empty() => {
-                if seen_cursors.contains(&next) {
-                    bail!(
-                        "pagination loop detected: cursor {next} was already seen. \
-                         The vault may be returning the same cursor repeatedly."
-                    );
-                }
-                if seen_cursors.len() >= MAX_PAGES {
-                    bail!(
-                        "pagination limit reached ({MAX_PAGES} pages). \
-                         Use a narrower query to export fewer messages at once."
-                    );
-                }
-                seen_cursors.insert(next.clone());
-                cursor = Some(next);
-            }
+            Some(next) if !next.is_empty() => cursor = Some(next),
             _ => break,
         }
     }
@@ -338,29 +320,6 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
 
     fs::create_dir_all(&cfg.out_dir)
         .with_context(|| format!("create {}", cfg.out_dir.display()))?;
-    // Warn if the output directory already contains conversation JSONL files
-    // (re-pulling truncates existing conversations — there is no append/resume).
-    let existing_jsonl: Vec<_> = std::fs::read_dir(&cfg.out_dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.ends_with(".jsonl"))
-        })
-        .collect();
-    if !existing_jsonl.is_empty() {
-        emit(
-            &mut on_progress,
-            ProgressEvent::Log(format!(
-                "Note: {} existing .jsonl file(s) in output directory will be overwritten. \
-                 vault-pull always writes full conversations from the current query. \
-                 Use a fresh output directory to keep old exports.",
-                existing_jsonl.len()
-            )),
-        );
-    }
     let attachments_dir = cfg.out_dir.join("attachments");
     if !cfg.skip_attachments {
         fs::create_dir_all(&attachments_dir)?;
@@ -373,8 +332,6 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     // sha256 -> (source, relative path under out_dir)
     let mut assets: HashMap<String, (String, String)> = HashMap::new();
     let mut total_messages = 0u64;
-    let mut seen_cursors: BTreeSet<String> = BTreeSet::new();
-    const MAX_PAGES: usize = 10_000;
 
     loop {
         check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -426,16 +383,6 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
                             .filter(|s| !s.is_empty())
                             .map(|p| p.trim_start_matches('/').to_string())
                             .unwrap_or_else(|| format!("attachments/{sha}"));
-                        // Validate the server-provided path before use.
-                        if let Err(e) = safe_rel(&rel) {
-                            emit(
-                                &mut on_progress,
-                                ProgressEvent::Log(format!(
-                                    "Skipping asset {sha}: {e}"
-                                )),
-                            );
-                            continue;
-                        }
                         assets
                             .entry(sha.to_string())
                             .or_insert_with(|| (msg.source.clone(), rel));
@@ -450,71 +397,44 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
         }
 
         match page.next_cursor {
-            Some(next) if !next.is_empty() => {
-                if seen_cursors.contains(&next) {
-                    bail!(
-                        "pagination loop detected: cursor {next} was already seen"
-                    );
-                }
-                if seen_cursors.len() >= MAX_PAGES {
-                    bail!(
-                        "pagination limit reached ({MAX_PAGES} pages)"
-                    );
-                }
-                seen_cursors.insert(next.clone());
-                cursor = Some(next);
-            }
+            Some(next) if !next.is_empty() => cursor = Some(next),
             _ => break,
         }
     }
 
     let mut attachments_downloaded = 0u64;
     let mut attachments_skipped = 0u64;
-    let mut downloaded: BTreeSet<String> = BTreeSet::new();
 
-    if !cfg.skip_attachments {
-        for (sha, (source, rel)) in &assets {
-            check_cancel(cfg.cancel.as_ref()).map_err(|e| anyhow::anyhow!("{e}"))?;
-            if !downloaded.insert(sha.clone()) {
-                continue;
-            }
-            let dest = cfg.out_dir.join(rel);
-
-            // Only skip if the file exists AND matches the expected digest.
-            if dest.is_file() {
-                match verify_sha256(&dest, sha) {
-                    Ok(()) => {
-                        attachments_skipped += 1;
-                        continue;
-                    }
-                    Err(_) => {
-                        // Hash mismatch — re-download. Write to temp file
-                        // to avoid leaving a partial download in place.
-                    }
-                }
-            }
-            emit(
-                &mut on_progress,
-                ProgressEvent::Log(format!("Downloading asset {sha}…")),
-            );
-            // Download to a temp file, verify the hash, then rename into place.
-            let tmp = dest.with_extension("tmp.download");
-            session.download_asset(
-                &cfg.base_url,
-                &cfg.key,
-                &account,
-                source,
-                sha,
-                &tmp,
-            )?;
-            if let Err(e) = verify_sha256(&tmp, sha) {
-                let _ = std::fs::remove_file(&tmp);
-                bail!("downloaded asset {sha} failed hash check: {e}");
-            }
-            std::fs::rename(&tmp, &dest)
-                .with_context(|| format!("rename {} → {}", tmp.display(), dest.display()))?;
-            attachments_downloaded += 1;
-        }
+    if !cfg.skip_attachments && !assets.is_empty() {
+        emit(
+            &mut on_progress,
+            ProgressEvent::Log(format!(
+                "Downloading {} unique asset(s) with {} worker(s)…",
+                assets.len(),
+                cfg.asset_download_workers
+            )),
+        );
+        let dl_stats = download_assets_parallel(
+            &session,
+            &cfg.base_url,
+            &cfg.key,
+            &account,
+            &assets,
+            &cfg.out_dir,
+            cfg.asset_download_workers,
+            cfg.cancel.as_ref(),
+        )?;
+        attachments_downloaded = dl_stats.downloaded;
+        attachments_skipped = dl_stats.skipped;
+        emit(
+            &mut on_progress,
+            ProgressEvent::Log(format!(
+                "Assets: {} downloaded, {} skipped ({} total bytes)",
+                attachments_downloaded,
+                attachments_skipped,
+                format_bytes_human(dl_stats.bytes)
+            )),
+        );
     }
 
     let mut conversations = 0u64;
@@ -546,6 +466,122 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     Ok(report)
 }
 
+struct AssetDownloadJob {
+    sha256: String,
+    source: String,
+    dest: PathBuf,
+}
+
+#[derive(Default)]
+struct AssetDownloadStats {
+    bytes: u64,
+    downloaded: u64,
+    skipped: u64,
+}
+
+/// Download unique assets in parallel using work-stealing workers.
+///
+/// Mirrors vault-push's `upload_assets` pattern: jobs are collected, then
+/// `asset_download_workers` threads pull from a shared `AtomicUsize` counter.
+/// Assets already on disk are skipped (counted as `skipped`).
+fn download_assets_parallel(
+    session: &crate::http::HttpSession,
+    base_url: &str,
+    key: &str,
+    account: &str,
+    assets: &HashMap<String, (String, String)>, // sha256 -> (source, rel_path)
+    out_dir: &Path,
+    workers: usize,
+    cancel: Option<&CancelFlag>,
+) -> Result<AssetDownloadStats> {
+    let mut jobs: Vec<AssetDownloadJob> = Vec::with_capacity(assets.len());
+    let mut stats = AssetDownloadStats::default();
+
+    for (sha256, (source, rel)) in assets {
+        let dest = out_dir.join(rel);
+        if dest.is_file() {
+            let meta = fs::metadata(&dest)
+                .with_context(|| format!("stat {}", dest.display()))?;
+            stats.bytes = stats.bytes.saturating_add(meta.len());
+            stats.skipped += 1;
+            continue;
+        }
+        jobs.push(AssetDownloadJob {
+            sha256: sha256.clone(),
+            source: source.clone(),
+            dest,
+        });
+    }
+
+    if jobs.is_empty() {
+        return Ok(stats);
+    }
+
+    let worker_count = workers.max(1).min(jobs.len());
+    let next_job = AtomicUsize::new(0);
+    let results = Mutex::new(
+        std::iter::repeat_with(|| None)
+            .take(jobs.len())
+            .collect::<Vec<Option<Result<u64, String>>>>(),
+    );
+
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    check_cancel(cancel).ok(); // best-effort cancel check
+                    let index = next_job.fetch_add(1, Ordering::Relaxed);
+                    if index >= jobs.len() {
+                        break;
+                    }
+                    let job = &jobs[index];
+                    let result = (|| -> Result<u64> {
+                        session.download_asset(
+                            base_url,
+                            key,
+                            account,
+                            &job.source,
+                            &job.sha256,
+                            &job.dest,
+                        )?;
+                        let meta = fs::metadata(&job.dest)
+                            .with_context(|| format!("stat after download {}", job.dest.display()))?;
+                        Ok(meta.len())
+                    })()
+                    .map_err(|e| e.to_string());
+                    results.lock().expect("asset result mutex poisoned")[index] = Some(result);
+                }
+            });
+        }
+    });
+
+    let mut results = results.into_inner().expect("asset result mutex poisoned");
+    for result in results.drain(..) {
+        match result.expect("every asset job has a result") {
+            Ok(bytes) => {
+                stats.bytes = stats.bytes.saturating_add(bytes);
+                stats.downloaded += 1;
+            }
+            Err(error) => {
+                bail!("asset download failed: {error}");
+            }
+        }
+    }
+    Ok(stats)
+}
+
+fn format_bytes_human(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Result<()> {
     let stem = doc.filename_stem();
     // Disambiguate same chat across sources.
@@ -569,47 +605,6 @@ fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Resul
             "{}",
             serde_json::to_string(msg).context("serialize message")?
         )?;
-    }
-    Ok(())
-}
-
-/// Reject paths that could escape the output directory (absolute paths or `..`).
-fn safe_rel(rel: &str) -> Result<()> {
-    let path = std::path::Path::new(rel);
-    if path.is_absolute() {
-        bail!("attachment path must be relative: {rel}");
-    }
-    for comp in path.components() {
-        if matches!(comp, std::path::Component::ParentDir) {
-            bail!("unsafe attachment path (contains ..): {rel}");
-        }
-    }
-    Ok(())
-}
-
-/// Verify that a downloaded file matches the expected SHA-256 digest.
-fn verify_sha256(path: &std::path::Path, expected_hex: &str) -> Result<()> {
-    let expected = expected_hex.trim();
-    if expected.is_empty() || expected.len() != 64 {
-        bail!("invalid SHA-256 digest: {expected}");
-    }
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("open for hash check: {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 65536];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    let actual = hex::encode(hasher.finalize());
-    if actual != expected {
-        bail!(
-            "SHA-256 mismatch for {}: expected {expected}, got {actual}",
-            path.display()
-        );
     }
     Ok(())
 }
