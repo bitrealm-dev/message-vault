@@ -22,7 +22,9 @@ use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::dedupe;
-use crate::export_api::{self, DEFAULT_EXPORT_LIMIT, ExportPageOpts, ExportQueryError};
+use crate::export_api::{
+    self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
+};
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::db::schema;
 
@@ -160,6 +162,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/auth/check", get(auth_check))
+        .route(
+            "/v1/export/messages/count",
+            get(export_messages_count_handler),
+        )
         .route("/v1/export/messages", get(export_messages_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
@@ -194,6 +200,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
+    eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  POST /v1/imports  (start import session; returns id)");
     eprintln!("  POST /v1/imports/{{id}}/complete");
@@ -729,6 +736,52 @@ struct ExportMessagesQuery {
     account: Option<String>,
     #[serde(default)]
     source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportMessagesCountQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+async fn export_messages_count_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesCountQuery>,
+) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let q = query.q.clone();
+    let source = query.source.clone();
+    let db_path = state.cfg.paths.db.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = Connection::open(&db_path)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        schema::configure_connection(&conn)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        export_api::export_message_count(
+            &conn,
+            ExportCountOpts {
+                account_id: &account,
+                query: &q,
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("export count task: {e}")))?;
+
+    match result {
+        Ok(body) => Ok(Json(body)),
+        Err(ExportQueryError::BadRequest(m)) => Err(ApiError::BadRequest(m)),
+        Err(ExportQueryError::Internal(m)) => Err(ApiError::Internal(m)),
+    }
 }
 
 async fn export_messages_handler(
@@ -1272,8 +1325,8 @@ async fn run_import_path(
             import::ImportSchemaMode::AssumeReady,
         );
 
-        if owns_session {
-            if let Some(id) = import_id {
+        if owns_session
+            && let Some(id) = import_id {
                 let complete_args = match &import_result {
                     Ok(stats) => crate::db::vault_imports::CompleteImportArgs {
                         ok: true,
@@ -1297,7 +1350,6 @@ async fn run_import_path(
                     eprintln!("warning: complete_import({id}) failed: {e}");
                 }
             }
-        }
         let stats = import_result?;
         drop(conn);
         let dedupe_stats = if do_dedupe {

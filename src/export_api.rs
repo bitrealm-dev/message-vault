@@ -1,4 +1,5 @@
-//! Read-only message export query used by `GET /v1/export/messages`.
+//! Read-only message export query used by `GET /v1/export/messages`
+//! and `GET /v1/export/messages/count`.
 
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
@@ -20,6 +21,13 @@ pub struct ExportPageOpts<'a> {
     pub source_override: Option<&'a str>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExportCountOpts<'a> {
+    pub account_id: &'a str,
+    pub query: &'a str,
+    pub source_override: Option<&'a str>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExportMessagesResponse {
     pub ok: bool,
@@ -29,6 +37,17 @@ pub struct ExportMessagesResponse {
     pub next_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportCountResponse {
+    pub ok: bool,
+    pub query: String,
+    pub messages: u64,
+    /// Unique attachment digests among matching messages.
+    pub attachments: u64,
+    /// Sum of known `size_bytes` for those unique digests (unknown sizes omitted).
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -310,6 +329,78 @@ pub fn export_messages(
         messages,
         next_cursor,
         truncated: truncated.then_some(true),
+    })
+}
+
+/// Aggregate counts for messages matching a Fastmail-style query (no paging).
+///
+/// Attachment count is unique non-empty `sha256` values on matching messages.
+/// `total_bytes` sums known `attachments.size_bytes` for those digests.
+pub fn export_message_count(
+    conn: &Connection,
+    opts: ExportCountOpts<'_>,
+) -> Result<ExportCountResponse, ExportQueryError> {
+    let parsed = parse_search_query(opts.query);
+    if parsed.mode == SearchMode::Contacts {
+        return Err(ExportQueryError::bad(
+            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
+        ));
+    }
+
+    let _ = has_search_criteria(&parsed);
+    let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
+
+    let msg_sql = format!(
+        "SELECT COUNT(*)
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE {where_sql}{dedupe}",
+        where_sql = filters.where_sql,
+        dedupe = filters.dedupe_sql,
+    );
+    let messages: i64 = conn
+        .query_row(
+            &msg_sql,
+            params_from_iter(filters.params.iter().cloned()),
+            |row| row.get(0),
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+
+    let size_expr = if column_exists(conn, "attachments", "size_bytes")? {
+        "MAX(a.size_bytes)"
+    } else {
+        "CAST(NULL AS INTEGER)"
+    };
+    let att_sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(sz), 0)
+         FROM (
+           SELECT {size_expr} AS sz
+           FROM attachments a
+           JOIN messages m ON m.id = a.message_id
+           JOIN conversations c ON c.id = m.conversation_id
+           WHERE {where_sql}{dedupe}
+             AND a.sha256 IS NOT NULL
+             AND length(trim(a.sha256)) > 0
+           GROUP BY lower(trim(a.sha256))
+         )",
+        size_expr = size_expr,
+        where_sql = filters.where_sql,
+        dedupe = filters.dedupe_sql,
+    );
+    let (attachments, total_bytes): (i64, i64) = conn
+        .query_row(
+            &att_sql,
+            params_from_iter(filters.params.iter().cloned()),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+
+    Ok(ExportCountResponse {
+        ok: true,
+        query: opts.query.to_string(),
+        messages: messages.max(0) as u64,
+        attachments: attachments.max(0) as u64,
+        total_bytes: total_bytes.max(0) as u64,
     })
 }
 

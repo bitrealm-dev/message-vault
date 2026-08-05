@@ -17,6 +17,7 @@ messages and asset bytes back out with the same Bearer token.
 | `GET` | `/health` | None | Liveness |
 | `GET` | `/v1/auth/check` | Bearer Import API token | Validate token |
 | `GET` | `/v1/export/messages?q=&limit=&cursor=&account=&source=` | Bearer token | **Read-only** message export |
+| `GET` | `/v1/export/messages/count?q=&account=&source=` | Bearer token | **Read-only** match counts (no message bodies) |
 | `GET` | `/v1/assets/{sha256}?source=&account=` | Bearer token | **Read-only** asset download |
 | `HEAD` | `/v1/assets/{sha256}?source=&account=` | Bearer token | Probe if asset exists |
 | `PUT` | `/v1/assets/{sha256}?source=&account=` | Bearer token | Upload asset |
@@ -72,6 +73,34 @@ Response shape:
 Messages are ordered ascending by `(timestamp, sort_order, id)`. Pass
 `next_cursor` as `cursor` for the next page. `search:contacts` is rejected with
 `400` (export is message-oriented).
+
+### `GET /v1/export/messages/count`
+
+Same auth and filters as `/v1/export/messages` (`q`, `account`, `source`), but
+returns aggregate counts only — no paging and no message payloads. Clients use
+this for a cheap preview before a full export.
+
+| Query | Description |
+|-------|-------------|
+| `q` | Fastmail-style search (same as export). Empty = all non-trashed messages |
+| `account` | Optional username/UUID; must match the token |
+| `source` | Optional source id override |
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "query": "has:attachment after:2020-01-01",
+  "messages": 85476,
+  "attachments": 3169,
+  "total_bytes": 48234412
+}
+```
+
+`attachments` is the number of unique non-empty attachment digests among
+matching messages. `total_bytes` sums known `size_bytes` for those digests
+(unknown sizes are omitted from the sum).
 
 ### Search operators (`q`)
 
