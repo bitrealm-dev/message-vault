@@ -76,11 +76,14 @@ export component VaultExportPage inherits VerticalLayout {
 
             StackedPathField {
                 label: "Output directory";
-                required: true;
-                placeholder: "Folder for message-ir JSONL + attachments/";
+                required: false;
+                placeholder: "Defaults to the folder you launched the app from";
                 field-id: "vault_export.output";
                 value <=> VaultExportAdapter.output;
                 browse-requested(id) => { VaultExportAdapter.browse(id); }
+            }
+            StackedHint {
+                message: "Writes into export-<type>-YYMMDD-HHMMSS under this directory (same pattern as import staging).";
             }
 
             StackedLineEdit {

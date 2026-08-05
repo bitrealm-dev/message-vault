@@ -53,7 +53,17 @@ pub fn push_all(ui: &AppWindow, state: &mut AppState) {
     push_vault(ui, state);
     push_credentials(ui, state);
     push_import(ui, state);
+    push_vault_export(ui);
     push_chrome(ui, state);
+}
+
+/// Prefill Vault Export parent directory with the process cwd when empty.
+pub fn push_vault_export(ui: &AppWindow) {
+    let export = ui.global::<VaultExportAdapter>();
+    if export.get_output().trim().is_empty() {
+        let parent = crate::staging::default_export_parent();
+        export.set_output(SharedString::from(parent.display().to_string()));
+    }
 }
 
 pub fn push_chrome(ui: &AppWindow, state: &AppState) {

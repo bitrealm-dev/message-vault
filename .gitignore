@@ -41,3 +41,4 @@ config/export-to-vault.sh
 # Local CLI / GUI run artifacts
 *.log
 /staging-*/
+/export-*/

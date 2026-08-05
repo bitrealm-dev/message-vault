@@ -181,6 +181,21 @@ Workflow screens (Home → Credentials → Import): Import Format choices are
   to resume a retained staging folder after a failed upload. Persists under
   `[vault]` as `input` and `import_format=existing-archive`.
 
+### Guided Vault Export
+
+Workflow screens (Home → Credentials → Export): pulls matching messages from
+Message Vault via `vault-pull` into a timestamped folder.
+
+| Control | Type | Required | Notes |
+|---------|------|:--------:|-------|
+| Exporter Type | enum | yes | Currently **iMessage** (covers iOS and macOS). |
+| Output directory | folder | no | Parent folder; defaults to the process working directory (where the app was launched). Export writes `export-<type>-YYMMDD-HHMMSS` under it (same timestamp shape as import `staging-*`). |
+| Search | text | no | Fastmail-style operators (`with:`, `has:attachment`, …). |
+| Start / End date | date | no | Optional inclusive/exclusive bounds. |
+
+Run **Query** first to preview counts; **Export** then creates the timestamped
+directory and downloads message-ir JSONL + attachments.
+
 ### Vault — `vault-push`
 
 Top tab. Two-step workflow after Extract Messages: push message-ir v3 JSONL +

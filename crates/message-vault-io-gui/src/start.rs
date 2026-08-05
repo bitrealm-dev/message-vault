@@ -26,6 +26,7 @@ use crate::AppWindow;
 use crate::CredentialsAdapter;
 use crate::VaultExportAdapter;
 use crate::jobs::{LibraryJob, library_job_for_exporter, prepare_library_config, run_and_log};
+use crate::options;
 use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
 use crate::sync;
@@ -167,6 +168,7 @@ fn start_library_job(
                         } else if matches!(on_success, OnSuccess::GoToExportScreen) {
                             ui.set_workflow_screen(state::screen::EXPORT);
                             ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
+                            sync::push_vault_export(&ui);
                         } else if let OnSuccess::VaultExportQuery(slot) = &on_success {
                             if let Some(summary) = slot.lock().expect("query summary").take() {
                                 let export = ui.global::<VaultExportAdapter>();
@@ -578,7 +580,8 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         }
         let url = st.export_ini.vault.url.trim().to_string();
         let key = st.export_ini.vault.key.trim().to_string();
-        let out = export.get_output().trim().to_string();
+        let parent_raw = export.get_output().trim().to_string();
+        let type_slug = options::vault_export_type_slug(export.get_exporter_index()).to_string();
         let search = export.get_search_query().trim().to_string();
         let start = export.get_start_date().trim().to_string();
         let end = export.get_end_date().trim().to_string();
@@ -590,12 +593,18 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         if key.is_empty() {
             errors.push("Vault key is required. Open Credentials or Vault Import and set it.".into());
         }
-        if out.is_empty() {
-            errors.push("Output directory is required.".into());
-        }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
             return;
+        }
+        let parent = if parent_raw.is_empty() {
+            staging::default_export_parent()
+        } else {
+            PathBuf::from(&parent_raw)
+        };
+        let out = staging::export_dir_path(&parent, &type_slug, Local::now());
+        if parent_raw.is_empty() {
+            export.set_output(parent.display().to_string().into());
         }
         if let Err(error) = st.save_export_ini() {
             report_errors(&ui, &mut st, vec![error]);
@@ -608,8 +617,12 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         );
         let label = "vault-pull (library)".to_string();
         let job: LibraryJob = Box::new(move |cancel, tx| {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "Exporting to {}",
+                out.display()
+            )));
             let cfg = VaultPullConfig {
-                out_dir: PathBuf::from(out),
+                out_dir: out,
                 base_url: url,
                 username: String::new(),
                 key,
@@ -990,6 +1003,7 @@ fn run_vault_upload(
             for line in vault_push::format_push_summary(&report).lines() {
                 let _ = tx.send(ProcessEvent::Log(line.to_string()));
             }
+            let _ = tx.send(ProcessEvent::Log(String::new()));
         }
     };
     match run_vault_push(&cfg, Some(&mut on_progress)) {

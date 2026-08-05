@@ -254,13 +254,18 @@ pub fn format_duration_ms(ms: u64) -> String {
 
 /// Build the multi-line "Import success / completed with errors" blurb for the log.
 pub fn format_push_summary(report: &PushReport) -> String {
-    let status = if report.ok { "success" } else { "completed with errors" };
+    let status = if report.ok {
+        "success"
+    } else {
+        "completed with errors"
+    };
     format!(
-        "Import {status}\n\
-         Conversations: {} ok, {} failed, {} skipped ({} total)\n\
-         Messages: {}\n\
-         Assets: {} uploaded, {} skipped\n\
-         Elapsed: {} ({} ms)",
+        "==== Summary ====\n\
+Import {status}\n\
+Conversations: {} ok, {} failed, {} skipped ({} total)\n\
+Messages: {}\n\
+Assets: {} uploaded, {} skipped\n\
+Elapsed: {} ({} ms)",
         report.conversations_ok,
         report.conversations_failed,
         report.conversations_skipped,
@@ -294,7 +299,8 @@ struct ProgressBatcher {
     chunk_messages: u64,
     chunk_bytes: u64,
     chunk_import_ms: u64,
-    chunk_total_ms: u64,
+    /// Wall clock for the current progress chunk (first note → emit).
+    chunk_started: Option<Instant>,
     chunk_count: usize,
 }
 
@@ -307,13 +313,20 @@ impl ProgressBatcher {
             chunk_messages: 0,
             chunk_bytes: 0,
             chunk_import_ms: 0,
-            chunk_total_ms: 0,
+            chunk_started: None,
             chunk_count: 0,
+        }
+    }
+
+    fn begin_chunk_if_needed(&mut self) {
+        if self.chunk_started.is_none() {
+            self.chunk_started = Some(Instant::now());
         }
     }
 
     /// Record one successful conversation. Returns a log line when the batch is full.
     fn note_ok(&mut self, messages: u64, profile: &UploadProfile) -> Option<String> {
+        self.begin_chunk_if_needed();
         self.done = self.done.saturating_add(1);
         self.chunk_count = self.chunk_count.saturating_add(1);
         self.chunk_conversations = self.chunk_conversations.saturating_add(1);
@@ -322,7 +335,6 @@ impl ProgressBatcher {
         self.chunk_import_ms = self
             .chunk_import_ms
             .saturating_add(profile.message_import_ms);
-        self.chunk_total_ms = self.chunk_total_ms.saturating_add(profile.total_ms);
         if self.chunk_count >= PROGRESS_BATCH_SIZE || self.done >= self.total {
             Some(self.take_chunk_line())
         } else {
@@ -332,6 +344,7 @@ impl ProgressBatcher {
 
     /// Record a conversation skipped because the journal says it already imported.
     fn note_skipped(&mut self) -> Option<String> {
+        self.begin_chunk_if_needed();
         self.done = self.done.saturating_add(1);
         self.chunk_count = self.chunk_count.saturating_add(1);
         self.chunk_conversations = self.chunk_conversations.saturating_add(1);
@@ -358,6 +371,9 @@ impl ProgressBatcher {
 
     /// Format the current chunk line, then zero the counters for the next chunk.
     fn take_chunk_line(&mut self) -> String {
+        // Wall time for this progress window — not the sum of per-file clocks
+        // (those overlap when prepares run ahead of imports).
+        let wall_ms = self.chunk_started.map(elapsed_ms).unwrap_or(0);
         let line = format!(
             "files {}/{} - conversations={} messages={} transfer size={}, import time={}, total time={}",
             self.done,
@@ -366,13 +382,13 @@ impl ProgressBatcher {
             self.chunk_messages,
             format_bytes_mb(self.chunk_bytes),
             format_ms_seconds(self.chunk_import_ms),
-            format_ms_seconds(self.chunk_total_ms),
+            format_ms_seconds(wall_ms),
         );
         self.chunk_conversations = 0;
         self.chunk_messages = 0;
         self.chunk_bytes = 0;
         self.chunk_import_ms = 0;
-        self.chunk_total_ms = 0;
+        self.chunk_started = None;
         self.chunk_count = 0;
         line
     }
@@ -876,8 +892,10 @@ fn finish_run(
             )),
         }
     }
+    log.line("");
     log.line(&format_push_summary(&report));
     if let Some(cb) = progress.as_mut() {
+        cb(ProgressEvent::Log(String::new()));
         cb(ProgressEvent::Finished(report.clone()));
     }
     Ok(report)
@@ -2406,10 +2424,16 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 response.messages.max(response.messages_appended),
             );
             args.log.line(&request_line);
-            for index in represented {
+            let n = represented.len().max(1) as u64;
+            let share = request_ms / n;
+            let rem = request_ms % n;
+            for (i, index) in represented.into_iter().enumerate() {
                 if let Some(tracker) = args.trackers[index].as_mut() {
+                    // One HTTP request may cover several conversations; split the
+                    // duration so progress "import time" is not multiplied by N.
+                    let add = share + if i == 0 { rem } else { 0 };
                     tracker.profile.message_import_ms =
-                        tracker.profile.message_import_ms.saturating_add(request_ms);
+                        tracker.profile.message_import_ms.saturating_add(add);
                 }
                 finish_file_if_ready(FinishFile {
                     index,
@@ -2435,12 +2459,16 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 batch.source, batch.conversations, message_count,
             );
             args.log.line(&request_line);
-            for index in represented {
+            let n = represented.len().max(1) as u64;
+            let share = request_ms / n;
+            let rem = request_ms % n;
+            for (i, index) in represented.into_iter().enumerate() {
                 let Some(tracker) = args.trackers[index].as_mut() else {
                     continue;
                 };
+                let add = share + if i == 0 { rem } else { 0 };
                 tracker.profile.message_import_ms =
-                    tracker.profile.message_import_ms.saturating_add(request_ms);
+                    tracker.profile.message_import_ms.saturating_add(add);
                 if tracker.failed.is_none() {
                     tracker.failed = Some(error.clone());
                     let _ = journal::append(
@@ -2536,7 +2564,9 @@ mod tests {
         assert!(tenth.contains("messages=20"));
         assert!(tenth.contains("transfer size=7.0MB"));
         assert!(tenth.contains("import time=33.0s"));
-        assert!(tenth.contains("total time=55.0s"));
+        // total time is wall-clock for the progress window, not sum of profile.total_ms.
+        assert!(tenth.contains("total time="));
+        assert!(!tenth.contains("total time=55.0s"));
         assert!(!tenth.contains("bytes="));
         assert!(!tenth.contains("import_ms="));
         assert!(!tenth.contains("total_ms="));
@@ -2573,10 +2603,15 @@ mod tests {
             results: vec![],
         };
         let summary = format_push_summary(&report);
+        assert!(summary.contains("==== Summary ===="));
         assert!(summary.contains("Import success"));
         assert!(summary.contains("Conversations: 8 ok, 1 failed, 1 skipped (10 total)"));
         assert!(summary.contains("Messages: 100"));
         assert!(summary.contains("Assets: 4 uploaded, 2 skipped"));
         assert!(summary.contains("Elapsed: 12s (12000 ms)"));
+        assert!(
+            !summary.lines().any(|l| l.starts_with(' ')),
+            "summary lines must not be indented"
+        );
     }
 }

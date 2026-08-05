@@ -118,6 +118,7 @@ fn select_main_panel_tab(ui: &AppWindow, screen: i32) {
         }
         state::screen::EXPORT => {
             ui.global::<VaultExportAdapter>().set_panel_tab(0);
+            sync::push_vault_export(ui);
         }
         _ => {}
     }

@@ -126,6 +126,11 @@ pub fn vault_export_exporter_options() -> ModelRc<SharedString> {
     model_from_labels(["iMessage".into()])
 }
 
+/// Directory-name slug for the guided Vault Export exporter combo index.
+pub fn vault_export_type_slug(_index: i32) -> &'static str {
+    crate::staging::IMESSAGE_EXPORTER
+}
+
 /// Guided Import Messages format (combo index order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GuidedImportFormat {
