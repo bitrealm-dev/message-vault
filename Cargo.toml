@@ -23,4 +23,5 @@ members = [
     "crates/message-vault-io-gui",
     "crates/vault-push",
     "crates/vault-pull",
+    "src-tauri",
 ]

@@ -1,0 +1,19 @@
+[package]
+name = "message-vault-io-tauri"
+version = "0.1.0"
+edition = "2024"
+description = "Tauri desktop app for message-vault-io"
+
+[lib]
+name = "message_vault_io_tauri_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1.0"
+message-vault-io-core = { path = "../crates/message-vault-io-core" }
