@@ -8,6 +8,7 @@ import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type { ContactListItem } from "@/lib/types";
 import { memo, type MouseEvent } from "react";
 import { CountBadge } from "./CountBadge";
+import { HandleTypeBadge } from "./HandleTypeBadge";
 import {
   ChevronDownIcon,
   GroupMessagesOutlineIcon,
@@ -215,8 +216,11 @@ export const BrowseContactRow = memo(function BrowseContactRow({
             return (
               <>
                 {showHandle ? (
-                  <span className="block truncate text-[12px] text-muted">
-                    {formattedHandle}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-[12px] text-muted">
+                      {formattedHandle}
+                    </span>
+                    <HandleTypeBadge type={c.handleType} />
                   </span>
                 ) : null}
                 {dateLabel || showGroupIcon || showCountBadge ? (

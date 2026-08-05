@@ -1,5 +1,6 @@
 "use client";
 
+import type { ContactHandle } from "@/lib/types";
 import type { ContactEditDraft } from "./contactEdit";
 import { ContactDetailsCard } from "./ContactDetailsCard";
 import {
@@ -32,10 +33,14 @@ export function ParticipantContactFormOverlay({
   form,
   titleId,
   phonesView = [],
+  handlesView,
 }: {
   form: ParticipantContactFormView;
   titleId: string;
+  /** @deprecated Prefer `handlesView`. */
   phonesView?: string[];
+  /** Handles with types for the closed-form view (rarely used; form renders open). */
+  handlesView?: ContactHandle[];
 }) {
   const {
     formOpen,
@@ -94,6 +99,7 @@ export function ParticipantContactFormOverlay({
         onDraftChange={setEditDraft}
         labels={editDraft.labels}
         phonesView={phonesView}
+        handlesView={handlesView}
         labelsEditor={
           <LabelsMenu
             allLabels={draftMenuLabels}

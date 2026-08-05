@@ -1,19 +1,41 @@
-import { addPhoneToContact, removePhoneFromContact } from "@/lib/contactsWrite";
+import {
+  addHandleToContact,
+  removeHandleFromContact,
+} from "@/lib/contactsWrite";
+import type { HandleType } from "@/lib/handleKind";
 import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { isHandleType } from "../../handles-body";
 
 export const runtime = "nodejs";
 
 type Params = { params: Promise<{ id: string }> };
 
-function parseHandle(body: Record<string, unknown>): string {
-  if (typeof body.handle === "string") return body.handle.trim();
-  if (typeof body.phone === "string") return body.phone.trim();
-  return "";
+function parseHandleBody(
+  body: Record<string, unknown>,
+): { raw: string; handle_type?: HandleType } | null {
+  // Typed form: { raw, handle_type } (legacy: bare `handle`/`phone` strings).
+  const raw =
+    typeof body.raw === "string"
+      ? body.raw.trim()
+      : typeof body.handle === "string"
+        ? body.handle.trim()
+        : typeof body.phone === "string"
+          ? body.phone.trim()
+          : "";
+  if (!raw) return null;
+  const rawType = body.handle_type;
+  if (rawType !== undefined && !isHandleType(rawType)) {
+    throw new Error("invalid handle_type");
+  }
+  return {
+    raw,
+    handle_type: rawType as HandleType | undefined,
+  };
 }
 
 function authError(err: unknown): NextResponse | null {
@@ -37,14 +59,19 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  const handle = parseHandle(body);
+  let handle: { raw: string; handle_type?: HandleType } | null = null;
+  try {
+    handle = parseHandleBody(body);
+  } catch {
+    return NextResponse.json({ error: "invalid handle_type" }, { status: 400 });
+  }
   if (!handle) {
     return NextResponse.json({ error: "handle required" }, { status: 400 });
   }
 
   try {
     return await withAccountHandler(async () => {
-      const contact = addPhoneToContact(id, handle);
+      const contact = addHandleToContact(id, handle.raw, handle.handle_type);
       return NextResponse.json({ contact });
     });
   } catch (err) {
@@ -77,14 +104,19 @@ export async function DELETE(req: Request, { params }: Params) {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  const handle = parseHandle(body);
+  let handle: { raw: string; handle_type?: HandleType } | null = null;
+  try {
+    handle = parseHandleBody(body);
+  } catch {
+    return NextResponse.json({ error: "invalid handle_type" }, { status: 400 });
+  }
   if (!handle) {
     return NextResponse.json({ error: "handle required" }, { status: 400 });
   }
 
   try {
     return await withAccountHandler(async () => {
-      const contact = removePhoneFromContact(id, handle);
+      const contact = removeHandleFromContact(id, handle.raw, handle.handle_type);
       return NextResponse.json({ contact });
     });
   } catch (err) {

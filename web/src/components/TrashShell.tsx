@@ -44,12 +44,13 @@ import { TrashUnifiedList } from "./TrashUnifiedList";
 function syntheticContactDetail(
   item: Extract<TrashListItem, { category: "contacts" }>,
 ): ContactDetail {
+  const handleType = item.handleType ?? "phone";
   return {
     id: item.contactId ?? -1,
     displayName: item.displayName,
     preferredName: item.displayName,
     preferredHandle: item.handle,
-    handleType: null,
+    handleType,
     firstName: null,
     lastName: null,
     sortFirst: item.displayName,
@@ -58,7 +59,7 @@ function syntheticContactDetail(
     labels: [],
     messageCount: item.messageCount,
     groupMessageCount: 0,
-    handles: [{ raw: item.handle, handle_type: "phone", service: null }],
+    handles: [{ raw: item.handle, handle_type: handleType, service: null }],
     phones: [item.handle],
     dateStart: null,
     dateEnd: null,
@@ -311,6 +312,9 @@ export function TrashShell({
         ? `/api/contacts/${focusedItem.contactId}/threads?${qs.toString()}`
         : (() => {
             qs.set("handle", focusedItem.handle);
+            if (focusedItem.handleType) {
+              qs.set("handleType", focusedItem.handleType);
+            }
             return `/api/unassigned/threads?${qs.toString()}`;
           })();
 
@@ -490,6 +494,7 @@ export function TrashShell({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 handle: row.handle,
+                handle_type: row.handleType ?? undefined,
                 permanent: permanent || undefined,
               }),
             });
@@ -499,6 +504,7 @@ export function TrashShell({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 handle: row.handle,
+                handle_type: row.handleType ?? undefined,
                 permanent: permanent || undefined,
               }),
             });

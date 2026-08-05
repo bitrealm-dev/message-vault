@@ -7,6 +7,7 @@ import {
 } from "@/lib/trashList";
 import type { MouseEvent, ReactNode, RefObject } from "react";
 import { CountBadge } from "./CountBadge";
+import { HandleTypeBadge } from "./HandleTypeBadge";
 import { TrashIcon } from "./icons";
 import { TrashListChrome } from "./TrashListChrome";
 import { TrashTabPicker } from "./TrashTabPicker";
@@ -173,8 +174,11 @@ export function TrashUnifiedList({
                             ) : null}
                           </span>
                           {phone ? (
-                            <span className="block truncate text-[12px] text-muted">
-                              {phone}
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate text-[12px] text-muted">
+                                {phone}
+                              </span>
+                              <HandleTypeBadge type={item.handleType} />
                             </span>
                           ) : (
                             <span

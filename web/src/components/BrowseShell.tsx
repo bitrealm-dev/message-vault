@@ -2580,7 +2580,7 @@ export function BrowseShell({
     )}
     <ParticipantContactFormOverlay
       titleId="mv-contact-form-title"
-      phonesView={detail?.phones ?? []}
+      handlesView={detail?.handles ?? []}
       form={participantForm}
     />
     {vcfPreview && (

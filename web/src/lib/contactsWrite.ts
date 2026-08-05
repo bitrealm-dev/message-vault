@@ -556,26 +556,39 @@ export function patchContact(
   return updated;
 }
 
-/** Append a handle to an existing contact (for Unassigned assign). */
+/** @deprecated Prefer {@link addHandleToContact} (type inferred from the raw). */
 export function addPhoneToContact(id: number, phone: string): ContactDetail {
+  return addHandleToContact(id, phone);
+}
+
+/**
+ * Append a handle to an existing contact (Unassigned assign, handle edit).
+ * `handleType` disambiguates the handles-table identity; when omitted it is
+ * inferred from the raw's shape.
+ */
+export function addHandleToContact(
+  id: number,
+  raw: string,
+  handleType?: HandleType,
+): ContactDetail {
   assertVaultWritable();
   const accountId = currentAccountId();
   const existing = getContact(id);
   if (!existing) throw new Error("contact not found");
-  const trimmed = phone.trim();
-  if (!trimmed) throw new Error("phone required");
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("handle required");
   assertNotOwnerHandle(trimmed);
   if (existing.phones.includes(trimmed)) return existing;
 
+  const type = handleType ?? inferHandleType(trimmed);
   const writeDb = openWritableVaultDb();
   try {
-    const handleType = inferHandleType(trimmed);
-    const owner = handleOwner(writeDb, trimmed, handleType, accountId);
+    const owner = handleOwner(writeDb, trimmed, type, accountId);
     if (owner != null && owner !== id) {
       throw new Error(`handle ${trimmed} already belongs to another contact`);
     }
     if (owner == null) {
-      const handleId = resolveHandleId(writeDb, accountId, trimmed, handleType);
+      const handleId = resolveHandleId(writeDb, accountId, trimmed, type);
       writeDb
         .prepare(
           `INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?, ?, ?)`,
@@ -592,32 +605,41 @@ export function addPhoneToContact(id: number, phone: string): ContactDetail {
   return updated;
 }
 
+/** @deprecated Prefer {@link removeHandleFromContact} (type inferred from the raw). */
+export function removePhoneFromContact(
+  id: number,
+  phone: string,
+): ContactDetail {
+  return removeHandleFromContact(id, phone);
+}
+
 /**
  * Remove a handle from a contact. Does not delete conversations or messages.
  * Used to undo assign-from-unassigned.
  */
-export function removePhoneFromContact(
+export function removeHandleFromContact(
   id: number,
-  phone: string,
+  raw: string,
+  handleType?: HandleType,
 ): ContactDetail {
   assertVaultWritable();
   const accountId = currentAccountId();
   const existing = getContact(id);
   if (!existing) throw new Error("contact not found");
-  const trimmed = phone.trim();
-  if (!trimmed) throw new Error("phone required");
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("handle required");
   if (!existing.phones.includes(trimmed)) {
     throw new Error("handle not on contact");
   }
 
+  const type = handleType ?? inferHandleType(trimmed);
   const writeDb = openWritableVaultDb();
   try {
-    const handleType = inferHandleType(trimmed);
-    const owner = handleOwner(writeDb, trimmed, handleType, accountId);
+    const owner = handleOwner(writeDb, trimmed, type, accountId);
     if (owner != null && owner !== id) {
       throw new Error(`handle ${trimmed} already belongs to another contact`);
     }
-    const handleId = resolveHandleId(writeDb, accountId, trimmed, handleType);
+    const handleId = resolveHandleId(writeDb, accountId, trimmed, type);
     writeDb
       .prepare(
         `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ?`,

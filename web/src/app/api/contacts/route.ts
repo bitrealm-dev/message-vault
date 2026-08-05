@@ -5,6 +5,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { parseHandlesBody } from "./handles-body";
 
 export const runtime = "nodejs";
 
@@ -45,12 +46,21 @@ export async function POST(req: Request) {
       ? labelsBody.map((t) => t.trim()).filter(Boolean)
       : undefined;
 
+  let handles;
+  try {
+    handles = parseHandlesBody(body);
+  } catch {
+    return NextResponse.json({ error: "invalid handle_type" }, { status: 400 });
+  }
+
   try {
     return await withAccountHandler(async () => {
       const contact = createContact({
         preferredName,
         firstName,
         lastName,
+        // Typed handles win over the legacy string list.
+        handles,
         phones,
         labels,
       });

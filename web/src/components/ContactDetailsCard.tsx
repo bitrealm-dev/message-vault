@@ -1,11 +1,13 @@
 "use client";
 
 import { formatPhoneDisplay } from "@/lib/phoneE164";
+import type { ContactHandle } from "@/lib/types";
 import type { ReactNode } from "react";
 import {
-  ContactPhoneList,
+  ContactHandleList,
   type ContactEditDraft,
 } from "./contactEdit";
+import { HandleTypeBadge } from "./HandleTypeBadge";
 import {
   PeopleGroupIcon,
   PersonDetailIcon,
@@ -56,12 +58,53 @@ function FormSection({
   );
 }
 
+/** Handles in view mode, phones first, each row showing its type badge. */
+function HandleViewList({ handles }: { handles: ContactHandle[] }) {
+  if (handles.length === 0) {
+    return (
+      <span className="truncate text-[13px] leading-5 text-muted">None</span>
+    );
+  }
+  const order = ["phone", "email", "username", "other"] as const;
+  const groups = order
+    .map((type) => ({
+      type,
+      rows: handles.filter((h) => h.handle_type === type),
+    }))
+    .filter((g) => g.rows.length > 0);
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {groups.map((group) => (
+        <div key={group.type} className="flex min-w-0 flex-col gap-0.5">
+          {group.rows.map((h) => (
+            <div
+              key={`${group.type}\0${h.raw}`}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              <span className="min-w-0 truncate text-[13px] leading-5 text-text tabular-nums">
+                {formatPhoneDisplay(h.raw)}
+              </span>
+              <HandleTypeBadge type={group.type} />
+              {h.service ? (
+                <span className="shrink-0 truncate text-[11px] text-muted">
+                  {h.service}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ContactDetailsCard({
   formOpen,
   draft,
   onDraftChange,
   labels,
   phonesView,
+  handlesView,
   framed = true,
   labelsEditor,
   hideLabels = false,
@@ -70,8 +113,10 @@ export function ContactDetailsCard({
   draft: ContactEditDraft | null;
   onDraftChange?: (draft: ContactEditDraft) => void;
   labels: string[];
-  /** Phones shown in view mode (when form is closed). */
-  phonesView: string[];
+  /** @deprecated Prefer `handlesView`; plain raw handles without types. */
+  phonesView?: string[];
+  /** Handles shown in view mode (when form is closed), with their types. */
+  handlesView?: ContactHandle[];
   /** When false, skip outer card chrome and "Contact details" heading (for dialogs). */
   framed?: boolean;
   /** When set and form is open, replaces the static labels list (e.g. LabelsMenu). */
@@ -80,11 +125,11 @@ export function ContactDetailsCard({
   hideLabels?: boolean;
 }) {
   const shownLabels = labels;
-  const phoneCount =
+  const handleCount =
     formOpen && draft
-      ? draft.phones.filter((p) => p.trim()).length
-      : phonesView.length;
-  const phoneLabel = phoneCount === 1 ? "Phone" : "Phones";
+      ? draft.handles.filter((h) => h.raw.trim()).length
+      : (handlesView?.length ?? phonesView?.length ?? 0);
+  const handleLabel = handleCount === 1 ? "Handle" : "Handles";
   const editing = Boolean(formOpen && draft && onDraftChange);
 
   const inputClass =
@@ -121,11 +166,13 @@ export function ContactDetailsCard({
 
       <FormSection
         icon={<PhoneIcon className="size-5 shrink-0 text-muted" />}
-        label={phoneLabel}
+        label={handleLabel}
       >
-        <ContactPhoneList
-          phones={draft!.phones}
-          onChange={(phones) => onDraftChange!({ ...draft!, phones })}
+        <ContactHandleList
+          handles={draft!.handles}
+          onChange={(handles) =>
+            onDraftChange!({ ...draft!, handles })
+          }
         />
       </FormSection>
     </div>
@@ -146,9 +193,11 @@ export function ContactDetailsCard({
 
       <FormSection
         icon={<PhoneIcon className="size-5 shrink-0 text-muted" />}
-        label={phoneLabel}
+        label={handleLabel}
       >
-        {phonesView.length > 0 ? (
+        {handlesView?.length ? (
+          <HandleViewList handles={handlesView} />
+        ) : phonesView?.length ? (
           <div className="flex min-w-0 flex-col gap-0.5">
             {phonesView.map((phone) => (
               <span

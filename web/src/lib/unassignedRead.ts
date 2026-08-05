@@ -190,7 +190,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
 export function unassignedThreadsBundle(
   handle: string,
   source?: string | null,
-  opts?: { includeTrashed?: boolean },
+  opts?: { includeTrashed?: boolean; handleType?: HandleType | null },
 ): {
   handle: string;
   handleType: HandleType | null;
@@ -203,14 +203,19 @@ export function unassignedThreadsBundle(
   const trimmed = handle.trim();
   if (!trimmed) return null;
   const db = getDb();
+  // A raw can in theory exist under several handle types; the list views know
+  // the type, so scope the conversation lookup to it when provided.
+  const typeFilter = opts?.handleType ? ` AND h.handle_type = ?` : "";
+  const params: unknown[] = [accountId, trimmed];
+  if (opts?.handleType) params.push(opts.handleType);
   const conv = db
     .prepare(
       `SELECT c.id AS id, h.handle_type AS handle_type
        FROM conversations c
        JOIN handles h ON h.id = c.chat_handle_id
-       WHERE c.account_id = ? AND c.conversation_type = 'individual' AND h.raw = ?`,
+       WHERE c.account_id = ? AND c.conversation_type = 'individual' AND h.raw = ?${typeFilter}`,
     )
-    .get(accountId, trimmed) as { id: number; handle_type: string } | undefined;
+    .get(...params) as { id: number; handle_type: string } | undefined;
   if (!conv) return null;
 
   const owned = db

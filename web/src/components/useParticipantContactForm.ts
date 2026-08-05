@@ -1,7 +1,7 @@
 "use client";
 
 import type { ContactDetail, GroupParticipant } from "@/lib/types";
-import { phoneHandlesOnly } from "@/lib/handleKind";
+import { inferHandleType } from "@/lib/handleKind";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -14,7 +14,7 @@ import {
 import {
   draftHasName,
   emptyContactEditDraft,
-  phonesForSave,
+  handlesForSave,
   seedContactEditDraft,
   type ContactEditDraft,
 } from "./contactEdit";
@@ -101,7 +101,7 @@ export function useParticipantContactForm(
   const canSaveForm =
     !!editDraft &&
     draftHasName(editDraft) &&
-    phoneHandlesOnly(phonesForSave(editDraft.phones)).length > 0;
+    handlesForSave(editDraft.handles).length > 0;
 
   const draftMenuLabels = useMemo(() => {
     const names = new Set([...knownLabels, ...extraDraftLabels]);
@@ -229,7 +229,14 @@ export function useParticipantContactForm(
       setEditContactId(null);
       setContactCreating(true);
       const draft = emptyContactEditDraft(createDefaults);
-      setEditDraft({ ...draft, phones: [handle, ""] });
+      const raw = handle.trim();
+      setEditDraft({
+        ...draft,
+        handles: [
+          { raw, handle_type: inferHandleType(raw) },
+          { raw: "", handle_type: "phone" },
+        ],
+      });
     },
     [createDefaults],
   );
@@ -263,7 +270,7 @@ export function useParticipantContactForm(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           preferredName: editDraft.preferredName.trim() || null,
-          phones: phonesForSave(editDraft.phones),
+          handles: handlesForSave(editDraft.handles),
           labels: editDraft.labels,
         }),
       });
@@ -291,7 +298,7 @@ export function useParticipantContactForm(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           preferredName: editDraft.preferredName.trim() || null,
-          phones: phonesForSave(editDraft.phones),
+          handles: handlesForSave(editDraft.handles),
           labels: editDraft.labels,
         }),
       });

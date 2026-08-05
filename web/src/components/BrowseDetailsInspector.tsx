@@ -4,6 +4,7 @@ import type { CollapsedGroupConversation } from "@/lib/groupChatList";
 import { formatPhoneDisplay } from "@/lib/phoneE164";
 import type {
   ContactDetail,
+  ContactHandle,
   ContactListItem,
   GroupChatThread,
   GroupParticipant,
@@ -11,6 +12,7 @@ import type {
 } from "@/lib/types";
 import type { ReactNode } from "react";
 import { collapsedParticipantLabels } from "./GroupConversationRow";
+import { HandleTypeBadge } from "./HandleTypeBadge";
 import { ChevronDownIcon } from "./icons";
 import { useDateTimeFormat } from "./useDateTimeFormat";
 
@@ -68,6 +70,70 @@ function StatRow({ label, value }: { label: string; value: string | number }) {
       <span className="min-w-0 text-right text-[13px] text-text tabular-nums">
         {value}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Handle rows in the inspector: typed handles (badge + service) when known,
+ * otherwise a plain fallback of raw strings (e.g. search-focused contacts).
+ */
+function HandlesSection({
+  handles,
+  fallback,
+  canEdit,
+  onEdit,
+}: {
+  handles?: ContactHandle[];
+  fallback?: string[];
+  canEdit: boolean;
+  onEdit?: () => void;
+}) {
+  const typed = handles && handles.length > 0 ? handles : null;
+  const plain = !typed && fallback && fallback.length > 0 ? fallback : null;
+  if (!typed && !plain) return null;
+  const editable = canEdit && !!onEdit;
+  const handleRow = (raw: string) => (
+    <>
+      {editable ? (
+        <EditableContactField
+          onEdit={onEdit!}
+          className="min-w-0 text-[14px] text-text tabular-nums"
+        >
+          {formatPhoneDisplay(raw)}
+        </EditableContactField>
+      ) : (
+        <span className="min-w-0 truncate text-[14px] text-text tabular-nums">
+          {formatPhoneDisplay(raw)}
+        </span>
+      )}
+    </>
+  );
+  return (
+    <div className="mt-2">
+      <div className={SECTION_LABEL}>Handles</div>
+      <ul className="space-y-0.5">
+        {typed
+          ? typed.map((h) => (
+              <li
+                key={`${h.handle_type}\0${h.raw}`}
+                className="flex min-w-0 items-center gap-1.5"
+              >
+                {handleRow(h.raw)}
+                <HandleTypeBadge type={h.handle_type} />
+                {h.service ? (
+                  <span className="shrink-0 truncate text-[11px] text-muted">
+                    {h.service}
+                  </span>
+                ) : null}
+              </li>
+            ))
+          : plain!.map((p) => (
+              <li key={p} className="flex min-w-0 items-center gap-1.5">
+                {handleRow(p)}
+              </li>
+            ))}
+      </ul>
     </div>
   );
 }
@@ -355,9 +421,10 @@ export function BrowseDetailsInspector({
       focusedContact?.displayName ||
       directThreadMeta?.title ||
       "Direct";
+    const handles = detail?.handles?.length ? detail.handles : [];
     const phones =
-      detail?.phones?.length
-        ? detail.phones
+      handles.length > 0
+        ? []
         : focusedContact?.phones?.length
           ? focusedContact.phones
           : focusedContact?.preferredHandle
@@ -410,29 +477,12 @@ export function BrowseDetailsInspector({
         ) : (
           <h2 className="text-[15px] font-semibold text-text">{name}</h2>
         )}
-        {phones.length > 0 && (
-          <div className="mt-2">
-            <div className={SECTION_LABEL}>Phones</div>
-            <ul className="space-y-0.5">
-              {phones.map((p) => (
-                <li key={p}>
-                  {canEdit ? (
-                    <EditableContactField
-                      onEdit={() => onEditContact()}
-                      className="text-[14px] text-text tabular-nums"
-                    >
-                      {formatPhoneDisplay(p)}
-                    </EditableContactField>
-                  ) : (
-                    <span className="text-[14px] text-text tabular-nums">
-                      {formatPhoneDisplay(p)}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <HandlesSection
+          handles={handles}
+          fallback={phones}
+          canEdit={canEdit}
+          onEdit={canEdit ? onEditContact : undefined}
+        />
         {labels.length > 0 && (
           <div className="mt-2">
             <LabelChips labels={labels} />
@@ -459,11 +509,13 @@ export function BrowseDetailsInspector({
   if (detail || focusedContact) {
     const c = detail;
     const name = c?.displayName || focusedContact?.displayName || "Contact";
-    const phones = c?.phones?.length
-      ? c.phones
-      : focusedContact?.preferredHandle
-        ? [focusedContact.preferredHandle]
-        : [];
+    const handles = c?.handles?.length ? c.handles : [];
+    const phones =
+      handles.length > 0
+        ? []
+        : focusedContact?.preferredHandle
+          ? [focusedContact.preferredHandle]
+          : [];
     const labels = (c?.labels ?? []).filter(Boolean);
     const dmCount = c?.messageCount ?? 0;
     const groupCount = c?.groupMessageCount ?? groupChats.length;
@@ -487,29 +539,14 @@ export function BrowseDetailsInspector({
             </h2>
           )}
         </div>
-        {phones.length > 0 && (
-          <div className="mb-3">
-            <div className={SECTION_LABEL}>Phones</div>
-            <ul className="space-y-0.5">
-              {phones.map((p) => (
-                <li key={p}>
-                  {canEdit ? (
-                    <EditableContactField
-                      onEdit={() => onEditContact()}
-                      className="text-[14px] text-text tabular-nums"
-                    >
-                      {formatPhoneDisplay(p)}
-                    </EditableContactField>
-                  ) : (
-                    <span className="text-[14px] text-text tabular-nums">
-                      {formatPhoneDisplay(p)}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <div className="mb-3">
+          <HandlesSection
+            handles={handles}
+            fallback={phones}
+            canEdit={canEdit}
+            onEdit={canEdit ? onEditContact : undefined}
+          />
+        </div>
         {labels.length > 0 && (
           <div className="mb-3">
             <LabelChips labels={labels} />

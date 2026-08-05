@@ -3,6 +3,7 @@ import {
   groupYearRowsToCollapseThreads,
   type CollapsedGroupConversation,
 } from "./groupChatList";
+import type { HandleType } from "./handleKind";
 import type {
   GroupYearRow,
   TrashedContactItem,
@@ -21,6 +22,8 @@ export type TrashListItem =
       trashKind: "contact" | "messages_only" | "unassigned";
       contactId?: number;
       handle: string;
+      /** Handle identity type (null when unknown — e.g. contact rows). */
+      handleType?: HandleType | null;
       displayName: string;
       messageCount: number;
       trashedAt: string;
@@ -98,6 +101,7 @@ export function buildTrashListItems(input: {
       category: "contacts",
       trashKind: "unassigned",
       handle: h.handle,
+      handleType: h.handleType ?? null,
       displayName: h.displayName,
       messageCount: h.messageCount,
       trashedAt: h.trashedAt ?? "",

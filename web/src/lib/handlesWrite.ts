@@ -34,15 +34,20 @@ export function resolveHandleId(
   return row.id;
 }
 
-/** Handle id for an existing raw handle, or null when no such handle row. */
+/**
+ * Handle id for an existing raw handle, or null when no such handle row.
+ * `handleType` disambiguates when the raw is known by type (e.g. from the
+ * unassigned/trash lists); omitted, the type is inferred from the raw's shape.
+ */
 export function handleIdForRaw(
   db: Database.Database,
   accountId: string,
   raw: string,
+  handleType?: HandleType,
 ): number | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  const type = inferHandleType(trimmed);
+  const type = handleType ?? inferHandleType(trimmed);
   const normalized = normalizeHandle(trimmed, type);
   const row = db
     .prepare(
@@ -68,11 +73,16 @@ export function clearTrashedHandles(
   ).run(accountId, ...ids);
 }
 
-/** Upsert handles into trashed_handles (owned or unassigned). */
+/**
+ * Upsert handles into trashed_handles (owned or unassigned).
+ * `handleType` applies to every handle in the batch when given; otherwise each
+ * handle's type is inferred from its raw shape.
+ */
 export function trashHandlesInDb(
   db: Database.Database,
   handles: string[],
   accountId: string = currentAccountId(),
+  handleType?: HandleType,
 ): void {
   const trimmed = [...new Set(handles.map((h) => h.trim()).filter(Boolean))];
   if (trimmed.length === 0) return;
@@ -82,18 +92,14 @@ export function trashHandlesInDb(
      ON CONFLICT(account_id, handle_id) DO UPDATE SET trashed_at = excluded.trashed_at`,
   );
   for (const handle of trimmed) {
-    const handleId = resolveHandleId(
-      db,
-      accountId,
-      handle,
-      inferHandleType(handle),
-    );
+    const type = handleType ?? inferHandleType(handle);
+    const handleId = resolveHandleId(db, accountId, handle, type);
     upsert.run(accountId, handleId);
   }
 }
 
 /** Move a handle into Trash (may still belong to a contact). */
-export function trashHandle(handle: string): void {
+export function trashHandle(handle: string, handleType?: HandleType): void {
   assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
@@ -101,7 +107,7 @@ export function trashHandle(handle: string): void {
 
   const writeDb = openWritableVaultDb();
   try {
-    trashHandlesInDb(writeDb, [trimmed], accountId);
+    trashHandlesInDb(writeDb, [trimmed], accountId, handleType);
   } finally {
     writeDb.close();
   }
@@ -109,7 +115,7 @@ export function trashHandle(handle: string): void {
 }
 
 /** Restore a handle from Trash. */
-export function restoreHandle(handle: string): void {
+export function restoreHandle(handle: string, handleType?: HandleType): void {
   assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
@@ -117,7 +123,7 @@ export function restoreHandle(handle: string): void {
 
   const writeDb = openWritableVaultDb();
   try {
-    const handleId = handleIdForRaw(writeDb, accountId, trimmed);
+    const handleId = handleIdForRaw(writeDb, accountId, trimmed, handleType);
     if (handleId != null) {
       writeDb
         .prepare(`DELETE FROM trashed_handles WHERE account_id = ? AND handle_id = ?`)
@@ -134,7 +140,10 @@ export function restoreHandle(handle: string): void {
  * messages/attachments) and removes the trash entry. Contact ownership is OK
  * (messages-only trash for a live contact).
  */
-export function permanentlyDeleteHandle(handle: string): void {
+export function permanentlyDeleteHandle(
+  handle: string,
+  handleType?: HandleType,
+): void {
   assertVaultWritable();
   const accountId = currentAccountId();
   const trimmed = handle.trim();
@@ -142,7 +151,7 @@ export function permanentlyDeleteHandle(handle: string): void {
 
   const writeDb = openWritableVaultDb();
   try {
-    const handleId = handleIdForRaw(writeDb, accountId, trimmed);
+    const handleId = handleIdForRaw(writeDb, accountId, trimmed, handleType);
     if (handleId == null) {
       throw new Error("handle is not in trash");
     }

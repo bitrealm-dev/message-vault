@@ -6,6 +6,7 @@ import {
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { parseHandlesBody } from "../handles-body";
 
 export const runtime = "nodejs";
 
@@ -78,17 +79,29 @@ export async function PATCH(req: Request, { params }: Params) {
   ) {
     patch.phones = body.phones.map((p) => p.trim()).filter(Boolean);
   }
+
+  let handles;
+  try {
+    handles = parseHandlesBody(body);
+  } catch {
+    return NextResponse.json({ error: "invalid handle_type" }, { status: 400 });
+  }
+  if (handles !== undefined) {
+    patch.handles = handles;
+  }
+
   if (
     patch.labels === undefined &&
     patch.preferredName === undefined &&
     patch.firstName === undefined &&
     patch.lastName === undefined &&
-    patch.phones === undefined
+    patch.phones === undefined &&
+    patch.handles === undefined
   ) {
     return NextResponse.json(
       {
         error:
-          "labels, preferredName, and/or phones required",
+          "labels, preferredName, phones, and/or handles required",
       },
       { status: 400 },
     );

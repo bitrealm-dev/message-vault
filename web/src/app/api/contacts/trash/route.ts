@@ -8,12 +8,14 @@ import {
   permanentlyDeleteHandle,
   restoreHandle,
 } from "@/lib/handlesWrite";
+import type { HandleType } from "@/lib/handleKind";
 import {
   unauthorizedResponse,
   withAccountHandler,
 } from "@/lib/accountContext";
 import { NextResponse } from "next/server";
 import { mutationErrorStatus } from "@/lib/owner";
+import { isHandleType } from "../handles-body";
 
 export const runtime = "nodejs";
 
@@ -88,15 +90,20 @@ export async function DELETE(req: Request) {
   const ids = parseIds(body);
   const handle =
     typeof body.handle === "string" ? body.handle.trim() : "";
+  const rawType = body.handle_type;
+  if (handle && rawType !== undefined && !isHandleType(rawType)) {
+    return NextResponse.json({ error: "invalid handle_type" }, { status: 400 });
+  }
+  const handleType = (rawType as HandleType | undefined) ?? undefined;
 
   if (handle) {
     try {
       return await withAccountHandler(async () => {
         if (permanent) {
-          permanentlyDeleteHandle(handle);
+          permanentlyDeleteHandle(handle, handleType);
           return NextResponse.json({ ok: true, handle, permanent: true });
         }
-        restoreHandle(handle);
+        restoreHandle(handle, handleType);
         return NextResponse.json({ ok: true, handle });
       });
     } catch (err) {
