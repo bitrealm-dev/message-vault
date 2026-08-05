@@ -11,6 +11,8 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY crates ./crates
+# Required at compile time by src/db/schema.rs include_str!(…).
+COPY schema ./schema
 
 RUN cargo build --release --bin message-vault-rs
 
