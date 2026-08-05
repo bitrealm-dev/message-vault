@@ -5,6 +5,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrAttachment,
     IrConversationType,
     IrDirection,
@@ -347,7 +348,9 @@ fn to_document(
         .map(|handle| IrParticipant {
             handle: handle.clone(),
             display_name: names.get(handle).cloned(),
-            handle_type: None,
+            // SBR conversation participants are E.164 phone numbers by
+            // construction (participant_e164s), so the type is always Phone.
+            handle_type: Some(HandleType::Phone),
         })
         .collect();
     let mut document = ConversationDocument {
