@@ -1,4 +1,5 @@
-import { Palette } from "std-widgets.slint";
+import { Theme, AppearanceAdapter } from "../theme.slint";
+import { CompactComboBox } from "../compact-combo-box.slint";
 
 export global HomeAdapter {
     in property <bool> enabled: true;
@@ -15,10 +16,10 @@ component HomeCard inherits Rectangle {
 
     border-radius: 10px;
     border-width: 1px;
-    border-color: Palette.border;
+    border-color: Theme.border;
     background: card-touch.has-hover && root.enabled
-        ? Palette.alternate-background
-        : Palette.background;
+        ? Theme.elevated
+        : Theme.panel;
     vertical-stretch: 0;
     min-height: 72px;
 
@@ -31,7 +32,7 @@ component HomeCard inherits Rectangle {
             width: 40px;
             height: 40px;
             border-radius: 8px;
-            background: #e8eef8;
+            background: Theme.glyph-bg;
             vertical-stretch: 0;
             horizontal-stretch: 0;
             Text {
@@ -39,7 +40,7 @@ component HomeCard inherits Rectangle {
                 font-size: 18px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                color: #1e3a5f;
+                color: Theme.glyph-fg;
             }
         }
 
@@ -51,13 +52,13 @@ component HomeCard inherits Rectangle {
                 text: root.title;
                 font-size: 14px;
                 font-weight: 700;
-                color: Palette.control-foreground;
+                color: Theme.text;
                 wrap: word-wrap;
             }
             Text {
                 text: root.subtitle;
                 font-size: 12px;
-                color: #555555;
+                color: Theme.muted;
                 wrap: word-wrap;
             }
         }
@@ -66,7 +67,7 @@ component HomeCard inherits Rectangle {
             text: "›";
             font-size: 22px;
             font-weight: 700;
-            color: #6b7280;
+            color: Theme.muted;
             vertical-alignment: center;
             horizontal-stretch: 0;
         }
@@ -96,13 +97,14 @@ export component HomePage inherits VerticalLayout {
             text: "What was said matters.";
             font-size: 28px;
             font-weight: 700;
+            color: Theme.text;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
         Text {
             text: "Bring your conversations into one place.";
             font-size: 14px;
-            color: #555555;
+            color: Theme.muted;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
@@ -125,6 +127,51 @@ export component HomePage inherits VerticalLayout {
             glyph: "↻";
             enabled: HomeAdapter.enabled;
             clicked => { HomeAdapter.convert-messages(); }
+        }
+
+        Rectangle { height: 36px; }
+
+        VerticalLayout {
+            spacing: 8px;
+            vertical-stretch: 0;
+            HorizontalLayout {
+                spacing: 12px;
+                vertical-stretch: 0;
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Theme";
+                        font-size: 11px;
+                        color: Theme.muted;
+                    }
+                    CompactComboBox {
+                        model: AppearanceAdapter.mode-options;
+                        current-index <=> AppearanceAdapter.mode-index;
+                        enabled: HomeAdapter.enabled;
+                        selected => {
+                            AppearanceAdapter.mode-changed(AppearanceAdapter.mode-index);
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Colors";
+                        font-size: 11px;
+                        color: Theme.muted;
+                    }
+                    CompactComboBox {
+                        model: AppearanceAdapter.preset-options;
+                        current-index <=> AppearanceAdapter.preset-index;
+                        enabled: HomeAdapter.enabled;
+                        selected => {
+                            AppearanceAdapter.preset-changed(AppearanceAdapter.preset-index);
+                        }
+                    }
+                }
+            }
         }
     }
 }

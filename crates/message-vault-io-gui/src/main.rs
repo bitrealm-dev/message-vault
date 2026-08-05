@@ -14,6 +14,7 @@ mod staging;
 mod start;
 mod state;
 mod sync;
+mod theme;
 mod wire;
 mod wsl;
 
@@ -29,8 +30,13 @@ fn main() -> Result<(), slint::PlatformError> {
     let state = Arc::new(Mutex::new(AppState::load()));
 
     sync::push_static_option_models(&ui);
+    theme::push_option_models(&ui);
     {
         let mut st = state.lock().expect("state lock");
+        let (mode, preset) = theme::appearance_from_section(&st.export_ini.appearance);
+        st.export_ini.appearance.mode = mode.as_ini().to_string();
+        st.export_ini.appearance.preset = preset.id.to_string();
+        theme::apply_to_ui(&ui, mode, preset);
         sync::push_all(&ui, &mut st);
     }
     sync::clear_log_lines(&ui);

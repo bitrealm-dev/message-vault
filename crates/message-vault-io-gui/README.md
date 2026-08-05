@@ -34,6 +34,12 @@ Built with Slint's **`native`** widget style (set in `build.rs`):
 - **macOS** — Cupertino
 - **Linux** — Qt if Qt 5.15+ is installed; otherwise Fluent (pure-Rust fallback; no Qt SDK required)
 
+Custom chrome uses a Fastmail-style **four-seed theme** (same defaults/presets as
+message-vault-rs): mode `light` / `dark` / `system` (default dark) and named
+color presets. Change them on the Home screen; values persist in
+`export.ini` under `[appearance]` (`mode=`, `preset=`). See
+[`docs/maintainers/gui.md`](../../docs/maintainers/gui.md) for tokens.
+
 Forms use a classic dialog grid (right-aligned label column, full-width
 controls, tight row gaps, content packed at the top). Form rows use bare
 `HorizontalLayout`/`VerticalLayout` — not `HorizontalBox`/`VerticalBox`, which

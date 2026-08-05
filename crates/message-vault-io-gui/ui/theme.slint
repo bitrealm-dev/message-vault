@@ -1,0 +1,43 @@
+// Four-seed theme tokens (Fastmail-style). Values are applied from Rust
+// when mode/preset change; defaults match Graphite Blue dark.
+
+export global Theme {
+    in-out property <bool> is-dark: true;
+
+    in-out property <brush> header: #222426;
+    in-out property <brush> accent: #5ea1ff;
+
+    in-out property <brush> bg: #131415;
+    in-out property <brush> panel: #1b1c1e;
+    in-out property <brush> elevated: #3a3c3e;
+    in-out property <brush> border: #5c5e60;
+    in-out property <brush> text: #ececed;
+    in-out property <brush> muted: #9a9b9c;
+    in-out property <brush> hover: #ffffff1f;
+    in-out property <brush> danger: #f87171;
+    in-out property <brush> danger-bg: #3a2224;
+    in-out property <brush> danger-text: #fca5a5;
+    in-out property <brush> link: #5ea1ff;
+    in-out property <brush> sent: #5ea1ff;
+    in-out property <brush> received: #6e7072;
+    in-out property <brush> sent-text: #ffffff;
+    in-out property <brush> selection: #5ea1ff;
+    in-out property <brush> selection-text: #ffffff;
+    in-out property <brush> tab-bar: #1b1c1e;
+    in-out property <brush> tab-inactive: #2a2c2e;
+    in-out property <brush> tab-active: #3a3c3e;
+    in-out property <brush> log-bg: #0e0f10;
+    in-out property <brush> glyph-bg: #2a3544;
+    in-out property <brush> glyph-fg: #a8c8f0;
+    in-out property <brush> chrome: #222426;
+    in-out property <brush> separator: #5c5e60;
+}
+
+export global AppearanceAdapter {
+    in-out property <int> mode-index: 1;
+    in-out property <int> preset-index: 0;
+    in property <[string]> mode-options;
+    in property <[string]> preset-options;
+    callback mode-changed(int);
+    callback preset-changed(int);
+}

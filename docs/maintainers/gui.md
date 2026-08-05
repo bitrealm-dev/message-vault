@@ -78,10 +78,39 @@ otherwise create `./export.ini` on first save. Template:
 Backup passwords are never written. The vault key is persisted in plain text under
 `[vault]`.
 
-Saved after exporter switch / Run / Clear, and again when the window exits.
-Running Extract Messages sets the shared output format to JSONL; the Format tab
-keeps its own output format under `[format]`. Older files with
+Saved after exporter switch / Run / Clear, appearance changes, and again when the
+window exits. Running Extract Messages sets the shared output format to JSONL; the
+Format tab keeps its own output format under `[format]`. Older files with
 `[message-reexport]` are still loaded; the next save writes `[format]` only.
+
+## Appearance (four-seed theme)
+
+Matches message-vault-rs Fastmail-style seeds. Rust derives surfaces (no CSS
+`color-mix`); Slint reads them from `global Theme` in `ui/theme.slint`.
+
+| Seed (preset) | Default Graphite Blue |
+|---------------|------------------------|
+| lightHeader | `#e6e9ee` |
+| lightAccent | `#2b7fff` |
+| darkHeader | `#222426` |
+| darkAccent | `#5ea1ff` |
+
+**Mode:** `light` | `dark` | `system` (default `dark`). System uses the
+`dark-light` crate (OS color scheme; unspecified → dark).
+
+**Presets:** Graphite Blue, Slate Sky, Forest, Dusk, Rose, Amber, Ocean, Mono.
+
+**INI** (`[appearance]`):
+
+```ini
+[appearance]
+mode = dark
+preset = graphite-blue
+```
+
+Home screen has Theme / Colors combos. Custom chrome uses `Theme.*` tokens
+(`bg`, `panel`, `elevated`, `border`, `text`, `muted`, `accent`, `danger`, …).
+Native `std-widgets` (Button, LineEdit, …) still follow the Slint `native` style.
 
 ## Licensing
 

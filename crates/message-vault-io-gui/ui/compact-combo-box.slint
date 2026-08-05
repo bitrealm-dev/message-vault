@@ -1,4 +1,5 @@
-import { Palette, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
 component CompactPopupEntry inherits VerticalLayout {
     in property <string> label;
@@ -23,12 +24,12 @@ component CompactPopupEntry inherits VerticalLayout {
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
                 height: 1px;
-                background: Palette.border;
+                background: Theme.border;
             }
         }
         Text {
             text: "Experimental";
-            color: Palette.alternate-foreground;
+            color: Theme.muted;
             font-size: 10px;
             vertical-alignment: center;
             horizontal-stretch: 0;
@@ -39,7 +40,7 @@ component CompactPopupEntry inherits VerticalLayout {
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
                 height: 1px;
-                background: Palette.border;
+                background: Theme.border;
             }
         }
     }
@@ -47,8 +48,8 @@ component CompactPopupEntry inherits VerticalLayout {
     option-row := Rectangle {
         height: 24px;
         background: root.selected
-            ? Palette.selection-background
-            : option-touch.has-hover ? Palette.alternate-background : Palette.background;
+            ? Theme.selection
+            : option-touch.has-hover ? Theme.elevated : Theme.panel;
         vertical-stretch: 0;
 
         Text {
@@ -56,7 +57,7 @@ component CompactPopupEntry inherits VerticalLayout {
             width: parent.width - 16px;
             height: parent.height;
             text: root.label;
-            color: root.selected ? Palette.selection-foreground : Palette.control-foreground;
+            color: root.selected ? Theme.selection-text : Theme.text;
             font-size: 11px;
             vertical-alignment: center;
             overflow: elide;
@@ -121,10 +122,10 @@ export component CompactComboBox {
     closed-background := Rectangle {
         border-radius: 3px;
         border-width: 1px;
-        border-color: Palette.border;
+        border-color: Theme.border;
         background: closed-touch.has-hover && root.enabled
-            ? Palette.alternate-background
-            : Palette.control-background;
+            ? Theme.elevated
+            : Theme.panel;
 
         HorizontalLayout {
             padding-left: 10px;
@@ -133,14 +134,14 @@ export component CompactComboBox {
 
             Text {
                 text: root.current-value;
-                color: Palette.control-foreground;
+                color: Theme.text;
                 vertical-alignment: center;
                 overflow: elide;
                 horizontal-stretch: 1;
             }
             Text {
                 text: "⌄";
-                color: Palette.control-foreground;
+                color: Theme.text;
                 vertical-alignment: center;
                 horizontal-stretch: 0;
             }
@@ -202,11 +203,9 @@ export component CompactComboBox {
             }
 
             Rectangle {
-                // Use the window background rather than the translucent control
-                // brush so content behind the popup cannot reduce readability.
-                background: Palette.background;
+                background: Theme.panel;
                 border-width: 1px;
-                border-color: Palette.border;
+                border-color: Theme.border;
                 border-radius: 3px;
 
                 ScrollView {

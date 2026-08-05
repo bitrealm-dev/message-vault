@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = "0.4.44"
+dark-light = "2"
 slint = "1.17"
 rfd = "0.15"
 open = "5"

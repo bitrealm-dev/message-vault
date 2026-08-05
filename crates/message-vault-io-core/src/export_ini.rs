@@ -21,6 +21,7 @@ const COMMON: &str = "common";
 const FORMAT: &str = "format";
 const MESSAGE_REEXPORT_LEGACY: &str = "message-reexport";
 const VAULT: &str = "vault";
+const APPEARANCE: &str = "appearance";
 const EXPORT_INI_NAME: &str = "export.ini";
 
 /// Fields for the Format top-level tab (`message-reexporter`).
@@ -58,6 +59,24 @@ impl Default for VaultSection {
     }
 }
 
+/// GUI appearance (`[appearance]`): theme mode and named preset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppearanceSection {
+    /// `light` | `dark` | `system` (default `dark`).
+    pub mode: String,
+    /// Preset id, e.g. `graphite-blue` (default).
+    pub preset: String,
+}
+
+impl Default for AppearanceSection {
+    fn default() -> Self {
+        Self {
+            mode: "dark".into(),
+            preset: "graphite-blue".into(),
+        }
+    }
+}
+
 /// Per-exporter path / type-specific fields kept when switching backup types.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ExporterSection {
@@ -86,6 +105,7 @@ pub struct ExportIniState {
     sections: [ExporterSection; 7],
     pub format: FormatSection,
     pub vault: VaultSection,
+    pub appearance: AppearanceSection,
 }
 
 impl ExportIniState {
@@ -127,6 +147,7 @@ impl ExportIniState {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            appearance: AppearanceSection::default(),
         };
         let mut form = Form::default();
         state.apply_section_to_form(&mut form);
@@ -153,6 +174,7 @@ impl ExportIniState {
         }
         let format = read_format_section(&ini);
         let vault = read_vault_section(&ini);
+        let appearance = read_appearance_section(&ini);
 
         let state = Self {
             path: path.to_path_buf(),
@@ -160,6 +182,7 @@ impl ExportIniState {
             sections,
             format,
             vault,
+            appearance,
         };
         state.apply_section_to_form(&mut form);
         Ok((state, form))
@@ -455,6 +478,11 @@ fn build_ini(state: &ExportIniState, form: &Form) -> Ini {
             .set("force", bool_str(state.vault.force))
             .set("skip_attachments", bool_str(state.vault.skip_attachments));
     }
+    {
+        let mut s = ini.with_section(Some(APPEARANCE));
+        s.set("mode", state.appearance.mode.trim())
+            .set("preset", state.appearance.preset.trim());
+    }
     ini
 }
 
@@ -482,6 +510,24 @@ fn read_vault_section(ini: &Ini) -> VaultSection {
         continue_on_error: parse_bool(&get(ini, Some(VAULT), "continue_on_error"), true),
         force: parse_bool(&get(ini, Some(VAULT), "force"), false),
         skip_attachments: parse_bool(&get(ini, Some(VAULT), "skip_attachments"), false),
+    }
+}
+
+fn read_appearance_section(ini: &Ini) -> AppearanceSection {
+    let defaults = AppearanceSection::default();
+    let mode = get(ini, Some(APPEARANCE), "mode");
+    let preset = get(ini, Some(APPEARANCE), "preset");
+    AppearanceSection {
+        mode: if mode.is_empty() {
+            defaults.mode
+        } else {
+            mode
+        },
+        preset: if preset.is_empty() {
+            defaults.preset
+        } else {
+            preset
+        },
     }
 }
 
@@ -542,6 +588,7 @@ mod tests {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            appearance: AppearanceSection::default(),
         };
         state.capture_form_section(&form);
         state.switch_exporter(Exporter::SmsBackupPlus, &mut form);
@@ -594,6 +641,7 @@ mod tests {
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            appearance: AppearanceSection::default(),
         };
         state.capture_form_section(&form);
         state.switch_exporter(Exporter::Imazing, &mut form);
@@ -677,6 +725,10 @@ apple_platform = ios
                 force: false,
                 skip_attachments: false,
             },
+            appearance: AppearanceSection {
+                mode: "system".into(),
+                preset: "ocean".into(),
+            },
         };
         let file = NamedTempFile::new().unwrap();
         state.path = file.path().to_path_buf();
@@ -687,8 +739,13 @@ apple_platform = ios
         assert_eq!(loaded.vault.username, "alice");
         assert_eq!(loaded.vault.key, "secret-import-token");
         assert_eq!(loaded.vault.input, "/data/jsonl");
+        assert_eq!(loaded.appearance.mode, "system");
+        assert_eq!(loaded.appearance.preset, "ocean");
         let text = fs::read_to_string(file.path()).unwrap();
         assert!(text.contains("key=secret-import-token") || text.contains("key = secret-import-token"));
+        assert!(text.contains("[appearance]"));
+        assert!(text.contains("mode=system") || text.contains("mode = system"));
+        assert!(text.contains("preset=ocean") || text.contains("preset = ocean"));
     }
 
     #[cfg(unix)]
@@ -707,6 +764,7 @@ apple_platform = ios
                 continue_on_error: true,
                 ..VaultSection::default()
             },
+            appearance: AppearanceSection::default(),
         };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("export.ini");

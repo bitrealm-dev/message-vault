@@ -12,9 +12,10 @@ use crate::start;
 use crate::state::{self, AppState};
 use crate::sync;
 use crate::wsl;
+use crate::theme;
 use crate::{
-    AppWindow, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter, FormatAdapter,
-    HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
+    AppWindow, AppearanceAdapter, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter,
+    FormatAdapter, HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
 };
 
 const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
@@ -23,6 +24,7 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_error_dismiss(ui, Arc::clone(&state));
     wire_navigate_back(ui);
     wire_grow_for_advanced(ui);
+    wire_appearance(ui, Arc::clone(&state));
     wire_home(ui);
     wire_credentials(ui, Arc::clone(&state));
     wire_import(ui, Arc::clone(&state));
@@ -33,6 +35,45 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_format(ui, Arc::clone(&state));
     wire_vault(ui, Arc::clone(&state));
     wire_log(ui, Arc::clone(&state));
+}
+
+fn wire_appearance(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
+    ui.global::<AppearanceAdapter>().on_mode_changed({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move |index| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mode = theme::ThemeMode::from_index(index);
+            let mut st = state.lock().expect("state lock");
+            st.export_ini.appearance.mode = mode.as_ini().to_string();
+            let preset = theme::preset_by_id(&st.export_ini.appearance.preset);
+            theme::apply_to_ui(&ui, mode, preset);
+            if let Err(error) = st.save_export_ini() {
+                eprintln!("Could not save appearance: {error}");
+            }
+        }
+    });
+    ui.global::<AppearanceAdapter>().on_preset_changed({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move |index| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let preset = theme::preset_from_index(index);
+            let mut st = state.lock().expect("state lock");
+            st.export_ini.appearance.preset = preset.id.to_string();
+            let mode = theme::ThemeMode::parse(&st.export_ini.appearance.mode)
+                .unwrap_or(theme::DEFAULT_MODE);
+            theme::apply_to_ui(&ui, mode, preset);
+            if let Err(error) = st.save_export_ini() {
+                eprintln!("Could not save appearance: {error}");
+            }
+        }
+    });
 }
 
 fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {

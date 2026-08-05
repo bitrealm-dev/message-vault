@@ -11,7 +11,7 @@ pub use config::{
     FormatConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,
     SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
 };
-pub use export_ini::{ExportIniState, FormatSection, VaultSection};
+pub use export_ini::{AppearanceSection, ExportIniState, FormatSection, VaultSection};
 pub use exporters::{
     APPLE_PLATFORMS, ATTACHMENT_MEDIA, ApplePlatform, AttachmentMedia, ContactsKind, EXPORTERS,
     Exporter, Form, MAX_RESOLUTIONS, WHATSAPP_PLATFORMS, WhatsappPlatform, contacts_kind_from_path,

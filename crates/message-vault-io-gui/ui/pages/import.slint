@@ -5,6 +5,7 @@ import {
     AnchoredScrollPage, FormMetrics, PanelTabBar, StackedFieldLabel
 } from "../widgets.slint";
 import { CompactComboBox } from "../compact-combo-box.slint";
+import { Theme } from "../theme.slint";
 import { LogPanel } from "log-panel.slint";
 import { LogAdapter } from "log.slint";
 
@@ -67,7 +68,7 @@ export component ImportPage inherits VerticalLayout {
         Text {
             text: "Select your messages.";
             font-size: 12px;
-            color: #555555;
+            color: Theme.muted;
             wrap: word-wrap;
             vertical-stretch: 0;
         }
@@ -100,7 +101,7 @@ export component ImportPage inherits VerticalLayout {
                         Text {
                             text: "Need help?";
                             font-size: 12px;
-                            color: #1d4ed8;
+                            color: Theme.link;
                             vertical-alignment: center;
                         }
                     }
