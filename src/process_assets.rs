@@ -909,8 +909,14 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, account_id, chat_identifier, conversation_type, source_file)
-             VALUES (1, 'acc', '+1', 'individual', 't')",
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ('acc', '+1', '+1', 'phone', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (id, account_id, chat_handle_id, service, conversation_type, source_file)
+             VALUES (1, 'acc', 1, NULL, 'individual', 't')",
             [],
         )
         .unwrap();

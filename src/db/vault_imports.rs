@@ -208,6 +208,7 @@ pub struct TopAttachment {
     pub size_bytes: i64,
     pub conversation_id: i64,
     pub conversation_title: Option<String>,
+    /// Raw text of the conversation's chat handle (via `handles`).
     pub chat_identifier: String,
 }
 
@@ -226,10 +227,11 @@ pub fn top_attachments_by_size(
                COALESCE(a.size_bytes, 0),
                c.id,
                c.group_title,
-               c.chat_identifier
+               h.raw
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         JOIN conversations c ON c.id = m.conversation_id
+        JOIN handles h ON h.id = c.chat_handle_id
         WHERE m.account_id = ?1
           AND COALESCE(a.size_bytes, 0) > 0
         ORDER BY a.size_bytes DESC, a.id DESC
