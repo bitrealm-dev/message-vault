@@ -11,6 +11,7 @@ use message_ir::{
     ConversationMeta,
     ConversationStats,
     ExportMeta,
+    HandleType,
     IrConversationType,
     IrDirection,
     IrMessage,
@@ -216,10 +217,13 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
     }
     if let Some(digits) = sanitize_number(peer) {
         let e164 = to_e164(&digits);
-        let name = book.lookup_name_by_phone(&digits).unwrap_or("").to_string();
+        let name = book
+            .lookup_name_by_handle(&e164, HandleType::Phone)
+            .unwrap_or("")
+            .to_string();
         return (e164, name, false);
     }
-    if let Some(e164) = book.lookup_e164_by_name(peer) {
+    if let Some((e164, _)) = book.lookup_handle_by_name(peer) {
         return (e164, peer.to_string(), false);
     }
     // Name-only chat id — not fatal; vault may struggle later.
@@ -267,7 +271,9 @@ fn resolve_sender(
     let display = if !contact_name.is_empty() {
         contact_name.to_string()
     } else if let Some(digits) = sanitize_number(&row.sender) {
-        book.lookup_name_by_phone(&digits).unwrap_or("").to_string()
+        book.lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
+            .unwrap_or("")
+            .to_string()
     } else if !is_me(&row.sender) {
         row.sender.clone()
     } else {
@@ -312,7 +318,7 @@ fn pending_to_document(
         vec![IrParticipant {
             handle: chat_id.to_string(),
             display_name: contact_name,
-            handle_type: None,
+            handle_type: Some(HandleType::Phone),
         }]
     };
 
