@@ -6,6 +6,7 @@ use message_csv::DateRange;
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
     ConversationDocument,
+    HandleType,
 };
 use message_ir_format::{
     ExportTransforms,
@@ -51,7 +52,8 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
     for document in documents {
         for participant in &mut document.conversation.participants {
             let current = participant.display_name.as_deref().unwrap_or("");
-            if let Some(name) = book.enrich_display_name(&participant.handle, current) {
+            if let Some(name) = book.enrich_display_name(&participant.handle, HandleType::Phone, current)
+            {
                 participant.display_name = Some(name);
             }
         }
@@ -60,7 +62,7 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
                 continue;
             };
             let current = message.sender_display_name.as_deref().unwrap_or("");
-            if let Some(name) = book.enrich_display_name(handle, current) {
+            if let Some(name) = book.enrich_display_name(handle, HandleType::Phone, current) {
                 message.sender_display_name = Some(name);
             }
         }
