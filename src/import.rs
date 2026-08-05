@@ -122,6 +122,8 @@ pub struct ImportStats {
     pub messages_deduped: u64,
     pub messages_appended: u64,
     pub mode: String,
+    /// Flagged phone handles (ambiguous; review note set) inserted by this import.
+    pub phones_needing_review: u64,
 }
 
 impl ImportStats {
@@ -132,6 +134,7 @@ impl ImportStats {
         self.attachments += other.attachments;
         self.tapbacks += other.tapbacks;
         self.messages_deduped += other.messages_deduped;
+        self.phones_needing_review += other.phones_needing_review;
     }
 }
 
@@ -368,6 +371,7 @@ pub fn import_jsonl_files_on_conn(
         contact_handles: contact_stats.phones,
         contact_label_links: contact_stats.labels,
         contacts_skipped: contact_stats.skipped,
+        phones_needing_review: contact_stats.phones_needing_review,
         mode: opts.mode.as_str().to_string(),
         ..Default::default()
     };
@@ -559,18 +563,26 @@ fn prepare_attachments(
     Ok(prepared)
 }
 
-/// Canonical form of a handle for identity matching, per type.
+/// Canonical form of a handle for identity matching, per type, plus a
+/// human-readable note when the canonical form is ambiguous (guarded policy).
 ///
-/// Phone: sanitized digits formatted as E.164 (matches the address-book
-/// normalization in `db/contacts.rs`). Email: lowercased. Username/Other:
-/// verbatim (trimmed).
-fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
+/// Phone: E.164 when the raw is unambiguous (`+`-prefixed, or a US national
+/// number); otherwise digits-as-is with a review note — a trunk-zero
+/// `020 7946 0000` becomes `02079460000` flagged, never `+02079460000`.
+/// Email: lowercased. Username/Other: verbatim (trimmed).
+fn normalize_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
     match handle_type {
-        HandleType::Phone => phone::sanitize_number(raw)
-            .map(|digits| phone::to_e164(&digits))
-            .unwrap_or_else(|| raw.trim().to_string()),
-        HandleType::Email => raw.trim().to_lowercase(),
-        HandleType::Username | HandleType::Other => raw.trim().to_string(),
+        HandleType::Phone => {
+            let guarded = phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw));
+            if guarded.normalized.is_empty() {
+                // No usable digits: fall back to the raw, unflagged.
+                (raw.trim().to_string(), None)
+            } else {
+                (guarded.normalized, guarded.note)
+            }
+        }
+        HandleType::Email => (raw.trim().to_lowercase(), None),
+        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
     }
 }
 
@@ -594,26 +606,27 @@ fn infer_handle_type(handle: &str) -> HandleType {
     HandleType::Other
 }
 
-/// Resolve or create a handle row. Returns the handle id.
+/// Resolve or create a handle row. Returns the handle id and whether this call
+/// newly inserted a flagged (review-note) row.
 fn resolve_handle(
     conn: &Connection,
     account_id: &str,
     raw: &str,
     handle_type: HandleType,
     service: Option<&str>,
-) -> Result<i64> {
-    let normalized = normalize_handle(raw, handle_type);
-    conn.execute(
-        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![account_id, raw, normalized, handle_type.as_str(), service],
+) -> Result<(i64, bool)> {
+    let (normalized, note) = normalize_handle(raw, handle_type);
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![account_id, raw, normalized, note, handle_type.as_str(), service],
     )?;
     let id: i64 = conn.query_row(
         "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
         params![account_id, normalized, handle_type.as_str()],
         |row| row.get(0),
     )?;
-    Ok(id)
+    Ok((id, inserted > 0 && note.is_some()))
 }
 
 /// Contact linked to a handle via `contact_handles`, if any.
@@ -902,13 +915,16 @@ fn import_conversation_to_staging(
 
     // Conversation identity: the chat handle, typed from its shape (Phone for
     // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let chat_handle_id = resolve_handle(
+    let (chat_handle_id, flagged) = resolve_handle(
         tx,
         &stmts.account_id,
         &chat_identifier,
         infer_handle_type(&chat_identifier),
         service.as_deref(),
     )?;
+    if flagged {
+        stats.phones_needing_review += 1;
+    }
 
     stmts.conv.execute(params![
         stmts.account_id,
@@ -925,13 +941,16 @@ fn import_conversation_to_staging(
     for (handle, name_hint, handle_type) in kept_participants {
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let handle_id = resolve_handle(
+        let (handle_id, flagged) = resolve_handle(
             tx,
             &stmts.account_id,
             &handle,
             handle_type,
             service.as_deref(),
         )?;
+        if flagged {
+            stats.phones_needing_review += 1;
+        }
         let contact_id = contact_id_for_handle(tx, &stmts.account_id, handle_id)?;
         stmts
             .part
@@ -957,13 +976,17 @@ fn import_conversation_to_staging(
             let handle_type = msg
                 .sender_handle_type
                 .unwrap_or_else(|| infer_handle_type(sender));
-            Some(resolve_handle(
+            let (handle_id, flagged) = resolve_handle(
                 tx,
                 &stmts.account_id,
                 sender,
                 handle_type,
                 msg.service.as_deref(),
-            )?)
+            )?;
+            if flagged {
+                stats.phones_needing_review += 1;
+            }
+            Some(handle_id)
         } else {
             None
         };
@@ -1036,13 +1059,17 @@ fn import_conversation_to_staging(
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
             {
-                Some(resolve_handle(
+                let (handle_id, flagged) = resolve_handle(
                     tx,
                     &stmts.account_id,
                     sender,
                     infer_handle_type(sender),
                     msg.service.as_deref(),
-                )?)
+                )?;
+                if flagged {
+                    stats.phones_needing_review += 1;
+                }
+                Some(handle_id)
             } else {
                 None
             };
@@ -1704,6 +1731,60 @@ mod tests {
             crate::db::vault_imports::top_attachments_by_size(&conn, TEST_ACCOUNT, 5)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn trunk_zero_phone_imports_digits_with_review_note() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let path = write_jsonl(
+            tmp.path(),
+            "trunk-zero.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"020 7946 0000","conversation_type":"individual","group_title":null,"participants":[{"handle":"020 7946 0000","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-trunk-zero","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"020 7946 0000","sender_display_name":null,"subject":null,"text":"hello","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+
+        let mut conn = Connection::open(&db).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+
+        let stats = import_jsonl_files_on_conn(
+            &mut conn,
+            &[path],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "imessage",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+            ImportSchemaMode::AssumeReady,
+        )
+        .unwrap();
+        assert_eq!(stats.phones_needing_review, 1);
+
+        // Guarded policy: normalized mirrors the digits (never +02079460000)
+        // and the handles row carries a review note.
+        let (normalized, note): (String, Option<String>) = conn
+            .query_row(
+                "SELECT normalized, normalized_note FROM handles
+                 WHERE account_id = ?1 AND handle_type = 'phone'",
+                params![TEST_ACCOUNT],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(normalized, "02079460000");
+        assert!(
+            note.as_deref().is_some(),
+            "trunk-zero import must carry a review note"
         );
     }
 

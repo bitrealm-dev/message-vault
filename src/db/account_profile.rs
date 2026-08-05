@@ -63,17 +63,25 @@ pub fn ensure_account_row(conn: &Connection, account_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Canonical form of a handle for identity matching, per type.
+/// Canonical form of a handle for identity matching, per type, plus a
+/// human-readable note when the canonical form is ambiguous (guarded policy).
 ///
 /// Mirrors `import.rs::normalize_handle` (and the address-book normalization in
-/// `db/contacts.rs`): phones become E.164, emails lowercase, others verbatim.
-fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
+/// `db/contacts.rs`): phones become E.164 when unambiguous, else digits-as-is
+/// with a note; emails lowercase; others verbatim.
+fn normalize_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
     match handle_type {
-        HandleType::Phone => phone::sanitize_number(raw)
-            .map(|digits| phone::to_e164(&digits))
-            .unwrap_or_else(|| raw.trim().to_string()),
-        HandleType::Email => raw.trim().to_lowercase(),
-        HandleType::Username | HandleType::Other => raw.trim().to_string(),
+        HandleType::Phone => {
+            let guarded = phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw));
+            if guarded.normalized.is_empty() {
+                // No usable digits: fall back to the raw, unflagged.
+                (raw.trim().to_string(), None)
+            } else {
+                (guarded.normalized, guarded.note)
+            }
+        }
+        HandleType::Email => (raw.trim().to_lowercase(), None),
+        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
     }
 }
 
@@ -85,11 +93,11 @@ pub fn link_account_handle(
     raw: &str,
     handle_type: HandleType,
 ) -> Result<i64> {
-    let normalized = normalize_handle(raw, handle_type);
+    let (normalized, note) = normalize_handle(raw, handle_type);
     conn.execute(
-        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, NULL)",
-        params![account_id, raw, normalized, handle_type.as_str()],
+        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+        params![account_id, raw, normalized, note, handle_type.as_str()],
     )?;
     let handle_id: i64 = conn.query_row(
         "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",

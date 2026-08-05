@@ -341,6 +341,7 @@ mod tests {
                 "account_id",
                 "raw",
                 "normalized",
+                "normalized_note",
                 "handle_type",
                 "service"
             ]

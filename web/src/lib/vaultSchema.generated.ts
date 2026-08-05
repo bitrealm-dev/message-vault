@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     raw TEXT NOT NULL,
     normalized TEXT NOT NULL,
+    normalized_note TEXT,
     handle_type TEXT NOT NULL,
     service TEXT,
     UNIQUE(account_id, normalized, handle_type)

@@ -69,11 +69,18 @@ never used for login. Import API tokens live in `account_api_tokens`.
 ### `handles`
 
 One row = one identity per account: `raw` (as the source wrote it),
-`normalized`, `handle_type` (`phone` / `email` / `username` / `other`), and an
-optional `service`. Handles are deduplicated per account by
-`(account_id, normalized, handle_type)`, so one phone number is a single row
-whether it appeared in a chat, a contact, or the account profile. Everywhere
-else in the schema, identities are referenced by `handle_id` — never by text.
+`normalized`, `handle_type` (`phone` / `email` / `username` / `other`), an
+optional `service`, and an optional `normalized_note`. Handles are deduplicated
+per account by `(account_id, normalized, handle_type)`, so one phone number is
+a single row whether it appeared in a chat, a contact, or the account profile.
+Everywhere else in the schema, identities are referenced by `handle_id` —
+never by text.
+
+`normalized_note` is the needs-review flag: phone numbers are written as
+E.164 only when unambiguous. Ambiguous values (e.g. a trunk-zero national
+number like `020 7946 0000` without a country code) keep their digits as
+`normalized` — never a fabricated `+0…` — and carry a human-readable reason
+in `normalized_note` so the vault UI can surface them for review.
 
 ### `contacts` / `contact_handles`
 

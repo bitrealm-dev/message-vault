@@ -246,6 +246,12 @@ fn main() -> Result<()> {
             println!("  assets copied: {}", stats.import.assets_copied);
             println!("  assets deduped:{}", stats.import.assets_deduped);
             println!("  assets missing:{}", stats.import.assets_missing);
+            if stats.import.phones_needing_review > 0 {
+                println!(
+                    "  phones needing review: {} (ambiguous numbers — fix them in the vault)",
+                    stats.import.phones_needing_review
+                );
+            }
             if let Some(d) = stats.dedupe {
                 println!("Cross-source dedupe");
                 println!("  keys filled:   {}", d.keys_filled);

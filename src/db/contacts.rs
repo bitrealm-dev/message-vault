@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use contacts::{
     ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows, strip_tags,
 };
-use phone::sanitize_number;
 use rusqlite::{Connection, OptionalExtension, params};
 
 #[derive(Debug, Default)]
@@ -15,11 +14,14 @@ pub struct ContactLoadStats {
     pub labels: u64,
     pub emails_restored: u64,
     pub skipped: bool,
+    /// Phone handles written with a review note (ambiguous normalized form).
+    pub phones_needing_review: u64,
 }
 
 #[derive(Debug)]
 struct ContactDraft {
-    phones: Vec<String>,
+    /// (normalized handle, review note when the value is ambiguous).
+    phones: Vec<(String, Option<String>)>,
     preferred_name: Option<String>,
     labels: Vec<String>,
 }
@@ -39,26 +41,35 @@ fn is_email_handle(handle: &str) -> bool {
     handle.contains('@')
 }
 
-/// Raw phone → E.164 when unambiguous enough for the shared `phone` crate.
-fn to_e164(num: &str) -> Option<String> {
+/// Raw phone → (normalized, review note) under the guarded policy: E.164 when
+/// the raw is unambiguous (`+`-prefixed, or a US national number), else
+/// digits-as-is plus a reason — never a fabricated `+0…` value.
+fn normalize_phone_guarded(num: &str) -> Option<(String, Option<String>)> {
     let trimmed = num.trim();
     if trimmed.is_empty() || trimmed.contains('@') {
         return None;
     }
-    sanitize_number(trimmed).map(|digits| phone::to_e164(&digits))
+    // No usable digits (e.g. a bare `+`): not a phone at all.
+    if phone::sanitize_number(trimmed).is_none() {
+        return None;
+    }
+    let guarded = phone::normalize_guarded(trimmed, phone::PhoneRegion::for_raw(trimmed));
+    Some((guarded.normalized, guarded.note))
 }
 
-fn phone_handles_only(handles: &[String]) -> Vec<String> {
+/// Phone handles from an address-book row as (normalized, review note) pairs;
+/// emails are dropped.
+fn phone_handles_only(handles: &[String]) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     for h in handles {
         if is_email_handle(h) {
             continue;
         }
-        let Some(e164) = to_e164(h) else {
+        let Some((normalized, note)) = normalize_phone_guarded(h) else {
             continue;
         };
-        if !out.iter().any(|p| p == &e164) {
-            out.push(e164);
+        if !out.iter().any(|(p, _)| p == &normalized) {
+            out.push((normalized, note));
         }
     }
     out
@@ -409,17 +420,16 @@ fn insert_contact_drafts(
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
 
-        for phone in &draft.phones {
-            // Ensure handle exists
-            let normalized = phone::to_e164(&sanitize_number(phone).unwrap_or_default());
+        for (phone, note) in &draft.phones {
+            // Ensure handle exists; the note flags ambiguous values for review.
             tx.execute(
-                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type)
-                 VALUES (?1, ?2, ?3, 'phone')",
-                params![account_id, phone, normalized],
+                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type)
+                 VALUES (?1, ?2, ?3, ?4, 'phone')",
+                params![account_id, phone, phone, note],
             )?;
             let handle_id: i64 = tx.query_row(
                 "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = 'phone'",
-                params![account_id, normalized],
+                params![account_id, phone],
                 |row| row.get(0),
             )?;
 
@@ -430,6 +440,9 @@ fn insert_contact_drafts(
                 params![account_id, handle_id, contact_id],
             )?;
             stats.phones += 1;
+            if note.is_some() {
+                stats.phones_needing_review += 1;
+            }
         }
 
         // Labels unchanged
@@ -529,8 +542,64 @@ mod tests {
                 "a@b.com".into(),
                 "+15559876543".into()
             ]),
-            vec!["+15551234567", "+15559876543"]
+            vec![
+                ("+15551234567".to_string(), None),
+                ("+15559876543".to_string(), None)
+            ]
         );
+    }
+
+    #[test]
+    fn trunk_zero_phone_is_flagged_with_note() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-trunk-zero-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("vault.db");
+        let vcf_path = dir.join("contacts.vcf");
+        std::fs::write(
+            &vcf_path,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:UK Peer\nN:Peer;UK;;;\nTEL:020 7946 0000\nEND:VCARD\n",
+        )
+        .unwrap();
+
+        let mut conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 't', 0, 'T')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        let stats =
+            load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
+        assert_eq!(stats.phones, 1);
+        assert_eq!(stats.phones_needing_review, 1);
+
+        // Guarded policy: normalized mirrors the digits (no fabricated
+        // +02079460000) and the handles row carries a review note.
+        let (normalized, note): (String, Option<String>) = conn
+            .query_row(
+                "SELECT normalized, normalized_note FROM handles
+                 WHERE account_id = ?1 AND handle_type = 'phone'",
+                params![TEST_ACCOUNT_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(normalized, "02079460000");
+        assert!(
+            note.as_deref().is_some(),
+            "trunk-zero phone must carry a review note"
+        );
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000042";
