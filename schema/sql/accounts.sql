@@ -18,10 +18,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_account_emails_one_primary
     ON account_emails(account_id)
     WHERE is_primary = 1;
 
-CREATE TABLE IF NOT EXISTS account_phones (
+CREATE TABLE IF NOT EXISTS account_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    phone TEXT NOT NULL,
-    PRIMARY KEY (account_id, phone)
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS account_api_tokens (
