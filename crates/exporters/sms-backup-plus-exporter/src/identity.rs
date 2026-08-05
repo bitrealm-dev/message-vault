@@ -9,7 +9,6 @@
 //! create two identities.
 
 use chrono::{DateTime, Local, TimeZone, Utc};
-use phone::to_e164;
 
 use crate::types::ParsedMessage;
 
@@ -23,7 +22,10 @@ pub(crate) fn chat_id_for(msg: &ParsedMessage) -> String {
     } else if msg.chat_key.is_empty() {
         "unknown".to_string()
     } else {
-        to_e164(&msg.chat_key)
+        // Guarded policy on the raw chat key: E.164 only when unambiguous,
+        // so a trunk-zero value stays digits-as-is instead of being
+        // fabricated into `+02079460000`.
+        phone::normalize_guarded(&msg.chat_key, phone::PhoneRegion::for_raw(&msg.chat_key)).normalized
     }
 }
 

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
-use phone::{sanitize_number, to_e164};
+use phone::sanitize_number;
 use quick_xml::{Reader, XmlVersion, events::Event};
 use regex::Regex;
 use serde::Serialize;
@@ -527,7 +527,7 @@ fn parse_mms(
             "Group: {}",
             peers
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -536,7 +536,7 @@ fn parse_mms(
             "Group: {}, and {} others",
             peers[..4]
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
                 .collect::<Vec<_>>()
                 .join(", "),
             peers.len() - 4
@@ -665,7 +665,17 @@ pub fn infer_owner_phones(path: &Path) -> Result<Vec<String>> {
                             let raw = get(&a, "address");
                             if !raw.eq_ignore_ascii_case(INSERT_ADDRESS_TOKEN) {
                                 if let Some(digits) = sanitize_number(raw).filter(|d| d != "0") {
-                                    *counts.entry(to_e164(&digits)).or_default() += 1;
+                                    // Guarded (US-digit form, matching
+                                    // OwnerPhoneSet): never a fabricated `+0…`.
+                                    *counts
+                                        .entry(
+                                            phone::normalize_guarded(
+                                                &digits,
+                                                phone::PhoneRegion::Usa,
+                                            )
+                                            .normalized,
+                                        )
+                                        .or_default() += 1;
                                 }
                             }
                         }

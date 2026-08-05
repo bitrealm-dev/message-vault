@@ -20,7 +20,7 @@ use message_ir::{
 use anyhow::{Result, bail};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
-use phone::{OwnerPhoneSet, to_e164};
+use phone::OwnerPhoneSet;
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file,
 };
@@ -166,7 +166,13 @@ fn stage_attachments(
 fn chat_id(record: &Record) -> String {
     match record.conversation_kind {
         ConversationKind::Group => format!("chat-{}", record.chat_key),
-        ConversationKind::Individual => to_e164(&record.chat_key),
+        // Guarded policy on the raw address: E.164 only when unambiguous, so
+        // a trunk-zero `020 7946 0000` stays digits-as-is instead of being
+        // fabricated into `+02079460000`.
+        ConversationKind::Individual => {
+            let guarded = phone::normalize_guarded(&record.chat_key, phone::PhoneRegion::for_raw(&record.chat_key));
+            guarded.normalized
+        }
     }
 }
 
@@ -179,7 +185,10 @@ fn add_record(
     let peers = record
         .participant_digits
         .iter()
-        .map(|(d, _)| to_e164(d))
+        .map(|(d, _)| {
+            let guarded = phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d));
+            guarded.normalized
+        })
         .filter(|d| !d.is_empty())
         .collect();
     let conversation = conversations
@@ -241,7 +250,7 @@ fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String
                 .filter(|s| !s.is_empty()),
         ) {
             names
-                .entry(to_e164(digits))
+                .entry(phone::normalize_guarded(digits, phone::PhoneRegion::for_raw(digits)).normalized)
                 .or_insert_with(|| name.to_string());
         }
         if conversation.kind == ConversationKind::Individual {
@@ -294,7 +303,9 @@ fn to_document(
             owner.clone()
         } else {
             (
-                message.sender_digits.as_deref().map(to_e164),
+                message.sender_digits.as_deref().map(|d| {
+                    phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized
+                }),
                 message.sender_display_name.clone(),
             )
         };
@@ -405,8 +416,8 @@ pub fn read_sbr_documents(
         (HashSet::new(), None)
     } else {
         let owners = OwnerPhoneSet::new(&owner_phones)?;
-        let handle = to_e164(&owners.primary_digits);
-        (owners.all_digits, Some(handle))
+        let guarded = phone::normalize_guarded(&owners.primary_digits, phone::PhoneRegion::Usa);
+        (owners.all_digits, Some(guarded.normalized))
     };
     if options.copy_attachments {
         if let Some(dir) = options.attachments_dir {

@@ -28,7 +28,7 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::{sanitize_number, to_e164};
+use phone::sanitize_number;
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -341,8 +341,12 @@ fn collect_peer_info(
         // must never be reduced to a phone number.
         if sid.contains('@') {
             handles.insert(sid.to_string());
-        } else if let Some(digits) = sanitize_number(sid) {
-            handles.insert(to_e164(&digits));
+        } else if sanitize_number(sid).is_some() {
+            // Guarded policy on the raw id: E.164 when unambiguous (keeps the
+            // `+` for +-prefixed values), else digits-as-is — never `+0…`.
+            handles.insert(
+                phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized,
+            );
         }
         for phone in phones_in_text(&row.chat_session) {
             handles.insert(phone);
@@ -361,8 +365,10 @@ fn collect_peer_info(
                 handles.insert(label.to_string());
                 continue;
             }
-            if let Some(digits) = sanitize_number(label) {
-                handles.insert(to_e164(&digits));
+            if sanitize_number(label).is_some() {
+                handles.insert(
+                    phone::normalize_guarded(label, phone::PhoneRegion::for_raw(label)).normalized,
+                );
                 continue;
             }
             if let Some((e164, _)) = book.lookup_handle_by_name(label) {
@@ -457,8 +463,12 @@ fn phones_in_text(text: &str) -> Vec<String> {
                 i += 1;
             }
             if i > start + 1 {
-                if let Some(digits) = sanitize_number(&text[start..i]) {
-                    let e164 = to_e164(&digits);
+                if sanitize_number(&text[start..i]).is_some() {
+                    let e164 = phone::normalize_guarded(
+                        &text[start..i],
+                        phone::PhoneRegion::for_raw(&text[start..i]),
+                    )
+                    .normalized;
                     if !out.contains(&e164) {
                         out.push(e164);
                     }
@@ -488,9 +498,13 @@ fn resolve_chat_identifier(
 
     if let Some(handle) = peer_handles.first() {
         let contact_name = if let Some(digits) = sanitize_number(handle) {
-            book.lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
-                .unwrap_or("")
-                .to_string()
+            // The book keys entries by its own US-digit form.
+            book.lookup_name_by_handle(
+                &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+                HandleType::Phone,
+            )
+            .unwrap_or("")
+            .to_string()
         } else {
             String::new()
         };
@@ -512,12 +526,17 @@ fn resolve_chat_identifier(
         return (session.to_string(), String::new(), false);
     }
     if let Some(digits) = sanitize_number(session) {
-        let e164 = to_e164(&digits);
+        // Guarded policy on the raw session: E.164 when unambiguous (keeps
+        // the `+`), else digits-as-is — never `+0…`. The book lookup uses
+        // its own US-digit form.
+        let handle =
+            phone::normalize_guarded(session, phone::PhoneRegion::for_raw(session)).normalized;
+        let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
         let name = book
-            .lookup_name_by_handle(&e164, HandleType::Phone)
+            .lookup_name_by_handle(&book_form, HandleType::Phone)
             .unwrap_or("")
             .to_string();
-        return (e164, name, false);
+        return (handle, name, false);
     }
     if let Some((e164, _)) = book.lookup_handle_by_name(session) {
         return (e164, session.to_string(), false);
@@ -542,8 +561,9 @@ fn resolve_sender(
         // must not be reduced to a phone number.
         let handle = if row.sender_id.contains('@') {
             row.sender_id.trim().to_string()
-        } else if let Some(digits) = sanitize_number(&row.sender_id) {
-            to_e164(&digits)
+        } else if sanitize_number(&row.sender_id).is_some() {
+            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
+                .normalized
         } else {
             String::new()
         };
@@ -553,18 +573,15 @@ fn resolve_sender(
     let mut handle = String::new();
     if row.sender_id.contains('@') {
         handle = row.sender_id.trim().to_string();
-    } else if let Some(digits) = sanitize_number(&row.sender_id) {
-        handle = to_e164(&digits);
+    } else if sanitize_number(&row.sender_id).is_some() {
+        // Guarded policy on the raw id: E.164 when unambiguous (keeps the
+        // `+`), else digits-as-is — never `+0…`.
+        handle = phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
+            .normalized;
     } else if !chat_id.contains('@')
         && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
     {
-        handle = if chat_id.starts_with('+') {
-            chat_id.to_string()
-        } else {
-            sanitize_number(chat_id)
-                .map(|d| to_e164(&d))
-                .unwrap_or_default()
-        };
+        handle = phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized;
     } else if !row.sender_name.is_empty() {
         if let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name) {
             handle = e164;
@@ -574,8 +591,12 @@ fn resolve_sender(
     let mut display = row.sender_name.trim().to_string();
     if display.is_empty() {
         if let Some(digits) = sanitize_number(&handle) {
+            // The book keys entries by its own US-digit form.
             display = book
-                .lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
+                .lookup_name_by_handle(
+                    &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+                    HandleType::Phone,
+                )
                 .unwrap_or("")
                 .to_string();
         }

@@ -1,6 +1,6 @@
 //! WhatsApp JID helpers.
 
-use phone::{sanitize_number, to_e164};
+use phone::{PhoneRegion, normalize_guarded, sanitize_number};
 
 /// True for `@g.us` group JIDs.
 pub(crate) fn is_group_jid(jid: &str) -> bool {
@@ -10,7 +10,7 @@ pub(crate) fn is_group_jid(jid: &str) -> bool {
 /// Map a user JID / phone-like sender to E.164 when possible.
 ///
 /// - `15551234567@s.whatsapp.net` → `+15551234567`
-/// - bare digits / `+E164` → normalized via [`sanitize_number`] / [`to_e164`]
+/// - bare digits / `+E164` → guarded normalization (E.164 when unambiguous)
 /// - otherwise `None`
 pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
     let jid = jid.trim();
@@ -25,7 +25,9 @@ pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
     if jid.contains("@lid") {
         return None;
     }
-    sanitize_number(local).map(|digits| to_e164(&digits))
+    // JID locals are bare digits (no `+`), so the US region applies; guarded
+    // so a non-NANP digit string is never fabricated into `+0…`.
+    sanitize_number(local).map(|digits| normalize_guarded(&digits, PhoneRegion::Usa).normalized)
 }
 
 /// Chat identifier for CSV: E.164 for 1:1 user JIDs; otherwise the raw JID.

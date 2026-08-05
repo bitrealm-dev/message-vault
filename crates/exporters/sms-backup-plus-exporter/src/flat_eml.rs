@@ -4,7 +4,7 @@ use crate::assets::extract_attachments;
 use crate::types::ParsedMessage;
 use anyhow::Result;
 use mailparse::{MailHeaderMap, ParsedMail};
-use phone::{sanitize_number, to_e164};
+use phone::sanitize_number;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -191,7 +191,7 @@ fn group_chat_id(others: &[String]) -> (String, String) {
             "Group: {}",
             sorted
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -200,7 +200,7 @@ fn group_chat_id(others: &[String]) -> (String, String) {
             "Group: {}, and {} others",
             sorted[..4]
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
                 .collect::<Vec<_>>()
                 .join(", "),
             sorted.len() - 4

@@ -25,7 +25,7 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::{sanitize_number, to_e164};
+use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -216,12 +216,17 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
         return ("unknown".to_string(), String::new(), true);
     }
     if let Some(digits) = sanitize_number(peer) {
-        let e164 = to_e164(&digits);
+        // Guarded policy on the raw peer: E.164 when unambiguous (keeps the
+        // `+` for +-prefixed values), else digits-as-is — never `+0…`.
+        let handle = phone::normalize_guarded(peer, phone::PhoneRegion::for_raw(peer)).normalized;
+        // The contacts book keys entries by its own US-digit form; look up
+        // with that form so +-prefixed raws still resolve names.
+        let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
         let name = book
-            .lookup_name_by_handle(&e164, HandleType::Phone)
+            .lookup_name_by_handle(&book_form, HandleType::Phone)
             .unwrap_or("")
             .to_string();
-        return (e164, name, false);
+        return (handle, name, false);
     }
     if let Some((e164, _)) = book.lookup_handle_by_name(peer) {
         return (e164, peer.to_string(), false);
@@ -256,14 +261,16 @@ fn resolve_sender(
     // Prefer phone on chat_id when it looks like E.164.
     let handle = if chat_id.starts_with('+') || sanitize_number(chat_id).is_some() {
         if chat_id.starts_with('+') {
-            chat_id.to_string()
+            // Guarded: only unambiguous +-prefixed values pass through; a
+            // fabricated +0… stays digits-as-is so the vault can flag it.
+            phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized
         } else {
             sanitize_number(chat_id)
-                .map(|d| to_e164(&d))
+                .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
                 .unwrap_or_default()
         }
     } else if let Some(digits) = sanitize_number(&row.sender) {
-        to_e164(&digits)
+        phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized
     } else {
         String::new()
     };
@@ -271,9 +278,12 @@ fn resolve_sender(
     let display = if !contact_name.is_empty() {
         contact_name.to_string()
     } else if let Some(digits) = sanitize_number(&row.sender) {
-        book.lookup_name_by_handle(&to_e164(&digits), HandleType::Phone)
-            .unwrap_or("")
-            .to_string()
+        book.lookup_name_by_handle(
+            &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+            HandleType::Phone,
+        )
+        .unwrap_or("")
+        .to_string()
     } else if !is_me(&row.sender) {
         row.sender.clone()
     } else {

@@ -105,7 +105,9 @@ pub fn normalize_certain(raw: &str, region: PhoneRegion) -> Option<String> {
             if !raw.contains('+') {
                 return None;
             }
-            if (8..=15).contains(&digits.len()) {
+            // E.164 country codes never start with 0 (0 is the trunk prefix),
+            // so a `+020…` value is fabricated, not certain.
+            if (8..=15).contains(&digits.len()) && !digits.starts_with('0') {
                 Some(format!("+{digits}"))
             } else {
                 None
@@ -135,6 +137,9 @@ pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
         PhoneRegion::International => {
             if !raw.contains('+') {
                 "international mode requires a leading +".into()
+            } else if digits.starts_with('0') {
+                // Fixed string so validate log groups all country-code-0 failures.
+                "international country code cannot start with 0".into()
             } else if !(8..=15).contains(&digits.len()) {
                 "international needs 8–15 digits after +".into()
             } else {
@@ -189,7 +194,10 @@ impl OwnerHandleSet {
                 HandleType::Phone => {
                     let d = sanitize_number(raw)
                         .with_context(|| format!("owner phone has no usable digits: {raw}"))?;
-                    to_e164(&d)
+                    // Guarded policy on the sanitized digits (same shape both
+                    // sides), so matching stays consistent and trunk-zero
+                    // values are never fabricated into `+0…`.
+                    normalize_guarded(&d, PhoneRegion::Usa).normalized
                 }
                 HandleType::Email => raw.trim().to_lowercase(),
                 HandleType::Username | HandleType::Other => raw.trim().to_string(),
@@ -205,7 +213,7 @@ impl OwnerHandleSet {
                 let Some(d) = sanitize_number(raw) else {
                     return false;
                 };
-                to_e164(&d)
+                normalize_guarded(&d, PhoneRegion::Usa).normalized
             }
             HandleType::Email => raw.trim().to_lowercase(),
             HandleType::Username | HandleType::Other => raw.trim().to_string(),
@@ -331,6 +339,22 @@ mod tests {
     }
 
     #[test]
+    fn guarded_rejects_fabricated_plus_zero() {
+        // E.164 country codes never start with 0: `+020…` must not be trusted
+        // as certain even when it has a plausible digit count.
+        assert_eq!(
+            normalize_certain("+02079460000", PhoneRegion::International),
+            None
+        );
+        let g = normalize_guarded("+02079460000", PhoneRegion::International);
+        assert_eq!(g.normalized, "02079460000");
+        assert_eq!(
+            g.note.as_deref(),
+            Some("international country code cannot start with 0")
+        );
+    }
+
+    #[test]
     fn guarded_trunk_zero_stays_digits_with_note() {
         // `020 7946 0000` (11 digits not starting with 1): never `+02079460000`.
         let g = normalize_guarded("020 7946 0000", PhoneRegion::Usa);
@@ -396,6 +420,18 @@ mod tests {
         // A phone-shaped handle is not treated as an email or username handle.
         assert!(!owners.is_owner("(555) 555-0100", HandleType::Email));
         assert!(!owners.is_owner("Person@Example.COM", HandleType::Username));
+    }
+
+    #[test]
+    fn owner_handle_set_guards_trunk_zero() {
+        let owners = OwnerHandleSet::new(&[("020 7946 0000".to_string(), HandleType::Phone)])
+            .unwrap();
+        assert!(owners.is_owner("02079460000", HandleType::Phone));
+        assert!(owners.is_owner("020 7946 0000", HandleType::Phone));
+        // The digits-as-is identity is never fabricated into +02079460000, so
+        // a +0… message handle matches through the same digit stripping.
+        assert!(owners.is_owner("+02079460000", HandleType::Phone));
+        assert!(!owners.is_owner("+02079469999", HandleType::Phone));
     }
 
     #[test]

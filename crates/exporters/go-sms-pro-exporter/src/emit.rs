@@ -29,7 +29,7 @@ use message_ir::{
     parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::{OwnerPhoneSet, to_e164};
+use phone::OwnerPhoneSet;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -98,8 +98,15 @@ fn mime_for_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
+/// Guarded normalization for digit-only values (see `phone::normalize_guarded`):
+/// E.164 when unambiguous for the US-centric crate, else digits-as-is — never
+/// a fabricated `+0…`.
+fn guarded_phone(digits: &str) -> String {
+    phone::normalize_guarded(digits, phone::PhoneRegion::Usa).normalized
+}
+
 fn chat_id_individual(digits: &str) -> String {
-    to_e164(digits)
+    guarded_phone(digits)
 }
 
 fn chat_id_group(participant_digits: &[String], owners: &OwnerPhoneSet) -> (String, String) {
@@ -117,7 +124,7 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerPhoneSet) -> (Stri
             "Group: {}",
             others
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| guarded_phone(d))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -126,7 +133,7 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerPhoneSet) -> (Stri
             "Group: {}, and {} others",
             others[..4]
                 .iter()
-                .map(|d| to_e164(d))
+                .map(|d| guarded_phone(d))
                 .collect::<Vec<_>>()
                 .join(", "),
             others.len() - 4
@@ -297,7 +304,7 @@ fn add_pdu_message(
             .participants
             .iter()
             .filter(|p| !p.is_empty() && !owners.is_owner(p))
-            .map(|d| to_e164(d))
+            .map(|d| guarded_phone(d))
             .collect();
         vec![(id, true, Some(title), peers)]
     } else {
@@ -448,7 +455,7 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
     let mut names = HashMap::new();
     for msg in &convo.messages {
         if !msg.sender_handle.is_empty() {
-            let handle = to_e164(&msg.sender_handle);
+            let handle = guarded_phone(&msg.sender_handle);
             if let Some(name) = msg
                 .sender_display_name
                 .as_deref()
@@ -539,7 +546,7 @@ fn pending_to_document(
                 if msg.sender_handle.is_empty() {
                     None
                 } else {
-                    Some(to_e164(&msg.sender_handle))
+                    Some(guarded_phone(&msg.sender_handle))
                 },
                 msg.sender_display_name.clone(),
             )
@@ -704,7 +711,7 @@ pub(crate) fn convert_export(
     }
 
     let owners = OwnerPhoneSet::new(owner_phones)?;
-    let owner_handle = to_e164(&owners.primary_digits);
+    let owner_handle = guarded_phone(&owners.primary_digits);
     let mut report = ExportReport::default();
     let mut skips = SkipDetails::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();

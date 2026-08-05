@@ -31,7 +31,7 @@ use message_ir::{
     parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::{OwnerPhoneSet, to_e164};
+use phone::OwnerPhoneSet;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -222,7 +222,7 @@ fn add_message(
     let peers: Vec<String> = msg
         .participant_digits
         .iter()
-        .map(|(d, _)| to_e164(d))
+        .map(|(d, _)| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
         .filter(|d| !d.is_empty())
         .collect();
     let convo = ensure_convo(
@@ -279,7 +279,8 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
     let mut names = HashMap::new();
     for msg in &convo.messages {
         if !msg.sender_handle.is_empty() {
-            let handle = to_e164(&msg.sender_handle);
+            let handle =
+                phone::normalize_guarded(&msg.sender_handle, phone::PhoneRegion::for_raw(&msg.sender_handle)).normalized;
             if let Some(name) = msg
                 .sender_display_name
                 .as_deref()
@@ -371,7 +372,13 @@ fn pending_to_document(
                 if msg.sender_handle.is_empty() {
                     None
                 } else {
-                    Some(to_e164(&msg.sender_handle))
+                    Some(
+                        phone::normalize_guarded(
+                            &msg.sender_handle,
+                            phone::PhoneRegion::for_raw(&msg.sender_handle),
+                        )
+                        .normalized,
+                    )
                 },
                 msg.sender_display_name.clone(),
             )
@@ -651,7 +658,8 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     log: Option<&LogSink>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
     let owners = OwnerPhoneSet::new(owner_phones)?;
-    let owner_handle = to_e164(&owners.primary_digits);
+    let guarded = phone::normalize_guarded(&owners.primary_digits, phone::PhoneRegion::Usa);
+    let owner_handle = guarded.normalized;
     let owner_emails_lc: Vec<String> = owner_emails
         .iter()
         .map(|e| e.trim().to_ascii_lowercase())
