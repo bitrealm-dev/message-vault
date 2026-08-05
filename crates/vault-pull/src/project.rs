@@ -28,6 +28,7 @@ pub fn build_document(
         .map(|p| IrParticipant {
             handle: p.handle.clone(),
             display_name: p.name_hint.clone(),
+            handle_type: None,
         })
         .collect::<Vec<_>>();
     let mut attachment_count = 0u64;
@@ -186,6 +187,9 @@ fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
         IrService::Sms => IrMessageKind::Sms,
         IrService::Rcs => IrMessageKind::Sms,
         IrService::Whatsapp => IrMessageKind::Unknown,
+        IrService::Discord | IrService::Signal | IrService::Telegram | IrService::Slack => {
+            IrMessageKind::Unknown
+        }
         IrService::Unknown => {
             if msg.attachments.is_empty() {
                 IrMessageKind::Sms
