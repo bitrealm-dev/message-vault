@@ -308,6 +308,7 @@ function toContactHandles(rows: ContactHandleRow[]): ContactHandle[] {
     raw: r.raw,
     handle_type: r.handle_type,
     service: r.service,
+    normalizedNote: r.normalized_note,
   }));
 }
 

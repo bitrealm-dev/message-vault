@@ -7,6 +7,8 @@ import { inferHandleType, type HandleType } from "@/lib/handleKind";
 export type ContactEditDraftHandle = {
   raw: string;
   handle_type: HandleType;
+  /** Review note for an ambiguous normalized value; cleared when the raw is edited. */
+  normalizedNote?: string | null;
 };
 
 export type ContactEditDraft = {
@@ -42,6 +44,8 @@ export function seedContactEditDraft(contact: {
       raw,
       handle_type:
         typeof h === "string" ? inferHandleType(raw) : h.handle_type,
+      normalizedNote:
+        typeof h === "string" ? null : h.normalizedNote ?? null,
     });
   }
   return {
@@ -97,7 +101,9 @@ export function updateHandleAt(
 ): ContactEditDraftHandle[] {
   const next = [...handles];
   const row = next[index] ?? { raw: "", handle_type: "phone" };
-  next[index] = { ...row, raw: value };
+  // Editing the raw re-normalizes the handle: the review note no longer
+  // describes the current value and is dropped from the draft.
+  next[index] = { ...row, raw: value, normalizedNote: null };
   if (index === handles.length - 1 && value !== "") {
     next.push({ raw: "", handle_type: "phone" });
   }
@@ -111,7 +117,8 @@ export function setHandleTypeAt(
 ): ContactEditDraftHandle[] {
   const next = [...handles];
   const row = next[index] ?? { raw: "", handle_type };
-  next[index] = { ...row, handle_type };
+  // Changing the identity type re-normalizes the handle; drop the note.
+  next[index] = { ...row, handle_type, normalizedNote: null };
   return next;
 }
 
@@ -211,6 +218,14 @@ export function ContactHandleList({
               placeholder={placeholder}
               className="min-w-0 flex-1 rounded-md border border-border bg-elevated/40 px-2.5 py-1.5 text-[13px] text-text outline-none placeholder:text-muted focus:border-accent/60"
             />
+            {row.normalizedNote ? (
+              <span
+                title={row.normalizedNote}
+                className="shrink-0 rounded bg-danger/15 px-1.5 py-0.5 text-[11px] font-medium text-danger"
+              >
+                needs review
+              </span>
+            ) : null}
             {showRemove && (
               <button
                 type="button"

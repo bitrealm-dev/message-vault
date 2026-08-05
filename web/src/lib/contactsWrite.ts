@@ -397,6 +397,11 @@ function remapHandle(
   const fromId = resolveHandleId(db, accountId, from.raw, from.handle_type);
   const toId = resolveHandleId(db, accountId, to.raw, to.handle_type);
 
+  // The edit is only a raw reformatting of the same identity (guarded
+  // normalization is unchanged): nothing to re-point. The review note stays —
+  // the value is still ambiguous.
+  if (fromId === toId) return;
+
   // Prefer updating in place; if `to` already exists on this contact, drop the
   // old link instead (merge).
   if (owner === contactId) {
@@ -417,6 +422,10 @@ function remapHandle(
   db.prepare(`UPDATE participants SET handle_id = ? WHERE handle_id = ?`).run(toId, fromId);
   db.prepare(`UPDATE messages SET sender_handle_id = ? WHERE sender_handle_id = ?`).run(toId, fromId);
   db.prepare(`UPDATE tapbacks SET sender_handle_id = ? WHERE sender_handle_id = ?`).run(toId, fromId);
+
+  // Re-normalizing a flagged handle clears its review note: the old row is
+  // orphaned after re-pointing, and the new row normalizes cleanly.
+  db.prepare(`UPDATE handles SET normalized_note = NULL WHERE id = ?`).run(fromId);
 }
 
 function syncContactHandles(

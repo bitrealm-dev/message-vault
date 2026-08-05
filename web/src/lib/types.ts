@@ -11,6 +11,8 @@ export type ContactHandle = {
   raw: string;
   handle_type: HandleType;
   service: string | null;
+  /** Review note when the handle's normalized form is ambiguous (not E.164). */
+  normalizedNote: string | null;
 };
 
 export type ContactListItem = {

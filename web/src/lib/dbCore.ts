@@ -202,6 +202,8 @@ export type ContactHandleRow = {
   raw: string;
   handle_type: HandleType;
   service: string | null;
+  /** Review note when the handle's normalized form is ambiguous (not E.164). */
+  normalized_note: string | null;
 };
 
 /** Every handle on the given contacts, phones first, keyed by contact id. */
@@ -220,7 +222,8 @@ export function contactHandlesByContact(
               h.id AS handle_id,
               h.raw AS raw,
               h.handle_type AS handle_type,
-              h.service AS service
+              h.service AS service,
+              h.normalized_note AS normalized_note
        FROM contact_handles ch
        JOIN handles h ON h.id = ch.handle_id
        WHERE ch.account_id = ? AND ch.contact_id IN (${placeholders})
@@ -236,6 +239,7 @@ export function contactHandlesByContact(
       raw: r.raw,
       handle_type: r.handle_type,
       service: r.service,
+      normalized_note: r.normalized_note,
     });
     out.set(r.contact_id, list);
   }

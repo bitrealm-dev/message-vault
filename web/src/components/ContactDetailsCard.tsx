@@ -85,6 +85,14 @@ function HandleViewList({ handles }: { handles: ContactHandle[] }) {
                 {formatPhoneDisplay(h.raw)}
               </span>
               <HandleTypeBadge type={group.type} />
+              {h.normalizedNote ? (
+                <span
+                  title={h.normalizedNote}
+                  className="shrink-0 rounded bg-danger/15 px-1.5 py-0.5 text-[11px] font-medium text-danger"
+                >
+                  needs review
+                </span>
+              ) : null}
               {h.service ? (
                 <span className="shrink-0 truncate text-[11px] text-muted">
                   {h.service}

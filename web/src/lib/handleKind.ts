@@ -1,4 +1,4 @@
-import { toPhoneE164 } from "./phoneE164";
+import { stripPhoneFormatting } from "./phoneE164";
 
 /**
  * Handle identity types (mirrors `message_ir::HandleType`).
@@ -23,16 +23,34 @@ export function inferHandleType(raw: string): HandleType {
 }
 
 /**
- * Canonical form of a handle for identity matching, per type.
- * Phone: E.164 when parseable (falls back to the trimmed raw). Email:
- * lowercased. Username/Other: verbatim (trimmed).
+ * Canonical form of a handle for identity matching, per type (guarded policy,
+ * mirroring the vault's `phone::normalize_guarded`).
+ *
+ * Phone: E.164 when the raw is unambiguous — `+`-prefixed (8–15 digits) or a
+ * US national number (10 digits, or 11 starting with 1). Otherwise the digits
+ * stay as-is, so a trunk-zero `020 7946 0000` becomes `02079460000` — never
+ * the fabricated `+02079460000` — and matches the review-flagged row the
+ * import wrote. Email: lowercased. Username/Other: verbatim (trimmed).
  */
 export function normalizeHandle(raw: string, handleType: HandleType): string {
   const trimmed = raw.trim();
   switch (handleType) {
     case "phone": {
-      const e164 = toPhoneE164(trimmed);
-      return e164 ?? trimmed;
+      // Keep every digit, including a leading 1 country code: `+1…` values
+      // must not be treated as 10-digit nationals (sanitizePhoneDigits would
+      // strip the 1). This mirrors the vault's `normalize_certain` rules.
+      const digits = stripPhoneFormatting(trimmed).replace(/\D/g, "");
+      if (!digits) return trimmed;
+      if (trimmed.startsWith("+")) {
+        if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+        // A + with an implausible length is still ambiguous — keep digits.
+        return digits;
+      }
+      if (digits.length === 10) return `+1${digits}`;
+      if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+      // Short codes and ambiguous national numbers (e.g. trunk-zero) keep
+      // their digits so the vault can flag them for review.
+      return digits;
     }
     case "email":
       return trimmed.toLowerCase();

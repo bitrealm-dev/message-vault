@@ -59,7 +59,9 @@ function syntheticContactDetail(
     labels: [],
     messageCount: item.messageCount,
     groupMessageCount: 0,
-    handles: [{ raw: item.handle, handle_type: handleType, service: null }],
+    handles: [
+      { raw: item.handle, handle_type: handleType, service: null, normalizedNote: null },
+    ],
     phones: [item.handle],
     dateStart: null,
     dateEnd: null,
