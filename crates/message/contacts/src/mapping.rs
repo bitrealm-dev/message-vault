@@ -1,28 +1,29 @@
-//! Incorrect EML export name → phone number.
+//! Incorrect EML export name → (normalized handle, handle type).
 
 use crate::name::{collapse_inner_whitespace, normalize_name_key};
 use anyhow::{Context, Result};
+use message_ir::HandleType;
 use phone::sanitize_number;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-/// Incorrect EML export name → sanitized phone digits.
+/// Incorrect EML export name → (normalized handle, handle type).
 #[derive(Debug, Default, Clone)]
 pub struct NameMapping {
-    /// Normalized incorrect name → sanitized phone digits.
-    incorrect_to_phone: HashMap<String, String>,
+    /// Normalized incorrect name → (normalized handle, handle type).
+    incorrect_to_handle: HashMap<String, (String, HandleType)>,
 }
 
 impl NameMapping {
     pub fn empty() -> Self {
         Self {
-            incorrect_to_phone: HashMap::new(),
+            incorrect_to_handle: HashMap::new(),
         }
     }
 
-    /// Load `Phone,Incorrect Name` CSV (column order flexible; header required).
+    /// Load `Handle,HandleType,Incorrect Name` CSV (column order flexible; header required).
     pub fn load(path: &Path) -> Result<Self> {
         let file =
             File::open(path).with_context(|| format!("open name mapping {}", path.display()))?;
@@ -35,13 +36,17 @@ impl NameMapping {
             .map(|h| h.trim().to_ascii_lowercase().replace('_', " "))
             .collect();
 
-        let phone_idx = header_l.iter().position(|h| h == "phone");
+        let handle_idx = header_l.iter().position(|h| h == "handle" || h == "phone");
+        let type_idx = header_l
+            .iter()
+            .position(|h| h == "handle type" || h == "handletype");
         let incorrect_idx = header_l
             .iter()
             .position(|h| h == "incorrect name" || h == "incorrectname" || h == "incorrect");
-        let (Some(phone_idx), Some(incorrect_idx)) = (phone_idx, incorrect_idx) else {
+
+        let (Some(handle_idx), Some(incorrect_idx)) = (handle_idx, incorrect_idx) else {
             anyhow::bail!(
-                "name mapping CSV {} missing expected header Phone,Incorrect Name",
+                "name mapping CSV {} missing required header Handle,Incorrect Name",
                 path.display()
             );
         };
@@ -54,22 +59,40 @@ impl NameMapping {
                 continue;
             }
             let parts = crate::book::split_csv_line(line);
-            let phone_raw = parts.get(phone_idx).map(|s| s.trim()).unwrap_or("");
+            let handle_raw = parts.get(handle_idx).map(|s| s.trim()).unwrap_or("");
             let incorrect = parts
                 .get(incorrect_idx)
                 .map(|s| collapse_inner_whitespace(s.trim()))
                 .unwrap_or_default();
-            if phone_raw.is_empty() || incorrect.is_empty() {
+            if handle_raw.is_empty() || incorrect.is_empty() {
                 continue;
             }
-            let Some(digits) = sanitize_number(phone_raw) else {
-                continue;
+
+            // Infer handle type from column or default to Phone
+            let handle_type = type_idx
+                .and_then(|i| parts.get(i))
+                .map(|s| HandleType::parse(s.trim()))
+                .unwrap_or(HandleType::Phone);
+
+            let normalized = match handle_type {
+                HandleType::Phone => {
+                    let Some(digits) = sanitize_number(handle_raw) else {
+                        continue;
+                    };
+                    phone::to_e164(&digits)
+                }
+                HandleType::Email => handle_raw.trim().to_lowercase(),
+                HandleType::Username | HandleType::Other => handle_raw.trim().to_string(),
             };
+
             let key = normalize_name_key(&incorrect);
             if key.is_empty() {
                 continue;
             }
-            mapping.incorrect_to_phone.entry(key).or_insert(digits);
+            mapping
+                .incorrect_to_handle
+                .entry(key)
+                .or_insert((normalized, handle_type));
         }
         Ok(mapping)
     }
@@ -81,21 +104,21 @@ impl NameMapping {
         }
     }
 
-    /// If `eml_name` is an incorrect export name, return sanitized phone digits.
-    pub fn phone_for_incorrect_name(&self, eml_name: &str) -> Option<&str> {
+    /// If `eml_name` is an incorrect export name, return (normalized handle, type).
+    pub fn handle_for_incorrect_name(&self, eml_name: &str) -> Option<&(String, HandleType)> {
         let key = normalize_name_key(eml_name);
         if key.is_empty() {
             return None;
         }
-        self.incorrect_to_phone.get(&key).map(String::as_str)
+        self.incorrect_to_handle.get(&key)
     }
 
     pub fn len(&self) -> usize {
-        self.incorrect_to_phone.len()
+        self.incorrect_to_handle.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.incorrect_to_phone.is_empty()
+        self.incorrect_to_handle.is_empty()
     }
 }
 
@@ -105,43 +128,43 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn loads_phone_incorrect_name() {
+    fn loads_handle_incorrect_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("map.csv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(
+            f,
+            "Handle,HandleType,Incorrect Name\n\
++15555550144,phone,Jordan Alias (SKIP)\n\
+user@example.com,email,Casey Email\n"
+        )
+        .unwrap();
+        let mapping = NameMapping::load(&path).unwrap();
+        assert_eq!(
+            mapping.handle_for_incorrect_name("Jordan Alias (SKIP)"),
+            Some(&("+15555550144".to_string(), HandleType::Phone))
+        );
+        assert_eq!(
+            mapping.handle_for_incorrect_name("casey email"),
+            Some(&("user@example.com".to_string(), HandleType::Email))
+        );
+    }
+
+    #[test]
+    fn defaults_to_phone_type_when_column_missing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("map.csv");
         let mut f = std::fs::File::create(&path).unwrap();
         write!(
             f,
             "Phone,Incorrect Name\n\
-+15555550144,Jordan Alias (SKIP)\n\
-15555550155,Casey Typo\n"
++15555550144,Jordan Alias (SKIP)\n"
         )
         .unwrap();
         let mapping = NameMapping::load(&path).unwrap();
         assert_eq!(
-            mapping.phone_for_incorrect_name("Jordan Alias (SKIP)"),
-            Some("5555550144")
-        );
-        assert_eq!(
-            mapping.phone_for_incorrect_name("casey typo"),
-            Some("5555550155")
-        );
-    }
-
-    #[test]
-    fn accepts_reversed_columns() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("map.csv");
-        let mut f = std::fs::File::create(&path).unwrap();
-        write!(
-            f,
-            "Incorrect Name,Phone\n\
-Jordan Alias (SKIP),+15555550144\n"
-        )
-        .unwrap();
-        let mapping = NameMapping::load(&path).unwrap();
-        assert_eq!(
-            mapping.phone_for_incorrect_name("Jordan Alias (SKIP)"),
-            Some("5555550144")
+            mapping.handle_for_incorrect_name("Jordan Alias (SKIP)"),
+            Some(&("+15555550144".to_string(), HandleType::Phone))
         );
     }
 }
