@@ -13,6 +13,7 @@ use crate::state::{self, AppState};
 use crate::sync;
 use crate::wsl;
 use crate::theme;
+use crate::BackupAccountAdapter;
 use crate::{
     AppWindow, AppearanceAdapter, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter,
     FormatAdapter, HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
@@ -25,10 +26,11 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_navigate_back(ui);
     wire_grow_for_advanced(ui);
     wire_appearance(ui, Arc::clone(&state));
-    wire_home(ui);
+    wire_home(ui, Arc::clone(&state));
     wire_credentials(ui, Arc::clone(&state));
     wire_import(ui, Arc::clone(&state));
     wire_vault_export(ui, Arc::clone(&state));
+    wire_backup_account(ui, Arc::clone(&state));
     // Legacy adapters remain wired for reference until the deprecation pass.
     wire_contacts(ui, Arc::clone(&state));
     wire_extract(ui, Arc::clone(&state));
@@ -140,6 +142,7 @@ fn wire_navigate_back(ui: &AppWindow) {
             x if x == state::screen::IMPORT || x == state::screen::EXPORT => {
                 state::screen::CREDENTIALS
             }
+            x if x == state::screen::BACKUP => state::screen::HOME,
             _ => current - 1,
         };
         ui.set_workflow_screen(previous);
@@ -148,7 +151,7 @@ fn wire_navigate_back(ui: &AppWindow) {
     });
 }
 
-fn wire_home(ui: &AppWindow) {
+fn wire_home(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.global::<HomeAdapter>().on_vault_import({
         let ui_weak = ui_weak.clone();
@@ -161,6 +164,35 @@ fn wire_home(ui: &AppWindow) {
     });
     // Convert messages is intentionally a no-op for this refactor phase.
     ui.global::<HomeAdapter>().on_convert_messages(move || {});
+    ui.global::<HomeAdapter>().on_backup_account({
+        let ui_weak = ui_weak.clone();
+        move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let st = state.lock().expect("state lock");
+                sync::push_backup_account(&ui, &st);
+                ui.set_workflow_screen(state::screen::BACKUP);
+                sync::push_chrome(&ui, &st);
+            }
+        }
+    });
+}
+
+fn wire_backup_account(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
+
+    ui.global::<BackupAccountAdapter>().on_browse({
+        let ui_weak = ui_weak.clone();
+        move |field_id| {
+            let kind = browse::browse_kind_for_field(&field_id);
+            browse::pick_path(ui_weak.clone(), field_id.to_string(), kind);
+        }
+    });
+
+    ui.global::<BackupAccountAdapter>().on_run({
+        let ui_weak = ui_weak.clone();
+        let state = Arc::clone(&state);
+        move || start::start_account_backup(&ui_weak, &state)
+    });
 }
 
 fn wire_credentials(ui: &AppWindow, state: Arc<Mutex<AppState>>) {

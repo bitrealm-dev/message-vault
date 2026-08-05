@@ -11,6 +11,7 @@ use vault_push::detect_source as vault_detect_source;
 
 use crate::options;
 use crate::state::AppState;
+use crate::BackupAccountAdapter;
 use crate::{
     AppWindow, ContactsAdapter, CredentialsAdapter, ExtractAdapter, FormatAdapter, HomeAdapter,
     ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
@@ -77,6 +78,8 @@ pub fn push_chrome(ui: &AppWindow, state: &AppState) {
     ui.global::<ImportAdapter>().set_enabled(!state.running);
     ui.global::<VaultExportAdapter>()
         .set_enabled(!state.running);
+    ui.global::<BackupAccountAdapter>()
+        .set_enabled(!state.running);
 
     let extract = ui.global::<ExtractAdapter>();
     extract.set_enabled(!state.running);
@@ -98,6 +101,20 @@ pub fn pull_contacts(ui: &AppWindow, state: &mut AppState) {
     let contacts = ui.global::<ContactsAdapter>();
     state.validate_input = contacts.get_input().to_string();
     state.validate_usa = contacts.get_region_index() == 0;
+}
+
+pub fn pull_backup_account(ui: &AppWindow, state: &mut AppState) {
+    let adapter = ui.global::<BackupAccountAdapter>();
+    state.export_ini.vault.url = adapter.get_url().trim().to_string();
+    state.export_ini.vault.key = adapter.get_key().trim().to_string();
+    state.backup_output = adapter.get_output().trim().to_string();
+}
+
+pub fn push_backup_account(ui: &AppWindow, state: &AppState) {
+    let adapter = ui.global::<BackupAccountAdapter>();
+    adapter.set_url(state.export_ini.vault.url.clone().into());
+    adapter.set_key(state.export_ini.vault.key.clone().into());
+    adapter.set_output(state.backup_output.clone().into());
 }
 
 pub fn push_credentials(ui: &AppWindow, state: &AppState) {

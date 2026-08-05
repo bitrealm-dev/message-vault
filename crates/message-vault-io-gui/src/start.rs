@@ -1,7 +1,7 @@
 //! Job start helpers and the shared library-job event bridge.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,7 @@ use vault_push::{
 };
 
 use crate::AppWindow;
+use crate::BackupAccountAdapter;
 use crate::CredentialsAdapter;
 use crate::VaultExportAdapter;
 use crate::jobs::{LibraryJob, library_job_for_exporter};
@@ -708,6 +709,132 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
     if let Some((label, job)) = job_and_label {
         start_library_job(ui_weak, state, label, job, OnSuccess::None);
     }
+}
+
+/// Download the entire account: no query filter, every message and attachment.
+pub(crate) fn start_account_backup(
+    ui_weak: &slint::Weak<AppWindow>,
+    state: &Arc<Mutex<AppState>>,
+) {
+    let Some(ui) = ui_weak.upgrade() else {
+        return;
+    };
+    let job_and_label = {
+        let mut st = state.lock().expect("state lock");
+        if st.running {
+            return;
+        }
+        sync::pull_backup_account(&ui, &mut st);
+        let adapter = ui.global::<BackupAccountAdapter>();
+        let url = st.export_ini.vault.url.trim().to_string();
+        let key = st.export_ini.vault.key.trim().to_string();
+        let output_raw = adapter.get_output().trim().to_string();
+        let force = adapter.get_force();
+
+        let mut errors = Vec::new();
+        if url.is_empty() {
+            errors.push("Vault URL is required.".into());
+        }
+        if key.is_empty() {
+            errors.push("API Key is required.".into());
+        }
+        if !errors.is_empty() {
+            report_errors(&ui, &mut st, errors);
+            return;
+        }
+
+        let out_dir = if output_raw.is_empty() {
+            staging::export_dir_path(
+                &staging::default_export_parent(),
+                "vault-backup",
+                Local::now(),
+            )
+        } else {
+            PathBuf::from(&output_raw)
+        };
+
+        if output_raw.is_empty() {
+            adapter.set_output(out_dir.display().to_string().into());
+        }
+
+        if let Err(error) = st.save_export_ini() {
+            report_errors(&ui, &mut st, vec![error]);
+            return;
+        }
+
+        let label = "vault account backup (library)".to_string();
+        let job: LibraryJob = Box::new(move |cancel, tx| {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "Backing up to {}",
+                out_dir.display()
+            )));
+            let cfg = VaultPullConfig {
+                out_dir,
+                base_url: url,
+                username: String::new(),
+                key,
+                query: String::new(), // empty = all messages
+                after: None,
+                before: None,
+                source: None,
+                skip_attachments: false,
+                page_limit: vault_pull::DEFAULT_PAGE_LIMIT,
+                expected_messages: None,
+                cancel: Some(cancel),
+                asset_download_workers: vault_pull::DEFAULT_ASSET_DOWNLOAD_WORKERS,
+                force,
+                journal_path: None, // default: out_dir/.vault-pull-state.jsonl
+            };
+            let expected_messages = Arc::new(AtomicU64::new(0));
+            let mut on_progress = |event: VaultPullProgressEvent| match event {
+                VaultPullProgressEvent::Log(line) => {
+                    let _ = tx.send(ProcessEvent::Log(line));
+                }
+                VaultPullProgressEvent::Auth {
+                    account_id,
+                    username,
+                } => {
+                    let _ = tx.send(ProcessEvent::Log(format!(
+                        "Authenticated as {username} ({account_id})"
+                    )));
+                }
+                VaultPullProgressEvent::Page {
+                    messages: _,
+                    total_so_far,
+                } => {
+                    expected_messages.store(total_so_far, Ordering::Relaxed);
+                }
+                VaultPullProgressEvent::Done(report) => {
+                    let summary = format_backup_summary(&report);
+                    let _ = tx.send(ProcessEvent::Log(summary));
+                }
+            };
+            match run_vault_pull(&cfg, Some(&mut on_progress)) {
+                Ok(report) if report.ok => Ok(()),
+                Ok(_) => Err(JobError::detail("Backup finished with errors.")),
+                Err(e) => Err(JobError::detail(format!("{e:#}"))),
+            }
+        });
+        Some((label, job))
+    };
+    if let Some((label, job)) = job_and_label {
+        start_library_job(ui_weak, state, label, job, OnSuccess::None);
+    }
+}
+
+fn format_backup_summary(report: &vault_pull::PullReport) -> String {
+    format!(
+        "==== Backup Complete ====\n\
+         Conversations: {}\n\
+         Messages: {}\n\
+         Attachments: {} downloaded, {} skipped\n\
+         Output: {}",
+        report.conversations,
+        report.messages,
+        report.attachments_downloaded,
+        report.attachments_skipped,
+        report.out_dir
+    )
 }
 
 fn format_query_summary(stats: &QueryStats) -> String {

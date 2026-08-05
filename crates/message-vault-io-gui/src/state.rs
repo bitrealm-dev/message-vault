@@ -13,6 +13,7 @@ pub mod screen {
     pub const CREDENTIALS: i32 = 1;
     pub const IMPORT: i32 = 2;
     pub const EXPORT: i32 = 3;
+    pub const BACKUP: i32 = 4;
 }
 
 pub struct AppState {
@@ -33,6 +34,8 @@ pub struct AppState {
     pub last_staging_dir: Option<PathBuf>,
     /// Guided Import Messages format (iOS / macOS / existing archive).
     pub guided_import_format: GuidedImportFormat,
+    /// Output directory for account backup (persisted).
+    pub backup_output: String,
 }
 
 impl AppState {
@@ -57,6 +60,7 @@ impl AppState {
             vault_source_note: String::new(),
             last_staging_dir: None,
             guided_import_format,
+            backup_output: String::new(),
         }
     }
 
