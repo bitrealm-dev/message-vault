@@ -263,6 +263,49 @@ Different services have different message formats. The message view renders serv
 
 The conversation schema already tracks `service` — the renderer uses this to pick the appropriate component.
 
+## Import flow (desktop only)
+
+Import combines extraction and push into a single operation. The user picks a source, provides a backup path, optionally provides a contacts file, and hits Import. Extraction, dedup, and push run as a pipeline — progress is shown inline.
+
+The import button lives in the left panel sidebar. Clicking it switches the main view area to the import form. No wizard navigation — it's one scrollable form.
+
+### Import steps
+
+**1. Source type:** Dropdown to pick the backup source (iMessage, WhatsApp, SMS Backup & Restore, GO SMS Pro, iMazing, SMS Backup+, OpenExtract).
+
+**2. Backup path:** File/directory picker for the backup location. Source-specific options appear below (e.g., WhatsApp platform, Apple platform, backup password).
+
+**3. Contacts (optional):** File picker for a VCF or vCard CSV file. Parsed and compared against existing vault contacts.
+
+**4. Conflict review:** If a contacts file is provided, show side-by-side comparison:
+
+| Contact file name | Vault name | Handle | Action |
+|-------------------|------------|--------|--------|
+| Bob Smith | Bobby Smith | +1 555-1234 | [Use file] [Use vault] [Edit] |
+| Mom | — | (none) | [Add handle: ___] |
+
+- If the vault has a matching name for a handle, auto-suggest linking
+- Contacts without handles appear as unmatched — user can add a handle or skip
+- The goal is to get names and handles right at import time, not clean up later
+
+**5. Progress:** A linear step indicator showing current phase:
+
+```
+Parsing backup… 1,423 messages found         ✓
+Converting attachments… 12 of 45             ⏳
+Uploading to vault… 89%                      ○
+```
+
+Primary view shows the high-level steps. A "Show details" toggle reveals the raw extraction/push log underneath.
+
+**6. Done:** Summary — messages imported, conversations created, duplicates skipped, attachments uploaded. Option to import another backup or return to the conversation list.
+
+### Contacts handling
+
+- **Full merge with conflict resolution**: Vault contacts and the provided contacts file are merged. The import review step lets the user resolve conflicts before data enters the vault.
+- **Auto-suggest**: If the vault has a contact named "Mom" with a phone number, suggest linking an unmatched name to that handle.
+- **Unmatched names**: Shown with a prompt to add a handle. Can be skipped — the name is stored but won't link to conversations.
+
 ## Sources and deduplication
 
 When a conversation is reconstructed from multiple backups:
