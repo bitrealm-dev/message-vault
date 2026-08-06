@@ -26,7 +26,7 @@ cargo build --workspace
 # Release build (substantially faster for real export work)
 cargo build --workspace --release
 
-# Build the web frontend only
+# Build the web frontend only (Vite SPA)
 cd web && npm run build
 
 # Run all tests (uses committed fixtures, no personal backups needed)
@@ -44,23 +44,23 @@ cd docs && npm run dev   # local preview
 
 ### Vault server (message-vault-rs)
 
-The Push/Pull screens require a Message Vault server running over HTTP:
+The Push/Pull/Export/Import screens require a Message Vault server running over HTTP:
 
 ```bash
 git clone https://github.com/bitrealm-dev/message-vault-rs.git
 cd message-vault-rs && docker compose up
-# API at http://localhost:5556  — Web UI at http://localhost:3000
+# API + Web UI at http://localhost:8080
 ```
 
 ## Architecture
 
-This is a Rust workspace that converts phone message backups into a shared conversation structure, then packages each conversation in the user's chosen format.
+This is a Rust workspace that converts phone message backups into a shared conversation structure, then packages each conversation in the user's chosen output format. It also contains the **unified GUI** — a Tauri v2 desktop app and Vite SPA that provides the full Message Vault user experience.
 
 **Pipeline**: `vendor backup → parse → ConversationDocument (schema v3) → FormatSink → output format`
 
 ### Layer model
 
-1. **`crates/message/ir/`** (`message-ir`) — Schema types only: `ConversationDocument`, `IrMessage`, `IrAttachment`, enums. No I/O, no formatting. Attachment bytes are never serialized to JSON (`#[serde(skip)]`); paths and digests point at sidecar files.
+1. **`crates/message/ir/`** (`message-ir`) — Schema types only: `ConversationDocument`, `IrMessage`, `IrAttachment`, `IrParticipant` (with `HandleType`), enums. No I/O, no formatting. Attachment bytes are never serialized to JSON (`#[serde(skip)]`); paths and digests point at sidecar files.
 
 2. **`crates/message/ir-format/`** (`message-ir-format`) — `FormatSink` that takes parsed conversations and writes the chosen output format (JSON, JSONL, CSV, EML, MBOX, or a single SyncTech `smses.xml`). Runs media transforms (copy/convert/compress) and obfuscation during `FormatSink::finish`. Readers exist for every format to enable round-trip conversion.
 
@@ -73,12 +73,14 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 5. **`crates/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 
-6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app. Architecture:
+6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app + Vite SPA (the **unified GUI**). Architecture:
    - `src-tauri/src/main.rs` — Tauri entry point, registers commands and plugins
    - `src-tauri/src/state.rs` — `AppState` with `CancelFlag` and `ExportIniState`
    - `src-tauri/src/commands/` — Tauri commands wrapping exporter/format/push/pull crates
-   - `web/src/` — React + Vite SPA (Extract, Format, Push, Pull, Settings screens)
-   - `web/src/lib/tauri.ts` — typed `invoke()` wrappers and progress event helpers
+   - `web/src/` — React 19 + TypeScript + Vite SPA (~20 screens, shared components, typed API layer)
+   - `web/src/screens/` — Full app screens: Extract, Format, Push, Pull, Home, Contacts, ConversationList, MessageView, SearchResults, ImportScreen, ExportScreen, ImportHistoryScreen, LoginScreen, RegisterScreen, OnboardingScreen, Settings, SettingsScreen, ProfileScreen, TrashScreen, ContactList
+   - `web/src/components/` — Shared UI components (message renderers, contact cards, search, forms, etc.)
+   - `web/src/lib/` — `tauri.ts` (typed `invoke()` wrappers), `api.ts` (vault server API client), `auth.ts` (auth context with token persistence), `searchQuery.ts` (search grammar), `handleKind.ts` (typed handle utilities), schema types
    - Jobs run on `std::thread`; progress streams to the frontend via Tauri events
    - `export.ini` persistence reuses `message-vault-io-core::ExportIniState`
 
@@ -91,8 +93,8 @@ This is a Rust workspace that converts phone message backups into a shared conve
 | `message-csv` | CSV helpers shared across the workspace |
 | `message-mail` | EML/MBOX generation from `ConversationDocument` |
 | `message-sbr` | SyncTech SMS Backup & Restore XML read/write |
-| `message-phone` | Phone number parsing and normalization |
-| `message-contacts` | Contact file parsing (VCF, CSV, AddressBook) and name resolution |
+| `message-phone` | Phone number parsing and guarded E.164 normalization |
+| `message-contacts` | Contact file parsing (VCF, CSV, AddressBook) and handle-generic name resolution |
 | `message-media` | FFmpeg wrapper for attachment convert/compress |
 | `message-obfuscate` | Deterministic pseudonym generation for obfuscated exports |
 | `message-go-sms-mms` | GO SMS Pro PDU decode helpers |
@@ -111,7 +113,13 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 - **`export.ini` persistence**: loaded from working directory first, then beside the binary; saved on tab switch, run, clear, and window exit. Passwords are never written. The vault key is stored in plain text under `[vault]` (file mode `0600` on Linux/macOS).
 
+- **Unified GUI**: The Vite SPA serves as both the Tauri desktop app UI and (when built and placed in `message-vault-rs/static/`) the web deployment. It connects to the vault API (`/v1/*`) for auth, import, export, contacts, messages, search, and settings. Screens are gated by auth state and Tauri availability (`isTauri()`). Import/Export require Tauri; Extract/Format require Tauri but not auth; Login/Register/Onboarding are public.
+
 - **WSL detection**: Tauri uses the system file dialog (via `tauri-plugin-dialog`), which opens native dialogs on each platform.
+
+### Vault API client
+
+The web app communicates with the message-vault-rs API through typed wrappers in `web/src/lib/api.ts`. The `AuthProvider` in `web/src/lib/auth.ts` manages login state with localStorage persistence and token validation. When running in Tauri, the app uses Tauri commands for Extract/Format/Push/Pull. When running in a browser (web deployment), it uses the vault HTTP API for everything.
 
 ### Vault import state
 
@@ -127,12 +135,11 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 ## UI component conventions
 
-- React + TypeScript under `web/src/` with Vite bundling.
+- React 19 + TypeScript under `web/src/` with Vite bundling.
 - Screens live in `web/src/screens/`; shared components in `web/src/components/`.
-- Form controls use `FormRow` component with a fixed 140px label column (matches the old Slint layout).
-- Progress and log output use `ProgressBar` component with an indeterminate bar and scrollable log tail.
-- Tab navigation in `App.tsx` switches between Extract, Format, Push, Pull, and Settings screens.
-- The frontend calls Rust commands via typed wrappers in `web/src/lib/tauri.ts`; progress streams back through Tauri events.
+- Auth gating via `useAuth()` hook from `web/src/lib/auth.ts`; Tauri gating via `isTauri()` from `web/src/lib/tauri.ts`.
+- Typed API calls via `web/src/lib/api.ts` (vault server) and `web/src/lib/tauri.ts` (Tauri commands).
+- The frontend has a unified GUI design spec at `docs/superpowers/specs/2026-08-06-unified-gui-design.md`.
 
 ## Cursor rules
 
