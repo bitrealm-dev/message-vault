@@ -12,7 +12,7 @@ const INDETERMINATE_KEYFRAMES = `
 }
 `;
 
-export default function Push() {
+export default function Push({ onError }: { onError?: (msg: string) => void }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
   const [key, setKey] = useState("");
@@ -38,6 +38,7 @@ export default function Push() {
         setLog((prev) => [...prev, `Error: ${err.detail}`]);
         if (err.user_message) setLog((prev) => [...prev, err.user_message!]);
         setRunning(false);
+        onError?.(err.user_message ?? err.detail);
       },
     });
 

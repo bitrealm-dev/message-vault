@@ -24,7 +24,7 @@ const INDETERMINATE_KEYFRAMES = `
 }
 `;
 
-export default function Extract() {
+export default function Extract({ onError }: { onError?: (msg: string) => void }) {
   const [source, setSource] = useState("sms-backup-restore");
   const [backupPath, setBackupPath] = useState("");
   const [outputDir, setOutputDir] = useState("");
@@ -50,6 +50,7 @@ export default function Extract() {
           setLog((prev) => [...prev, err.user_message!]);
         }
         setRunning(false);
+        onError?.(err.user_message ?? err.detail);
       },
     });
 

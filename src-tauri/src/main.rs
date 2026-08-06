@@ -20,6 +20,9 @@ fn main() {
             commands::push::push,
             commands::pull::pull,
             commands::settings::load_settings,
+            commands::settings::save_settings,
+            commands::settings::get_errors,
+            commands::settings::clear_errors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

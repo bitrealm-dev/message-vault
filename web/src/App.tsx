@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import Home from "./screens/Home";
 import Extract from "./screens/Extract";
 import Format from "./screens/Format";
 import Push from "./screens/Push";
 import Pull from "./screens/Pull";
 import Settings from "./screens/Settings";
+import ErrorBanner from "./components/ErrorBanner";
+import { getErrors, clearErrors } from "./lib/tauri";
 
 const TABS = [
+  { id: "home", label: "Home" },
   { id: "extract", label: "Extract" },
   { id: "format", label: "Format" },
   { id: "push", label: "Vault Push" },
@@ -16,10 +20,34 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 function App() {
-  const [tab, setTab] = useState<TabId>("extract");
+  const [tab, setTab] = useState<TabId>("home");
+  const [errors, setErrors] = useState<string[]>([]);
+
+  // Check for startup errors (e.g. corrupt export.ini)
+  useState(() => {
+    getErrors().then((errs) => {
+      if (errs.length > 0) setErrors(errs);
+    });
+  });
+
+  const handleNavigate = useCallback((target: string) => {
+    if (TABS.some((t) => t.id === target)) {
+      setTab(target as TabId);
+    }
+  }, []);
+
+  const handleDismissErrors = useCallback(async () => {
+    setErrors([]);
+    await clearErrors();
+  }, []);
+
+  const handleJobError = useCallback((message: string) => {
+    setErrors([message]);
+  }, []);
 
   return (
     <div style={{ fontFamily: "system-ui", minHeight: "100vh", background: "#fafafa" }}>
+      <ErrorBanner errors={errors} onDismiss={handleDismissErrors} />
       <nav
         style={{
           display: "flex",
@@ -49,10 +77,11 @@ function App() {
           </button>
         ))}
       </nav>
-      {tab === "extract" && <Extract />}
-      {tab === "format" && <Format />}
-      {tab === "push" && <Push />}
-      {tab === "pull" && <Pull />}
+      {tab === "home" && <Home onNavigate={handleNavigate} />}
+      {tab === "extract" && <Extract onError={handleJobError} />}
+      {tab === "format" && <Format onError={handleJobError} />}
+      {tab === "push" && <Push onError={handleJobError} />}
+      {tab === "pull" && <Pull onError={handleJobError} />}
       {tab === "settings" && <Settings />}
     </div>
   );

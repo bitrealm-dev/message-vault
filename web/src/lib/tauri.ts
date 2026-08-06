@@ -76,6 +76,29 @@ export async function invokePull(config: PullConfig): Promise<void> {
   });
 }
 
+export interface AppSettings {
+  vault_url: string;
+  vault_username: string;
+  vault_key: string;
+  default_output_dir: string;
+}
+
+export async function loadSettings(): Promise<AppSettings> {
+  return invoke("load_settings");
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  return invoke("save_settings", { settings });
+}
+
+export async function getErrors(): Promise<string[]> {
+  return invoke("get_errors");
+}
+
+export async function clearErrors(): Promise<void> {
+  return invoke("clear_errors");
+}
+
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;

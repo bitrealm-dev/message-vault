@@ -1,32 +1,33 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { loadSettings, saveSettings, type AppSettings } from "../lib/tauri";
 import FormRow from "../components/FormRow";
 
-interface AppSettings {
-  vault_url: string;
-  vault_username: string;
-  vault_key: string;
-  default_output_dir: string;
-}
-
 export default function Settings() {
-  const [vaultUrl, setVaultUrl] = useState("");
-  const [vaultUsername, setVaultUsername] = useState("");
-  const [vaultKey, setVaultKey] = useState("");
-  const [defaultOutputDir, setDefaultOutputDir] = useState("");
+  const [settings, setSettings] = useState<AppSettings>({
+    vault_url: "",
+    vault_username: "",
+    vault_key: "",
+    default_output_dir: "",
+  });
   const [loaded, setLoaded] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    invoke<AppSettings>("load_settings")
-      .then((s) => {
-        setVaultUrl(s.vault_url);
-        setVaultUsername(s.vault_username);
-        setVaultKey(s.vault_key);
-        setDefaultOutputDir(s.default_output_dir);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
+    loadSettings()
+      .then((s) => setSettings(s))
+      .catch(() => {})
+      .finally(() => setLoaded(true));
   }, []);
+
+  const handleSave = async () => {
+    try {
+      await saveSettings(settings);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch {
+      // save failed — state stays editable
+    }
+  };
 
   if (!loaded) {
     return <div style={{ padding: "1.5rem" }}>Loading settings…</div>;
@@ -36,25 +37,64 @@ export default function Settings() {
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Settings</h2>
 
-      <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>Vault Connection</h3>
+      <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>
+        Vault Connection
+      </h3>
       <FormRow label="Server URL">
-        <input type="text" value={vaultUrl} readOnly
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "#f3f4f6" }} />
+        <input
+          type="text"
+          value={settings.vault_url}
+          onChange={(e) => setSettings({ ...settings, vault_url: e.target.value })}
+          placeholder="https://vault.example.com"
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+        />
       </FormRow>
       <FormRow label="Username">
-        <input type="text" value={vaultUsername} readOnly
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "#f3f4f6" }} />
+        <input
+          type="text"
+          value={settings.vault_username}
+          onChange={(e) => setSettings({ ...settings, vault_username: e.target.value })}
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+        />
+      </FormRow>
+      <FormRow label="API Key">
+        <input
+          type="password"
+          value={settings.vault_key}
+          onChange={(e) => setSettings({ ...settings, vault_key: e.target.value })}
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+        />
       </FormRow>
 
-      <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>Defaults</h3>
+      <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>
+        Defaults
+      </h3>
       <FormRow label="Output directory">
-        <input type="text" value={defaultOutputDir} readOnly
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "#f3f4f6" }} />
+        <input
+          type="text"
+          value={settings.default_output_dir}
+          onChange={(e) => setSettings({ ...settings, default_output_dir: e.target.value })}
+          placeholder="Default output path for exports"
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+        />
       </FormRow>
+
+      <div style={{ marginTop: "1.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <button
+          onClick={handleSave}
+          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}
+        >
+          Save
+        </button>
+        {saved && (
+          <span style={{ fontSize: "0.875rem", color: "#16a34a" }}>
+            Saved to export.ini
+          </span>
+        )}
+      </div>
 
       <p style={{ marginTop: "1.5rem", fontSize: "0.8rem", color: "#9ca3af" }}>
-        Settings are read from <code>export.ini</code> in the working directory.
-        Edit the file directly or run an export to persist values.
+        Settings persist in <code>export.ini</code> in the working directory.
       </p>
     </div>
   );

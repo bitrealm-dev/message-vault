@@ -21,7 +21,7 @@ const INDETERMINATE_KEYFRAMES = `
 }
 `;
 
-export default function Format() {
+export default function Format({ onError }: { onError?: (msg: string) => void }) {
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [outputFormat, setOutputFormat] = useState("jsonl");
@@ -43,6 +43,7 @@ export default function Format() {
         setLog((prev) => [...prev, `Error: ${err.detail}`]);
         if (err.user_message) setLog((prev) => [...prev, err.user_message!]);
         setRunning(false);
+        onError?.(err.user_message ?? err.detail);
       },
     });
 
