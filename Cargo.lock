@@ -393,6 +393,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "hex",
  "image",
  "message-ir",
  "rand 0.9.5",
@@ -400,6 +401,7 @@ dependencies = [
  "rand_distr",
  "serde",
  "serde_json",
+ "sha2",
  "toml 0.8.23",
 ]
 
