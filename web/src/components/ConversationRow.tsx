@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Conversation } from "../lib/types";
 
 function formatDate(iso: string): string {
@@ -60,6 +61,15 @@ export default function ConversationRow({
   checked?: boolean;
   onCheckChange?: (id: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [labelValue, setLabelValue] = useState(conversation.label || "");
+
+  const handleSaveLabel = () => {
+    // Store locally — the API endpoint for persisting labels is follow-up (Tier 4)
+    conversation.label = labelValue.trim() || null;
+    setEditing(false);
+  };
+
   return (
     <button
       onClick={onClick}
@@ -84,13 +94,35 @@ export default function ConversationRow({
         display: "flex", justifyContent: "space-between", alignItems: "baseline",
         marginBottom: "2px",
       }}>
-        <span style={{
-          fontSize: "0.875rem", fontWeight: 500, color: "#1f2937",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          flex: 1, marginRight: "0.5rem",
-        }}>
-          {displayName(conversation)}
-        </span>
+        {editing ? (
+          <input
+            type="text"
+            value={labelValue}
+            onChange={(e) => setLabelValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSaveLabel();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            onBlur={handleSaveLabel}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+            style={{ fontSize: "0.875rem", fontWeight: 500, width: "100%", padding: "0.125rem 0.25rem" }}
+          />
+        ) : (
+          <span
+            onClick={(e) => { e.stopPropagation(); setEditing(true); setLabelValue(conversation.label || displayName(conversation)); }}
+            title="Click to rename"
+            style={{
+              cursor: "pointer",
+              fontSize: "0.875rem", fontWeight: 500, color: "#1f2937",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              flex: 1, marginRight: "0.5rem",
+            }}
+          >
+            {displayName(conversation)}
+            {conversation.label && <span style={{ fontSize: "0.688rem", color: "#9ca3af", marginLeft: "0.25rem" }}>(renamed)</span>}
+          </span>
+        )}
         <span style={{ fontSize: "0.75rem", color: "#9ca3af", flexShrink: 0 }}>
           {formatDate(conversation.last_message_at)}
         </span>
