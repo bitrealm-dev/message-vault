@@ -31,13 +31,13 @@ use crate::db::schema;
 
 /// Authenticated vault account from a per-account Import API token.
 #[derive(Debug, Clone)]
-struct AuthIdentity {
-    account_id: String,
+pub struct AuthIdentity {
+    pub account_id: String,
 }
 
 #[derive(Clone)]
-struct AppState {
-    cfg: Arc<Config>,
+pub struct AppState {
+    pub cfg: Arc<Config>,
     /// Warm connection for short import-session SQL only (`POST /v1/imports`,
     /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
     /// export open their own connections so they do not hold this mutex.
@@ -100,7 +100,7 @@ struct ErrorBody {
     error: String,
 }
 
-enum ApiError {
+pub enum ApiError {
     Unauthorized(String),
     Forbidden(String),
     BadRequest(String),
@@ -163,7 +163,11 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/auth/mode", get(auth_mode_handler))
+        .route("/v1/auth/register", post(crate::auth::register_handler))
+        .route("/v1/auth/login", post(crate::auth::login_handler))
+        .route("/v1/auth/hanko/session", post(crate::auth::hanko_session_handler))
         .route("/v1/auth/check", get(auth_check))
+        .route("/v1/account/profile", get(crate::profile::account_profile_handler).post(crate::profile::account_profile_update_handler))
         .route(
             "/v1/export/messages/count",
             get(export_messages_count_handler),
@@ -240,11 +244,15 @@ async fn health() -> impl IntoResponse {
 /// can render the correct login form before authenticating.
 async fn auth_mode_handler() -> Json<serde_json::Value> {
     let mode = crate::config::AuthMode::from_env();
+    let hanko_api_url = std::env::var("HANKO_API_URL")
+        .ok()
+        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
     Json(serde_json::json!({
         "mode": match mode {
             crate::config::AuthMode::Hanko => "hanko",
             crate::config::AuthMode::Local => "local",
-        }
+        },
+        "hanko_api_url": hanko_api_url,
     }))
 }
 
@@ -379,7 +387,7 @@ fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_string())
 }
 
-async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdentity, ApiError> {
+pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdentity, ApiError> {
     let token = bearer_token(headers)?;
     // Always look up against SQLite so rotate/delete in Settings takes effect
     // without restarting serve (no process-local token cache).

@@ -1,6 +1,8 @@
 mod asset_uploads;
 mod assets;
+mod auth;
 mod config;
+mod profile;
 mod db;
 mod dedupe;
 mod export_api;

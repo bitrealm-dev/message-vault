@@ -104,6 +104,37 @@ pub fn rotate_account_api_token(conn: &Connection, account_id: &str) -> Result<S
     Ok(token)
 }
 
+/// Create a fresh API token for an account and return the plaintext.
+/// Unlike `rotate_account_api_token`, this does INSERT (not upsert) and fails
+/// if a token already exists.
+pub fn insert_account_api_token(conn: &Connection, account_id: &str) -> Result<String> {
+    let token = generate_api_token();
+    let token_hash = hash_api_token(&token);
+    let created_at = chrono_like_now();
+    conn.execute(
+        "INSERT INTO account_api_tokens (account_id, token_hash, created_at) VALUES (?1, ?2, ?3)",
+        params![account_id, token_hash, created_at],
+    )
+    .with_context(|| format!("insert api token for {account_id}"))?;
+    Ok(token)
+}
+
+/// Retrieve or create an API token for the account. If a token row already
+/// exists, rotates it; otherwise inserts a fresh one. Returns the plaintext.
+pub fn get_or_create_api_token(conn: &Connection, account_id: &str) -> Result<String> {
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT token_hash FROM account_api_tokens WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match existing {
+        Some(_) => rotate_account_api_token(conn, account_id),
+        None => insert_account_api_token(conn, account_id),
+    }
+}
+
 /// Remove the account's API token (imports stop until a new one is generated).
 #[allow(dead_code)] // available for CLI tooling; web manages tokens via Next.js
 pub fn delete_account_api_token(conn: &Connection, account_id: &str) -> Result<()> {

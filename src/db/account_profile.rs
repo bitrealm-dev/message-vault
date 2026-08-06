@@ -132,6 +132,85 @@ pub fn username_for_account(conn: &Connection, account_id: &str) -> Result<Optio
     Ok(name)
 }
 
+/// Load the argon2 password hash for an account id, if set.
+pub fn load_password_hash(conn: &Connection, account_id: &str) -> Result<Option<String>> {
+    let hash: Option<String> = conn
+        .query_row(
+            "SELECT password_hash FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(hash)
+}
+
+/// Look up account id by Hanko user id. Returns None if no account is linked.
+pub fn lookup_account_by_hanko(conn: &Connection, hanko_user_id: &str) -> Result<Option<String>> {
+    schema::ensure_accounts_schema(conn)?;
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM accounts WHERE hanko_user_id = ?1",
+            params![hanko_user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(id)
+}
+
+/// Load the preferred_name for an account, if set.
+pub fn load_preferred_name(conn: &Connection, account_id: &str) -> Result<Option<String>> {
+    let name: Option<String> = conn
+        .query_row(
+            "SELECT preferred_name FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(name)
+}
+
+/// Insert a new account row. All fields except id and username are optional.
+pub fn insert_account(
+    conn: &Connection,
+    id: &str,
+    username: &str,
+    password_hash: Option<&str>,
+    preferred_name: Option<&str>,
+    hanko_user_id: Option<&str>,
+    read_only: bool,
+) -> Result<()> {
+    schema::ensure_accounts_schema(conn)?;
+    conn.execute(
+        "INSERT INTO accounts (id, username, read_only, password_hash, preferred_name, hanko_user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, username, read_only as i32, password_hash, preferred_name, hanko_user_id],
+    )
+    .with_context(|| format!("insert account {username}"))?;
+    Ok(())
+}
+
+/// Upsert an account_phones row.
+pub fn upsert_account_phone(conn: &Connection, account_id: &str, phone: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO account_phones (account_id, phone) VALUES (?1, ?2)",
+        params![account_id, phone],
+    )?;
+    Ok(())
+}
+
+/// Upsert an account_emails row.
+pub fn upsert_account_email(
+    conn: &Connection,
+    account_id: &str,
+    email: &str,
+    is_primary: bool,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO account_emails (account_id, email, is_primary) VALUES (?1, ?2, ?3)",
+        params![account_id, email, is_primary as i32],
+    )?;
+    Ok(())
+}
+
 /// Open the vault DB and resolve `account_ref` to a UUID.
 pub fn resolve_account_ref_at(db_path: &std::path::Path, account_ref: &str) -> Result<String> {
     let conn = Connection::open(db_path)
