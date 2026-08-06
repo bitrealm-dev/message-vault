@@ -103,7 +103,13 @@ Handles are set on the user's own profile during onboarding and can be edited la
 └──────────────────────────────────┘
 ```
 
-Existing vault users enter their server URL and authenticate (Hanko passkey or username/password). The SPA stores the auth token and navigates to the conversation list.
+The user enters the vault server URL. The client calls the server's auth-mode endpoint to determine whether it uses Hanko passkeys or local username/password. The login form renders the appropriate fields. Auth mode is a server-side setting (configured in the Docker container) — the client never chooses.
+
+After entering the server URL, the login form adapts to the server's mode:
+- **Hanko**: Show the Hanko passkey login flow
+- **Local**: Show username and password fields
+
+The SPA stores the auth token and navigates to the conversation list.
 
 Below the auth section, two offline tools are available without login:
 - **Extract messages**: Parse a backup to JSONL without connecting to a vault
@@ -432,10 +438,9 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 - Contact editing and merging UI (combining two contact profiles)
 - Import progress and status dashboard (batch import history)
 - Exact query syntax for saved groups
-- Server-side auth configuration (Hanko vs local — how the server advertises its mode)
+- How the server advertises its auth mode (Hanko vs local) — client queries and adapts the login form
 
 ## Open questions
 
 - Exact search query syntax for saved groups (`from:`, `participants:`, `date:`, `has:attachment`, etc.)
 - Virtualized message list implementation (replace "load everything and fast-scroll")
-- How server-side authentication mode (Hanko vs local) is configured — server setting or client chooses?
