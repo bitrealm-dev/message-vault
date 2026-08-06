@@ -369,9 +369,31 @@ The export button opens a popover with three options:
 The most likely choice is pre-selected. The popover prevents accidentally exporting everything.
 Export is not expected to be a high-frequency action — two clicks is acceptable.
 
-## What this design does NOT cover (yet)
+## Trash and deletion
 
-- Trash and recovery workflow
+Three levels of deletion:
+
+| Unit | What happens | Trash display |
+|------|-------------|---------------|
+| Message | Message moves to trash. Conversation remains. | "Conversation with Bob — 1 message" |
+| Conversation | All messages move to trash. Conversation metadata preserved. | "Conversation with Bob — 10,000 messages" |
+| Contact | Profile and name mapping removed. Messages remain — they revert to showing raw handles. | "Contact Bob Smith" |
+
+### Trash is conversation-grouped
+
+The trash view always shows conversations as containers. What varies is the message count inside. This avoids deduplication problems — you never have individual messages and conversation deletes overlapping.
+
+**Restore logic:**
+- If the conversation still exists → merge restored messages back in
+- If the conversation was fully deleted → recreate it from preserved metadata, then restore messages
+
+No partial restores. No orphaned trash entries. The conversation is the container — restore always targets the right place.
+
+**Empty trash** removes everything permanently.
+
+**Bulk operations:** Deleting 10,000 messages in a conversation and undoing shows one row — "Conversation with Bob — 10,000 messages — deleted 5 minutes ago." Restore brings the whole conversation back.
+
+## What this design does NOT cover (yet)
 - Settings (server config, theme, storage management)
 - Excluded conversations / spam filtering
 - Contact editing and merging UI
