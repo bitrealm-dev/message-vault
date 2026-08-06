@@ -324,6 +324,24 @@ When a conversation is reconstructed from multiple backups:
 - Video: inline player with play/pause/seek controls
 - Attachments are streamed from the vault server API (or read from local filesystem in Tauri for un-uploaded data)
 
+## Export (desktop only)
+
+Export pulls data from the vault to local files. Accessed from the left panel sidebar. Three entry points:
+
+- **Export entire vault**: Downloads everything the user has access to
+- **Export from query**: The user runs a global search or opens a saved group, then hits Export — exports only the matching conversations
+- **Ad-hoc selection**: The user selects specific conversations from the list (checkboxes) and exports those
+
+All three paths lead to the same export form:
+
+**1. Save location:** Directory picker for where files land.
+
+**2. Format:** Dropdown — JSONL, JSON, CSV. Future: HTML (static vault snapshot).
+
+**3. Progress:** Linear step indicator with collapsible detail log, same pattern as import.
+
+The export button is a single action in the left panel. The selection context (full vault, current query, or checked conversations) determines what gets exported.
+
 ## What this design does NOT cover (yet)
 
 - Trash and recovery workflow
