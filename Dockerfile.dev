@@ -1,27 +1,17 @@
-# Dev toolchain image: Rust + Node + FFmpeg.
+# Dev toolchain image: Rust + FFmpeg.
 # Source is bind-mounted at runtime (see compose-dev.yml).
 # rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
 FROM rust:1.95-bookworm
-
-# Node 20 from the official image (avoids NodeSource apt scripts).
-COPY --from=node:20-bookworm /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:20-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-  && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-  && ln -sf /usr/local/lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     ffmpeg \
-    python3 \
-    build-essential \
     pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Use the bind-mounted script so entrypoint fixes apply without rebuilding the image.
-EXPOSE 3000 8080
+EXPOSE 8080
 
 ENTRYPOINT ["/bin/bash", "/app/scripts/docker-entrypoint-dev.sh"]

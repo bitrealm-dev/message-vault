@@ -3,6 +3,9 @@
 #
 #   docker compose -f compose-release.yml up --build
 #
+# Build the Vite SPA first:  cd ../message-vault-io/web && npm run build
+# Then copy:  cp -r ../message-vault-io/web/dist ./static
+#
 # Personal vault: VAULT_MODE=personal docker compose -f compose-release.yml up --build
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
 #
@@ -13,16 +16,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.release
-      args:
-        NEXT_PUBLIC_HANKO_API_URL: ${NEXT_PUBLIC_HANKO_API_URL:-}
     ports:
-      - "0.0.0.0:3000:3000"
       - "0.0.0.0:8080:8080"
     environment:
       VAULT_MODE: ${VAULT_MODE:-demo}
       VAULT_AUTH: ${VAULT_AUTH:-local}
-      HANKO_API_URL: ${HANKO_API_URL:-${NEXT_PUBLIC_HANKO_API_URL:-}}
-      NEXT_PUBLIC_HANKO_API_URL: ${NEXT_PUBLIC_HANKO_API_URL:-}
+      AUTH_MODE: ${AUTH_MODE:-local}
+      HANKO_API_URL: ${HANKO_API_URL:-}
     volumes:
       - vault-data:/app/data
       - ./staging:/app/staging

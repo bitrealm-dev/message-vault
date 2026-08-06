@@ -19,21 +19,16 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "0.0.0.0:3000:3000"
       - "0.0.0.0:8080:8080"
     environment:
       VAULT_MODE: ${VAULT_MODE:-demo}
       VAULT_AUTH: ${VAULT_AUTH:-local}
-      HANKO_API_URL: ${HANKO_API_URL:-${NEXT_PUBLIC_HANKO_API_URL:-}}
-      NEXT_PUBLIC_HANKO_API_URL: ${NEXT_PUBLIC_HANKO_API_URL:-}
-      NODE_ENV: development
-      WATCHPACK_POLLING: ${WATCHPACK_POLLING:-false}
+      HANKO_API_URL: ${HANKO_API_URL:-}
     volumes:
       - .:/app
       - ./staging:/app/staging
       - cargo-target:/app/target
       - cargo-registry:/usr/local/cargo/registry
-      - web-node-modules:/app/web/node_modules
       - vault-data:/app/data
     stdin_open: true
     tty: true
@@ -52,5 +47,4 @@ services:
 volumes:
   cargo-target:
   cargo-registry:
-  web-node-modules:
   vault-data:

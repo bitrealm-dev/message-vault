@@ -17,34 +17,7 @@ COPY schema ./schema
 RUN cargo build --release --bin message-vault-rs
 
 # -----------------------------------------------------------------------------
-# Stage 2: Next.js production build
-# -----------------------------------------------------------------------------
-FROM node:20-bookworm AS web-builder
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    python3 \
-    build-essential \
-  && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /src/web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-
-COPY web ./
-
-# Baked into the client at build time (login footer + optional Hanko URL).
-ARG BUILD_ID=dev
-ARG BUILD_DATE=
-ARG NEXT_PUBLIC_HANKO_API_URL=
-RUN BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%d)}" \
-  && NEXT_PUBLIC_BUILD_ID="$BUILD_ID" \
-     NEXT_PUBLIC_BUILD_DATE="$BUILD_DATE" \
-     NEXT_PUBLIC_HANKO_API_URL="$NEXT_PUBLIC_HANKO_API_URL" \
-     npm run build
-
-# -----------------------------------------------------------------------------
-# Stage 3: slim runtime
+# Stage 2: slim runtime
 # -----------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime
 
@@ -66,9 +39,8 @@ COPY demo ./demo
 # Container config template
 COPY config/config.docker.toml ./config/config.docker.toml
 
-# Next.js standalone (built from web/ → server.js at standalone root)
-COPY --from=web-builder /src/web/.next/standalone ./
-COPY --from=web-builder /src/web/.next/static ./.next/static
+# Vite SPA build (pre-built before Docker build)
+COPY static ./static
 
 COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
@@ -77,13 +49,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
 
 USER node
 
-ENV NODE_ENV=production \
-    HOSTNAME=0.0.0.0 \
-    PORT=3000 \
+ENV HOSTNAME=0.0.0.0 \
     VAULT_DB=/app/data/vault.db \
     VAULT_DATA_DIR=/app/data
 
-EXPOSE 3000 8080
+EXPOSE 8080
 VOLUME ["/app/data"]
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint-release.sh"]

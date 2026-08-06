@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev profile entrypoint: seed data if needed, then cargo run -- serve + next dev.
+# Dev profile entrypoint: seed data if needed, then cargo run -- serve.
 set -euo pipefail
 
 cd /app
@@ -17,19 +17,6 @@ ensure_docker_config() {
   cp "${CONFIG_DOCKER}" "${CONFIG}"
 }
 
-# Named volume mounts create an empty web/node_modules dir, so "-d" is not enough.
-web_deps_ready() {
-  [[ -d web/node_modules/next ]]
-}
-
-install_web_deps() {
-  if web_deps_ready; then
-    return
-  fi
-  echo "Installing web dependencies…"
-  (cd web && npm ci)
-}
-
 seed_if_needed() {
   if [[ -f data/vault.db ]]; then
     echo "Vault DB present; skipping seed (VAULT_MODE=${VAULT_MODE})."
@@ -44,7 +31,6 @@ seed_if_needed() {
     demo)
       echo "Seeding demo vault…"
       cargo run --release -- reset-demo --config "${CONFIG}"
-      # reset-demo installs demo config without [server]; restore docker bind.
       ensure_docker_config
       echo "Converting demo media…"
       cargo run --release -- process-assets --config "${CONFIG}" \
@@ -60,18 +46,16 @@ seed_if_needed() {
   esac
 }
 
-install_web_deps
+# Link Vite build output if available (built externally via npm run dev or npm run build)
+if [[ -d /app/static ]]; then
+  echo "Static files found at /app/static"
+else
+  echo "Note: no /app/static directory — create a symlink to your Vite build:"
+  echo "  ln -s /path/to/message-vault-io/web/dist /app/static"
+  mkdir -p /app/static
+fi
+
 seed_if_needed
 
-echo "Starting import API (cargo run -- serve)…"
-cargo run --release -- serve --config "${CONFIG}" &
-SERVE_PID=$!
-
-cleanup() {
-  kill "${SERVE_PID}" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
-
-echo "Starting Next.js (npm run dev)…"
-cd web
-exec npm run dev -- --hostname 0.0.0.0 --port 3000
+echo "Starting message-vault-rs (API + static files)…"
+exec cargo run --release -- serve --config "${CONFIG}" --bind 0.0.0.0:8080
