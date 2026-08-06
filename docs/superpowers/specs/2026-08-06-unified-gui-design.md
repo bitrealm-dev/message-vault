@@ -452,7 +452,7 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 - Contact editing and merging UI (combining two contact profiles)
 - Import progress and status dashboard (batch import history)
 - Exact query syntax for saved groups
-- How the server advertises its auth mode (Hanko vs local) — client queries and adapts the login form
+- New REST endpoint: `GET /api/auth/mode` — unauthenticated, returns `{"mode": "hanko"}` or `{"mode": "local"}`. Client calls this before rendering the login form. Does not exist yet in message-vault-rs.
 
 ## Open questions
 
