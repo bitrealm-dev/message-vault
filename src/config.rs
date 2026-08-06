@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -153,6 +153,26 @@ impl Config {
             );
         }
         Ok(server)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    Hanko,
+    Local,
+}
+
+impl AuthMode {
+    pub fn from_env() -> Self {
+        match std::env::var("AUTH_MODE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "hanko" => AuthMode::Hanko,
+            _ => AuthMode::Local,
+        }
     }
 }
 

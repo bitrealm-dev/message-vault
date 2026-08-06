@@ -161,6 +161,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/v1/auth/mode", get(auth_mode_handler))
         .route("/v1/auth/check", get(auth_check))
         .route(
             "/v1/export/messages/count",
@@ -198,6 +199,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-rs serve listening on http://{bind}");
     eprintln!("  GET  /health");
+    eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
@@ -228,6 +230,18 @@ async fn shutdown_signal() {
 
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok\n")
+}
+
+/// Returns the server's configured authentication mode so clients
+/// can render the correct login form before authenticating.
+async fn auth_mode_handler() -> Json<serde_json::Value> {
+    let mode = crate::config::AuthMode::from_env();
+    Json(serde_json::json!({
+        "mode": match mode {
+            crate::config::AuthMode::Hanko => "hanko",
+            crate::config::AuthMode::Local => "local",
+        }
+    }))
 }
 
 #[derive(Debug, Deserialize)]
