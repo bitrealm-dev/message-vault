@@ -1,7 +1,7 @@
 //! `extract` / `cancel` Tauri commands.
 //!
-//! `extract` starts the SMS Backup & Restore exporter on a background thread
-//! and returns immediately. Progress streams back as Tauri events:
+//! `extract` starts the selected exporter on a background thread and returns
+//! immediately. Progress streams back as Tauri events:
 //! `extract:log` (String line), `extract:finished` (String summary), and
 //! `extract:error` (`ExtractErrorEvent`).
 //!
@@ -15,17 +15,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use message_vault_io_core::{
-    CancelFlag, ExporterConfig, LogSink, MediaConfig, OutputFormat, SmsBackupRestoreConfig,
-    SourceConfig,
+    AppleConfig, ApplePlatform, CancelFlag, ExporterConfig, GoSmsProConfig, ImazingConfig,
+    LogSink, MediaConfig, OpenExtractConfig, SmsBackupPlusConfig, SmsBackupRestoreConfig,
+    SourceConfig, WhatsappConfig, WhatsappPlatform,
 };
 use tauri::Emitter;
 
+// Exporter run functions — aliased to keep the dispatch match legible.
+use go_sms_pro_exporter::run as run_go_sms_pro;
+use imazing_exporter::run as run_imazing;
+use imessage_ir_exporter::run as run_imessage;
+use openextract_exporter::run as run_openextract;
+use sms_backup_plus_exporter::run as run_sms_plus;
+use sms_backup_restore_exporter::run as run_sms_restore;
+use whatsapp_exporter::run as run_whatsapp;
+
 use super::events::ExtractErrorEvent;
 use crate::state::AppState;
-
-/// The `source` id the frontend sends for SMS Backup & Restore
-/// (see `web/src/lib/types.ts` and the Task 5 Extract screen).
-const SOURCE_SMS_BACKUP_RESTORE: &str = "sms-backup-restore";
 
 #[tauri::command]
 pub async fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
@@ -44,12 +50,41 @@ pub async fn extract(
     path: String,
     output_dir: String,
 ) -> Result<(), String> {
-    // Only SMS Backup & Restore is wired so far; later tasks extend this dispatch.
-    if source != SOURCE_SMS_BACKUP_RESTORE {
-        return Err(format!(
-            "unsupported source '{source}' (expected '{SOURCE_SMS_BACKUP_RESTORE}')"
-        ));
-    }
+    // Build the source config from the frontend source id.
+    let source_config = match source.as_str() {
+        "sms-backup-restore" => SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
+            owner_phones: Vec::new(),
+        }),
+        "go-sms-pro" => SourceConfig::GoSmsPro(GoSmsProConfig {
+            owner_phones: Vec::new(),
+        }),
+        "sms-backup-plus" => SourceConfig::SmsBackupPlus(SmsBackupPlusConfig {
+            owner_phones: Vec::new(),
+            owner_emails: Vec::new(),
+            name_mapping: None,
+            verbose: false,
+            include_summary: false,
+        }),
+        "openextract" => SourceConfig::OpenExtract(OpenExtractConfig {}),
+        "imazing" => SourceConfig::Imazing(ImazingConfig {}),
+        "imessage-ios" => SourceConfig::Apple(AppleConfig {
+            platform: Some(ApplePlatform::Ios),
+            ..Default::default()
+        }),
+        "imessage-macos" => SourceConfig::Apple(AppleConfig {
+            platform: Some(ApplePlatform::MacOs),
+            ..Default::default()
+        }),
+        "whatsapp-android" => SourceConfig::Whatsapp(WhatsappConfig {
+            platform: Some(WhatsappPlatform::Android),
+            ..Default::default()
+        }),
+        "whatsapp-ios" => SourceConfig::Whatsapp(WhatsappConfig {
+            platform: Some(WhatsappPlatform::Ios),
+            ..Default::default()
+        }),
+        _ => return Err(format!("unsupported source '{source}'")),
+    };
 
     // Reset the shared cancel flag so a previous run's cancel doesn't abort
     // this one. The job below polls this flag during the export.
@@ -81,30 +116,25 @@ pub async fn extract(
             log: Some(LogSink::new(move |line: &str| {
                 let _ = log_app.emit("extract:log", line.to_string());
             })),
-            output_format: OutputFormat::default(),
-            source: SourceConfig::SmsBackupRestore(SmsBackupRestoreConfig {
-                owner_phones: Vec::new(),
-            }),
+            output_format: Default::default(),
+            source: source_config,
         };
 
-        match sms_backup_restore_exporter::run(&config) {
-            Ok(result) => {
-                // `RunResult.messages` holds the exporter's report lines (skips,
-                // attachment counts, and the final "Wrote ... export under ..."
-                // summary). Forward them all to the log, then re-emit the last
-                // line as the finished summary.
-                let summary = result
+        let result = run_exporter(&config);
+
+        match result {
+            Ok(run_result) => {
+                let summary = run_result
                     .messages
                     .last()
                     .cloned()
                     .unwrap_or_else(|| "Export complete.".to_string());
-                for line in result.messages {
+                for line in run_result.messages {
                     let _ = app_handle.emit("extract:log", line);
                 }
                 let _ = app_handle.emit("extract:finished", summary);
             }
             Err(err) => {
-                // `{:#}` prints the anyhow error chain (cause + context).
                 let _ = app_handle.emit(
                     "extract:error",
                     ExtractErrorEvent {
@@ -117,4 +147,19 @@ pub async fn extract(
     });
 
     Ok(())
+}
+
+/// Dispatch to the correct exporter's `run()` function based on the source
+/// config. Mirrors `message-vault-io-gui::jobs::run_exporter()`.
+fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core::RunResult> {
+    match &config.source {
+        SourceConfig::GoSmsPro(_) => run_go_sms_pro(config),
+        SourceConfig::SmsBackupRestore(_) => run_sms_restore(config),
+        SourceConfig::SmsBackupPlus(_) => run_sms_plus(config),
+        SourceConfig::OpenExtract(_) => run_openextract(config),
+        SourceConfig::Imazing(_) => run_imazing(config),
+        SourceConfig::Apple(_) => run_imessage(config),
+        SourceConfig::Whatsapp(_) => run_whatsapp(config),
+        SourceConfig::Format(_) => Err(anyhow::anyhow!("Format conversion not yet wired")),
+    }
 }
