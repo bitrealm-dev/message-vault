@@ -4921,6 +4921,7 @@ dependencies = [
  "message-vault-io-core",
  "serde",
  "serde_json",
+ "sms-backup-restore-exporter",
  "tauri",
  "tauri-build",
 ]
