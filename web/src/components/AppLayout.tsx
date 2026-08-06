@@ -33,7 +33,10 @@ export default function AppLayout() {
     switch (activeView) {
       case "conversations":
         return selectedConversation ? (
-          <MessageView conversation={selectedConversation} />
+          <MessageView
+            conversation={selectedConversation}
+            onOpenContact={(contactId: string) => setSelectedContactId(contactId)}
+          />
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.875rem" }}>
             Select a conversation to view messages
