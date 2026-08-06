@@ -1005,6 +1005,7 @@ async fn asset_put_handler(
             &assets_dir_store,
             mime.as_deref(),
             true,
+            false,
         )
     })
     .await
@@ -1166,8 +1167,9 @@ async fn asset_upload_complete_handler(
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let sha = sha256.clone();
     let uid = upload_id.clone();
+    let limits = state.upload_limits;
     let result = tokio::task::spawn_blocking(move || {
-        asset_uploads::complete_upload(&assets_dir, &sha, &uid)
+        asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("upload complete task: {e}")))?

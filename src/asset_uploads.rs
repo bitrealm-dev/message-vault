@@ -251,10 +251,15 @@ pub fn put_part(
 }
 
 /// Concatenate parts, verify claimed SHA-256, install into the asset store.
+///
+/// Assembles files at or above `limits.hash_threshold_bytes` are accepted on
+/// declared size match alone (no SHA-256 pass); smaller files are hashed and
+/// verified against the claimed digest.
 pub fn complete_upload(
     assets_root: &Path,
     sha256: &str,
     upload_id: &str,
+    limits: UploadLimits,
 ) -> Result<(StoredAsset, bool)> {
     let sha = normalize_sha(sha256)?;
     let session = session_dir(assets_root, &sha, upload_id);
@@ -281,10 +286,10 @@ pub fn complete_upload(
 
     let ext = ext_for_mime(manifest.mime.as_deref());
     let assembled = session.join(format!("assembled{ext}"));
+    let mut total = 0u64;
     {
         let mut out = File::create(&assembled)
             .with_context(|| format!("create {}", assembled.display()))?;
-        let mut total = 0u64;
         for n in 1..=count {
             let path = part_path(&session, n);
             let mut file =
@@ -303,6 +308,7 @@ pub fn complete_upload(
             );
         }
     }
+    let skip_hash = total >= limits.hash_threshold_bytes;
 
     let result = assets::store_verified(
         &assembled,
@@ -310,6 +316,7 @@ pub fn complete_upload(
         assets_root,
         manifest.mime.as_deref(),
         true,
+        skip_hash,
     );
     // Always drop the session directory after complete attempt.
     let _ = fs::remove_dir_all(&session);
@@ -371,7 +378,8 @@ mod tests {
         }
         write_manifest(&session, &manifest).unwrap();
 
-        let (stored, already) = complete_upload(root, &sha, upload_id).unwrap();
+        let (stored, already) =
+            complete_upload(root, &sha, upload_id, UploadLimits::default()).unwrap();
         assert!(!already);
         assert_eq!(stored.sha256, sha);
         assert!(root.join(&stored.assets_path).is_file());
@@ -399,8 +407,44 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        let err = complete_upload(root, &wrong_sha, upload_id).unwrap_err();
+        let err =
+            complete_upload(root, &wrong_sha, upload_id, UploadLimits::default()).unwrap_err();
         assert!(err.to_string().contains("sha256 mismatch"));
+        assert!(!session.exists());
+    }
+
+    #[test]
+    fn complete_skips_hash_at_or_above_threshold() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let data = b"large-enough-to-skip";
+        // Claimed digest deliberately wrong: with hashing skipped, completion
+        // trusts the verified size and installs under the claimed sha.
+        let claimed_sha = "a".repeat(64);
+        let upload_id = "skiphash";
+        let session = session_dir(root, &claimed_sha, upload_id);
+        fs::create_dir_all(&session).unwrap();
+        let mut manifest = UploadManifest {
+            sha256: claimed_sha.clone(),
+            bytes: data.len() as u64,
+            part_size: 64,
+            mime: None,
+            received: BTreeSet::new(),
+        };
+        fs::write(part_path(&session, 1), data).unwrap();
+        manifest.received.insert(1);
+        write_manifest(&session, &manifest).unwrap();
+
+        // Threshold 0: every assembled file is at or above it, so hashing is skipped.
+        let limits = UploadLimits {
+            part_size: 64,
+            max_bytes: DEFAULT_MAX_BYTES,
+            hash_threshold_bytes: 0,
+        };
+        let (stored, already) = complete_upload(root, &claimed_sha, upload_id, limits).unwrap();
+        assert!(!already);
+        assert_eq!(stored.sha256, claimed_sha);
+        assert!(root.join(&stored.assets_path).is_file());
         assert!(!session.exists());
     }
 
@@ -426,7 +470,7 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        let err = complete_upload(root, &sha, upload_id).unwrap_err();
+        let err = complete_upload(root, &sha, upload_id, UploadLimits::default()).unwrap_err();
         assert!(err.to_string().contains("missing part"));
         // Incomplete sessions are kept so the client can resume missing parts.
         assert!(session.exists());
@@ -459,7 +503,8 @@ mod tests {
             offset = end;
             part += 1;
         }
-        let (stored, already) = complete_upload(root, &sha, &start.upload_id).unwrap();
+        let (stored, already) =
+            complete_upload(root, &sha, &start.upload_id, limits).unwrap();
         assert!(!already);
         assert_eq!(stored.sha256, sha);
         unsafe {

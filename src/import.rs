@@ -525,6 +525,7 @@ fn prepare_attachments(
                     assets_dir,
                     att.mime_type.as_deref(),
                     false,
+                    false,
                 ) {
                     Ok((stored, already)) => {
                         if already {

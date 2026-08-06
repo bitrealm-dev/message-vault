@@ -36,6 +36,10 @@ pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset>
 /// When `consume_source` is true (HTTP upload temps), prefers `rename` into place.
 /// When false (export/import sources), always copies so the original file remains.
 ///
+/// When `skip_hash` is true, the claimed sha256 is trusted without hashing the
+/// file — callers should only pass true when the file size has already been
+/// verified against a declared size (see `UploadLimits::hash_threshold_bytes`).
+///
 /// Returns `(stored, already_present)`.
 pub fn store_verified(
     source: &Path,
@@ -43,6 +47,7 @@ pub fn store_verified(
     assets_root: &Path,
     export_mime: Option<&str>,
     consume_source: bool,
+    skip_hash: bool,
 ) -> Result<(StoredAsset, bool)> {
     let claimed = normalize_sha256(claimed_sha256)
         .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))?;
@@ -61,10 +66,16 @@ pub fn store_verified(
         ));
     }
 
-    let actual =
-        hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
-    if actual != claimed {
-        anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
+    if skip_hash {
+        // Trust the claimed sha256 — caller verified the assembled file size
+        // matches the declared size. For large files this avoids an expensive
+        // full-file SHA-256 pass on the server.
+    } else {
+        let actual = hash_file(source)
+            .with_context(|| format!("failed to hash {}", source.display()))?;
+        if actual != claimed {
+            anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
+        }
     }
 
     let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
@@ -128,7 +139,7 @@ pub fn hash_and_store(
     }
 
     let sha = hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
-    let (stored, already) = store_verified(source, &sha, assets_root, export_mime, false)?;
+    let (stored, already) = store_verified(source, &sha, assets_root, export_mime, false, false)?;
     if already {
         stats.deduped += 1;
     } else {
@@ -250,7 +261,7 @@ mod tests {
 
         let sha = hash_file(src.path()).unwrap();
         let (first, present) =
-            store_verified(src.path(), &sha, root, Some("text/plain"), false).unwrap();
+            store_verified(src.path(), &sha, root, Some("text/plain"), false, false).unwrap();
         assert!(!present);
         assert_eq!(first.sha256, sha);
         assert!(src.path().is_file(), "non-consuming store must keep source");
@@ -261,7 +272,7 @@ mod tests {
         other.write_all(b"different-bytes").unwrap();
         other.flush().unwrap();
         let (second, present_again) =
-            store_verified(other.path(), &sha, root, Some("text/plain"), false).unwrap();
+            store_verified(other.path(), &sha, root, Some("text/plain"), false, false).unwrap();
         assert!(present_again);
         assert_eq!(second.sha256, sha);
         assert_eq!(second.assets_path, first.assets_path);
@@ -278,8 +289,15 @@ mod tests {
         fs::write(&tmp, b"rename-me").unwrap();
         let sha = hash_file(&tmp).unwrap();
 
-        let (stored, present) =
-            store_verified(&tmp, &sha, root, Some("application/octet-stream"), true).unwrap();
+        let (stored, present) = store_verified(
+            &tmp,
+            &sha,
+            root,
+            Some("application/octet-stream"),
+            true,
+            false,
+        )
+        .unwrap();
         assert!(!present);
         assert!(!tmp.exists(), "rename should consume the temp file");
         assert!(root.join(&stored.assets_path).is_file());
