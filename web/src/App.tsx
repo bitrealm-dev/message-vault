@@ -4,6 +4,7 @@ import Extract from "./screens/Extract";
 import Format from "./screens/Format";
 import Push from "./screens/Push";
 import Pull from "./screens/Pull";
+import Contacts from "./screens/Contacts";
 import Settings from "./screens/Settings";
 import ErrorBanner from "./components/ErrorBanner";
 import { getErrors, clearErrors } from "./lib/tauri";
@@ -14,6 +15,7 @@ const TABS = [
   { id: "format", label: "Format" },
   { id: "push", label: "Vault Push" },
   { id: "pull", label: "Vault Pull" },
+  { id: "contacts", label: "Contacts" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -82,6 +84,7 @@ function App() {
       {tab === "format" && <Format onError={handleJobError} />}
       {tab === "push" && <Push onError={handleJobError} />}
       {tab === "pull" && <Pull onError={handleJobError} />}
+      {tab === "contacts" && <Contacts />}
       {tab === "settings" && <Settings />}
     </div>
   );

@@ -76,6 +76,16 @@ export async function invokePull(config: PullConfig): Promise<void> {
   });
 }
 
+export interface ContactsInfo {
+  count: number;
+  format: string;
+  preview: string[];
+}
+
+export async function invokeContactsInfo(path: string): Promise<ContactsInfo> {
+  return invoke("contacts_info", { path });
+}
+
 export interface AppSettings {
   vault_url: string;
   vault_username: string;
