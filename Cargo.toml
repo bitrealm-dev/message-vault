@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/message/phone",
-    "crates/message/csv",
-    "crates/message/ir",
-    "crates/message/ir-format",
-    "crates/message/reexport",
-    "crates/message/mail",
-    "crates/message/sbr",
-    "crates/message/contacts",
-    "crates/message/obfuscate",
-    "crates/message/media",
-    "crates/message/go-sms-mms",
+    "crates/libs/phone",
+    "crates/libs/csv",
+    "crates/libs/ir",
+    "crates/libs/ir-format",
+    "crates/libs/reexport",
+    "crates/libs/mail",
+    "crates/libs/sbr",
+    "crates/libs/contacts",
+    "crates/libs/obfuscate",
+    "crates/libs/media",
+    "crates/libs/go-sms-mms",
     "crates/exporters/go-sms-pro-exporter",
     "crates/exporters/sms-backup-restore-exporter",
     "crates/exporters/sms-backup-plus-exporter",
@@ -19,8 +19,14 @@ members = [
     "crates/exporters/imazing-exporter",
     "crates/exporters/imessage-ir-exporter",
     "crates/exporters/whatsapp-exporter",
-    "crates/message-vault-io-core",
-    "crates/vault-push",
-    "crates/vault-pull",
+    "crates/core/message-vault-io-core",
+    "crates/cli/vault-push",
+    "crates/cli/vault-pull",
+    "crates/vault/demo-seed",
     "src-tauri",
 ]
+
+[workspace.dependencies]
+message-ir = { path = "crates/libs/ir" }
+contacts = { path = "crates/libs/contacts" }
+phone = { path = "crates/libs/phone" }

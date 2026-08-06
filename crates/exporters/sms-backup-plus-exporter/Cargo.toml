@@ -20,14 +20,14 @@ clap = { version = "4.6.1", features = ["derive"], optional = true }
 csv = "1.4.0"
 hex = "0.4.3"
 mailparse = "0.16.1"
-obfuscate = { path = "../../message/obfuscate" }
-contacts = { path = "../../message/contacts" }
-message-csv = { path = "../../message/csv" }
-message-vault-io-core = { path = "../../message-vault-io-core" }
-message-ir = { path = "../../message/ir" }
-message-ir-format = { path = "../../message/ir-format" }
-media = { path = "../../message/media" }
-phone = { path = "../../message/phone" }
+obfuscate = { path = "../../libs/obfuscate" }
+contacts = { path = "../../libs/contacts" }
+message-csv = { path = "../../libs/csv" }
+message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-ir = { path = "../../libs/ir" }
+message-ir-format = { path = "../../libs/ir-format" }
+media = { path = "../../libs/media" }
+phone = { path = "../../libs/phone" }
 rayon = "1.12.0"
 regex = "1.13.0"
 serde = { version = "1.0.228", features = ["derive"] }

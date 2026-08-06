@@ -6,8 +6,8 @@ description = "Shared form models and process spawning for message-vault-io GUIs
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"], optional = true }
-message-csv = { path = "../message/csv" }
-media = { path = "../message/media" }
+message-csv = { path = "../../libs/csv" }
+media = { path = "../../libs/media" }
 rust-ini = "0.21"
 
 [features]

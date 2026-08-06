@@ -13,7 +13,7 @@ path = "src/bin/message_reexporter.rs"
 anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
 csv = "1.4.0"
-message-vault-io-core = { path = "../../message-vault-io-core" }
+message-vault-io-core = { path = "../../core/message-vault-io-core" }
 message-ir = { path = "../ir" }
 message-ir-format = { path = "../ir-format" }
 media = { path = "../media" }
