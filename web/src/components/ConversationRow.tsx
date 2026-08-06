@@ -51,21 +51,35 @@ export default function ConversationRow({
   conversation,
   isSelected,
   onClick,
+  checked,
+  onCheckChange,
 }: {
   conversation: Conversation;
   isSelected: boolean;
   onClick: () => void;
+  checked?: boolean;
+  onCheckChange?: (id: string) => void;
 }) {
   return (
     <button
       onClick={onClick}
       style={{
-        display: "block", width: "100%", textAlign: "left", border: "none",
+        display: "flex", width: "100%", textAlign: "left", border: "none",
         background: isSelected ? "#e5e7eb" : "transparent",
         padding: "0.5rem 0.75rem", cursor: "pointer",
-        borderBottom: "1px solid #f3f4f6",
+        borderBottom: "1px solid #f3f4f6", gap: "0.5rem", alignItems: "flex-start",
       }}
     >
+      {onCheckChange && (
+        <input
+          type="checkbox"
+          checked={checked || false}
+          onChange={(e) => { e.stopPropagation(); onCheckChange(conversation.id); }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ marginTop: "2px", flexShrink: 0 }}
+        />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "baseline",
         marginBottom: "2px",
@@ -83,6 +97,7 @@ export default function ConversationRow({
       </div>
       <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
         {subtitle(conversation)}
+      </div>
       </div>
     </button>
   );
