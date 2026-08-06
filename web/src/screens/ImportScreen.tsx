@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { useAuth } from "../lib/auth";
+import { apiClient, getBaseUrl } from "../lib/api";
+import { invokeExtract } from "../lib/tauri";
+import { isTauri } from "../lib/tauri-check";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import StepProgress from "../components/StepProgress";
@@ -8,12 +12,19 @@ const SOURCES = [
   "sms-backup-restore", "go-sms-pro", "imazing", "sms-backup-plus", "openextract",
 ];
 
+interface ImportStep {
+  label: string;
+  status: "pending" | "active" | "done" | "error";
+  detail?: string;
+}
+
 export default function ImportScreen() {
+  const { token } = useAuth();
   const [source, setSource] = useState("imessage-ios");
   const [backupPath, setBackupPath] = useState("");
   const [contactsPath, setContactsPath] = useState("");
   const [running, setRunning] = useState(false);
-  const [steps, setSteps] = useState<{ label: string; status: "pending" | "active" | "done" | "error"; detail?: string }[]>([
+  const [steps, setSteps] = useState<ImportStep[]>([
     { label: "Parse backup", status: "pending" },
     { label: "Convert attachments", status: "pending" },
     { label: "Upload to vault", status: "pending" },
@@ -22,26 +33,78 @@ export default function ImportScreen() {
   const [log, setLog] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const [summary, setSummary] = useState("");
+  const [phase, setPhase] = useState<"form" | "progress" | "done">("form");
 
   const startImport = async () => {
+    if (!isTauri()) return;
     setRunning(true);
+    setPhase("progress");
     setDone(false);
     setLog([]);
-    setSteps((s) => s.map((step, i) => i === 0 ? { ...step, status: "active", detail: "Parsing backup…" } : step));
+
+    // Step 1: Parse backup
+    setSteps((s) => s.map((step, i) =>
+      i === 0 ? { ...step, status: "active", detail: "Parsing backup…" } : step
+    ));
+
     try {
-      await new Promise((r) => setTimeout(r, 1000));
-      setSteps((s) => s.map((step, i) => i === 0 ? { ...step, status: "done", detail: "1,423 messages found" } : step));
-      setSteps((s) => s.map((step, i) => i === 1 ? { ...step, status: "active", detail: "Converting…" } : step));
-      await new Promise((r) => setTimeout(r, 1000));
-      setSteps((s) => s.map((step, i) => i === 1 ? { ...step, status: "done", detail: "12 of 45 converted" } : step));
-      setSteps((s) => s.map((step, i) => i === 2 ? { ...step, status: "active", detail: "Uploading…" } : step));
-      await new Promise((r) => setTimeout(r, 1000));
-      setSteps((s) => s.map((step, i) => i === 2 ? { ...step, status: "done", detail: "Done" } : step));
-      setDone(true);
-      setSummary("Import complete: 1,423 messages across 87 conversations.");
+      // Run Tauri extract command — produces JSONL in a temp directory
+      const outputDir = `${backupPath}/../extract-output`;
+      await invokeExtract({ source, path: backupPath, output_dir: outputDir });
+
+      setSteps((s) => s.map((step, i) =>
+        i === 0 ? { ...step, status: "done", detail: "Extraction complete" } : step
+      ));
+
+      // Step 2: Convert attachments
+      setSteps((s) => s.map((step, i) =>
+        i === 1 ? { ...step, status: "active", detail: "Processing attachments…" } : step
+      ));
+      setSteps((s) => s.map((step, i) =>
+        i === 1 ? { ...step, status: "done", detail: "Attachments processed" } : step
+      ));
+
+      // Step 3: Upload to vault
+      setSteps((s) => s.map((step, i) =>
+        i === 2 ? { ...step, status: "active", detail: "Uploading to vault…" } : step
+      ));
+
+      const baseUrl = getBaseUrl();
+      if (!token) throw new Error("Not authenticated");
+
+      // Start an import session
+      const importSession = await apiClient.post<{ id: string }>("/v1/imports", {
+        source,
+        tool: "message-vault-io",
+        mode: "push",
+      });
+
+      // Call the existing Tauri push command which handles the JSONL upload:
+      const { invokePush } = await import("../lib/tauri");
+      await invokePush({
+        base_url: baseUrl,
+        username: "",
+        key: token,
+        input_dir: outputDir,
+        mode: "import",
+        force: false,
+        skip_attachments: false,
+      });
+
+      // Complete the import session
+      await apiClient.post(`/v1/imports/${importSession.id}/complete`, {});
+
+      setSteps((s) => s.map((step, i) =>
+        i === 2 ? { ...step, status: "done", detail: "Upload complete" } : step
+      ));
+
+      setPhase("done");
+      setSummary("Import complete. Messages uploaded to vault.");
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       setSteps((s) => s.map((step) => ({ ...step, status: "error" as const })));
-      setLog((l) => [...l, `Error: ${e}`]);
+      setLog((l) => [...l, `Error: ${msg}`]);
+      setPhase("progress");
     } finally {
       setRunning(false);
     }
@@ -50,7 +113,8 @@ export default function ImportScreen() {
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Import to Vault</h2>
-      {!running && !done && (
+
+      {phase === "form" && (
         <>
           <FormRow label="Source">
             <select value={source} onChange={(e) => setSource(e.target.value)}
@@ -58,20 +122,25 @@ export default function ImportScreen() {
               {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </FormRow>
+
           <FormRow label="Backup path">
             <PathPicker value={backupPath} onChange={setBackupPath} directory />
           </FormRow>
+
           <FormRow label="Contacts (optional)">
             <PathPicker value={contactsPath} onChange={setContactsPath} placeholder="VCF or vCard CSV file" />
           </FormRow>
+
           <div style={{ marginTop: "1.5rem" }}>
             <button onClick={startImport} disabled={!backupPath}
-              style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>Import</button>
+              style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
+              Import
+            </button>
           </div>
         </>
       )}
 
-      {(running || done) && (
+      {(phase === "progress" || phase === "done") && (
         <>
           <StepProgress steps={steps} />
           <div style={{ marginTop: "1rem" }}>
@@ -81,16 +150,29 @@ export default function ImportScreen() {
             </button>
           </div>
           {showDetails && (
-            <pre style={{ maxHeight: "300px", overflow: "auto", fontSize: "0.75rem", background: "#f3f4f6", padding: "0.5rem", borderRadius: "4px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-              {log.map((line, i) => <div key={i}>{line}</div>)}
+            <pre style={{
+              maxHeight: "300px", overflow: "auto", fontSize: "0.75rem",
+              background: "#f3f4f6", padding: "0.5rem", borderRadius: "4px",
+              whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}>
+              {log.length === 0 ? "No log entries" : log.map((line, i) => <div key={i}>{line}</div>)}
             </pre>
           )}
         </>
       )}
 
-      {done && (
+      {phase === "done" && (
         <div style={{ marginTop: "1rem", padding: "1rem", background: "#f0fdf4", borderRadius: "6px", fontSize: "0.875rem" }}>
           {summary}
+        </div>
+      )}
+
+      {phase === "done" && (
+        <div style={{ marginTop: "1rem" }}>
+          <button onClick={() => { setPhase("form"); setDone(false); }}
+            style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
+            Import another
+          </button>
         </div>
       )}
     </div>
