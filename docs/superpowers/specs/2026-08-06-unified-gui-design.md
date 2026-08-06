@@ -446,13 +446,22 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 - Change password
 - Delete account (with confirmation)
 
+## Import history
+
+Accessible from the Import button dropdown or the Settings screen. A chronological list of past imports:
+
+| Date | Source | Messages | Conversations | Duplicates |
+|------|--------|----------|---------------|------------|
+| Aug 6, 2026 2:34 PM | iMessage (iOS) | 14,203 | 87 | 312 |
+| Aug 4, 2026 9:15 AM | WhatsApp (Android) | 3,400 | 22 | 0 |
+
+Helps answer "did I already import that backup?" before re-importing. Click a row to see the per-conversation breakdown from that import session.
+
 ## What this design does NOT cover
 
 - Excluded conversations / spam filtering (marking conversations to exclude from views)
 - Contact editing and merging UI (combining two contact profiles)
-- Import progress and status dashboard (batch import history)
-- Exact query syntax for saved groups
-- New REST endpoint: `GET /api/auth/mode` — unauthenticated, returns `{"mode": "hanko"}` or `{"mode": "local"}`. Client calls this before rendering the login form. Does not exist yet in message-vault-rs.
+- New server endpoints: `GET /api/auth/mode`, import history API, paginated message queries
 
 ## Open questions
 
