@@ -50,3 +50,4 @@ config/export-to-vault.sh
 /web/node_modules/
 /web/dist/
 .claude/
+.worktrees/

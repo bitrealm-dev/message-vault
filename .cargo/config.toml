@@ -1,0 +1,4 @@
+# Windows default main-thread stack (1 MiB) is too small for demo import.
+# Without this, `reset-demo` / import can hit STATUS_STACK_OVERFLOW.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:16777216"]

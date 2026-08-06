@@ -42,6 +42,7 @@ export interface PushConfig {
   mode: string;
   force: boolean;
   skip_attachments: boolean;
+  trust_export: boolean;
 }
 
 export async function invokePush(config: PushConfig): Promise<void> {
@@ -53,6 +54,7 @@ export async function invokePush(config: PushConfig): Promise<void> {
     mode: config.mode,
     force: config.force,
     skipAttachments: config.skip_attachments,
+    trustExport: config.trust_export,
   });
 }
 

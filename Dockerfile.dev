@@ -1,0 +1,17 @@
+# Dev toolchain image: Rust + FFmpeg.
+# Source is bind-mounted at runtime (see compose-dev.yml).
+# rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
+FROM rust:1.95-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    ffmpeg \
+    pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+EXPOSE 8080
+
+ENTRYPOINT ["/bin/bash", "/app/scripts/docker-entrypoint-dev.sh"]

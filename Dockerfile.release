@@ -1,0 +1,61 @@
+# Multi-stage release image built from the current checkout (no published binaries).
+# Usage: docker compose -f compose-release.yml up --build
+
+# -----------------------------------------------------------------------------
+# Stage 1: Rust binary
+# -----------------------------------------------------------------------------
+# rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
+FROM rust:1.95-bookworm AS rust-builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY crates ./crates
+# Required at compile time by crates/vault/server/src/db/schema.rs include_str!(…).
+COPY schema ./schema
+# Required at compile time by include_str! in search_query.rs.
+COPY fixtures ./fixtures
+
+RUN cargo build --release -p message-vault-server
+
+# -----------------------------------------------------------------------------
+# Stage 2: slim runtime
+# -----------------------------------------------------------------------------
+FROM node:20-bookworm-slim AS runtime
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    ffmpeg \
+    tini \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Rust CLI / serve binary
+COPY --from=rust-builder /src/target/release/message-vault-server /usr/local/bin/message-vault-server
+
+# Demo bundle (seeded on first start when VAULT_MODE=demo)
+COPY demo ./demo
+
+# Container config template
+COPY config/config.docker.toml ./config/config.docker.toml
+
+# Vite SPA build (pre-built before Docker build)
+COPY static ./static
+
+COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
+  && mkdir -p /app/data \
+  && chown -R node:node /app
+
+USER node
+
+ENV HOSTNAME=0.0.0.0 \
+    VAULT_DB=/app/data/vault.db \
+    VAULT_DATA_DIR=/app/data
+
+EXPOSE 8080
+VOLUME ["/app/data"]
+
+ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint-release.sh"]

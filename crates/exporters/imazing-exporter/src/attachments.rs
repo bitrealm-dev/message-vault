@@ -109,6 +109,7 @@ pub(crate) fn resolve_attachment_cell(
     copy_attachments: bool,
     message_secs: i64,
     attachments_saved: &mut u64,
+    copy_failures: &mut u64,
 ) -> AttachmentCell {
     let mime = mime_hint(attachment_type, csv_name);
     let is_sticker = attachment_type.eq_ignore_ascii_case("sticker");
@@ -140,7 +141,7 @@ pub(crate) fn resolve_attachment_cell(
             transcription: None,
             sticker_effect: None,
         },
-        Ok(None) | Err(_) => AttachmentCell {
+        Ok(None) => AttachmentCell {
             path: Some(csv_name.to_string()),
             original_name: Some(csv_name.to_string()),
             mime_type: mime,
@@ -148,6 +149,18 @@ pub(crate) fn resolve_attachment_cell(
             is_sticker,
             transcription: None,
             sticker_effect: None,
+        },
+        Err(_) => {
+            *copy_failures += 1;
+            AttachmentCell {
+                path: Some(csv_name.to_string()),
+                original_name: Some(csv_name.to_string()),
+                mime_type: mime,
+                digest_sha256: None,
+                is_sticker,
+                transcription: None,
+                sticker_effect: None,
+            }
         },
     }
 }

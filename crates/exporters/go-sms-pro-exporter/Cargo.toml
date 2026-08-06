@@ -19,15 +19,15 @@ chrono = "0.4.44"
 clap = { version = "4.6.1", features = ["derive"], optional = true }
 csv = "1.4.0"
 hex = "0.4.3"
-obfuscate = { path = "../../message/obfuscate" }
-contacts = { path = "../../message/contacts" }
-go-sms-mms = { path = "../../message/go-sms-mms" }
-message-csv = { path = "../../message/csv" }
-message-vault-io-core = { path = "../../message-vault-io-core" }
-message-ir = { path = "../../message/ir" }
-message-ir-format = { path = "../../message/ir-format" }
-media = { path = "../../message/media" }
-phone = { path = "../../message/phone" }
+obfuscate = { path = "../../libs/obfuscate" }
+contacts = { path = "../../libs/contacts" }
+go-sms-mms = { path = "../../libs/go-sms-mms" }
+message-csv = { path = "../../libs/csv" }
+message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-ir = { path = "../../libs/ir" }
+message-ir-format = { path = "../../libs/ir-format" }
+media = { path = "../../libs/media" }
+phone = { path = "../../libs/phone" }
 quick-xml = { version = "0.41.0", features = ["serialize"] }
 regex = "1.13.0"
 serde = { version = "1.0.228", features = ["derive"] }

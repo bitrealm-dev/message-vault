@@ -91,6 +91,7 @@ export default function ImportScreen() {
         mode: "import",
         force: false,
         skip_attachments: false,
+        trust_export: false,
       });
 
       // Complete the import session

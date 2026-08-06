@@ -1,0 +1,6 @@
+DROP TRIGGER IF EXISTS messages_fts_ai;
+DROP TRIGGER IF EXISTS messages_fts_ad;
+DROP TRIGGER IF EXISTS messages_fts_au;
+DROP TRIGGER IF EXISTS attachments_fts_ai;
+DROP TRIGGER IF EXISTS attachments_fts_ad;
+DROP TRIGGER IF EXISTS attachments_fts_au;

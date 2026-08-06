@@ -1,0 +1,19 @@
+---
+title: Export messages from Apple
+description: Choose the Apple Messages or WhatsApp export path.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+An iPhone backup can contain Apple Messages and WhatsApp data. A Mac `chat.db` can also be used for Apple Messages.
+
+<CardGrid>
+  <Card title="Apple Messages and SMS">
+    Read Messages from a Mac `chat.db` or from an iPhone backup. Encrypted iPhone backups work when you know the password. [Export Apple Messages](/apple/text-messages/).
+  </Card>
+  <Card title="WhatsApp">
+    Give the WhatsApp exporter an iPhone backup path. The bundled `wtsexporter` helper extracts the chats before the selected output format is written. [Export WhatsApp from Apple](/apple/whatsapp/).
+  </Card>
+</CardGrid>
+
+These jobs are separate. Exporting Apple Messages does not automatically export WhatsApp from the same backup.

@@ -1,0 +1,31 @@
+# Release — production-shaped image built from this checkout.
+# No live editing; rebuild after code changes. Closer to what you ship.
+#
+#   docker compose -f compose-release.yml up --build
+#
+# Build the Vite SPA first:  cd web && npm run build
+# Then copy:  cp -r web/dist ./static
+#
+# Personal vault: VAULT_MODE=personal docker compose -f compose-release.yml up --build
+# Staging drop: copy JSONL into ./staging (mounted at /app/staging).
+#
+# VPS Hub + nginx TLS: private message-vault-ops repo (compose-hub.yml).
+
+services:
+  vault:
+    build:
+      context: .
+      dockerfile: Dockerfile.release
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+      VAULT_AUTH: ${VAULT_AUTH:-local}
+      AUTH_MODE: ${AUTH_MODE:-local}
+      HANKO_API_URL: ${HANKO_API_URL:-}
+    volumes:
+      - vault-data:/app/data
+      - ./staging:/app/staging
+
+volumes:
+  vault-data:

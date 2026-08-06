@@ -1,0 +1,57 @@
+---
+title: Convert an existing export
+description: Change a Message Exporters output folder into another supported format.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The **Format** tab reads an archive that Message Vault already created and writes it in another format. It does not read an arbitrary vendor export.
+
+## Before you start
+
+The input folder must contain exactly one detectable format:
+
+- common-message `.json` files using schema version 3;
+- `.jsonl` files;
+- unified common-message `.csv` files;
+- `.mbox` files;
+- conversation folders containing `.eml` files; or
+- one `smses.xml`.
+
+Create a different empty output folder. Input and output cannot be the same path.
+
+## Convert the folder
+
+<Tabs>
+  <TabItem label="Desktop app">
+    1. Open **Format**.
+    2. Choose the existing **Input directory**.
+    3. Choose the new **Output format**.
+    4. Choose a different **Output directory**.
+    5. Select the attachment mode. **Copy** keeps media when it is present.
+    6. Optionally enable **Obfuscate**.
+    7. Select **Run**, then check **Log** for the detected format and conversation count.
+  </TabItem>
+  <TabItem label="Terminal">
+    Run:
+
+    ```bash
+    message-reexporter \
+      --input /path/to/prior-export \
+      --output /path/to/new-export \
+      --format csv
+    ```
+
+    Replace `csv` with `json`, `jsonl`, `eml`, `mbox`, or `xml`. Media options use `--media-mode disabled|clone|convert|compress`. Obfuscation uses `--obfuscate` and optional `--obfuscate-seed <8-hex>`.
+  </TabItem>
+</Tabs>
+
+The detector ignores `attachments/` and old `*.meta.json` files. It rejects mixed format classes, unsupported folder layouts, and attempts to write over the input.
+
+<Aside type="caution" title="Some conversions lose details">
+  Android XML cannot store Apple-only fields. Prefer JSON as the source and destination when preserving iMessage detail matters. Convert can only carry media that is still present in the source folder or embedded in its files.
+</Aside>
+
+## Command-line reference
+
+See the [`message-reexporter` reference](/reference/cli/message-reexporter/) for format detection, media conversion settings, obfuscation, exit behavior, and all available flags.

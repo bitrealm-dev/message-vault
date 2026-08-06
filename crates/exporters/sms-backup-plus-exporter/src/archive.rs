@@ -65,9 +65,9 @@ fn date_only_re() -> &'static Regex {
 fn phone_from_from_header(from_hdr: &str) -> String {
     // parseaddr-ish: extract email local-part or display
     if let Some(start) = from_hdr.find('<')
-        && let Some(end) = from_hdr.find('>')
+        && let Some(end) = from_hdr[start..].find('>')
     {
-        let addr = &from_hdr[start + 1..end];
+        let addr = &from_hdr[start + 1..start + end];
         let local = addr.split('@').next().unwrap_or(addr);
         if let Some(digits) = sanitize_number(local) {
             return digits;

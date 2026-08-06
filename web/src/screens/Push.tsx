@@ -20,6 +20,7 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
   const [mode, setMode] = useState("append");
   const [force, setForce] = useState(false);
   const [skipAttachments, setSkipAttachments] = useState(false);
+  const [trustExport, setTrustExport] = useState(false);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -43,12 +44,12 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
     });
 
     try {
-      await invokePush({ base_url: baseUrl, username, key, input_dir: inputDir, mode, force, skip_attachments: skipAttachments });
+      await invokePush({ base_url: baseUrl, username, key, input_dir: inputDir, mode, force, skip_attachments: skipAttachments, trust_export: trustExport });
     } catch (err) {
       setLog((prev) => [...prev, `Error starting push: ${err}`]);
       setRunning(false);
     }
-  }, [baseUrl, username, key, inputDir, mode, force, skipAttachments]);
+  }, [baseUrl, username, key, inputDir, mode, force, skipAttachments, trustExport]);
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
@@ -88,6 +89,9 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
         </label>
         <label style={{ fontSize: "0.875rem" }}>
           <input type="checkbox" checked={skipAttachments} onChange={(e) => setSkipAttachments(e.target.checked)} /> Skip attachments
+        </label>
+        <label style={{ fontSize: "0.875rem" }}>
+          <input type="checkbox" checked={trustExport} onChange={(e) => setTrustExport(e.target.checked)} /> Trust export (skip hash verification)
         </label>
       </FormRow>
 

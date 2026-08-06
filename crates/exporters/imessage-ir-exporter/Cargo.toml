@@ -26,11 +26,11 @@ clap = { version = "4", features = ["derive"], optional = true }
 crabapple = { version = "=0.4.7" }
 hex = "0.4.3"
 imessage-database = "4.2.0"
-message-csv = { path = "../../message/csv" }
-message-vault-io-core = { path = "../../message-vault-io-core" }
-message-ir = { path = "../../message/ir" }
-message-ir-format = { path = "../../message/ir-format" }
-mail = { path = "../../message/mail" }
+message-csv = { path = "../../libs/csv" }
+message-vault-io-core = { path = "../../core/message-vault-io-core" }
+message-ir = { path = "../../libs/ir" }
+message-ir-format = { path = "../../libs/ir-format" }
+mail = { path = "../../libs/mail" }
 rpassword = "=7.5.3"
 rusqlite = { version = "=0.40.0", features = ["blob", "bundled"] }
 serde = { version = "1", features = ["derive"] }

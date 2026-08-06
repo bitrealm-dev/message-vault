@@ -1,0 +1,19 @@
+---
+title: Export messages from Android
+description: Choose the Android text-message or WhatsApp export path.
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Text messages and MMS">
+    Create an XML backup with SyncTech SMS Backup & Restore, then convert it in the desktop app. [Export Android text messages](/android/text-messages/).
+  </Card>
+  <Card title="WhatsApp">
+    Provide a WhatsApp message database or encrypted backup and the matching key material required by `wtsexporter`. [Export WhatsApp from Android](/android/whatsapp/).
+  </Card>
+</CardGrid>
+
+<Aside type="note" title="Message Vault does not pull data from the phone">
+  First use the backup app or device-specific method that can place the required files on the computer. Message Vault reads those local files and builds the archive.
+</Aside>

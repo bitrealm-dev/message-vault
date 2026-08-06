@@ -18,7 +18,7 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0"
-message-vault-io-core = { path = "../crates/message-vault-io-core" }
+message-vault-io-core = { path = "../crates/core/message-vault-io-core" }
 sms-backup-restore-exporter = { path = "../crates/exporters/sms-backup-restore-exporter", default-features = false }
 go-sms-pro-exporter = { path = "../crates/exporters/go-sms-pro-exporter", default-features = false }
 sms-backup-plus-exporter = { path = "../crates/exporters/sms-backup-plus-exporter", default-features = false }
@@ -26,7 +26,7 @@ openextract-exporter = { path = "../crates/exporters/openextract-exporter", defa
 imazing-exporter = { path = "../crates/exporters/imazing-exporter", default-features = false }
 whatsapp-exporter = { path = "../crates/exporters/whatsapp-exporter", default-features = false }
 imessage-ir-exporter = { path = "../crates/exporters/imessage-ir-exporter", default-features = false }
-message-reexport = { path = "../crates/message/reexport" }
-vault-push = { path = "../crates/vault-push" }
-vault-pull = { path = "../crates/vault-pull" }
-contacts = { path = "../crates/message/contacts" }
+message-reexport = { path = "../crates/libs/reexport" }
+vault-push = { path = "../crates/cli/vault-push" }
+vault-pull = { path = "../crates/cli/vault-pull" }
+contacts = { path = "../crates/libs/contacts" }

@@ -76,15 +76,19 @@ impl DataSource {
                         get_decrypted_message_database(&backup, log.as_ref())?,
                         log.clone(),
                     );
-                    let contacts_path = get_decrypted_contacts_database(&backup, log.as_ref())
-                        .ok();
-                    if contacts_path.is_none() {
-                        emit_log(
-                            log.as_ref(),
-                            "No Contacts database found in iOS backup (AddressBook absent); \
-                             continuing without contacts".to_string(),
-                        );
-                    }
+                    let contacts_path = match get_decrypted_contacts_database(&backup, log.as_ref()) {
+                        Ok(path) => Some(path),
+                        Err(e) => {
+                            emit_log(
+                                log.as_ref(),
+                                format!(
+                                    "Could not decrypt Contacts database from iOS backup: {e:#}; \
+                                     continuing without contacts"
+                                ),
+                            );
+                            None
+                        }
+                    };
 
                     emit_log(
                         log.as_ref(),

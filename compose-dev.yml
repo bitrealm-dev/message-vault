@@ -1,0 +1,49 @@
+# Dev — laptop day-to-day work.
+# Bind-mounts the repo for hot reload; heavier toolchain image.
+#
+#   docker compose -f compose-dev.yml up
+#   docker compose -f compose-dev.yml up --build   # Dockerfile.dev / OS deps changed
+#
+# With COMPOSE_FILE=compose-dev.yml in .env (default), bare `docker compose up` works.
+#
+# Personal vault: VAULT_MODE=personal docker compose -f compose-dev.yml up
+# Staging drop: copy JSONL into ./staging (mounted at /app/staging).
+#
+# SQLite browser (plain HTTP on loopback): http://127.0.0.1:8081
+#
+# TLS / nginx for production lives in the private message-vault-ops repo.
+
+services:
+  vault:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      VAULT_MODE: ${VAULT_MODE:-demo}
+      VAULT_AUTH: ${VAULT_AUTH:-local}
+      HANKO_API_URL: ${HANKO_API_URL:-}
+    volumes:
+      - .:/app
+      - ./staging:/app/staging
+      - cargo-target:/app/target
+      - cargo-registry:/usr/local/cargo/registry
+      - vault-data:/app/data
+    stdin_open: true
+    tty: true
+
+  # SQLite browser — localhost only.
+  sqlite-web:
+    image: ghcr.io/coleifer/sqlite-web:latest
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - vault-data:/data
+    command: /data/vault.db
+    restart: unless-stopped
+
+volumes:
+  cargo-target:
+  cargo-registry:
+  vault-data:

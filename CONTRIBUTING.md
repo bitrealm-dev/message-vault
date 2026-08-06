@@ -103,21 +103,21 @@ export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
 cargo tauri dev
 ```
 
-### Vault server (message-vault-rs)
+### Vault server (message-vault-server)
 
 The Vault Push and Vault Pull screens talk to a Message Vault server over HTTP.
 The server is a separate project — clone and run with Docker:
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-rs.git
-cd message-vault-rs
+git clone https://github.com/bitrealm-dev/message-vault-server.git
+cd message-vault-server
 docker compose up
 ```
 
 The server's API is available at `http://localhost:5556` by default.
 Create an account and API key through the server's web UI at `http://localhost:3000`.
 
-Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-vault-io-core/export.example.ini`](crates/message-vault-io-core/export.example.ini). Backup passwords are never written.
+Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
 ## Helper binaries and environment variables
 
@@ -192,7 +192,7 @@ Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand
 
 ## Workspace map
 
-- **Libraries:** under `crates/message/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
+- **Libraries:** under `crates/libs/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
 - **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
 - **GUI:** Tauri v2 app in `src-tauri/` with React + Vite frontend in `web/`
 - **In-app libraries (not shipped as CLIs in this product’s release):** `vault-push`, `message-reexport` (package `message-reexport`); standalone CLIs come from message-exporters

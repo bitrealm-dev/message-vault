@@ -195,6 +195,7 @@ pub(crate) fn convert_export(
                 let mut attachment_extra: BTreeMap<String, String> = BTreeMap::new();
                 if !row.attachment.is_empty() {
                     let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
+                    let mut copy_failures = 0u64;
                     let cell = resolve_attachment_cell(
                         &row.attachment,
                         &row.attachment_type,
@@ -204,7 +205,11 @@ pub(crate) fn convert_export(
                         copy_attachments,
                         secs,
                         &mut report.attachments_saved,
+                        &mut copy_failures,
                     );
+                    if copy_failures > 0 {
+                        bump(&mut report, "attachment-copy-failures", copy_failures);
+                    }
                     let rel_path = cell.path.clone().unwrap_or_default();
                     attachments.push(PendingAttachment {
                         rel_path: rel_path.clone(),

@@ -1,0 +1,38 @@
+# Git / IDE
+.git
+.github
+.cursor
+.vscode
+.idea
+
+# Accidental root lockfile confuses Next.js workspace root detection
+/package-lock.json
+/package.json
+
+# Local data and machine config (never bake personal vaults)
+data
+**/data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+config/config.toml
+config/contacts.csv
+config/contacts.vcf
+
+# Build artifacts
+target
+**/target
+web/node_modules
+web/.next
+web/tsconfig.tsbuildinfo
+docs/node_modules
+docs/.astro
+docs/dist
+
+# Misc
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+sources
+staging

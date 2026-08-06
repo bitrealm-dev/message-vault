@@ -100,11 +100,14 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
+    let copy_attachments = session.options.transforms.copies_attachments();
     let attachments_dir = session.options.export_path.join("attachments");
-    if matches!(
-        format,
-        OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-    ) && session.options.attachment_embed == AttachmentEmbed::Embed
+    if copy_attachments
+        && matches!(
+            format,
+            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
+        )
+        && session.options.attachment_embed == AttachmentEmbed::Embed
     {
         fs::create_dir_all(&attachments_dir)?;
     }
@@ -275,6 +278,7 @@ fn collect_one(
         attachments_dir,
         session.options.output_format,
         session.options.attachment_embed,
+        session.options.transforms.copies_attachments(),
     )?;
 
     let convo = conversations
@@ -307,11 +311,13 @@ fn mail_message_to_ir(
     attachments_dir: &Path,
     format: OutputFormat,
     embed: AttachmentEmbed,
+    copy_attachments: bool,
 ) -> Result<IrMessage, RuntimeError> {
-    let persist_to_disk = matches!(
-        format,
-        OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-    );
+    let persist_to_disk = copy_attachments
+        && matches!(
+            format,
+            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
+        );
 
     let mut attachments = Vec::with_capacity(mail.attachments.len());
     for attachment in &mail.attachments {

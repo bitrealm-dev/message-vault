@@ -1,0 +1,12 @@
+# Demo account identity used only by `reset-demo`.
+# Not copied into the runtime config.toml.
+
+[owner]
+display_name = "Demo User"
+# (raw handle, handle type) pairs linked into `account_handles` by reset-demo.
+handle_specs = [["+14155559000", "phone"]]
+emails = ["demo.ingest@example.com"]
+
+[account]
+username = "demo"
+read_only = true
