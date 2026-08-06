@@ -2,20 +2,6 @@ export interface ExtractConfig {
   source: string;
   path: string;
   output_dir: string;
-  media: MediaConfig;
-}
-
-export interface MediaConfig {
-  mode: "copy" | "convert" | "compress" | "none";
-  convert_resolution?: number;
-  convert_fps?: number;
-}
-
-export interface ProgressEvent {
-  kind: string;
-  message: string;
-  current: number;
-  total?: number;
 }
 
 /**

@@ -3,7 +3,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ExtractConfig, ExtractErrorEvent } from "./types";
 
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
-  return invoke("extract", { config: JSON.stringify(config) });
+  return invoke("extract", {
+    source: config.source,
+    path: config.path,
+    outputDir: config.output_dir,
+  });
 }
 
 export async function invokeCancel(): Promise<void> {
