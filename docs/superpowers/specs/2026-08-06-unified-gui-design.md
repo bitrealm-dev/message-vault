@@ -393,12 +393,36 @@ No partial restores. No orphaned trash entries. The conversation is the containe
 
 **Bulk operations:** Deleting 10,000 messages in a conversation and undoing shows one row — "Conversation with Bob — 10,000 messages — deleted 5 minutes ago." Restore brings the whole conversation back.
 
+## Settings
+
+Accessed from the ⚙ icon in the left panel. Replaces the main view area.
+
+**Vault connection:**
+- Server URL
+- Authentication (Hanko vs. local username/password)
+- Connection test button
+
+**Media:**
+- ffmpeg path: Text field with Browse button. Defaults to system PATH. If ffmpeg is not found at startup, the app shows a notification with a link to documentation. Same model as VS Code's clangd path — system default unless overridden.
+- Link to documentation for per-platform ffmpeg install instructions
+
+**Appearance:**
+- Theme (light / dark / system)
+- Date/time format preferences
+
+**Storage:**
+- Conversation count, message count, attachment storage used
+- Export all data link
+
+**Account:**
+- Change password
+- Delete account (with confirmation)
+
 ## What this design does NOT cover (yet)
-- Settings (server config, theme, storage management)
 - Excluded conversations / spam filtering
 - Contact editing and merging UI
 - Import progress and status dashboard
-- The existing extract/format/push/pull screens from the current Tauri app (these carry forward as-is until iterated on)
+- The existing extract/format screens from the current Tauri app (these carry forward until iterated on)
 
 ## Open questions
 
