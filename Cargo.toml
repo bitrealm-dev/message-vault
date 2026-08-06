@@ -20,7 +20,6 @@ edition = "2024"
 anyhow = "1.0.103"
 argon2 = "0.5"
 axum = { version = "0.8.9", features = ["multipart"] }
-base64 = "0.22"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.1", features = ["derive"] }
 contacts = { workspace = true }
