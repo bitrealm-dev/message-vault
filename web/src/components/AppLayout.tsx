@@ -8,6 +8,7 @@ import ExportScreen from "../screens/ExportScreen";
 import TrashScreen from "../screens/TrashScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import ImportHistoryScreen from "../screens/ImportHistoryScreen";
 import MessageView from "../screens/MessageView";
 import type { Conversation } from "../lib/types";
 
@@ -50,6 +51,7 @@ export default function AppLayout() {
         );
       case "trash": return <TrashScreen />;
       case "import": return <ImportScreen />;
+      case "import-history": return <ImportHistoryScreen />;
       case "export": return <ExportScreen scope={exportScope} selectedCount={0} />;
       case "settings": return <SettingsScreen />;
       case "profile": return <ProfileScreen />;

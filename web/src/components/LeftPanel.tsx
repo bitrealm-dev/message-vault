@@ -41,6 +41,7 @@ export default function LeftPanel({
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [showExportPopover, setShowExportPopover] = useState(false);
 
   return (
     <div style={{
@@ -155,12 +156,34 @@ export default function LeftPanel({
           >
             Import
           </button>
-          <button
-            onClick={() => onNavigate("export")}
-            style={{ width: "100%", padding: "0.5rem", fontSize: "0.875rem" }}
-          >
-            Export
-          </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowExportPopover(!showExportPopover)}
+              style={{ width: "100%", padding: "0.5rem", fontSize: "0.875rem" }}
+            >
+              Export
+            </button>
+            {showExportPopover && (
+              <div style={{
+                position: "absolute", bottom: "100%", left: 0, right: 0,
+                background: "#fff", border: "1px solid #d1d5db", borderRadius: "6px",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 80, padding: "0.25rem",
+              }}>
+                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px" }}>
+                  Export entire vault
+                </button>
+                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px" }}>
+                  Export current view
+                </button>
+                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px" }}>
+                  Export selected
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
