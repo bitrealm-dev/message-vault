@@ -59,6 +59,9 @@ target
 **/__pycache__/
 *.py[cod]
 
+# Built frontend static assets (web/ build output)
+/static/
+
 # Starlight documentation output
 /docs/.astro/
 /docs/dist/
