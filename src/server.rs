@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use rusqlite::Connection;
@@ -194,6 +195,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/assets/{sha256}/uploads/{upload_id}",
             delete(asset_upload_abort_handler),
         )
+        .layer(CorsLayer::permissive())
         .layer(RequestBodyLimitLayer::new(max_body_bytes))
         .with_state(state);
 
