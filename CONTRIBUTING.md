@@ -62,21 +62,60 @@ Exporters are linked as libraries. Standalone exporter CLIs are published from
 
 ## Run the app
 
+### One-time setup
+
 ```bash
-# First install web dependencies
+# Install Tauri CLI
+cargo install tauri-cli --version "^2"
+
+# Install web frontend dependencies
 cd web && npm ci && cd ..
+```
 
-# Dev mode with hot reload (requires Tauri CLI)
+### Dev mode (hot reload)
+
+```bash
 cargo tauri dev
+```
 
-# Or build and run from source (no hot reload)
+This starts the Vite dev server on `localhost:5173` and opens a native window.
+Editing files under `web/src/` triggers instant reload; changes to Rust code under
+`src-tauri/` recompile and restart the backend.
+
+### Release mode (no hot reload, faster exports)
+
+```bash
 cd web && npm run build && cd ..
 cargo build --release --workspace
 ./target/release/message-vault-io
 ```
 
-Use a release build when testing real exports. Debug builds compile faster, but parsing,
-attachment hashing, and JSON serialization can be substantially slower.
+Use a release build when testing real exports. Debug builds compile faster, but
+parsing, attachment hashing, and JSON serialization can be substantially slower.
+
+### WSL2
+
+On WSL2, the Tauri window requires **WSLg** (Windows 11, built-in) or an X server
+like **VcXsrv** (Windows 10). Set `DISPLAY` if using a standalone X server:
+
+```bash
+export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
+cargo tauri dev
+```
+
+### Vault server (message-vault-rs)
+
+The Vault Push and Vault Pull screens talk to a Message Vault server over HTTP.
+The server is a separate project — clone and run with Docker:
+
+```bash
+git clone https://github.com/bitrealm-dev/message-vault-rs.git
+cd message-vault-rs
+docker compose up
+```
+
+The server's API is available at `http://localhost:5556` by default.
+Create an account and API key through the server's web UI at `http://localhost:3000`.
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-vault-io-core/export.example.ini`](crates/message-vault-io-core/export.example.ini). Backup passwords are never written.
 

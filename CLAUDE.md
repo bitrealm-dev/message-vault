@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The public documentation is published from the unified [bitrealm-dev.github.io](https://bitrealm-dev.github.io/) hub repo. Edit content in `docs/src/content/docs/` — there is no docs deploy workflow in this repo anymore. The hub syncs content from here at build time.
 
+## Quick start
+
+```bash
+# One-time setup
+cargo install tauri-cli --version "^2"
+cd web && npm ci && cd ..
+
+# Run the Tauri desktop app in dev mode (hot reload)
+cargo tauri dev
+```
+
 ## Build and test
 
 ```bash
@@ -14,10 +25,6 @@ cargo build --workspace
 
 # Release build (substantially faster for real export work)
 cargo build --workspace --release
-
-# Run the Tauri desktop app in dev mode (with hot reload)
-cd web && npm ci && cd ..
-cargo tauri dev
 
 # Build the web frontend only
 cd web && npm run build
@@ -33,7 +40,17 @@ cd docs && npm ci && npm run check && npm run build
 cd docs && npm run dev   # local preview
 ```
 
-**Requirements**: Rust 1.85+ (edition 2024), Node.js 22+ (for the web frontend and docs). Linux needs WebKit2GTK and GTK3 system libraries (see CONTRIBUTING.md). `ffmpeg`/`ffprobe` on PATH for media convert/compress features. `cargo tauri` CLI for dev mode (install with `cargo install tauri-cli --version "^2"`).
+**Requirements**: Rust 1.85+ (edition 2024), Node.js 22+ (for the web frontend and docs). Linux needs WebKit2GTK and GTK3 system libraries (see `CONTRIBUTING.md`). `ffmpeg`/`ffprobe` on PATH for media convert/compress features. WSL2 needs WSLg (Windows 11) or an X server like VcXsrv (Windows 10).
+
+### Vault server (message-vault-rs)
+
+The Push/Pull screens require a Message Vault server running over HTTP:
+
+```bash
+git clone https://github.com/bitrealm-dev/message-vault-rs.git
+cd message-vault-rs && docker compose up
+# API at http://localhost:5556  — Web UI at http://localhost:3000
+```
 
 ## Architecture
 
