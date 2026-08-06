@@ -450,10 +450,10 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 
 Accessible from the Import button dropdown or the Settings screen. A chronological list of past imports:
 
-| Date | Source | Messages | Conversations | Duplicates |
-|------|--------|----------|---------------|------------|
-| Aug 6, 2026 2:34 PM | iMessage (iOS) | 14,203 | 87 | 312 |
-| Aug 4, 2026 9:15 AM | WhatsApp (Android) | 3,400 | 22 | 0 |
+| Date | Source | Messages | Attachments | Size | Conversations | Duplicates |
+|------|--------|----------|-------------|------|---------------|------------|
+| Aug 6, 2026 2:34 PM | iMessage (iOS) | 14,203 | 342 | 1.2 GB | 87 | 312 |
+| Aug 4, 2026 9:15 AM | WhatsApp (Android) | 3,400 | 56 | 89 MB | 22 | 0 |
 
 Helps answer "did I already import that backup?" before re-importing. Click a row to see the per-conversation breakdown from that import session.
 
