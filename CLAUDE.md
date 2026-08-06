@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Docs site
+## Repo identity
 
-The public documentation is published from the unified [bitrealm-dev.github.io](https://bitrealm-dev.github.io/) hub repo. Edit content in `docs/src/content/docs/` — there is no docs deploy workflow in this repo anymore. The hub syncs content from here at build time.
+This repository is named **message-vault**. It was formed by merging the former `message-vault-io` (desktop app + exporter libraries) and `message-vault-rs` (vault server) repos. Many Rust package names still use `message-vault-io` for historical reasons — that is the package namespace, not the repo name. The public docs site and GitHub org remain under `bitrealm-dev`.
 
 ## Quick start
 
@@ -42,19 +42,9 @@ cd docs && npm run dev   # local preview
 
 **Requirements**: Rust 1.85+ (edition 2024), Node.js 22+ (for the web frontend and docs). Linux needs WebKit2GTK and GTK3 system libraries (see `CONTRIBUTING.md`). `ffmpeg`/`ffprobe` on PATH for media convert/compress features. WSL2 needs WSLg (Windows 11) or an X server like VcXsrv (Windows 10).
 
-### Vault server (message-vault-server)
-
-The Push/Pull/Export/Import screens require a Message Vault server running over HTTP:
-
-```bash
-git clone https://github.com/bitrealm-dev/message-vault-server.git
-cd message-vault-server && docker compose up
-# API + Web UI at http://localhost:8080
-```
-
 ## Architecture
 
-This is a Rust workspace that converts phone message backups into a shared conversation structure, then packages each conversation in the user's chosen output format. It also contains the **unified GUI** — a Tauri v2 desktop app and Vite SPA that provides the full Message Vault user experience.
+This is a Rust workspace that converts phone message backups into a shared conversation structure, then packages each conversation in the user's chosen output format. It also contains the **unified GUI** (Tauri v2 desktop app + Vite SPA) and the **vault server** (HTTP API + SQLite storage for browsing imported messages).
 
 **Pipeline**: `vendor backup → parse → ConversationDocument (schema v3) → FormatSink → output format`
 
@@ -73,18 +63,22 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 5. **`crates/core/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 
-6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app + Vite SPA (the **unified GUI**). Architecture:
+6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app + Vite SPA (the **unified GUI**). `src-tauri/` is excluded from the workspace (`exclude = ["src-tauri"]` in root `Cargo.toml`) and built via `cargo tauri`. Architecture:
    - `src-tauri/src/main.rs` — Tauri entry point, registers commands and plugins
    - `src-tauri/src/state.rs` — `AppState` with `CancelFlag` and `ExportIniState`
    - `src-tauri/src/commands/` — Tauri commands wrapping exporter/format/push/pull crates
    - `web/src/` — React 19 + TypeScript + Vite SPA (~20 screens, shared components, typed API layer)
    - `web/src/screens/` — Full app screens: Extract, Format, Push, Pull, Home, Contacts, ConversationList, MessageView, SearchResults, ImportScreen, ExportScreen, ImportHistoryScreen, LoginScreen, RegisterScreen, OnboardingScreen, Settings, SettingsScreen, ProfileScreen, TrashScreen, ContactList
    - `web/src/components/` — Shared UI components (message renderers, contact cards, search, forms, etc.)
-   - `web/src/lib/` — `tauri.ts` (typed `invoke()` wrappers), `api.ts` (vault server API client), `auth.ts` (auth context with token persistence), `searchQuery.ts` (search grammar), `handleKind.ts` (typed handle utilities), schema types
+   - `web/src/lib/` — `tauri.ts` (typed `invoke()` wrappers), `api.ts` (vault server API client), `auth.tsx` (auth context with token persistence), `types.ts`, `savedGroups.ts`, `tauri-check.ts`
    - Jobs run on `std::thread`; progress streams to the frontend via Tauri events
    - `export.ini` persistence reuses `message-vault-io-core::ExportIniState`
 
-7. **`crates/vault-push/`** and **`crates/vault-pull/`** — CLI/library crates for importing messages into / exporting from a Message Vault server. The GUI links them as libraries. `vault-pull` depends on `vault-push` for shared types.
+7. **`crates/cli/vault-push/`** and **`crates/cli/vault-pull/`** — CLI/library crates for importing messages into / exporting from a Message Vault server. The GUI links them as libraries. `vault-pull` depends on `vault-push` for shared types. Each has a `cli` feature (default on) gating the standalone binary.
+
+8. **`crates/vault/server/`** (`message-vault-server`) — HTTP API server backed by SQLite. Provides import (`POST /v1/import`), export, contacts, search, auth, and asset endpoints. The server can also run CLI commands (`import`, `dedupe-cross-source`, `import-contacts`, `reset-demo`, `serve`, `process-assets`) via its `main.rs`. Built as a Docker image (`Dockerfile.release`); also usable directly via `cargo run --release -p message-vault-server -- serve`.
+
+9. **`crates/vault/demo-seed/`** (`demo-seed`) — Generates synthetic conversation data for the demo vault. Has both a library (`src/lib.rs`) and a CLI binary (`src/main.rs`). Used by `message-vault-server`'s `reset-demo` command.
 
 ### Supporting libraries
 
@@ -117,13 +111,34 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 - **WSL detection**: Tauri uses the system file dialog (via `tauri-plugin-dialog`), which opens native dialogs on each platform.
 
-### Vault API client
+### Vault server (message-vault-server)
 
-The web app communicates with the message-vault-server API through typed wrappers in `web/src/lib/api.ts`. The `AuthProvider` in `web/src/lib/auth.ts` manages login state with localStorage persistence and token validation. When running in Tauri, the app uses Tauri commands for Extract/Format/Push/Pull. When running in a browser (web deployment), it uses the vault HTTP API for everything.
+The Push/Pull/Export/Import screens require a Message Vault server. The server is part of this workspace under `crates/vault/server/` and runs as a Docker container:
+
+```bash
+# Dev mode (bind-mounts repo for hot reload; includes SQLite browser on port 8081)
+docker compose up
+
+# Release mode (production-shaped image; build Vite SPA first: cd web && npm run build)
+docker compose -f compose-release.yml up --build
+
+# Personal vault (non-demo mode)
+VAULT_MODE=personal docker compose up
+```
+
+The server exposes HTTP API + Web UI at `http://localhost:8080`. Create an account through the web UI, then use the Import API token from Settings for Push operations.
+
+SQLite schema lives under `schema/sql/` (messages, contacts, accounts, FTS, staging). Server config templates are in `config/` (copy `config.toml.example` to `config.toml` for local use; `config.docker.toml` is used by the Docker entrypoint).
 
 ### Vault import state
 
 `vault-push` writes `.vault-import-state.jsonl` to track which conversations, messages, and assets have already been uploaded to a given vault URL + username. Re-runs skip already-recorded entries unless **Force reprocessing** is enabled (which uses `JournalState::default()` — an empty journal — so everything is re-submitted). Server-side dedup (`messages_deduped`, `already_present` for assets by SHA-256) prevents actual duplicates.
+
+### CI workflow
+
+A single workflow (`.github/workflows/ci.yml`) runs on push/PR to `main`:
+- **Always**: `cargo build --workspace && cargo test --workspace` on ubuntu-latest
+- **On tag `v*`**: additionally builds and pushes Docker image (`mbeisser1/message-vault`) and builds Tauri desktop app for Linux/Windows/macOS, creating a GitHub Release
 
 ## Test conventions
 
@@ -137,7 +152,7 @@ The web app communicates with the message-vault-server API through typed wrapper
 
 - React 19 + TypeScript under `web/src/` with Vite bundling.
 - Screens live in `web/src/screens/`; shared components in `web/src/components/`.
-- Auth gating via `useAuth()` hook from `web/src/lib/auth.ts`; Tauri gating via `isTauri()` from `web/src/lib/tauri.ts`.
+- Auth gating via `useAuth()` hook from `web/src/lib/auth.tsx`; Tauri gating via `isTauri()` from `web/src/lib/tauri-check.ts`.
 - Typed API calls via `web/src/lib/api.ts` (vault server) and `web/src/lib/tauri.ts` (Tauri commands).
 - The frontend has a unified GUI design spec at `docs/superpowers/specs/2026-08-06-unified-gui-design.md`.
 
@@ -154,7 +169,7 @@ This project has a communication-style rule (`.cursor/skills/communication-style
 
 ## Release process
 
-A manual GitHub Actions workflow (`.github/workflows/release.yml`) builds platform installers via `cargo tauri build`. Nothing builds or releases on push/PR by default. Bump `version` in `src-tauri/Cargo.toml` before running the workflow. Docs deploy automatically on push to `main` when files under `docs/` change (`.github/workflows/docs.yml`).
+Push a tag (`v*`) to trigger the CI workflow (`.github/workflows/ci.yml`), which builds and pushes the Docker image, builds Tauri desktop installers for Linux/Windows/macOS, and creates a GitHub Release with all artifacts. Bump `version` in `src-tauri/Cargo.toml` before tagging. Nothing builds or releases on push/PR without a tag.
 
 ## Licensing
 
