@@ -25,6 +25,11 @@ pub struct ServerConfig {
     /// (under Cloudflare Free/Pro ~100 MB). Must be ≤ `asset_max_bytes`.
     #[serde(default = "default_asset_part_size")]
     pub asset_part_size: usize,
+    /// Attachments at or above this size (in bytes) skip server-side SHA-256
+    /// verification at upload completion. The server still verifies that the
+    /// assembled file size matches the declared size. Default 20 MiB.
+    #[serde(default = "default_asset_hash_threshold_bytes")]
+    pub asset_hash_threshold_bytes: u64,
 }
 
 fn default_server_bind() -> String {
@@ -37,6 +42,10 @@ fn default_asset_max_bytes() -> u64 {
 
 fn default_asset_part_size() -> usize {
     64 * 1024 * 1024
+}
+
+fn default_asset_hash_threshold_bytes() -> u64 {
+    20 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize)]

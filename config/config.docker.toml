@@ -13,3 +13,7 @@ assets_converted_dir = "assets_converted"
 # firewall to your trusted subnet (do not port-forward on the router).
 [server]
 bind = "0.0.0.0:8080"
+
+# Attachments at or above this size (bytes) skip server-side SHA-256
+# verification at upload completion. 20 MiB default.
+asset_hash_threshold_bytes = 20971520

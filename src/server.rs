@@ -132,8 +132,11 @@ impl IntoResponse for ApiError {
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
-    let upload_limits =
-        asset_uploads::UploadLimits::resolve(server.asset_part_size, server.asset_max_bytes);
+    let upload_limits = asset_uploads::UploadLimits::resolve(
+        server.asset_part_size,
+        server.asset_max_bytes,
+        server.asset_hash_threshold_bytes,
+    );
     let max_body_bytes = upload_limits.max_bytes as usize;
 
     // Open a warm writer, recover hot journals, and ensure schema once before serving.

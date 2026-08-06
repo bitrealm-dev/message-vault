@@ -23,6 +23,9 @@ pub const DEFAULT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 pub struct UploadLimits {
     pub part_size: usize,
     pub max_bytes: u64,
+    /// Attachments at or above this size skip server-side SHA-256.
+    /// Below this threshold the server hashes and verifies the digest.
+    pub hash_threshold_bytes: u64,
 }
 
 impl Default for UploadLimits {
@@ -30,6 +33,7 @@ impl Default for UploadLimits {
         Self {
             part_size: DEFAULT_PART_SIZE,
             max_bytes: DEFAULT_MAX_BYTES,
+            hash_threshold_bytes: 20 * 1024 * 1024,
         }
     }
 }
@@ -37,7 +41,7 @@ impl Default for UploadLimits {
 impl UploadLimits {
     /// Build limits from config. `VAULT_ASSET_PART_SIZE` overrides part size when set
     /// to a value in `1..=part_size` (tests / smoke).
-    pub fn resolve(part_size: usize, max_bytes: u64) -> Self {
+    pub fn resolve(part_size: usize, max_bytes: u64, hash_threshold_bytes: u64) -> Self {
         let part_size = std::env::var("VAULT_ASSET_PART_SIZE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
@@ -47,6 +51,7 @@ impl UploadLimits {
         Self {
             part_size,
             max_bytes,
+            hash_threshold_bytes,
         }
     }
 }
@@ -438,7 +443,8 @@ mod tests {
         unsafe {
             std::env::set_var("VAULT_ASSET_PART_SIZE", "10");
         }
-        let limits = UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES);
+        let limits =
+            UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES, 20 * 1024 * 1024);
         let (existing, start) =
             start_upload(root, &sha, data.len() as u64, Some("text/plain"), limits).unwrap();
         assert!(existing.is_none());
@@ -491,6 +497,7 @@ mod tests {
         let limits = UploadLimits {
             part_size: 1024,
             max_bytes: 2048,
+            hash_threshold_bytes: 20 * 1024 * 1024,
         };
         let err = start_upload(root, &sha, 4096, None, limits).unwrap_err();
         assert!(err.to_string().contains("server limit"));
