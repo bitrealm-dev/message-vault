@@ -47,4 +47,4 @@ seed_if_needed() {
 seed_if_needed
 
 echo "Starting message-vault-rs (API + static files)…"
-exec message-vault-rs serve --config "${CONFIG}" --bind 0.0.0.0:8080
+exec message-vault-rs serve --config "${CONFIG}"

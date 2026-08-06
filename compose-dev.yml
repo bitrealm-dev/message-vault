@@ -40,8 +40,7 @@ services:
       - "127.0.0.1:8081:8080"
     volumes:
       - vault-data:/data
-    environment:
-      SQLITE_DATABASE: vault.db
+    command: /data/vault.db
     restart: unless-stopped
 
 volumes:

@@ -58,4 +58,4 @@ fi
 seed_if_needed
 
 echo "Starting message-vault-rs (API + static files)…"
-exec cargo run --release -- serve --config "${CONFIG}" --bind 0.0.0.0:8080
+exec cargo run --release -- serve --config "${CONFIG}"
