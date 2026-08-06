@@ -199,15 +199,36 @@ When a conversation is selected:
 - **No permanent right panel** — metadata lives in the header, participant details in a drawer
 - **Jump links**: Date-based quick-jump anchors at the top (from the old GUI) — but consider virtualized rendering to avoid one giant DOM
 
-### Participant profile drawer
+### Participant contact view
 
-Clicking a participant name or chip opens a slide-over drawer:
+Clicking a participant name or chip opens a slide-over drawer. This is a contact view, not a conversation browser — the user is "who is this person?" not "what conversations are they in?"
 
-- Display name (editable)
-- Handles across services
-- Conversations with this person (direct + groups they're in)
-- Last message timestamp, total messages
-- Sources breakdown (which backups contributed to this person's data)
+- **Display name**: Click to inline edit. Renaming here updates the name everywhere this person appears
+- **Handles by service with date ranges**: Shows which handles the person uses, which service each belongs to, and the date range that handle was active. This gives the user context about how they communicate with this person over time:
+
+```
++1 555-1234 · SMS       2019–2026 · 1,203 messages
+bob#1234 · Discord      2021–2023 · 450 messages
+@bob.ig · Instagram     2023–present
+```
+
+- **Message counts per handle**: Shown for direct messages only. Group message stats are not attributed to individual participants — the count would be misleading
+- **Group membership**: "3 group conversations" — just a count, not per-handle stats
+- **Sources** (optional expand): Which backups contributed data for this person, and which handles came from which source
+
+Adding a new handle triggers matching: "We found 3 conversations matching bob#1234 on Discord"
+
+### My Profile (the vault owner)
+
+Separate from the participant contact view. Accessed from the "Profile" link in the bottom of the left panel:
+
+- Display name
+- My handles (phone, email, Discord, Instagram, etc.) — used to match imported messages to the owner
+- Account settings: change password, manage sessions
+- Storage usage (how many messages, attachments, conversations in the vault)
+- Delete account
+
+The profile is created at onboarding, not hidden in Settings. Editing handles here is the same UI as the contact view.
 
 ### Search
 
@@ -340,7 +361,13 @@ All three paths lead to the same export form:
 
 **3. Progress:** Linear step indicator with collapsible detail log, same pattern as import.
 
-The export button is a single action in the left panel. The selection context (full vault, current query, or checked conversations) determines what gets exported.
+The export button opens a popover with three options:
+- Export entire vault
+- Export current view (available when a saved group or search is active)
+- Export selected (available when conversations are checked)
+
+The most likely choice is pre-selected. The popover prevents accidentally exporting everything.
+Export is not expected to be a high-frequency action — two clicks is acceptable.
 
 ## What this design does NOT cover (yet)
 
