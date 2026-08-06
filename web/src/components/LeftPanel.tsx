@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
+import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
+import SavedGroupForm from "./SavedGroupForm";
 
 export default function LeftPanel({
   activeView,
@@ -33,6 +36,9 @@ export default function LeftPanel({
     color: "#1f2937",
   });
 
+  const [groups, setGroups] = useState(() => listGroups());
+  const [showGroupForm, setShowGroupForm] = useState(false);
+
   return (
     <div style={{
       width: "220px", flexShrink: 0, borderRight: "1px solid #e5e7eb",
@@ -56,14 +62,51 @@ export default function LeftPanel({
         />
       </div>
 
-      {/* Saved groups placeholder */}
+      {/* Saved groups */}
       <div style={{ padding: "0 0.75rem", marginBottom: "0.5rem" }}>
-        <div style={{ fontSize: "0.688rem", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" }}>
-          Saved Groups
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+          <span style={{ fontSize: "0.688rem", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Saved Groups
+          </span>
+          <button
+            onClick={() => setShowGroupForm(true)}
+            style={{ fontSize: "0.688rem", border: "none", background: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
+          >
+            + New
+          </button>
         </div>
-        <div style={{ fontSize: "0.813rem", color: "#9ca3af", padding: "0.25rem 0" }}>
-          No saved groups yet
-        </div>
+        {groups.length === 0 ? (
+          <div style={{ fontSize: "0.813rem", color: "#9ca3af", padding: "0.25rem 0" }}>No saved groups</div>
+        ) : (
+          groups.map((g) => (
+            <div key={g.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <button
+                onClick={() => {
+                  onSearchChange(g.query);
+                  onSearch(g.query);
+                }}
+                style={{
+                  display: "block", flex: 1, textAlign: "left", border: "none",
+                  background: "transparent", padding: "0.25rem 0", fontSize: "0.813rem",
+                  cursor: "pointer", color: "#374151", overflow: "hidden",
+                  textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
+                {g.name}
+              </button>
+              <button
+                onClick={() => {
+                  removeGroup(g.id);
+                  setGroups(listGroups());
+                }}
+                title="Delete saved group"
+                style={{ border: "none", background: "none", color: "#9ca3af", cursor: "pointer", fontSize: "0.75rem", padding: "0 0.25rem", flexShrink: 0 }}
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
       </div>
 
       <div style={{ borderTop: "1px solid #e5e7eb", margin: "0 0.75rem" }} />
@@ -128,6 +171,18 @@ export default function LeftPanel({
           Sign out
         </button>
       </div>
+
+      {/* Saved group form modal */}
+      {showGroupForm && (
+        <SavedGroupForm
+          onSave={(name, query) => {
+            addGroup(name, query);
+            setGroups(listGroups());
+            setShowGroupForm(false);
+          }}
+          onCancel={() => setShowGroupForm(false)}
+        />
+      )}
     </div>
   );
 }
