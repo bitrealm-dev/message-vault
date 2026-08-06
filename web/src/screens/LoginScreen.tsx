@@ -7,7 +7,7 @@ type AuthMode = "hanko" | "local" | null;
 
 export default function LoginScreen() {
   const { login, setServer: setAuthServer } = useAuth();
-  const [serverUrl, setServerUrl] = useState("http://localhost:5556");
+  const [serverUrl, setServerUrl] = useState("http://localhost:8080");
   const [authMode, setAuthMode] = useState<AuthMode>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
