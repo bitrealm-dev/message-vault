@@ -39,14 +39,14 @@ const pages = [
     title: 'Convert an existing export',
     description:
       'Command-line options for converting a Message Vault output directory to another format.',
-    source: 'crates/message/reexport/docs/MESSAGE_REEXPORTER.md',
+    source: 'crates/libs/reexport/docs/MESSAGE_REEXPORTER.md',
   },
   {
     slug: 'vault-push',
     title: 'Push to Message Vault',
     description:
       'Command-line options for importing a JSONL export folder into Message Vault.',
-    source: 'crates/vault-push/docs/MANPAGE.md',
+    source: 'crates/cli/vault-push/docs/MANPAGE.md',
   },
   {
     slug: 'go-sms-pro-exporter',
@@ -84,7 +84,7 @@ function repositoryUrl(sourcePath, target) {
     path.posix.join(path.posix.dirname(sourcePath), linkPath),
   );
   const suffix = fragment ? `#${fragment}` : '';
-  return `https://github.com/bitrealm-dev/message-vault-io/blob/main/${resolvedPath}${suffix}`;
+  return `https://github.com/bitrealm-dev/message-vault/blob/main/${resolvedPath}${suffix}`;
 }
 
 function prepareBody(markdown, sourcePath) {
@@ -103,7 +103,7 @@ for (const page of pages) {
   const sourceFile = path.join(repositoryDirectory, page.source);
   const body = prepareBody(await readFile(sourceFile, 'utf8'), page.source);
   const editUrl =
-    `https://github.com/bitrealm-dev/message-vault-io/edit/main/${page.source}`;
+    `https://github.com/bitrealm-dev/message-vault/edit/main/${page.source}`;
   const frontmatter = [
     '---',
     `title: ${JSON.stringify(page.title)}`,

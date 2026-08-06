@@ -64,7 +64,7 @@ See [First personal import](/get-started/first-personal-import/) for a walkthrou
 
 ## Next steps
 
-- [Install from source or Compose](/get-started/install/) — all installation options including building from source.
+- [Install the vault server](/get-started/server-install/) — Docker, Compose, or build from source.
 - [Docker guide](/get-started/docker/) — Compose dev and release images, volume details, mTLS, and troubleshooting.
 - [Try the demo with native tools](/get-started/try-the-demo/) — no Docker, build the demo from source.
 - [Updating Message Vault](/get-started/updating/) — how to upgrade when a new version is available.
