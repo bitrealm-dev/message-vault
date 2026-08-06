@@ -1,0 +1,65 @@
+---
+title: Make your first export
+description: Run a message export in the desktop app and understand its tabs.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The desktop app can extract messages from a phone backup, convert an older app export, or change the format of an archive that Message Exporters already created.
+
+## Before you start
+
+Have these items ready:
+
+- the source backup or export;
+- any password, key, owner phone number, or contacts file required by that source; and
+- a new empty output folder.
+
+Choose the source guide for exact requirements: [Supported formats](/get-started/supported-formats/), [Apple](/apple/), [Android](/android/), or [other app exports](/other-app-exports/).
+
+## Run an export
+
+1. Start `message-vault-io` and open **Extract Messages**.
+2. Choose the **Backup type**.
+3. Fill in the source paths and identity fields shown for that backup type.
+4. Choose a new empty **Output directory**.
+5. Choose an **Attachments** mode.
+6. If needed, set a start date, end date, or **Obfuscate**.
+7. Select **Run**.
+8. Read the **Log** and confirm that the run finished without errors.
+
+Extract Messages always writes **JSONL**. Use the **Format** tab afterward if you need CSV, EML, MBOX, JSON, or Android XML.
+
+Start dates are inclusive. End dates are exclusive. Both use local calendar dates in `YYYY-MM-DD` form.
+
+## What each tab does
+
+<Tabs>
+  <TabItem label="Extract Messages">
+    Extract a phone backup or an export from another app into a JSONL archive. This is the tab to use for a first export.
+  </TabItem>
+  <TabItem label="Format">
+    Read an existing Message Exporters output folder and write it in another format. You do not need this tab when making the first JSONL archive; use it when you want CSV, EML, MBOX, JSON, or Android XML.
+  </TabItem>
+  <TabItem label="Contacts">
+    Check a VCF or contacts CSV without changing it, or write a cleaned sibling file. Cleaned contacts can improve phone-number and display-name matching for sources that accept a contacts file.
+  </TabItem>
+  <TabItem label="Vault">
+    Push a JSONL export folder into Message Vault. Prefills from the last Extract Messages output when that field is empty. See [Import to Message Vault](/work-with-exports/import-to-vault/) for resume behavior and Force reprocessing.
+  </TabItem>
+  <TabItem label="Log">
+    Show the latest run in a larger view. Check this tab for missing paths, unresolved contacts, skipped records, helper failures, and the final summary.
+  </TabItem>
+</Tabs>
+
+## Find the result
+
+The output directory is the archive. Most formats write one file or folder per conversation. Android XML writes one `smses.xml`.
+
+When media copying is enabled, JSON, JSONL, and CSV use an `attachments/` folder. EML, MBOX, and Android XML embed media instead.
+
+<Aside type="caution" title="Keep input and output separate">
+  Do not choose the source folder as the output folder. Format also requires different input and output directories.
+</Aside>
+
+While an in-process export is running, use **Cancel** when it appears. Cancellation is cooperative. The app cannot stop the external `wtsexporter` process in the middle of WhatsApp extraction.

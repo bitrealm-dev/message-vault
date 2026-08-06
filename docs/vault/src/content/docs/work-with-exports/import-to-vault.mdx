@@ -1,0 +1,66 @@
+---
+title: Import to Message Vault
+description: Push a JSONL export into Message Vault, resume safely, and use Force reprocessing when a run needs another pass.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+After you have a JSONL export folder (with an `attachments/` directory when media was copied), you can upload it to a running Message Vault from the desktop app.
+
+Use the guided **Import Messages** flow, or the **Vault** tab after Extract Messages.
+
+## Before you start
+
+- A Message Vault URL (the API origin, not the website UI port).
+- A vault Import API key from Vault Settings.
+- A JSONL export folder produced by Message Vault.
+
+Choose the right source path in the [supported formats guide](/get-started/supported-formats/) before you extract.
+
+## Normal import (resume-safe)
+
+By default the importer writes a local journal file named `.vault-import-state.jsonl` next to the export. On a later run with the same vault account and folder, that journal lets the app skip work it already finished:
+
+- conversations already marked complete;
+- messages already recorded by conversation file and message id; and
+- attachments already recorded by SHA-256.
+
+Leave **Force reprocessing** off when you are continuing an interrupted upload or re-running after a partial success.
+
+## Force reprocessing
+
+**Force reprocessing** tells the desktop app to ignore the local journal for this run and send conversations, messages, and attachments again.
+
+It does **not** wipe Message Vault. Existing rows stay in the database. The vault server deduplicates:
+
+- messages that are already stored (reported as deduped rather than appended again); and
+- attachments that already exist by SHA-256 (treated as already present).
+
+### When to use it
+
+Turn **Force reprocessing** on when:
+
+- a previous run left messages in the vault without their attachments;
+- you fixed missing attachment files in the export folder and want another pass; or
+- the local journal is wrong or you intentionally want a full re-send.
+
+### Partial failures
+
+A conversation can fail partway through. The usual order is: upload unique attachments, then import the messages that reference them. The vault can accept a message while reporting missing assets if an attachment digest is not on the server yet. With **Continue on error** enabled (the default), other conversations can still succeed.
+
+Force reprocessing can repair that when the attachment file still exists in the export or staging tree:
+
+1. The app ignores the journal and tries those assets and messages again.
+2. Attachments that never reached the vault are uploaded.
+3. Attachments already on the vault are skipped as already present.
+4. Messages are sent again; the server dedupes rows that already exist, and a successful asset upload fills the gap.
+
+It will **not** fix a missing attachment file that is no longer on disk, and it will not restore media if you used a text-only / skip-attachments import.
+
+<Aside type="tip" title="Force reprocessing vs replace mode">
+  Force reprocessing is “ignore the local journal and send again” in append mode. It is not a database wipe. Destructive replace semantics are a separate import mode used by the command-line tool when you choose replace explicitly.
+</Aside>
+
+## After the run
+
+Check the **Log** tab for progress lines, failures, and the end summary (conversations ok / failed / skipped, assets uploaded / skipped, elapsed time). The session log file on disk keeps the full detail even if the on-screen log is trimmed.
