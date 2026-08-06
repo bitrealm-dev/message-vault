@@ -110,6 +110,9 @@ pub struct VaultPushConfig {
     /// still hash when the export left the digest empty. A path cache avoids
     /// hashing the same file twice when several chats share it.
     pub verify_digests: bool,
+    /// If true, skip re-hashing attachments when the JSONL `size_bytes` matches
+    /// the file size on disk. Default remains full verification of every file.
+    pub trust_export: bool,
     pub max_retries: u32,
     pub batch_size: usize,
     /// Max parallel attachment uploads. Message imports stay one-at-a-time.
@@ -508,24 +511,29 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Decide which sha256 hex string to use for an attachment file.
+/// Resolve the sha256 for an attachment file. The default behavior is to hash
+/// every file from disk, compare against any JSONL claim, and warn on mismatch
+/// (using the actual disk hash). Two flags alter this:
 ///
-/// Order of preference (for speed, unless `verify_digests` is on):
-/// 1. Value already in the path cache from an earlier chat in this run.
-/// 2. Digest written into the export JSONL (trusted when verify is off).
-/// 3. Hash the file on disk (slow, but correct when the export left it blank).
+/// * `trust_export` — skip the hash when the JSONL `size_bytes` matches the
+///   file size on disk (a cheap proxy for "file unchanged since export").
+/// * `verify_digests` — hash from disk and **fail** on mismatch (no correction).
 ///
-/// When `verify_digests` is on we always hash the file and fail if the export
-/// claim does not match. That catches stale digests after media convert/compress.
+/// The vault server is the final verifier on upload; a stale sha256 is
+/// self-correcting (the server rejects mismatches).
 fn resolve_attachment_digest(
     abs: &Path,
     claimed_raw: Option<&str>,
+    claimed_size: Option<u64>,
     verify_digests: bool,
+    trust_export: bool,
     cache: &DigestCache,
     name: &str,
     rel: &str,
+    warn: &mut dyn FnMut(String),
 ) -> Result<String> {
-    // Fast path: another conversation already hashed this absolute path.
+    // Fast path: another conversation already hashed this absolute path
+    // during this run. Always trust the cache — it was computed from disk.
     {
         let guard = cache.lock().expect("digest cache mutex poisoned");
         if let Some(digest) = guard.get(abs) {
@@ -533,33 +541,65 @@ fn resolve_attachment_digest(
         }
     }
 
+    // Normalize the claimed sha256 from JSONL (may be absent or malformed).
     let claimed = match claimed_raw {
-        Some(raw) => Some(normalize_digest_sha256(raw).with_context(|| {
-            format!("{name}: invalid digest_sha256 for {rel}")
-        })?),
+        Some(raw) => match normalize_digest_sha256(raw) {
+            Ok(d) => Some(d),
+            Err(e) => {
+                warn(format!("{name}: bad digest_sha256 for {rel}: {e}"));
+                None
+            }
+        },
         None => None,
     };
 
-    let digest = if verify_digests {
-        let disk = hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
-        if let Some(claimed) = claimed.as_ref() {
-            if claimed != &disk {
-                bail!("{name}: sha256 mismatch for {rel}: claimed {claimed}, got {disk}");
+    let disk_size = std::fs::metadata(abs)
+        .with_context(|| format!("{name}: stat {rel}"))?
+        .len();
+
+    // trust_export fast path: skip hash when JSONL size matches disk.
+    if trust_export && !verify_digests {
+        if let (Some(ref dig), Some(cl_size)) = (claimed.as_ref(), claimed_size) {
+            if cl_size == disk_size {
+                let digest = dig.to_string();
+                cache
+                    .lock()
+                    .expect("digest cache mutex poisoned")
+                    .insert(abs.to_path_buf(), digest.clone());
+                return Ok(digest);
             }
         }
-        disk
-    } else if let Some(claimed) = claimed {
-        // Trust the export — avoids re-reading large media on every push.
-        claimed
-    } else {
-        hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?
-    };
+    }
+
+    // Hash from disk — the default path.
+    let disk_digest =
+        hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
+
+    // Compare against JSONL claim.
+    if let Some(ref claimed_digest) = claimed {
+        if claimed_digest != &disk_digest {
+            let size_note = match claimed_size {
+                Some(cs) if cs != disk_size => {
+                    format!(", size changed from {cs} to {disk_size} bytes")
+                }
+                _ => String::new(),
+            };
+            let msg = format!(
+                "{name}: sha256 mismatch for {rel}: \
+                 claimed {claimed_digest}, got {disk_digest}{size_note}"
+            );
+            if verify_digests {
+                bail!("{msg}");
+            }
+            warn(msg);
+        }
+    }
 
     cache
         .lock()
         .expect("digest cache mutex poisoned")
-        .insert(abs.to_path_buf(), digest.clone());
-    Ok(digest)
+        .insert(abs.to_path_buf(), disk_digest.clone());
+    Ok(disk_digest)
 }
 
 /// Turn an attachment path from JSONL into a real file path under the export folder.
@@ -1578,6 +1618,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let mut assets_skipped = 0u64;
     let mut assets_bytes = 0u64;
     let mut log_lines = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut profile = UploadProfile {
         read_ms,
         ..UploadProfile::default()
@@ -1618,10 +1659,13 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 let digest = resolve_attachment_digest(
                     &abs,
                     claimed,
+                    att.size_bytes,
                     cfg.verify_digests,
+                    cfg.trust_export,
                     digest_cache,
                     name,
                     rel,
+                    &mut |msg| warnings.push(msg),
                 )?;
                 unique
                     .entry(digest.clone())
@@ -1633,6 +1677,12 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
 
         profile.attachment_scan_hash_ms = elapsed_ms(attachment_scan_hash_started);
         profile.unique_assets = u64::try_from(unique.len()).unwrap_or(u64::MAX);
+
+        // Emit any warnings collected during verification.
+        for warning in &warnings {
+            log_lines.push(format!("WARN {warning}"));
+        }
+
         let asset_upload_started = Instant::now();
         let upload_stats = upload_assets(UploadAssets {
             input,

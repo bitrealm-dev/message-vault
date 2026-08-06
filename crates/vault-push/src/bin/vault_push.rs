@@ -55,6 +55,11 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     verify_digests: bool,
 
+    /// Trust export metadata: skip re-hashing attachments when size_bytes matches
+    /// the file size on disk. Without this flag every attachment is re-hashed.
+    #[arg(long, default_value_t = false)]
+    trust_export: bool,
+
     /// Max retries for transient HTTP errors
     #[arg(long, default_value_t = 3)]
     max_retries: u32,
@@ -127,6 +132,7 @@ fn real_main() -> Result<ExitCode> {
         force: cli.force,
         skip_attachments: cli.skip_attachments,
         verify_digests: cli.verify_digests,
+        trust_export: cli.trust_export,
         max_retries: cli.max_retries,
         batch_size: cli.batch_size,
         asset_upload_workers: cli.asset_upload_workers,

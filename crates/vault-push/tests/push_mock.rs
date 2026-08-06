@@ -98,6 +98,8 @@ fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
         force: false,
         skip_attachments: false,
         verify_digests: false,
+        trust_export: false,
+
         max_retries: 0,
         batch_size: 50,
         asset_upload_workers: 1,
@@ -444,6 +446,8 @@ fn profiles_attachment_upload_phases() {
         force: false,
         skip_attachments: false,
         verify_digests: false,
+        trust_export: false,
+
         max_retries: 0,
         batch_size: 50,
         asset_upload_workers: 2,
