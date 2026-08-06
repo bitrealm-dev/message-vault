@@ -71,6 +71,7 @@ pub fn write_all(
     cfg: &SeedConfig,
     corpus: &Corpus,
     rng: &mut impl Rng,
+    attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<GenStats> {
     let mut stats = GenStats {
         contacts: roster.contacts.len(),
@@ -106,16 +107,35 @@ pub fn write_all(
             corpus,
             rng,
             &mut stats,
+            attachment_digests,
         )?;
     }
 
     for ua in &roster.unassigned {
         let count = rng.random_range(4..16);
-        write_unassigned(staging, ua, count, cfg, corpus, rng, &mut stats)?;
+        write_unassigned(
+            staging,
+            ua,
+            count,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+            attachment_digests,
+        )?;
     }
 
     for group in &roster.groups {
-        write_group(staging, roster, group, cfg, corpus, rng, &mut stats)?;
+        write_group(
+            staging,
+            roster,
+            group,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+            attachment_digests,
+        )?;
     }
 
     write_orphaned(staging, cfg, corpus, rng, &mut stats)?;
@@ -153,6 +173,7 @@ fn write_individual(
     corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let display_name = if display.is_empty() {
         None
@@ -181,7 +202,18 @@ fn write_individual(
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
         let mut msg = text_message(&guid, ts, from_me, chat_id, cfg, corpus, rng);
-        decorate_message(&mut msg, i, msg_count, chat_id, from_me, cfg, rng, stats, &mut origin_guid);
+        decorate_message(
+            &mut msg,
+            i,
+            msg_count,
+            chat_id,
+            from_me,
+            cfg,
+            rng,
+            stats,
+            &mut origin_guid,
+            attachment_digests,
+        );
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
@@ -197,6 +229,7 @@ fn write_unassigned(
     corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let chat_id = &ua.handle;
     let participants = vec![IrParticipant {
@@ -238,7 +271,7 @@ fn write_unassigned(
             msg.sender_handle = Some(String::new());
         }
         if should_attach_jpg(i, msg_count, cfg) {
-            add_jpg_attachment(&mut msg, i, stats);
+            add_jpg_attachment(&mut msg, i, stats, attachment_digests);
         }
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -255,6 +288,7 @@ fn write_group(
     corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let chat_id = group_chat_id(group.index);
     let participants: Vec<IrParticipant> = if group.phone_only {
@@ -345,9 +379,15 @@ fn write_group(
         );
         msg.sender_handle = sender;
         if should_attach_jpg(i, msg_count, cfg) {
-            add_jpg_attachment(&mut msg, i + group.index, stats);
+            add_jpg_attachment(&mut msg, i + group.index, stats, attachment_digests);
         } else if should_attach_other(i, msg_count, cfg) {
-            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS);
+            add_attachment(
+                &mut msg,
+                i,
+                stats,
+                OTHER_ATTACHMENTS,
+                attachment_digests,
+            );
         }
         if cfg.messages.tapback_stride > 0
             && i % cfg.messages.tapback_stride == 0
@@ -451,17 +491,18 @@ fn decorate_message(
     rng: &mut impl Rng,
     stats: &mut GenStats,
     origin_guid: &mut Option<String>,
+    attachment_digests: &HashMap<String, (String, u64)>,
 ) {
     if should_attach_jpg(i, msg_count, cfg) {
-        add_jpg_attachment(msg, i, stats);
+        add_jpg_attachment(msg, i, stats, attachment_digests);
         if i > 0 && i.is_multiple_of(40) {
             msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
         }
     } else if should_attach_photo_only(i, msg_count, cfg) {
         msg.text.clear();
-        add_jpg_attachment(msg, i + 1, stats);
+        add_jpg_attachment(msg, i + 1, stats, attachment_digests);
     } else if should_attach_other(i, msg_count, cfg) {
-        add_attachment(msg, i, stats, OTHER_ATTACHMENTS);
+        add_attachment(msg, i, stats, OTHER_ATTACHMENTS, attachment_digests);
     }
     if cfg.messages.tapback_stride > 0
         && i.is_multiple_of(cfg.messages.tapback_stride)
@@ -687,18 +728,28 @@ fn should_attach_other(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     i > 0 && i.is_multiple_of(stride)
 }
 
-fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {
+fn add_jpg_attachment(
+    msg: &mut IrMessage,
+    idx: usize,
+    stats: &mut GenStats,
+    digests: &HashMap<String, (String, u64)>,
+) {
     let photo = &JPG_PHOTOS[idx % JPG_PHOTOS.len()];
+    let (sha, size) = digests
+        .get(photo.path)
+        .map(|(s, z)| (s.clone(), *z))
+        .unwrap_or_default();
+    let has_sha = !sha.is_empty();
     msg.attachments.push(IrAttachment {
         path: Some(photo.path.into()),
         original_name: Some(photo.original_name.into()),
         mime_type: Some("image/jpeg".into()),
-        digest_sha256: None,
+        digest_sha256: if has_sha { Some(sha) } else { None },
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
         bytes: None,
-        size_bytes: None,
+        size_bytes: if has_sha { Some(size) } else { None },
     });
     stats.attachment_refs += 1;
 }
@@ -708,8 +759,14 @@ fn add_attachment(
     idx: usize,
     stats: &mut GenStats,
     files: &[(&str, &str, bool)],
+    digests: &HashMap<String, (String, u64)>,
 ) {
     let (path, mime, is_sticker) = files[idx % files.len()];
+    let (sha, size) = digests
+        .get(path)
+        .map(|(s, z)| (s.clone(), *z))
+        .unwrap_or_default();
+    let has_sha = !sha.is_empty();
     let transcription = if mime.starts_with("audio/") {
         Some("Hey, just leaving a quick voice note.".into())
     } else {
@@ -719,12 +776,12 @@ fn add_attachment(
         path: Some(path.into()),
         original_name: Some(path.rsplit('/').next().unwrap_or(path).into()),
         mime_type: Some(mime.into()),
-        digest_sha256: None,
+        digest_sha256: if has_sha { Some(sha) } else { None },
         is_sticker,
         transcription,
         sticker_effect: None,
         bytes: None,
-        size_bytes: None,
+        size_bytes: if has_sha { Some(size) } else { None },
     });
     stats.attachment_refs += 1;
 }

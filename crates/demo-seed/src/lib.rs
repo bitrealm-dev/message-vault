@@ -36,14 +36,21 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
         corpus::Corpus::load_pride_and_prejudice().context("load public-domain message corpus")?;
     let names = names::NameBank::load_default().context("load name lists")?;
 
-    assets::write_attachment_blobs(&attachments)?;
+    let attachment_digests = assets::write_attachment_blobs(&attachments)?;
     let roster = personas::build_roster(cfg, &names, &mut rng);
     contacts::write_vcf(&config_dir, &roster)?;
     contacts::write_config_toml(&config_dir)?;
     contacts::write_seed_toml(&config_dir)?;
 
-    let stats =
-        conversations::write_all(&staging, &attachments, &roster, cfg, &corpus, &mut rng)?;
+    let stats = conversations::write_all(
+        &staging,
+        &attachments,
+        &roster,
+        cfg,
+        &corpus,
+        &mut rng,
+        &attachment_digests,
+    )?;
 
     write_readme(out, &stats, cfg, corpus.len())?;
 
