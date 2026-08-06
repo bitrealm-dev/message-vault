@@ -1,0 +1,61 @@
+//! `contacts_info` Tauri command — parses a VCF or vCard CSV file and
+//! returns the contact count and first few names for preview.
+
+use std::path::PathBuf;
+
+use contacts::{detect_contacts_format, parse_vcf, read_vcard_csv_rows, ContactsFormat};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContactsInfo {
+    pub count: usize,
+    pub format: String,
+    pub preview: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn contacts_info(path: String) -> Result<ContactsInfo, String> {
+    let path = PathBuf::from(&path);
+    let format = detect_contacts_format(&path).map_err(|e| e.to_string())?;
+
+    match format {
+        ContactsFormat::Vcf => {
+            let cards = parse_vcf(&path).map_err(|e| e.to_string())?;
+            let preview: Vec<String> = cards
+                .iter()
+                .take(10)
+                .map(|c| {
+                    if !c.fn_raw.is_empty() {
+                        c.fn_raw.clone()
+                    } else {
+                        let name = format!("{} {}", c.n_given, c.n_family).trim().to_string();
+                        if name.is_empty() { "(unknown)".to_string() } else { name }
+                    }
+                })
+                .collect();
+            Ok(ContactsInfo {
+                count: cards.len(),
+                format: "vcf".to_string(),
+                preview,
+            })
+        }
+        ContactsFormat::VcardCsv => {
+            let rows = read_vcard_csv_rows(&path).map_err(|e| e.to_string())?;
+            let preview: Vec<String> = rows
+                .iter()
+                .take(10)
+                .map(|r| {
+                    let name = format!("{} {} {}", r.first, r.middle, r.last)
+                        .trim()
+                        .to_string();
+                    if name.is_empty() { "(unknown)".to_string() } else { name }
+                })
+                .collect();
+            Ok(ContactsInfo {
+                count: rows.len(),
+                format: "csv".to_string(),
+                preview,
+            })
+        }
+    }
+}

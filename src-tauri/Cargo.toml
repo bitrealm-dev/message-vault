@@ -28,3 +28,4 @@ imessage-ir-exporter = { path = "../crates/exporters/imessage-ir-exporter", defa
 message-reexport = { path = "../crates/message/reexport" }
 vault-push = { path = "../crates/vault-push" }
 vault-pull = { path = "../crates/vault-pull" }
+contacts = { path = "../crates/message/contacts" }
