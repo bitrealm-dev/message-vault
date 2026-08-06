@@ -316,21 +316,22 @@ fn mail_message_to_ir(
     let mut attachments = Vec::with_capacity(mail.attachments.len());
     for attachment in &mail.attachments {
         let has_bytes = embed == AttachmentEmbed::Embed && !attachment.bytes.is_empty();
-        let (path, digest_sha256, bytes) = if persist_to_disk {
+        let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
             if has_bytes {
-                let (rel_path, digest) = persist_attachment(
+                let (rel_path, digest, size) = persist_attachment(
                     attachments_dir,
                     mail.timestamp_unix_ms,
                     &attachment.bytes,
                     attachment.original_name.as_deref(),
                 )?;
-                (Some(rel_path), Some(digest), None)
+                (Some(rel_path), Some(digest), Some(size), None)
             } else {
-                (None, attachment.digest_sha256.clone(), None)
+                (None, attachment.digest_sha256.clone(), None, None)
             }
         } else {
             let bytes = has_bytes.then(|| attachment.bytes.clone());
-            (None, attachment.digest_sha256.clone(), bytes)
+            let size = bytes.as_ref().map(|b| b.len() as u64);
+            (None, attachment.digest_sha256.clone(), size, bytes)
         };
         attachments.push(IrAttachment {
             path,
@@ -340,7 +341,7 @@ fn mail_message_to_ir(
             is_sticker: attachment.is_sticker,
             transcription: attachment.transcription.clone(),
             sticker_effect: attachment.sticker_effect.clone(),
-            size_bytes: None,
+            size_bytes: file_size,
             bytes,
         });
     }
@@ -474,21 +475,24 @@ fn attachment_dest_name(
 
 /// Write attachment bytes under `attachments_dir` (idempotent by digest name).
 ///
-/// Returns the export-relative path (`attachments/<name>`) and the sha256 digest.
+/// Returns the export-relative path (`attachments/<name>`), the sha256 digest,
+/// and the byte length of the persisted file.
 fn persist_attachment(
     attachments_dir: &Path,
     timestamp_unix_ms: i64,
     bytes: &[u8],
     original_name: Option<&str>,
-) -> Result<(String, String), RuntimeError> {
+) -> Result<(String, String, u64), RuntimeError> {
     let name = attachment_dest_name(timestamp_unix_ms, bytes, original_name);
     let dest = attachments_dir.join(&name);
     if !dest.is_file() {
         fs::write(&dest, bytes)?;
     }
+    let byte_len = bytes.len() as u64;
     Ok((
         format!("attachments/{name}"),
         hex::encode(Sha256::digest(bytes)),
+        byte_len,
     ))
 }
 
