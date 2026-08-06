@@ -7,7 +7,7 @@ This directory contains implementation and release documentation for contributor
 - [Setup, build, and contributing](../../CONTRIBUTING.md) — prerequisites, workspace build, helpers, tests, and PR rules.
 - [Develop and publish releases](developing.md) — release workflow, documentation build, and local preview.
 - [Code signing (Windows / macOS)](signing.md) — certificates, GitHub secrets, and gated release workflow steps.
-- [GUI design](gui.md) — Slint desktop app: tabs, controls, validation, saved settings, and exporter integration.
+- [GUI design](gui.md) — Desktop app architecture: Tauri v2 shell with React + Vite frontend, Tauri commands wrapping exporter crates, and progress events.
 - [Exporter capability matrix](exporter-matrix.md) — supported inputs, known source limitations, and links to crate-specific technical documents.
 
 ## Architecture and output formats

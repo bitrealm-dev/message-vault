@@ -20,7 +20,6 @@ members = [
     "crates/exporters/imessage-ir-exporter",
     "crates/exporters/whatsapp-exporter",
     "crates/message-vault-io-core",
-    "crates/message-vault-io-gui",
     "crates/vault-push",
     "crates/vault-pull",
     "src-tauri",

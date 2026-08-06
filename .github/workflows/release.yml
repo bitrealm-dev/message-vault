@@ -1,9 +1,9 @@
-# Manually cut a semantic-versioned GitHub Release with platform archives
-# (Linux .tgz, Windows/macOS .zip).
+# Manually cut a semantic-versioned GitHub Release with platform installers
+# (.deb, .AppImage, .dmg, .msi).
 # Does not run on push/PR — only via Actions → Release → Run workflow.
 #
-# Version comes from crates/message-vault-io-gui/Cargo.toml (single source of truth;
-# also shown in the GUI title via CARGO_PKG_VERSION). Bump that field before releasing.
+# Version comes from src-tauri/Cargo.toml (single source of truth;
+# also shown in the Tauri window title). Bump that field before releasing.
 #
 # Optional signing (no-op until the matching repo secrets are set):
 #   Windows: WINDOWS_CERTIFICATE_BASE64, WINDOWS_CERTIFICATE_PASSWORD
@@ -31,9 +31,9 @@ jobs:
       - id: semver
         run: |
           set -euo pipefail
-          V="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' crates/message-vault-io-gui/Cargo.toml | head -n1)"
+          V="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' src-tauri/Cargo.toml | head -n1)"
           if [[ -z "$V" ]]; then
-            echo "version not found in crates/message-vault-io-gui/Cargo.toml" >&2
+            echo "version not found in src-tauri/Cargo.toml" >&2
             exit 1
           fi
           if [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -42,7 +42,7 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
-          echo "Will release tag v$V (from crates/message-vault-io-gui/Cargo.toml)"
+          echo "Will release tag v$V (from src-tauri/Cargo.toml)"
 
   build:
     needs: validate
@@ -51,20 +51,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_suffix: x86_64-unknown-linux-gnu
-            archive_ext: ".tgz"
-            ext: ""
+            bundle_ext: ".deb"
+            label: linux-deb
           - os: windows-latest
-            artifact_suffix: x86_64-pc-windows-msvc
-            archive_ext: ".zip"
-            ext: ".exe"
+            bundle_ext: ".msi"
+            label: windows-msi
           - os: macos-latest
-            artifact_suffix: aarch64-apple-darwin
-            archive_ext: ".zip"
-            ext: ""
+            bundle_ext: ".dmg"
+            label: macos-dmg
     runs-on: ${{ matrix.os }}
-    # Job-level env so `if:` can detect whether signing secrets are configured
-    # (secrets cannot be referenced directly in step `if` expressions).
     env:
       WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -77,119 +72,94 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Linux GUI build deps
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Install Linux Tauri build deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config libfontconfig1-dev \
-            libxkbcommon-x11-0 libxkbcommon0 \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release GUI
-        run: cargo build --release -p message-vault-io-gui
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
 
-      - name: Sign Windows binaries
-        if: matrix.os == 'windows-latest' && env.WINDOWS_CERTIFICATE_BASE64 != ''
+      - name: Build Tauri app
+        run: cargo tauri build --bundles "${{ matrix.label == 'linux-deb' && 'deb,appimage' || matrix.label == 'windows-msi' && 'msi' || 'dmg' }}"
+
+      - name: Find and rename release artifacts
+        id: artifacts
         shell: bash
         run: |
           set -euo pipefail
-          CERT_PATH="$(mktemp --suffix=.pfx)"
-          cleanup() { rm -f "$CERT_PATH"; }
-          trap cleanup EXIT
-          echo "$WINDOWS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          VERSION="${{ needs.validate.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
 
-          SIGNTOOL=""
-          for candidate in \
-            "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe \
-            "/c/Program Files/Windows Kits/10/bin/"*/x64/signtool.exe
-          do
-            if [[ -f "$candidate" ]]; then
-              SIGNTOOL="$candidate"
-              break
-            fi
-          done
-          if [[ -z "$SIGNTOOL" ]]; then
-            echo "signtool.exe not found in Windows Kits" >&2
-            exit 1
-          fi
-          echo "Using $SIGNTOOL"
+          case "${{ matrix.os }}" in
+            ubuntu-latest)
+              # Prefer .deb; fall back to .AppImage
+              DEB=$(find "$BUNDLE_DIR/deb" -name "*.deb" -type f 2>/dev/null | head -1)
+              APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" -type f 2>/dev/null | head -1)
+              if [[ -n "$DEB" ]]; then
+                cp "$DEB" "dist/message-vault-io_${VERSION}_amd64.deb"
+              elif [[ -n "$APPIMAGE" ]]; then
+                cp "$APPIMAGE" "dist/message-vault-io_${VERSION}_amd64.AppImage"
+              else
+                echo "No Linux bundle found" >&2
+                ls -R "$BUNDLE_DIR" || true
+                exit 1
+              fi
+              ;;
+            windows-latest)
+              MSI=$(find "$BUNDLE_DIR/msi" -name "*.msi" -type f 2>/dev/null | head -1)
+              if [[ -n "$MSI" ]]; then
+                cp "$MSI" "dist/message-vault-io_${VERSION}_x64.msi"
+              else
+                echo "No Windows MSI found" >&2
+                ls -R "$BUNDLE_DIR" || true
+                exit 1
+              fi
+              ;;
+            macos-latest)
+              DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" -type f 2>/dev/null | head -1)
+              if [[ -n "$DMG" ]]; then
+                cp "$DMG" "dist/message-vault-io_${VERSION}_aarch64.dmg"
+              else
+                echo "No macOS DMG found" >&2
+                ls -R "$BUNDLE_DIR" || true
+                exit 1
+              fi
+              ;;
+          esac
 
-          # Sign the GUI binary that ships in the ZIP (helpers are third-party).
-          path="target/release/message-vault-io.exe"
-          if [[ ! -f "$path" ]]; then
-            echo "missing binary to sign: $path" >&2
-            exit 1
-          fi
-          "$SIGNTOOL" sign \
-            /f "$CERT_PATH" \
-            /p "$WINDOWS_CERTIFICATE_PASSWORD" \
-            /fd SHA256 \
-            /tr http://timestamp.digicert.com \
-            /td SHA256 \
-            "$path"
-
-      - name: Sign and notarize macOS binaries
-        if: matrix.os == 'macos-latest' && env.MACOS_CERTIFICATE_BASE64 != ''
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/message-vault-io-signing.keychain-db"
-          CERT_PATH="$RUNNER_TEMP/certificate.p12"
-          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
-
-          cleanup() {
-            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
-            rm -f "$CERT_PATH"
-          }
-          trap cleanup EXIT
-
-          echo "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          path="target/release/message-vault-io"
-          if [[ ! -f "$path" ]]; then
-            echo "missing binary to sign: $path" >&2
-            exit 1
-          fi
-          codesign --force --options runtime --timestamp \
-            --sign "$MACOS_SIGNING_IDENTITY" "$path"
-          codesign --verify --verbose "$path"
-
-          # Notarize the GUI (standalone Mach-O; stapling is not available without a
-          # .app / .pkg / .dmg — Gatekeeper still checks online on first launch).
-          NOTARY_ZIP="$RUNNER_TEMP/message-vault-io-notarize.zip"
-          ditto -c -k --keepParent target/release/message-vault-io "$NOTARY_ZIP"
-          xcrun notarytool submit "$NOTARY_ZIP" \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --team-id "$NOTARY_TEAM_ID" \
-            --password "$NOTARY_APP_SPECIFIC_PASSWORD" \
-            --wait
-          rm -f "$NOTARY_ZIP"
-
-      - name: Package platform ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x scripts/package-release.sh
-          scripts/package-release.sh \
-            '${{ needs.validate.outputs.version }}' \
-            '${{ matrix.artifact_suffix }}' \
-            '${{ matrix.ext }}'
+          echo "Artifacts in dist/:"
+          ls -la dist/
 
       - uses: actions/upload-artifact@v7
         with:
-          name: package-${{ matrix.artifact_suffix }}
-          path: dist/message-vault-io-${{ needs.validate.outputs.version }}-${{ matrix.artifact_suffix }}${{ matrix.archive_ext }}
+          name: package-${{ matrix.label }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -211,41 +181,38 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          ls -la dist
           shopt -s nullglob
-          assets=(dist/*.zip dist/*.tgz)
+          # Tauri produces platform installers, not plain archives
+          assets=(dist/*)
           if [[ ${#assets[@]} -eq 0 ]]; then
-            echo "no release archives found under dist/" >&2
+            echo "no release artifacts found under dist/" >&2
             exit 1
           fi
+          echo "Release assets:"
+          ls -la dist/
+
           gh release create "$TAG" "${assets[@]}" \
             --title "Message Vault ${VERSION}" \
             --notes "## Highlights
 
-          - GUI-only archive: exporters run as libraries inside the app (no Rust CLI bins shipped)
-          - Bundled helpers remain: \`lib/ffmpeg\` / \`lib/ffprobe\`, \`cli/wtsexporter\`
+          - Tauri v2 desktop app: web-based UI powered by React + Vite, Rust backend
+          - All 7 exporters included: SMS Backup & Restore, iMessage, WhatsApp, GO SMS Pro, iMazing, SMS Backup+, OpenExtract
+          - Vault push/pull, format conversion, contacts preview
           - Standalone exporter CLIs: use [message-exporters](https://github.com/bitrealm-dev/message-exporters) releases
 
-          ## Upgrade notes
+          ## Installers
 
-          - Extract the whole archive and keep folders together (\`lib/\` and \`cli/\` must stay next to the app)
-          - If you relied on \`cli/*-exporter\` or \`vault-push\` from this archive, install those from message-exporters instead
+          - \`message-vault-io_${VERSION}_amd64.deb\` — Debian/Ubuntu
+          - \`message-vault-io_${VERSION}_amd64.AppImage\` — Linux (portable)
+          - \`message-vault-io_${VERSION}_x64.msi\` — Windows
+          - \`message-vault-io_${VERSION}_aarch64.dmg\` — macOS (Apple Silicon)
 
-          ## Archives
+          ## Requirements
 
-          - \`message-vault-io-${VERSION}-x86_64-unknown-linux-gnu.tgz\`
-          - \`message-vault-io-${VERSION}-x86_64-pc-windows-msvc.zip\`
-          - \`message-vault-io-${VERSION}-aarch64-apple-darwin.zip\`
-
-          ## Layout
-
-          - **Root:** \`message-vault-io\` (GUI; exporters run as libraries)
-          - **\`lib/\`:** bundled \`ffmpeg\` / \`ffprobe\` (eugeneware/ffmpeg-static \`b6.1.1\`)
-          - **\`cli/\`:** WhatsApp \`wtsexporter\` 0.13.0 only
-          - **\`licenses/\`:** project and third-party license notices
+          - \`ffmpeg\` / \`ffprobe\` on PATH for media convert/compress features
+          - Python 3.11+ for WhatsApp exporter (runs \`wtsexporter\`)
 
           ## Notes
 
-          - Start the desktop app from the archive root: Linux/macOS \`message-vault-io\`, Windows \`message-vault-io.exe\`
-          - Builds are unsigned until code-signing secrets are configured (see \`docs/maintainers/signing.md\`). Windows SmartScreen and macOS Gatekeeper may warn on first launch; allow the app once if you trust the download.
-          - See \`licenses/THIRD_PARTY_NOTICES.md\` in each archive for bundled helper provenance and licenses."
+          - The Tauri app bundles the SPA frontend as static assets — no separate web server needed
+          - Builds are unsigned until code-signing secrets are configured (see \`docs/maintainers/signing.md\`). Windows SmartScreen and macOS Gatekeeper may warn on first launch; allow the app once if you trust the download."

@@ -15,9 +15,12 @@ cargo build --workspace
 # Release build (substantially faster for real export work)
 cargo build --workspace --release
 
-# Run the GUI (use --release for realistic export performance)
-cargo run -p message-vault-io-gui
-cargo run --release -p message-vault-io-gui
+# Run the Tauri desktop app in dev mode (with hot reload)
+cd web && npm ci && cd ..
+cargo tauri dev
+
+# Build the web frontend only
+cd web && npm run build
 
 # Run all tests (uses committed fixtures, no personal backups needed)
 cargo test --workspace
@@ -30,7 +33,7 @@ cd docs && npm ci && npm run check && npm run build
 cd docs && npm run dev   # local preview
 ```
 
-**Requirements**: Rust 1.85+ (edition 2024), Node.js 24 (docs only). Linux needs fontconfig and X11 keyboard libs (see CONTRIBUTING.md). `ffmpeg`/`ffprobe` on PATH for media convert/compress features.
+**Requirements**: Rust 1.85+ (edition 2024), Node.js 22+ (for the web frontend and docs). Linux needs WebKit2GTK and GTK3 system libraries (see CONTRIBUTING.md). `ffmpeg`/`ffprobe` on PATH for media convert/compress features. `cargo tauri` CLI for dev mode (install with `cargo install tauri-cli --version "^2"`).
 
 ## Architecture
 
@@ -53,14 +56,14 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 5. **`crates/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 
-6. **`crates/message-vault-io-gui/`** — Slint 1.17 desktop app. Architecture:
-   - `ui/app-window.slint` — root window, tabs, error banner
-   - `ui/pages/*.slint` — one page per tab, each exports a `*Adapter` global
-   - `src/main.rs` — constructs window, wires callbacks, persists `export.ini`
-   - `src/state.rs` — `AppState` behind `Arc<Mutex<_>>`
-   - `src/jobs.rs` — in-process library dispatch for exporters/contacts/format/vault
-   - `src/sync.rs` — push/pull between `AppState` and Slint adapters
-   - Jobs run on `std::thread`; a bridge thread drains the channel and posts log lines onto the Slint UI thread via `slint::Weak::upgrade_in_event_loop`.
+6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app. Architecture:
+   - `src-tauri/src/main.rs` — Tauri entry point, registers commands and plugins
+   - `src-tauri/src/state.rs` — `AppState` with `CancelFlag` and `ExportIniState`
+   - `src-tauri/src/commands/` — Tauri commands wrapping exporter/format/push/pull crates
+   - `web/src/` — React + Vite SPA (Extract, Format, Push, Pull, Settings screens)
+   - `web/src/lib/tauri.ts` — typed `invoke()` wrappers and progress event helpers
+   - Jobs run on `std::thread`; progress streams to the frontend via Tauri events
+   - `export.ini` persistence reuses `message-vault-io-core::ExportIniState`
 
 7. **`crates/vault-push/`** and **`crates/vault-pull/`** — CLI/library crates for importing messages into / exporting from a Message Vault server. The GUI links them as libraries. `vault-pull` depends on `vault-push` for shared types.
 
@@ -91,7 +94,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 - **`export.ini` persistence**: loaded from working directory first, then beside the binary; saved on tab switch, run, clear, and window exit. Passwords are never written. The vault key is stored in plain text under `[vault]` (file mode `0600` on Linux/macOS).
 
-- **WSL detection**: the GUI auto-opens Windows-native file dialogs and the Windows browser when it detects WSL (see `src/wsl.rs`).
+- **WSL detection**: Tauri uses the system file dialog (via `tauri-plugin-dialog`), which opens native dialogs on each platform.
 
 ### Vault import state
 
@@ -107,11 +110,12 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 ## UI component conventions
 
-- Slint `.slint` files under `crates/message-vault-io-gui/ui/`.
-- Pages export a single `*Adapter` global singleton for property/callback binding.
-- Form controls use dense `FormRow` widgets from `ui/widgets.slint` with a fixed label column.
-- The Log tab's viewer is the only element that grows on vertical window resize.
-- Wizard-style flows (Guided Import, Vault Export) use screens composed in `app-window.slint`.
+- React + TypeScript under `web/src/` with Vite bundling.
+- Screens live in `web/src/screens/`; shared components in `web/src/components/`.
+- Form controls use `FormRow` component with a fixed 140px label column (matches the old Slint layout).
+- Progress and log output use `ProgressBar` component with an indeterminate bar and scrollable log tail.
+- Tab navigation in `App.tsx` switches between Extract, Format, Push, Pull, and Settings screens.
+- The frontend calls Rust commands via typed wrappers in `web/src/lib/tauri.ts`; progress streams back through Tauri events.
 
 ## Cursor rules
 
@@ -126,7 +130,7 @@ This project has a communication-style rule (`.cursor/skills/communication-style
 
 ## Release process
 
-A manual GitHub Actions workflow (`.github/workflows/release.yml`) builds three platform archives from the crate GUI's `Cargo.toml` version. Nothing builds or releases on push/PR by default. Bump `version` in `crates/message-vault-io-gui/Cargo.toml` before running the workflow. Docs deploy automatically on push to `main` when files under `docs/` change (`.github/workflows/docs.yml`).
+A manual GitHub Actions workflow (`.github/workflows/release.yml`) builds platform installers via `cargo tauri build`. Nothing builds or releases on push/PR by default. Bump `version` in `src-tauri/Cargo.toml` before running the workflow. Docs deploy automatically on push to `main` when files under `docs/` change (`.github/workflows/docs.yml`).
 
 ## Licensing
 

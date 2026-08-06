@@ -12,33 +12,32 @@ End-user guides (install, first export, formats) live on the [docs site](https:/
 | **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload (MSVC). |
 | **macOS** | Xcode Command Line Tools (`xcode-select --install`). |
 | **Linux** | C toolchain plus GUI system libs (see [Linux packages](#linux-packages) below). |
-| **Node.js 24** | Only if you edit the Astro Starlight docs under `docs/`. |
+| **Node.js 22+** | For the web frontend (`web/`) and docs site (`docs/`). |
 
 Optional for full WhatsApp / media features while developing: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
 
 ### Linux packages
 
-The Slint desktop GUI needs a C toolchain, **fontconfig**, and X11 keyboard libs (Slint / winit at **runtime**). On Debian/Ubuntu:
+The Tauri desktop app needs a C toolchain and WebKit2GTK system libraries at **build time** and **runtime**. On Debian/Ubuntu:
 
 ```bash
 sudo apt update
 sudo apt install \
-  build-essential pkg-config libfontconfig1-dev \
-  libxkbcommon-x11-0 libxkbcommon0 \
-  libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev
+  build-essential pkg-config \
+  libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libappindicator3-dev librsvg2-dev patchelf \
+  libssl-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev
 ```
 
 On Fedora:
 
 ```bash
 sudo dnf install \
-  gcc pkgconf-pkg-config fontconfig-devel \
-  libxkbcommon libxkbcommon-x11 \
-  libxkbcommon-devel libxcb-devel
+  gcc pkgconf-pkg-config \
+  webkit2gtk4.1-devel gtk3-devel \
+  libappindicator-gtk3-devel librsvg2-devel \
+  openssl-devel javascriptcoregtk4.1-devel libsoup3-devel
 ```
-
-`libxkbcommon-x11-0` provides `libxkbcommon-x11.so` — required to **run** `message-vault-io` even when the build succeeded.
 
 ## Clone and build
 
@@ -56,30 +55,30 @@ Release profile:
 cargo build --workspace --release
 ```
 
-Release packaging builds the GUI only (`cargo build --release -p message-vault-io-gui`);
-exporters are linked as libraries. Standalone exporter CLIs are published from
+Release packaging uses `cargo tauri build` which bundles the web frontend, Rust backend,
+and all exporter libraries into a single platform installer.
+Exporters are linked as libraries. Standalone exporter CLIs are published from
 [message-exporters](https://github.com/bitrealm-dev/message-exporters).
 
 ## Run the app
 
 ```bash
-cargo run -p message-vault-io-gui
+# First install web dependencies
+cd web && npm ci && cd ..
+
+# Dev mode with hot reload (requires Tauri CLI)
+cargo tauri dev
+
+# Or build and run from source (no hot reload)
+cd web && npm run build && cd ..
+cargo build --release --workspace
+./target/release/message-vault-io
 ```
 
 Use a release build when testing real exports. Debug builds compile faster, but parsing,
-attachment hashing, and JSON serialization can be substantially slower:
+attachment hashing, and JSON serialization can be substantially slower.
 
-```bash
-cargo run --release -p message-vault-io-gui
-```
-
-Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-vault-io-gui/export.example.ini`](crates/message-vault-io-gui/export.example.ini). Backup passwords are never written.
-
-Compile-time Slint style override (optional):
-
-```bash
-SLINT_STYLE=fluent cargo build -p message-vault-io-gui
-```
+Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/message-vault-io-core/export.example.ini`](crates/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
 ## Helper binaries and environment variables
 
@@ -96,7 +95,6 @@ Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI 
 |----------|---------|
 | `MESSAGE_VAULT_IO_BIN` | Directory that contains helper binaries |
 | `WTSEXPORTER` | Full path to the WhatsApp extractor |
-| `SLINT_STYLE` | Slint widget style at compile time (e.g. `fluent`) |
 
 Local options:
 
@@ -107,13 +105,13 @@ Local options:
 ```powershell
 # Windows PowerShell
 $env:MESSAGE_VAULT_IO_BIN = "$PWD\target\release"
-cargo run --release -p message-vault-io-gui
+./target/release/message-vault-io.exe
 ```
 
 ```bash
 # Linux / macOS
 export MESSAGE_VAULT_IO_BIN="$PWD/target/release"
-cargo run --release -p message-vault-io-gui
+./target/release/message-vault-io
 ```
 
 ## Test
@@ -157,7 +155,7 @@ Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand
 
 - **Libraries:** under `crates/message/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
 - **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
-- **GUI:** `message-vault-io-gui`
+- **GUI:** Tauri v2 app in `src-tauri/` with React + Vite frontend in `web/`
 - **In-app libraries (not shipped as CLIs in this product’s release):** `vault-push`, `message-reexport` (package `message-reexport`); standalone CLIs come from message-exporters
 
 Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database` / `crabapple`). The GUI binary therefore includes GPL-licensed code.
@@ -176,11 +174,11 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 
 | Symptom | What to try |
 |---------|-------------|
-| `Package 'fontconfig' not found` / `yeslogic-fontconfig-sys` panic | Install `libfontconfig1-dev` (Debian/Ubuntu) or `fontconfig-devel` (Fedora); see [Linux packages](#linux-packages) |
-| `Library libxkbcommon-x11.so could not be loaded` | Install `libxkbcommon-x11-0` (Debian/Ubuntu) or `libxkbcommon-x11` (Fedora), then re-run |
+| `webkit2gtk` / `libsoup` not found | Install WebKit2GTK and GTK3 dev packages; see [Linux packages](#linux-packages) |
 | “Could not find wtsexporter / ffmpeg / ffprobe” | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
 | Windows linker / `link.exe` errors | Install MSVC Build Tools with the C++ desktop workload |
-| Other GUI link / load errors on Linux | Install the packages under [Linux packages](#linux-packages) |
+| `cargo tauri` not found | Install with `cargo install tauri-cli --version “^2”` |
+| Frontend not loading in dev mode | Run `cd web && npm ci` first, then `cargo tauri dev` |
 
 ## Further reading
 

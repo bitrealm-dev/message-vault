@@ -33,6 +33,24 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libjavascriptcoregtk-4.1-0",
+          "libsoup-3.0-0"
+        ]
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
   }
 }
