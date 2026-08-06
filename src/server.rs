@@ -745,6 +745,8 @@ struct ExportMessagesQuery {
     #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
     account: Option<String>,
@@ -807,6 +809,7 @@ async fn export_messages_handler(
     let account =
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
+    let offset = query.offset;
     let q = query.q.clone();
     let cursor = query.cursor.clone();
     let source = query.source.clone();
@@ -823,6 +826,7 @@ async fn export_messages_handler(
                 account_id: &account,
                 query: &q,
                 limit,
+                offset,
                 cursor: cursor.as_deref(),
                 source_override: source.as_deref(),
             },

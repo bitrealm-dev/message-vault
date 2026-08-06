@@ -17,6 +17,7 @@ pub struct ExportPageOpts<'a> {
     pub account_id: &'a str,
     pub query: &'a str,
     pub limit: usize,
+    pub offset: Option<usize>,
     pub cursor: Option<&'a str>,
     pub source_override: Option<&'a str>,
 }
@@ -220,8 +221,15 @@ pub fn export_messages(
         params.push(cur.sort_order.into());
         params.push(cur.id.into());
     }
-    sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC LIMIT ?");
-    params.push((fetch_limit as i64).into());
+    sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC");
+    if let (Some(offset), None) = (opts.offset, &cursor) {
+        sql.push_str(" LIMIT ? OFFSET ?");
+        params.push((fetch_limit as i64).into());
+        params.push((offset as i64).into());
+    } else {
+        sql.push_str(" LIMIT ?");
+        params.push((fetch_limit as i64).into());
+    }
 
     let mut stmt = conn
         .prepare(&sql)
