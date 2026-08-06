@@ -20,6 +20,20 @@ export async function invokeCancel(): Promise<void> {
  * `extract:error` ({ detail, user_message? }).
  * Returns a single unlisten function that tears down all three listeners.
  */
+export interface FormatConfig {
+  input_dir: string;
+  output_dir: string;
+  output_format: string;
+}
+
+export async function invokeFormat(config: FormatConfig): Promise<void> {
+  return invoke("format", {
+    inputDir: config.input_dir,
+    outputDir: config.output_dir,
+    outputFormat: config.output_format,
+  });
+}
+
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;
