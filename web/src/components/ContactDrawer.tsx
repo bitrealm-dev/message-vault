@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../lib/api";
+import type { Conversation } from "../lib/types";
 
 interface ContactDetail {
   id: string;
@@ -16,6 +17,8 @@ interface ContactDetail {
   total_messages: number;
 }
 
+const SERVICES = ["phone", "email", "discord", "instagram", "telegram", "signal"];
+
 export default function ContactDrawer({
   contactId,
   onClose,
@@ -26,6 +29,9 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(detail?.name ?? "");
+  const [newHandle, setNewHandle] = useState("");
+  const [newService, setNewService] = useState("discord");
+  const [matchResults, setMatchResults] = useState<Conversation[] | null>(null);
 
   const loadDetail = () => {
     if (!contactId) return;
@@ -44,6 +50,32 @@ export default function ContactDrawer({
     setNameValue(detail?.name ?? "");
     setEditingName(false);
   }, [detail?.name]);
+
+  const checkMatches = async () => {
+    if (!newHandle.trim()) return;
+    try {
+      const res = await apiClient.get<{ conversations: Conversation[] }>(
+        `/v1/export/conversations?q=handle:${encodeURIComponent(newHandle)}`,
+      );
+      setMatchResults(res.conversations);
+    } catch {
+      setMatchResults([]);
+    }
+  };
+
+  const addHandle = async () => {
+    if (!newHandle.trim()) return;
+    try {
+      await apiClient.post(`/v1/export/contacts/${contactId}`, {
+        add_handle: { handle: newHandle.trim(), service: newService },
+      });
+      setNewHandle("");
+      setMatchResults(null);
+      loadDetail();
+    } catch {
+      // Leave the input in place so the user can retry
+    }
+  };
 
   if (!contactId || !detail) return null;
 
@@ -103,6 +135,46 @@ export default function ContactDrawer({
             </div>
           </div>
         ))}
+
+        <h3 style={{ fontSize: "0.75rem", color: "#9ca3af", textTransform: "uppercase", margin: "1rem 0 0.5rem" }}>Add Handle</h3>
+        <div style={{ display: "flex", gap: "0.375rem" }}>
+          <select
+            value={newService}
+            onChange={(e) => setNewService(e.target.value)}
+            style={{ padding: "0.375rem 0.5rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px", width: "110px" }}
+          >
+            {SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input
+            type="text"
+            value={newHandle}
+            onChange={(e) => setNewHandle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") checkMatches(); }}
+            placeholder="user#1234, @handle…"
+            style={{ flex: 1, minWidth: 0, padding: "0.375rem 0.5rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+          <button
+            onClick={checkMatches}
+            disabled={!newHandle.trim()}
+            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem", border: "1px solid #d1d5db", background: "#fff", borderRadius: "4px", cursor: "pointer" }}
+          >
+            Check matches
+          </button>
+          <button
+            onClick={addHandle}
+            disabled={!newHandle.trim()}
+            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem", border: "none", background: "#2563eb", color: "#fff", borderRadius: "4px", cursor: "pointer" }}
+          >
+            Add handle
+          </button>
+        </div>
+        {matchResults !== null && matchResults.length > 0 && (
+          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#eff6ff", borderRadius: "4px", fontSize: "0.813rem" }}>
+            We found {matchResults.length} conversation{matchResults.length !== 1 ? "s" : ""} matching {newHandle} on {newService}.
+          </div>
+        )}
 
         <div style={{ marginTop: "1rem", fontSize: "0.875rem", color: "#6b7280" }}>
           <div>{detail.direct_conversations} direct conversation{detail.direct_conversations !== 1 ? "s" : ""}</div>
