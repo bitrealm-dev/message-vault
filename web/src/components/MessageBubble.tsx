@@ -2,6 +2,8 @@ import type { Message } from "../lib/types";
 import SmsBubble from "./messages/SmsBubble";
 import ImessageBubble from "./messages/ImessageBubble";
 import DiscordBubble from "./messages/DiscordBubble";
+import WhatsAppBubble from "./messages/WhatsAppBubble";
+import InstagramBubble from "./messages/InstagramBubble";
 
 export default function MessageBubble({
   message,
@@ -19,7 +21,9 @@ export default function MessageBubble({
     case "discord":
       return <DiscordBubble message={message} highlight={highlight} isActive={isActive} />;
     case "whatsapp":
-      // Fall through to base for now — WhatsApp renderer in Task 8
+      return <WhatsAppBubble message={message} highlight={highlight} isActive={isActive} />;
+    case "instagram":
+      return <InstagramBubble message={message} highlight={highlight} isActive={isActive} />;
     default:
       return <SmsBubble message={message} highlight={highlight} isActive={isActive} />;
   }
