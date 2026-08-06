@@ -3,7 +3,8 @@
 
 [owner]
 display_name = "Demo User"
-phones = ["+14155559000"]
+# (raw handle, handle type) pairs linked into `account_handles` by reset-demo.
+handle_specs = [["+14155559000", "phone"]]
 emails = ["demo.ingest@example.com"]
 
 [account]

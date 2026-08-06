@@ -249,10 +249,10 @@ fn main() -> Result<()> {
             println!("  assets copied: {}", stats.import.assets_copied);
             println!("  assets deduped:{}", stats.import.assets_deduped);
             println!("  assets missing:{}", stats.import.assets_missing);
-            if stats.import.unknown_contacts > 0 {
+            if stats.import.phones_needing_review > 0 {
                 println!(
-                    "  unknown contacts created: {}",
-                    stats.import.unknown_contacts
+                    "  phones needing review: {} (ambiguous numbers — fix them in the vault)",
+                    stats.import.phones_needing_review
                 );
             }
             if let Some(d) = stats.dedupe {

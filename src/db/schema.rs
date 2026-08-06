@@ -44,7 +44,6 @@ const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../schema/sql/fts_triggers_drop.sql");
 const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../schema/sql/fts_triggers_create.sql");
-const FTS_BACKFILL_SQL: &str = include_str!("../../schema/sql/fts_backfill.sql");
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let exists: bool = conn.query_row(
@@ -59,9 +58,12 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_accounts_schema(conn)?;
+    // Contacts DDL defines `handles`, the FK target of conversations, participants,
+    // messages, and tapbacks (messages.sql) plus account_handles (accounts.sql).
+    // Apply it before the tables that reference handles.
+    conn.execute_batch(CONTACTS_TABLES_DDL)?;
     conn.execute_batch(MESSAGE_TABLES_DDL)?;
     conn.execute_batch(STAGING_TABLES_DDL)?;
-    conn.execute_batch(CONTACTS_TABLES_DDL)?;
     ensure_messages_fts(conn)?;
     Ok(())
 }
@@ -71,8 +73,6 @@ pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
     ensure_vault_schema(conn)
 }
 
-/// Marker for the one-time FTS5 backfill of messages present before trigger setup.
-pub const MESSAGES_FTS_BACKFILL_META_KEY: &str = "messages_fts_backfill_v1";
 /// Marker that current FTS sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
@@ -92,7 +92,6 @@ fn ensure_messages_fts(conn: &Connection) -> Result<()> {
         install_messages_fts_triggers(conn)?;
     }
 
-    backfill_messages_fts(conn)?;
     Ok(())
 }
 
@@ -141,25 +140,6 @@ pub(crate) fn index_messages_fts_from_promote_map(conn: &Connection) -> Result<u
         [],
     )?;
     Ok(u64::try_from(n).unwrap_or(0))
-}
-
-fn backfill_messages_fts(conn: &Connection) -> Result<()> {
-    let already: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM schema_meta WHERE key = ?1",
-        params![MESSAGES_FTS_BACKFILL_META_KEY],
-        |row| row.get(0),
-    )?;
-    if already {
-        return Ok(());
-    }
-
-    // Clear any partial index before a full rebuild.
-    conn.execute_batch(FTS_BACKFILL_SQL)?;
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES (?1, '1')",
-        params![MESSAGES_FTS_BACKFILL_META_KEY],
-    )?;
-    Ok(())
 }
 
 /// Delete all production messages (and cascaded rows) for one import source within one account.
@@ -265,12 +245,21 @@ mod tests {
             .unwrap();
             conn.execute(
                 r#"
-                INSERT INTO conversations (
-                    account_id, chat_identifier, service, conversation_type,
-                    group_title, exported_at, source_file
-                ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
+                INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+                VALUES (?1, '+15555550100', '+15555550100', 'phone', 'SMS')
                 "#,
                 params![id],
+            )
+            .unwrap();
+            let handle_id = conn.last_insert_rowid();
+            conn.execute(
+                r#"
+                INSERT INTO conversations (
+                    account_id, chat_handle_id, service, conversation_type,
+                    group_title, exported_at, source_file
+                ) VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')
+                "#,
+                params![id, handle_id],
             )
             .unwrap();
         }
@@ -343,8 +332,21 @@ mod tests {
         );
         assert_eq!(
             columns("contacts"),
-            ["id", "account_id", "preferred_name", "preferred_handle"]
+            ["id", "account_id", "preferred_name"]
         );
+        assert_eq!(
+            columns("handles"),
+            [
+                "id",
+                "account_id",
+                "raw",
+                "normalized",
+                "normalized_note",
+                "handle_type",
+                "service"
+            ]
+        );
+        assert!(columns("conversations").iter().any(|c| c == "chat_handle_id"));
         for column in ["account_id", "source", "content_key", "duplicate_of"] {
             assert!(columns("messages").iter().any(|c| c == column));
         }
@@ -402,9 +404,9 @@ mod tests {
             conn.execute(
                 r#"
                 INSERT INTO staging_conversations (
-                    account_id, chat_identifier, service, conversation_type,
+                    account_id, chat_handle_id, service, conversation_type,
                     group_title, exported_at, source_file
-                ) VALUES (?1, '+15555550100', 'SMS', 'individual', NULL, NULL, 't.json')
+                ) VALUES (?1, 1, 'SMS', 'individual', NULL, NULL, 't.json')
                 "#,
                 params![account],
             )

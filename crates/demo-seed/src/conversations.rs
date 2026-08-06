@@ -162,6 +162,7 @@ fn write_individual(
     let participants = vec![IrParticipant {
         handle: chat_id.into(),
         display_name,
+        handle_type: None,
     }];
     let path = staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
@@ -201,6 +202,7 @@ fn write_unassigned(
     let participants = vec![IrParticipant {
         handle: chat_id.clone(),
         display_name: ua.name_hint.clone(),
+        handle_type: None,
     }];
     let fname = if ua.email_only {
         format!("email-{}.jsonl", chat_id.replace('@', "_at_"))
@@ -262,6 +264,7 @@ fn write_group(
             .map(|h| IrParticipant {
                 handle: h.clone(),
                 display_name: None,
+                handle_type: None,
             })
             .collect()
     } else {
@@ -274,6 +277,7 @@ fn write_group(
                 IrParticipant {
                     handle: c.primary_phone().into(),
                     display_name: if hint.is_empty() { None } else { Some(hint) },
+                    handle_type: None,
                 }
             })
             .collect()
@@ -429,6 +433,7 @@ fn write_header_only(
         .map(|h| IrParticipant {
             handle: (*h).into(),
             display_name: None,
+            handle_type: None,
         })
         .collect();
     write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0)?;
@@ -511,7 +516,7 @@ fn write_conversation_header(
             group_title,
             participants,
             stats: ConversationStats {
-                message_count,
+                message_count: message_count as u64,
                 attachment_count: 0,
                 first_timestamp_unix_ms: None,
                 last_timestamp_unix_ms: None,
@@ -693,6 +698,7 @@ fn add_jpg_attachment(msg: &mut IrMessage, idx: usize, stats: &mut GenStats) {
         transcription: None,
         sticker_effect: None,
         bytes: None,
+        size_bytes: None,
     });
     stats.attachment_refs += 1;
 }
@@ -718,6 +724,7 @@ fn add_attachment(
         transcription,
         sticker_effect: None,
         bytes: None,
+        size_bytes: None,
     });
     stats.attachment_refs += 1;
 }

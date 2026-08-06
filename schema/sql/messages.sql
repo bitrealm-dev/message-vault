@@ -1,13 +1,13 @@
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
+    chat_handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
     source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
+    UNIQUE(account_id, chat_handle_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_conversations_account_id ON conversations (account_id);
@@ -15,12 +15,14 @@ CREATE INDEX IF NOT EXISTS ix_conversations_account_id ON conversations (account
 CREATE TABLE IF NOT EXISTS participants (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
+    contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
     name_hint TEXT,
-    UNIQUE(conversation_id, handle)
+    UNIQUE(conversation_id, handle_id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_participants_handle ON participants (handle);
+CREATE INDEX IF NOT EXISTS ix_participants_handle_id ON participants (handle_id);
+CREATE INDEX IF NOT EXISTS ix_participants_contact_id ON participants (contact_id);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
@@ -31,7 +33,7 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp TEXT NOT NULL,
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT,
+    sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +64,7 @@ CREATE INDEX IF NOT EXISTS ix_messages_duplicate_of
 CREATE INDEX IF NOT EXISTS ix_messages_import_id
     ON messages (import_id)
     WHERE import_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);
 
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY,
@@ -89,8 +92,7 @@ CREATE TABLE IF NOT EXISTS tapbacks (
     kind TEXT NOT NULL,
     emoji TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT
+    sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_tapbacks_message_id ON tapbacks (message_id);
-CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source);

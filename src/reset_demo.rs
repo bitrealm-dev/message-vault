@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use message_ir::HandleType;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 
@@ -36,7 +37,9 @@ struct DemoSeed {
 #[derive(Debug, Deserialize)]
 struct DemoOwner {
     display_name: String,
-    phones: Vec<String>,
+    /// `(raw handle, handle type)` pairs linked into `account_handles`.
+    #[serde(default)]
+    handle_specs: Vec<(String, HandleType)>,
     #[serde(default)]
     emails: Vec<String>,
 }
@@ -220,15 +223,13 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     }
     // Demo has no Import API token until the user generates one in Settings.
 
+    // Owner identity handles ("you" matching) live in `handles`, linked via `account_handles`.
     conn.execute(
-        "DELETE FROM account_phones WHERE account_id = ?1",
+        "DELETE FROM account_handles WHERE account_id = ?1",
         params![account_id],
     )?;
-    for phone in &seed.owner.phones {
-        conn.execute(
-            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
-            params![account_id, phone],
-        )?;
+    for (raw, handle_type) in &seed.owner.handle_specs {
+        account_profile::link_account_handle(&conn, account_id, raw, *handle_type)?;
     }
 
     Ok(())
@@ -265,4 +266,26 @@ fn remove_tree_if_exists(path: &Path) -> Result<()> {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed demo bundle ships a `seed.toml`; it must parse with the
+    /// current `DemoOwner` (handle_specs) format or `reset-demo` fails on
+    /// release images that skip bundle regeneration.
+    #[test]
+    fn committed_demo_seed_toml_parses() {
+        let text = include_str!("../demo/config/seed.toml");
+        let seed: DemoSeed = toml::from_str(text).expect("committed demo seed.toml must parse");
+        assert_eq!(seed.owner.display_name, "Demo User");
+        assert_eq!(seed.owner.handle_specs.len(), 1);
+        let (raw, handle_type) = &seed.owner.handle_specs[0];
+        assert_eq!(raw, "+14155559000");
+        assert_eq!(*handle_type, HandleType::Phone);
+        assert_eq!(seed.owner.emails, vec!["demo.ingest@example.com"]);
+        assert_eq!(seed.account.username, "demo");
+        assert!(seed.account.read_only);
+    }
 }

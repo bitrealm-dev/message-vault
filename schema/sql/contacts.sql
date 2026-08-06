@@ -1,17 +1,31 @@
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    preferred_name TEXT,
-    preferred_handle TEXT
+    preferred_name TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
 
+CREATE TABLE IF NOT EXISTS handles (
+    id INTEGER PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    raw TEXT NOT NULL,
+    normalized TEXT NOT NULL,
+    normalized_note TEXT,
+    handle_type TEXT NOT NULL,
+    service TEXT,
+    UNIQUE(account_id, normalized, handle_type)
+);
+
+CREATE INDEX IF NOT EXISTS ix_handles_account_id ON handles (account_id);
+CREATE INDEX IF NOT EXISTS ix_handles_normalized ON handles (account_id, normalized);
+
 CREATE TABLE IF NOT EXISTS contact_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    PRIMARY KEY (account_id, handle)
+    name_hint TEXT,
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_contact_handles_contact_id
@@ -32,9 +46,9 @@ CREATE TABLE IF NOT EXISTS contact_label_members (
 
 CREATE TABLE IF NOT EXISTS trashed_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     trashed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (account_id, handle)
+    PRIMARY KEY (account_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS trashed_conversations (

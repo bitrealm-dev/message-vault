@@ -314,11 +314,11 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "contacts"
 version = "0.1.0"
-source = "git+https://github.com/bitrealm-dev/message-exporters#d954f01034315f9fdcee6c21a22e38046d265280"
 dependencies = [
  "anyhow",
  "clap",
  "csv",
+ "message-ir",
  "phone",
 ]
 
@@ -1014,7 +1014,6 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "message-csv"
 version = "0.1.0"
-source = "git+https://github.com/bitrealm-dev/message-exporters#d954f01034315f9fdcee6c21a22e38046d265280"
 dependencies = [
  "chrono",
  "hex",
@@ -1026,7 +1025,6 @@ dependencies = [
 [[package]]
 name = "message-ir"
 version = "0.1.0"
-source = "git+https://github.com/bitrealm-dev/message-exporters#d954f01034315f9fdcee6c21a22e38046d265280"
 dependencies = [
  "message-csv",
  "serde",
@@ -1183,9 +1181,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "phone"
 version = "0.1.0"
-source = "git+https://github.com/bitrealm-dev/message-exporters#d954f01034315f9fdcee6c21a22e38046d265280"
 dependencies = [
  "anyhow",
+ "message-ir",
 ]
 
 [[package]]

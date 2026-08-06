@@ -125,7 +125,6 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
         source: opts.source_override.as_deref().unwrap_or(""),
         account_id: &account_id,
         fill_content_keys: true,
-        backfill_contacts: true,
         import_id: Some(import_id),
         source_from_jsonl,
         paths: source_from_jsonl.then_some(&cfg.paths),

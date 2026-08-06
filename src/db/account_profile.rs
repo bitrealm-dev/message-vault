@@ -1,18 +1,23 @@
 use anyhow::{Context, Result, bail};
+use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::schema;
 
+/// Account identity loaded only by tests: the handles migration replaced the
+/// load-for-matching path with direct joins through `account_handles`/`handles`,
+/// so this struct/loader now exists to pin the soft-default behavior.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // phones/emails loaded for handle matching; export uses display_name
 pub struct AccountProfile {
     pub display_name: String,
-    pub phones: Vec<String>,
+    pub handle_ids: Vec<i64>,
     pub emails: Vec<String>,
 }
 
-/// Load account identity (preferred name + phones) and optional email handles.
-/// Soft-defaults when the row is missing or name/phones are empty (`"Me"`, empty sets).
+/// Load account identity (preferred name + linked handle ids) and optional email handles.
+/// Soft-defaults when the row is missing or name/handles are empty (`"Me"`, empty sets).
+#[cfg(test)]
 pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
     let preferred_name: Option<Option<String>> = conn
         .query_row(
@@ -28,9 +33,10 @@ pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<Accou
         .filter(|s| !s.is_empty());
     let display_name = preferred.unwrap_or_else(|| "Me".to_string());
 
-    let mut phone_stmt =
-        conn.prepare("SELECT phone FROM account_phones WHERE account_id = ?1 ORDER BY phone")?;
-    let phones: Vec<String> = phone_stmt
+    let mut handle_stmt = conn.prepare(
+        "SELECT ah.handle_id FROM account_handles ah WHERE ah.account_id = ?1 ORDER BY ah.handle_id",
+    )?;
+    let handle_ids: Vec<i64> = handle_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -42,7 +48,7 @@ pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<Accou
 
     Ok(AccountProfile {
         display_name,
-        phones,
+        handle_ids,
         emails,
     })
 }
@@ -55,6 +61,54 @@ pub fn ensure_account_row(conn: &Connection, account_id: &str) -> Result<()> {
     )
     .with_context(|| format!("failed to ensure account row for {account_id}"))?;
     Ok(())
+}
+
+/// Canonical form of a handle for identity matching, per type, plus a
+/// human-readable note when the canonical form is ambiguous (guarded policy).
+///
+/// Mirrors `import.rs::normalize_handle` (and the address-book normalization in
+/// `db/contacts.rs`): phones become E.164 when unambiguous, else digits-as-is
+/// with a note; emails lowercase; others verbatim.
+fn normalize_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
+    match handle_type {
+        HandleType::Phone => {
+            let guarded = phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw));
+            if guarded.normalized.is_empty() {
+                // No usable digits: fall back to the raw, unflagged.
+                (raw.trim().to_string(), None)
+            } else {
+                (guarded.normalized, guarded.note)
+            }
+        }
+        HandleType::Email => (raw.trim().to_lowercase(), None),
+        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
+    }
+}
+
+/// Ensure a `handles` row exists and link it to the account via `account_handles`.
+/// Returns the handle id.
+pub fn link_account_handle(
+    conn: &Connection,
+    account_id: &str,
+    raw: &str,
+    handle_type: HandleType,
+) -> Result<i64> {
+    let (normalized, note) = normalize_handle(raw, handle_type);
+    conn.execute(
+        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+        params![account_id, raw, normalized, note, handle_type.as_str()],
+    )?;
+    let handle_id: i64 = conn.query_row(
+        "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
+        params![account_id, normalized, handle_type.as_str()],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
+        params![account_id, handle_id],
+    )?;
+    Ok(handle_id)
 }
 
 fn looks_like_uuid(s: &str) -> bool {
@@ -250,7 +304,7 @@ mod tests {
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_accounts_schema(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username, read_only) VALUES (?1, ?2, 0)",
             params!["00000000-0000-4000-8000-000000000001", "Alice"],
@@ -313,20 +367,53 @@ mod tests {
         let conn = setup();
         let empty = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
         assert_eq!(empty.display_name, "Me");
-        assert!(empty.phones.is_empty());
+        assert!(empty.handle_ids.is_empty());
 
         conn.execute(
             "UPDATE accounts SET preferred_name = 'MB' WHERE id = ?1",
             params!["00000000-0000-4000-8000-000000000001"],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
-            params!["00000000-0000-4000-8000-000000000001", "+15555550100"],
+        let handle_id = link_account_handle(
+            &conn,
+            "00000000-0000-4000-8000-000000000001",
+            "+15555550100",
+            HandleType::Phone,
         )
         .unwrap();
         let loaded = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
         assert_eq!(loaded.display_name, "MB");
-        assert_eq!(loaded.phones, vec!["+15555550100".to_string()]);
+        assert_eq!(loaded.handle_ids, vec![handle_id]);
+    }
+
+    #[test]
+    fn link_account_handle_normalizes_and_dedupes() {
+        let conn = setup();
+        let account = "00000000-0000-4000-8000-000000000001";
+        let a = link_account_handle(&conn, account, "+1 (555) 555-0100", HandleType::Phone).unwrap();
+        // Same normalized value with a different raw form reuses the handle row.
+        let b = link_account_handle(&conn, account, "+15555550100", HandleType::Phone).unwrap();
+        assert_eq!(a, b);
+        let normalized: String = conn
+            .query_row(
+                "SELECT normalized FROM handles WHERE id = ?1",
+                params![a],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(normalized, "+15555550100");
+        let linked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM account_handles WHERE account_id = ?1",
+                params![account],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, 1);
+        // Email handles are lowercased and stored separately by type.
+        let email = link_account_handle(&conn, account, "ME@EXAMPLE.com", HandleType::Email).unwrap();
+        let loaded = load_account_profile(&conn, account).unwrap();
+        assert_eq!(loaded.handle_ids.len(), 2);
+        assert!(loaded.handle_ids.contains(&email));
     }
 }

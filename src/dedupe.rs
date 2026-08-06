@@ -18,8 +18,10 @@ pub fn normalize_body(body: Option<&str>) -> String {
 
 /// Stable chat identity for content keys.
 ///
-/// 1:1 chats use `chat_identifier`. Groups use sorted participant handles so the same
-/// people across exporters (different `chat_identifier`s) share one fingerprint.
+/// 1:1 chats use the conversation handle's normalized form (E.164 phones,
+/// lowercased emails, verbatim usernames). Groups use sorted normalized
+/// participant handles so the same people across exporters (different
+/// `chat_identifier`s) share one fingerprint.
 pub fn chat_identity_for_content_key(
     chat_identifier: &str,
     group_handles: Option<&[String]>,
@@ -225,10 +227,11 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     };
     let sql = format!(
         r#"
-        SELECT m.id, m.conversation_id, c.chat_identifier, c.conversation_type,
+        SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
                m.is_from_me, m.timestamp_utc, m.timestamp, m.body
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
+        JOIN handles h ON h.id = c.chat_handle_id
         {filter}
         ORDER BY m.id
         "#
@@ -269,12 +272,13 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     {
         let mut p_stmt = conn.prepare(
             r#"
-            SELECT p.conversation_id, p.handle
+            SELECT p.conversation_id, h.normalized
             FROM participants p
             JOIN conversations c ON c.id = p.conversation_id
+            JOIN handles h ON h.id = p.handle_id
             WHERE c.account_id = ?1
-              AND p.handle IS NOT NULL AND p.handle != ''
-            ORDER BY p.conversation_id, p.handle
+              AND h.normalized IS NOT NULL AND h.normalized != ''
+            ORDER BY p.conversation_id, h.normalized
             "#,
         )?;
         let p_rows = p_stmt.query_map(params![account_id], |row| {
@@ -841,12 +845,27 @@ mod tests {
         .unwrap();
         conn.execute(
             r#"
-            INSERT INTO conversations (
-                account_id, chat_identifier, service, conversation_type, group_title, exported_at, source_file
-            )
-            VALUES (?1, '+14075551212', 'SMS', 'individual', NULL, NULL, 't.json')
+            INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+            VALUES (?1, '+14075551212', '+14075551212', 'phone', 'SMS')
             "#,
             params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+        let handle_id: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND normalized = '+14075551212'",
+                params![TEST_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"
+            INSERT INTO conversations (
+                account_id, chat_handle_id, service, conversation_type, group_title, exported_at, source_file
+            )
+            VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')
+            "#,
+            params![TEST_ACCOUNT_ID, handle_id],
         )
         .unwrap();
         conn
@@ -867,7 +886,7 @@ mod tests {
             r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender, subject, body, sort_order
+                sender_handle_id, subject, body, sort_order
             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
             "#,
             params![

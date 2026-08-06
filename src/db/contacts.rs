@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use contacts::{
     ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows, strip_tags,
 };
-use phone::sanitize_number;
 use rusqlite::{Connection, OptionalExtension, params};
 
 #[derive(Debug, Default)]
@@ -15,11 +14,14 @@ pub struct ContactLoadStats {
     pub labels: u64,
     pub emails_restored: u64,
     pub skipped: bool,
+    /// Phone handles written with a review note (ambiguous normalized form).
+    pub phones_needing_review: u64,
 }
 
 #[derive(Debug)]
 struct ContactDraft {
-    phones: Vec<String>,
+    /// (normalized handle, review note when the value is ambiguous).
+    phones: Vec<(String, Option<String>)>,
     preferred_name: Option<String>,
     labels: Vec<String>,
 }
@@ -39,26 +41,35 @@ fn is_email_handle(handle: &str) -> bool {
     handle.contains('@')
 }
 
-/// Raw phone → E.164 when unambiguous enough for the shared `phone` crate.
-fn to_e164(num: &str) -> Option<String> {
+/// Raw phone → (normalized, review note) under the guarded policy: E.164 when
+/// the raw is unambiguous (`+`-prefixed, or a US national number), else
+/// digits-as-is plus a reason — never a fabricated `+0…` value.
+fn normalize_phone_guarded(num: &str) -> Option<(String, Option<String>)> {
     let trimmed = num.trim();
     if trimmed.is_empty() || trimmed.contains('@') {
         return None;
     }
-    sanitize_number(trimmed).map(|digits| phone::to_e164(&digits))
+    // No usable digits (e.g. a bare `+`): not a phone at all.
+    if phone::sanitize_number(trimmed).is_none() {
+        return None;
+    }
+    let guarded = phone::normalize_guarded(trimmed, phone::PhoneRegion::for_raw(trimmed));
+    Some((guarded.normalized, guarded.note))
 }
 
-fn phone_handles_only(handles: &[String]) -> Vec<String> {
+/// Phone handles from an address-book row as (normalized, review note) pairs;
+/// emails are dropped.
+fn phone_handles_only(handles: &[String]) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
     for h in handles {
         if is_email_handle(h) {
             continue;
         }
-        let Some(e164) = to_e164(h) else {
+        let Some((normalized, note)) = normalize_phone_guarded(h) else {
             continue;
         };
-        if !out.iter().any(|p| p == &e164) {
-            out.push(e164);
+        if !out.iter().any(|(p, _)| p == &normalized) {
+            out.push((normalized, note));
         }
     }
     out
@@ -68,25 +79,36 @@ fn phone_handles_only(handles: &[String]) -> Vec<String> {
 #[derive(Debug, Default)]
 struct EmailSnapshot {
     /// One entry per contact that had emails: (phones on that contact, emails).
-    entries: Vec<(HashSet<String>, Vec<String>)>,
+    /// Emails are (handle_id, raw) so restore can re-link the `handles` row.
+    entries: Vec<(HashSet<String>, Vec<(i64, String)>)>,
 }
 
 fn snapshot_email_handles(conn: &Connection, account_id: &str) -> Result<EmailSnapshot> {
-    let mut by_contact: HashMap<i64, (HashSet<String>, Vec<String>)> = HashMap::new();
+    let mut by_contact: HashMap<i64, (HashSet<String>, Vec<(i64, String)>)> = HashMap::new();
 
     let mut stmt = conn.prepare(
-        "SELECT contact_id, handle FROM contact_handles WHERE account_id = ?1 ORDER BY contact_id, handle",
+        "SELECT ch.contact_id, h.id, h.raw, h.normalized, h.handle_type
+         FROM contact_handles ch
+         JOIN handles h ON h.id = ch.handle_id
+         WHERE ch.account_id = ?1
+         ORDER BY ch.contact_id, h.handle_type, h.raw",
     )?;
     let rows = stmt.query_map(params![account_id], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
     })?;
     for row in rows {
-        let (contact_id, handle) = row?;
+        let (contact_id, handle_id, raw, normalized, handle_type) = row?;
         let entry = by_contact.entry(contact_id).or_default();
-        if is_email_handle(&handle) {
-            entry.1.push(handle);
+        if handle_type == "email" {
+            entry.1.push((handle_id, raw));
         } else {
-            entry.0.insert(handle);
+            entry.0.insert(normalized);
         }
     }
     Ok(EmailSnapshot {
@@ -112,7 +134,10 @@ fn restore_email_handles(
         for phone in phones {
             let found: Option<i64> = conn
                 .query_row(
-                    "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle = ?2",
+                    "SELECT ch.contact_id
+                     FROM contact_handles ch
+                     JOIN handles h ON h.id = ch.handle_id
+                     WHERE ch.account_id = ?1 AND h.handle_type = 'phone' AND h.normalized = ?2",
                     params![account_id, phone],
                     |row| row.get(0),
                 )
@@ -125,11 +150,11 @@ fn restore_email_handles(
         let Some(id) = contact_id else {
             continue;
         };
-        for email in emails {
+        for (handle_id, email) in emails {
             let owner: Option<i64> = conn
                 .query_row(
-                    "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle = ?2",
-                    params![account_id, email],
+                    "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
+                    params![account_id, handle_id],
                     |row| row.get(0),
                 )
                 .optional()?;
@@ -142,8 +167,8 @@ fn restore_email_handles(
                 continue;
             }
             conn.execute(
-                "INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?1, ?2, ?3)",
-                params![account_id, email, id],
+                "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?1, ?2, ?3)",
+                params![account_id, handle_id, id],
             )?;
             restored += 1;
         }
@@ -386,28 +411,42 @@ fn insert_contact_drafts(
     let tx = conn.transaction()?;
 
     for draft in drafts {
-        let preferred = draft.phones[0].clone();
+        // Insert contact
+        let preferred_name = draft.preferred_name.as_deref().unwrap_or("Unknown");
         tx.execute(
-            r#"
-            INSERT INTO contacts (
-                account_id, preferred_name, preferred_handle
-            ) VALUES (?1, ?2, ?3)
-            "#,
-            params![account_id, draft.preferred_name, preferred],
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
+            params![account_id, preferred_name],
         )?;
         let contact_id = tx.last_insert_rowid();
         stats.contacts += 1;
 
-        for phone in &draft.phones {
+        for (phone, note) in &draft.phones {
+            // Ensure handle exists; the note flags ambiguous values for review.
             tx.execute(
-                "INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?1, ?2, ?3)",
-                params![account_id, phone, contact_id],
+                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type)
+                 VALUES (?1, ?2, ?3, ?4, 'phone')",
+                params![account_id, phone, phone, note],
+            )?;
+            let handle_id: i64 = tx.query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = 'phone'",
+                params![account_id, phone],
+                |row| row.get(0),
+            )?;
+
+            // Link contact to handle
+            tx.execute(
+                "INSERT OR IGNORE INTO contact_handles (account_id, handle_id, contact_id)
+                 VALUES (?1, ?2, ?3)",
+                params![account_id, handle_id, contact_id],
             )?;
             stats.phones += 1;
+            if note.is_some() {
+                stats.phones_needing_review += 1;
+            }
         }
 
-        let labels = draft.labels;
-        for label_name in &labels {
+        // Labels unchanged
+        for label_name in &draft.labels {
             let label_id = ensure_label(&tx, account_id, label_name)?;
             tx.execute(
                 "INSERT OR IGNORE INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
@@ -485,306 +524,9 @@ fn ensure_label(conn: &Connection, account_id: &str, name: &str) -> Result<i64> 
     Ok(id)
 }
 
-/// Normalized comparison key for owner-handle matching (E.164 phone / lowercased email).
-fn handle_match_key(handle: &str) -> String {
-    let trimmed = handle.trim();
-    if is_email_handle(trimmed) {
-        return trimmed.to_lowercase();
-    }
-    to_e164(trimmed).unwrap_or_else(|| trimmed.to_string())
-}
-
-/// Create contacts for handles that have messages but no contact_handles row:
-/// 1:1 handles, plus group participants who never had a 1:1 conversation.
-/// Names come from participant `name_hint` / exporter `display_name` when present.
-pub fn ensure_unknown_contacts(conn: &mut Connection, account_id: &str) -> Result<u64> {
-    crate::db::schema::ensure_contacts_schema(conn)?;
-
-    let has_trash: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'trashed_handles'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|n| n > 0)
-        .unwrap_or(false);
-    let has_trashed_conversations: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'table' AND name = 'trashed_conversations'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|n| n > 0)
-        .unwrap_or(false);
-
-    let trash_sql = if has_trash {
-        "AND NOT EXISTS (
-           SELECT 1 FROM trashed_handles th
-           WHERE th.handle = c.chat_identifier AND th.account_id = c.account_id
-         )"
-    } else {
-        ""
-    };
-
-    let sql = format!(
-        "SELECT DISTINCT c.chat_identifier
-         FROM conversations c
-         JOIN messages m ON m.conversation_id = c.id
-         WHERE c.account_id = ?1
-           AND c.conversation_type = 'individual'
-           AND NOT EXISTS (
-             SELECT 1 FROM contact_handles cp
-             WHERE cp.handle = c.chat_identifier AND cp.account_id = c.account_id
-           )
-           {trash_sql}
-         ORDER BY c.chat_identifier"
-    );
-
-    let mut handles: Vec<String> = {
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![account_id], |row| row.get(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        out
-    };
-
-    // Group participants with no 1:1 thread are never reached by the query above,
-    // so their group messages would belong to no contact.
-    let group_trash_handle_sql = if has_trash {
-        "AND NOT EXISTS (
-           SELECT 1 FROM trashed_handles th
-           WHERE th.handle = p.handle AND th.account_id = c.account_id
-         )"
-    } else {
-        ""
-    };
-    let group_trash_conv_sql = if has_trashed_conversations {
-        "AND NOT EXISTS (
-           SELECT 1 FROM trashed_conversations tc
-           WHERE tc.conversation_id = c.id AND tc.account_id = c.account_id
-         )"
-    } else {
-        ""
-    };
-    let group_sql = format!(
-        "SELECT DISTINCT p.handle
-         FROM participants p
-         JOIN conversations c ON c.id = p.conversation_id
-         WHERE c.account_id = ?1
-           AND c.conversation_type = 'group'
-           AND trim(coalesce(p.handle, '')) <> ''
-           AND NOT EXISTS (
-             SELECT 1 FROM contact_handles cp
-             WHERE cp.handle = p.handle AND cp.account_id = c.account_id
-           )
-           AND EXISTS (
-             SELECT 1 FROM messages m WHERE m.conversation_id = c.id
-           )
-           {group_trash_handle_sql}
-           {group_trash_conv_sql}
-         ORDER BY p.handle"
-    );
-    {
-        let mut stmt = conn.prepare(&group_sql)?;
-        let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
-        let mut seen: HashSet<String> = handles.iter().cloned().collect();
-        for row in rows {
-            let handle = row?;
-            if seen.insert(handle.clone()) {
-                handles.push(handle);
-            }
-        }
-    }
-
-    // The account holder is a participant in their own groups.
-    let owner_keys: HashSet<String> =
-        crate::db::account_profile::load_account_profile(conn, account_id)
-            .map(|owner| {
-                owner
-                    .phones
-                    .iter()
-                    .chain(owner.emails.iter())
-                    .map(|h| handle_match_key(h))
-                    .collect()
-            })
-            .unwrap_or_default();
-    if !owner_keys.is_empty() {
-        handles.retain(|handle| !owner_keys.contains(&handle_match_key(handle)));
-    }
-
-    if handles.is_empty() {
-        return Ok(0);
-    }
-
-    let mut created = 0u64;
-    let tx = conn.transaction()?;
-    for handle in &handles {
-        let preferred = handle.clone();
-        let hint = best_name_hint_for_handle(&tx, account_id, handle)?;
-        let preferred_name = hint
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        tx.execute(
-            r#"
-            INSERT INTO contacts (
-                account_id, preferred_name, preferred_handle
-            ) VALUES (?1, ?2, ?3)
-            "#,
-            params![account_id, preferred_name, preferred],
-        )?;
-        let contact_id = tx.last_insert_rowid();
-        tx.execute(
-            "INSERT INTO contact_handles (account_id, handle, contact_id) VALUES (?1, ?2, ?3)",
-            params![account_id, handle, contact_id],
-        )?;
-        created += 1;
-    }
-    tx.commit()?;
-
-    Ok(created)
-}
-
-/// Fill empty contact preferred names from participant name hints (exporter display names).
-///
-/// Does not overwrite names the user (or contacts CSV) already set.
-pub fn fill_empty_contact_names_from_participants(
-    conn: &mut Connection,
-    account_id: &str,
-) -> Result<u64> {
-    crate::db::schema::ensure_contacts_schema(conn)?;
-
-    let rows: Vec<(i64, String)> = {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT c.id, ch.handle
-            FROM contacts c
-            JOIN contact_handles ch
-              ON ch.contact_id = c.id AND ch.account_id = c.account_id
-            WHERE c.account_id = ?1
-              AND (c.preferred_name IS NULL OR TRIM(c.preferred_name) = '')
-            ORDER BY c.id, ch.handle
-            "#,
-        )?;
-        let mapped = stmt.query_map(params![account_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        let mut out = Vec::new();
-        for row in mapped {
-            out.push(row?);
-        }
-        out
-    };
-
-    // One best hint per contact (prefer longer useful hint across its handles).
-    let mut best: HashMap<i64, String> = HashMap::new();
-    for (contact_id, handle) in rows {
-        let Some(hint) = best_name_hint_for_handle(conn, account_id, &handle)? else {
-            continue;
-        };
-        best.entry(contact_id)
-            .and_modify(|existing| {
-                if hint.len() > existing.len() {
-                    *existing = hint.clone();
-                }
-            })
-            .or_insert(hint);
-    }
-
-    if best.is_empty() {
-        return Ok(0);
-    }
-
-    let mut filled = 0u64;
-    let tx = conn.transaction()?;
-    for (contact_id, hint) in best {
-        let preferred_name = hint.trim();
-        if preferred_name.is_empty() {
-            continue;
-        }
-        let n = tx.execute(
-            r#"
-            UPDATE contacts
-            SET preferred_name = ?2
-            WHERE id = ?1
-              AND account_id = ?3
-              AND (preferred_name IS NULL OR TRIM(preferred_name) = '')
-            "#,
-            params![contact_id, preferred_name, account_id],
-        )?;
-        filled += n as u64;
-    }
-    tx.commit()?;
-    Ok(filled)
-}
-
-fn best_name_hint_for_handle(
-    conn: &Connection,
-    account_id: &str,
-    handle: &str,
-) -> Result<Option<String>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT p.name_hint
-        FROM participants p
-        JOIN conversations c ON c.id = p.conversation_id
-        WHERE c.account_id = ?1
-          AND p.handle = ?2
-          AND p.name_hint IS NOT NULL
-          AND TRIM(p.name_hint) != ''
-        ORDER BY LENGTH(TRIM(p.name_hint)) DESC, p.name_hint ASC
-        "#,
-    )?;
-    let hints = stmt.query_map(params![account_id, handle], |row| row.get::<_, String>(0))?;
-    for hint in hints {
-        let hint = hint?;
-        if let Some(useful) = useful_name_hint(&hint, handle) {
-            return Ok(Some(useful));
-        }
-    }
-    Ok(None)
-}
-
-/// Prefer a real display hint; ignore phones and placeholder "(Unknown)" labels.
-fn useful_name_hint(hint: &str, handle: &str) -> Option<String> {
-    let t = hint.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if looks_like_phone(t) {
-        return None;
-    }
-    if t.eq_ignore_ascii_case(handle) {
-        return None;
-    }
-    if matches!(t.to_ascii_lowercase().as_str(), "unknown" | "(unknown)") {
-        return None;
-    }
-    Some(t.to_string())
-}
-
-fn looks_like_phone(s: &str) -> bool {
-    let t = s.trim();
-    if t.is_empty() {
-        return false;
-    }
-    if t.starts_with('+')
-        && t.chars()
-            .all(|c| c.is_ascii_digit() || "+ ().-".contains(c))
-    {
-        return true;
-    }
-    let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
-    let stripped: String = t
-        .chars()
-        .filter(|c| !c.is_whitespace() && !"()+-.".contains(*c))
-        .collect();
-    digits.len() >= 7 && digits.len() == stripped.len()
-}
+/// Contacts are now resolved through the `handles` table during import (Task 10 of the
+/// handle-identity-model plan); backfilling unknown contacts from conversation data and
+/// filling empty names from participant hints happen there, not here.
 
 #[cfg(test)]
 mod tests {
@@ -800,91 +542,67 @@ mod tests {
                 "a@b.com".into(),
                 "+15559876543".into()
             ]),
-            vec!["+15551234567", "+15559876543"]
+            vec![
+                ("+15551234567".to_string(), None),
+                ("+15559876543".to_string(), None)
+            ]
         );
     }
 
     #[test]
-    fn useful_name_hint_filters_phones() {
-        assert_eq!(
-            useful_name_hint("Annette Gubert", "+19124011522").as_deref(),
-            Some("Annette Gubert")
+    fn trunk_zero_phone_is_flagged_with_note() {
+        let dir = std::env::temp_dir().join(format!(
+            "mv-contacts-trunk-zero-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("vault.db");
+        let vcf_path = dir.join("contacts.vcf");
+        std::fs::write(
+            &vcf_path,
+            "BEGIN:VCARD\nVERSION:3.0\nFN:UK Peer\nN:Peer;UK;;;\nTEL:020 7946 0000\nEND:VCARD\n",
+        )
+        .unwrap();
+
+        let mut conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 't', 0, 'T')",
+            params![TEST_ACCOUNT_ID],
+        )
+        .unwrap();
+
+        let stats =
+            load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
+        assert_eq!(stats.phones, 1);
+        assert_eq!(stats.phones_needing_review, 1);
+
+        // Guarded policy: normalized mirrors the digits (no fabricated
+        // +02079460000) and the handles row carries a review note.
+        let (normalized, note): (String, Option<String>) = conn
+            .query_row(
+                "SELECT normalized, normalized_note FROM handles
+                 WHERE account_id = ?1 AND handle_type = 'phone'",
+                params![TEST_ACCOUNT_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(normalized, "02079460000");
+        assert!(
+            note.as_deref().is_some(),
+            "trunk-zero phone must carry a review note"
         );
-        assert_eq!(useful_name_hint("+19124011522", "+19124011522"), None);
-        assert_eq!(useful_name_hint("(Unknown)", "+19124011522"), None);
+
+        drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     const TEST_ACCOUNT_ID: &str = "00000000-0000-0000-0000-000000000042";
-    const OWNER_PHONE: &str = "+15555550100";
-    const GROUP_ONLY_PHONE: &str = "+15555550111";
-    const DIRECT_PHONE: &str = "+15555550222";
-
-    /// Group with the owner, a group-only participant, and a 1:1 participant.
-    fn seed_group_vault(db_path: &Path) -> Connection {
-        let conn = Connection::open(db_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::schema::ensure_vault_schema(&conn).unwrap();
-
-        conn.execute(
-            "INSERT INTO accounts (id, username, read_only, preferred_name)
-             VALUES (?1, 'test', 0, 'Vault Owner')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO account_phones (account_id, phone) VALUES (?1, ?2)",
-            params![TEST_ACCOUNT_ID, OWNER_PHONE],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO conversations (
-                 account_id, chat_identifier, service, conversation_type,
-                 group_title, exported_at, source_file
-             ) VALUES (?1, 'chat-1', 'SMS', 'group', 'Crew', NULL, 't.json')",
-            params![TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-        let group_id = conn.last_insert_rowid();
-        for (handle, hint) in [
-            (OWNER_PHONE, "Vault Owner"),
-            (GROUP_ONLY_PHONE, "Group Only"),
-            (DIRECT_PHONE, "Direct Friend"),
-        ] {
-            conn.execute(
-                "INSERT INTO participants (conversation_id, handle, name_hint)
-                 VALUES (?1, ?2, ?3)",
-                params![group_id, handle, hint],
-            )
-            .unwrap();
-        }
-        conn.execute(
-            "INSERT INTO messages (
-                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
-             ) VALUES (?1, ?2, 'imessage', 'g-group', '2023-06-01T10:00:00Z', 0, 0, 'hi crew')",
-            params![group_id, TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO conversations (
-                 account_id, chat_identifier, service, conversation_type,
-                 group_title, exported_at, source_file
-             ) VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')",
-            params![TEST_ACCOUNT_ID, DIRECT_PHONE],
-        )
-        .unwrap();
-        let direct_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO messages (
-                 conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
-             ) VALUES (?1, ?2, 'imessage', 'g-direct', '2023-06-02T10:00:00Z', 0, 0, 'hi there')",
-            params![direct_id, TEST_ACCOUNT_ID],
-        )
-        .unwrap();
-
-        conn
-    }
 
     #[test]
     fn accepts_vcard_csv_and_vcf_but_rejects_vault_csv() {
@@ -1013,8 +731,10 @@ mod tests {
 
         let preferred_name: String = conn
             .query_row(
-                "SELECT preferred_name FROM contacts
-                 WHERE account_id = ?1 AND preferred_handle = '+15551234567'",
+                "SELECT c.preferred_name FROM contacts c
+                 JOIN contact_handles ch ON ch.contact_id = c.id
+                 JOIN handles h ON h.id = ch.handle_id
+                 WHERE c.account_id = ?1 AND h.normalized = '+15551234567'",
                 params![TEST_ACCOUNT_ID],
                 |row| row.get(0),
             )
@@ -1040,44 +760,6 @@ mod tests {
                 "Work".to_string()
             ]
         );
-
-        drop(conn);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn ensure_unknown_contacts_covers_group_only_participants() {
-        let dir = std::env::temp_dir().join(format!(
-            "mv-contacts-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("vault.db");
-        let mut conn = seed_group_vault(&db_path);
-        let created = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID).unwrap();
-        assert_eq!(created, 2, "group-only and 1:1 handles both get contacts");
-
-        let handles: Vec<String> = conn
-            .prepare("SELECT handle FROM contact_handles WHERE account_id = ?1 ORDER BY handle")
-            .unwrap()
-            .query_map(params![TEST_ACCOUNT_ID], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(handles.iter().any(|h| h == GROUP_ONLY_PHONE));
-        assert!(handles.iter().any(|h| h == DIRECT_PHONE));
-        assert!(
-            !handles.iter().any(|h| h == OWNER_PHONE),
-            "the account holder must not become a contact: {handles:?}"
-        );
-
-        // Second run is a no-op now that every handle has a contact.
-        let again = ensure_unknown_contacts(&mut conn, TEST_ACCOUNT_ID).unwrap();
-        assert_eq!(again, 0);
-        assert!(!dir.join("contacts.csv").exists());
 
         drop(conn);
         std::fs::remove_dir_all(&dir).ok();

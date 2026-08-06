@@ -1,21 +1,22 @@
 CREATE TABLE IF NOT EXISTS staging_conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    chat_identifier TEXT NOT NULL,
+    chat_handle_id INTEGER NOT NULL,
     service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
     source_file TEXT NOT NULL,
-    UNIQUE(account_id, chat_identifier)
+    UNIQUE(account_id, chat_handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS staging_participants (
     id INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
-    handle TEXT NOT NULL,
+    handle_id INTEGER NOT NULL,
+    contact_id INTEGER,
     name_hint TEXT,
-    UNIQUE(conversation_id, handle)
+    UNIQUE(conversation_id, handle_id)
 );
 
 CREATE TABLE IF NOT EXISTS staging_messages (
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     timestamp TEXT NOT NULL,
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT,
+    sender_handle_id INTEGER,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -72,7 +73,7 @@ CREATE TABLE IF NOT EXISTS staging_tapbacks (
     kind TEXT NOT NULL,
     emoji TEXT,
     is_from_me INTEGER NOT NULL,
-    sender TEXT
+    sender_handle_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS ix_staging_tapbacks_message_id ON staging_tapbacks (message_id);
