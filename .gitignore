@@ -49,3 +49,4 @@ config/export-to-vault.sh
 # Frontend (web/) dependencies and build output
 /web/node_modules/
 /web/dist/
+.claude/
