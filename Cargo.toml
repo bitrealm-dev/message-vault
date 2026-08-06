@@ -24,8 +24,8 @@ members = [
     "crates/cli/vault-pull",
     "crates/vault/demo-seed",
     "crates/vault/server",
-    "src-tauri",
 ]
+exclude = ["src-tauri"]
 
 [workspace.dependencies]
 message-ir = { path = "crates/libs/ir" }
