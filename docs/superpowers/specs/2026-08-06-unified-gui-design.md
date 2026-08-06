@@ -218,7 +218,7 @@ When a conversation is selected:
 - **Find bar**: Appears when search is active. Highlights matches in visible messages with next/prev arrows
 - **Messages**: Full-width, service-specific rendering (iMessage reactions vs. Discord embeds vs. SMS bubbles)
 - **No permanent right panel** — metadata lives in the header, participant details in a drawer
-- **Jump links**: Date-based quick-jump anchors at the top (from the old GUI) — but consider virtualized rendering to avoid one giant DOM
+- **Pagination**: Messages are loaded in pages from the API (`offset`/`limit`). The header shows "Messages 1–50 of 1,423" with prev/next controls. Date jump links resolve to the correct page offset. No giant DOM — only the visible page is rendered.
 
 ### Participant contact view
 
@@ -443,4 +443,3 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 ## Open questions
 
 - Exact search query syntax for saved groups (`from:`, `participants:`, `date:`, `has:attachment`, etc.)
-- Virtualized message list implementation (replace "load everything and fast-scroll")
