@@ -91,10 +91,25 @@ Handles are set on the user's own profile during onboarding and can be edited la
 │   Password: [______________]     │
 │                                  │
 │   [Create account]               │
+│                                  │
+│   ─────────── or ───────────     │
+│                                  │
+│   [Extract messages]             │
+│   Parse a backup to JSONL        │
+│   without connecting to a vault  │
+│                                  │
+│   [Format conversion]            │
+│   Convert between output formats │
 └──────────────────────────────────┘
 ```
 
 Existing vault users enter their server URL and authenticate (Hanko passkey or username/password). The SPA stores the auth token and navigates to the conversation list.
+
+Below the auth section, two offline tools are available without login:
+- **Extract messages**: Parse a backup to JSONL without connecting to a vault
+- **Format conversion**: Convert between output formats (JSONL/EML/MBOX/CSV/XML)
+
+These do not require authentication — they only access the local filesystem. In the web deployment, they are hidden (no local filesystem access).
 
 ### Onboarding (new user)
 
@@ -134,12 +149,10 @@ After login, the user sees a flat conversation list sorted by most recent messag
 │                      │                                      │
 │  👤 Profile          │                                      │
 │  ⚙ Settings         │                                      │
-├──────────────────────┴──────────────────────────────────────┤
-│  [Extract] [Format]                         — desktop only  │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────┴──────────────────────────────────────┘
 ```
 
-The right panel shows a placeholder until a conversation is selected. Import and Export are left-panel buttons (desktop only). Extract and Format are secondary actions in a bottom bar.
+The right panel shows a placeholder until a conversation is selected. Import and Export are left-panel buttons (desktop only, require auth). Extract and Format are available from the login screen without authentication.
 
 ### Conversation rows — display logic
 
@@ -192,9 +205,7 @@ When a conversation is selected:
 │                      │                                      │
 │  👤 Profile          │                                      │
 │  ⚙ Settings         │                                      │
-├──────────────────────┴──────────────────────────────────────┤
-│  [Extract] [Format]                         — desktop only  │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────┴──────────────────────────────────────┘
 ```
 
 - **Header**: Participant name/handle, participant chips (clickable — opens profile drawer), message count, date range, Photos & Files shortcut
@@ -257,17 +268,17 @@ Clicking a saved group filters the conversation list to matching conversations. 
 
 ### Desktop-only actions
 
-Import and Export are left-panel buttons (always visible while browsing). They replace the main view area with their forms when clicked.
+Four desktop actions, divided by whether they need vault authentication:
 
-- **Import**: Combined extract + push. Pick source, backup path, optional contacts, go. Auth required.
-- **Export**: Pull from vault to local files. Three scopes: entire vault, current view, or selected. Popover picker.
+**Require auth** (left panel buttons, visible when logged in):
+- **Import**: Combined extract + push. Left panel button, replaces main view with import form.
+- **Export**: Pull from vault to local files. Left panel button, popover for scope selection.
 
-Extract and Format are secondary actions in a bottom bar:
+**No auth required** (login screen, below the auth form):
+- **Extract**: Parse backup to JSONL without connecting to a vault. For offline use.
+- **Format**: Convert between output formats. Also accessible from the authenticated view via a Tools menu.
 
-- **Extract**: Parse phone backup to JSONL without uploading. For offline use.
-- **Format**: Convert between output formats (JSONL/EML/MBOX/CSV/XML).
-
-All four are gated behind `isTauri()` and hidden in the web deployment.
+All four are gated behind `isTauri()` and hidden in the web deployment. The web deployment shows only the auth form — no offline tools, no import/export.
 
 ## Service-specific message rendering
 
