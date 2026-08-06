@@ -134,8 +134,8 @@ fn is_sent(headers: &MailHeaders, owner_emails: &[String]) -> bool {
     // Compare against the bare addr-spec, not a substring: owner
     // `ce@example.com` would otherwise match `alice@example.com`.
     let from_addr = if let Some(start) = from.find('<') {
-        if let Some(end) = from.find('>') {
-            &from[start + 1..end]
+        if let Some(end) = from[start..].find('>') {
+            &from[start + 1..start + end]
         } else {
             &from[start + 1..]
         }
