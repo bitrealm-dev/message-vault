@@ -37,5 +37,5 @@ sha2 = "0.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
 toml = "1.1.2"
-tower-http = { version = "0.7.0", features = ["limit", "cors"] }
+tower-http = { version = "0.7.0", features = ["limit", "cors", "fs"] }
 uuid = { version = "1", features = ["v4"] }
