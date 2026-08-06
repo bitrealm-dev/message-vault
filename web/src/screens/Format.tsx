@@ -21,7 +21,7 @@ const INDETERMINATE_KEYFRAMES = `
 }
 `;
 
-export default function Format({ onError }: { onError?: (msg: string) => void }) {
+export default function Format({ onError, onBack }: { onError?: (msg: string) => void; onBack?: () => void }) {
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [outputFormat, setOutputFormat] = useState("jsonl");
@@ -62,6 +62,17 @@ export default function Format({ onError }: { onError?: (msg: string) => void })
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <style>{INDETERMINATE_KEYFRAMES}</style>
+      {onBack && (
+        <button
+          onClick={onBack}
+          style={{
+            marginBottom: "1rem", border: "none", background: "none",
+            color: "#2563eb", cursor: "pointer", fontSize: "0.875rem", padding: 0,
+          }}
+        >
+          ← Back to login
+        </button>
+      )}
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Format Conversion</h2>
 
       <FormRow label="Input directory">

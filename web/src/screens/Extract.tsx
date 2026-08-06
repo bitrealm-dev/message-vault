@@ -24,7 +24,7 @@ const INDETERMINATE_KEYFRAMES = `
 }
 `;
 
-export default function Extract({ onError }: { onError?: (msg: string) => void }) {
+export default function Extract({ onError, onBack }: { onError?: (msg: string) => void; onBack?: () => void }) {
   const [source, setSource] = useState("sms-backup-restore");
   const [backupPath, setBackupPath] = useState("");
   const [outputDir, setOutputDir] = useState("");
@@ -69,6 +69,17 @@ export default function Extract({ onError }: { onError?: (msg: string) => void }
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <style>{INDETERMINATE_KEYFRAMES}</style>
+      {onBack && (
+        <button
+          onClick={onBack}
+          style={{
+            marginBottom: "1rem", border: "none", background: "none",
+            color: "#2563eb", cursor: "pointer", fontSize: "0.875rem", padding: 0,
+          }}
+        >
+          ← Back to login
+        </button>
+      )}
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Extract Messages</h2>
 
       <FormRow label="Source">

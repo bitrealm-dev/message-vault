@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
+import ExtractScreen from "./Extract";
+import FormatScreen from "./Format";
 
 type AuthMode = "hanko" | "local" | null;
 
@@ -26,6 +28,7 @@ export default function LoginScreen({
   const [password, setPassword] = useState("");
 
   const hankoRef = useRef<HTMLDivElement>(null);
+  const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
 
   const detectMode = async () => {
     if (!serverUrl.trim()) return;
@@ -115,6 +118,13 @@ export default function LoginScreen({
       cancelled = true;
     };
   }, [authMode, hankoApiUrl, serverUrl, login]);
+
+  if (offlineScreen === "extract") {
+    return <ExtractScreen onBack={() => setOfflineScreen("none")} />;
+  }
+  if (offlineScreen === "format") {
+    return <FormatScreen onBack={() => setOfflineScreen("none")} />;
+  }
 
   return (
     <div
@@ -314,11 +324,13 @@ export default function LoginScreen({
             </p>
             <div style={{ display: "flex", gap: "0.75rem" }}>
               <button
+                onClick={() => setOfflineScreen("extract")}
                 style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
               >
                 Extract messages
               </button>
               <button
+                onClick={() => setOfflineScreen("format")}
                 style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
               >
                 Format conversion
