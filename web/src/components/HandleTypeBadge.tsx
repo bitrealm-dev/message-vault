@@ -1,6 +1,6 @@
 "use client";
 
-import type { HandleType } from "@/lib/handleKind";
+export type HandleType = "phone" | "email" | "username" | "other";
 
 const LABELS: Record<HandleType, string> = {
   phone: "Phone",
