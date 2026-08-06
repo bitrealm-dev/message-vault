@@ -146,6 +146,42 @@ pub fn complete_import(
     get_owned_import(conn, account_id, import_id)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportSummary {
+    pub id: i64,
+    pub source: String,
+    pub tool: Option<String>,
+    pub mode: String,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub message_count: i64,
+    pub attachment_count: i64,
+    pub bytes_uploaded: i64,
+}
+
+impl From<VaultImportRow> for ImportSummary {
+    fn from(r: VaultImportRow) -> Self {
+        ImportSummary {
+            id: r.id,
+            source: r.source,
+            tool: r.tool,
+            mode: r.mode,
+            status: r.status,
+            started_at: r.started_at,
+            finished_at: r.finished_at,
+            message_count: r.message_count,
+            attachment_count: r.attachment_count,
+            bytes_uploaded: r.bytes_uploaded,
+        }
+    }
+}
+
+/// List imports for an account, newest first. Returns serializable summaries.
+pub fn list_imports(conn: &Connection, account_id: &str) -> Result<Vec<ImportSummary>> {
+    list_imports_for_account(conn, account_id, 100).map(|rows| rows.into_iter().map(Into::into).collect())
+}
+
 /// List imports for an account, newest first.
 #[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn list_imports_for_account(

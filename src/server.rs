@@ -168,6 +168,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             get(export_messages_count_handler),
         )
         .route("/v1/export/messages", get(export_messages_handler))
+        .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
         .route("/v1/import", post(import_handler))
@@ -204,6 +205,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
+    eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
     eprintln!("  POST /v1/imports  (start import session; returns id)");
     eprintln!("  POST /v1/imports/{{id}}/complete");
     eprintln!("  HEAD /v1/assets/{{sha256}}?source=&account=  (probe before PUT)");
@@ -502,6 +504,35 @@ struct CompleteImportResponse {
     message_count: i64,
     attachment_count: i64,
     bytes_uploaded: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListImportsQuery {
+    #[serde(default)]
+    account: Option<String>,
+}
+
+async fn imports_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListImportsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+
+    let db = Arc::clone(&state.db);
+    let imports = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::db::vault_imports::list_imports(&conn, &account)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("list imports task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "imports": imports })))
 }
 
 async fn imports_create_handler(
