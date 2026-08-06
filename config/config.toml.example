@@ -1,0 +1,31 @@
+# Copy to config.toml and edit for your machine:
+#   cp config/config.toml.example config/config.toml
+#
+# Instance config only: shared database path, per-account data root, and optional
+# HTTP import server. Web accounts (user ID + optional password) and identity
+# (preferred name / phones / optional email handles) live in SQLite. Create an
+# account in the web UI, then import with `--account <username>` (CLI) or your
+# Import API token (Message Exporters).
+#
+# Message Exporters writes JSONL + attachments and uploads with a source name.
+# Source folders are not listed here — each import registers its own source for
+# that account under data/<account_id>/<source_id>/.
+#
+# Address books load into SQLite via CLI `import-contacts --contacts`
+# (VCF or vCard CSV).
+# Older contact_phones / preferred_phone DBs are not upgraded — wipe vault.db and re-import.
+
+[paths]
+db = "data/vault.db"
+data_dir = "data"
+assets_dir = "assets"
+assets_converted_dir = "assets_converted"
+
+# HTTP JSONL import API (`cargo run --release -- serve`).
+# Auth uses per-account Import API tokens from the web Settings UI (not a host secret).
+[server]
+bind = "127.0.0.1:8080"
+# Max size of one attachment (single PUT or multipart). Default 512 MiB.
+# asset_max_bytes = 536870912
+# Multipart chunk size advertised to clients. Default 64 MiB (keep under ~100 MB for Cloudflare).
+# asset_part_size = 67108864

@@ -1,0 +1,19 @@
+# Container defaults for Docker Compose (dev + release profiles).
+# Entrypoints copy this to config/config.toml when missing, and restore it
+# after `reset-demo` (which otherwise installs the demo config without [server]).
+
+[paths]
+db = "data/vault.db"
+data_dir = "data"
+assets_dir = "assets"
+assets_converted_dir = "assets_converted"
+
+# Bind all interfaces so Docker port publishing works.
+# Compose publishes 0.0.0.0:3000/8080 for LAN access; restrict with the host
+# firewall to your trusted subnet (do not port-forward on the router).
+[server]
+bind = "0.0.0.0:8080"
+
+# Attachments at or above this size (bytes) skip server-side SHA-256
+# verification at upload completion. 20 MiB default.
+asset_hash_threshold_bytes = 20971520
