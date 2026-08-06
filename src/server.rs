@@ -174,6 +174,11 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             get(export_messages_count_handler),
         )
         .route("/v1/export/messages", get(export_messages_handler))
+        .route("/v1/export/contacts", get(contacts_list_handler))
+        .route(
+            "/v1/export/contacts/{id}",
+            get(contact_detail_handler),
+        )
         .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
@@ -517,6 +522,46 @@ struct CompleteImportResponse {
     message_count: i64,
     attachment_count: i64,
     bytes_uploaded: i64,
+}
+
+async fn contacts_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let db = Arc::clone(&state.db);
+    let contacts = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::contacts_api::list_contacts(&conn, &auth.account_id)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("contacts list task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "contacts": contacts })))
+}
+
+async fn contact_detail_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<Json<crate::contacts_api::ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let db = Arc::clone(&state.db);
+    let detail = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::contacts_api::get_contact_detail(&conn, &auth.account_id, contact_id)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("contact detail task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    match detail {
+        Some(d) => Ok(Json(d)),
+        None => Err(ApiError::NotFound("contact not found".into())),
+    }
 }
 
 #[derive(Debug, Deserialize)]

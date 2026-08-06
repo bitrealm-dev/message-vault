@@ -88,6 +88,8 @@ pub struct ExportParticipant {
     pub handle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,6 +123,23 @@ pub struct ExportTapback {
 pub enum ExportQueryError {
     BadRequest(String),
     Internal(String),
+}
+
+impl std::fmt::Display for ExportQueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadRequest(msg) => write!(f, "bad request: {msg}"),
+            Self::Internal(msg) => write!(f, "internal error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ExportQueryError {}
+
+impl From<anyhow::Error> for ExportQueryError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Internal(e.to_string())
+    }
 }
 
 impl ExportQueryError {
@@ -764,10 +783,13 @@ fn load_participants(
     for chunk in conversation_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT conversation_id, handle, name_hint
-             FROM participants
-             WHERE conversation_id IN ({placeholders})
-             ORDER BY conversation_id, id"
+            "SELECT p.conversation_id, p.handle, p.name_hint, ch.contact_id
+             FROM participants p
+             JOIN conversations c ON c.id = p.conversation_id
+             LEFT JOIN contact_handles ch
+               ON ch.account_id = c.account_id AND ch.handle = p.handle
+             WHERE p.conversation_id IN ({placeholders})
+             ORDER BY p.conversation_id, p.id"
         );
         let mut stmt = conn
             .prepare(&sql)
@@ -779,6 +801,7 @@ fn load_participants(
                     ExportParticipant {
                         handle: row.get(1)?,
                         name_hint: row.get(2)?,
+                        contact_id: row.get(3)?,
                     },
                 ))
             })

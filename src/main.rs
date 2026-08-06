@@ -2,6 +2,7 @@ mod asset_uploads;
 mod assets;
 mod auth;
 mod config;
+mod contacts_api;
 mod profile;
 mod db;
 mod dedupe;
