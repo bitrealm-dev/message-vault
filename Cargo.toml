@@ -6,9 +6,9 @@ members = [
 ]
 
 [workspace.dependencies]
-message-ir = { path = "/home/mbeisser/repo/message-vault-io/.claude/worktrees/handle-identity-model/crates/message/ir", package = "message-ir" }
-contacts = { path = "/home/mbeisser/repo/message-vault-io/.claude/worktrees/handle-identity-model/crates/message/contacts", package = "contacts" }
-phone = { path = "/home/mbeisser/repo/message-vault-io/.claude/worktrees/handle-identity-model/crates/message/phone", package = "phone" }
+message-ir = { path = "/home/mbeisser/repo/message-vault-io/crates/message/ir", package = "message-ir" }
+contacts = { path = "/home/mbeisser/repo/message-vault-io/crates/message/contacts", package = "contacts" }
+phone = { path = "/home/mbeisser/repo/message-vault-io/crates/message/phone", package = "phone" }
 
 [package]
 name = "message-vault-rs"
