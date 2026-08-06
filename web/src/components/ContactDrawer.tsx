@@ -24,14 +24,26 @@ export default function ContactDrawer({
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<ContactDetail | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(detail?.name ?? "");
 
-  useEffect(() => {
+  const loadDetail = () => {
     if (!contactId) return;
     apiClient
       .get<ContactDetail>(`/v1/export/contacts/${contactId}`)
       .then(setDetail)
       .catch(() => setDetail(null));
+  };
+
+  useEffect(() => {
+    loadDetail();
   }, [contactId]);
+
+  // Sync when detail changes (new contact selected)
+  useEffect(() => {
+    setNameValue(detail?.name ?? "");
+    setEditingName(false);
+  }, [detail?.name]);
 
   if (!contactId || !detail) return null;
 
@@ -46,7 +58,37 @@ export default function ContactDrawer({
         overflow: "auto", padding: "1.5rem",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
-          <h2 style={{ margin: 0, fontSize: "1.125rem" }}>{detail.name}</h2>
+          {editingName ? (
+            <input
+              type="text"
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter") {
+                  await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
+                  setEditingName(false);
+                  loadDetail();
+                }
+              }}
+              onBlur={async () => {
+                if (nameValue !== detail.name) {
+                  await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
+                  loadDetail();
+                }
+                setEditingName(false);
+              }}
+              autoFocus
+              style={{ fontSize: "1.125rem", fontWeight: 600, padding: "0.25rem", width: "100%" }}
+            />
+          ) : (
+            <h2
+              onClick={() => setEditingName(true)}
+              style={{ margin: 0, fontSize: "1.125rem", cursor: "pointer" }}
+              title="Click to edit"
+            >
+              {detail.name} ✎
+            </h2>
+          )}
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer" }}>×</button>
         </div>
 
