@@ -1,7 +1,7 @@
 # Unified GUI Design
 
 **Date**: 2026-08-06
-**Status**: draft (in progress)
+**Status**: draft
 
 ## Context
 
@@ -133,7 +133,7 @@ After login, the user sees a flat conversation list sorted by most recent messag
 │ 214 msgs     │                                      │
 │              │                                      │
 ├──────────────┴──────────────────────────────────────┤
-│  [Extract] [Format] [Import] [Export]  — desktop only│
+│  [Import] [Export] [Extract] [Format] — desktop only   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -189,7 +189,7 @@ When a conversation is selected:
 │              │  │                                  │ │
 │              │  └──────────────────────────────────┘ │
 ├──────────────┴──────────────────────────────────────┤
-│  [Extract] [Format] [Import] [Export]  — desktop only│
+│  [Import] [Export] [Extract] [Format] — desktop only   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -255,22 +255,14 @@ If the user wants to tag specific messages, they add a keyword like `#family` an
 
 ### Desktop-only actions
 
-```
-┌─────────────────────────────────────────────────────┐
-│  [Extract] [Format] [Import] [Push] [Pull]          │
-│  Hidden in web deployment (isTauri() === false)     │
-└─────────────────────────────────────────────────────┘
-```
+These appear in the bottom bar and are gated behind `isTauri()`:
 
-These screens are gated behind `isTauri()`:
+- **Import**: Combined extract + push. Pick source, provide backup path, optional contacts, go. Auth required (token from login passed to vault API).
+- **Export**: Pull data from vault to local files. Three scopes: entire vault, current view, or selected conversations.
+- **Extract**: Parse phone backup to JSONL without uploading. For offline use or pre-processing.
+- **Format**: Convert between output formats (JSONL/EML/MBOX/CSV/XML).
 
-- **Extract**: Parse phone backups, convert to JSONL
-- **Format**: Convert between output formats
-- **Import**: Push extracted messages to the vault server (requires auth)
-- **Push**: Upload data to vault (requires auth)
-- **Pull**: Download data from vault (requires auth)
-
-Import and push/pull operations require authentication — the auth token is obtained at login and passed to the vault API.
+Import and Export are the primary actions (left-aligned in the bar). Extract and Format are secondary (right-aligned).
 
 ## Service-specific message rendering
 
@@ -418,15 +410,16 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 - Change password
 - Delete account (with confirmation)
 
-## What this design does NOT cover (yet)
-- Excluded conversations / spam filtering
-- Contact editing and merging UI
-- Import progress and status dashboard
-- The existing extract/format screens from the current Tauri app (these carry forward until iterated on)
+## What this design does NOT cover
+
+- Excluded conversations / spam filtering (marking conversations to exclude from views)
+- Contact editing and merging UI (combining two contact profiles)
+- Import progress and status dashboard (batch import history)
+- Exact query syntax for saved groups
+- Server-side auth configuration (Hanko vs local — how the server advertises its mode)
 
 ## Open questions
 
-- How to display conversation backlinks in the participant profile drawer (list of groups + direct)
-- Exact search query syntax for saved groups
-- Virtualized message list implementation (to replace the "load everything and fast-scroll" approach)
-- How the existing Tauri extract/format/push/pull screens integrate into the bottom bar
+- Exact search query syntax for saved groups (`from:`, `participants:`, `date:`, `has:attachment`, etc.)
+- Virtualized message list implementation (replace "load everything and fast-scroll")
+- How server-side authentication mode (Hanko vs local) is configured — server setting or client chooses?
