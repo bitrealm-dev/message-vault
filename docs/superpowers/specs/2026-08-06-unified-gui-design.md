@@ -139,8 +139,9 @@ After login, the user sees a flat conversation list sorted by most recent messag
 │  ├ 2023 Arch.  (47)  │                                      │
 │  └ Videos      (15)  │                                      │
 │                      │                                      │
-│  ▸ All           142 │                                      │
-│  ▸ Trash          3  │                                      │
+│  ▸ Conversations  142 │                                      │
+│  ▸ Contacts        87 │                                      │
+│  ▸ Trash            3 │                                      │
 │                      │                                      │
 │  ────────────────    │                                      │
 │                      │                                      │
@@ -195,7 +196,8 @@ When a conversation is selected:
 │  SAVED GROUPS        │  Jan 2019 – Aug 2026  [Photos]      │
 │  ...                 ├──────────────────────────────────────┤
 │                      │                                      │
-│  ▸ All               │  [Find: _________ ↑↓]                │
+│  ▸ Conversations      │  [Find: _________ ↑↓]                │
+│  ▸ Contacts          │                                      │
 │  ▸ Trash             │                                      │
 │                      │  ┌──────────────────────────────┐    │
 │  ────────────────    │  │ Message bubble               │    │
@@ -253,11 +255,23 @@ The profile is created at onboarding, not hidden in Settings. Editing handles he
 
 ### Search
 
-**Global search** (left panel header): Searches all conversations. Results list shows conversation name + matching snippet. Click a result → opens that conversation, jumps to the message, and the find bar auto-populates with the search term.
+The existing message-vault-rs search system is the foundation — port it to the unified GUI and iterate, don't rebuild.
 
-**Find bar** (message view): Highlights all matches in the visible messages with next/prev arrows. If arrived from global search, pre-filled with that term. User can type a new term to search within the current conversation.
+**Search bar** (left panel header): Operator-based query input with autocomplete for contacts and labels. Supports `from:`, `to:`, `with:`, `within:`, `label:`, `handle:`, `has:`, `date:`, `source:` operators.
 
-Flow: global search "vacation" → click result → find bar shows "vacation", click next twice → type "hotel" → now searching for something else in the same conversation.
+**Advanced search form** (dropdown from search bar): Two tabs:
+- **Messages** (default): from, to, with person (expandable for first/last name, phone), has/doesn't have words, subject, date range, message type (all/direct/group), source, attachment filter (type, filename, size), results grouping, sort, context
+- **Contacts**: handle (expandable for first/last name, phone), first/last message date range, group/direct message counts
+
+**Search results**: Replace the main view area. Grouped by conversation by default (one row per conversation, showing matching message count + snippet). Click a result → opens that conversation with the find bar pre-populated.
+
+**Find bar** (message view): Highlights all matches in the visible page. Next/prev arrows navigate between matches. If arrived from search results, pre-filled with the search term. User can type a new term to search within the current conversation.
+
+Flow: search "vacation" → results show 3 conversations → click one → find bar shows "vacation", click next twice → type "hotel" → now searching within this conversation.
+
+### Contacts list
+
+Toggleable from the left panel under "Contacts." A flat list of all people in the vault — names, handle count, last message date. Sortable by name or recency. Click a row → contact view drawer. This is for discovery ("who's in my vault?") not for navigating to messages.
 
 ### Saved groups (dynamic labels)
 
@@ -442,4 +456,4 @@ Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 
 ## Open questions
 
-- Exact search query syntax for saved groups (`from:`, `participants:`, `date:`, `has:attachment`, etc.)
+None — all design decisions are resolved. Search syntax is defined by the existing message-vault-rs system. Query syntax for saved groups inherits from the search bar operators.
