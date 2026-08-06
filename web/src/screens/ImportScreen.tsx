@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
-import { invokeExtract } from "../lib/tauri";
+import { invokeExtract, invokeContactsInfo, type ContactCard } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import StepProgress from "../components/StepProgress";
+import ContactReviewTable from "../components/ContactReviewTable";
 
 const SOURCES = [
   "imessage-ios", "imessage-macos", "whatsapp-android", "whatsapp-ios",
@@ -33,7 +34,8 @@ export default function ImportScreen() {
   const [log, setLog] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const [summary, setSummary] = useState("");
-  const [phase, setPhase] = useState<"form" | "progress" | "done">("form");
+  const [phase, setPhase] = useState<"form" | "contacts-review" | "progress" | "done">("form");
+  const [fileCards, setFileCards] = useState<ContactCard[]>([]);
 
   const startImport = async () => {
     if (!isTauri()) return;
@@ -131,13 +133,32 @@ export default function ImportScreen() {
             <PathPicker value={contactsPath} onChange={setContactsPath} placeholder="VCF or vCard CSV file" />
           </FormRow>
 
-          <div style={{ marginTop: "1.5rem" }}>
+          <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
             <button onClick={startImport} disabled={!backupPath}
               style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
               Import
             </button>
+            {contactsPath && isTauri() && (
+              <button onClick={async () => {
+                try {
+                  const info = await invokeContactsInfo(contactsPath);
+                  setFileCards(info.cards);
+                  setPhase("contacts-review");
+                } catch (e) { /* contacts parse failed — skip */ }
+              }}
+                style={{ padding: "0.5rem 1.5rem", fontSize: "0.875rem" }}>
+                Review contacts
+              </button>
+            )}
           </div>
         </>
+      )}
+
+      {phase === "contacts-review" && (
+        <ContactReviewTable
+          fileCards={fileCards}
+          onClose={() => setPhase("form")}
+        />
       )}
 
       {(phase === "progress" || phase === "done") && (
