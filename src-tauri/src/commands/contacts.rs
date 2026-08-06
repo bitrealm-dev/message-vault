@@ -7,10 +7,18 @@ use contacts::{detect_contacts_format, parse_vcf, read_vcard_csv_rows, ContactsF
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ContactCard {
+    pub name: String,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ContactsInfo {
     pub count: usize,
     pub format: String,
     pub preview: Vec<String>,
+    pub cards: Vec<ContactCard>,
 }
 
 #[tauri::command]
@@ -33,10 +41,27 @@ pub async fn contacts_info(path: String) -> Result<ContactsInfo, String> {
                     }
                 })
                 .collect();
+            let contact_cards: Vec<ContactCard> = cards
+                .iter()
+                .map(|c| {
+                    let name = if !c.fn_raw.is_empty() {
+                        c.fn_raw.clone()
+                    } else {
+                        let n = format!("{} {}", c.n_given, c.n_family).trim().to_string();
+                        if n.is_empty() { "(unknown)".to_string() } else { n }
+                    };
+                    ContactCard {
+                        name,
+                        phone: c.phones.first().cloned(),
+                        email: c.email.clone(),
+                    }
+                })
+                .collect();
             Ok(ContactsInfo {
                 count: cards.len(),
                 format: "vcf".to_string(),
                 preview,
+                cards: contact_cards,
             })
         }
         ContactsFormat::VcardCsv => {
@@ -51,10 +76,24 @@ pub async fn contacts_info(path: String) -> Result<ContactsInfo, String> {
                     if name.is_empty() { "(unknown)".to_string() } else { name }
                 })
                 .collect();
+            let contact_cards: Vec<ContactCard> = rows
+                .iter()
+                .map(|r| {
+                    let name = format!("{} {} {}", r.first, r.middle, r.last)
+                        .trim()
+                        .to_string();
+                    ContactCard {
+                        name: if name.is_empty() { "(unknown)".to_string() } else { name },
+                        phone: r.phones.first().cloned(),
+                        email: None,
+                    }
+                })
+                .collect();
             Ok(ContactsInfo {
                 count: rows.len(),
                 format: "csv".to_string(),
                 preview,
+                cards: contact_cards,
             })
         }
     }

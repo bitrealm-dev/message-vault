@@ -76,10 +76,17 @@ export async function invokePull(config: PullConfig): Promise<void> {
   });
 }
 
+export interface ContactCard {
+  name: string;
+  phone: string | null;
+  email: string | null;
+}
+
 export interface ContactsInfo {
   count: number;
   format: string;
   preview: string[];
+  cards: ContactCard[];
 }
 
 export async function invokeContactsInfo(path: string): Promise<ContactsInfo> {
