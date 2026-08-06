@@ -15,6 +15,8 @@ fn main() {
             commands::extract::extract,
             commands::extract::cancel,
             commands::format::format,
+            commands::push::push,
+            commands::pull::pull,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

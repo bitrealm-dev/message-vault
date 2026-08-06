@@ -34,6 +34,48 @@ export async function invokeFormat(config: FormatConfig): Promise<void> {
   });
 }
 
+export interface PushConfig {
+  base_url: string;
+  username: string;
+  key: string;
+  input_dir: string;
+  mode: string;
+  force: boolean;
+  skip_attachments: boolean;
+}
+
+export async function invokePush(config: PushConfig): Promise<void> {
+  return invoke("push", {
+    baseUrl: config.base_url,
+    username: config.username,
+    key: config.key,
+    inputDir: config.input_dir,
+    mode: config.mode,
+    force: config.force,
+    skipAttachments: config.skip_attachments,
+  });
+}
+
+export interface PullConfig {
+  base_url: string;
+  username: string;
+  key: string;
+  out_dir: string;
+  query: string;
+  skip_attachments: boolean;
+}
+
+export async function invokePull(config: PullConfig): Promise<void> {
+  return invoke("pull", {
+    baseUrl: config.base_url,
+    username: config.username,
+    key: config.key,
+    outDir: config.out_dir,
+    query: config.query,
+    skipAttachments: config.skip_attachments,
+  });
+}
+
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;

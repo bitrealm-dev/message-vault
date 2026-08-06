@@ -1,10 +1,14 @@
 import { useState } from "react";
 import Extract from "./screens/Extract";
 import Format from "./screens/Format";
+import Push from "./screens/Push";
+import Pull from "./screens/Pull";
 
 const TABS = [
   { id: "extract", label: "Extract" },
   { id: "format", label: "Format" },
+  { id: "push", label: "Vault Push" },
+  { id: "pull", label: "Vault Pull" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -45,6 +49,8 @@ function App() {
       </nav>
       {tab === "extract" && <Extract />}
       {tab === "format" && <Format />}
+      {tab === "push" && <Push />}
+      {tab === "pull" && <Pull />}
     </div>
   );
 }

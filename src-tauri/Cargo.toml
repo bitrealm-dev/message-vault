@@ -26,3 +26,5 @@ imazing-exporter = { path = "../crates/exporters/imazing-exporter", default-feat
 whatsapp-exporter = { path = "../crates/exporters/whatsapp-exporter", default-features = false }
 imessage-ir-exporter = { path = "../crates/exporters/imessage-ir-exporter", default-features = false }
 message-reexport = { path = "../crates/message/reexport" }
+vault-push = { path = "../crates/vault-push" }
+vault-pull = { path = "../crates/vault-pull" }
