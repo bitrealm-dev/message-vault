@@ -446,6 +446,19 @@ fn build_message_filters(
 
     append_metadata_text_filters(parsed, &mut where_parts, &mut params);
 
+    if let Some(conv) = &parsed.in_conversation {
+        match conv.parse::<i64>() {
+            Ok(id) => {
+                where_parts.push("c.id = ?".into());
+                params.push(id.into());
+            }
+            Err(_) => {
+                where_parts.push("c.chat_identifier = ?".into());
+                params.push(conv.clone().into());
+            }
+        }
+    }
+
     if let Some(from) = &parsed.from {
         where_parts.push(
             "(m.is_from_me = 0 AND (m.sender LIKE ? OR EXISTS (
@@ -898,4 +911,73 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, E
 #[allow(dead_code)]
 fn _ct_used(ct: ConversationTypeFilter) -> String {
     ct.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::db::schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES ('a1', 'alice', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (id, account_id, chat_identifier, service, conversation_type, source_file)
+             VALUES (1, 'a1', '+1555', 'sms', 'individual', 'backup-a.jsonl'),
+                    (2, 'a1', '+1666', 'sms', 'individual', 'backup-a.jsonl')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order, body)
+             VALUES (1, 1, 'a1', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
+                    (2, 2, 'a1', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn conversation_filter_scopes_messages() {
+        let conn = setup();
+
+        let res = export_messages(&conn, ExportPageOpts {
+            account_id: "a1",
+            query: "in:1",
+            limit: 100,
+            offset: None,
+            cursor: None,
+            source_override: None,
+        }).unwrap();
+        assert_eq!(res.messages.len(), 1);
+        assert_eq!(res.messages[0].id, 1);
+
+        let res = export_messages(&conn, ExportPageOpts {
+            account_id: "a1",
+            query: "conversation:2",
+            limit: 100,
+            offset: None,
+            cursor: None,
+            source_override: None,
+        }).unwrap();
+        assert_eq!(res.messages.len(), 1);
+        assert_eq!(res.messages[0].id, 2);
+
+        let res = export_messages(&conn, ExportPageOpts {
+            account_id: "a1",
+            query: "",
+            limit: 100,
+            offset: None,
+            cursor: None,
+            source_override: None,
+        }).unwrap();
+        assert_eq!(res.messages.len(), 2);
+    }
 }

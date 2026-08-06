@@ -656,7 +656,8 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
         "search" | "with" | "from" | "to" | "subject" | "text" | "has" | "after" | "before"
         | "source" | "is" | "within" | "label" | "in" | "show" | "handle" | "filename"
         | "filetype" | "larger" | "smaller" | "group-count" | "message-count" | "group"
-        | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last" | "phone" => {
+        | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last" | "phone"
+        | "conversation" => {
             Some((op, value))
         }
         _ => None,
@@ -756,6 +757,7 @@ pub fn parse_search_query(input: &str) -> ParsedSearchQuery {
                         out.in_conversation = Some(value.to_string());
                     }
                 }
+                "conversation" => out.in_conversation = Some(value.to_string()),
                 "show" => {}
                 "last-contact" => out.last_contact = parse_date_bounds(value),
                 "first-contact" => out.first_contact = parse_date_bounds(value),
