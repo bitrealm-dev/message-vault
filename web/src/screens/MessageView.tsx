@@ -3,6 +3,7 @@ import { apiClient } from "../lib/api";
 import type { Conversation, Message, MessageAttachment } from "../lib/types";
 import MessageBubble from "../components/MessageBubble";
 import AttachmentLightbox from "../components/AttachmentLightbox";
+import SourcesPanel from "../components/SourcesPanel";
 
 const PAGE_SIZE = 50;
 
@@ -23,7 +24,30 @@ export default function MessageView({
   const [loading, setLoading] = useState(false);
   const [lightboxAttachments, setLightboxAttachments] = useState<MessageAttachment[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [showSources, setShowSources] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Year jump targets — estimate the offset from the conversation's date range
+  const dateJumps = useMemo(() => {
+    if (!conversation.date_range_start || !conversation.date_range_end) return [];
+    const start = new Date(conversation.date_range_start);
+    const end = new Date(conversation.date_range_end);
+    const startYear = start.getFullYear();
+    const endYear = end.getFullYear();
+    const years: number[] = [];
+    for (let y = startYear; y <= endYear; y++) years.push(y);
+    const lastPageOffset = Math.max(0, conversation.message_count - PAGE_SIZE);
+    return years.map((year) => ({
+      year,
+      estimatedOffset: Math.min(
+        Math.floor(
+          ((year - startYear) / Math.max(1, endYear - startYear)) *
+            conversation.message_count,
+        ),
+        lastPageOffset,
+      ),
+    }));
+  }, [conversation]);
 
   // Open the lightbox at the clicked image; prev/next walks this page's images
   const handleAttachmentClick = useCallback((att: MessageAttachment) => {
@@ -115,6 +139,16 @@ export default function MessageView({
             </span>
           )}
           <span>{conversation.message_count} messages</span>
+          <button
+            onClick={() => setShowSources(true)}
+            style={{
+              fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
+              border: "1px solid #d1d5db", background: "#fff",
+              color: "#2563eb", cursor: "pointer",
+            }}
+          >
+            Sources
+          </button>
         </div>
         {headerParticipants.length > 0 && (
           <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem" }}>
@@ -145,6 +179,26 @@ export default function MessageView({
                 </span>
               );
             })}
+          </div>
+        )}
+
+        {/* Date jump links */}
+        {dateJumps.length > 0 && (
+          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem" }}>
+            {dateJumps.map((jump) => (
+              <button
+                key={jump.year}
+                onClick={() => fetchPage(jump.estimatedOffset)}
+                title={`Jump to ${jump.year} (estimated offset ${jump.estimatedOffset})`}
+                style={{
+                  fontSize: "0.688rem", border: "1px solid #d1d5db", background: "#fff",
+                  padding: "0.125rem 0.375rem", borderRadius: "4px", cursor: "pointer",
+                  color: "#2563eb",
+                }}
+              >
+                {jump.year}
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -233,6 +287,11 @@ export default function MessageView({
           onPrev={() => setLightboxIndex((i) => (i - 1 + lightboxAttachments.length) % lightboxAttachments.length)}
           onNext={() => setLightboxIndex((i) => (i + 1) % lightboxAttachments.length)}
         />
+      )}
+
+      {/* Backup provenance slide-over */}
+      {showSources && (
+        <SourcesPanel conversationId={conversation.id} onClose={() => setShowSources(false)} />
       )}
     </div>
   );
