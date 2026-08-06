@@ -252,7 +252,7 @@ export default function LoginScreen({
 
             <button
               onClick={handleLocalLogin}
-              disabled={loading || !username || !password}
+              disabled={loading || !username}
               style={{
                 width: "100%",
                 padding: "0.75rem",
