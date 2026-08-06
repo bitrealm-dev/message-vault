@@ -277,7 +277,7 @@ mod tests {
     /// release images that skip bundle regeneration.
     #[test]
     fn committed_demo_seed_toml_parses() {
-        let text = include_str!("../demo/config/seed.toml");
+        let text = include_str!("../../../../demo/config/seed.toml");
         let seed: DemoSeed = toml::from_str(text).expect("committed demo seed.toml must parse");
         assert_eq!(seed.owner.display_name, "Demo User");
         assert_eq!(seed.owner.handle_specs.len(), 1);

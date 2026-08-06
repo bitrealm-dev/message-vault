@@ -51,11 +51,11 @@ if [[ -d /app/static ]]; then
   echo "Static files found at /app/static"
 else
   echo "Note: no /app/static directory — create a symlink to your Vite build:"
-  echo "  ln -s /path/to/message-vault-io/web/dist /app/static"
+  echo "  ln -s /path/to/web/dist /app/static"
   mkdir -p /app/static
 fi
 
 seed_if_needed
 
-echo "Starting message-vault-rs (API + static files)…"
+echo "Starting message-vault-server (API + static files)…"
 exec cargo run --release -- serve --config "${CONFIG}"

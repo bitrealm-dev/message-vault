@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand};
 use crate::config::{Config, validate_source_id};
 
 #[derive(Parser)]
-#[command(name = "message-vault-rs")]
+#[command(name = "message-vault-server")]
 #[command(about = "Import and view messages in SQLite")]
 struct Cli {
     #[command(subcommand)]

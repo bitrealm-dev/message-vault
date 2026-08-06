@@ -54,7 +54,7 @@ PY
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 cargo build --release -q
-"$CARGO_TARGET_DIR/release/message-vault-rs" serve --config "$TMP/config/config.toml" &
+"$CARGO_TARGET_DIR/release/message-vault-server" serve --config "$TMP/config/config.toml" &
 SERVER_PID=$!
 
 for _ in $(seq 1 50); do

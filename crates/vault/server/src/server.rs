@@ -222,7 +222,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    eprintln!("message-vault-rs serve listening on http://{bind}");
+    eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
     eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");

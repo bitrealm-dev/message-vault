@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub paths: PathsConfig,
-    /// HTTP ingest server (`message-vault-rs serve`). Required for `serve`.
+    /// HTTP ingest server (`message-vault-server serve`). Required for `serve`.
     #[serde(default)]
     pub server: Option<ServerConfig>,
 }

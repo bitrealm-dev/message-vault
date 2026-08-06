@@ -28,10 +28,10 @@ seed_if_needed() {
   case "${VAULT_MODE}" in
     demo)
       echo "Seeding demo vault…"
-      message-vault-rs reset-demo --config "${CONFIG}"
+      message-vault-server reset-demo --config "${CONFIG}"
       ensure_docker_config
       echo "Converting demo media…"
-      message-vault-rs process-assets --config "${CONFIG}" \
+      message-vault-server process-assets --config "${CONFIG}" \
         || echo "warning: process-assets failed; UI still works"
       ;;
     personal)
@@ -46,5 +46,5 @@ seed_if_needed() {
 
 seed_if_needed
 
-echo "Starting message-vault-rs (API + static files)…"
-exec message-vault-rs serve --config "${CONFIG}"
+echo "Starting message-vault-server (API + static files)…"
+exec message-vault-server serve --config "${CONFIG}"

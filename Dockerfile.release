@@ -11,13 +11,12 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY crates ./crates
-# Required at compile time by src/db/schema.rs include_str!(…).
+# Required at compile time by crates/vault/server/src/db/schema.rs include_str!(…).
 COPY schema ./schema
+# Required at compile time by include_str! in search_query.rs.
+COPY fixtures ./fixtures
 
-# Sibling crates from message-vault-io (resolved via relative paths in Cargo.toml)
-COPY --from=message-io crates/message /message-vault-io/crates/message
-
-RUN cargo build --release --bin message-vault-rs
+RUN cargo build --release -p message-vault-server
 
 # -----------------------------------------------------------------------------
 # Stage 2: slim runtime
@@ -34,7 +33,7 @@ RUN apt-get update \
 WORKDIR /app
 
 # Rust CLI / serve binary
-COPY --from=rust-builder /src/target/release/message-vault-rs /usr/local/bin/message-vault-rs
+COPY --from=rust-builder /src/target/release/message-vault-server /usr/local/bin/message-vault-server
 
 # Demo bundle (seeded on first start when VAULT_MODE=demo)
 COPY demo ./demo

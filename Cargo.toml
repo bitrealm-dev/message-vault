@@ -23,6 +23,7 @@ members = [
     "crates/cli/vault-push",
     "crates/cli/vault-pull",
     "crates/vault/demo-seed",
+    "crates/vault/server",
     "src-tauri",
 ]
 

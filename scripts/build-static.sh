@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-IO_ROOT="$(cd "$REPO_ROOT/../message-vault-io" && pwd)"
+IO_ROOT="$(cd "$REPO_ROOT/." && pwd)"
 
 echo "Building Vite SPA in $IO_ROOT/web…"
 (cd "$IO_ROOT/web" && npm run build)

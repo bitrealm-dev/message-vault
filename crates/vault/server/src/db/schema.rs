@@ -35,15 +35,15 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
 }
 
 /// Baseline DDL lives in `schema/sql/` (shared with the web app via sync script).
-const ACCOUNTS_DDL: &str = include_str!("../../schema/sql/accounts.sql");
-const MESSAGE_TABLES_DDL: &str = include_str!("../../schema/sql/messages.sql");
-const STAGING_TABLES_DDL: &str = include_str!("../../schema/sql/staging.sql");
-const CONTACTS_TABLES_DDL: &str = include_str!("../../schema/sql/contacts.sql");
-const FTS_VIRTUAL_DDL: &str = include_str!("../../schema/sql/fts_virtual.sql");
+const ACCOUNTS_DDL: &str = include_str!("../../../../../schema/sql/accounts.sql");
+const MESSAGE_TABLES_DDL: &str = include_str!("../../../../../schema/sql/messages.sql");
+const STAGING_TABLES_DDL: &str = include_str!("../../../../../schema/sql/staging.sql");
+const CONTACTS_TABLES_DDL: &str = include_str!("../../../../../schema/sql/contacts.sql");
+const FTS_VIRTUAL_DDL: &str = include_str!("../../../../../schema/sql/fts_virtual.sql");
 const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
-    include_str!("../../schema/sql/fts_triggers_drop.sql");
+    include_str!("../../../../../schema/sql/fts_triggers_drop.sql");
 const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
-    include_str!("../../schema/sql/fts_triggers_create.sql");
+    include_str!("../../../../../schema/sql/fts_triggers_create.sql");
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let exists: bool = conn.query_row(
@@ -271,7 +271,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         ensure_vault_schema(&conn).unwrap();
         let contract: serde_json::Value =
-            serde_json::from_str(include_str!("../../fixtures/schema/current-schema.json")).unwrap();
+            serde_json::from_str(include_str!("../../../../../fixtures/schema/current-schema.json")).unwrap();
 
         for table in contract["tables"].as_array().unwrap() {
             let table = table.as_str().unwrap();

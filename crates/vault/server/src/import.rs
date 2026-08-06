@@ -182,7 +182,7 @@ pub fn import_export(
         account_id,
         source,
         mode.as_str(),
-        Some("message-vault-rs"),
+        Some("message-vault-server"),
     )?;
 
     let result = import_jsonl_files_on_conn(

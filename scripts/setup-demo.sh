@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
 
-echo "Building message-vault-rs (release)…"
+echo "Building message-vault-server (release)…"
 cargo build --release
 
 echo "Regenerating demo bundle, importing, and processing assets…"

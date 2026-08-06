@@ -852,7 +852,7 @@ mod tests {
 
     #[test]
     fn golden_parse_cases_match_typescript() {
-        let raw = include_str!("../fixtures/search/parse-cases.json");
+        let raw = include_str!("../../../../fixtures/search/parse-cases.json");
         let cases: Value = serde_json::from_str(raw).unwrap();
         for case in cases.as_array().unwrap() {
             let name = case["name"].as_str().unwrap();

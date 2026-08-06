@@ -26,7 +26,6 @@ services:
       HANKO_API_URL: ${HANKO_API_URL:-}
     volumes:
       - .:/app
-      - ../message-vault-io:/message-vault-io
       - ./staging:/app/staging
       - cargo-target:/app/target
       - cargo-registry:/usr/local/cargo/registry

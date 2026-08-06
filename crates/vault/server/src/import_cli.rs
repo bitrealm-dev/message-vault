@@ -112,7 +112,7 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
         &account_id,
         &session_source,
         opts.mode.as_str(),
-        Some("message-vault-rs"),
+        Some("message-vault-server"),
     )?;
 
     let import_opts = ImportOptions {

@@ -42,13 +42,13 @@ cd docs && npm run dev   # local preview
 
 **Requirements**: Rust 1.85+ (edition 2024), Node.js 22+ (for the web frontend and docs). Linux needs WebKit2GTK and GTK3 system libraries (see `CONTRIBUTING.md`). `ffmpeg`/`ffprobe` on PATH for media convert/compress features. WSL2 needs WSLg (Windows 11) or an X server like VcXsrv (Windows 10).
 
-### Vault server (message-vault-rs)
+### Vault server (message-vault-server)
 
 The Push/Pull/Export/Import screens require a Message Vault server running over HTTP:
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-rs.git
-cd message-vault-rs && docker compose up
+git clone https://github.com/bitrealm-dev/message-vault-server.git
+cd message-vault-server && docker compose up
 # API + Web UI at http://localhost:8080
 ```
 
@@ -60,18 +60,18 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 ### Layer model
 
-1. **`crates/message/ir/`** (`message-ir`) — Schema types only: `ConversationDocument`, `IrMessage`, `IrAttachment`, `IrParticipant` (with `HandleType`), enums. No I/O, no formatting. Attachment bytes are never serialized to JSON (`#[serde(skip)]`); paths and digests point at sidecar files.
+1. **`crates/libs/ir/`** (`message-ir`) — Schema types only: `ConversationDocument`, `IrMessage`, `IrAttachment`, `IrParticipant` (with `HandleType`), enums. No I/O, no formatting. Attachment bytes are never serialized to JSON (`#[serde(skip)]`); paths and digests point at sidecar files.
 
-2. **`crates/message/ir-format/`** (`message-ir-format`) — `FormatSink` that takes parsed conversations and writes the chosen output format (JSON, JSONL, CSV, EML, MBOX, or a single SyncTech `smses.xml`). Runs media transforms (copy/convert/compress) and obfuscation during `FormatSink::finish`. Readers exist for every format to enable round-trip conversion.
+2. **`crates/libs/ir-format/`** (`message-ir-format`) — `FormatSink` that takes parsed conversations and writes the chosen output format (JSON, JSONL, CSV, EML, MBOX, or a single SyncTech `smses.xml`). Runs media transforms (copy/convert/compress) and obfuscation during `FormatSink::finish`. Readers exist for every format to enable round-trip conversion.
 
-3. **`crates/message/reexport/`** (`message-reexport`) — Directory converter (GUI **Format** tab). Auto-detects input format in an export folder, reads all conversations, writes them in a target format via `FormatSink`.
+3. **`crates/libs/reexport/`** (`message-reexport`) — Directory converter (GUI **Format** tab). Auto-detects input format in an export folder, reads all conversations, writes them in a target format via `FormatSink`.
 
 4. **Exporter crates** under `crates/exporters/` — Each parses one backup source into `ConversationDocument` and feeds it to `FormatSink`. The GUI links them as libraries (`default-features = false` in GUI Cargo.toml, which drops the `cli` feature). Each crate has a `cli` feature (default on) that gates the standalone binary behind `dep:clap`. Three tiers:
    - **Primary**: iMessage (`imessage-ir-exporter`), WhatsApp (`whatsapp-exporter`, shells out to `wtsexporter`), SMS Backup & Restore (`sms-backup-restore-exporter`)
    - **Experimental**: GO SMS Pro, iMazing, OpenExtract, SMS Backup+
    - See `docs/maintainers/exporter-matrix.md` for per-exporter capability gaps
 
-5. **`crates/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
+5. **`crates/core/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 
 6. **`src-tauri/`** and **`web/`** — Tauri v2 desktop app + Vite SPA (the **unified GUI**). Architecture:
    - `src-tauri/src/main.rs` — Tauri entry point, registers commands and plugins
@@ -113,13 +113,13 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 - **`export.ini` persistence**: loaded from working directory first, then beside the binary; saved on tab switch, run, clear, and window exit. Passwords are never written. The vault key is stored in plain text under `[vault]` (file mode `0600` on Linux/macOS).
 
-- **Unified GUI**: The Vite SPA serves as both the Tauri desktop app UI and (when built and placed in `message-vault-rs/static/`) the web deployment. It connects to the vault API (`/v1/*`) for auth, import, export, contacts, messages, search, and settings. Screens are gated by auth state and Tauri availability (`isTauri()`). Import/Export require Tauri; Extract/Format require Tauri but not auth; Login/Register/Onboarding are public.
+- **Unified GUI**: The Vite SPA serves as both the Tauri desktop app UI and (when built and placed in `message-vault-server/static/`) the web deployment. It connects to the vault API (`/v1/*`) for auth, import, export, contacts, messages, search, and settings. Screens are gated by auth state and Tauri availability (`isTauri()`). Import/Export require Tauri; Extract/Format require Tauri but not auth; Login/Register/Onboarding are public.
 
 - **WSL detection**: Tauri uses the system file dialog (via `tauri-plugin-dialog`), which opens native dialogs on each platform.
 
 ### Vault API client
 
-The web app communicates with the message-vault-rs API through typed wrappers in `web/src/lib/api.ts`. The `AuthProvider` in `web/src/lib/auth.ts` manages login state with localStorage persistence and token validation. When running in Tauri, the app uses Tauri commands for Extract/Format/Push/Pull. When running in a browser (web deployment), it uses the vault HTTP API for everything.
+The web app communicates with the message-vault-server API through typed wrappers in `web/src/lib/api.ts`. The `AuthProvider` in `web/src/lib/auth.ts` manages login state with localStorage persistence and token validation. When running in Tauri, the app uses Tauri commands for Extract/Format/Push/Pull. When running in a browser (web deployment), it uses the vault HTTP API for everything.
 
 ### Vault import state
 
@@ -150,7 +150,7 @@ This project has a communication-style rule (`.cursor/skills/communication-style
 - JSON/JSONL: attachment bytes are never stored in the document (`#[serde(skip)]`). Paths + digests point at sidecar `attachments/` directory.
 - EML/MBOX/XML: `FormatSink` loads attachment files, embeds the bytes, then removes the staged `attachments/` directory.
 - XML (`smses.xml`): one file for the entire export (not per-conversation). iMessage-only fields are dropped. SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
-- CSV columns are defined by `CSV_HEADERS` in `crates/message/ir-format/src/write.rs`.
+- CSV columns are defined by `CSV_HEADERS` in `crates/libs/ir-format/src/write.rs`.
 
 ## Release process
 
