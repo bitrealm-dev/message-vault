@@ -22,6 +22,7 @@ pub async fn push(
     mode: String,
     force: bool,
     skip_attachments: bool,
+    trust_export: bool,
 ) -> Result<(), String> {
     let app_handle = app.clone();
 
@@ -35,6 +36,7 @@ pub async fn push(
             continue_on_error: true,
             force,
             skip_attachments,
+            trust_export,
             verify_digests: false,
             max_retries: 3,
             batch_size: 100,
