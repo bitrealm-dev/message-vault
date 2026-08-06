@@ -49,6 +49,31 @@ export interface MessageTapback {
   sender: string | null;
 }
 
+export interface Reaction {
+  emoji: string;
+  count: number;
+  users: string[];  // display names
+}
+
+export interface MessageRef {
+  id: string;
+  sender_name: string;
+  body_preview: string;
+}
+
+export interface Embed {
+  type: "image" | "video" | "link" | "rich";
+  url?: string;
+  title?: string;
+  description?: string;
+  thumbnail_url?: string;
+}
+
+export interface EditEntry {
+  body: string;
+  edited_at: string;
+}
+
 export interface Message {
   id: string;
   source: string;
@@ -62,6 +87,17 @@ export interface Message {
   conversation: MessageConversation;
   attachments: MessageAttachment[];
   tapbacks: MessageTapback[];
+
+  // Service-specific data (optional — populated when available)
+  reactions?: Reaction[];        // iMessage tapbacks, Discord reactions
+  reply_to_message?: MessageRef; // WhatsApp reply chains
+  embeds?: Embed[];              // Discord embeds
+  edit_history?: EditEntry[];    // iMessage edit history
+  deleted_indicator?: boolean;   // WhatsApp "this message was deleted"
+  effect?: string;               // iMessage screen effect
+  role_color?: string;           // Discord role color
+  is_story_reply?: boolean;      // Instagram story reply
+  forwarded?: boolean;           // Instagram forwarding indicator
 }
 
 export interface ExtractConfig {
