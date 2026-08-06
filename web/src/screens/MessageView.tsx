@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiClient } from "../lib/api";
-import type { Conversation, Message } from "../lib/types";
+import type { Conversation, Message, MessageAttachment } from "../lib/types";
 import MessageBubble from "../components/MessageBubble";
+import AttachmentLightbox from "../components/AttachmentLightbox";
 
 const PAGE_SIZE = 50;
 
@@ -20,7 +21,21 @@ export default function MessageView({
   const [findTerm, setFindTerm] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [lightboxAttachments, setLightboxAttachments] = useState<MessageAttachment[] | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Open the lightbox at the clicked image; prev/next walks this page's images
+  const handleAttachmentClick = useCallback((att: MessageAttachment) => {
+    const images = messages.flatMap((m) =>
+      (m.attachments || []).filter(
+        (a) => a.sha256 && a.mime_type?.startsWith("image/"),
+      ),
+    );
+    const idx = images.findIndex((a) => a.sha256 === att.sha256);
+    setLightboxAttachments(images.length > 0 ? images : [att]);
+    setLightboxIndex(idx >= 0 ? idx : 0);
+  }, [messages]);
 
   const fetchPage = useCallback(
     async (newOffset: number, _searchTerm?: string) => {
@@ -184,6 +199,7 @@ export default function MessageView({
               message={m}
               highlight={findTerm.trim() || undefined}
               isActive={matchIds.length > 0 && matchIds[activeMatch] === m.id}
+              onAttachmentClick={handleAttachmentClick}
             />
           ))
         )}
@@ -207,6 +223,17 @@ export default function MessageView({
           Next
         </button>
       </div>
+
+      {/* Attachment lightbox */}
+      {lightboxAttachments && (
+        <AttachmentLightbox
+          attachments={lightboxAttachments}
+          currentIndex={lightboxIndex}
+          onClose={() => setLightboxAttachments(null)}
+          onPrev={() => setLightboxIndex((i) => (i - 1 + lightboxAttachments.length) % lightboxAttachments.length)}
+          onNext={() => setLightboxIndex((i) => (i + 1) % lightboxAttachments.length)}
+        />
+      )}
     </div>
   );
 }

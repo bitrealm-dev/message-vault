@@ -1,4 +1,4 @@
-import type { Message } from "../lib/types";
+import type { Message, MessageAttachment } from "../lib/types";
 import SmsBubble from "./messages/SmsBubble";
 import ImessageBubble from "./messages/ImessageBubble";
 import DiscordBubble from "./messages/DiscordBubble";
@@ -9,10 +9,12 @@ export default function MessageBubble({
   message,
   highlight,
   isActive,
+  onAttachmentClick,
 }: {
   message: Message;
   highlight?: string;
   isActive?: boolean;
+  onAttachmentClick?: (attachment: MessageAttachment) => void;
 }) {
   switch (message.conversation.service?.toLowerCase()) {
     case "imessage":
@@ -25,6 +27,6 @@ export default function MessageBubble({
     case "instagram":
       return <InstagramBubble message={message} highlight={highlight} isActive={isActive} />;
     default:
-      return <SmsBubble message={message} highlight={highlight} isActive={isActive} />;
+      return <SmsBubble message={message} highlight={highlight} isActive={isActive} onAttachmentClick={onAttachmentClick} />;
   }
 }
