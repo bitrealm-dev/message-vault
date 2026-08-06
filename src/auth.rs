@@ -9,6 +9,7 @@ use argon2::{
     password_hash::SaltString,
 };
 use axum::{Json, extract::State};
+use axum::http::HeaderMap;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -352,4 +353,101 @@ pub async fn hanko_session_handler(
     .map_err(|e| ApiError::Unauthorized(e.to_string()))?;
 
     Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// Change-password / delete-account request types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChangePasswordResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteAccountResponse {
+    pub ok: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Change-password / delete-account handlers
+// ---------------------------------------------------------------------------
+
+/// `POST /v1/auth/change-password` — verify the current password, set a new one.
+pub async fn change_password_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<ChangePasswordResponse>, ApiError> {
+    let new_password = req.new_password.trim();
+    if new_password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "new password must be at least 8 characters".into(),
+        ));
+    }
+    let auth = crate::server::resolve_auth(&headers, &state).await?;
+    let account_id = auth.account_id;
+    let current_password = req.current_password.clone();
+    let db = state.cfg.paths.db.clone();
+    let new_hash = hash_password(new_password)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let conn = Connection::open(&db)?;
+        schema::configure_connection(&conn)?;
+        let current_hash = account_profile::load_password_hash(&conn, &account_id)?;
+        if !passwords_match(current_hash.as_deref(), &current_password) {
+            bail!("current password is incorrect");
+        }
+        account_profile::update_password_hash(&conn, &account_id, &new_hash)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("change password task: {e}")))?
+    .map_err(|e| {
+        if e.to_string().contains("current password is incorrect") {
+            ApiError::BadRequest(e.to_string())
+        } else {
+            ApiError::Internal(e.to_string())
+        }
+    })?;
+
+    Ok(Json(ChangePasswordResponse { ok: true }))
+}
+
+/// `POST /v1/auth/delete-account` — permanently delete the account.
+pub async fn delete_account_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeleteAccountRequest>,
+) -> Result<Json<DeleteAccountResponse>, ApiError> {
+    if !req.confirm {
+        return Err(ApiError::BadRequest("confirmation flag must be true".into()));
+    }
+    let auth = crate::server::resolve_auth(&headers, &state).await?;
+    let account_id = auth.account_id;
+    let db = state.cfg.paths.db.clone();
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let conn = Connection::open(&db)?;
+        schema::configure_connection(&conn)?;
+        account_profile::delete_account(&conn, &account_id)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("delete account task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(DeleteAccountResponse { ok: true }))
 }

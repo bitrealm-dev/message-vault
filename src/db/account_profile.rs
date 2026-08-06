@@ -144,6 +144,29 @@ pub fn load_password_hash(conn: &Connection, account_id: &str) -> Result<Option<
     Ok(hash)
 }
 
+/// Replace the argon2 password hash for an account.
+pub fn update_password_hash(
+    conn: &Connection,
+    account_id: &str,
+    password_hash: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE accounts SET password_hash = ?2 WHERE id = ?1",
+        params![account_id, password_hash],
+    )
+    .with_context(|| format!("update password hash for {account_id}"))?;
+    Ok(())
+}
+
+/// Permanently delete an account. All dependent rows are removed by
+/// ON DELETE CASCADE (messages, conversations, contacts, vault_imports,
+/// account_phones/emails/api_tokens).
+pub fn delete_account(conn: &Connection, account_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
+        .with_context(|| format!("delete account {account_id}"))?;
+    Ok(())
+}
+
 /// Look up account id by Hanko user id. Returns None if no account is linked.
 pub fn lookup_account_by_hanko(conn: &Connection, hanko_user_id: &str) -> Result<Option<String>> {
     schema::ensure_accounts_schema(conn)?;

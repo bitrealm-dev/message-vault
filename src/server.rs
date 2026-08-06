@@ -168,6 +168,14 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route("/v1/auth/login", post(crate::auth::login_handler))
         .route("/v1/auth/hanko/session", post(crate::auth::hanko_session_handler))
         .route("/v1/auth/check", get(auth_check))
+        .route(
+            "/v1/auth/change-password",
+            post(crate::auth::change_password_handler),
+        )
+        .route(
+            "/v1/auth/delete-account",
+            post(crate::auth::delete_account_handler),
+        )
         .route("/v1/account/profile", get(crate::profile::account_profile_handler).post(crate::profile::account_profile_update_handler))
         .route(
             "/v1/export/messages/count",
