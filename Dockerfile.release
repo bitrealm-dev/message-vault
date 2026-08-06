@@ -14,6 +14,9 @@ COPY crates ./crates
 # Required at compile time by src/db/schema.rs include_str!(…).
 COPY schema ./schema
 
+# Sibling crates from message-vault-io (resolved via relative paths in Cargo.toml)
+COPY --from=message-io crates/message /message-vault-io/crates/message
+
 RUN cargo build --release --bin message-vault-rs
 
 # -----------------------------------------------------------------------------

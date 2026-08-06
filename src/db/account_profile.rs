@@ -4,20 +4,21 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::schema;
 
-/// Account identity loaded only by tests: the handles migration replaced the
+/// Account identity loaded for profile display: the handles migration replaced the
 /// load-for-matching path with direct joins through `account_handles`/`handles`,
 /// so this struct/loader now exists to pin the soft-default behavior.
-#[cfg(test)]
+
 #[derive(Debug, Clone)]
 pub struct AccountProfile {
     pub display_name: String,
     pub handle_ids: Vec<i64>,
     pub emails: Vec<String>,
+    pub phones: Vec<String>,
 }
 
 /// Load account identity (preferred name + linked handle ids) and optional email handles.
 /// Soft-defaults when the row is missing or name/handles are empty (`"Me"`, empty sets).
-#[cfg(test)]
+
 pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
     let preferred_name: Option<Option<String>> = conn
         .query_row(
@@ -46,10 +47,17 @@ pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<Accou
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
+    let mut phone_stmt =
+        conn.prepare("SELECT phone FROM account_phones WHERE account_id = ?1 ORDER BY phone")?;
+    let phones: Vec<String> = phone_stmt
+        .query_map(params![account_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(AccountProfile {
         display_name,
         handle_ids,
         emails,
+        phones,
     })
 }
 

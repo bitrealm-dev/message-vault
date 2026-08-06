@@ -6,9 +6,9 @@ members = [
 ]
 
 [workspace.dependencies]
-message-ir = { path = "/home/mbeisser/repo/message-vault-io/crates/message/ir", package = "message-ir" }
-contacts = { path = "/home/mbeisser/repo/message-vault-io/crates/message/contacts", package = "contacts" }
-phone = { path = "/home/mbeisser/repo/message-vault-io/crates/message/phone", package = "phone" }
+message-ir = { path = "../message-vault-io/crates/message/ir", package = "message-ir" }
+contacts = { path = "../message-vault-io/crates/message/contacts", package = "contacts" }
+phone = { path = "../message-vault-io/crates/message/phone", package = "phone" }
 
 [package]
 name = "message-vault-rs"
@@ -17,14 +17,18 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
+argon2 = "0.5.3"
 axum = { version = "0.8.9", features = ["multipart"] }
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.1", features = ["derive"] }
 contacts = { workspace = true }
 demo-seed = { path = "crates/demo-seed" }
 futures-util = { version = "0.3.31", default-features = false }
+jsonwebtoken = "9.3.1"
 message-ir = { workspace = true }
 phone = { workspace = true }
+rand = "0.8.5"
+reqwest = { version = "0.12.25", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 rusqlite = { version = "0.40.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -32,4 +36,5 @@ sha2 = "0.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
 toml = "1.1.2"
-tower-http = { version = "0.7.0", features = ["limit"] }
+tower-http = { version = "0.7.0", features = ["limit", "cors", "fs"] }
+uuid = { version = "1.18.1", features = ["v4"] }

@@ -328,7 +328,7 @@ pub async fn hanko_session_handler(
                         false,
                     )?;
 
-                    if let Some(ref email) = email {
+                    if let Some(email) = &email {
                         let _ = account_profile::upsert_account_email(
                             &conn, &account_id, email, true,
                         );
