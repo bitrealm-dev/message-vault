@@ -109,33 +109,37 @@ New user flow: Create account → Create profile. The profile is created at sign
 After login, the user sees a flat conversation list sorted by most recent message timestamp:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  [Global search]                    [Profile] [⚙]   │
-├──────────────┬──────────────────────────────────────┤
-│ Saved Groups │                                      │
-│ Work team    │   Select a conversation to view      │
-│ Family       │   messages, or search to find        │
-│ 2023 Archive │   someone.                           │
-│ Videos       │                                      │
-│              │                                      │
-│ All          │                                      │
-│ Trash        │                                      │
-├──────────────┤                                      │
-│ Conversations│                                      │
-│              │                                      │
-│ Bob Smith    │                                      │
-│ yesterday     │                                      │
-│              │                                      │
-│ Bob, Carol   │                                      │
-│ + 17 others  │                                      │
-│ Sep 2020 –    │                                      │
-│ Jan 2022     │                                      │
-│ 214 msgs     │                                      │
-│              │                                      │
-├──────────────┴──────────────────────────────────────┤
-│  [Import] [Export] [Extract] [Format] — desktop only   │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────┬──────────────────────────────────────┐
+│  🔍 Global search    │                                      │
+│                      │  Select a conversation to view       │
+│  SAVED GROUPS   [+]  │  messages, or search to find         │
+│  ├ Work team   (12)  │  someone.                            │
+│  ├ Family       (8)  │                                      │
+│  ├ 2023 Arch.  (47)  │                                      │
+│  └ Videos      (15)  │                                      │
+│                      │                                      │
+│  ▸ All           142 │                                      │
+│  ▸ Trash          3  │                                      │
+│                      │                                      │
+│  ────────────────    │                                      │
+│                      │                                      │
+│  ┌────────────────┐  │                                      │
+│  │  📥 Import     │  │                                      │
+│  └────────────────┘  │                                      │
+│  ┌────────────────┐  │                                      │
+│  │  📤 Export     │  │                                      │
+│  └────────────────┘  │                                      │
+│                      │                                      │
+│  ────────────────    │                                      │
+│                      │                                      │
+│  👤 Profile          │                                      │
+│  ⚙ Settings         │                                      │
+├──────────────────────┴──────────────────────────────────────┤
+│  [Extract] [Format]                         — desktop only  │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+The right panel shows a placeholder until a conversation is selected. Import and Export are left-panel buttons (desktop only). Extract and Format are secondary actions in a bottom bar.
 
 ### Conversation rows — display logic
 
@@ -166,31 +170,31 @@ Don't show participant names — the date range distinguishes it. Users can rena
 When a conversation is selected:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  [Global search]                    [Profile] [⚙]   │
-├──────────────┬──────────────────────────────────────┤
-│ Conversations│  ┌──────────────────────────────────┐ │
-│              │  │ Bob Smith                        │ │
-│  Bob Smith   │  │ +1 555-1234 · SMS  142 messages │ │
-│              │  │ Jan 2019 – Aug 2026 [Photos]    │ │
-│  ...         │  ├──────────────────────────────────┤ │
-│              │  │                                  │ │
-│              │  │  [Find bar: _________ ↑↓]        │ │
-│              │  │                                  │ │
-│              │  │  ┌──────────────────────────┐   │ │
-│              │  │  │ Message bubble           │   │ │
-│              │  │  │ Aug 6, 2020 2:34 PM      │   │ │
-│              │  │  └──────────────────────────┘   │ │
-│              │  │                                  │ │
-│              │  │  ┌──────────────────────────┐   │ │
-│              │  │  │ Reply bubble             │   │ │
-│              │  │  │ Aug 6, 2020 2:35 PM      │   │ │
-│              │  │  └──────────────────────────┘   │ │
-│              │  │                                  │ │
-│              │  └──────────────────────────────────┘ │
-├──────────────┴──────────────────────────────────────┤
-│  [Import] [Export] [Extract] [Format] — desktop only   │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────┬──────────────────────────────────────┐
+│  🔍 Global search    │  Bob Smith                           │
+│                      │  +1 555-1234 · SMS · 142 messages    │
+│  SAVED GROUPS        │  Jan 2019 – Aug 2026  [Photos]      │
+│  ...                 ├──────────────────────────────────────┤
+│                      │                                      │
+│  ▸ All               │  [Find: _________ ↑↓]                │
+│  ▸ Trash             │                                      │
+│                      │  ┌──────────────────────────────┐    │
+│  ────────────────    │  │ Message bubble               │    │
+│                      │  │ Aug 6, 2020 2:34 PM          │    │
+│  ┌────────────────┐  │  └──────────────────────────────┘    │
+│  │  📥 Import     │  │                                      │
+│  └────────────────┘  │  ┌──────────────────────────────┐    │
+│  ┌────────────────┐  │  │ Reply bubble                 │    │
+│  │  📤 Export     │  │  │ Aug 6, 2020 2:35 PM          │    │
+│  └────────────────┘  │  └──────────────────────────────┘    │
+│                      │                                      │
+│  ────────────────    │                                      │
+│                      │                                      │
+│  👤 Profile          │                                      │
+│  ⚙ Settings         │                                      │
+├──────────────────────┴──────────────────────────────────────┤
+│  [Extract] [Format]                         — desktop only  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 - **Header**: Participant name/handle, participant chips (clickable — opens profile drawer), message count, date range, Photos & Files shortcut
@@ -249,20 +253,21 @@ The left panel has a "Saved Groups" section above the conversation list. Each sa
 | 2023 Archive | `date:2023` |
 | Videos | `has:attachment type:video` |
 
-Clicking a saved group filters the conversation list to matching conversations. No manual labeling of individual messages — the group is the saved query. Users can create, rename, reorder, and delete saved groups.
-
-If the user wants to tag specific messages, they add a keyword like `#family` anywhere in a message body and save a search for `#family`.
+Clicking a saved group filters the conversation list to matching conversations. No manual labeling of messages — the group is a saved query. Users can create, rename, reorder, and delete saved groups. Messages are imported data and cannot be edited to add tags.
 
 ### Desktop-only actions
 
-These appear in the bottom bar and are gated behind `isTauri()`:
+Import and Export are left-panel buttons (always visible while browsing). They replace the main view area with their forms when clicked.
 
-- **Import**: Combined extract + push. Pick source, provide backup path, optional contacts, go. Auth required (token from login passed to vault API).
-- **Export**: Pull data from vault to local files. Three scopes: entire vault, current view, or selected conversations.
-- **Extract**: Parse phone backup to JSONL without uploading. For offline use or pre-processing.
+- **Import**: Combined extract + push. Pick source, backup path, optional contacts, go. Auth required.
+- **Export**: Pull from vault to local files. Three scopes: entire vault, current view, or selected. Popover picker.
+
+Extract and Format are secondary actions in a bottom bar:
+
+- **Extract**: Parse phone backup to JSONL without uploading. For offline use.
 - **Format**: Convert between output formats (JSONL/EML/MBOX/CSV/XML).
 
-Import and Export are the primary actions (left-aligned in the bar). Extract and Format are secondary (right-aligned).
+All four are gated behind `isTauri()` and hidden in the web deployment.
 
 ## Service-specific message rendering
 
