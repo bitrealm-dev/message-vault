@@ -252,10 +252,11 @@ impl Obfuscator {
         fake
     }
 
-    /// Fake URL that stays syntactically valid (`http(s)://…` or `www.…`).
+    /// Replace every URL with a deterministic dummy URL.
     ///
-    /// Host becomes `{hex}.example.invalid`; path/query/fragment keep separators with
-    /// letter/digit runs replaced by digest-driven nonsense of the same length.
+    /// The dummy is always `https://{n}.example.invalid/` where `n` is derived
+    /// from the original URL via HMAC, so the same URL always maps to the same
+    /// dummy without leaking any structure of the original.
     pub fn obfuscate_url(&mut self, raw: &str) -> String {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -266,30 +267,8 @@ impl Obfuscator {
             return cached.clone();
         }
         let d = self.digest("url", &key);
-        let host_label = hex::encode(&d[..4]);
-
-        let lower = trimmed.to_ascii_lowercase();
-        let (prefix, rest, www_style) = if lower.starts_with("https://") {
-            ("https://", &trimmed["https://".len()..], false)
-        } else if lower.starts_with("http://") {
-            ("http://", &trimmed["http://".len()..], false)
-        } else if lower.starts_with("www.") {
-            ("", trimmed, true)
-        } else {
-            let fake = format!("https://{host_label}.example.invalid/");
-            self.url_cache.insert(key, fake.clone());
-            return fake;
-        };
-
-        let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        let after_host = &rest[host_end..];
-        let fake_host = if www_style {
-            format!("www.{host_label}.example.invalid")
-        } else {
-            format!("{host_label}.example.invalid")
-        };
-        let fake_tail = shape_preserving_filler(after_host, &d, 8);
-        let fake = format!("{prefix}{fake_host}{fake_tail}");
+        let n = u32::from_le_bytes(d[0..4].try_into().unwrap());
+        let fake = format!("https://{n}.example.invalid/");
         self.url_cache.insert(key, fake.clone());
         fake
     }
@@ -375,15 +354,19 @@ impl Obfuscator {
 
 /// Same-length letter/digit filler; whitespace and punctuation kept in place.
 ///
-/// ASCII letters/digits are replaced with deterministic ASCII substitutes.
-/// Non-ASCII alphabetic characters (CJK, Cyrillic, accented Latin, etc.) are
-/// also replaced to prevent leaking message content in non-English languages.
+/// ASCII letters/digits and any Unicode alphabetic (CJK, Cyrillic, accented
+/// Latin, Arabic, etc.) are replaced with deterministic ASCII substitutes.
+/// Emoji, symbols, combining marks, and other non-structural characters are
+/// also replaced so they cannot leak identity or message content.
+/// Only whitespace and ASCII punctuation pass through unchanged.
 fn shape_preserving_filler(raw: &str, digest: &[u8; 32], digest_offset: usize) -> String {
     let len = raw.chars().count();
     let mut out = String::with_capacity(raw.len());
     let mut i = digest_offset;
     for ch in raw.chars() {
-        if ch.is_ascii_alphabetic() {
+        if ch.is_whitespace() || ch.is_ascii_punctuation() {
+            out.push(ch);
+        } else if ch.is_ascii_alphabetic() {
             let b = digest[i % digest.len()];
             i += 1;
             let base = if ch.is_ascii_uppercase() { b'A' } else { b'a' };
@@ -392,14 +375,14 @@ fn shape_preserving_filler(raw: &str, digest: &[u8; 32], digest_offset: usize) -
             let b = digest[i % digest.len()];
             i += 1;
             out.push(char::from(b'0' + (b % 10)));
-        } else if ch.is_alphabetic() {
-            // Non-ASCII alphabetic (CJK, Cyrillic, accented Latin, Arabic, etc.)
-            // — replace with a deterministic ASCII letter to prevent content leaks.
+        } else {
+            // Non-ASCII alphabetic (CJK, Cyrillic, accented Latin, Arabic,
+            // etc.), emoji, symbols, combining marks, zero-width characters,
+            // and anything else — replace with a deterministic ASCII letter
+            // so nothing identifiable leaks through.
             let b = digest[i % digest.len()];
             i += 1;
             out.push(char::from(b'a' + (b % 26)));
-        } else {
-            out.push(ch);
         }
     }
     let mut chars: Vec<char> = out.chars().collect();
@@ -1180,5 +1163,73 @@ mod tests {
         // Valid lengths: legacy 8-char and modern 64-char
         assert!(resolve_obfuscator(Some("01234567")).is_ok());
         assert!(resolve_obfuscator(Some("0123456789abcdef")).is_ok());
+    }
+
+    #[test]
+    fn unicode_emoji_scrambled() {
+        let mut a = Obfuscator::new(key(1));
+        // Emoji pass through is_alphabetic = false and would have survived
+        // the old else branch.
+        let fake = a.obfuscate_text("Hello 🎉🥳💃");
+        assert!(!fake.contains('🎉'));
+        assert!(!fake.contains('🥳'));
+        assert!(!fake.contains('💃'));
+        assert_eq!(fake.chars().count(), "Hello 🎉🥳💃".chars().count());
+    }
+
+    #[test]
+    fn unicode_combining_marks_scrambled() {
+        let mut a = Obfuscator::new(key(1));
+        // NFD "café" = "cafe" + U+0301 combining acute.
+        // The 'e' gets replaced, but U+0301 would have survived the old else.
+        let src = "cafe\u{0301}";
+        let fake = a.obfuscate_text(src);
+        assert!(!fake.contains('\u{0301}'), "combining mark survived");
+        assert_eq!(fake.chars().count(), src.chars().count());
+    }
+
+    #[test]
+    fn unicode_math_symbols_scrambled() {
+        let mut a = Obfuscator::new(key(1));
+        let fake = a.obfuscate_text("x ∑ y → z");
+        assert!(!fake.contains('∑'));
+        assert!(!fake.contains('→'));
+        // '+' and '>' are ASCII punctuation so they survive.
+        assert_eq!(fake.chars().count(), "x ∑ y → z".chars().count());
+    }
+
+    #[test]
+    fn unicode_zero_width_scrambled() {
+        let mut a = Obfuscator::new(key(1));
+        // Zero-width joiner (U+200D) used in emoji sequences.
+        let src = "\u{200D}";
+        let fake = a.obfuscate_text(src);
+        assert!(!fake.contains('\u{200D}'), "zero-width joiner survived");
+        assert_eq!(fake.chars().count(), 1);
+    }
+
+    #[test]
+    fn ascii_punctuation_and_whitespace_preserved() {
+        let mut a = Obfuscator::new(key(1));
+        let fake = a.obfuscate_text("Hello, world! How are you?");
+        assert!(fake.contains(", "));
+        assert!(fake.contains('!'));
+        assert!(fake.contains('?'));
+        assert!(fake.contains(' '));
+        // The words themselves should be scrambled.
+        assert!(!fake.contains("Hello"));
+        assert!(!fake.contains("world"));
+    }
+
+    #[test]
+    fn unicode_cjk_still_scrambled() {
+        let mut a = Obfuscator::new(key(1));
+        // CJK was handled before and should still be.
+        let fake = a.obfuscate_text("你好世界");
+        assert!(!fake.contains('你'));
+        assert!(!fake.contains('世'));
+        assert_eq!(fake.chars().count(), 4);
+        // Should all be ASCII letters now.
+        assert!(fake.chars().all(|c| c.is_ascii_alphabetic()));
     }
 }
