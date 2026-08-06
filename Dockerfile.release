@@ -1,15 +1,28 @@
-# Multi-stage release image built from the current checkout (no published binaries).
-# Usage: docker compose -f compose-release.yml up --build
+# Multi-stage release image built from the current checkout.
+# Usage:
+#   docker build -f Dockerfile.release -t message-vault-server .
+# Or:
+#   docker compose -f compose-release.yml up --build
 
 # -----------------------------------------------------------------------------
-# Stage 1: Rust binary
+# Stage 1: Vite SPA frontend
+# -----------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS frontend-builder
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Rust binary
 # -----------------------------------------------------------------------------
 # rusqlite 0.40 / libsqlite3-sys 0.38 need Rust 1.95+ (cfg_select!).
 FROM rust:1.95-bookworm AS rust-builder
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
 COPY crates ./crates
 # Required at compile time by crates/vault/server/src/db/schema.rs include_str!(…).
 COPY schema ./schema
@@ -19,7 +32,7 @@ COPY fixtures ./fixtures
 RUN cargo build --release -p message-vault-server
 
 # -----------------------------------------------------------------------------
-# Stage 2: slim runtime
+# Stage 3: slim runtime
 # -----------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime
 
@@ -41,8 +54,8 @@ COPY demo ./demo
 # Container config template
 COPY config/config.docker.toml ./config/config.docker.toml
 
-# Vite SPA build (pre-built before Docker build)
-COPY static ./static
+# Vite SPA (built in Stage 1)
+COPY --from=frontend-builder /web/dist ./static
 
 COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
