@@ -10,6 +10,7 @@ import SettingsScreen from "../screens/SettingsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import ImportHistoryScreen from "../screens/ImportHistoryScreen";
 import MessageView from "../screens/MessageView";
+import SearchResults from "../screens/SearchResults";
 import type { Conversation } from "../lib/types";
 
 export default function AppLayout() {
@@ -17,15 +18,38 @@ export default function AppLayout() {
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchActive, setSearchActive] = useState(false);
+  const [findTerm, setFindTerm] = useState("");
   const [exportScope] = useState<"all" | "current-view" | "selected">("all");
+
+  const handleSearch = (q: string) => {
+    setSearchQuery(q);
+    setActiveView("conversations");
+    setSearchActive(q.trim() !== "");
+  };
+
+  const handleSearchChange = (q: string) => {
+    setSearchQuery(q);
+    if (!q.trim()) setSearchActive(false);
+  };
+
+  const handleSelectResult = (conversation: Conversation, term: string) => {
+    setSelectedConversation(conversation);
+    setActiveView("conversations");
+    setFindTerm(term);
+  };
 
   const leftContent =
     activeView === "conversations" || activeView === "trash" ? (
-      <ConversationList
-        selectedId={selectedConversation?.id || null}
-        onSelect={(c) => { setSelectedConversation(c); setActiveView("conversations"); }}
-        query={activeView === "trash" ? "is:trash" : searchQuery}
-      />
+      searchActive && searchQuery.trim() && activeView === "conversations" ? (
+        <SearchResults query={searchQuery} onSelectResult={handleSelectResult} />
+      ) : (
+        <ConversationList
+          selectedId={selectedConversation?.id || null}
+          onSelect={(c) => { setSelectedConversation(c); setActiveView("conversations"); }}
+          query={activeView === "trash" ? "is:trash" : searchQuery}
+        />
+      )
     ) : activeView === "contacts" ? (
       <ContactList onSelect={(c) => setSelectedContactId(c.id)} />
     ) : null;
@@ -37,6 +61,7 @@ export default function AppLayout() {
           <MessageView
             conversation={selectedConversation}
             onOpenContact={(contactId: string) => setSelectedContactId(contactId)}
+            initialFindTerm={findTerm}
           />
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.875rem" }}>
@@ -65,8 +90,8 @@ export default function AppLayout() {
         activeView={activeView}
         onNavigate={setActiveView}
         searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        onSearch={(q) => { setSearchQuery(q); setActiveView("conversations"); }}
+        onSearchChange={handleSearchChange}
+        onSearch={handleSearch}
         conversationList={leftContent}
       />
       <main style={{ flex: 1, overflow: "auto", background: "#fff" }}>
