@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository is named **message-vault**. It was formed by merging the former `message-vault-io` (desktop app + exporter libraries) and `message-vault-rs` (vault server) repos. Many Rust package names still use `message-vault-io` for historical reasons — that is the package namespace, not the repo name. The public docs site and GitHub org remain under `bitrealm-dev`.
 
+## Docs site
+
+The public documentation is published from the unified [bitrealm-dev.github.io](https://bitrealm-dev.github.io/) hub repo. Edit content in `docs/src/content/docs/` — there is no docs deploy workflow in this repo anymore. The hub syncs content from here at build time. The docs site is a single Astro Starlight project under `docs/` covering both the exporter app and the vault server. Run `cd docs && npm run dev` for local preview.
+
 ## Quick start
 
 ```bash
@@ -130,6 +134,10 @@ The server exposes HTTP API + Web UI at `http://localhost:8080`. Create an accou
 
 SQLite schema lives under `schema/sql/` (messages, contacts, accounts, FTS, staging). Server config templates are in `config/` (copy `config.toml.example` to `config.toml` for local use; `config.docker.toml` is used by the Docker entrypoint).
 
+### Vault API client
+
+The web app communicates with the message-vault-server API through typed wrappers in `web/src/lib/api.ts`. The `AuthProvider` in `web/src/lib/auth.tsx` manages login state with localStorage persistence and token validation. When running in Tauri, the app uses Tauri commands for Extract/Format/Push/Pull. When running in a browser (web deployment), it uses the vault HTTP API for everything.
+
 ### Vault import state
 
 `vault-push` writes `.vault-import-state.jsonl` to track which conversations, messages, and assets have already been uploaded to a given vault URL + username. Re-runs skip already-recorded entries unless **Force reprocessing** is enabled (which uses `JournalState::default()` — an empty journal — so everything is re-submitted). Server-side dedup (`messages_deduped`, `already_present` for assets by SHA-256) prevents actual duplicates.
@@ -143,7 +151,7 @@ A single workflow (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 ## Test conventions
 
 - Exporters have smoke tests at `crates/exporters/*/tests/convert_smoke.rs` using committed fixtures under `crates/*/tests/fixtures/`.
-- `vault-push` has mock tests at `crates/vault-push/tests/push_mock.rs` using `httpmock`.
+- `vault-push` has mock tests at `crates/cli/vault-push/tests/push_mock.rs` using `httpmock`.
 - Unit tests use `#[cfg(test)] mod tests` within source files.
 - Integration tests live in each crate's `tests/` directory.
 - No personal phone backups are needed to run the test suite.

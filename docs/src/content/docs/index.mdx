@@ -1,21 +1,40 @@
 ---
-title: Message Exporters
-description: Turn Apple, Android, and existing message exports into files you can keep and use.
+title: Message Vault
+description: Extract messages from phone backups, import them into a local vault, and browse them in a website you control.
 template: splash
 hero:
-  title: Your messages your way
-  tagline: Extract messages from phone backups and convert them into JSON, CSV, EML, MBOX, or Android XML with the desktop app.
+  title: Your messages, your way
+  tagline: Extract messages from Apple and Android phone backups. Import them into a local SQLite vault. Browse, search, and export in formats you can keep.
   actions:
     - text: Make your first export
       link: /get-started/first-export/
       icon: right-arrow
       variant: primary
-    - text: Install the app
+    - text: Try the demo vault
+      link: /get-started/try-the-demo/
+      icon: rocket
+      variant: secondary
+    - text: Install
       link: /get-started/install/
       icon: download
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+## How it works
+
+```text
+1. Extract    Phone backup → message-ir JSONL + attachments/
+              (Message Vault desktop app)
+
+2. Import     Push or CLI-import message-ir JSONL into the vault
+
+3. Browse     Open the website on your computer — search, browse contacts, view media
+```
+
+Your messages stay in a SQLite database on a machine you control. They are not uploaded to a cloud service by this project.
+
+Turning a phone backup into message-ir JSONL is a separate step handled by [Message Exporters](https://bitrealm-dev.github.io/message-exporters/). This site covers both the desktop exporter app and the vault server.
 
 ## Choose what you want to do
 
@@ -29,17 +48,17 @@ import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
   <Card title="Convert an existing export">
     Change a Message Vault folder from JSON, JSONL, CSV, EML, MBOX, or XML into another format. [Convert the format](/work-with-exports/convert-format/).
   </Card>
+  <Card title="Import into the vault">
+    Upload a JSONL archive to the vault server, resume safely, or force reprocessing after a partial run. [Import to Message Vault](/work-with-exports/import-to-vault/).
+  </Card>
+  <Card title="Browse the vault">
+    Use contacts, labels, group messages, sources, trash, and settings. [Navigation and sources](/browse/navigation-and-sources/).
+  </Card>
   <Card title="Install the desktop app">
     Download the release for Linux, Windows, or macOS and keep the helper programs with the app. [Install Message Vault](/get-started/install/).
   </Card>
-  <Card title="Make a first export">
-    Learn what each tab does, run one export, and check the log. [Follow the first-export guide](/get-started/first-export/).
-  </Card>
-  <Card title="Supported formats">
-    Pick the right phone backup or app export, then choose JSONL, CSV, mail, or Android XML. [Browse supported formats](/get-started/supported-formats/).
-  </Card>
-  <Card title="Import to Message Vault">
-    Upload a JSONL archive, resume safely, or force reprocessing after a partial run. [Import to Message Vault](/work-with-exports/import-to-vault/).
+  <Card title="Try sample data">
+    Load the committed demo vault and click through contacts without a real backup. [Try the demo](/get-started/try-the-demo/).
   </Card>
   <Card title="Protect private information">
     Choose whether to copy media, convert it, compress it, or replace personal data before sharing. [Review media and privacy options](/work-with-exports/media-and-privacy/).

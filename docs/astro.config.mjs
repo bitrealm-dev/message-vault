@@ -9,22 +9,22 @@ const limitedBadge = {
 
 export default defineConfig({
   site: 'https://bitrealm-dev.github.io',
-  base: '/message-vault-io/',
+  base: '/message-vault/',
   integrations: [
     starlight({
-      title: 'Message Exporters',
+      title: 'Message Vault',
       description:
-        'Turn Apple and Android message backups into files you can keep and open.',
+        'Extract messages from phone backups, import them into a local vault, and browse them in a website you control.',
       plugins: [starlightBasePath()],
       editLink: {
         baseUrl:
-          'https://github.com/bitrealm-dev/message-vault-io/edit/main/docs/',
+          'https://github.com/bitrealm-dev/message-vault/edit/main/docs/',
       },
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/bitrealm-dev/message-vault-io',
+          href: 'https://github.com/bitrealm-dev/message-vault',
         },
       ],
       customCss: ['./src/styles/custom.css'],
@@ -34,8 +34,12 @@ export default defineConfig({
           label: 'Get started',
           items: [
             'get-started/install',
-            'get-started/supported-formats',
+            'get-started/server-install',
+            'get-started/docker',
+            'get-started/try-the-demo',
             'get-started/first-export',
+            'get-started/first-personal-import',
+            'get-started/supported-formats',
           ],
         },
         {
@@ -77,6 +81,25 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Import to vault',
+          items: [
+            'import/from-message-exporters',
+            'import/same-machine',
+            'import/modes-and-dedupe',
+          ],
+        },
+        {
+          label: 'Browse the vault',
+          items: [
+            'browse/navigation-and-sources',
+            'browse/search',
+            'browse/contacts-and-labels',
+            'browse/group-messages',
+            'browse/trash-and-undo',
+            'browse/settings',
+          ],
+        },
+        {
           label: 'Understand the output',
           collapsed: true,
           items: [
@@ -85,7 +108,7 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Command-line reference',
+          label: 'Reference',
           collapsed: true,
           items: [
             'reference/cli',
@@ -98,6 +121,11 @@ export default defineConfig({
             'reference/cli/imazing-exporter',
             'reference/cli/openextract-exporter',
             'reference/cli/sms-backup-plus-exporter',
+            'reference/server-cli',
+            'reference/config-and-accounts',
+            'reference/message-ir',
+            'reference/database',
+            'reference/api',
           ],
         },
       ],

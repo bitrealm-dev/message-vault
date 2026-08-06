@@ -1,6 +1,6 @@
 ---
-title: Install
-description: Every way to run Message Vault — Docker image, Compose, or build from source.
+title: Install the vault server
+description: Run the Message Vault server — Docker image, Compose, or build from source.
 ---
 
 Message Vault has two components: a Rust server (import/export API and CLI) and a Next.js web UI (browse and search). You can run both with Docker, or build them from source.
@@ -26,8 +26,8 @@ Open http://localhost:3000/login. See the [Quick start](/get-started/quick-start
 Clone the repo and use the bundled Compose file:
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-rs.git
-cd message-vault-rs
+git clone https://github.com/bitrealm-dev/message-vault.git
+cd message-vault
 docker compose up
 ```
 
@@ -56,13 +56,13 @@ npm --version
 ffmpeg -version
 ```
 
-Full OS-specific prerequisite steps (Visual Studio workloads on Windows, `apt` packages on Linux) are in the maintainer guide: [`docs/maintainers/development.md`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/docs/maintainers/development.md).
+Full OS-specific prerequisite steps (Visual Studio workloads on Windows, `apt` packages on Linux) are in the maintainer guide: [`docs/maintainers/development.md`](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/development.md).
 
 ### Build
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-rs.git
-cd message-vault-rs
+git clone https://github.com/bitrealm-dev/message-vault.git
+cd message-vault
 cargo build --workspace --release
 ```
 

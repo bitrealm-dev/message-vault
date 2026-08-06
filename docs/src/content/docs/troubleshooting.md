@@ -1,9 +1,11 @@
 ---
 title: Troubleshooting
-description: Fix common problems with the Message Exporters desktop app.
+description: Fix common problems with the Message Vault desktop app and vault server.
 ---
 
-## The app will not start
+## Desktop app
+
+### The app will not start
 
 **Windows SmartScreen or "unrecognized app" warning.** Click **More info** and then **Run anyway**. The app is not signed with a code-signing certificate, so Windows flags it on first launch. You only need to allow it once.
 
@@ -13,7 +15,7 @@ description: Fix common problems with the Message Exporters desktop app.
 
 **Helper programs moved or deleted.** The app looks for `ffmpeg` / `ffprobe` under `lib/` and `wtsexporter` under `cli/`, next to the app binary. If you moved those folders, the app cannot find them. Extract the archive fresh and keep the layout intact.
 
-## Extraction fails
+### Extraction fails
 
 **Wrong platform auto-detection.** If the app guesses the wrong platform for an iPhone backup (iOS vs macOS), use the **Platform** dropdown to set it explicitly. The same applies to WhatsApp: choose Android or iOS in the form.
 
@@ -31,13 +33,13 @@ Then set `WTSEXPORTER` to the full path or add it to your `PATH`.
 
 **Cancellation does not stop immediately.** The app uses cooperative cancellation. It cannot stop the external `wtsexporter` process mid-run during WhatsApp extraction. Wait for it to finish or kill the process manually.
 
-## Media problems
+### Media problems
 
 **ffmpeg or ffprobe not found.** The **Convert** and **Compress** attachment modes need FFmpeg. The app looks for `lib/ffmpeg` and `lib/ffprobe` next to the binary. If you unzipped the archive and kept the folders together, they are already there. If you are building from source, install ffmpeg from your package manager and make sure it is on `PATH`.
 
 **Conversion produces no output or low-quality results.** Check the **Compress options** in the advanced section. The defaults (1080p, 30 fps, 20 MB minimum) are conservative. Raise or lower them for your needs. The log tab shows which files were converted and which were skipped.
 
-## Output problems
+### Output problems
 
 **"Input and output must differ" error (Format tab).** When converting between formats, the output directory must be different from the input directory. Choose a new empty folder.
 
@@ -47,17 +49,115 @@ Then set `WTSEXPORTER` to the full path or add it to your `PATH`.
 
 **Some messages are missing from a rescue import.** The limited rescue formats (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) cannot preserve everything the original backup contained. Each of those guides has a "Known limitations" section. If the source format did not store the data, the exporter cannot recover it.
 
+## Vault server
+
+### SQLITE_CANTOPEN on `/app/data/vault.db`
+
+**Symptom**: the Docker container fails to start with `SQLITE_CANTOPEN`.
+
+**Fix**: the `data/` directory inside the volume is owned by `root` but the container runs as a non-root user. Change ownership:
+
+```bash
+docker run --rm -v message-vault-data:/data alpine chown -R 1000:1000 /data
+```
+
+Then restart the container. This is a one-time fix when you first create a named volume on Linux. Windows and macOS Docker Desktop volumes are not affected.
+
+### ffmpeg missing (native install)
+
+**Symptom**: media conversion fails with "ffmpeg not found" or converted assets do not appear.
+
+**Fix**: the published Docker image includes FFmpeg. If you are running natively, install it from your package manager:
+
+```bash
+# Debian / Ubuntu
+sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows
+winget install Gyan.FFmpeg
+```
+
+Verify with `ffmpeg -version`. After installing, run `cargo run --release -- process-assets --force` to convert any assets that were skipped.
+
+### Port conflicts
+
+**Symptom**: "address already in use" on port 8080.
+
+**Fix**: something else is already using the port. Check what is listening:
+
+```bash
+# Linux / macOS
+lsof -i :8080
+
+# Windows
+netstat -ano | findstr :8080
+```
+
+If another instance of the vault is already running, stop it first. If another application is using the port, change the bind address in `config/config.toml`.
+
+Running both `compose-dev.yml` and `compose-release.yml` at the same time will conflict — they share the default ports and the volume name.
+
+### Import failures
+
+#### "schema_version mismatch"
+
+**Symptom**: `POST /v1/import` returns an error about an unexpected `schema_version`.
+
+**Fix**: the import API expects message-ir schema version 3. If the export was made with an older version of the desktop app, re-export it with the current version. See the [message-ir reference](/reference/message-ir/).
+
+#### "Input directory has no .jsonl files"
+
+**Symptom**: the CLI `import` command or `vault-push` reports no `.jsonl` files found.
+
+**Fix**: the input directory must contain `.jsonl` files at the top level or one level deep (per-conversation subdirectories). Verify the path and check that the files are not inside a subdirectory the tool is not scanning. If you used the Exporters app, the output folder is the correct input path.
+
+#### Account resolution
+
+**Symptom**: `--account` value is not recognized.
+
+**Fix**: use the exact username (not display name) shown under **Settings → Access** in the web UI, or the account UUID. Both work.
+
+#### Token issues
+
+**Symptom**: `401 Unauthorized` from the import API.
+
+**Fix**: API tokens are shown once when created under **Settings → Access → Vault Import**. If you lost the token, generate a new one. The old token stops working when a new one is created (rotation). Tokens are stored as SHA-256 hashes — the server never stores the plain text.
+
+#### Import validation errors
+
+**Symptom**: `400 Bad Request` from `POST /v1/import`.
+
+Common causes:
+- **Missing `source` query parameter.** The API requires `?source=...` on every import request (or `source` in the session-start body for multipart).
+- **Part number less than 1.** Multipart part indices are 1-based.
+- **Part too large.** Each part must not exceed the `part_size` advertised by the server.
+- **Source ID format.** Source names must be lowercase alphanumeric with hyphens or underscores, up to 64 characters, and not start with `-` or `_`.
+
+#### Asset already_present
+
+**Symptom**: attachment uploads report `already_present: true` and no bytes are transferred.
+
+**This is normal.** The server deduplicates assets by SHA-256 content hash. If the same file was already uploaded for this source (or during a previous import), the upload is skipped. It does not mean the attachment is missing — the server already has it.
+
+### Web UI issues
+
+**Browser cache after upgrade.** If the web UI looks wrong or shows errors after an update, hard-refresh the browser (`Ctrl+Shift+R` or `Cmd+Shift+R`).
+
+**Hanko configuration.** If `VAULT_AUTH=hanko` mode does not work, check that `HANKO_API_URL` is set and reachable from the browser. This mode is intended for the hosted Bitrealm service — use `VAULT_AUTH=local` for self-hosting.
+
 ## Getting help
 
-If you cannot find an answer here, open an issue on GitHub:
+If the issue is not covered here, open an issue on GitHub:
 
-- [Message Exporters issues](https://github.com/bitrealm-dev/message-vault-io/issues) — for the desktop app, exporters, or CLI tools.
-- [Message Vault issues](https://github.com/bitrealm-dev/message-vault-rs/issues) — for the vault server and web UI.
+- [Message Vault issues](https://github.com/bitrealm-dev/message-vault/issues)
 
 Include:
-- Your operating system and version
-- The backup source you are using
-- The Log tab output from the failed run (copy the relevant lines)
-- Any error messages shown in the app
+- Your setup (Docker / Compose / native, operating system)
+- The backup source (if using the desktop app)
+- The full error message or log output
+- Your `config/config.toml` with any secrets removed
 
-Do not include passwords, vault keys, phone numbers, or message content in a public issue.
+Do not include passwords, API tokens, phone numbers, or message content in a public issue.

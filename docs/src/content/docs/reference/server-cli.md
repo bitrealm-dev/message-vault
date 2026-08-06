@@ -1,5 +1,5 @@
 ---
-title: CLI reference
+title: Vault server CLI
 description: Cargo subcommands for import, dedupe, contacts, demo reset, and serve.
 ---
 
