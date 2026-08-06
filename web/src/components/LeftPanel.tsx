@@ -4,6 +4,8 @@ import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
 import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
 import SavedGroupForm from "./SavedGroupForm";
+import GlobalSearch from "./GlobalSearch";
+import AdvancedSearchForm from "./AdvancedSearchForm";
 
 export default function LeftPanel({
   activeView,
@@ -38,6 +40,7 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
 
   return (
     <div style={{
@@ -47,19 +50,28 @@ export default function LeftPanel({
     }}>
       {/* Global search */}
       <div style={{ padding: "0.75rem" }}>
-        <input
-          type="search"
+        <GlobalSearch
           value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onSearch(searchQuery);
-          }}
-          placeholder="Search vault"
-          style={{
-            width: "100%", padding: "0.375rem 0.5rem", fontSize: "0.813rem",
-            border: "1px solid #d1d5db", borderRadius: "4px",
-          }}
+          onChange={onSearchChange}
+          onSubmit={(q) => onSearch(q)}
         />
+        <button
+          onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+          style={{
+            fontSize: "0.688rem", border: "none", background: "none",
+            color: "#6b7280", cursor: "pointer", padding: "0.25rem 0 0",
+          }}
+        >
+          {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
+        </button>
+        {showAdvancedSearch && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <AdvancedSearchForm
+              onApply={(q) => { onSearchChange(q); onSearch(q); setShowAdvancedSearch(false); }}
+              onClose={() => setShowAdvancedSearch(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Saved groups */}
