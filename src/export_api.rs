@@ -45,6 +45,8 @@ pub struct ExportCountResponse {
     pub ok: bool,
     pub query: String,
     pub messages: u64,
+    /// Distinct conversations with at least one matching message.
+    pub conversations: u64,
     /// Unique attachment digests among matching messages.
     pub attachments: u64,
     /// Sum of known `size_bytes` for those unique digests (unknown sizes omitted).
@@ -393,6 +395,22 @@ pub fn export_message_count(
         )
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
 
+    let conv_sql = format!(
+        "SELECT COUNT(DISTINCT c.id)
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE {where_sql}{dedupe}",
+        where_sql = filters.where_sql,
+        dedupe = filters.dedupe_sql,
+    );
+    let conversations: i64 = conn
+        .query_row(
+            &conv_sql,
+            params_from_iter(filters.params.iter().cloned()),
+            |row| row.get(0),
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+
     let size_expr = if column_exists(conn, "attachments", "size_bytes")? {
         "MAX(a.size_bytes)"
     } else {
@@ -426,6 +444,7 @@ pub fn export_message_count(
         ok: true,
         query: opts.query.to_string(),
         messages: messages.max(0) as u64,
+        conversations: conversations.max(0) as u64,
         attachments: attachments.max(0) as u64,
         total_bytes: total_bytes.max(0) as u64,
     })
