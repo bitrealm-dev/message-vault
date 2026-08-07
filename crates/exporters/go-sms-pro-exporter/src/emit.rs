@@ -29,7 +29,7 @@ use message_ir::{
     parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::OwnerPhoneSet;
+use phone::OwnerHandleSet;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -109,10 +109,10 @@ fn chat_id_individual(digits: &str) -> String {
     guarded_phone(digits)
 }
 
-fn chat_id_group(participant_digits: &[String], owners: &OwnerPhoneSet) -> (String, String) {
+fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (String, String) {
     let mut others: Vec<String> = participant_digits
         .iter()
-        .filter(|d| !d.is_empty() && !owners.is_owner(d))
+        .filter(|d| !d.is_empty() && !owners.is_owner(d, HandleType::Phone))
         .cloned()
         .collect();
     others.sort();
@@ -282,7 +282,7 @@ fn add_pdu_message(
     conversations: &mut BTreeMap<String, PendingConversation>,
     parsed: ParsedPdu,
     attachments: Vec<PendingAttachment>,
-    owners: &OwnerPhoneSet,
+    owners: &OwnerHandleSet,
     report: &mut ExportReport,
     skips: &mut SkipDetails,
 ) {
@@ -303,7 +303,7 @@ fn add_pdu_message(
         let peers: Vec<String> = parsed
             .participants
             .iter()
-            .filter(|p| !p.is_empty() && !owners.is_owner(p))
+            .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
             .map(|d| guarded_phone(d))
             .collect();
         vec![(id, true, Some(title), peers)]
@@ -311,7 +311,7 @@ fn add_pdu_message(
         let others: Vec<_> = parsed
             .participants
             .iter()
-            .filter(|p| !p.is_empty() && !owners.is_owner(p))
+            .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
             .cloned()
             .collect();
         if others.is_empty() {
@@ -710,8 +710,12 @@ pub(crate) fn convert_export(
         );
     }
 
-    let owners = OwnerPhoneSet::new(owner_phones)?;
-    let owner_handle = guarded_phone(&owners.primary_digits);
+    let owners = OwnerHandleSet::from_phones(owner_phones)?;
+    let owner_handle = guarded_phone(
+        owners
+            .primary_phone_digit()
+            .context("owner phone has no usable digits")?,
+    );
     let mut report = ExportReport::default();
     let mut skips = SkipDetails::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
@@ -768,7 +772,8 @@ pub(crate) fn convert_export(
 
     for pdu_path in pdu_paths {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        match parse_pdu_file(&pdu_path, &owners.all_digits, &owners.primary_digits) {
+        let all_digits = owners.all_phone_digits();
+        match parse_pdu_file(&pdu_path, &all_digits, owners.primary_phone_digit().unwrap_or("")) {
             Ok(None) => {
                 bump(&mut report, "skipped_unparseable_pdu", 1);
                 if report.errors.len() < 20 {

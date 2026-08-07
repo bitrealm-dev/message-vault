@@ -229,45 +229,22 @@ impl OwnerHandleSet {
             .collect();
         Self::new(&handles)
     }
-}
 
-/// All configured owner phone numbers (normalized digits).
-///
-/// Deprecated: use [`OwnerHandleSet`], which also covers email and username
-/// handles. Kept as a compatibility wrapper for exporters that haven't
-/// migrated yet.
-#[derive(Debug, Clone)]
-#[deprecated(note = "use OwnerHandleSet")]
-pub struct OwnerPhoneSet {
-    pub all_digits: HashSet<String>,
-    pub primary_digits: String,
-    handles: OwnerHandleSet,
-}
-
-#[allow(deprecated)]
-impl OwnerPhoneSet {
-    pub fn new(phones: &[String]) -> Result<Self> {
-        if phones.is_empty() {
-            bail!("owner phone required: pass --owner-phone (or set phones in config)");
-        }
-        let mut all_digits = HashSet::new();
-        for phone in phones {
-            let d = sanitize_number(phone)
-                .with_context(|| format!("owner phone has no usable digits: {phone}"))?;
-            all_digits.insert(d);
-        }
-        let primary_digits =
-            sanitize_number(&phones[0]).context("owner phone has no usable digits")?;
-        let handles = OwnerHandleSet::from_phones(phones)?;
-        Ok(Self {
-            all_digits,
-            primary_digits,
-            handles,
-        })
+    /// All phone digits in the set (sanitized). Other handle types are skipped.
+    pub fn all_phone_digits(&self) -> HashSet<String> {
+        self.handles
+            .iter()
+            .filter_map(|(v, t)| (*t == HandleType::Phone).then(|| v.clone()))
+            .collect()
     }
 
-    pub fn is_owner(&self, digits: &str) -> bool {
-        self.handles.is_owner(digits, HandleType::Phone)
+    /// First phone digit (sanitized), for callers that need a single
+    /// representative owner phone (e.g. guarded E.164 normalization).
+    pub fn primary_phone_digit(&self) -> Option<&str> {
+        self.handles
+            .iter()
+            .find(|(_, t)| *t == HandleType::Phone)
+            .map(|(v, _)| v.as_str())
     }
 }
 
@@ -432,16 +409,5 @@ mod tests {
         // a +0… message handle matches through the same digit stripping.
         assert!(owners.is_owner("+02079460000", HandleType::Phone));
         assert!(!owners.is_owner("+02079469999", HandleType::Phone));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_owner_phone_set_still_works() {
-        let owners = OwnerPhoneSet::new(&["(555) 555-0100".into()]).unwrap();
-        assert_eq!(owners.primary_digits, "5555550100");
-        assert!(owners.all_digits.contains("5555550100"));
-        assert!(owners.is_owner("+15555550100"));
-        assert!(!owners.is_owner("5555550199"));
-        assert!(OwnerPhoneSet::new(&[]).is_err());
     }
 }
