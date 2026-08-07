@@ -17,10 +17,10 @@ use message_ir::{
     SCHEMA_VERSION,
     owner_sender,
 };
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
-use phone::OwnerPhoneSet;
+use phone::OwnerHandleSet;
 use sbr::{
     AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file,
 };
@@ -415,9 +415,12 @@ pub fn read_sbr_documents(
     let (owners, owner_handle) = if owner_phones.is_empty() {
         (HashSet::new(), None)
     } else {
-        let owners = OwnerPhoneSet::new(&owner_phones)?;
-        let guarded = phone::normalize_guarded(&owners.primary_digits, phone::PhoneRegion::Usa);
-        (owners.all_digits, Some(guarded.normalized))
+        let owners = OwnerHandleSet::from_phones(&owner_phones)?;
+        let primary = owners
+            .primary_phone_digit()
+            .context("owner phone has no usable digits")?;
+        let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
+        (owners.all_phone_digits(), Some(guarded.normalized))
     };
     if options.copy_attachments {
         if let Some(dir) = options.attachments_dir {

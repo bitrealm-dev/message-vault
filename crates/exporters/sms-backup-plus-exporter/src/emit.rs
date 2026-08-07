@@ -5,7 +5,7 @@ use crate::contacts::{apply_name_mapping, enrich_display_names, fill_unknown_pho
 use crate::flat_eml::{MailHeaders, is_archive_eml, is_flat_sms_eml, parse_flat_eml_mail};
 use crate::identity::{chat_id_for, cover_identity, timestamp_ms};
 use crate::types::{AttachmentBlob, ParsedMessage};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::{DateRange, format_local_ts, stable_guid};
 use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, emit_log};
@@ -31,7 +31,7 @@ use message_ir::{
     parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use phone::OwnerPhoneSet;
+use phone::OwnerHandleSet;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -657,8 +657,11 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     cancel: Option<&CancelFlag>,
     log: Option<&LogSink>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    let owners = OwnerPhoneSet::new(owner_phones)?;
-    let guarded = phone::normalize_guarded(&owners.primary_digits, phone::PhoneRegion::Usa);
+    let owners = OwnerHandleSet::from_phones(owner_phones)?;
+    let primary = owners
+        .primary_phone_digit()
+        .context("owner phone has no usable digits")?;
+    let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
     let owner_handle = guarded.normalized;
     let owner_emails_lc: Vec<String> = owner_emails
         .iter()
@@ -674,7 +677,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     vlog(
         verbose,
         log,
-        format!("owner phones: {}", owners.all_digits.len()),
+        format!("owner phones: {}", owners.all_phone_digits().len()),
     );
     vlog(
         verbose,
@@ -711,6 +714,8 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
 
     message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
 
+    let owner_all_digits = owners.all_phone_digits();
+
     // Parallel: read + MIME parse + message build. Serial: attachment write + dedupe merge.
     let outcomes: Vec<ParsedEmlKind> = eml_paths
         .par_iter()
@@ -719,7 +724,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
             parse_one_eml(
                 eml_path,
                 rel_path,
-                &owners.all_digits,
+                &owner_all_digits,
                 &owner_emails_lc,
                 contacts,
                 name_mapping,
