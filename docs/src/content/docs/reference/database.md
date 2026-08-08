@@ -138,8 +138,8 @@ as trashed without deleting underlying rows.
 | Import scratch space | `staging_*` |
 
 Baseline table definitions live in
-[`schema/sql/`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/schema/sql/).
-Rust loads them from [`src/db/schema.rs`](https://github.com/bitrealm-dev/message-vault-rs/blob/main/src/db/schema.rs).
+[`schema/sql/`](https://github.com/bitrealm-dev/message-vault/blob/main/schema/sql/).
+Rust loads them from [`src/db/schema.rs`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/vault/server/src/db/schema.rs).
 After editing the SQL files, run `node scripts/sync-vault-schema.mjs` so the web
 app’s generated copy stays in sync.
 

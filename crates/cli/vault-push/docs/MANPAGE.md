@@ -1,6 +1,6 @@
 # vault-push
 
-Push a Message Vault **JSONL** export folder into a running Message Vault (`message-vault-rs serve`).
+Push a Message Vault **JSONL** export folder into a running Message Vault (`message-vault-server serve`).
 
 ## Synopsis
 
@@ -20,7 +20,7 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 | Flag | Env | Meaning |
 |------|-----|---------|
-| `--url` | `VAULT_URL` | Base URL of `message-vault-rs serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`), **not** the Next.js UI on `:3000` |
+| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`), **not** the Next.js UI on `:3000` |
 | `--key` | `VAULT_KEY` | Per-account Import API token (Vault key) |
 | `--username` | | Optional; account is resolved from the vault key |
 | `--input` | | JSONL export directory |
@@ -37,4 +37,4 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 ## See also
 
-The Message Exporters desktop app **Vault** tab, or the [Import to Message Vault](https://bitrealm-dev.github.io/message-vault-io/work-with-exports/import-to-vault/) user guide.
+The Message Exporters desktop app **Vault** tab, or the [Import to Message Vault](https://bitrealm-dev.github.io/message-vault/work-with-exports/import-to-vault/) user guide.
