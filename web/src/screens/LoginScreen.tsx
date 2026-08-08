@@ -56,7 +56,7 @@ export default function LoginScreen({
         token: string;
         account_id: string;
       }>("/v1/auth/login", { username, password });
-      login(serverUrl, res.token, res.account_id);
+      login(serverUrl, res.token, res.account_id, false);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -94,8 +94,9 @@ export default function LoginScreen({
               const res = await apiClient.post<{
                 token: string;
                 account_id: string;
+                new_account: boolean;
               }>("/v1/auth/hanko/session", { hanko_jwt: jwt });
-              login(serverUrl, res.token, res.account_id);
+              login(serverUrl, res.token, res.account_id, res.new_account);
             } catch (e) {
               setError(`Hanko login failed: ${e}`);
             }
