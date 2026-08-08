@@ -2,7 +2,7 @@
 
 For local setup and build, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-End-user documentation lives in the [Starlight source](../src/content/docs/) (start with [What’s inside an export](../src/content/docs/understand-output/export-structure.md)). Use the [maintainer index](README.md) to find architecture, GUI, exporter, and format documentation.
+End-user documentation lives in the [Starlight source](../src/content/docs/) (start with [Export structure](../src/content/docs/reference/export-structure.md)). Use the [maintainer index](README.md) to find architecture, GUI, exporter, and format documentation.
 
 ## Cutting a release
 
@@ -19,11 +19,11 @@ The release version is **`crates/message-vault-io-gui/Cargo.toml` → `version`*
 ### Steps
 
 1. Bump `version` in [`crates/message-vault-io-gui/Cargo.toml`](../../crates/message-vault-io-gui/Cargo.toml) and merge whatever should ship onto `main` (or the branch you intend to build; the workflow checks out the branch you select when you run it).
-2. Open [Actions → Release](https://github.com/bitrealm-dev/message-vault-io/actions/workflows/release.yml).
+2. Open [Actions → Release](https://github.com/bitrealm-dev/message-vault/actions/workflows/release.yml).
 3. Click **Run workflow**.
 4. Choose the branch to build from (usually `main`).
 5. Wait for all three OS jobs (Linux, Windows, macOS) to finish and for the release job to create the GitHub Release.
-6. Confirm the release at [Releases](https://github.com/bitrealm-dev/message-vault-io/releases). The tag will be `v` plus the Cargo.toml version (`0.4.0` → `v0.4.0`). The workflow fills release notes (Highlights, Upgrade notes, Archives, Layout) from [`.github/workflows/release.yml`](../../.github/workflows/release.yml); edit that `--notes` block when the next cut needs different copy.
+6. Confirm the release at [Releases](https://github.com/bitrealm-dev/message-vault/releases). The tag will be `v` plus the Cargo.toml version (`0.4.0` → `v0.4.0`). The workflow fills release notes (Highlights, Upgrade notes, Archives, Layout) from [`.github/workflows/release.yml`](../../.github/workflows/release.yml); edit that `--notes` block when the next cut needs different copy.
 
 You need write access to the repository (to run workflows that create releases and tags).
 
@@ -41,7 +41,7 @@ Layout (same on every platform):
 
 **Root**
 
-- `message-vault-io` (`.exe` on Windows) — runs exporters, Contacts, Format, and Vault as **libraries** (linked into the GUI; no Rust exporter CLIs in this archive)
+- `message-vault` (`.exe` on Windows) — runs exporters, Contacts, Format, and Vault as **libraries** (linked into the GUI; no Rust exporter CLIs in this archive)
 
 **`lib/` — media tools**
 
@@ -89,7 +89,7 @@ User-facing docs use [Astro Starlight](https://starlight.astro.build/) under [`d
 1. Repo **Settings → Pages**.
 2. **Build and deployment → Source** → **GitHub Actions** (not “Deploy from a branch”).
 3. Push to `main` or run the **Docs** workflow under **Actions**.
-4. Site URL: `https://bitrealm-dev.github.io/message-vault-io/`.
+4. Site URL: `https://bitrealm.dev/vault/`.
 
 Local preview:
 

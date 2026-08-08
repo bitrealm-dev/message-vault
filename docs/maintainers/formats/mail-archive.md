@@ -2,7 +2,7 @@
 
 Design for a human-viewable export: **one folder per conversation**, **one `.eml` per message**, with structured `X-ME-*` headers for machine fidelity. Intended as an archive / interchange path before vault exists. Mail clients can open individual messages; translators can recover SMS, group MMS, and (later) iMessage semantics without relying on CSV.
 
-**Status:** Writer in [`message-mail`](../../../crates/message/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](../../../crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](../../src/content/docs/understand-output/export-structure.md) ([`message-ir`](../../../crates/message/ir/)) → output format (see [message-ir architecture](../architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](../../src/content/docs/understand-output/csv-columns.md).
+**Status:** Writer in [`message-mail`](../../../crates/message/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](../../../crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](../../src/content/docs/reference/export-structure.md) ([`message-ir`](../../../crates/message/ir/)) → output format (see [message-ir architecture](../architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](../../src/content/docs/reference/csv-columns.md).
 
 ## Goals
 
@@ -91,7 +91,7 @@ Do **not** use the `X-smssync-*` header namespace. This format is not Plus-compa
 ### Message-ID
 
 - Prefer source guid when present (iMessage): `<{apple-guid}@imessage.local>`.
-- Otherwise: `<{sha256-fingerprint}@message-vault-io.local>` matching CSV `guid` construction where possible.
+- Otherwise: `<{sha256-fingerprint}@message-vault.local>` matching CSV `guid` construction where possible.
 - Must be stable across re-exports of the same logical message.
 
 ### From / To / Cc mapping
@@ -343,7 +343,7 @@ Normal sticker sends: image MIME part + `X-ME-Attachment-Meta` (`is_sticker`, `s
 
 ## Related docs
 
-- [CSV output conventions](../../src/content/docs/understand-output/csv-columns.md)
+- [CSV output conventions](../../src/content/docs/reference/csv-columns.md)
 - [Exporter capability matrix](../exporter-matrix.md)
 - [SMS Backup+ EML input notes](../../../crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md)
 - [SMS Backup & Restore import mapping](../../../crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md)

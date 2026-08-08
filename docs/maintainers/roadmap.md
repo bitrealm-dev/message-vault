@@ -11,7 +11,7 @@ The initial release should support this complete path:
    configured).
 2. Copy the account Import API token from Settings → Access.
 3. Import messages and attachments with
-   [Message Exporters](https://bitrealm-dev.github.io/message-exporters/)
+   the desktop app
    (`vault-push` / the Vault tab), or with the vault CLI `import` against a
    JSONL directory. Optionally pass a local VCF or contacts CSV to
    `vault-push`, `import --contacts`, or `import-contacts` so names can be
@@ -118,14 +118,14 @@ harden.
 The VPS stack should contain:
 
 - Caddy for TLS and routing;
-- the Message Vault release container, with the Next.js UI on port 3000 and
+- the Message Vault release container, with the web UI on port 3000 and
   Rust import API on port 8080;
 - the Hanko public API and a one-shot Hanko migration job;
 - PostgreSQL for Hanko;
 - an external SMTP provider for passwordless email delivery.
 
 Use separate hostnames such as `vault.example.com`, `auth.example.com`, and
-`import.example.com`. Bundle Hanko Elements into the Next.js application.
+`import.example.com`. Bundle Hanko Elements into the web application.
 Keep the import API's per-account bearer tokens independent from Hanko browser
 sessions.
 

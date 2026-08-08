@@ -85,7 +85,7 @@ Format tab keeps its own output format under `[format]`. Older files with
 
 ## Appearance (four-seed theme)
 
-Matches message-vault-rs Fastmail-style seeds. Rust derives surfaces (no CSS
+Matches the vault server Fastmail-style search seeds. Rust derives surfaces (no CSS
 `color-mix`); Slint reads them from `global Theme` in `ui/theme.slint`.
 
 | Seed (preset) | Default Graphite Blue |
@@ -281,7 +281,7 @@ GUI collects fields explicitly.
 no-op for files; the control is still shown.
 
 Extract Messages always packages as **JSONL**. Schema v3 applies to every
-exporter. See [What’s inside an export](../src/content/docs/understand-output/export-structure.md)
+exporter. See [What’s inside an export](../src/content/docs/reference/export-structure.md)
 and the [message-ir architecture](architecture/message-ir.md). Attachment modes
 and obfuscate apply to every output format via `FormatSink` (including Format-tab
 re-exports).
@@ -321,7 +321,7 @@ Product: [SMS Backup & Restore](https://www.synctech.com.au/sms-backup-restore/)
 | Attachments | enum | no | `--media-mode` (+ compress flags; same as GO SMS Pro); all formats |
 
 Encrypted ZIP backups must be unlocked/extracted before selecting input. The
-exporter builds the [shared conversation structure](../src/content/docs/understand-output/export-structure.md),
+exporter builds the [shared conversation structure](../src/content/docs/reference/export-structure.md),
 then writes JSONL (or the Format-tab target). Media modes and obfuscate apply
 through FormatSink for every format.
 
@@ -412,7 +412,7 @@ temp dir under Output.
 ### iPhone backup — `imessage-ir-exporter`
 
 Form link label: **imessage-ir-exporter** →
-[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter).
+[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault/tree/main/crates/exporters/imessage-ir-exporter).
 Dropdown stays **iPhone backup**.
 
 GUI defaults: JSONL for Extract Messages, `--copy-method clone` (or `disabled`),
