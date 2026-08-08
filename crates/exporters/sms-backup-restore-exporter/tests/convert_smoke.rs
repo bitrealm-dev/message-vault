@@ -232,7 +232,7 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
 
-    let (_report, _) = convert_export(
+    let (report, _) = convert_export(
         &fixture,
         tmp.path(),
         &["+15555550100".into()],
@@ -266,7 +266,10 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     assert!(msg["source"].get("contact_name").is_none());
     assert!(msg["source"]["android_type"].is_number() || msg["source"]["android_type"].is_null());
     assert!(msg["service"].as_str() == Some("sms"));
-    // Outgoing rows carry owner identity.
+    // Outgoing rows carry owner identity. The fixture includes an SMS type=2
+    // (sent) and an MMS where the owner is a recipient; both must share the same
+    // individual conversation after owner-filtered peer resolution.
+    assert_eq!(report.conversations, 1, "MMS must not fragment into a group chat");
     let has_outgoing = doc["messages"].as_array().unwrap().iter().any(|m| {
         m["direction"] == "outgoing" && m["sender_handle"].as_str() == Some("+15555550100")
     });
