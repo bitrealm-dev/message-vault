@@ -71,4 +71,4 @@ The detector ignores `attachments/` and legacy `*.meta.json` files. It rejects a
 
 # SEE ALSO
 
-- [Convert user guide](https://bitrealm-dev.github.io/message-vault-io/work-with-exports/convert-format/)
+- [Convert user guide](/use-the-desktop-app/convert-formats/)

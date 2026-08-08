@@ -111,6 +111,6 @@ Experimental in the GUI. Attachment→message pairing in archives is heuristic. 
 
 # SEE ALSO
 
-- [SMS Backup+ user guide](https://bitrealm-dev.github.io/message-vault-io/other-app-exports/sms-backup-plus/)
+- [SMS Backup+ user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/sms-backup-plus/)
 - [Input EML format](FORMAT.md)
 - [Import mapping](IMPORT_MAPPING.md)

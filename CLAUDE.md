@@ -148,6 +148,11 @@ A single workflow (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 - **Always**: `cargo build --workspace && cargo test --workspace` on ubuntu-latest
 - **On tag `v*`**: additionally builds and pushes Docker image (`mbeisser1/message-vault`) and builds Tauri desktop app for Linux/Windows/macOS, creating a GitHub Release
 
+## Git workflow
+
+- Use `gh` for all GitHub remote operations — `gh pr create`, `gh pr view`, `gh auth setup-git`
+- Before `git push`, run `gh auth setup-git` if the remote is HTTPS; the environment has no credential helper but `gh` is authenticated with SSH
+
 ## Test conventions
 
 - Exporters have smoke tests at `crates/exporters/*/tests/convert_smoke.rs` using committed fixtures under `crates/*/tests/fixtures/`.

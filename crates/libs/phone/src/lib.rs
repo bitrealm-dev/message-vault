@@ -411,6 +411,11 @@ mod tests {
         // A phone-shaped handle is not treated as an email or username handle.
         assert!(!owners.is_owner("(555) 555-0100", HandleType::Email));
         assert!(!owners.is_owner("Person@Example.COM", HandleType::Username));
+        // all_phone_digits returns sanitized (digits-only) form so callers
+        // that compare against sanitize_number output match consistently.
+        let digits = owners.all_phone_digits();
+        assert!(digits.contains("5555550100"));
+        assert!(!digits.contains("+15555550100"), "must be digits-only, not E.164");
     }
 
     #[test]
