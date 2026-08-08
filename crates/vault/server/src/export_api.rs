@@ -509,7 +509,7 @@ fn build_message_filters(
                 params.push(id.into());
             }
             Err(_) => {
-                where_parts.push("c.chat_identifier = ?".into());
+                where_parts.push("hc.raw = ?".into());
                 params.push(conv.clone().into());
             }
         }
@@ -982,7 +982,7 @@ fn _ct_used(ct: ConversationTypeFilter) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use rusqlite::{Connection, params};
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -993,13 +993,22 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO conversations (id, account_id, chat_identifier, service, conversation_type, source_file)
-             VALUES (1, 'a1', '+1555', 'sms', 'individual', 'backup-a.jsonl'),
-                    (2, 'a1', '+1666', 'sms', 'individual', 'backup-a.jsonl')",
-            [],
-        )
-        .unwrap();
+        // Create handles and conversations using chat_handle_id (FK to handles).
+        for (cid, phone) in [(1, "+1555"), (2, "+1666")] {
+            conn.execute(
+                "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+                 VALUES ('a1', ?1, ?1, 'phone', 'sms')",
+                params![phone],
+            )
+            .unwrap();
+            let handle_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO conversations (id, account_id, chat_handle_id, service, conversation_type, source_file)
+                 VALUES (?1, 'a1', ?2, 'sms', 'individual', 'backup-a.jsonl')",
+                params![cid, handle_id],
+            )
+            .unwrap();
+        }
         conn.execute(
             "INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order, body)
              VALUES (1, 1, 'a1', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),

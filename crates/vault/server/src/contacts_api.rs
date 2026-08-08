@@ -38,14 +38,14 @@ pub struct ContactDetail {
 }
 
 /// A contact is linked to a conversation when one of its handles is either
-/// the conversation's `chat_identifier` or a participant handle in it.
+/// the conversation's chat handle or a participant handle in it.
 fn involves_contact_sql() -> &'static str {
     "EXISTS (
        SELECT 1 FROM contact_handles ch
        WHERE ch.account_id = c.account_id
          AND ch.contact_id = ?
          AND (
-           ch.handle = c.chat_identifier
+           ch.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
            OR EXISTS (
              SELECT 1 FROM participants p
              WHERE p.conversation_id = c.id AND p.handle = ch.handle
@@ -73,7 +73,7 @@ pub fn list_contacts(
                          SELECT 1 FROM contact_handles ch2
                          WHERE ch2.account_id = c.account_id AND ch2.contact_id = ct.id
                            AND (
-                             ch2.handle = c.chat_identifier
+                             ch2.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
                              OR EXISTS (
                                SELECT 1 FROM participants p
                                WHERE p.conversation_id = c.id AND p.handle = ch2.handle
@@ -129,7 +129,7 @@ pub fn get_contact_detail(
             "SELECT ch.handle,
                     (SELECT c2.service FROM conversations c2
                      WHERE c2.account_id = ch.account_id
-                       AND (c2.chat_identifier = ch.handle
+                       AND ((SELECT h.raw FROM handles h WHERE h.id = c2.chat_handle_id) = ch.handle
                             OR EXISTS (
                               SELECT 1 FROM participants p2
                               WHERE p2.conversation_id = c2.id AND p2.handle = ch.handle
@@ -140,7 +140,7 @@ pub fn get_contact_detail(
                     COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN m.id END)
              FROM contact_handles ch
              LEFT JOIN conversations c ON c.account_id = ch.account_id
-               AND (c.chat_identifier = ch.handle
+               AND ((SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id) = ch.handle
                     OR EXISTS (
                       SELECT 1 FROM participants p
                       WHERE p.conversation_id = c.id AND p.handle = ch.handle
@@ -188,7 +188,7 @@ pub fn get_contact_detail(
                )
                AND NOT EXISTS (
                  SELECT 1 FROM trashed_handles th
-                 WHERE th.account_id = c.account_id AND th.handle = c.chat_identifier
+                 WHERE th.account_id = c.account_id AND th.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
                )",
             involves_contact_sql = involves_contact_sql(),
         ))
