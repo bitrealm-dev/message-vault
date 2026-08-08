@@ -230,19 +230,29 @@ impl OwnerHandleSet {
         Self::new(&handles)
     }
 
-    /// All phone digits in the set (sanitized). Other handle types are skipped.
+    /// All sanitized phone digits in the set. Other handle types are skipped.
+    ///
+    /// The values are raw digit strings (no `+` prefix, no formatting) so they
+    /// compare correctly against `sanitize_number` output in callers such as
+    /// `sbr::parse_mms`.
     pub fn all_phone_digits(&self) -> HashSet<String> {
         self.handles
             .iter()
             .filter_map(|(v, t)| {
-                (*t == HandleType::Phone)
-                    .then(|| sanitize_number(v))
-                    .flatten()
+                if *t == HandleType::Phone {
+                    // The stored value is E.164-normalised; re-extract sanitized
+                    // digits for compatibility with consumers that compare against
+                    // `sanitize_number` output.
+                    let digits = sanitize_number(v).unwrap_or_else(|| v.clone());
+                    Some(digits)
+                } else {
+                    None
+                }
             })
             .collect()
     }
 
-    /// First phone digit (sanitized), for callers that need a single
+    /// First sanitized phone digit, for callers that need a single
     /// representative owner phone (e.g. guarded E.164 normalization).
     pub fn primary_phone_digit(&self) -> Option<&str> {
         self.handles
