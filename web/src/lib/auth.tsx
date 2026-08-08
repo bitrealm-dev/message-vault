@@ -14,18 +14,14 @@ interface AuthState {
   token: string | null;
   accountId: string | null;
   isAuthenticated: boolean;
-  needsOnboarding: boolean;
-}
-
-interface Profile {
-  name: string;
-  handles: { handle: string; service: string }[];
+  needsOnboarding: boolean;  // in-memory only, never persisted
 }
 
 interface AuthContextValue extends AuthState {
-  login: (serverUrl: string, token: string, accountId: string) => void;
+  login: (serverUrl: string, token: string, accountId: string, newAccount: boolean) => void;
   logout: () => void;
   setServer: (url: string) => void;
+  finishOnboarding: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -50,7 +46,6 @@ function persistState(state: AuthState) {
         serverUrl: state.serverUrl,
         token: state.token,
         accountId: state.accountId,
-        needsOnboarding: state.needsOnboarding,
       }),
     );
   } catch {
@@ -78,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token: persisted.token,
         accountId: persisted.accountId,
         isAuthenticated: true,
-        needsOnboarding: persisted.needsOnboarding ?? false,
+        needsOnboarding: false,  // persisted tokens only exist after onboarding
       };
     }
     return {
@@ -100,25 +95,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setBaseUrl(state.serverUrl);
         setToken(state.token);
         await apiClient.get("/v1/auth/check");
-        if (cancelled) return;
-
-        // Refresh onboarding need from the profile — self-heals a stale flag
-        try {
-          const profile = await apiClient.get<Profile>("/v1/account/profile");
-          if (!cancelled) {
-            const needsOnboarding =
-              !profile.name && (profile.handles?.length ?? 0) === 0;
-            setState((s) => {
-              if (s.needsOnboarding === needsOnboarding) return s;
-              const next: AuthState = { ...s, needsOnboarding };
-              persistState(next);
-              return next;
-            });
-          }
-        } catch {
-          // Profile fetch failed — keep the persisted flag
-        }
-
         if (!cancelled) setRestored(true);
       } catch {
         // Token invalid — clear and show login
@@ -149,36 +125,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(
-    async (serverUrl: string, token: string, accountId: string) => {
+    (serverUrl: string, token: string, accountId: string, newAccount: boolean) => {
       const epoch = ++authEpoch.current;
       setBaseUrl(serverUrl);
       setToken(token);
-
-      // New accounts have no profile yet — flag them for onboarding
-      let needsOnboarding = false;
-      try {
-        const profile = await apiClient.get<Profile>("/v1/account/profile");
-        needsOnboarding =
-          !profile.name && (profile.handles?.length ?? 0) === 0;
-      } catch {
-        // Profile check failed — assume a profile exists so access is never blocked
-      }
-
-      if (authEpoch.current !== epoch) return; // superseded by logout/login
 
       const newState: AuthState = {
         serverUrl,
         token,
         accountId,
         isAuthenticated: true,
-        needsOnboarding,
+        needsOnboarding: newAccount,
       };
-      persistState(newState);
+
+      // Only persist once onboarding is complete
+      if (!newAccount) {
+        persistState(newState);
+      }
+
+      if (authEpoch.current !== epoch) return; // superseded by logout
       setState(newState);
       setRestored(true);
     },
     [],
   );
+
+  const finishOnboarding = useCallback(() => {
+    setState((s) => {
+      const next: AuthState = { ...s, needsOnboarding: false };
+      persistState(next);
+      return next;
+    });
+  }, []);
 
   const logout = useCallback(() => {
     authEpoch.current++;
@@ -194,7 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, setServer }}>
+    <AuthContext.Provider value={{ ...state, login, logout, setServer, finishOnboarding }}>
       {children}
     </AuthContext.Provider>
   );

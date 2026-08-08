@@ -25,10 +25,6 @@ pub struct RegisterRequest {
     pub username: String,
     #[serde(default)]
     pub password: Option<String>,
-    #[serde(default)]
-    pub preferred_name: Option<String>,
-    #[serde(default)]
-    pub phone: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +45,7 @@ pub struct AuthTokenResponse {
     pub token: String,
     pub account_id: String,
     pub username: String,
+    pub new_account: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -122,17 +119,6 @@ pub async fn register_handler(
         Some(hash_password(&password_plain).map_err(|e| ApiError::Internal(e.to_string()))?)
     };
 
-    let preferred_name = req
-        .preferred_name
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let phone: Option<String> = req
-        .phone
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
     let account_id = uuid::Uuid::new_v4().to_string();
 
     let db = state.cfg.paths.db.clone();
@@ -149,20 +135,17 @@ pub async fn register_handler(
             &account_id,
             &username,
             password_hash.as_deref(),
-            preferred_name.as_deref(),
+            None,  // preferred_name (set during onboarding)
             None,  // hanko_user_id
             false, // read_only
         )?;
-
-        if let Some(ref phone) = phone {
-            account_profile::upsert_account_phone(&conn, &account_id, phone)?;
-        }
 
         let token = api_tokens::insert_account_api_token(&conn, &account_id)?;
         Ok(AuthTokenResponse {
             token,
             account_id,
             username,
+            new_account: true,
         })
     })
     .await
@@ -206,6 +189,7 @@ pub async fn login_handler(
             token,
             account_id,
             username,
+            new_account: false,
         })
     })
     .await
@@ -292,10 +276,13 @@ pub async fn hanko_session_handler(
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
 
+        let mut new_account = false;
+
         let account_id =
             match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
                 Some(id) => id,
                 None => {
+                    new_account = true;
                     // Auto-provision a new account
                     let account_id = uuid::Uuid::new_v4().to_string();
                     let username = email
@@ -346,6 +333,7 @@ pub async fn hanko_session_handler(
             token,
             account_id,
             username,
+            new_account,
         })
     })
     .await

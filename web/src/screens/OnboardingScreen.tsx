@@ -10,7 +10,7 @@ interface HandleInput {
 const SERVICES = ["phone", "email", "discord", "instagram", "telegram", "signal"];
 
 export default function OnboardingScreen() {
-  const { login, token, serverUrl, accountId } = useAuth();
+  const { finishOnboarding, logout } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [handles, setHandles] = useState<HandleInput[]>([{ handle: "", service: "phone" }]);
   const [loading, setLoading] = useState(false);
@@ -39,8 +39,7 @@ export default function OnboardingScreen() {
         name: displayName.trim(),
         handles: handles.filter((h) => h.handle.trim()),
       });
-      // Mark onboarding complete — user is now fully authenticated
-      login(serverUrl, token!, accountId!);
+      finishOnboarding();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -104,6 +103,21 @@ export default function OnboardingScreen() {
         <button onClick={handleSubmit} disabled={!canSubmit || loading}
           style={{ width: "100%", marginTop: "1.5rem", padding: "0.75rem", fontSize: "1rem", fontWeight: 600 }}>
           {loading ? "Saving…" : "Continue to Vault"}
+        </button>
+        <button
+          onClick={logout}
+          style={{
+            width: "100%",
+            padding: "0.5rem",
+            fontSize: "0.875rem",
+            marginTop: "0.5rem",
+            background: "transparent",
+            border: "none",
+            color: "#9ca3af",
+            cursor: "pointer",
+          }}
+        >
+          Sign out
         </button>
       </div>
     </div>

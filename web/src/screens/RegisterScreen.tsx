@@ -14,8 +14,6 @@ export default function RegisterScreen({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [noPassword, setNoPassword] = useState(false);
-  const [preferredName, setPreferredName] = useState("");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,10 +39,8 @@ export default function RegisterScreen({
       }>("/v1/auth/register", {
         username: username.trim(),
         password: noPassword ? "" : password,
-        preferred_name: preferredName.trim() || null,
-        phone: phone.trim() || null,
       });
-      login(serverUrl, res.token, res.account_id);
+      login(serverUrl, res.token, res.account_id, true);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -98,44 +94,6 @@ export default function RegisterScreen({
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           placeholder="alphanumeric, _, -, ."
-          style={inputStyle}
-        />
-
-        <label
-          style={{
-            fontSize: "0.875rem",
-            fontWeight: 500,
-            display: "block",
-            marginBottom: "0.25rem",
-            marginTop: "0.75rem",
-          }}
-        >
-          Display Name
-        </label>
-        <input
-          type="text"
-          value={preferredName}
-          onChange={(e) => setPreferredName(e.target.value)}
-          placeholder="Optional"
-          style={inputStyle}
-        />
-
-        <label
-          style={{
-            fontSize: "0.875rem",
-            fontWeight: 500,
-            display: "block",
-            marginBottom: "0.25rem",
-            marginTop: "0.75rem",
-          }}
-        >
-          Phone
-        </label>
-        <input
-          type="text"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="+15555550100"
           style={inputStyle}
         />
 

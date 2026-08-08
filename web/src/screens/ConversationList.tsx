@@ -7,10 +7,12 @@ export default function ConversationList({
   selectedId,
   onSelect,
   query,
+  onNavigate,
 }: {
   selectedId: string | null;
   onSelect: (conversation: Conversation) => void;
   query: string;
+  onNavigate?: (view: string) => void;
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +33,25 @@ export default function ConversationList({
   }
 
   if (conversations.length === 0) {
-    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>No conversations</div>;
+    return (
+      <div style={{ padding: "1.5rem 1rem", fontSize: "0.813rem", color: "#9ca3af", textAlign: "center" }}>
+        <p style={{ margin: "0 0 0.5rem", fontWeight: 600, color: "#6b7280" }}>No messages yet</p>
+        <p style={{ margin: "0 0 1rem" }}>Import your first messages to get started.</p>
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate("import")}
+            style={{
+              padding: "0.5rem 1.25rem",
+              fontSize: "0.813rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Import messages
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (

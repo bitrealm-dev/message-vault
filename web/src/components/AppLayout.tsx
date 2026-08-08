@@ -48,6 +48,7 @@ export default function AppLayout() {
           selectedId={selectedConversation?.id || null}
           onSelect={(c) => { setSelectedConversation(c); setActiveView("conversations"); }}
           query={activeView === "trash" ? "is:trash" : searchQuery}
+          onNavigate={setActiveView}
         />
       )
     ) : activeView === "contacts" ? (
