@@ -106,7 +106,7 @@ Running both `compose-dev.yml` and `compose-release.yml` at the same time will c
 
 **Symptom**: `POST /v1/import` returns an error about an unexpected `schema_version`.
 
-**Fix**: the import API expects message-ir schema version 3. If the export was made with an older version of the desktop app, re-export it with the current version. See the [message-ir reference](/reference/message-ir/).
+**Fix**: the import API expects JSONL schema version 3. If the export was made with an older version of the desktop app, re-export it with the current version. See the [export structure reference](/reference/export-structure/).
 
 #### "Input directory has no .jsonl files"
 
