@@ -2,7 +2,7 @@
 
 How SyncTech `<sms>` and `<mms>` elements become `ConversationDocument` values, including validation, skipped records, and the source-specific data retained for later output.
 
-Input structure and attribute meanings: [INPUT_FORMAT.md](INPUT_FORMAT.md). Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/understand-output/csv-columns.md).
+Input structure and attribute meanings: [INPUT_FORMAT.md](INPUT_FORMAT.md). Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md).
 
 ## Pipeline
 
