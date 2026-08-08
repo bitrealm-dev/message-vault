@@ -93,4 +93,4 @@ This exporter uses the GPL-3.0-or-later `imessage-database` implementation. Andr
 
 # SEE ALSO
 
-- [Apple Messages user guide](https://bitrealm-dev.github.io/message-vault-io/apple/text-messages/)
+- [Apple Messages user guide](https://bitrealm-dev.github.io/message-vault/apple/text-messages/)
