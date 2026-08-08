@@ -232,7 +232,7 @@ under the export/staging tree. Reprocessing retries the asset upload; a successf
 digest on the vault fills the gap. It cannot repair attachments that are missing
 from disk, or media omitted by skip-attachments / text-only import.
 
-End-user write-up: [Import to Message Vault](../src/content/docs/work-with-exports/import-to-vault.mdx).
+End-user write-up: [Import to Message Vault](../src/content/docs/use-the-desktop-app/import-into-vault.md).
 
 Persists under `[vault]` in `export.ini`. See
 [`crates/vault-push/docs/MANPAGE.md`](../../crates/vault-push/docs/MANPAGE.md).
@@ -473,7 +473,7 @@ Tabs: Extract Messages | Format | Vault | Contacts | Log
   Contacts → contacts file, USA checkbox → Check / Update / Cancel → log
 ```
 
-End-user walkthrough: [First export with the app](../src/content/docs/get-started/first-export.mdx).
+End-user walkthrough: [First export with the app](../src/content/docs/use-the-desktop-app/extract-messages.md).
 
 ## Known gaps
 

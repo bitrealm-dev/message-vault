@@ -1,6 +1,6 @@
 # Common message (schema / JSON / JSONL)
 
-**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [What’s inside an export](../../src/content/docs/understand-output/export-structure.md).
+**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [What’s inside an export](../../src/content/docs/reference/export-structure.md).
 
 Three crates:
 
@@ -147,11 +147,11 @@ After `normalize_document_for_compare`:
 
 **Not required:** filename stem / pretty-print identity, packaging suffix in the JSON body, embedding attachment bytes in JSON. EML `X-ME-Attachment-Meta` currently omits on-disk `path` (bytes may still round-trip in memory for re-export).
 
-CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](../../src/content/docs/understand-output/csv-columns.md).
+CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](../../src/content/docs/reference/csv-columns.md).
 
 ## Related
 
 - [Mail archive format](../formats/mail-archive.md) — EML/MBOX packaging
 - [SMS Backup & Restore XML output](../formats/sms-backup-restore-xml.md) — SyncTech `smses.xml` output
-- [CSV columns](../../src/content/docs/understand-output/csv-columns.md) — user-facing CSV conventions
+- [CSV columns](../../src/content/docs/reference/csv-columns.md) — user-facing CSV conventions
 - [Exporter capability matrix](../exporter-matrix.md)

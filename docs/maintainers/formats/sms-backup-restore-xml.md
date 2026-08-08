@@ -39,5 +39,5 @@ Exporters use `FormatSink::open` → `write_document` per conversation → `fini
 ## Related
 
 - [Message-ir architecture](../architecture/message-ir.md) — shared model and projectors
-- [What’s inside an export](../../src/content/docs/understand-output/export-structure.md) — end-user workflow
+- [What’s inside an export](../../src/content/docs/reference/export-structure.md) — end-user workflow
 - [SMS Backup & Restore import mapping](../../../crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md) — XML source → shared model

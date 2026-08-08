@@ -2,7 +2,7 @@
 
 Release builds ship **unsigned** until the GitHub repository secrets below are configured. The [Release workflow](../../.github/workflows/release.yml) already contains gated signing steps: they stay skipped while the certificate secrets are empty, and activate automatically on the next run once secrets exist.
 
-End-user install docs still warn about SmartScreen / Gatekeeper until signing is turned on. After the first signed release, update those warnings in [`install.mdx`](../src/content/docs/get-started/install.mdx) and the workflow release notes.
+End-user install docs still warn about SmartScreen / Gatekeeper until signing is turned on. After the first signed release, update those warnings in [`install.mdx`](../src/content/docs/introduction/install.md) and the workflow release notes.
 
 ## What to obtain
 
