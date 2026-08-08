@@ -47,8 +47,12 @@ pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<Accou
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut phone_stmt =
-        conn.prepare("SELECT phone FROM account_phones WHERE account_id = ?1 ORDER BY phone")?;
+    let mut phone_stmt = conn.prepare(
+        "SELECT h.normalized FROM handles h
+         JOIN account_handles ah ON ah.handle_id = h.id
+         WHERE ah.account_id = ?1 AND h.handle_type = 'phone'
+         ORDER BY h.normalized",
+    )?;
     let phones: Vec<String> = phone_stmt
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -222,7 +226,7 @@ pub fn update_password_hash(
 
 /// Permanently delete an account. All dependent rows are removed by
 /// ON DELETE CASCADE (messages, conversations, contacts, vault_imports,
-/// account_phones/emails/api_tokens).
+/// account_handles/emails/api_tokens).
 pub fn delete_account(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
         .with_context(|| format!("delete account {account_id}"))?;
@@ -273,12 +277,9 @@ pub fn insert_account(
     Ok(())
 }
 
-/// Upsert an account_phones row.
+/// Ensure a phone handle is linked to the account via `account_handles`.
 pub fn upsert_account_phone(conn: &Connection, account_id: &str, phone: &str) -> Result<()> {
-    conn.execute(
-        "INSERT OR IGNORE INTO account_phones (account_id, phone) VALUES (?1, ?2)",
-        params![account_id, phone],
-    )?;
+    link_account_handle(conn, account_id, phone, HandleType::Phone)?;
     Ok(())
 }
 
