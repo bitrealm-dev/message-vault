@@ -2,7 +2,7 @@
 
 How `gosms_sys*.xml` `<SMS>` elements and `I_*.pdu` MMS files become shared `ConversationDocument` values, including validation, skipped records, and retained source data.
 
-Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/understand-output/csv-columns.md) and [`message_ir_format::CSV_HEADERS`](../../../message/ir-format/src/write.rs).
+Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md) and [`message_ir_format::CSV_HEADERS`](../../../libs/ir-format/src/write.rs).
 
 ## Goal / non-goal
 
@@ -11,7 +11,7 @@ Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.
 
 ## Pipeline / output
 
-Source XML/PDU → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../message/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
+Source XML/PDU → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
 
 With `--format csv`: one file per conversation. PDU media under `attachments/` when copying/embedding. Filenames: 1:1 → `+E164.csv`; untitled groups → `group_+A_+B_….csv` (max 10 phones, then a hash). `--format xml` writes a single SyncTech `smses.xml`.
 

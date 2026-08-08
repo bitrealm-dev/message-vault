@@ -1,6 +1,6 @@
 # vault-push
 
-Push a Message Vault **JSONL** export folder into [Message Vault](https://github.com/bitrealm-dev/message-vault-rs).
+Push a Message Vault **JSONL** export folder into a running Message Vault server.
 
 - Library: `vault_push::run`
 - CLI: `vault-push` (`--features cli`)

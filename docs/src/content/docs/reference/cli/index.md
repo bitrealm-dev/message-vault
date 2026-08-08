@@ -12,7 +12,7 @@ Each source has its own command:
 - `whatsapp-exporter` runs `wtsexporter` and converts its result.
 - `go-sms-pro-exporter`, `imazing-exporter`, `openextract-exporter`, and `sms-backup-plus-exporter` handle the limited rescue formats.
 - `message-reexporter` converts an existing Message Exporters output directory.
-- `vault-push` imports a JSONL export folder into a running Message Vault. See the [Import to Message Vault](/work-with-exports/import-to-vault/) user guide.
+- `vault-push` imports a JSONL export folder into a running Message Vault. See the [Import to Message Vault](/use-the-desktop-app/import-into-vault/) user guide.
 
 Most converters accept `--format json|jsonl|csv|eml|mbox|xml`, an input path, an output directory, date filters, media settings, and obfuscation settings. Source-specific commands also require identity, passwords, keys, contacts, or platform values where applicable.
 

@@ -2,7 +2,7 @@
 
 Release builds ship **unsigned** until the GitHub repository secrets below are configured. The [Release workflow](../../.github/workflows/release.yml) already contains gated signing steps: they stay skipped while the certificate secrets are empty, and activate automatically on the next run once secrets exist.
 
-End-user install docs still warn about SmartScreen / Gatekeeper until signing is turned on. After the first signed release, update those warnings in [`install.mdx`](../src/content/docs/get-started/install.mdx) and the workflow release notes.
+End-user install docs still warn about SmartScreen / Gatekeeper until signing is turned on. After the first signed release, update those warnings in [`install.mdx`](../src/content/docs/introduction/install.md) and the workflow release notes.
 
 ## What to obtain
 
@@ -58,7 +58,7 @@ base64 -i DeveloperID.p12 | tr -d '\n' > macos-cert.b64   # macOS
 
 1. **Build** release binaries as today.
 2. **Windows** (`windows-latest` only, when `WINDOWS_CERTIFICATE_BASE64` is non-empty): decode the `.pfx`, locate `signtool.exe`, sign each project `.exe` under `target/release/` with SHA-256 and an RFC 3161 timestamp, then package.
-3. **macOS** (`macos-latest` only, when `MACOS_CERTIFICATE_BASE64` is non-empty): import the `.p12` into a temporary keychain, `codesign --options runtime --timestamp` each project binary, submit a zip of `message-vault-io` to `notarytool --wait`, tear down the keychain, then package.
+3. **macOS** (`macos-latest` only, when `MACOS_CERTIFICATE_BASE64` is non-empty): import the `.p12` into a temporary keychain, `codesign --options runtime --timestamp` each project binary, submit a zip of `message-vault` to `notarytool --wait`, tear down the keychain, then package.
 4. **Package** still runs `scripts/package-release.sh` (GUI at root; `lib/` for ffmpeg/ffprobe; `cli/` for wtsexporter only; `licenses/`). Third-party helpers are not re-signed by these steps.
 
 No further workflow edits are required to enable signing — only the secrets.
@@ -68,4 +68,4 @@ No further workflow edits are required to enable signing — only the secrets.
 After configuring secrets, cut a pre-release version (for example `0.0.0-sign-test`), download the Windows/macOS archives, and verify:
 
 - Windows: right-click an `.exe` → Properties → Digital Signatures.
-- macOS: `codesign -dv --verbose=4 ./message-vault-io` and `spctl -a -vv ./message-vault-io` (online Gatekeeper check).
+- macOS: `codesign -dv --verbose=4 ./message-vault` and `spctl -a -vv ./message-vault` (online Gatekeeper check).

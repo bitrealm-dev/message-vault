@@ -7,7 +7,7 @@ The observed iMazing 3.5.5 directory layout, CSV headers, and source limitations
 ## Goals
 
 - Accept either one iMazing Messages/WhatsApp CSV **or** a folder at any level of a device export tree.
-- Emit the common message → packaging via `FormatSink` (CSV uses shared [`CSV_HEADERS`](../../../message/ir-format/src/write.rs); default JSON), with WhatsApp kept separate from SMS/iMessage.
+- Emit the common message → packaging via `FormatSink` (CSV uses shared [`CSV_HEADERS`](../../../libs/ir-format/src/write.rs); default JSON), with WhatsApp kept separate from SMS/iMessage.
 - Resolve phones/names through an optional vCard CSV.
 
 ## Input discovery
@@ -16,7 +16,7 @@ Discovery walks the selected path recursively without following directory symbol
 
 ## Output policy
 
-- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../message/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](../../../message/ir-format/src/write.rs) / [CSV columns](../../../../docs/src/content/docs/understand-output/csv-columns.md).
+- Pipeline: iMazing CSV → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format csv|eml|mbox|json|jsonl|xml`). Shared header: [`CSV_HEADERS`](../../../libs/ir-format/src/write.rs) / [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md).
 - SMS + iMessage for the same peer merge into one conversation (Messages family).
 - WhatsApp for the same peer is a **separate** file (`…__whatsapp.csv` / matching stem suffix for other formats).
 - Notification rows keep `imazing_type=Notification` in `source_fields_json`; direction is emitted as `incoming`.
@@ -68,5 +68,5 @@ Non-senders are invisible in the CSV.
 
 - CLI: [`MANPAGE.md`](MANPAGE.md)
 - Input format and source limitations: [`INPUT_FORMAT.md`](INPUT_FORMAT.md)
-- Contacts helper: [`../../../message-contacts/README.md`](../../../message-contacts/README.md)
-- Shared model and output contracts: [message-ir architecture](../../../../docs/maintainers/architecture/message-ir.md), [export structure](../../../../docs/src/content/docs/understand-output/export-structure.md), [CSV columns](../../../../docs/src/content/docs/understand-output/csv-columns.md)
+- Contacts helper: [`../../../libs/contacts/README.md`](../../../libs/contacts/README.md)
+- Shared model and output contracts: [message-ir architecture](../../../../docs/maintainers/architecture/message-ir.md), [export structure](../../../../docs/src/content/docs/reference/export-structure.md), [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md)

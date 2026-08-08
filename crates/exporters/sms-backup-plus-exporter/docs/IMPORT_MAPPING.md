@@ -2,7 +2,7 @@
 
 How flat and archive `.eml` messages become shared `ConversationDocument` values, including identity resolution, deduplication, and retained source data.
 
-Input layouts: [FORMAT.md](FORMAT.md). Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/understand-output/csv-columns.md) and [`message_ir_format::CSV_HEADERS`](../../../message/ir-format/src/write.rs).
+Input layouts: [FORMAT.md](FORMAT.md). Shared model: [message-ir](../../../../docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md) and [`message_ir_format::CSV_HEADERS`](../../../libs/ir-format/src/write.rs).
 
 ## Goal / non-goal
 
@@ -11,7 +11,7 @@ Input layouts: [FORMAT.md](FORMAT.md). Shared model: [message-ir](../../../../do
 
 ## Pipeline / output
 
-Source EML → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../message/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
+Source EML → `ConversationDocument` → [`message_ir_format::FormatSink`](../../../libs/ir-format/src/format_sink.rs) (`--format json|jsonl|csv|eml|mbox|xml`; default `json`).
 
 With `--format csv`: one file per conversation (header + one row per message after dedupe). MIME attachments under `attachments/` when copying/embedding. Filenames: 1:1 → `+E164.csv`; untitled groups → `group_+A_+B_….csv` (max 10 phones, then a hash). Peers with no usable phone number are written to `unknown.csv`. `--format xml` writes a single SyncTech `smses.xml`.
 

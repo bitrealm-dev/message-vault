@@ -1,28 +1,37 @@
-# message-vault-io
+# Message Vault
 
-Phone backups are easy to make. Reading the messages later is harder.
+Extract messages from phone backups, import them into a local vault, and browse them in an interface you control.
 
-This project turns vendor backups into a shared [conversation structure](docs/src/content/docs/understand-output/export-structure.md), then packages each conversation in the format you pick (default **JSON**):
+Message Vault has two parts that work together:
 
-- **JSON** / **JSON Lines** — default packaging; machine-readable archives
-- **CSV** — one spreadsheet file per conversation
-- **EML** — one email folder per conversation
-- **MBOX** — one mailbox file per conversation
-- **XML** — one SyncTech `smses.xml` backup
+- **The vault** — a Docker container running a REST API and SQLite database. It stores your messages and serves them through a web interface you open in your browser.
+- **The desktop app** — a Tauri desktop application that extracts messages from Apple and Android phone backups, converts them between formats, and imports them into the vault.
 
-Photos and other media are saved next to those files when the format needs them.
+Your messages stay on your own machine — nothing is uploaded to a cloud service, and no account is required.
 
 ## Docs
 
-Read the full guide (install, desktop app, supported backups, CSV layout):
+Read the full guide (install, desktop app, supported backups, formats, API):
 
-**https://bitrealm-dev.github.io/exporters/**
+**https://bitrealm.dev/vault/**
 
 Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
 
 ## Quick start
 
-**Desktop app / binaries:** Download the platform ZIP from the latest [Release](https://github.com/bitrealm-dev/message-vault-io/releases). Extract it and keep every file in the same folder. Run `message-vault-io`.
+**Desktop app:** Download the platform archive from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it and keep every file in the same folder. Run `message-vault`.
+
+**Vault server (Docker):**
+
+```bash
+docker run -d --name message-vault \
+  -p 3000:3000 -p 8080:8080 \
+  -e VAULT_MODE=demo \
+  -v message-vault-data:/app/data \
+  mbeisser1/message-vault:latest
+```
+
+Open **http://localhost:3000** and sign in with username `demo` and an empty password.
 
 **From source:**
 
@@ -33,9 +42,7 @@ cargo run --release -p message-vault-io-gui
 
 ### WSL2 development
 
-Use WSL2 with WSLg enabled and keep the repository in the Linux filesystem
-(`~/repo/...`), not under `/mnt/c`. From Windows PowerShell, update WSL before
-setting up the Linux environment:
+Use WSL2 with WSLg enabled and keep the repository in the Linux filesystem (`~/repo/...`), not under `/mnt/c`. From Windows PowerShell, update WSL before setting up the Linux environment:
 
 ```powershell
 wsl --update
@@ -60,9 +67,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
-Install [nvm](https://github.com/nvm-sh/nvm) and Node.js 24 inside WSL. This
-prevents WSL from invoking Windows `npm.cmd`, which fails when the current
-directory is a `\\wsl.localhost\...` path:
+Install [nvm](https://github.com/nvm-sh/nvm) and Node.js 24 inside WSL. This prevents WSL from invoking Windows `npm.cmd`, which fails when the current directory is a `\\wsl.localhost\...` path:
 
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh | bash
@@ -79,30 +84,27 @@ node --version
 npm --version
 ```
 
-The paths should be under `/home/...`, not `/mnt/c/...` or `C:\...`. The Slint
-app automatically opens Windows-native file dialogs and the Windows browser
-when it detects WSL. Build it in release mode for realistic export performance:
+The paths should be under `/home/...`, not `/mnt/c/...` or `C:\...`. Build in release mode for realistic export performance:
 
 ```bash
 cargo run --release -p message-vault-io-gui
 ```
 
-More Linux package details and optional helpers such as `ffmpeg` are documented
-in [CONTRIBUTING.md](CONTRIBUTING.md).
+More Linux package details and optional helpers such as `ffmpeg` are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Supported exporters
+## Supported backups
 
 | Backup | Converter |
 |--------|-----------|
-| Apple Messages (`chat.db`) | [`imessage-ir-exporter`](crates/exporters/imessage-ir-exporter) |
-| SMS Backup & Restore (SyncTech XML) | [`sms-backup-restore-exporter`](crates/exporters/sms-backup-restore-exporter) |
-| WhatsApp (native DB / crypt) | [`whatsapp-exporter`](crates/exporters/whatsapp-exporter) |
+| Apple Messages (`chat.db`) | `imessage-ir-exporter` |
+| SMS Backup & Restore (SyncTech XML) | `sms-backup-restore-exporter` |
+| WhatsApp (native DB / crypt) | `whatsapp-exporter` |
 
-Experimental converters also ship in the GUI and release zip: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm-dev.github.io/message-vault-io/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
+Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.dev/vault/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
 
-Already exported? The GUI **Format** tab ([`message-reexporter`](crates/message/reexport/docs/REEXPORT.md)) converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
+Already exported? The desktop app **Format** tab converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 
-Import into Message Vault with the GUI **Vault** tab (JSONL export folder + Import API token). For a standalone `vault-push` CLI or exporter CLIs, use [message-exporters](https://github.com/bitrealm-dev/message-exporters) releases.
+Import into Message Vault with the desktop app **Vault** tab (JSONL export folder + Import API token). For standalone CLI tools (`vault-push`, `vault-pull`, exporter CLIs), build from source in this repo.
 
 ## Contributing
 
@@ -110,10 +112,10 @@ Setup, build, run, test, and contribution rules: [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Releases
 
-Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives — **GUI only** plus `lib/` (ffmpeg/ffprobe), `cli/wtsexporter`, and `licenses/`: [Releases](https://github.com/bitrealm-dev/message-vault-io/releases).
+Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives — **GUI only** plus `lib/` (ffmpeg/ffprobe), `cli/wtsexporter`, and `licenses/`: [Releases](https://github.com/bitrealm-dev/message-vault/releases).
 
 Maintainer documentation (architecture, GUI design, signing): [`docs/maintainers/`](docs/maintainers/README.md). Release steps: [Development and releases](docs/maintainers/developing.md).
 
 ## License
 
-Most converters are MIT — see [LICENSE](LICENSE). `imessage-ir-exporter` is GPL-3.0-or-later (via `imessage-database` / `crabapple`).
+Most converters are MIT — see [LICENSE](LICENSE). `imessage-ir-exporter` is GPL-3.0-or-later (via `imessage-database`).

@@ -1,18 +1,18 @@
 # Contributing
 
-How to set up, build, run, and contribute to message-vault-io.
+How to set up, build, run, and contribute to Message Vault.
 
-End-user guides (install, first export, formats) live on the [docs site](https://bitrealm-dev.github.io/message-vault-io/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
+End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/vault/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
 
 | Tool | Notes |
 |------|--------|
 | **Rust** | Stable toolchain via [rustup](https://rustup.rs/). This workspace uses Rust edition **2024**, which needs **Rust 1.85+**. CI builds with the latest stable. |
-| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload (MSVC). |
+| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
 | **macOS** | Xcode Command Line Tools (`xcode-select --install`). |
 | **Linux** | C toolchain plus GUI system libs (see [Linux packages](#linux-packages) below). |
-| **Node.js 22+** | For the web frontend (`web/`) and docs site (`docs/`). |
+| **Node.js 22+** | For the docs site (`docs/`). |
 
 Optional for full WhatsApp / media features while developing: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
 
@@ -42,8 +42,8 @@ sudo dnf install \
 ## Clone and build
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-io.git
-cd message-vault-io
+git clone https://github.com/bitrealm-dev/message-vault.git
+cd message-vault
 cargo build --workspace
 ```
 
@@ -55,10 +55,7 @@ Release profile:
 cargo build --workspace --release
 ```
 
-Release packaging uses `cargo tauri build` which bundles the web frontend, Rust backend,
-and all exporter libraries into a single platform installer.
-Exporters are linked as libraries. Standalone exporter CLIs are published from
-[message-exporters](https://github.com/bitrealm-dev/message-exporters).
+Release packaging uses `cargo tauri build` which bundles the desktop app frontend, Rust backend, and all exporter libraries into a single platform installer. Exporters are linked as libraries. Standalone exporter CLIs can be built from this repo as well.
 
 ## Run the app
 
@@ -67,9 +64,6 @@ Exporters are linked as libraries. Standalone exporter CLIs are published from
 ```bash
 # Install Tauri CLI
 cargo install tauri-cli --version "^2"
-
-# Install web frontend dependencies
-cd web && npm ci && cd ..
 ```
 
 ### Dev mode (hot reload)
@@ -78,44 +72,35 @@ cd web && npm ci && cd ..
 cargo tauri dev
 ```
 
-This starts the Vite dev server on `localhost:5173` and opens a native window.
-Editing files under `web/src/` triggers instant reload; changes to Rust code under
-`src-tauri/` recompile and restart the backend.
+This starts the Vite dev server on `localhost:5173` and opens a native window. Editing files under `web/src/` triggers instant reload; changes to Rust code under `src-tauri/` recompile and restart the backend.
 
 ### Release mode (no hot reload, faster exports)
 
 ```bash
-cd web && npm run build && cd ..
 cargo build --release --workspace
-./target/release/message-vault-io
+./target/release/message-vault
 ```
 
-Use a release build when testing real exports. Debug builds compile faster, but
-parsing, attachment hashing, and JSON serialization can be substantially slower.
+Use a release build when testing real exports. Debug builds compile faster, but parsing, attachment hashing, and JSON serialization can be substantially slower.
 
 ### WSL2
 
-On WSL2, the Tauri window requires **WSLg** (Windows 11, built-in) or an X server
-like **VcXsrv** (Windows 10). Set `DISPLAY` if using a standalone X server:
+On WSL2, the Tauri window requires **WSLg** (Windows 11, built-in) or an X server like **VcXsrv** (Windows 10). Set `DISPLAY` if using a standalone X server:
 
 ```bash
 export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
 cargo tauri dev
 ```
 
-### Vault server (message-vault-server)
+### Vault server
 
-The Vault Push and Vault Pull screens talk to a Message Vault server over HTTP.
-The server is a separate project — clone and run with Docker:
+The vault server (`message-vault-server`) is built from this repo and runs in Docker:
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault-server.git
-cd message-vault-server
 docker compose up
 ```
 
-The server's API is available at `http://localhost:5556` by default.
-Create an account and API key through the server's web UI at `http://localhost:3000`.
+The server's API is available at `http://localhost:8080` by default. The web interface is at `http://localhost:3000`. Create an account and API key through the web UI under **Settings → Access**.
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
@@ -138,19 +123,19 @@ Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI 
 Local options:
 
 - Install WhatsApp helper: `pip install 'whatsapp-chat-exporter>=0.13'`
-- Install system `ffmpeg` / `ffprobe`, or copy them from a [release ZIP](https://github.com/bitrealm-dev/message-vault-io/releases) next to your built GUI
+- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-dev/message-vault/releases) next to your built GUI
 - After `cargo build --workspace --release`, point helpers at the build output:
 
 ```powershell
 # Windows PowerShell
 $env:MESSAGE_VAULT_IO_BIN = "$PWD\target\release"
-./target/release/message-vault-io.exe
+./target/release/message-vault.exe
 ```
 
 ```bash
 # Linux / macOS
 export MESSAGE_VAULT_IO_BIN="$PWD/target/release"
-./target/release/message-vault-io
+./target/release/message-vault
 ```
 
 ## Test
@@ -188,16 +173,17 @@ npm run check
 npm run build
 ```
 
-Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand. Release and GitHub Pages steps: [Development and releases](docs/maintainers/developing.md).
+Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand.
 
 ## Workspace map
 
 - **Libraries:** under `crates/libs/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
 - **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
 - **GUI:** Tauri v2 app in `src-tauri/` with React + Vite frontend in `web/`
-- **In-app libraries (not shipped as CLIs in this product’s release):** `vault-push`, `message-reexport` (package `message-reexport`); standalone CLIs come from message-exporters
+- **Server:** `message-vault-server` crate — the vault REST API, SQLite database, and web UI
+- **CLI tools:** `vault-push`, `vault-pull`, `message-reexport` (package `message-reexport`), and individual exporter CLIs — built from this repo
 
-Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database` / `crabapple`). The GUI binary therefore includes GPL-licensed code.
+Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database`). The GUI binary therefore includes GPL-licensed code.
 
 ## Contribution rules
 
@@ -214,9 +200,9 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 | Symptom | What to try |
 |---------|-------------|
 | `webkit2gtk` / `libsoup` not found | Install WebKit2GTK and GTK3 dev packages; see [Linux packages](#linux-packages) |
-| “Could not find wtsexporter / ffmpeg / ffprobe” | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
+| "Could not find wtsexporter / ffmpeg / ffprobe" | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
 | Windows linker / `link.exe` errors | Install MSVC Build Tools with the C++ desktop workload |
-| `cargo tauri` not found | Install with `cargo install tauri-cli --version “^2”` |
+| `cargo tauri` not found | Install with `cargo install tauri-cli --version "^2"` |
 | Frontend not loading in dev mode | Run `cd web && npm ci` first, then `cargo tauri dev` |
 
 ## Further reading
@@ -225,4 +211,4 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 - [Development and releases](docs/maintainers/developing.md)
 - [Exporter capability matrix](docs/maintainers/exporter-matrix.md)
 - [Code signing](docs/maintainers/signing.md)
-- End-user docs: <https://bitrealm-dev.github.io/message-vault-io/>
+- End-user docs: <https://bitrealm.dev/vault/>
