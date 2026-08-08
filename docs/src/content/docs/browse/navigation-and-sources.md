@@ -30,4 +30,4 @@ configured in `config.toml`.
 - **Combined** merges person threads and hides soft-deduped copies
   (`duplicate_of`).
 
-See [import modes and dedupe](/import/modes-and-dedupe/).
+See [import modes and dedupe](/use-the-desktop-app/import-into-vault/).
