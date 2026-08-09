@@ -2,10 +2,18 @@
 
 Committed message-ir JSONL bundle for local browsing without a real phone backup.
 
+Two staging trees simulate separate phone backups:
+
+- `staging/imessage/` — Apple Messages-style export
+- `staging/sms-backup-restore/` — Android SMS Backup & Restore–style export
+
+Most conversations are single-source. A small set appears in both so the Sources panel and
+cross-source dedupe can be exercised.
+
 Regenerate + import in one step:
 
 ```bash
-cargo run --release -- reset-demo
+cargo run --release -p message-vault-server -- reset-demo
 ```
 
 Or regenerate the bundle only:
@@ -14,10 +22,10 @@ Or regenerate the bundle only:
 cargo run -p demo-seed -- --out demo
 ```
 
-Config knobs live in `crates/demo-seed/demo_seed.toml` (seed, contact count, rate/span
-distributions, group membership). Message bodies are sampled from Pride and Prejudice
-(5274 sentences) under `crates/demo-seed/data/corpus/`. Names come from
-`crates/demo-seed/data/names/`.
+Config knobs live in `crates/vault/demo-seed/demo_seed.toml` (seed, contact count, rate/span
+distributions, group membership, dual-source split). Message bodies are sampled from Pride and
+Prejudice (5274 sentences) under `crates/vault/demo-seed/data/corpus/`. Names come from
+`crates/vault/demo-seed/data/names/`.
 
 ## Contents (seed 42)
 
@@ -25,12 +33,13 @@ distributions, group membership). Message bodies are sampled from Pride and Prej
 |------|------:|
 | Contacts (VCF) | 200 |
 | Groups | 223 |
-| Conversation files | 390 |
-| Messages | 627207 |
-| Attachment references | 10643 |
+| Conversation files | 400 |
+| Messages | 631969 |
+| Attachment references | 10350 |
 
 ## Exercises
 
+- **Dual sources** — `imessage` vs `sms-backup-restore`; light overlap threads
 - **Contacts / labels / No Messages** — label memberships and zero-message rows
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year

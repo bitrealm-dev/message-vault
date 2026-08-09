@@ -18,7 +18,8 @@ use crate::process_assets::{self, ProcessAssetsOptions};
 /// Stable demo account id used when `reset-demo` runs without `--account`.
 pub use crate::db::account_profile::DEMO_ACCOUNT_ID;
 
-const DEMO_SOURCE: &str = "imessage";
+const IMESSAGE_SOURCE: &str = "imessage";
+const SBR_SOURCE: &str = "sms-backup-restore";
 
 #[derive(Debug)]
 pub struct ResetDemoStats {
@@ -70,13 +71,18 @@ fn run_reset_demo_for_account(
 
     let demo_config = bundle.join("config/config.toml");
     let demo_seed = bundle.join("config/seed.toml");
-    let export_dir = bundle.join("staging/imessage");
+    let imessage_dir = bundle.join("staging").join(IMESSAGE_SOURCE);
+    let sbr_dir = bundle.join("staging").join(SBR_SOURCE);
     let contacts_vcf = bundle.join("config/contacts.vcf");
-    if !demo_config.is_file() || !demo_seed.is_file() || !export_dir.is_dir() || !contacts_vcf.is_file()
+    if !demo_config.is_file()
+        || !demo_seed.is_file()
+        || !imessage_dir.is_dir()
+        || !sbr_dir.is_dir()
+        || !contacts_vcf.is_file()
     {
         bail!(
             "incomplete demo bundle under {} (need config/config.toml, config/seed.toml, \
-             staging/imessage/, config/contacts.vcf)",
+             staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, config/contacts.vcf)",
             bundle.display()
         );
     }
@@ -95,27 +101,41 @@ fn run_reset_demo_for_account(
 
     wipe_demo_account(&cfg, account_id)?;
 
-    let assets_dir = cfg.paths.assets_dir_for_account(account_id, DEMO_SOURCE);
+    let imessage_assets = cfg.paths.assets_dir_for_account(account_id, IMESSAGE_SOURCE);
+    let sbr_assets = cfg.paths.assets_dir_for_account(account_id, SBR_SOURCE);
     let db = cfg.paths.db.clone();
 
     println!("Reset demo — importing");
     println!("  config:       {}", config_dest.display());
     println!("  account:      {}", account_id);
-    println!("  export_dir:   {}", export_dir.display());
+    println!("  imessage:     {}", imessage_dir.display());
+    println!("  android:      {}", sbr_dir.display());
     println!("  db:           {}", db.display());
 
     seed_demo_account(&db, account_id, &seed)?;
 
-    let import_stats = import::import_export(
-        &export_dir,
+    let mut import_stats = import::import_export(
+        &imessage_dir,
         &db,
-        &assets_dir,
+        &imessage_assets,
         Some(&contacts_vcf),
         true,
         ImportMode::Replace,
-        DEMO_SOURCE,
+        IMESSAGE_SOURCE,
         account_id,
     )?;
+
+    let sbr_stats = import::import_export(
+        &sbr_dir,
+        &db,
+        &sbr_assets,
+        None,
+        false,
+        ImportMode::Append,
+        SBR_SOURCE,
+        account_id,
+    )?;
+    merge_import_stats(&mut import_stats, &sbr_stats);
 
     let dedupe_stats = dedupe::run_dedupe(&db, account_id, 2)?;
 
@@ -153,7 +173,8 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     }
 
     let complete = bundle.join("config/seed.toml").is_file()
-        && bundle.join("staging/imessage").is_dir()
+        && bundle.join("staging").join(IMESSAGE_SOURCE).is_dir()
+        && bundle.join("staging").join(SBR_SOURCE).is_dir()
         && bundle.join("config/contacts.vcf").is_file();
     if complete {
         println!(
@@ -170,10 +191,26 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     }
 
     bail!(
-        "cannot reset demo: {} is missing and {} is not a complete committed bundle",
+        "cannot reset demo: {} is missing and {} is not a complete committed bundle \
+         (need staging/{IMESSAGE_SOURCE}/ and staging/{SBR_SOURCE}/)",
         seed_toml.display(),
         bundle.display()
     );
+}
+
+fn merge_import_stats(into: &mut import::ImportStats, other: &import::ImportStats) {
+    into.conversations += other.conversations;
+    into.participants += other.participants;
+    into.messages += other.messages;
+    into.attachments += other.attachments;
+    into.tapbacks += other.tapbacks;
+    into.files += other.files;
+    into.assets_copied += other.assets_copied;
+    into.assets_deduped += other.assets_deduped;
+    into.assets_missing += other.assets_missing;
+    into.messages_deduped += other.messages_deduped;
+    into.messages_appended += other.messages_appended;
+    into.phones_needing_review += other.phones_needing_review;
 }
 
 fn load_demo_seed(path: &Path) -> Result<DemoSeed> {

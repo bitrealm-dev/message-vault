@@ -1,4 +1,4 @@
-//! Synthetic iMessage JSONL demo dataset for Message Vault.
+//! Synthetic multi-source JSONL demo dataset for Message Vault.
 
 mod assets;
 mod config;
@@ -19,32 +19,42 @@ use rand_chacha::ChaCha8Rng;
 pub use config::SeedConfig;
 pub use conversations::GenStats;
 
+const IMESSAGE_SOURCE: &str = "imessage";
+const SBR_SOURCE: &str = "sms-backup-restore";
+
 /// Generate (or regenerate) a demo bundle under `cfg.out`.
 pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let out = Path::new(&cfg.out);
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
 
-    let staging = out.join("staging/imessage");
-    let attachments = staging.join("attachments");
+    let imessage_staging = out.join("staging").join(IMESSAGE_SOURCE);
+    let sbr_staging = out.join("staging").join(SBR_SOURCE);
+    let imessage_attachments = imessage_staging.join("attachments");
+    let sbr_attachments = sbr_staging.join("attachments");
     let config_dir = out.join("config");
 
-    fs::create_dir_all(&staging)?;
-    fs::create_dir_all(&attachments)?;
+    fs::create_dir_all(&imessage_staging)?;
+    fs::create_dir_all(&sbr_staging)?;
+    fs::create_dir_all(&imessage_attachments)?;
+    fs::create_dir_all(&sbr_attachments)?;
     fs::create_dir_all(&config_dir)?;
 
     let corpus =
         corpus::Corpus::load_pride_and_prejudice().context("load public-domain message corpus")?;
     let names = names::NameBank::load_default().context("load name lists")?;
 
-    let attachment_digests = assets::write_attachment_blobs(&attachments)?;
+    let attachment_digests = assets::write_attachment_blobs(&imessage_attachments)?;
+    // Same blobs under the Android tree so relative attachment paths resolve on import.
+    copy_dir_files(&imessage_attachments, &sbr_attachments)?;
+
     let roster = personas::build_roster(cfg, &names, &mut rng);
     contacts::write_vcf(&config_dir, &roster)?;
     contacts::write_config_toml(&config_dir)?;
     contacts::write_seed_toml(&config_dir)?;
 
     let stats = conversations::write_all(
-        &staging,
-        &attachments,
+        &imessage_staging,
+        &sbr_staging,
         &roster,
         cfg,
         &corpus,
@@ -78,6 +88,19 @@ pub fn generate_to(out: &Path, seed: Option<u64>) -> Result<GenStats> {
     generate(&cfg)
 }
 
+fn copy_dir_files(from: &Path, to: &Path) -> Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            let name = entry.file_name();
+            fs::copy(&path, to.join(&name))
+                .with_context(|| format!("copy {} → {}", path.display(), to.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn write_readme(
     out: &Path,
     stats: &GenStats,
@@ -90,10 +113,18 @@ fn write_readme(
 
 Committed message-ir JSONL bundle for local browsing without a real phone backup.
 
+Two staging trees simulate separate phone backups:
+
+- `staging/imessage/` — Apple Messages-style export
+- `staging/sms-backup-restore/` — Android SMS Backup & Restore–style export
+
+Most conversations are single-source. A small set appears in both so the Sources panel and
+cross-source dedupe can be exercised.
+
 Regenerate + import in one step:
 
 ```bash
-cargo run --release -- reset-demo
+cargo run --release -p message-vault-server -- reset-demo
 ```
 
 Or regenerate the bundle only:
@@ -102,10 +133,10 @@ Or regenerate the bundle only:
 cargo run -p demo-seed -- --out demo
 ```
 
-Config knobs live in `crates/demo-seed/demo_seed.toml` (seed, contact count, rate/span
-distributions, group membership). Message bodies are sampled from Pride and Prejudice
-({corpus_sentences} sentences) under `crates/demo-seed/data/corpus/`. Names come from
-`crates/demo-seed/data/names/`.
+Config knobs live in `crates/vault/demo-seed/demo_seed.toml` (seed, contact count, rate/span
+distributions, group membership, dual-source split). Message bodies are sampled from Pride and
+Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corpus/`. Names come from
+`crates/vault/demo-seed/data/names/`.
 
 ## Contents (seed {seed})
 
@@ -119,6 +150,7 @@ distributions, group membership). Message bodies are sampled from Pride and Prej
 
 ## Exercises
 
+- **Dual sources** — `imessage` vs `sms-backup-restore`; light overlap threads
 - **Contacts / labels / No Messages** — label memberships and zero-message rows
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year

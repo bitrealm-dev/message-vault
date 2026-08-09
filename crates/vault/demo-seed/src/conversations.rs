@@ -13,15 +13,25 @@ use message_ir::{
     SCHEMA_VERSION,
 };
 use rand::Rng;
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 use serde_json::json;
 
 use crate::assets::{JPG_PHOTOS, OTHER_ATTACHMENTS};
 use crate::config::SeedConfig;
 use crate::corpus::Corpus;
 use crate::personas::{
-    EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, OWNER_PHONE, Roster, Unassigned,
+    EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, OWNER_PHONE, Contact, Roster,
+    Unassigned,
 };
+
+const IMESSAGE_SOURCE: &str = "imessage";
+const SBR_SOURCE: &str = "sms-backup-restore";
+
+#[derive(Clone, Copy)]
+enum SourceFlavor {
+    IMessage,
+    SmsBackupRestore,
+}
 
 #[derive(Debug, Default)]
 pub struct GenStats {
@@ -54,9 +64,9 @@ const EMOJI_ONLY: &[&str] = &["👍", "😂", "❤️", "🎉", "😊"];
 
 const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
 
-fn export_meta() -> ExportMeta {
+fn export_meta(source: &str) -> ExportMeta {
     ExportMeta {
-        source: "imessage".into(),
+        source: source.into(),
         tool: "demo-seed".into(),
         tool_version: "0.2.0".into(),
         owner_handle: Some(OWNER_PHONE.into()),
@@ -65,8 +75,8 @@ fn export_meta() -> ExportMeta {
 }
 
 pub fn write_all(
-    staging: &Path,
-    _attachments: &Path,
+    imessage_staging: &Path,
+    sbr_staging: &Path,
     roster: &Roster,
     cfg: &SeedConfig,
     corpus: &Corpus,
@@ -79,30 +89,60 @@ pub fn write_all(
         ..Default::default()
     };
 
-    for entry in fs::read_dir(staging)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path
-            .extension()
-            .is_some_and(|e| e == "jsonl" || e == "json")
-        {
-            fs::remove_file(&path)?;
-        }
-    }
+    clear_jsonl(imessage_staging)?;
+    clear_jsonl(sbr_staging)?;
 
-    for contact in roster
+    let mut one_to_one: Vec<&Contact> = roster
         .contacts
         .iter()
         .filter(|c| !c.phones.is_empty() && c.has_one_to_one())
-    {
-        let phone = contact.primary_phone();
-        let count = contact.message_count();
+        .collect();
+    one_to_one.shuffle(rng);
+
+    let overlap_n = cfg.sources.overlap_count.min(one_to_one.len());
+    let (overlap, rest) = one_to_one.split_at(overlap_n);
+    let android_n = ((rest.len() as f64) * cfg.sources.android_only_fraction)
+        .round()
+        .clamp(0.0, rest.len() as f64) as usize;
+    let (android_only, imessage_only) = rest.split_at(android_n);
+
+    for contact in imessage_only {
         write_individual(
-            staging,
-            phone,
+            imessage_staging,
+            contact.primary_phone(),
             contact.display_hint(),
             contact.span_years,
-            count,
+            contact.message_count(),
+            SourceFlavor::IMessage,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+            attachment_digests,
+        )?;
+    }
+
+    for contact in android_only {
+        write_individual(
+            sbr_staging,
+            contact.primary_phone(),
+            contact.display_hint(),
+            contact.span_years,
+            contact.message_count(),
+            SourceFlavor::SmsBackupRestore,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+            attachment_digests,
+        )?;
+    }
+
+    for contact in overlap {
+        write_overlap_individual(
+            imessage_staging,
+            sbr_staging,
+            contact,
             cfg,
             corpus,
             rng,
@@ -114,7 +154,7 @@ pub fn write_all(
     for ua in &roster.unassigned {
         let count = rng.random_range(4..16);
         write_unassigned(
-            staging,
+            imessage_staging,
             ua,
             count,
             cfg,
@@ -127,7 +167,7 @@ pub fn write_all(
 
     for group in &roster.groups {
         write_group(
-            staging,
+            imessage_staging,
             roster,
             group,
             cfg,
@@ -138,28 +178,47 @@ pub fn write_all(
         )?;
     }
 
-    write_orphaned(staging, cfg, corpus, rng, &mut stats)?;
+    write_orphaned(imessage_staging, cfg, corpus, rng, &mut stats)?;
 
     if cfg.edge_cases.empty_individual {
         write_header_only(
-            staging,
+            imessage_staging,
             EMPTY_THREAD_HANDLE,
             IrConversationType::Individual,
             &[],
+            IMESSAGE_SOURCE,
         )?;
         stats.conversation_files += 1;
     }
     if cfg.edge_cases.empty_group {
         write_header_only(
-            staging,
+            imessage_staging,
             EMPTY_GROUP_HANDLE,
             IrConversationType::Group,
             &["+12125554503", "+13035555604"],
+            IMESSAGE_SOURCE,
         )?;
         stats.conversation_files += 1;
     }
 
     Ok(stats)
+}
+
+fn clear_jsonl(staging: &Path) -> Result<()> {
+    if !staging.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(staging)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|e| e == "jsonl" || e == "json")
+        {
+            fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -169,12 +228,14 @@ fn write_individual(
     display: String,
     span_years: f64,
     msg_count: usize,
+    flavor: SourceFlavor,
     cfg: &SeedConfig,
     corpus: &Corpus,
     rng: &mut impl Rng,
     stats: &mut GenStats,
     attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
+    let source = source_id(flavor);
     let display_name = if display.is_empty() {
         None
     } else {
@@ -194,31 +255,240 @@ fn write_individual(
         None,
         participants,
         msg_count,
+        source,
     )?;
 
     let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
     let mut origin_guid: Option<String> = None;
     for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 3 != 0;
-        let guid = format!("1to1-{chat_id}-{i}");
-        let mut msg = text_message(&guid, ts, from_me, chat_id, cfg, corpus, rng);
-        decorate_message(
-            &mut msg,
-            i,
-            msg_count,
-            chat_id,
-            from_me,
-            cfg,
-            rng,
-            stats,
-            &mut origin_guid,
-            attachment_digests,
-        );
+        let guid = format!("{}1to1-{chat_id}-{i}", guid_prefix(flavor));
+        let mut msg = text_message(&guid, ts, from_me, chat_id, cfg, corpus, rng, flavor);
+        match flavor {
+            SourceFlavor::IMessage => {
+                decorate_message(
+                    &mut msg,
+                    i,
+                    msg_count,
+                    chat_id,
+                    from_me,
+                    cfg,
+                    rng,
+                    stats,
+                    &mut origin_guid,
+                    attachment_digests,
+                );
+            }
+            SourceFlavor::SmsBackupRestore => {
+                decorate_android_message(&mut msg, i, msg_count, cfg, rng, stats, attachment_digests);
+            }
+        }
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
     stats.conversation_files += 1;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_overlap_individual(
+    imessage_staging: &Path,
+    sbr_staging: &Path,
+    contact: &Contact,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
+) -> Result<()> {
+    let chat_id = contact.primary_phone();
+    let display = contact.display_hint();
+    let msg_count = contact.message_count().max(1);
+    let span_years = contact.span_years;
+    let shared_n = ((msg_count as f64) * cfg.sources.overlap_shared_fraction)
+        .round()
+        .clamp(1.0, msg_count as f64) as usize;
+    let extra_lo = cfg.sources.overlap_android_extra_min;
+    let extra_hi = cfg.sources.overlap_android_extra_max.max(extra_lo + 1);
+    let extra_n = rng.random_range(extra_lo..extra_hi);
+
+    let display_name = if display.is_empty() {
+        None
+    } else {
+        Some(display)
+    };
+    let participants = |dn: Option<String>| {
+        vec![IrParticipant {
+            handle: chat_id.into(),
+            display_name: dn,
+            handle_type: None,
+        }]
+    };
+
+    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
+    let mut shared: Vec<(i64, bool, String)> = Vec::with_capacity(shared_n);
+    for i in 0..shared_n {
+        let ts = timestamps[i];
+        let from_me = i % 3 != 0;
+        let text = format!("Shared demo message {i} with {chat_id}");
+        shared.push((ts, from_me, text));
+    }
+
+    // --- iMessage tree: shared plain rows + remaining decorated rows ---
+    {
+        let path = imessage_staging.join(sanitize_filename(chat_id) + ".jsonl");
+        let mut file = open_jsonl(&path)?;
+        write_conversation_header(
+            &mut file,
+            chat_id,
+            IrConversationType::Individual,
+            None,
+            participants(display_name.clone()),
+            msg_count,
+            IMESSAGE_SOURCE,
+        )?;
+        let mut origin_guid: Option<String> = None;
+        for (i, (ts, from_me, text)) in shared.iter().enumerate() {
+            let guid = format!("1to1-{chat_id}-{i}");
+            let msg = IrMessage {
+                guid,
+                timestamp_unix_ms: *ts,
+                direction: if *from_me {
+                    IrDirection::Outgoing
+                } else {
+                    IrDirection::Incoming
+                },
+                service: IrService::IMessage,
+                message_kind: IrMessageKind::IMessage,
+                sender_handle: if *from_me {
+                    None
+                } else {
+                    Some(chat_id.into())
+                },
+                sender_display_name: None,
+                subject: None,
+                text: text.clone(),
+                attachments: vec![],
+                imessage: None,
+                source: None,
+            };
+            write_message(&mut file, msg)?;
+            stats.messages += 1;
+        }
+        for i in shared_n..msg_count {
+            let ts = timestamps[i];
+            let from_me = i % 3 != 0;
+            let guid = format!("1to1-{chat_id}-{i}");
+            let mut msg = text_message(
+                &guid,
+                ts,
+                from_me,
+                chat_id,
+                cfg,
+                corpus,
+                rng,
+                SourceFlavor::IMessage,
+            );
+            decorate_message(
+                &mut msg,
+                i,
+                msg_count,
+                chat_id,
+                from_me,
+                cfg,
+                rng,
+                stats,
+                &mut origin_guid,
+                attachment_digests,
+            );
+            write_message(&mut file, msg)?;
+            stats.messages += 1;
+        }
+        stats.conversation_files += 1;
+    }
+
+    // --- Android tree: same shared rows + unique extras ---
+    {
+        let android_total = shared_n + extra_n;
+        let path = sbr_staging.join(sanitize_filename(chat_id) + ".jsonl");
+        let mut file = open_jsonl(&path)?;
+        write_conversation_header(
+            &mut file,
+            chat_id,
+            IrConversationType::Individual,
+            None,
+            participants(display_name),
+            android_total,
+            SBR_SOURCE,
+        )?;
+        for (i, (ts, from_me, text)) in shared.iter().enumerate() {
+            let guid = format!("sbr-shared-{chat_id}-{i}");
+            let msg = IrMessage {
+                guid,
+                timestamp_unix_ms: *ts,
+                direction: if *from_me {
+                    IrDirection::Outgoing
+                } else {
+                    IrDirection::Incoming
+                },
+                service: IrService::Sms,
+                message_kind: IrMessageKind::Sms,
+                sender_handle: if *from_me {
+                    None
+                } else {
+                    Some(chat_id.into())
+                },
+                sender_display_name: None,
+                subject: None,
+                text: text.clone(),
+                attachments: vec![],
+                imessage: None,
+                source: None,
+            };
+            write_message(&mut file, msg)?;
+            stats.messages += 1;
+        }
+        let base_ts = shared
+            .last()
+            .map(|(ts, _, _)| *ts)
+            .or_else(|| timestamps.last().copied())
+            .unwrap_or_else(|| Utc::now().timestamp_millis());
+        for j in 0..extra_n {
+            let ts = base_ts + ((j as i64) + 1) * 60_000;
+            let from_me = j % 4 == 0;
+            let guid = format!("sbr-extra-{chat_id}-{j}");
+            let mut msg = text_message(
+                &guid,
+                ts,
+                from_me,
+                chat_id,
+                cfg,
+                corpus,
+                rng,
+                SourceFlavor::SmsBackupRestore,
+            );
+            decorate_android_message(&mut msg, j, extra_n, cfg, rng, stats, attachment_digests);
+            write_message(&mut file, msg)?;
+            stats.messages += 1;
+        }
+        stats.conversation_files += 1;
+    }
+
+    Ok(())
+}
+
+fn source_id(flavor: SourceFlavor) -> &'static str {
+    match flavor {
+        SourceFlavor::IMessage => IMESSAGE_SOURCE,
+        SourceFlavor::SmsBackupRestore => SBR_SOURCE,
+    }
+}
+
+fn guid_prefix(flavor: SourceFlavor) -> &'static str {
+    match flavor {
+        SourceFlavor::IMessage => "",
+        SourceFlavor::SmsBackupRestore => "sbr-",
+    }
 }
 
 fn write_unassigned(
@@ -251,6 +521,7 @@ fn write_unassigned(
         None,
         participants,
         msg_count,
+        IMESSAGE_SOURCE,
     )?;
 
     let span_years = 1.5;
@@ -266,6 +537,7 @@ fn write_unassigned(
             cfg,
             corpus,
             rng,
+            SourceFlavor::IMessage,
         );
         if i == 2 && ua.name_hint.is_some() && !from_me {
             msg.sender_handle = Some(String::new());
@@ -333,6 +605,7 @@ fn write_group(
         group.title.clone(),
         participants,
         msg_count + usize::from(group.index == 0),
+        IMESSAGE_SOURCE,
     )?;
 
     // First group: synthetic rename announcement.
@@ -350,6 +623,7 @@ fn write_group(
             cfg,
             corpus,
             rng,
+            SourceFlavor::IMessage,
         );
         ann.text.clear();
         ann.message_kind = IrMessageKind::Announcement;
@@ -376,6 +650,7 @@ fn write_group(
             cfg,
             corpus,
             rng,
+            SourceFlavor::IMessage,
         );
         msg.sender_handle = sender;
         if should_attach_jpg(i, msg_count, cfg) {
@@ -439,6 +714,7 @@ fn write_orphaned(
         None,
         vec![],
         n,
+        IMESSAGE_SOURCE,
     )?;
     let timestamps = bursty_timestamps(n, 2.0, sample_direct_day_burst, rng);
     for (i, &ts) in timestamps.iter().enumerate() {
@@ -451,6 +727,7 @@ fn write_orphaned(
             cfg,
             corpus,
             rng,
+            SourceFlavor::IMessage,
         );
         msg.text = format!("Orphaned message #{i} (no conversation association)");
         write_message(&mut file, msg)?;
@@ -465,6 +742,7 @@ fn write_header_only(
     chat_id: &str,
     conv_type: IrConversationType,
     member_phones: &[&str],
+    source: &str,
 ) -> Result<()> {
     let path = staging.join(format!("empty-{}.jsonl", sanitize_filename(chat_id)));
     let mut file = open_jsonl(&path)?;
@@ -476,7 +754,7 @@ fn write_header_only(
             handle_type: None,
         })
         .collect();
-    write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0)?;
+    write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0, source)?;
     Ok(())
 }
 
@@ -547,10 +825,11 @@ fn write_conversation_header(
     group_title: Option<String>,
     participants: Vec<IrParticipant>,
     message_count: usize,
+    source: &str,
 ) -> Result<()> {
     let header = ConversationHeader {
         schema_version: SCHEMA_VERSION,
-        export: export_meta(),
+        export: export_meta(source),
         conversation: ConversationMeta {
             chat_identifier: chat_id.into(),
             conversation_type: conv_type,
@@ -584,11 +863,16 @@ fn text_message(
     cfg: &SeedConfig,
     corpus: &Corpus,
     rng: &mut impl Rng,
+    flavor: SourceFlavor,
 ) -> IrMessage {
     let text = if rng.random_bool(cfg.messages.emoji_probability) {
         (*EMOJI_ONLY.choose(rng).unwrap()).to_string()
     } else {
         corpus.pick_message(rng)
+    };
+    let (service, message_kind) = match flavor {
+        SourceFlavor::IMessage => (IrService::IMessage, IrMessageKind::IMessage),
+        SourceFlavor::SmsBackupRestore => (IrService::Sms, IrMessageKind::Sms),
     };
     IrMessage {
         guid: guid.into(),
@@ -598,8 +882,8 @@ fn text_message(
         } else {
             IrDirection::Incoming
         },
-        service: IrService::IMessage,
-        message_kind: IrMessageKind::IMessage,
+        service,
+        message_kind,
         sender_handle: if from_me { None } else { Some(peer.into()) },
         sender_display_name: None,
         subject: None,
@@ -607,6 +891,30 @@ fn text_message(
         attachments: vec![],
         imessage: None,
         source: None,
+    }
+}
+
+fn decorate_android_message(
+    msg: &mut IrMessage,
+    i: usize,
+    msg_count: usize,
+    cfg: &SeedConfig,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
+) {
+    msg.service = IrService::Sms;
+    if should_attach_jpg(i, msg_count, cfg) {
+        add_jpg_attachment(msg, i, stats, attachment_digests);
+        if i > 0 && i.is_multiple_of(40) {
+            msg.text = PHOTO_CAPTIONS.choose(rng).unwrap().to_string();
+        }
+        msg.message_kind = IrMessageKind::Mms;
+    } else if should_attach_other(i, msg_count, cfg) {
+        add_attachment(msg, i, stats, OTHER_ATTACHMENTS, attachment_digests);
+        msg.message_kind = IrMessageKind::Mms;
+    } else {
+        msg.message_kind = IrMessageKind::Sms;
     }
 }
 

@@ -18,6 +18,8 @@ pub struct SeedConfig {
     pub groups: GroupsConfig,
     pub messages: MessagesConfig,
     pub edge_cases: EdgeCasesConfig,
+    #[serde(default)]
+    pub sources: SourcesConfig,
 }
 
 fn default_seed() -> u64 {
@@ -100,6 +102,52 @@ pub struct EdgeCasesConfig {
     pub orphaned_messages: usize,
     pub empty_individual: bool,
     pub empty_group: bool,
+}
+
+/// How demo conversations are split across backup source trees.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SourcesConfig {
+    /// Fraction of non-overlap 1:1 contacts that are Android-only.
+    #[serde(default = "default_android_only_fraction")]
+    pub android_only_fraction: f64,
+    /// Contacts written into both `imessage` and `sms-backup-restore` staging.
+    #[serde(default = "default_overlap_count")]
+    pub overlap_count: usize,
+    /// Fraction of overlap iMessage messages also present on Android (shared fingerprint).
+    #[serde(default = "default_overlap_shared_fraction")]
+    pub overlap_shared_fraction: f64,
+    #[serde(default = "default_overlap_android_extra_min")]
+    pub overlap_android_extra_min: usize,
+    #[serde(default = "default_overlap_android_extra_max")]
+    pub overlap_android_extra_max: usize,
+}
+
+impl Default for SourcesConfig {
+    fn default() -> Self {
+        Self {
+            android_only_fraction: default_android_only_fraction(),
+            overlap_count: default_overlap_count(),
+            overlap_shared_fraction: default_overlap_shared_fraction(),
+            overlap_android_extra_min: default_overlap_android_extra_min(),
+            overlap_android_extra_max: default_overlap_android_extra_max(),
+        }
+    }
+}
+
+fn default_android_only_fraction() -> f64 {
+    0.12
+}
+fn default_overlap_count() -> usize {
+    10
+}
+fn default_overlap_shared_fraction() -> f64 {
+    0.35
+}
+fn default_overlap_android_extra_min() -> usize {
+    20
+}
+fn default_overlap_android_extra_max() -> usize {
+    80
 }
 
 impl SeedConfig {

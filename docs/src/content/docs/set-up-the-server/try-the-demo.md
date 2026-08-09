@@ -3,7 +3,7 @@ title: Try the demo
 description: Browse a sample vault with synthetic conversations — no phone backup required.
 ---
 
-The demo vault comes with a built-in dataset: about 627,000 synthetic messages across 390 conversations. It is a quick way to try search, browse, and media features without extracting a real backup.
+The demo vault comes with a built-in dataset: synthetic messages across hundreds of conversations from two backup sources (`imessage` and `sms-backup-restore`). A small set of threads appears in both so you can try the Sources panel and cross-source dedupe. It is a quick way to try search, browse, and media features without extracting a real backup.
 
 ## Run the demo
 

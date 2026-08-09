@@ -1,5 +1,7 @@
 //! Read-only conversation list used by `GET /v1/export/conversations`.
 
+use std::collections::{HashMap, HashSet};
+
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -278,6 +280,7 @@ pub fn list_conversations(
 
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut participants = load_participants(conn, &ids)?;
+    let source_sets = load_conversation_sources(conn, &ids)?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
@@ -286,11 +289,13 @@ pub fn list_conversations(
             .clone()
             .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
         let is_group = row.conversation_type.eq_ignore_ascii_case("group");
-        let service = row
-            .service
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "unknown".into());
+        let service = display_service_label(
+            source_sets
+                .get(&row.id)
+                .map(|s| s.as_slice())
+                .unwrap_or(&[]),
+            row.service.as_deref(),
+        );
         let parts = participants.remove(&row.id).unwrap_or_default();
         let parts = if parts.is_empty() {
             chat_handle_as_participant(conn, row.id)?
@@ -423,6 +428,131 @@ fn enrich_participant_names(
         }
     }
     Ok(participants)
+}
+
+const IMESSAGE_SOURCE: &str = "imessage";
+const SBR_SOURCE: &str = "sms-backup-restore";
+
+/// Header label from distinct message sources in a conversation.
+pub fn display_service_label(sources: &[String], stored_service: Option<&str>) -> String {
+    let set: HashSet<&str> = sources.iter().map(|s| s.as_str()).collect();
+    if set.contains(SBR_SOURCE) {
+        return "SMS/MMS".into();
+    }
+    if set.len() == 1 && set.contains(IMESSAGE_SOURCE) {
+        return IMESSAGE_SOURCE.into();
+    }
+    stored_service
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn load_conversation_sources(
+    conn: &Connection,
+    conversation_ids: &[i64],
+) -> Result<HashMap<i64, Vec<String>>, ExportQueryError> {
+    let mut map: HashMap<i64, Vec<String>> = HashMap::new();
+    if conversation_ids.is_empty() {
+        return Ok(map);
+    }
+    for chunk in conversation_ids.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT conversation_id, source
+             FROM messages
+             WHERE duplicate_of IS NULL
+               AND conversation_id IN ({placeholders})
+             GROUP BY conversation_id, source
+             ORDER BY conversation_id, source"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_from_iter(chunk.iter().copied()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        for row in rows {
+            let (cid, source) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            if source.trim().is_empty() {
+                continue;
+            }
+            map.entry(cid).or_default().push(source);
+        }
+    }
+    Ok(map)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConversationSourceInfo {
+    pub backup_name: String,
+    pub message_count: u64,
+    pub unique_count: u64,
+    pub percentage: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConversationSourcesPage {
+    pub sources: Vec<ConversationSourceInfo>,
+}
+
+/// Per-source message counts for the Sources panel.
+pub fn list_conversation_source_stats(
+    conn: &Connection,
+    account_id: &str,
+    conversation_id: i64,
+) -> Result<Option<ConversationSourcesPage>, ExportQueryError> {
+    let owned: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM conversations WHERE id = ?1 AND account_id = ?2",
+            rusqlite::params![conversation_id, account_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    if owned == 0 {
+        return Ok(None);
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT source,
+                    COUNT(*) AS message_count,
+                    SUM(CASE WHEN duplicate_of IS NULL THEN 1 ELSE 0 END) AS unique_count
+             FROM messages
+             WHERE conversation_id = ?1
+             GROUP BY source
+             ORDER BY source",
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let rows: Vec<(String, i64, i64)> = stmt
+        .query_map(rusqlite::params![conversation_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+
+    let total_unique: i64 = rows.iter().map(|(_, _, u)| *u).sum();
+    let sources = rows
+        .into_iter()
+        .map(|(source, message_count, unique_count)| {
+            let percentage = if total_unique > 0 {
+                (unique_count as f64) * 100.0 / (total_unique as f64)
+            } else {
+                0.0
+            };
+            ConversationSourceInfo {
+                backup_name: source,
+                message_count: message_count.max(0) as u64,
+                unique_count: unique_count.max(0) as u64,
+                percentage: (percentage * 10.0).round() / 10.0,
+            }
+        })
+        .collect();
+    Ok(Some(ConversationSourcesPage { sources }))
 }
 
 #[cfg(test)]
@@ -668,5 +798,29 @@ mod tests {
 
         let trash = parse_conversation_list_query("is:trash");
         assert!(trash.trash_only);
+    }
+
+    #[test]
+    fn display_service_label_from_sources() {
+        assert_eq!(
+            display_service_label(&["imessage".into()], None),
+            "imessage"
+        );
+        assert_eq!(
+            display_service_label(&["sms-backup-restore".into()], None),
+            "SMS/MMS"
+        );
+        assert_eq!(
+            display_service_label(
+                &["imessage".into(), "sms-backup-restore".into()],
+                Some("iMessage")
+            ),
+            "SMS/MMS"
+        );
+        assert_eq!(display_service_label(&[], None), "unknown");
+        assert_eq!(
+            display_service_label(&["whatsapp".into()], Some("WhatsApp")),
+            "WhatsApp"
+        );
     }
 }

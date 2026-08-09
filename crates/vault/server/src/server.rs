@@ -206,6 +206,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/export/conversations",
             get(conversations_list_handler),
         )
+        .route(
+            "/v1/export/conversations/{id}/sources",
+            get(conversation_sources_handler),
+        )
         .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
@@ -628,6 +632,32 @@ async fn conversations_list_handler(
         "limit": page.limit,
         "offset": page.offset,
     })))
+}
+
+async fn conversation_sources_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let db = Arc::clone(&state.db);
+    let page = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::conversations_api::list_conversation_source_stats(
+            &conn,
+            &auth.account_id,
+            conversation_id,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("conversation sources task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    match page {
+        Some(p) => Ok(Json(serde_json::json!({ "sources": p.sources }))),
+        None => Err(ApiError::NotFound("conversation not found".into())),
+    }
 }
 
 async fn contact_detail_handler(
