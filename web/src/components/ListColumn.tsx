@@ -1,15 +1,17 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import GlobalSearch from "./GlobalSearch";
-import AdvancedSearchForm from "./AdvancedSearchForm";
+import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 
 export default function ListColumn({
   searchQuery,
+  searchMode,
   onSearchChange,
   onSearch,
   children,
 }: {
   searchQuery: string;
+  searchMode: AdvancedSearchMode;
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
   children: ReactNode;
@@ -21,17 +23,29 @@ export default function ListColumn({
       style={{
         width: "300px",
         flexShrink: 0,
-        borderRight: "1px solid #e5e7eb",
-        background: "#fff",
+        borderRight: "1px solid var(--border)",
+        background: "var(--panel)",
+        color: "var(--text)",
         display: "flex",
         flexDirection: "column",
         height: "100vh",
-        overflow: "hidden",
+        // Visible so the advanced search panel can extend over the main column.
+        overflow: "visible",
+        position: "relative",
+        zIndex: showAdvancedSearch ? 40 : 1,
       }}
     >
-      <div style={{ padding: "0.75rem", borderBottom: "1px solid #e5e7eb", flexShrink: 0 }}>
+      <div
+        style={{
+          padding: "0.75rem",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+          position: "relative",
+        }}
+      >
         <GlobalSearch
           value={searchQuery}
+          mode={searchMode === "contacts" ? "filter" : "search"}
           onChange={onSearchChange}
           onSubmit={(q) => onSearch(q)}
         />
@@ -42,16 +56,30 @@ export default function ListColumn({
             fontSize: "0.688rem",
             border: "none",
             background: "none",
-            color: "#6b7280",
+            color: "var(--muted)",
             cursor: "pointer",
             padding: "0.25rem 0 0",
           }}
         >
-          {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
+          {showAdvancedSearch
+            ? "Hide advanced search"
+            : searchMode === "contacts"
+              ? "Advanced filters"
+              : "Advanced search"}
         </button>
         {showAdvancedSearch && (
-          <div style={{ marginTop: "0.5rem" }}>
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              width: "560px",
+              marginTop: "-1px",
+              zIndex: 50,
+            }}
+          >
             <AdvancedSearchForm
+              mode={searchMode}
               onApply={(q) => {
                 onSearchChange(q);
                 onSearch(q);

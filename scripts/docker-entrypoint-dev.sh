@@ -30,10 +30,10 @@ seed_if_needed() {
   case "${VAULT_MODE}" in
     demo)
       echo "Seeding demo vault…"
-      cargo run --release -- reset-demo --config "${CONFIG}"
+      cargo run --release -p message-vault-server -- reset-demo --config "${CONFIG}"
       ensure_docker_config
       echo "Converting demo media…"
-      cargo run --release -- process-assets --config "${CONFIG}" \
+      cargo run --release -p message-vault-server -- process-assets --config "${CONFIG}" \
         || echo "warning: process-assets failed; UI still works"
       ;;
     personal)
@@ -58,4 +58,4 @@ fi
 seed_if_needed
 
 echo "Starting message-vault-server (API + static files)…"
-exec cargo run --release -- serve --config "${CONFIG}"
+exec cargo run --release -p message-vault-server -- serve --config "${CONFIG}"

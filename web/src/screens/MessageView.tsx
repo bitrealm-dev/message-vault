@@ -4,6 +4,7 @@ import type { Conversation, Message, MessageAttachment } from "../lib/types";
 import MessageBubble from "../components/MessageBubble";
 import AttachmentLightbox from "../components/AttachmentLightbox";
 import SourcesPanel from "../components/SourcesPanel";
+import Button from "../components/Button";
 
 const PAGE_SIZE = 50;
 
@@ -121,8 +122,8 @@ export default function MessageView({
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Header */}
       <div style={{
-        padding: "0.75rem 1.5rem", borderBottom: "1px solid #e5e7eb",
-        background: "#fafafa",
+        padding: "0.75rem 1.5rem", borderBottom: "1px solid var(--border)",
+        background: "var(--elevated)",
       }}>
         <div style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>
           {conversation.label ||
@@ -130,7 +131,7 @@ export default function MessageView({
               ? `${conversation.participants.length} participants`
               : conversation.participants[0]?.name || conversation.participants[0]?.handle)}
         </div>
-        <div style={{ display: "flex", gap: "1rem", fontSize: "0.75rem", color: "#6b7280", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "1rem", fontSize: "0.75rem", color: "var(--muted)", flexWrap: "wrap" }}>
           <span>{conversation.service}</span>
           {conversation.date_range_start && conversation.date_range_end && (
             <span>
@@ -143,8 +144,8 @@ export default function MessageView({
             onClick={() => setShowSources(true)}
             style={{
               fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-              border: "1px solid #d1d5db", background: "#fff",
-              color: "#2563eb", cursor: "pointer",
+              border: "1px solid var(--border)", background: "var(--panel)",
+              color: "var(--accent)", cursor: "pointer",
             }}
           >
             Sources
@@ -161,8 +162,8 @@ export default function MessageView({
                   title={`Open contact for ${label}`}
                   style={{
                     fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-                    border: "1px solid #d1d5db", background: "#fff",
-                    color: "#2563eb", cursor: "pointer",
+                    border: "1px solid var(--border)", background: "var(--panel)",
+                    color: "var(--accent)", cursor: "pointer",
                   }}
                 >
                   {label}
@@ -172,7 +173,7 @@ export default function MessageView({
                   key={i}
                   style={{
                     fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-                    border: "1px solid #e5e7eb", background: "#f9fafb", color: "#6b7280",
+                    border: "1px solid var(--border)", background: "var(--elevated)", color: "var(--muted)",
                   }}
                 >
                   {label}
@@ -191,9 +192,9 @@ export default function MessageView({
                 onClick={() => fetchPage(jump.estimatedOffset)}
                 title={`Jump to ${jump.year} (estimated offset ${jump.estimatedOffset})`}
                 style={{
-                  fontSize: "0.688rem", border: "1px solid #d1d5db", background: "#fff",
+                  fontSize: "0.688rem", border: "1px solid var(--border)", background: "var(--panel)",
                   padding: "0.125rem 0.375rem", borderRadius: "4px", cursor: "pointer",
-                  color: "#2563eb",
+                  color: "var(--accent)",
                 }}
               >
                 {jump.year}
@@ -205,7 +206,7 @@ export default function MessageView({
 
       {/* Find bar */}
       <div style={{
-        padding: "0.375rem 1.5rem", borderBottom: "1px solid #e5e7eb",
+        padding: "0.375rem 1.5rem", borderBottom: "1px solid var(--border)",
         display: "flex", gap: "0.5rem", alignItems: "center",
       }}>
         <input
@@ -222,22 +223,23 @@ export default function MessageView({
           placeholder="Find in conversation…"
           style={{
             flex: 1, padding: "0.25rem 0.5rem", fontSize: "0.813rem",
-            border: "1px solid #d1d5db", borderRadius: "4px",
+            border: "1px solid var(--border)", borderRadius: "4px",
+            background: "var(--bg)", color: "var(--text)",
           }}
         />
         {matchIds.length > 0 && (
           <>
-            <span style={{ fontSize: "0.75rem", color: "#6b7280", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: "0.75rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
               {activeMatch + 1} of {matchIds.length} on this page
             </span>
-            <button onClick={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
-              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px", background: "#fff", cursor: "pointer" }}>
+            <Button onClick={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
+              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem" }}>
               ↑
-            </button>
-            <button onClick={() => setActiveMatch((a) => (a + 1) % matchIds.length)}
-              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px", background: "#fff", cursor: "pointer" }}>
+            </Button>
+            <Button onClick={() => setActiveMatch((a) => (a + 1) % matchIds.length)}
+              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem" }}>
               ↓
-            </button>
+            </Button>
           </>
         )}
       </div>
@@ -245,7 +247,7 @@ export default function MessageView({
       {/* Messages */}
       <div ref={listRef} style={{ flex: 1, overflow: "auto" }}>
         {loading ? (
-          <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>Loading…</div>
+          <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>Loading…</div>
         ) : (
           messages.map((m) => (
             <MessageBubble
@@ -262,20 +264,20 @@ export default function MessageView({
       {/* Pagination */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "center",
-        gap: "1rem", padding: "0.5rem", borderTop: "1px solid #e5e7eb",
-        fontSize: "0.813rem", color: "#6b7280",
+        gap: "1rem", padding: "0.5rem", borderTop: "1px solid var(--border)",
+        fontSize: "0.813rem", color: "var(--muted)",
       }}>
-        <button onClick={() => fetchPage(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}
+        <Button onClick={() => fetchPage(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}
           style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
           Previous
-        </button>
+        </Button>
         <span>
           Messages {total === 0 ? 0 : offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
         </span>
-        <button onClick={() => fetchPage(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}
+        <Button onClick={() => fetchPage(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}
           style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
           Next
-        </button>
+        </Button>
       </div>
 
       {/* Attachment lightbox */}

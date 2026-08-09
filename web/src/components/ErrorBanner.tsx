@@ -9,8 +9,8 @@ export default function ErrorBanner({ errors, onDismiss }: ErrorBannerProps) {
   return (
     <div
       style={{
-        background: "#fef2f2",
-        borderBottom: "2px solid #fecaca",
+        background: "var(--danger-soft-bg)",
+        borderBottom: "2px solid var(--danger-soft-border)",
         padding: "0.75rem 1.5rem",
         display: "flex",
         alignItems: "flex-start",
@@ -23,7 +23,7 @@ export default function ErrorBanner({ errors, onDismiss }: ErrorBannerProps) {
             key={i}
             style={{
               fontSize: "0.875rem",
-              color: "#991b1b",
+              color: "var(--danger)",
               lineHeight: 1.5,
             }}
           >
@@ -37,7 +37,7 @@ export default function ErrorBanner({ errors, onDismiss }: ErrorBannerProps) {
           background: "none",
           border: "none",
           fontSize: "1.25rem",
-          color: "#991b1b",
+          color: "var(--danger)",
           cursor: "pointer",
           padding: "0 0.25rem",
           lineHeight: 1,

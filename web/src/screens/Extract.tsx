@@ -4,6 +4,7 @@ import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import Button from "../components/Button";
 
 const SOURCES = [
   { id: "sms-backup-restore", label: "SMS Backup & Restore" },
@@ -74,7 +75,7 @@ export default function Extract({ onError, onBack }: { onError?: (msg: string) =
           onClick={onBack}
           style={{
             marginBottom: "1rem", border: "none", background: "none",
-            color: "#2563eb", cursor: "pointer", fontSize: "0.875rem", padding: 0,
+            color: "var(--accent)", cursor: "pointer", fontSize: "0.875rem", padding: 0,
           }}
         >
           ← Back to login
@@ -86,7 +87,15 @@ export default function Extract({ onError, onBack }: { onError?: (msg: string) =
         <select
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem", width: "100%" }}
+          style={{
+            padding: "0.25rem 0.5rem",
+            fontSize: "0.875rem",
+            width: "100%",
+            background: "var(--bg)",
+            color: "var(--text)",
+            border: "1px solid var(--border)",
+            borderRadius: "4px",
+          }}
         >
           {SOURCES.map((s) => (
             <option key={s.id} value={s.id}>
@@ -105,20 +114,17 @@ export default function Extract({ onError, onBack }: { onError?: (msg: string) =
       </FormRow>
 
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
-        <button
+        <Button
+          variant="primary"
           onClick={start}
           disabled={running || !backupPath || !outputDir}
-          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}
-        >
-          {running ? "Running…" : "Extract"}
-        </button>
-        <button
-          onClick={cancel}
-          disabled={!running}
           style={{ padding: "0.5rem 1.5rem" }}
         >
+          {running ? "Running…" : "Extract"}
+        </Button>
+        <Button onClick={cancel} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
           Cancel
-        </button>
+        </Button>
       </div>
 
       <div style={{ marginTop: "1.5rem" }}>

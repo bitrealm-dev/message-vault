@@ -36,30 +36,30 @@ export default function SourcesPanel({
       }} />
       <div style={{
         position: "fixed", right: 0, top: 0, bottom: 0, width: "320px",
-        background: "#fff", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
+        background: "var(--panel)", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
         overflow: "auto", padding: "1.5rem",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
           <h2 style={{ margin: 0, fontSize: "1.125rem" }}>Sources</h2>
-          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer" }}>×</button>
+          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)" }}>×</button>
         </div>
 
         {sources.length === 0 ? (
-          <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>No source data available.</div>
+          <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>No source data available.</div>
         ) : (
           <>
             {sources.map((s, i) => (
-              <div key={i} style={{ marginBottom: "0.75rem", padding: "0.5rem", background: "#f9fafb", borderRadius: "4px" }}>
+              <div key={i} style={{ marginBottom: "0.75rem", padding: "0.5rem", background: "var(--elevated)", borderRadius: "4px" }}>
                 <div style={{ fontSize: "0.875rem", fontWeight: 500 }}>{s.backup_name}</div>
-                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
                   {s.message_count.toLocaleString()} messages ({s.percentage}% of total)
                 </div>
-                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
                   {s.unique_count.toLocaleString()} unique
                 </div>
               </div>
             ))}
-            <div style={{ marginTop: "0.5rem", fontSize: "0.813rem", color: "#6b7280" }}>
+            <div style={{ marginTop: "0.5rem", fontSize: "0.813rem", color: "var(--muted)" }}>
               Net total: {total.toLocaleString()} unique messages
             </div>
           </>

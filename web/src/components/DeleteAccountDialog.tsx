@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Button from "./Button";
 
 export default function DeleteAccountDialog({
   open,
@@ -51,8 +52,8 @@ export default function DeleteAccountDialog({
           width: "100%",
           maxWidth: "28rem",
           borderRadius: "8px",
-          border: "1px solid #e5e7eb",
-          background: "#fff",
+          border: "1px solid var(--border)",
+          background: "var(--panel)",
           padding: "1.25rem",
           boxShadow: "0 16px 48px rgba(0,0,0,0.25)",
         }}
@@ -68,7 +69,7 @@ export default function DeleteAccountDialog({
             right: "0.75rem",
             border: "none",
             background: "transparent",
-            color: "#6b7280",
+            color: "var(--muted)",
             cursor: deleting ? "not-allowed" : "pointer",
             fontSize: "1.25rem",
             lineHeight: 1,
@@ -84,13 +85,13 @@ export default function DeleteAccountDialog({
           Delete your account?
         </h2>
 
-        <p style={{ margin: "0.75rem 0 0", fontSize: "0.875rem", color: "#6b7280", lineHeight: 1.5 }}>
+        <p style={{ margin: "0.75rem 0 0", fontSize: "0.875rem", color: "var(--muted)", lineHeight: 1.5 }}>
           This cannot be undone. Your messages, contacts, group chats, profile,
           and attachments will be permanently deleted.
         </p>
 
         <label style={{ display: "block", marginTop: "1.25rem" }}>
-          <span style={{ fontSize: "0.875rem", color: "#374151" }}>
+          <span style={{ fontSize: "0.875rem", color: "var(--text)" }}>
             Type your user ID{" "}
             {expected ? <strong>{expected}</strong> : null} to confirm.
           </span>
@@ -107,30 +108,23 @@ export default function DeleteAccountDialog({
               boxSizing: "border-box",
               padding: "0.5rem 0.75rem",
               fontSize: "0.875rem",
-              border: "1px solid #d1d5db",
+              border: "1px solid var(--border)",
               borderRadius: "4px",
+              background: "var(--bg)",
+              color: "var(--text)",
             }}
           />
         </label>
 
         <div style={{ marginTop: "1.25rem", display: "flex", justifyContent: "flex-end" }}>
-          <button
-            type="button"
+          <Button
+            variant="danger"
             disabled={deleting || !matches}
             onClick={onConfirm}
-            style={{
-              padding: "0.5rem 1rem",
-              fontSize: "0.813rem",
-              borderRadius: "4px",
-              cursor: matches && !deleting ? "pointer" : "not-allowed",
-              opacity: matches && !deleting ? 1 : 0.5,
-              color: "#dc2626",
-              border: "1px solid #fecaca",
-              background: "#fef2f2",
-            }}
+            style={{ padding: "0.5rem 1rem", fontSize: "0.813rem" }}
           >
             {deleting ? "Deleting…" : "Permanently delete my account"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

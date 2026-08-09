@@ -7,6 +7,7 @@ import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
+import Button from "../components/Button";
 
 const SOURCES: { id: string; label: string }[] = [
   { id: "imessage-ios", label: "iPhone - iOS" },
@@ -37,8 +38,10 @@ const fieldStyle: React.CSSProperties = {
   padding: "0.4rem 0.6rem",
   fontSize: "0.875rem",
   borderRadius: "6px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--border)",
   boxSizing: "border-box",
+  background: "var(--bg)",
+  color: "var(--text)",
 };
 
 const labelStyle: React.CSSProperties = {
@@ -50,7 +53,7 @@ const labelStyle: React.CSSProperties = {
 
 const hintStyle: React.CSSProperties = {
   fontSize: "0.75rem",
-  color: "#6b7280",
+  color: "var(--muted)",
   marginTop: "0.25rem",
 };
 
@@ -62,8 +65,8 @@ const collapsibleHeaderStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "0.5rem 0.75rem",
   borderRadius: "8px",
-  border: "1px solid #d1d5db",
-  background: "#f9fafb",
+  border: "1px solid var(--border)",
+  background: "var(--elevated)",
   fontSize: "0.875rem",
   fontWeight: 500,
   cursor: "pointer",
@@ -246,7 +249,7 @@ export default function ImportScreen() {
           <h1 style={{ margin: "0 0 0.25rem 0", fontSize: "1.5rem", fontWeight: 700 }}>
             Import Messages
           </h1>
-          <p style={{ margin: "0 0 1.25rem 0", color: "#6b7280", fontSize: "0.875rem" }}>
+          <p style={{ margin: "0 0 1.25rem 0", color: "var(--muted)", fontSize: "0.875rem" }}>
             Select your messages.
           </p>
 
@@ -269,7 +272,7 @@ export default function ImportScreen() {
                     href={IPHONE_HELP_URL}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ fontSize: "0.8125rem", color: "#2563eb" }}
+                    style={{ fontSize: "0.8125rem", color: "var(--accent)" }}
                   >
                     Need help?
                   </a>
@@ -382,7 +385,7 @@ export default function ImportScreen() {
               <hr
                 style={{
                   border: "none",
-                  borderTop: "1px solid #e5e7eb",
+                  borderTop: "1px solid var(--border)",
                   margin: "1.25rem 0",
                 }}
               />
@@ -442,23 +445,14 @@ export default function ImportScreen() {
           )}
 
           <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.5rem" }}>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={startImport}
               disabled={!backupPath || running}
-              style={{
-                padding: "0.55rem 1.5rem",
-                fontWeight: 600,
-                borderRadius: "8px",
-                border: "1px solid #111827",
-                background: "#111827",
-                color: "#fff",
-                cursor: backupPath ? "pointer" : "not-allowed",
-                opacity: backupPath ? 1 : 0.5,
-              }}
+              style={{ padding: "0.55rem 1.5rem", borderRadius: "8px" }}
             >
               Import
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -471,23 +465,17 @@ export default function ImportScreen() {
           <StepProgress steps={steps} />
           <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem" }}>
             {running && (
-              <button type="button" onClick={() => invokeCancel()}>
+              <Button onClick={() => invokeCancel()}>
                 Cancel
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => setShowDetails(!showDetails)}
-              style={{
-                fontSize: "0.813rem",
-                border: "none",
-                background: "none",
-                color: "#2563eb",
-                cursor: "pointer",
-              }}
+              style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
             >
               {showDetails ? "Hide details" : "Show details"}
-            </button>
+            </Button>
           </div>
           {showDetails && (
             <pre
@@ -495,7 +483,7 @@ export default function ImportScreen() {
                 maxHeight: "300px",
                 overflow: "auto",
                 fontSize: "0.75rem",
-                background: "#f3f4f6",
+                background: "var(--hover)",
                 padding: "0.5rem",
                 borderRadius: "4px",
                 whiteSpace: "pre-wrap",
@@ -516,7 +504,7 @@ export default function ImportScreen() {
             style={{
               marginTop: "1rem",
               padding: "1rem",
-              background: "#f0fdf4",
+              background: "var(--ok-soft-bg)",
               borderRadius: "6px",
               fontSize: "0.875rem",
             }}
@@ -524,16 +512,16 @@ export default function ImportScreen() {
             {summary}
           </div>
           <div style={{ marginTop: "1rem" }}>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={() => {
                 setPhase("form");
                 setSummary("");
               }}
-              style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}
+              style={{ padding: "0.5rem 1.5rem" }}
             >
               Import another
-            </button>
+            </Button>
           </div>
         </>
       )}

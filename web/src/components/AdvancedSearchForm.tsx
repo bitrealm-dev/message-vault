@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { apiClient } from "../lib/api";
+import Button from "./Button";
+
+export type AdvancedSearchMode = "messages" | "contacts";
 
 export default function AdvancedSearchForm({
+  mode,
   onApply,
   onClose,
 }: {
+  mode: AdvancedSearchMode;
   onApply: (query: string) => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"messages" | "contacts">("messages");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [withPerson, setWithPerson] = useState("");
@@ -36,10 +40,11 @@ export default function AdvancedSearchForm({
 
   const inputStyle: CSSProperties = {
     width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.813rem",
-    border: "1px solid #d1d5db", borderRadius: "4px", boxSizing: "border-box",
+    border: "1px solid var(--border)", borderRadius: "4px", boxSizing: "border-box",
+    background: "var(--bg)", color: "var(--text)",
   };
   const labelStyle: CSSProperties = {
-    fontSize: "0.688rem", fontWeight: 600, color: "#6b7280",
+    fontSize: "0.688rem", fontWeight: 600, color: "var(--muted)",
     textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem",
     display: "block",
   };
@@ -47,7 +52,7 @@ export default function AdvancedSearchForm({
   const buildQuery = (): string => {
     const parts: string[] = [];
     const push = (s: string) => { if (s.trim()) parts.push(s.trim()); };
-    if (tab === "messages") {
+    if (mode === "messages") {
       if (from) push(`from:"${from}"`);
       if (to) push(`to:"${to}"`);
       if (withPerson) push(`with:"${withPerson}"`);
@@ -72,23 +77,18 @@ export default function AdvancedSearchForm({
 
   return (
     <div style={{
-      background: "#fff", border: "1px solid #e5e7eb", borderRadius: "6px",
+      background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "6px",
       boxShadow: "0 4px 12px rgba(0,0,0,0.1)", padding: "0.75rem", zIndex: 60,
     }}>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        <button onClick={() => setTab("messages")}
-          style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem", fontWeight: tab === "messages" ? 600 : 400 }}>
-          Messages
-        </button>
-        <button onClick={() => setTab("contacts")}
-          style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem", fontWeight: tab === "contacts" ? 600 : 400 }}>
-          Contacts
-        </button>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", alignItems: "center" }}>
+        <span style={{ fontSize: "0.813rem", fontWeight: 600, color: "var(--text)" }}>
+          {mode === "messages" ? "Message filters" : "Contact filters"}
+        </span>
         <span style={{ flex: 1 }} />
-        <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1rem", cursor: "pointer" }}>×</button>
+        <button type="button" onClick={onClose} style={{ border: "none", background: "none", fontSize: "1rem", cursor: "pointer", color: "var(--muted)" }}>×</button>
       </div>
 
-      {tab === "messages" ? (
+      {mode === "messages" ? (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
           <div><label style={labelStyle}>From</label><input style={inputStyle} value={from} onChange={(e) => setFrom(e.target.value)} placeholder="Name or handle" /></div>
           <div><label style={labelStyle}>To</label><input style={inputStyle} value={to} onChange={(e) => setTo(e.target.value)} placeholder="Name or handle" /></div>
@@ -116,8 +116,8 @@ export default function AdvancedSearchForm({
       )}
 
       <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.75rem" }}>
-        <button onClick={onClose} style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}>Cancel</button>
-        <button onClick={() => onApply(buildQuery())} style={{ padding: "0.375rem 1rem", fontSize: "0.813rem", fontWeight: 600 }}>Apply</button>
+        <Button onClick={onClose} style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}>Cancel</Button>
+        <Button variant="primary" onClick={() => onApply(buildQuery())} style={{ padding: "0.375rem 1rem", fontSize: "0.813rem" }}>Apply</Button>
       </div>
     </div>
   );

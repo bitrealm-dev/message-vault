@@ -1,6 +1,16 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient } from "../lib/api";
+import {
+  accentLink,
+  authCard,
+  authInput,
+  authLabel,
+  authTitle,
+  mutedText,
+  pageCenter,
+} from "../lib/uiStyles";
+import AuthSubmitButton from "../components/AuthSubmitButton";
 
 interface HandleInput {
   handle: string;
@@ -67,25 +77,25 @@ export default function OnboardingScreen() {
     displayName.trim() && handles.some((h) => h.handle.trim());
 
   return (
-    <div style={pageStyle}>
-      <div style={cardStyle}>
-        <h1 style={titleStyle}>Profile Setup</h1>
+    <div style={pageCenter}>
+      <div style={{ ...authCard, maxWidth: "480px" }}>
+        <h1 style={{ ...authTitle, marginBottom: "0.5rem" }}>Profile Setup</h1>
         <p style={greetingStyle}>Welcome to the Message Vault!</p>
         <p style={bodyStyle}>
           Set up your profile so we can match imported message data to you.
         </p>
 
-        <label style={labelStyle}>Display Name</label>
+        <label style={authLabel}>Display Name</label>
         <input
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="Your name"
-          style={inputStyle}
+          style={authInput}
           autoFocus
         />
 
-        <label style={{ ...labelStyle, marginTop: "1rem" }}>Source Accounts</label>
+        <label style={{ ...authLabel, marginTop: "1rem" }}>Source Accounts</label>
         <p style={helpStyle}>
           Add the accounts or phone numbers you import data from.
         </p>
@@ -99,11 +109,9 @@ export default function OnboardingScreen() {
               value={h.service}
               onChange={(e) => updateHandle(i, "service", e.target.value)}
               style={{
-                padding: "0.375rem 0.5rem",
-                fontSize: "0.875rem",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
+                ...authInput,
                 width: "140px",
+                padding: "0.375rem 0.5rem",
               }}
             >
               {SERVICES.map((s) => (
@@ -122,11 +130,10 @@ export default function OnboardingScreen() {
                   : "+1 555-123-4567"
               }
               style={{
+                ...authInput,
                 flex: 1,
+                width: "auto",
                 padding: "0.375rem 0.5rem",
-                fontSize: "0.875rem",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
               }}
             />
             <button
@@ -136,7 +143,7 @@ export default function OnboardingScreen() {
               style={{
                 border: "none",
                 background: "none",
-                color: "#9ca3af",
+                color: "var(--muted)",
                 cursor: handles.length === 1 ? "default" : "pointer",
                 fontSize: "1.25rem",
               }}
@@ -153,7 +160,7 @@ export default function OnboardingScreen() {
             fontSize: "0.813rem",
             border: "none",
             background: "none",
-            color: "#2563eb",
+            color: "var(--accent)",
             cursor: "pointer",
             padding: 0,
           }}
@@ -161,21 +168,15 @@ export default function OnboardingScreen() {
           + Add another account
         </button>
 
-        <button
+        <AuthSubmitButton
           onClick={handleSubmit}
           disabled={!canSubmit || loading}
-          style={{
-            width: "100%",
-            marginTop: "1.5rem",
-            padding: "0.75rem",
-            fontSize: "1rem",
-            fontWeight: 600,
-          }}
+          style={!canSubmit && !loading ? { filter: "brightness(0.72)" } : undefined}
         >
           {loading ? "Saving…" : "Continue to Vault"}
-        </button>
+        </AuthSubmitButton>
 
-        <button type="button" onClick={logout} style={backLinkStyle}>
+        <button type="button" onClick={logout} style={{ ...accentLink, marginTop: "0.75rem" }}>
           ← Back to login
         </button>
 
@@ -185,7 +186,7 @@ export default function OnboardingScreen() {
             minHeight: "2.5rem",
             fontSize: "0.813rem",
             lineHeight: 1.35,
-            color: error ? "#991b1b" : "transparent",
+            color: error ? "var(--danger)" : "transparent",
           }}
           aria-live="polite"
         >
@@ -196,77 +197,23 @@ export default function OnboardingScreen() {
   );
 }
 
-const pageStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: "100vh",
-  background: "#f3f4f6",
-  fontFamily: "system-ui",
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  padding: "2rem",
-  borderRadius: "8px",
-  width: "100%",
-  maxWidth: "480px",
-  boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-};
-
-const titleStyle: React.CSSProperties = {
-  margin: "0 0 0.5rem",
-  fontSize: "1.5rem",
-  textAlign: "center",
-};
-
 const greetingStyle: React.CSSProperties = {
   textAlign: "center",
-  color: "#374151",
+  color: "var(--text)",
   fontSize: "0.9375rem",
   margin: "0 0 0.5rem",
   fontWeight: 500,
 };
 
 const bodyStyle: React.CSSProperties = {
+  ...mutedText,
   textAlign: "center",
-  color: "#6b7280",
   fontSize: "0.875rem",
   margin: "0 0 1.5rem",
 };
 
-const labelStyle: React.CSSProperties = {
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  display: "block",
-  marginBottom: "0.25rem",
-};
-
 const helpStyle: React.CSSProperties = {
+  ...mutedText,
   fontSize: "0.75rem",
-  color: "#9ca3af",
   marginBottom: "0.5rem",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.5rem",
-  fontSize: "0.875rem",
-  border: "1px solid #d1d5db",
-  borderRadius: "4px",
-  boxSizing: "border-box",
-};
-
-const backLinkStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  marginTop: "0.75rem",
-  padding: "0.25rem",
-  fontSize: "0.875rem",
-  background: "transparent",
-  border: "none",
-  color: "#4f46e5",
-  textDecoration: "underline",
-  cursor: "pointer",
-  textAlign: "center",
 };

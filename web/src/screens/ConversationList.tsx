@@ -32,19 +32,19 @@ export default function ConversationList({
   }, [query]);
 
   if (loading) {
-    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>Loading…</div>;
+    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>Loading…</div>;
   }
 
   if (error) {
     return (
-      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#dc2626" }}>
+      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--danger)" }}>
         Could not load conversations: {error}
       </div>
     );
   }
 
   if (conversations.length === 0) {
-    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>No conversations</div>;
+    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>No conversations</div>;
   }
 
   return (

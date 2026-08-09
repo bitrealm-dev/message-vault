@@ -11,7 +11,7 @@ export default function ProgressBar({ log, running }: ProgressBarProps) {
           <div
             style={{
               height: "8px",
-              background: "#e5e7eb",
+              background: "var(--border)",
               borderRadius: "4px",
               overflow: "hidden",
             }}
@@ -20,7 +20,7 @@ export default function ProgressBar({ log, running }: ProgressBarProps) {
               style={{
                 height: "100%",
                 width: "100%",
-                background: "#3b82f6",
+                background: "var(--accent)",
                 animation: "indeterminate 1.5s ease-in-out infinite",
               }}
             />
@@ -33,7 +33,7 @@ export default function ProgressBar({ log, running }: ProgressBarProps) {
             maxHeight: "300px",
             overflow: "auto",
             fontSize: "0.75rem",
-            background: "#f3f4f6",
+            background: "var(--hover)",
             padding: "0.5rem",
             borderRadius: "4px",
             margin: 0,

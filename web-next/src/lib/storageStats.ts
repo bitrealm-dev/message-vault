@@ -61,7 +61,7 @@ export function listVaultImports(
 
 export function loadStorageUsage(
   accountId: string,
-  topLimit = 20,
+  topLimit = 100,
 ): StorageUsage {
   ensureReadableSchema();
   const db = getDb();

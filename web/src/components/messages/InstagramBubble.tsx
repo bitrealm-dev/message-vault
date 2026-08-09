@@ -15,7 +15,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark key={key++} style={{ background: "#fde68a", borderRadius: "2px", padding: "0 1px" }}>
+      <mark key={key++} style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}>
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -50,8 +50,8 @@ export default function InstagramBubble({
 
   return (
     <div id={`msg-${message.id}`} style={{
-      padding: "0.5rem 1.5rem", borderBottom: "1px solid #f3f4f6",
-      background: isActive ? "#fef9c3" : "transparent",
+      padding: "0.5rem 1.5rem", borderBottom: "1px solid var(--border)",
+      background: isActive ? "var(--search-active)" : "transparent",
     }}>
       <div style={{
         display: "flex", gap: "0.5rem", marginBottom: "0.25rem",
@@ -60,17 +60,17 @@ export default function InstagramBubble({
         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#e4405f" }}>
           {senderName(message)}
         </span>
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{time}</span>
+        <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{time}</span>
         {message.is_story_reply && (
           <span style={{ fontSize: "0.688rem", color: "#e4405f" }}>Story reply</span>
         )}
         {message.forwarded && (
-          <span style={{ fontSize: "0.688rem", color: "#9ca3af" }}>Forwarded</span>
+          <span style={{ fontSize: "0.688rem", color: "var(--muted)" }}>Forwarded</span>
         )}
       </div>
 
       <div style={{
-        fontSize: "0.875rem", color: "#1f2937", lineHeight: 1.5,
+        fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5,
         whiteSpace: "pre-wrap", textAlign: mine ? "right" : "left",
       }}>
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}

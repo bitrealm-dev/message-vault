@@ -1,0 +1,233 @@
+/*
+  Four-seed themes: JS sets --header + --accent (and data-theme).
+  Surfaces derive via color-mix.
+*/
+
+:root {
+  /* Fallback seeds (dark graphite blue) until boot script runs */
+  --header: #222426;
+  --accent: #5ea1ff;
+
+  --sidebar: var(--header);
+  --sent: var(--accent);
+  --popover: var(--elevated);
+  --received-text: var(--text);
+  --scrollbar-track: var(--panel);
+  --scrollbar-thumb: var(--muted);
+  --scrollbar-thumb-hover: var(--text);
+  --checkbox-border: var(--muted);
+}
+
+/* Dark: header is chrome; deepen for canvas, lift for elevated */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: color-mix(in srgb, var(--header) 55%, black);
+  --panel: color-mix(in srgb, var(--header) 78%, black);
+  --elevated: color-mix(in srgb, var(--header) 82%, white);
+  --border: color-mix(in srgb, var(--header) 65%, white);
+  --text: color-mix(in srgb, white 92%, var(--header));
+  --muted: color-mix(in srgb, white 70%, var(--header));
+  --received: color-mix(in srgb, var(--header) 70%, white);
+  --sent-text: #ffffff;
+  --hover: rgb(255 255 255 / 0.12);
+  --hover-strong: rgb(255 255 255 / 0.2);
+  --scrim: rgb(0 0 0 / 0.55);
+  --checkbox-bg: color-mix(in srgb, white 72%, var(--header));
+  --checkbox-check: color-mix(in srgb, black 85%, var(--header));
+  --danger: #f87171;
+  --danger-soft-bg: color-mix(in srgb, var(--danger) 18%, var(--panel));
+  --danger-soft-border: color-mix(in srgb, var(--danger) 40%, var(--border));
+  --ok: #4ade80;
+  --ok-soft-bg: color-mix(in srgb, var(--ok) 16%, var(--panel));
+  --ok-soft-border: color-mix(in srgb, var(--ok) 35%, var(--border));
+  --ok-soft-text: color-mix(in srgb, var(--ok) 70%, white);
+  --warn-soft-bg: color-mix(in srgb, #fbbf24 16%, var(--panel));
+  --warn-soft-border: color-mix(in srgb, #fbbf24 35%, var(--border));
+  --warn-soft-text: color-mix(in srgb, #fbbf24 75%, white);
+  --info-soft-bg: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  --search-mark: color-mix(in srgb, #fbbf24 45%, var(--elevated));
+  --search-active: color-mix(in srgb, #fbbf24 28%, var(--panel));
+}
+
+/* Light: header is chrome; open up toward white for panels */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: color-mix(in srgb, var(--header) 45%, white);
+  --panel: #ffffff;
+  --elevated: color-mix(in srgb, var(--header) 35%, white);
+  --border: color-mix(in srgb, var(--header) 55%, black);
+  --text: color-mix(in srgb, black 88%, var(--header));
+  --muted: color-mix(in srgb, black 45%, var(--header));
+  --received: color-mix(in srgb, var(--header) 55%, white);
+  --sent-text: #ffffff;
+  --hover: rgb(0 0 0 / 0.06);
+  --hover-strong: rgb(0 0 0 / 0.1);
+  --scrim: rgb(0 0 0 / 0.4);
+  --checkbox-bg: #ffffff;
+  --checkbox-check: #ffffff;
+  --danger: #dc2626;
+  --danger-soft-bg: color-mix(in srgb, var(--danger) 12%, white);
+  --danger-soft-border: color-mix(in srgb, var(--danger) 35%, white);
+  --ok: #16a34a;
+  --ok-soft-bg: #f0fdf4;
+  --ok-soft-border: #bbf7d0;
+  --ok-soft-text: #166534;
+  --warn-soft-bg: #fefce8;
+  --warn-soft-border: #fef08a;
+  --warn-soft-text: #854d0e;
+  --info-soft-bg: #eff6ff;
+  --search-mark: #fde68a;
+  --search-active: #fef9c3;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Native form controls (select popups, date pickers) follow data-theme via color-scheme. */
+input,
+select,
+textarea {
+  color: var(--text);
+  background-color: var(--bg);
+  border-color: var(--border);
+}
+
+select option {
+  color: var(--text);
+  background-color: var(--panel);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+.checkbox-list {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 3px;
+  border: 1px solid var(--checkbox-border);
+  background-color: var(--checkbox-bg);
+  cursor: pointer;
+}
+
+.checkbox-list:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-theme="light"] .checkbox-list:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+}
+
+.checkbox-list:indeterminate {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-theme="light"] .checkbox-list:indeterminate {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
+}
+
+.checkbox-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Default form controls inherit theme (screens can still override). */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+select,
+textarea {
+  background-color: var(--elevated);
+  color: var(--text);
+  border-color: var(--border);
+  color-scheme: light dark;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+/* Prefer <Button> (all:unset) for solid CTAs — WebKit/Tauri often ignores
+   native button backgrounds while still applying text color. */
+button {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+button.btn-primary {
+  background-color: var(--accent) !important;
+  background-image: linear-gradient(var(--accent), var(--accent)) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+button.btn-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+
+button.btn-link {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+}

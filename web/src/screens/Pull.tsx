@@ -4,6 +4,7 @@ import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import Button from "../components/Button";
 
 const INDETERMINATE_KEYFRAMES = `
 @keyframes indeterminate {
@@ -56,17 +57,17 @@ export default function Pull({ onError }: { onError?: (msg: string) => void }) {
 
       <FormRow label="Server URL">
         <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://vault.example.com" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          placeholder="https://vault.example.com" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="Username">
         <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="API Key">
         <input type="password" value={key} onChange={(e) => setKey(e.target.value)}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="Output directory">
@@ -75,7 +76,7 @@ export default function Pull({ onError }: { onError?: (msg: string) => void }) {
 
       <FormRow label="Search query">
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. from:alice before:2024-01-01" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          placeholder="e.g. from:alice before:2024-01-01" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="Options">
@@ -85,13 +86,13 @@ export default function Pull({ onError }: { onError?: (msg: string) => void }) {
       </FormRow>
 
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
-        <button onClick={start} disabled={running || !baseUrl || !username || !key || !outDir}
-          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
+        <Button variant="primary" onClick={start} disabled={running || !baseUrl || !username || !key || !outDir}
+          style={{ padding: "0.5rem 1.5rem" }}>
           {running ? "Pulling…" : "Pull"}
-        </button>
-        <button onClick={() => invokeCancel()} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
+        </Button>
+        <Button onClick={() => invokeCancel()} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
           Cancel
-        </button>
+        </Button>
       </div>
 
       <div style={{ marginTop: "1.5rem" }}>

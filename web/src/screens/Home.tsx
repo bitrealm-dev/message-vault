@@ -12,7 +12,7 @@ const ACTIONS: QuickAction[] = [
     id: "extract",
     label: "Extract Messages",
     description: "Pull conversations from a phone backup and export them as JSONL",
-    color: "#2563eb",
+    color: "var(--accent)",
   },
   {
     id: "format",
@@ -40,29 +40,29 @@ export default function Home({ onNavigate }: { onNavigate: (tab: string) => void
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <h2 style={{ margin: "0 0 0.5rem 0", fontSize: "1.5rem" }}>Message Vault</h2>
-      <p style={{ margin: "0 0 2rem 0", color: "#6b7280", fontSize: "0.875rem" }}>
+      <p style={{ margin: "0 0 2rem 0", color: "var(--muted)", fontSize: "0.875rem" }}>
         Extract, convert, and manage message backups
       </p>
 
       <div
         style={{
-          background: isAuthenticated ? "#f0fdf4" : "#fefce8",
-          border: isAuthenticated ? "1px solid #bbf7d0" : "1px solid #fef08a",
+          background: isAuthenticated ? "var(--ok-soft-bg)" : "var(--warn-soft-bg)",
+          border: isAuthenticated ? "1px solid var(--ok-soft-border)" : "1px solid var(--warn-soft-border)",
           borderRadius: "8px",
           padding: "0.75rem 1rem",
           marginBottom: "2rem",
           fontSize: "0.875rem",
         }}
       >
-        <span style={{ fontWeight: 600, color: isAuthenticated ? "#166534" : "#854d0e" }}>
+        <span style={{ fontWeight: 600, color: isAuthenticated ? "var(--ok-soft-text)" : "var(--warn-soft-text)" }}>
           Vault:{" "}
         </span>
         {isAuthenticated ? (
-          <span style={{ color: "#166534" }}>
+          <span style={{ color: "var(--ok-soft-text)" }}>
             Signed in{serverUrl ? ` at ${serverUrl}` : ""}
           </span>
         ) : (
-          <span style={{ color: "#854d0e" }}>
+          <span style={{ color: "var(--warn-soft-text)" }}>
             Sign in to use vault import and browse
           </span>
         )}
@@ -78,9 +78,9 @@ export default function Home({ onNavigate }: { onNavigate: (tab: string) => void
               alignItems: "center",
               gap: "1rem",
               padding: "1rem 1.25rem",
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--border)",
               borderRadius: "8px",
-              background: "#fff",
+              background: "var(--panel)",
               cursor: "pointer",
               textAlign: "left",
             }}
@@ -95,10 +95,10 @@ export default function Home({ onNavigate }: { onNavigate: (tab: string) => void
               }}
             />
             <span>
-              <span style={{ display: "block", fontWeight: 600, color: "#111827" }}>
+              <span style={{ display: "block", fontWeight: 600, color: "var(--text)" }}>
                 {action.label}
               </span>
-              <span style={{ display: "block", fontSize: "0.813rem", color: "#6b7280" }}>
+              <span style={{ display: "block", fontSize: "0.813rem", color: "var(--muted)" }}>
                 {action.description}
               </span>
             </span>

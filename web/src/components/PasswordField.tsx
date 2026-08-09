@@ -73,16 +73,16 @@ function EyeOffIcon() {
 const wrapStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--border)",
   borderRadius: "4px",
-  background: "#fff",
+  background: "var(--elevated)",
 };
 
 const iconStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   paddingLeft: "0.5rem",
-  color: "#6b7280",
+  color: "var(--muted)",
   flexShrink: 0,
 };
 
@@ -93,6 +93,7 @@ const inputStyle: React.CSSProperties = {
   border: "none",
   outline: "none",
   background: "transparent",
+  color: "var(--text)",
   minWidth: 0,
 };
 
@@ -103,7 +104,7 @@ const eyeButtonStyle: React.CSSProperties = {
   padding: "0.5rem",
   border: "none",
   background: "transparent",
-  color: "#6b7280",
+  color: "var(--muted)",
   cursor: "pointer",
   flexShrink: 0,
 };

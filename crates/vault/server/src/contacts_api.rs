@@ -11,6 +11,9 @@ pub struct ContactSummary {
     pub id: i64,
     pub name: String,
     pub handle_count: u64,
+    /// Normalized (and raw when distinct) handle values for client-side filter.
+    #[serde(default)]
+    pub handles: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
 }
@@ -66,6 +69,20 @@ pub fn list_contacts(
                     (SELECT COUNT(*)
                      FROM contact_handles ch
                      WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
+                    (SELECT GROUP_CONCAT(val, char(31))
+                     FROM (
+                       SELECT DISTINCT h.normalized AS val
+                       FROM contact_handles ch
+                       JOIN handles h ON h.id = ch.handle_id
+                       WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                         AND h.normalized IS NOT NULL AND trim(h.normalized) != ''
+                       UNION
+                       SELECT DISTINCT h.raw AS val
+                       FROM contact_handles ch
+                       JOIN handles h ON h.id = ch.handle_id
+                       WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                         AND h.raw IS NOT NULL AND trim(h.raw) != ''
+                     )) AS handles,
                     (SELECT MAX(m.timestamp)
                      FROM messages m
                      JOIN conversations c ON c.id = m.conversation_id
@@ -89,11 +106,22 @@ pub fn list_contacts(
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
     let rows = stmt
         .query_map([account_id], |row| {
+            let handles_blob: Option<String> = row.get(3)?;
+            let handles = handles_blob
+                .map(|s| {
+                    s.split('\u{1f}')
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             Ok(ContactSummary {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 handle_count: row.get::<_, i64>(2)?.max(0) as u64,
-                last_message_at: row.get(3)?,
+                handles,
+                last_message_at: row.get(4)?,
             })
         })
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?
@@ -261,5 +289,13 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "Pat");
         assert_eq!(list[0].handle_count, 1);
+        assert!(
+            list[0]
+                .handles
+                .iter()
+                .any(|h| h.contains("5555550100") || h.contains("+15555550100")),
+            "handles={:?}",
+            list[0].handles
+        );
     }
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invokeContactsInfo, type ContactsInfo } from "../lib/tauri";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
+import Button from "../components/Button";
 
 export default function Contacts() {
   const [path, setPath] = useState("");
@@ -36,13 +37,14 @@ export default function Contacts() {
       </FormRow>
 
       <div style={{ marginTop: "1.5rem" }}>
-        <button
+        <Button
+          variant="primary"
           onClick={handleParse}
           disabled={loading || !path}
-          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}
+          style={{ padding: "0.5rem 1.5rem" }}
         >
           {loading ? "Parsing…" : "Parse Contacts"}
-        </button>
+        </Button>
       </div>
 
       {error && (
@@ -50,10 +52,10 @@ export default function Contacts() {
           style={{
             marginTop: "1rem",
             padding: "0.75rem 1rem",
-            background: "#fef2f2",
-            border: "1px solid #fecaca",
+            background: "var(--danger-soft-bg)",
+            border: "1px solid var(--danger-soft-border)",
             borderRadius: "6px",
-            color: "#991b1b",
+            color: "var(--danger)",
             fontSize: "0.875rem",
           }}
         >
@@ -69,7 +71,7 @@ export default function Contacts() {
               gap: "1.5rem",
               marginBottom: "1rem",
               fontSize: "0.875rem",
-              color: "#374151",
+              color: "var(--text)",
             }}
           >
             <div>
@@ -88,7 +90,7 @@ export default function Contacts() {
                 style={{
                   fontWeight: 600,
                   fontSize: "0.813rem",
-                  color: "#6b7280",
+                  color: "var(--muted)",
                   marginBottom: "0.5rem",
                 }}
               >
@@ -96,7 +98,7 @@ export default function Contacts() {
               </div>
               <div
                 style={{
-                  border: "1px solid #e5e7eb",
+                  border: "1px solid var(--border)",
                   borderRadius: "6px",
                   maxHeight: "300px",
                   overflow: "auto",
@@ -108,8 +110,8 @@ export default function Contacts() {
                     style={{
                       padding: "0.375rem 0.75rem",
                       fontSize: "0.875rem",
-                      borderBottom: "1px solid #f3f4f6",
-                      background: i % 2 === 0 ? "#fff" : "#f9fafb",
+                      borderBottom: "1px solid var(--border)",
+                      background: i % 2 === 0 ? "var(--panel)" : "var(--elevated)",
                     }}
                   >
                     {name}

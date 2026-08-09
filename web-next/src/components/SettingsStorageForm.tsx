@@ -5,7 +5,9 @@ import {
   type TopAttachmentItem,
   type VaultImportListItem,
 } from "@/lib/storageTypes";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const PAGE_SIZE = 20;
 
 function formatImportDate(iso: string | null): string {
   if (!iso) return "—";
@@ -27,6 +29,7 @@ export function SettingsStorageForm() {
   const [topAttachments, setTopAttachments] = useState<TopAttachmentItem[]>(
     [],
   );
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +61,7 @@ export function SettingsStorageForm() {
       setTotalBytes(usageJson.totalBytes ?? 0);
       setAttachmentCount(usageJson.attachmentCount ?? 0);
       setTopAttachments(usageJson.topAttachments ?? []);
+      setPage(0);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Couldn’t load storage details.",
@@ -70,6 +74,12 @@ export function SettingsStorageForm() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const pageCount = Math.max(1, Math.ceil(topAttachments.length / PAGE_SIZE));
+  const pageRows = useMemo(() => {
+    const start = page * PAGE_SIZE;
+    return topAttachments.slice(start, start + PAGE_SIZE);
+  }, [topAttachments, page]);
 
   if (loading) {
     return <p className="text-[14px] text-muted">Loading storage…</p>;
@@ -153,40 +163,75 @@ export function SettingsStorageForm() {
             Largest attachments
           </h2>
           <p className="mt-1 text-[13px] text-muted">
-            Top attachments by file size.
+            Top {topAttachments.length || 100} attachments by file size
+            {topAttachments.length > PAGE_SIZE
+              ? ` · ${PAGE_SIZE} per page`
+              : ""}
+            .
           </p>
         </div>
         {topAttachments.length === 0 ? (
           <p className="text-[13px] text-muted">No attachments with sizes yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="min-w-full text-left text-[13px]">
-              <thead className="border-b border-border bg-surface text-muted">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Name</th>
-                  <th className="px-3 py-2 font-medium">Conversation</th>
-                  <th className="px-3 py-2 font-medium text-right">Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topAttachments.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-b border-border last:border-b-0"
-                  >
-                    <td className="max-w-[14rem] truncate px-3 py-2 text-text">
-                      {row.originalName || row.mimeType || `Attachment ${row.id}`}
-                    </td>
-                    <td className="px-3 py-2 text-text">
-                      {row.conversationTitle || row.chatIdentifier}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-text">
-                      {formatBytes(row.sizeBytes)}
-                    </td>
+          <div className="space-y-3">
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="min-w-full text-left text-[13px]">
+                <thead className="border-b border-border bg-surface text-muted">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Name</th>
+                    <th className="px-3 py-2 font-medium">Conversation</th>
+                    <th className="px-3 py-2 font-medium text-right">Size</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pageRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="border-b border-border last:border-b-0"
+                    >
+                      <td className="max-w-[14rem] truncate px-3 py-2 text-text">
+                        {row.originalName ||
+                          row.mimeType ||
+                          `Attachment ${row.id}`}
+                      </td>
+                      <td className="px-3 py-2 text-text">
+                        {row.conversationTitle || row.chatIdentifier}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-text">
+                        {formatBytes(row.sizeBytes)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {topAttachments.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[12px] text-muted">
+                  Page {page + 1} of {pageCount}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={page <= 0}
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    className="rounded-md border border-border bg-surface px-3 py-1.5 text-[13px] font-medium text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={page >= pageCount - 1}
+                    onClick={() =>
+                      setPage((p) => Math.min(pageCount - 1, p + 1))
+                    }
+                    className="rounded-md border border-border bg-surface px-3 py-1.5 text-[13px] font-medium text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>

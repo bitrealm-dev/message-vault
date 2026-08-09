@@ -15,7 +15,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark key={key++} style={{ background: "#fde68a", borderRadius: "2px", padding: "0 1px" }}>
+      <mark key={key++} style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}>
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -50,8 +50,8 @@ export default function DiscordBubble({
 
   return (
     <div id={`msg-${message.id}`} style={{
-      padding: "0.5rem 1.5rem", borderBottom: "1px solid #f3f4f6",
-      background: isActive ? "#fef9c3" : "transparent",
+      padding: "0.5rem 1.5rem", borderBottom: "1px solid var(--border)",
+      background: isActive ? "var(--search-active)" : "transparent",
     }}>
       <div style={{
         display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.25rem",
@@ -63,11 +63,11 @@ export default function DiscordBubble({
         }}>
           {senderName(message)}
         </span>
-        <span style={{ fontSize: "0.688rem", color: "#9ca3af" }}>{time}</span>
+        <span style={{ fontSize: "0.688rem", color: "var(--muted)" }}>{time}</span>
       </div>
 
       <div style={{
-        fontSize: "0.875rem", color: "#1f2937", lineHeight: 1.5,
+        fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5,
         whiteSpace: "pre-wrap", textAlign: mine ? "right" : "left",
       }}>
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
@@ -77,15 +77,15 @@ export default function DiscordBubble({
       {message.embeds && message.embeds.length > 0 && message.embeds.map((embed, i) => (
         <div key={i} style={{
           marginTop: "0.5rem", borderLeft: "4px solid #5865f2",
-          background: "#f3f4f6", padding: "0.5rem 0.75rem", borderRadius: "0 4px 4px 0",
+          background: "var(--hover)", padding: "0.5rem 0.75rem", borderRadius: "0 4px 4px 0",
         }}>
           {embed.title && (
             <div style={{ fontSize: "0.813rem", fontWeight: 600, marginBottom: "0.125rem" }}>
-              {embed.url ? <a href={embed.url} style={{ color: "#2563eb" }}>{embed.title}</a> : embed.title}
+              {embed.url ? <a href={embed.url} style={{ color: "var(--accent)" }}>{embed.title}</a> : embed.title}
             </div>
           )}
           {embed.description && (
-            <div style={{ fontSize: "0.813rem", color: "#4b5563" }}>{embed.description}</div>
+            <div style={{ fontSize: "0.813rem", color: "var(--muted)" }}>{embed.description}</div>
           )}
         </div>
       ))}
@@ -95,7 +95,7 @@ export default function DiscordBubble({
         <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
           {message.reactions.map((r, i) => (
             <span key={i} style={{
-              fontSize: "0.75rem", background: "#e5e7eb",
+              fontSize: "0.75rem", background: "var(--border)",
               padding: "0.125rem 0.375rem", borderRadius: "4px",
             }}>
               {r.emoji} {r.count}

@@ -20,11 +20,11 @@ export default function AttachmentThumbnail({
     return (
       <div style={{
         display: "flex", alignItems: "center", gap: "0.5rem",
-        padding: "0.5rem", background: "#f9fafb", borderRadius: "4px",
+        padding: "0.5rem", background: "var(--elevated)", borderRadius: "4px",
         marginTop: "0.375rem", fontSize: "0.813rem",
       }}>
         <span>📎</span>
-        <span style={{ color: "#374151" }}>{attachment.original_name || "attachment"}</span>
+        <span style={{ color: "var(--text)" }}>{attachment.original_name || "attachment"}</span>
       </div>
     );
   }
@@ -35,7 +35,7 @@ export default function AttachmentThumbnail({
       style={{
         marginTop: "0.375rem", cursor: "pointer",
         maxWidth: "300px", borderRadius: "6px", overflow: "hidden",
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--border)",
       }}
     >
       {isImage && (

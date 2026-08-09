@@ -2,6 +2,15 @@ import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import PasswordField from "../components/PasswordField";
+import AuthSubmitButton from "../components/AuthSubmitButton";
+import {
+  accentLink,
+  authCard,
+  authInput,
+  authLabel,
+  authTitle,
+  pageCenter,
+} from "../lib/uiStyles";
 
 export default function RegisterScreen({
   serverUrl,
@@ -52,21 +61,21 @@ export default function RegisterScreen({
   };
 
   return (
-    <div style={pageStyle}>
-      <div style={cardStyle}>
-        <h1 style={titleStyle}>Create Account</h1>
+    <div style={pageCenter}>
+      <div style={authCard}>
+        <h1 style={authTitle}>Create Account</h1>
 
-        <label style={labelStyle}>Username</label>
+        <label style={authLabel}>Username</label>
         <input
           type="text"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
           autoComplete="username"
-          style={inputStyle}
+          style={authInput}
         />
 
-        <label style={{ ...labelStyle, marginTop: "0.75rem" }}>Password</label>
+        <label style={{ ...authLabel, marginTop: "0.75rem" }}>Password</label>
         <PasswordField
           value={password}
           onChange={setPassword}
@@ -74,7 +83,7 @@ export default function RegisterScreen({
           autoComplete="new-password"
         />
 
-        <label style={{ ...labelStyle, marginTop: "0.75rem" }}>Confirm Password</label>
+        <label style={{ ...authLabel, marginTop: "0.75rem" }}>Confirm Password</label>
         <PasswordField
           value={confirmPassword}
           onChange={setConfirmPassword}
@@ -82,21 +91,11 @@ export default function RegisterScreen({
           autoComplete="new-password"
         />
 
-        <button
-          onClick={handleRegister}
-          disabled={loading || !username.trim()}
-          style={{
-            width: "100%",
-            padding: "0.75rem",
-            fontSize: "1rem",
-            fontWeight: 600,
-            marginTop: "1rem",
-          }}
-        >
+        <AuthSubmitButton onClick={handleRegister} disabled={loading}>
           {loading ? "Creating account…" : "Create account"}
-        </button>
+        </AuthSubmitButton>
 
-        <button type="button" onClick={onBack} style={backLinkStyle}>
+        <button type="button" onClick={onBack} style={{ ...accentLink, marginTop: "0.75rem" }}>
           ← Back to login
         </button>
 
@@ -106,7 +105,7 @@ export default function RegisterScreen({
             minHeight: "2.5rem",
             fontSize: "0.813rem",
             lineHeight: 1.35,
-            color: error ? "#991b1b" : "transparent",
+            color: error ? "var(--danger)" : "transparent",
           }}
           aria-live="polite"
         >
@@ -116,57 +115,3 @@ export default function RegisterScreen({
     </div>
   );
 }
-
-const pageStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: "100vh",
-  background: "#f3f4f6",
-  fontFamily: "system-ui",
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  padding: "2rem",
-  borderRadius: "8px",
-  width: "100%",
-  maxWidth: "400px",
-  boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-};
-
-const titleStyle: React.CSSProperties = {
-  margin: "0 0 1.5rem",
-  fontSize: "1.5rem",
-  textAlign: "center",
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  display: "block",
-  marginBottom: "0.25rem",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.5rem",
-  fontSize: "0.875rem",
-  border: "1px solid #d1d5db",
-  borderRadius: "4px",
-  boxSizing: "border-box",
-};
-
-const backLinkStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  marginTop: "0.75rem",
-  padding: "0.25rem",
-  fontSize: "0.875rem",
-  background: "transparent",
-  border: "none",
-  color: "#4f46e5",
-  textDecoration: "underline",
-  cursor: "pointer",
-  textAlign: "center",
-};

@@ -220,7 +220,6 @@ pub fn list_imports_for_account(
 }
 
 /// Total attachment bytes for an account (original size_bytes).
-#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i64> {
     let n: i64 = conn.query_row(
         r#"
@@ -235,8 +234,22 @@ pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i
     Ok(n)
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+/// Attachment row count for an account.
+pub fn account_attachment_count(conn: &Connection, account_id: &str) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM attachments a
+        JOIN messages m ON m.id = a.message_id
+        WHERE m.account_id = ?1
+        "#,
+        params![account_id],
+        |r| r.get(0),
+    )?;
+    Ok(n)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TopAttachment {
     pub id: i64,
     pub original_name: Option<String>,
@@ -249,7 +262,6 @@ pub struct TopAttachment {
 }
 
 /// Largest attachments for an account.
-#[allow(dead_code)] // used by unit tests; storage UI queries SQLite from Next.js
 pub fn top_attachments_by_size(
     conn: &Connection,
     account_id: &str,

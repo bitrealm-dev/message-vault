@@ -24,7 +24,9 @@ export default function AppLayout() {
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
-    setActiveView("conversations");
+    const isContactSearch =
+      /\bsearch:contacts\b/i.test(q) || activeView === "contacts";
+    setActiveView(isContactSearch ? "contacts" : "conversations");
     setSearchActive(q.trim() !== "");
   };
 
@@ -56,7 +58,10 @@ export default function AppLayout() {
         />
       )
     ) : activeView === "contacts" ? (
-      <ContactList onSelect={(c) => setSelectedContactId(c.id)} />
+      <ContactList
+        filter={searchQuery}
+        onSelect={(c) => setSelectedContactId(c.id)}
+      />
     ) : null;
 
   const mainContent = () => {
@@ -69,13 +74,13 @@ export default function AppLayout() {
             initialFindTerm={findTerm}
           />
         ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.875rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)", fontSize: "0.875rem" }}>
             Select a conversation to view messages
           </div>
         );
       case "contacts":
         return (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.875rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)", fontSize: "0.875rem" }}>
             Select a contact to view details
           </div>
         );
@@ -91,7 +96,7 @@ export default function AppLayout() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui" }}>
+    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui", background: "var(--bg)", color: "var(--text)" }}>
       <LeftPanel
         activeView={activeView}
         onNavigate={setActiveView}
@@ -101,13 +106,14 @@ export default function AppLayout() {
       {showListColumn && (
         <ListColumn
           searchQuery={searchQuery}
+          searchMode={activeView === "contacts" ? "contacts" : "messages"}
           onSearchChange={handleSearchChange}
           onSearch={handleSearch}
         >
           {listContent}
         </ListColumn>
       )}
-      <main style={{ flex: 1, overflow: "auto", background: "#fff", minWidth: 0 }}>
+      <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
         {mainContent()}
       </main>
       <ContactDrawer contactId={selectedContactId} onClose={() => setSelectedContactId(null)} />

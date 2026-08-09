@@ -191,6 +191,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/account/delete-messages",
             post(crate::profile::delete_messages_handler),
         )
+        .route("/v1/account/storage", get(account_storage_handler))
         .route(
             "/v1/export/messages/count",
             get(export_messages_count_handler),
@@ -245,6 +246,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
     eprintln!("  GET  /v1/imports       (list past import sessions with stats)");
+    eprintln!("  GET  /v1/account/storage  (usage + top attachments)");
     eprintln!("  POST /v1/imports  (start import session; returns id)");
     eprintln!("  GET  /                  (static files — Vite SPA)");
     eprintln!("  POST /v1/imports/{{id}}/complete");
@@ -643,6 +645,37 @@ async fn imports_list_handler(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(serde_json::json!({ "imports": imports })))
+}
+
+/// `GET /v1/account/storage` — attachment usage + top 100 largest attachments.
+async fn account_storage_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account_id = auth.account_id;
+    let db = Arc::clone(&state.db);
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let total_bytes =
+            crate::db::vault_imports::account_attachment_bytes(&conn, &account_id)?;
+        let attachment_count =
+            crate::db::vault_imports::account_attachment_count(&conn, &account_id)?;
+        let top_attachments =
+            crate::db::vault_imports::top_attachments_by_size(&conn, &account_id, 100)?;
+        Ok(serde_json::json!({
+            "total_bytes": total_bytes,
+            "attachment_count": attachment_count,
+            "top_attachments": top_attachments,
+        }))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("account storage task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(result))
 }
 
 async fn imports_create_handler(

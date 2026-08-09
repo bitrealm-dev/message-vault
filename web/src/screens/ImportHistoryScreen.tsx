@@ -27,17 +27,17 @@ export default function ImportHistoryScreen() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div style={{ padding: "1.5rem", color: "#9ca3af" }}>Loading…</div>;
+  if (loading) return <div style={{ padding: "1.5rem", color: "var(--muted)" }}>Loading…</div>;
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "900px" }}>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Import History</h2>
       {imports.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>No imports yet.</div>
+        <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>No imports yet.</div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.813rem" }}>
           <thead>
-            <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
+            <tr style={{ borderBottom: "2px solid var(--border)", textAlign: "left" }}>
               <th style={{ padding: "0.5rem" }}>Date</th>
               <th style={{ padding: "0.5rem" }}>Source</th>
               <th style={{ padding: "0.5rem" }}>Messages</th>
@@ -49,7 +49,7 @@ export default function ImportHistoryScreen() {
           </thead>
           <tbody>
             {imports.map((imp) => (
-              <tr key={imp.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <tr key={imp.id} style={{ borderBottom: "1px solid var(--border)" }}>
                 <td style={{ padding: "0.5rem" }}>
                   {new Date(imp.created_at).toLocaleDateString([], {
                     month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",

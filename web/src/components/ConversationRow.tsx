@@ -75,9 +75,9 @@ export default function ConversationRow({
       onClick={onClick}
       style={{
         display: "flex", width: "100%", textAlign: "left", border: "none",
-        background: isSelected ? "#e5e7eb" : "transparent",
+        background: isSelected ? "var(--hover)" : "transparent",
         padding: "0.5rem 0.75rem", cursor: "pointer",
-        borderBottom: "1px solid #f3f4f6", gap: "0.5rem", alignItems: "flex-start",
+        borderBottom: "1px solid var(--border)", gap: "0.5rem", alignItems: "flex-start",
       }}
     >
       {onCheckChange && (
@@ -106,7 +106,16 @@ export default function ConversationRow({
             onBlur={handleSaveLabel}
             onClick={(e) => e.stopPropagation()}
             autoFocus
-            style={{ fontSize: "0.875rem", fontWeight: 500, width: "100%", padding: "0.125rem 0.25rem" }}
+            style={{
+              fontSize: "0.875rem",
+              fontWeight: 500,
+              width: "100%",
+              padding: "0.125rem 0.25rem",
+              background: "var(--bg)",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+              borderRadius: "4px",
+            }}
           />
         ) : (
           <span
@@ -114,20 +123,20 @@ export default function ConversationRow({
             title="Click to rename"
             style={{
               cursor: "pointer",
-              fontSize: "0.875rem", fontWeight: 500, color: "#1f2937",
+              fontSize: "0.875rem", fontWeight: 500, color: "var(--text)",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               flex: 1, marginRight: "0.5rem",
             }}
           >
             {displayName(conversation)}
-            {conversation.label && <span style={{ fontSize: "0.688rem", color: "#9ca3af", marginLeft: "0.25rem" }}>(renamed)</span>}
+            {conversation.label && <span style={{ fontSize: "0.688rem", color: "var(--muted)", marginLeft: "0.25rem" }}>(renamed)</span>}
           </span>
         )}
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af", flexShrink: 0 }}>
+        <span style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
           {formatDate(conversation.last_message_at)}
         </span>
       </div>
-      <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+      <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
         {subtitle(conversation)}
       </div>
       </div>

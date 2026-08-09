@@ -5,6 +5,7 @@ import { isTauri } from "../lib/tauri-check";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import StepProgress from "../components/StepProgress";
+import Button from "../components/Button";
 
 type ExportScope = "all" | "current-view" | "selected";
 const FORMATS = ["jsonl", "json", "csv"];
@@ -118,7 +119,7 @@ export default function ExportScreen({
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Export</h2>
 
-      <p style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "1.5rem" }}>
+      <p style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
         Exporting {scopeLabel}
       </p>
 
@@ -128,20 +129,28 @@ export default function ExportScreen({
 
       <FormRow label="Format">
         <select value={format} onChange={(e) => setFormat(e.target.value)}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}>
+          style={{
+            width: "100%",
+            padding: "0.25rem 0.5rem",
+            fontSize: "0.875rem",
+            background: "var(--bg)",
+            color: "var(--text)",
+            border: "1px solid var(--border)",
+            borderRadius: "4px",
+          }}>
           {FORMATS.map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}
         </select>
       </FormRow>
 
       <div style={{ marginTop: "1.5rem" }}>
-        <button onClick={startExport} disabled={running || !savePath}
-          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
+        <Button variant="primary" onClick={startExport} disabled={running || !savePath}
+          style={{ padding: "0.5rem 1.5rem" }}>
           {running ? "Exporting…" : "Export"}
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div style={{ marginTop: "1rem", padding: "0.75rem", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "4px", color: "#991b1b", fontSize: "0.813rem" }}>
+        <div style={{ marginTop: "1rem", padding: "0.75rem", background: "var(--danger-soft-bg)", border: "1px solid var(--danger-soft-border)", borderRadius: "4px", color: "var(--danger)", fontSize: "0.813rem" }}>
           {error}
         </div>
       )}
@@ -150,13 +159,13 @@ export default function ExportScreen({
         <>
           <StepProgress steps={steps} />
           <button onClick={() => setShowDetails(!showDetails)}
-            style={{ fontSize: "0.813rem", border: "none", background: "none", color: "#2563eb", cursor: "pointer", marginTop: "0.5rem" }}>
+            style={{ fontSize: "0.813rem", border: "none", background: "none", color: "var(--accent)", cursor: "pointer", marginTop: "0.5rem" }}>
             {showDetails ? "Hide details" : "Show details"}
           </button>
           {showDetails && (
             <pre style={{
               maxHeight: "300px", overflow: "auto", fontSize: "0.75rem",
-              background: "#f3f4f6", padding: "0.5rem", borderRadius: "4px",
+              background: "var(--hover)", padding: "0.5rem", borderRadius: "4px",
               whiteSpace: "pre-wrap",
             }}>
               {log.length === 0 ? "No log entries" : log.map((line, i) => <div key={i}>{line}</div>)}
@@ -166,7 +175,7 @@ export default function ExportScreen({
       )}
 
       {done && (
-        <div style={{ marginTop: "1rem", padding: "1rem", background: "#f0fdf4", borderRadius: "6px", fontSize: "0.875rem" }}>
+        <div style={{ marginTop: "1rem", padding: "1rem", background: "var(--ok-soft-bg)", borderRadius: "6px", fontSize: "0.875rem" }}>
           Export complete. Files saved to {savePath}.
         </div>
       )}

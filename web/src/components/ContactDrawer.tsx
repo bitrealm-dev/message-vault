@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation } from "../lib/types";
+import Button from "./Button";
 
 interface ContactDetail {
   id: string;
@@ -86,7 +87,7 @@ export default function ContactDrawer({
       }} />
       <div style={{
         position: "fixed", right: 0, top: 0, bottom: 0, width: "320px",
-        background: "#fff", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
+        background: "var(--panel)", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
         overflow: "auto", padding: "1.5rem",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
@@ -110,7 +111,16 @@ export default function ContactDrawer({
                 setEditingName(false);
               }}
               autoFocus
-              style={{ fontSize: "1.125rem", fontWeight: 600, padding: "0.25rem", width: "100%" }}
+              style={{
+                fontSize: "1.125rem",
+                fontWeight: 600,
+                padding: "0.25rem",
+                width: "100%",
+                background: "var(--bg)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+                borderRadius: "4px",
+              }}
             />
           ) : (
             <h2
@@ -121,14 +131,14 @@ export default function ContactDrawer({
               {detail.name} ✎
             </h2>
           )}
-          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer" }}>×</button>
+          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)" }}>×</button>
         </div>
 
-        <h3 style={{ fontSize: "0.75rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: "0.5rem" }}>Handles</h3>
+        <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>Handles</h3>
         {detail.handles.map((h, i) => (
           <div key={i} style={{ marginBottom: "0.5rem", fontSize: "0.875rem" }}>
             <div style={{ fontWeight: 500 }}>{h.handle}</div>
-            <div style={{ color: "#6b7280" }}>
+            <div style={{ color: "var(--muted)" }}>
               {h.service}
               {h.start_date && ` · ${new Date(h.start_date).getFullYear()}–${h.end_date ? new Date(h.end_date).getFullYear() : "present"}`}
               {h.message_count > 0 && ` · ${h.message_count} messages`}
@@ -136,12 +146,20 @@ export default function ContactDrawer({
           </div>
         ))}
 
-        <h3 style={{ fontSize: "0.75rem", color: "#9ca3af", textTransform: "uppercase", margin: "1rem 0 0.5rem" }}>Add Handle</h3>
+        <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", margin: "1rem 0 0.5rem" }}>Add Handle</h3>
         <div style={{ display: "flex", gap: "0.375rem" }}>
           <select
             value={newService}
             onChange={(e) => setNewService(e.target.value)}
-            style={{ padding: "0.375rem 0.5rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px", width: "110px" }}
+            style={{
+              padding: "0.375rem 0.5rem",
+              fontSize: "0.813rem",
+              border: "1px solid var(--border)",
+              borderRadius: "4px",
+              width: "110px",
+              background: "var(--bg)",
+              color: "var(--text)",
+            }}
           >
             {SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
@@ -151,32 +169,42 @@ export default function ContactDrawer({
             onChange={(e) => setNewHandle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") checkMatches(); }}
             placeholder="user#1234, @handle…"
-            style={{ flex: 1, minWidth: 0, padding: "0.375rem 0.5rem", fontSize: "0.813rem", border: "1px solid #d1d5db", borderRadius: "4px" }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: "0.375rem 0.5rem",
+              fontSize: "0.813rem",
+              border: "1px solid var(--border)",
+              borderRadius: "4px",
+              background: "var(--bg)",
+              color: "var(--text)",
+            }}
           />
         </div>
         <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-          <button
+          <Button
             onClick={checkMatches}
             disabled={!newHandle.trim()}
-            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem", border: "1px solid #d1d5db", background: "#fff", borderRadius: "4px", cursor: "pointer" }}
+            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
           >
             Check matches
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
             onClick={addHandle}
             disabled={!newHandle.trim()}
-            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem", border: "none", background: "#2563eb", color: "#fff", borderRadius: "4px", cursor: "pointer" }}
+            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
           >
             Add handle
-          </button>
+          </Button>
         </div>
         {matchResults !== null && matchResults.length > 0 && (
-          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#eff6ff", borderRadius: "4px", fontSize: "0.813rem" }}>
+          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "var(--info-soft-bg)", borderRadius: "4px", fontSize: "0.813rem" }}>
             We found {matchResults.length} conversation{matchResults.length !== 1 ? "s" : ""} matching {newHandle} on {newService}.
           </div>
         )}
 
-        <div style={{ marginTop: "1rem", fontSize: "0.875rem", color: "#6b7280" }}>
+        <div style={{ marginTop: "1rem", fontSize: "0.875rem", color: "var(--muted)" }}>
           <div>{detail.direct_conversations} direct conversation{detail.direct_conversations !== 1 ? "s" : ""}</div>
           <div>{detail.group_conversations} group conversation{detail.group_conversations !== 1 ? "s" : ""}</div>
           <div>{detail.total_messages} total messages</div>

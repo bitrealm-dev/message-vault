@@ -15,7 +15,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark key={key++} style={{ background: "#fde68a", borderRadius: "2px", padding: "0 1px" }}>
+      <mark key={key++} style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}>
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -50,8 +50,8 @@ export default function ImessageBubble({
 
   return (
     <div id={`msg-${message.id}`} style={{
-      padding: "0.5rem 1.5rem", borderBottom: "1px solid #f3f4f6",
-      background: isActive ? "#fef9c3" : "transparent",
+      padding: "0.5rem 1.5rem", borderBottom: "1px solid var(--border)",
+      background: isActive ? "var(--search-active)" : "transparent",
     }}>
       <div style={{
         display: "flex", gap: "0.5rem", marginBottom: "0.25rem",
@@ -60,7 +60,7 @@ export default function ImessageBubble({
         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#007aff" }}>
           {senderName(message)}
         </span>
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{time}</span>
+        <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{time}</span>
         {message.effect && (
           <span style={{ fontSize: "0.688rem", color: "#8b5cf6", fontStyle: "italic" }}>
             {message.effect}
@@ -70,13 +70,13 @@ export default function ImessageBubble({
 
       {/* Edit history indicator */}
       {message.edit_history && message.edit_history.length > 0 && (
-        <div style={{ fontSize: "0.688rem", color: "#9ca3af", fontStyle: "italic", marginBottom: "0.25rem" }}>
+        <div style={{ fontSize: "0.688rem", color: "var(--muted)", fontStyle: "italic", marginBottom: "0.25rem" }}>
           Edited
         </div>
       )}
 
       <div style={{
-        fontSize: "0.875rem", color: "#1f2937", lineHeight: 1.5,
+        fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5,
         whiteSpace: "pre-wrap", textAlign: mine ? "right" : "left",
       }}>
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
@@ -87,7 +87,7 @@ export default function ImessageBubble({
         <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
           {message.reactions.map((r, i) => (
             <span key={i} style={{
-              fontSize: "0.75rem", background: "#f3f4f6",
+              fontSize: "0.75rem", background: "var(--hover)",
               padding: "0.125rem 0.375rem", borderRadius: "4px",
             }}>
               {r.emoji} {r.count}

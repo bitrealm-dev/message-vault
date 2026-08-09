@@ -4,6 +4,7 @@ import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import Button from "../components/Button";
 
 const INDETERMINATE_KEYFRAMES = `
 @keyframes indeterminate {
@@ -58,17 +59,17 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
 
       <FormRow label="Server URL">
         <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder="https://vault.example.com" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          placeholder="https://vault.example.com" style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="Username">
         <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="API Key">
         <input type="password" value={key} onChange={(e) => setKey(e.target.value)}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }} />
+          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
       </FormRow>
 
       <FormRow label="Input directory">
@@ -77,7 +78,7 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
 
       <FormRow label="Mode">
         <select value={mode} onChange={(e) => setMode(e.target.value)}
-          style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem", width: "100%" }}>
+          style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem", width: "100%", background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }}>
           <option value="append">Append</option>
           <option value="replace">Replace (with force)</option>
         </select>
@@ -96,13 +97,13 @@ export default function Push({ onError }: { onError?: (msg: string) => void }) {
       </FormRow>
 
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
-        <button onClick={start} disabled={running || !baseUrl || !username || !key || !inputDir}
-          style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
+        <Button variant="primary" onClick={start} disabled={running || !baseUrl || !username || !key || !inputDir}
+          style={{ padding: "0.5rem 1.5rem" }}>
           {running ? "Pushing…" : "Push"}
-        </button>
-        <button onClick={() => invokeCancel()} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
+        </Button>
+        <Button onClick={() => invokeCancel()} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
           Cancel
-        </button>
+        </Button>
       </div>
 
       <div style={{ marginTop: "1.5rem" }}>

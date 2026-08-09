@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient } from "../lib/api";
 import DeleteAccountDialog from "../components/DeleteAccountDialog";
+import Button from "../components/Button";
 
 interface AccountProfile {
   account_id: string;
@@ -17,14 +18,16 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "0.35rem 0.5rem",
   fontSize: "0.875rem",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--border)",
   borderRadius: "4px",
   boxSizing: "border-box",
+  background: "var(--bg)",
+  color: "var(--text)",
 };
 
 const sectionTitle: React.CSSProperties = {
   fontSize: "0.875rem",
-  color: "#6b7280",
+  color: "var(--muted)",
   margin: "0 0 0.5rem",
 };
 
@@ -33,11 +36,6 @@ const dangerButtonStyle: React.CSSProperties = {
   flexShrink: 0,
   padding: "0.5rem 0.75rem",
   fontSize: "0.813rem",
-  color: "#dc2626",
-  border: "1px solid #fecaca",
-  background: "#fef2f2",
-  borderRadius: "4px",
-  cursor: "pointer",
 };
 
 /** Profile settings body for the Settings Profile tab (no page chrome). */
@@ -78,14 +76,14 @@ export function ProfileSettingsPanel() {
 
   if (loadError) {
     return (
-      <div style={{ color: "#dc2626" }}>
+      <div style={{ color: "var(--danger)" }}>
         Could not load profile: {loadError}
       </div>
     );
   }
 
   if (!profile) {
-    return <div style={{ color: "#9ca3af" }}>Loading…</div>;
+    return <div style={{ color: "var(--muted)" }}>Loading…</div>;
   }
 
   const isDemo = profile.is_demo === true;
@@ -230,7 +228,7 @@ export function ProfileSettingsPanel() {
   return (
     <div>
       <h3 style={sectionTitle}>Username</h3>
-      <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", background: "#f9fafb", color: "#6b7280" }} />
+      <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", background: "var(--elevated)", color: "var(--muted)" }} />
 
       <h3 style={sectionTitle}>Display Name</h3>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
@@ -240,16 +238,16 @@ export function ProfileSettingsPanel() {
           onChange={(e) => setName(e.target.value)}
           style={{ ...inputStyle, flex: 1 }}
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
           onClick={handleSaveName}
-          style={{ padding: "0.25rem 1rem", fontWeight: 600 }}
+          style={{ padding: "0.25rem 1rem" }}
         >
           {nameSaved ? "Saved" : "Save"}
-        </button>
+        </Button>
       </div>
       {nameError && (
-        <div style={{ fontSize: "0.813rem", color: "#dc2626", marginBottom: "1.5rem" }}>
+        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "1.5rem" }}>
           {nameError}
         </div>
       )}
@@ -257,7 +255,7 @@ export function ProfileSettingsPanel() {
 
       <h3 style={sectionTitle}>My Handles</h3>
       {handles.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "#9ca3af", marginBottom: "0.75rem" }}>
+        <div style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
           No phone or email handles on this account yet.
         </div>
       ) : (
@@ -270,28 +268,20 @@ export function ProfileSettingsPanel() {
                 alignItems: "center",
                 gap: "0.75rem",
                 padding: "0.375rem 0",
-                borderBottom: "1px solid #f3f4f6",
+                borderBottom: "1px solid var(--border)",
                 fontSize: "0.875rem",
               }}
             >
               <span style={{ flex: 1 }}>{h.handle}</span>
-              <span style={{ color: "#6b7280", minWidth: "3.5rem" }}>{h.service}</span>
-              <button
-                type="button"
+              <span style={{ color: "var(--muted)", minWidth: "3.5rem" }}>{h.service}</span>
+              <Button
+                variant="danger"
                 onClick={() => handleRemoveHandle(h.handle, h.service)}
                 disabled={handleBusy}
-                style={{
-                  fontSize: "0.813rem",
-                  color: "#dc2626",
-                  border: "1px solid #fecaca",
-                  background: "#fff",
-                  borderRadius: "4px",
-                  padding: "0.2rem 0.5rem",
-                  cursor: handleBusy ? "not-allowed" : "pointer",
-                }}
+                style={{ fontSize: "0.813rem", padding: "0.2rem 0.5rem" }}
               >
                 Remove
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -330,24 +320,24 @@ export function ProfileSettingsPanel() {
             }
           }}
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
           onClick={handleAddHandle}
           disabled={handleBusy || !newHandle.trim()}
-          style={{ padding: "0.35rem 0.85rem", fontWeight: 600 }}
+          style={{ padding: "0.35rem 0.85rem" }}
         >
           Add
-        </button>
+        </Button>
       </div>
       {handleError && (
-        <div style={{ fontSize: "0.813rem", color: "#dc2626", marginBottom: "1.5rem" }}>
+        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "1.5rem" }}>
           {handleError}
         </div>
       )}
       {!handleError && <div style={{ marginBottom: "1.5rem" }} />}
 
       <h3 style={sectionTitle}>Message import</h3>
-      <p style={{ margin: "0 0 0.5rem", fontSize: "0.813rem", color: "#6b7280" }}>
+      <p style={{ margin: "0 0 0.5rem", fontSize: "0.813rem", color: "var(--muted)" }}>
         API token used for Import and Push into this vault.
       </p>
       {token ? (
@@ -355,8 +345,8 @@ export function ProfileSettingsPanel() {
           style={{
             ...inputStyle,
             marginBottom: "1.5rem",
-            background: "#f9fafb",
-            color: "#374151",
+            background: "var(--elevated)",
+            color: "var(--text)",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             fontSize: "0.813rem",
             wordBreak: "break-all",
@@ -366,7 +356,7 @@ export function ProfileSettingsPanel() {
           {token}
         </div>
       ) : (
-        <div style={{ fontSize: "0.813rem", color: "#9ca3af", marginBottom: "1.5rem" }}>
+        <div style={{ fontSize: "0.813rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
           Sign in again to see token
         </div>
       )}
@@ -403,20 +393,20 @@ export function ProfileSettingsPanel() {
           autoComplete="new-password"
           style={{ ...inputStyle, marginBottom: "0.5rem" }}
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
           onClick={handleChangePassword}
           disabled={!currentPw || !newPw || !confirmPw}
-          style={{ padding: "0.375rem 0.75rem", fontSize: "0.875rem" }}
+          style={{ padding: "0.375rem 0.75rem" }}
         >
           Change password
-        </button>
+        </Button>
         {pwMsg && (
           <div
             style={{
               marginTop: "0.375rem",
               fontSize: "0.813rem",
-              color: pwOk ? "#16a34a" : "#dc2626",
+              color: pwOk ? "var(--ok)" : "var(--danger)",
             }}
           >
             {pwMsg}
@@ -424,7 +414,7 @@ export function ProfileSettingsPanel() {
         )}
       </div>
 
-      <section style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid #e5e7eb" }}>
+      <section style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid var(--border)" }}>
         <button
           type="button"
           aria-expanded={dangerZoneOpen}
@@ -446,7 +436,7 @@ export function ProfileSettingsPanel() {
               display: "inline-block",
               transform: dangerZoneOpen ? "rotate(90deg)" : "none",
               transition: "transform 0.15s ease",
-              color: "#dc2626",
+              color: "var(--danger)",
               fontSize: "0.75rem",
             }}
           >
@@ -458,58 +448,50 @@ export function ProfileSettingsPanel() {
               fontWeight: 600,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
-              color: "#dc2626",
+              color: "var(--danger)",
             }}
           >
             Danger zone
           </span>
         </button>
-        <p style={{ margin: "0.35rem 0 0 1.25rem", fontSize: "0.813rem", color: "#6b7280" }}>
+        <p style={{ margin: "0.35rem 0 0 1.25rem", fontSize: "0.813rem", color: "var(--muted)" }}>
           Delete messages or permanently remove your account.
         </p>
 
         {dangerZoneOpen && (
           <div style={{ marginTop: "1rem", marginLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "#6b7280" }}>
+              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
                 Delete all messages and attachments. Your contacts and settings remain.
               </p>
-              <button
-                type="button"
+              <Button
+                variant="danger"
                 disabled={busy}
                 onClick={() => void deleteAllMessages()}
-                style={{
-                  ...dangerButtonStyle,
-                  opacity: busy ? 0.5 : 1,
-                  cursor: busy ? "not-allowed" : "pointer",
-                }}
+                style={dangerButtonStyle}
               >
                 {deletingMessages ? "Deleting…" : "Delete all messages"}
-              </button>
+              </Button>
             </div>
 
             {!isDemo && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "#6b7280" }}>
+                <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
                   Delete this account and everything in it.
                 </p>
-                <button
-                  type="button"
+                <Button
+                  variant="danger"
                   disabled={busy}
                   onClick={() => setDeleteDialogOpen(true)}
-                  style={{
-                    ...dangerButtonStyle,
-                    opacity: busy ? 0.5 : 1,
-                    cursor: busy ? "not-allowed" : "pointer",
-                  }}
+                  style={dangerButtonStyle}
                 >
                   Delete account
-                </button>
+                </Button>
               </div>
             )}
 
             {dangerError && (
-              <div style={{ fontSize: "0.813rem", color: "#dc2626" }} role="alert">
+              <div style={{ fontSize: "0.813rem", color: "var(--danger)" }} role="alert">
                 {dangerError}
               </div>
             )}

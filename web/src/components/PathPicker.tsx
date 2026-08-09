@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import Button from "./Button";
 
 interface PathPickerProps {
   value: string;
@@ -24,11 +25,19 @@ export default function PathPicker({ value, onChange, directory, placeholder }: 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ flex: 1, padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+        style={{
+          flex: 1,
+          padding: "0.25rem 0.5rem",
+          fontSize: "0.875rem",
+          background: "var(--bg)",
+          color: "var(--text)",
+          border: "1px solid var(--border)",
+          borderRadius: "4px",
+        }}
       />
-      <button type="button" onClick={browse} style={{ padding: "0.25rem 0.75rem" }}>
+      <Button onClick={browse} style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
         Browse
-      </button>
+      </Button>
     </div>
   );
 }

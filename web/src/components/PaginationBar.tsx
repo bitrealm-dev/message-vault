@@ -1,3 +1,5 @@
+import Button from "./Button";
+
 export default function PaginationBar({
   offset,
   limit,
@@ -17,20 +19,20 @@ export default function PaginationBar({
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "center",
-      gap: "1rem", padding: "0.5rem", borderTop: "1px solid #e5e7eb",
-      fontSize: "0.813rem", color: "#6b7280",
+      gap: "1rem", padding: "0.5rem", borderTop: "1px solid var(--border)",
+      fontSize: "0.813rem", color: "var(--muted)",
     }}>
-      <button onClick={onPrev} disabled={offset === 0}
+      <Button onClick={onPrev} disabled={offset === 0}
         style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
         Previous
-      </button>
+      </Button>
       <span>
         Messages {start}–{end} of {total}
       </span>
-      <button onClick={onNext} disabled={offset + limit >= total}
+      <Button onClick={onNext} disabled={offset + limit >= total}
         style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
         Next
-      </button>
+      </Button>
     </div>
   );
 }

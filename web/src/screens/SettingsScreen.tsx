@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties } from "react";
 import { isTauri } from "../lib/tauri-check";
 import { apiClient } from "../lib/api";
 import FormRow from "../components/FormRow";
+import ThemeSettings from "../components/ThemeSettings";
+import Button from "../components/Button";
 import { ProfileSettingsPanel } from "./ProfileScreen";
 
 type SettingsTab = "profile" | "storage" | "appearance";
@@ -16,10 +18,10 @@ export default function SettingsScreen() {
   const [tab, setTab] = useState<SettingsTab>("profile");
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
+    <div style={{ padding: "1.5rem", maxWidth: "820px", color: "var(--text)" }}>
       <header style={{ marginBottom: "1.5rem" }}>
-        <h2 style={{ margin: 0 }}>Settings</h2>
-        <p style={{ margin: "0.35rem 0 0", fontSize: "0.875rem", color: "#6b7280" }}>
+        <h2 style={{ margin: 0, color: "var(--text)" }}>Settings</h2>
+        <p style={{ margin: "0.35rem 0 0", fontSize: "0.875rem", color: "var(--muted)" }}>
           Manage your profile, storage, and appearance.
         </p>
         <nav
@@ -28,7 +30,7 @@ export default function SettingsScreen() {
             display: "flex",
             gap: "0.25rem",
             marginTop: "1.25rem",
-            borderBottom: "1px solid #e5e7eb",
+            borderBottom: "1px solid var(--border)",
           }}
         >
           {TABS.map((t) => {
@@ -43,7 +45,7 @@ export default function SettingsScreen() {
                   padding: "0.5rem 0.75rem",
                   fontSize: "0.813rem",
                   fontWeight: 500,
-                  color: active ? "#111827" : "#6b7280",
+                  color: active ? "var(--text)" : "var(--muted)",
                   background: "transparent",
                   border: "none",
                   cursor: "pointer",
@@ -61,7 +63,7 @@ export default function SettingsScreen() {
                       bottom: 0,
                       height: "2px",
                       borderRadius: "999px",
-                      background: "#2563eb",
+                      background: "var(--accent)",
                     }}
                   />
                 )}
@@ -78,29 +80,286 @@ export default function SettingsScreen() {
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatImportDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const ATTACHMENT_PAGE_SIZE = 20;
+
+const sectionTitle: CSSProperties = {
+  fontSize: "0.938rem",
+  fontWeight: 600,
+  color: "var(--text)",
+  margin: 0,
+};
+
+const sectionHint: CSSProperties = {
+  margin: "0.25rem 0 0",
+  fontSize: "0.813rem",
+  color: "var(--muted)",
+};
+
+const tableWrap: CSSProperties = {
+  overflowX: "auto",
+  border: "1px solid var(--border)",
+  borderRadius: "8px",
+};
+
+const thStyle: CSSProperties = {
+  padding: "0.5rem 0.75rem",
+  fontWeight: 500,
+  color: "var(--muted)",
+  background: "var(--elevated)",
+  borderBottom: "1px solid var(--border)",
+  textAlign: "left",
+  fontSize: "0.813rem",
+};
+
+const tdStyle: CSSProperties = {
+  padding: "0.5rem 0.75rem",
+  borderBottom: "1px solid var(--border)",
+  fontSize: "0.813rem",
+  color: "var(--text)",
+};
+
+interface ImportRow {
+  id: number;
+  source: string;
+  started_at: string;
+  finished_at: string | null;
+  message_count: number;
+  attachment_count: number;
+}
+
+interface TopAttachment {
+  id: number;
+  original_name: string | null;
+  mime_type: string | null;
+  size_bytes: number;
+  conversation_title: string | null;
+  chat_identifier: string;
+}
+
 function StorageSection() {
-  const [stats, setStats] = useState<{
-    conversations: number;
-    messages: number;
-    attachments: number;
-  } | null>(null);
+  const [imports, setImports] = useState<ImportRow[]>([]);
+  const [totalBytes, setTotalBytes] = useState(0);
+  const [attachmentCount, setAttachmentCount] = useState(0);
+  const [topAttachments, setTopAttachments] = useState<TopAttachment[]>([]);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    apiClient
-      .get<{ conversations: number; messages: number; attachments: number }>(
-        "/v1/export/messages/count?q="
-      )
-      .then((res) => setStats(res))
-      .catch(() => {});
+    setLoading(true);
+    setError("");
+    Promise.all([
+      apiClient.get<{ imports: ImportRow[] }>("/v1/imports"),
+      apiClient.get<{
+        total_bytes: number;
+        attachment_count: number;
+        top_attachments: TopAttachment[];
+      }>("/v1/account/storage"),
+    ])
+      .then(([importsRes, usageRes]) => {
+        setImports(importsRes.imports ?? []);
+        setTotalBytes(usageRes.total_bytes ?? 0);
+        setAttachmentCount(usageRes.attachment_count ?? 0);
+        setTopAttachments(usageRes.top_attachments ?? []);
+        setPage(0);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  if (!stats) return <div style={{ fontSize: "0.813rem", color: "#9ca3af" }}>Loading…</div>;
+  if (loading) {
+    return <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>Loading storage…</div>;
+  }
+
+  const pageCount = Math.max(1, Math.ceil(topAttachments.length / ATTACHMENT_PAGE_SIZE));
+  const pageRows = topAttachments.slice(
+    page * ATTACHMENT_PAGE_SIZE,
+    page * ATTACHMENT_PAGE_SIZE + ATTACHMENT_PAGE_SIZE,
+  );
 
   return (
-    <div style={{ fontSize: "0.875rem", color: "#374151" }}>
-      <div>{stats.messages.toLocaleString()} messages</div>
-      <div>{stats.conversations.toLocaleString()} conversations</div>
-      <div>{stats.attachments.toLocaleString()} attachments</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+      {error && (
+        <div
+          style={{
+            fontSize: "0.813rem",
+            color: "var(--danger)",
+            background: "var(--danger-soft-bg)",
+            border: "1px solid var(--danger-soft-border)",
+            borderRadius: "6px",
+            padding: "0.5rem 0.75rem",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <section>
+        <h3 style={sectionTitle}>Usage</h3>
+        <p style={sectionHint}>Attachment storage for this account (original file sizes).</p>
+        <div
+          style={{
+            marginTop: "0.75rem",
+            border: "1px solid var(--border)",
+            borderRadius: "8px",
+            padding: "0.75rem 1rem",
+            background: "var(--elevated)",
+          }}
+        >
+          <div style={{ fontSize: "1.375rem", fontWeight: 600, color: "var(--text)" }}>
+            {formatBytes(totalBytes)}
+          </div>
+          <div style={{ marginTop: "0.25rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+            {attachmentCount.toLocaleString()} attachment{attachmentCount === 1 ? "" : "s"}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h3 style={sectionTitle}>Import history</h3>
+        <p style={sectionHint}>Each vault push or CLI import recorded for this account.</p>
+        {imports.length === 0 ? (
+          <p style={{ ...sectionHint, marginTop: "0.75rem" }}>No imports recorded yet.</p>
+        ) : (
+          <div style={{ ...tableWrap, marginTop: "0.75rem" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Date</th>
+                  <th style={thStyle}>Import type</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Messages</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Attachments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {imports.map((row) => (
+                  <tr key={row.id}>
+                    <td style={tdStyle}>
+                      {formatImportDate(row.finished_at ?? row.started_at)}
+                    </td>
+                    <td style={tdStyle}>{row.source}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {row.message_count.toLocaleString()}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {row.attachment_count.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 style={sectionTitle}>Largest attachments</h3>
+        <p style={sectionHint}>
+          Top {topAttachments.length || 100} attachments by file size
+          {topAttachments.length > ATTACHMENT_PAGE_SIZE
+            ? ` · ${ATTACHMENT_PAGE_SIZE} per page`
+            : ""}
+          .
+        </p>
+        {topAttachments.length === 0 ? (
+          <p style={{ ...sectionHint, marginTop: "0.75rem" }}>No attachments with sizes yet.</p>
+        ) : (
+          <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div style={tableWrap}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Name</th>
+                    <th style={thStyle}>Conversation</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((row) => (
+                    <tr key={row.id}>
+                      <td
+                        style={{
+                          ...tdStyle,
+                          maxWidth: "14rem",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.original_name || row.mime_type || `Attachment ${row.id}`}
+                      </td>
+                      <td style={tdStyle}>
+                        {row.conversation_title || row.chat_identifier}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        {formatBytes(row.size_bytes)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {topAttachments.length > ATTACHMENT_PAGE_SIZE && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "0.75rem",
+                }}
+              >
+                <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                  Page {page + 1} of {pageCount}
+                </span>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <Button
+                    disabled={page <= 0}
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    disabled={page >= pageCount - 1}
+                    onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                    style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -108,34 +367,33 @@ function StorageSection() {
 function AppearanceSection() {
   const [ffmpegPath, setFfmpegPath] = useState("");
   const [saved, setSaved] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem("mv-theme") || "system");
 
-  const handleSave = () => {
-    localStorage.setItem("mv-theme", theme);
+  const handleSaveFfmpeg = () => {
+    localStorage.setItem("mv-ffmpeg-path", ffmpegPath);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  useEffect(() => {
+    setFfmpegPath(localStorage.getItem("mv-ffmpeg-path") || "");
+  }, []);
+
   return (
     <div>
-      <h3 style={{ fontSize: "0.875rem", color: "#6b7280", margin: "0 0 0.5rem" }}>
-        Theme
-      </h3>
-      <FormRow label="Theme">
-        <select
-          value={theme}
-          onChange={(e) => setTheme(e.target.value)}
-          style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
-        >
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </FormRow>
+      <ThemeSettings />
 
       {isTauri() && (
-        <div style={{ marginTop: "1.5rem" }}>
-          <h3 style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "0.5rem" }}>
+        <div style={{ marginTop: "2rem" }}>
+          <h3
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              letterSpacing: "0.05em",
+              textTransform: "uppercase",
+              color: "var(--muted)",
+              margin: "0 0 0.5rem",
+            }}
+          >
             Media
           </h3>
           <FormRow label="ffmpeg path">
@@ -144,29 +402,38 @@ function AppearanceSection() {
               value={ffmpegPath}
               onChange={(e) => setFfmpegPath(e.target.value)}
               placeholder="Uses system PATH by default"
-              style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+              style={{
+                width: "100%",
+                padding: "0.25rem 0.5rem",
+                fontSize: "0.875rem",
+                border: "1px solid var(--border)",
+                borderRadius: "0.375rem",
+                background: "var(--bg)",
+                color: "var(--text)",
+              }}
             />
           </FormRow>
-          <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "0.25rem" }}>
+          <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
             Leave blank to use system PATH.{" "}
             <a
               href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
               target="_blank"
               rel="noopener"
-              style={{ color: "#2563eb" }}
+              style={{ color: "var(--accent)" }}
             >
               Install help
             </a>
           </p>
+          <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <Button onClick={handleSaveFfmpeg} style={{ padding: "0.5rem 1.5rem" }}>
+              Save
+            </Button>
+            {saved && (
+              <span style={{ fontSize: "0.875rem", color: "var(--accent)" }}>Saved</span>
+            )}
+          </div>
         </div>
       )}
-
-      <div style={{ marginTop: "1.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <button type="button" onClick={handleSave} style={{ padding: "0.5rem 1.5rem", fontWeight: 600 }}>
-          Save
-        </button>
-        {saved && <span style={{ fontSize: "0.875rem", color: "#16a34a" }}>Saved</span>}
-      </div>
     </div>
   );
 }
