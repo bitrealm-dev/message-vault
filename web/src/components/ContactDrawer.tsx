@@ -52,6 +52,21 @@ export default function ContactDrawer({
     setEditingName(false);
   }, [detail?.name]);
 
+  useEffect(() => {
+    if (!contactId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (editingName) {
+        setEditingName(false);
+        setNameValue(detail?.name ?? "");
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [contactId, editingName, detail?.name, onClose]);
+
   const checkMatches = async () => {
     if (!newHandle.trim()) return;
     try {
@@ -101,6 +116,10 @@ export default function ContactDrawer({
                   await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
                   setEditingName(false);
                   loadDetail();
+                } else if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setEditingName(false);
+                  setNameValue(detail.name);
                 }
               }}
               onBlur={async () => {
