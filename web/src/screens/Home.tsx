@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { loadSettings, type AppSettings } from "../lib/tauri";
+import { useAuth } from "../lib/auth";
 
 interface QuickAction {
   id: string;
@@ -36,15 +35,7 @@ const ACTIONS: QuickAction[] = [
 ];
 
 export default function Home({ onNavigate }: { onNavigate: (tab: string) => void }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-
-  useEffect(() => {
-    loadSettings()
-      .then((s) => setSettings(s))
-      .catch(() => {});
-  }, []);
-
-  const vaultConfigured = !!(settings?.vault_url && settings?.vault_username && settings?.vault_key);
+  const { isAuthenticated, serverUrl } = useAuth();
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
@@ -55,24 +46,24 @@ export default function Home({ onNavigate }: { onNavigate: (tab: string) => void
 
       <div
         style={{
-          background: vaultConfigured ? "#f0fdf4" : "#fefce8",
-          border: vaultConfigured ? "1px solid #bbf7d0" : "1px solid #fef08a",
+          background: isAuthenticated ? "#f0fdf4" : "#fefce8",
+          border: isAuthenticated ? "1px solid #bbf7d0" : "1px solid #fef08a",
           borderRadius: "8px",
           padding: "0.75rem 1rem",
           marginBottom: "2rem",
           fontSize: "0.875rem",
         }}
       >
-        <span style={{ fontWeight: 600, color: vaultConfigured ? "#166534" : "#854d0e" }}>
+        <span style={{ fontWeight: 600, color: isAuthenticated ? "#166534" : "#854d0e" }}>
           Vault:{" "}
         </span>
-        {vaultConfigured ? (
+        {isAuthenticated ? (
           <span style={{ color: "#166534" }}>
-            Connected to {settings!.vault_url} as {settings!.vault_username}
+            Signed in{serverUrl ? ` at ${serverUrl}` : ""}
           </span>
         ) : (
           <span style={{ color: "#854d0e" }}>
-            Not configured — set up in Settings before using Push or Pull
+            Sign in to use vault import and browse
           </span>
         )}
       </div>
@@ -94,23 +85,23 @@ export default function Home({ onNavigate }: { onNavigate: (tab: string) => void
               textAlign: "left",
             }}
           >
-            <div
+            <span
               style={{
-                width: "3px",
+                width: "8px",
                 height: "40px",
-                borderRadius: "2px",
+                borderRadius: "4px",
                 background: action.color,
                 flexShrink: 0,
               }}
             />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: "0.938rem", marginBottom: "2px" }}>
+            <span>
+              <span style={{ display: "block", fontWeight: 600, color: "#111827" }}>
                 {action.label}
-              </div>
-              <div style={{ color: "#6b7280", fontSize: "0.813rem" }}>
+              </span>
+              <span style={{ display: "block", fontSize: "0.813rem", color: "#6b7280" }}>
                 {action.description}
-              </div>
-            </div>
+              </span>
+            </span>
           </button>
         ))}
       </div>

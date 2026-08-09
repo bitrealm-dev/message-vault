@@ -109,6 +109,7 @@ fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
         log_path: Some(dir.join("vault-push.log")),
         journal_path: Some(dir.join(".vault-import-state.jsonl")),
         cancel: None,
+        contact_name_mode: "fill_missing".into(),
     }
 }
 
@@ -457,6 +458,7 @@ fn profiles_attachment_upload_phases() {
         log_path: Some(log_path.clone()),
         journal_path: Some(dir.path().join(".vault-import-state.jsonl")),
         cancel: None,
+        contact_name_mode: "fill_missing".into(),
     };
     let mut progress_lines = Vec::new();
     let report = {

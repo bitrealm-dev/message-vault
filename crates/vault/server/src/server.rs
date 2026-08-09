@@ -70,6 +70,13 @@ struct ImportQuery {
     /// Optional vault import session id from POST /v1/imports.
     #[serde(default)]
     import_id: Option<i64>,
+    /// How vault contacts supply participant names (`fill_missing` or `overwrite`).
+    #[serde(default = "default_contact_name_mode")]
+    contact_name_mode: String,
+}
+
+fn default_contact_name_mode() -> String {
+    "fill_missing".to_string()
 }
 
 fn default_import_mode() -> String {
@@ -1369,6 +1376,8 @@ async fn run_import_path(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let cfg = Arc::clone(&state.cfg);
     let db = Arc::clone(&state.db);
@@ -1420,7 +1429,7 @@ async fn run_import_path(
             (Some(id), true)
         };
 
-        let opts = ImportOptions::fixed(
+        let mut opts = ImportOptions::fixed(
             &cfg.paths.db,
             &assets_dir,
             &asset_root_owned,
@@ -1432,6 +1441,7 @@ async fn run_import_path(
             do_dedupe,
             import_id,
         );
+        opts.contact_name_mode = contact_name_mode;
         // Dedicated connection for the long import so we do not hold `state.db`
         // across JSONL / asset IO / promote (export and session SQL stay free).
         let mut conn = Connection::open(&cfg.paths.db)

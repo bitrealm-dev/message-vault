@@ -494,6 +494,7 @@ impl HttpSession {
         source: &str,
         mode: &str,
         import_id: Option<i64>,
+        contact_name_mode: &str,
         ndjson: Vec<u8>,
     ) -> Result<ImportResponse> {
         let body_len = ndjson.len();
@@ -505,10 +506,11 @@ impl HttpSession {
         }
         let base = base_url.trim_end_matches('/');
         let mut url = format!(
-            "{base}/v1/import?source={}&account={}&mode={}",
+            "{base}/v1/import?source={}&account={}&mode={}&contact_name_mode={}",
             encode(source),
             encode(username),
-            encode(mode)
+            encode(mode),
+            encode(contact_name_mode)
         );
         if let Some(id) = import_id {
             url.push_str(&format!("&import_id={id}"));

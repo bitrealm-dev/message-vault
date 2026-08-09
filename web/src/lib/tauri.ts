@@ -7,6 +7,15 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
     source: config.source,
     path: config.path,
     outputDir: config.output_dir,
+    backupPassword: config.backup_password ?? null,
+    attachmentMedia: config.attachment_media ?? null,
+    mediaMaxResolution: config.media_max_resolution ?? null,
+    mediaMaxFps: config.media_max_fps ?? null,
+    mediaMinSize: config.media_min_size ?? null,
+    conversationFilter: config.conversation_filter ?? null,
+    startDate: config.start_date ?? null,
+    endDate: config.end_date ?? null,
+    obfuscate: config.obfuscate ?? null,
   });
 }
 
@@ -43,6 +52,7 @@ export interface PushConfig {
   force: boolean;
   skip_attachments: boolean;
   trust_export: boolean;
+  contact_name_mode?: string;
 }
 
 export async function invokePush(config: PushConfig): Promise<void> {
@@ -55,6 +65,7 @@ export async function invokePush(config: PushConfig): Promise<void> {
     force: config.force,
     skipAttachments: config.skip_attachments,
     trustExport: config.trust_export,
+    contactNameMode: config.contact_name_mode ?? "fill_missing",
   });
 }
 

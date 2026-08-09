@@ -273,14 +273,14 @@ pub fn lookup_account_by_hanko(conn: &Connection, hanko_user_id: &str) -> Result
 
 /// Load the preferred_name for an account, if set.
 pub fn load_preferred_name(conn: &Connection, account_id: &str) -> Result<Option<String>> {
-    let name: Option<String> = conn
+    let name: Option<Option<String>> = conn
         .query_row(
             "SELECT preferred_name FROM accounts WHERE id = ?1",
             params![account_id],
             |row| row.get(0),
         )
         .optional()?;
-    Ok(name)
+    Ok(name.flatten().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
 
 /// Insert a new account row. All fields except id and username are optional.
@@ -320,6 +320,48 @@ pub fn upsert_account_email(
         params![account_id, email, is_primary as i32],
     )?;
     Ok(())
+}
+
+/// Unlink a handle from the account profile (`account_handles`).
+///
+/// For emails, also removes the matching `account_emails` row. The underlying
+/// `handles` row is left in place so conversation history stays intact.
+pub fn unlink_account_handle(
+    conn: &Connection,
+    account_id: &str,
+    raw: &str,
+    handle_type: HandleType,
+) -> Result<bool> {
+    let (normalized, _) = normalize_handle(raw, handle_type);
+    let handle_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
+            params![account_id, normalized, handle_type.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(handle_id) = handle_id else {
+        if matches!(handle_type, HandleType::Email) {
+            let n = conn.execute(
+                "DELETE FROM account_emails WHERE account_id = ?1 AND email = ?2",
+                params![account_id, normalized],
+            )?;
+            return Ok(n > 0);
+        }
+        return Ok(false);
+    };
+
+    let removed = conn.execute(
+        "DELETE FROM account_handles WHERE account_id = ?1 AND handle_id = ?2",
+        params![account_id, handle_id],
+    )?;
+    if matches!(handle_type, HandleType::Email) {
+        conn.execute(
+            "DELETE FROM account_emails WHERE account_id = ?1 AND email = ?2",
+            params![account_id, normalized],
+        )?;
+    }
+    Ok(removed > 0)
 }
 
 /// Open the vault DB and resolve `account_ref` to a UUID.

@@ -142,6 +142,7 @@ fn real_main() -> Result<ExitCode> {
         log_path: cli.log,
         journal_path: cli.journal,
         cancel: None,
+        contact_name_mode: "fill_missing".into(),
     };
 
     let mut on_progress = |event: ProgressEvent| {

@@ -125,6 +125,9 @@ pub struct VaultPushConfig {
     pub log_path: Option<PathBuf>,
     pub journal_path: Option<PathBuf>,
     pub cancel: Option<CancelFlag>,
+    /// How the vault applies account contacts to import display names
+    /// (`fill_missing` or `overwrite`).
+    pub contact_name_mode: String,
 }
 
 /// Per-conversation outcome written into the final report JSON.
@@ -2314,6 +2317,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
         mode,
         batch,
         import_id: args.import_id,
+        contact_name_mode: args.cfg.contact_name_mode.clone(),
     }));
     if args.wait {
         ok = join_inflight_import(JoinInflightImport {
@@ -2342,6 +2346,7 @@ struct SpawnImportHttp {
     mode: String,
     batch: ImportBatch,
     import_id: Option<i64>,
+    contact_name_mode: String,
 }
 
 /// Start one message-import HTTP request on a background thread and return immediately.
@@ -2359,6 +2364,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
             mode,
             batch,
             import_id,
+            contact_name_mode,
         } = args;
         let request_started = Instant::now();
         let body_bytes = batch.body.len();
@@ -2371,6 +2377,7 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
                 &batch.source,
                 &mode,
                 import_id,
+                &contact_name_mode,
                 batch.body.clone(),
             )
         })

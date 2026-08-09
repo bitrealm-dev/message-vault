@@ -65,8 +65,12 @@ pub struct ProfileHandleInput {
 pub struct AccountProfileUpdateRequest {
     #[serde(default)]
     pub preferred_name: Option<String>,
+    /// Handles to add/link onto the account profile.
     #[serde(default)]
     pub handles: Vec<ProfileHandleInput>,
+    /// Handles to unlink from the account profile.
+    #[serde(default)]
+    pub remove_handles: Vec<ProfileHandleInput>,
 }
 
 fn apply_profile_update(
@@ -74,6 +78,7 @@ fn apply_profile_update(
     account_id: &str,
     preferred_name: Option<&str>,
     handles: &[ProfileHandleInput],
+    remove_handles: &[ProfileHandleInput],
 ) -> Result<()> {
     if let Some(name) = preferred_name {
         let name = name.trim();
@@ -88,6 +93,33 @@ fn apply_profile_update(
                 account_id
             ],
         )?;
+    }
+
+    for entry in remove_handles {
+        let raw = entry.handle.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let service = entry.service.trim().to_ascii_lowercase();
+        match service.as_str() {
+            "phone" | "whatsapp" => {
+                account_profile::unlink_account_handle(
+                    conn,
+                    account_id,
+                    raw,
+                    HandleType::Phone,
+                )?;
+            }
+            "email" => {
+                account_profile::unlink_account_handle(
+                    conn,
+                    account_id,
+                    raw,
+                    HandleType::Email,
+                )?;
+            }
+            other => bail!("unsupported handle service: {other}"),
+        }
     }
 
     for entry in handles {
@@ -148,6 +180,7 @@ pub async fn account_profile_update_handler(
             &account_id,
             req.preferred_name.as_deref(),
             &req.handles,
+            &req.remove_handles,
         )?;
         load_response(&conn, &account_id)
     })
@@ -204,6 +237,7 @@ mod tests {
                     service: "whatsapp".into(),
                 },
             ],
+            &[],
         )
         .unwrap();
 
@@ -221,5 +255,49 @@ mod tests {
             )
             .unwrap();
         assert_eq!(wa_service, "whatsapp");
+    }
+
+    #[test]
+    fn apply_profile_update_removes_handles() {
+        let (conn, account_id) = setup();
+        apply_profile_update(
+            &conn,
+            &account_id,
+            None,
+            &[
+                ProfileHandleInput {
+                    handle: "+15555550100".into(),
+                    service: "phone".into(),
+                },
+                ProfileHandleInput {
+                    handle: "alex@example.com".into(),
+                    service: "email".into(),
+                },
+            ],
+            &[],
+        )
+        .unwrap();
+
+        apply_profile_update(
+            &conn,
+            &account_id,
+            None,
+            &[],
+            &[
+                ProfileHandleInput {
+                    handle: "+15555550100".into(),
+                    service: "phone".into(),
+                },
+                ProfileHandleInput {
+                    handle: "alex@example.com".into(),
+                    service: "email".into(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let loaded = load_response(&conn, &account_id).unwrap();
+        assert!(loaded.phones.is_empty());
+        assert!(loaded.emails.is_empty());
     }
 }

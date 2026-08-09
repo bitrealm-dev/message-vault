@@ -100,10 +100,24 @@ export interface Message {
   forwarded?: boolean;           // Instagram forwarding indicator
 }
 
+export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
+
+/** How vault contacts apply display names during import push. */
+export type ContactNameMode = "fill_missing" | "overwrite";
+
 export interface ExtractConfig {
   source: string;
   path: string;
   output_dir: string;
+  backup_password?: string;
+  attachment_media?: AttachmentMediaMode;
+  media_max_resolution?: string;
+  media_max_fps?: string;
+  media_min_size?: string;
+  conversation_filter?: string;
+  start_date?: string;
+  end_date?: string;
+  obfuscate?: boolean;
 }
 
 export interface ExtractErrorEvent {

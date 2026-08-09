@@ -23,8 +23,11 @@ pub async fn push(
     force: bool,
     skip_attachments: bool,
     trust_export: bool,
+    contact_name_mode: Option<String>,
 ) -> Result<(), String> {
     let app_handle = app.clone();
+    let contact_name_mode = contact_name_mode
+        .unwrap_or_else(|| "fill_missing".into());
 
     thread::spawn(move || {
         let cfg = VaultPushConfig {
@@ -47,6 +50,7 @@ pub async fn push(
             log_path: None,
             journal_path: None,
             cancel: None,
+            contact_name_mode,
         };
 
         let mut progress = |event: ProgressEvent| match event {

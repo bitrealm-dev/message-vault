@@ -24,6 +24,36 @@ pub enum ImportMode {
     Append,
 }
 
+/// How account contacts supply participant display names during import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContactNameMode {
+    /// Use the vault contact name only when the import name is empty.
+    #[default]
+    FillMissing,
+    /// Prefer the vault contact name whenever one exists for the handle.
+    Overwrite,
+}
+
+impl ContactNameMode {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "fill_missing" | "fill-missing" => Ok(Self::FillMissing),
+            "overwrite" => Ok(Self::Overwrite),
+            other => bail!(
+                "invalid contact_name_mode '{other}' (expected fill_missing or overwrite)"
+            ),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FillMissing => "fill_missing",
+            Self::Overwrite => "overwrite",
+        }
+    }
+}
+
 impl ImportMode {
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
@@ -68,6 +98,8 @@ pub struct ImportOptions<'a> {
     pub media: MediaMode,
     /// When `source_from_jsonl` + Replace: wipe these sources before import.
     pub wipe_sources: Option<Vec<String>>,
+    /// Apply vault contact preferred names to import `name_hint` values.
+    pub contact_name_mode: ContactNameMode,
 }
 
 impl<'a> ImportOptions<'a> {
@@ -100,6 +132,7 @@ impl<'a> ImportOptions<'a> {
             paths: None,
             media: MediaMode::Copy,
             wipe_sources: None,
+            contact_name_mode: ContactNameMode::default(),
         }
     }
 }
@@ -645,6 +678,44 @@ fn contact_id_for_handle(
         .optional()?)
 }
 
+fn contact_preferred_name(
+    conn: &Connection,
+    account_id: &str,
+    contact_id: i64,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT preferred_name FROM contacts WHERE account_id = ?1 AND id = ?2",
+            params![account_id, contact_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty()))
+}
+
+/// Merge an import display name with a vault contact name per [`ContactNameMode`].
+pub fn apply_contact_name_mode(
+    mode: ContactNameMode,
+    import_name: Option<String>,
+    vault_name: Option<String>,
+) -> Option<String> {
+    let import_empty = import_name
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    match mode {
+        ContactNameMode::FillMissing => {
+            if import_empty {
+                vault_name.or(import_name)
+            } else {
+                import_name
+            }
+        }
+        ContactNameMode::Overwrite => vault_name.or(import_name),
+    }
+}
+
 struct StagingInserts<'conn> {
     account_id: String,
     import_id: Option<i64>,
@@ -953,6 +1024,11 @@ fn import_conversation_to_staging(
             stats.phones_needing_review += 1;
         }
         let contact_id = contact_id_for_handle(tx, &stmts.account_id, handle_id)?;
+        let vault_name = match contact_id {
+            Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
+            None => None,
+        };
+        let name_hint = apply_contact_name_mode(opts.contact_name_mode, name_hint, vault_name);
         stmts
             .part
             .execute(params![conversation_id, handle_id, contact_id, name_hint])?;
@@ -1831,6 +1907,7 @@ mod tests {
                 paths: Some(&paths),
                 media: MediaMode::Copy,
                 wipe_sources: Some(vec!["go-sms-pro".into()]),
+                contact_name_mode: ContactNameMode::default(),
             },
         )
         .unwrap();
@@ -1890,11 +1967,165 @@ mod tests {
                 paths: Some(&paths),
                 media: MediaMode::None,
                 wipe_sources: Some(vec!["sms".into()]),
+                contact_name_mode: ContactNameMode::default(),
             },
         )
         .unwrap();
         assert_eq!(stats.messages, 1);
         assert_eq!(stats.attachments, 0);
         assert_eq!(stats.assets_copied, 0);
+    }
+
+    fn seed_contact(db: &Path, handle: &str, preferred_name: &str) {
+        let conn = Connection::open(db).unwrap();
+        schema::configure_connection(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
+            params![TEST_ACCOUNT, preferred_name],
+        )
+        .unwrap();
+        let contact_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type)
+             VALUES (?1, ?2, ?2, 'phone')",
+            params![TEST_ACCOUNT, handle],
+        )
+        .unwrap();
+        let handle_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![TEST_ACCOUNT, handle_id, contact_id],
+        )
+        .unwrap();
+    }
+
+    fn participant_name_hint(db: &Path) -> Option<String> {
+        let conn = Connection::open(db).unwrap();
+        conn.query_row("SELECT name_hint FROM participants LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .unwrap()
+    }
+
+    #[test]
+    fn apply_contact_name_mode_unit() {
+        assert_eq!(
+            apply_contact_name_mode(ContactNameMode::FillMissing, None, Some("Vault".into())),
+            Some("Vault".into())
+        );
+        assert_eq!(
+            apply_contact_name_mode(
+                ContactNameMode::FillMissing,
+                Some("Import".into()),
+                Some("Vault".into())
+            ),
+            Some("Import".into())
+        );
+        assert_eq!(
+            apply_contact_name_mode(
+                ContactNameMode::Overwrite,
+                Some("Import".into()),
+                Some("Vault".into())
+            ),
+            Some("Vault".into())
+        );
+        assert_eq!(
+            apply_contact_name_mode(ContactNameMode::Overwrite, Some("Import".into()), None),
+            Some("Import".into())
+        );
+    }
+
+    #[test]
+    fn contact_name_mode_fill_missing_keeps_import_name() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        seed_contact(&db, "+15555550123", "Vault Alice");
+        let path = write_jsonl(
+            tmp.path(),
+            "named.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Backup Bob"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-fill","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let mut opts = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        opts.contact_name_mode = ContactNameMode::FillMissing;
+        import_jsonl_files(&[path], &opts).unwrap();
+        assert_eq!(participant_name_hint(&db).as_deref(), Some("Backup Bob"));
+    }
+
+    #[test]
+    fn contact_name_mode_fill_missing_uses_vault_when_empty() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        seed_contact(&db, "+15555550123", "Vault Alice");
+        let path = write_jsonl(
+            tmp.path(),
+            "missing.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-missing","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let mut opts = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        opts.contact_name_mode = ContactNameMode::FillMissing;
+        import_jsonl_files(&[path], &opts).unwrap();
+        assert_eq!(participant_name_hint(&db).as_deref(), Some("Vault Alice"));
+    }
+
+    #[test]
+    fn contact_name_mode_overwrite_prefers_vault() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        seed_contact(&db, "+15555550123", "Vault Alice");
+        let path = write_jsonl(
+            tmp.path(),
+            "overwrite.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Backup Bob"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-over","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let mut opts = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        opts.contact_name_mode = ContactNameMode::Overwrite;
+        import_jsonl_files(&[path], &opts).unwrap();
+        assert_eq!(participant_name_hint(&db).as_deref(), Some("Vault Alice"));
     }
 }

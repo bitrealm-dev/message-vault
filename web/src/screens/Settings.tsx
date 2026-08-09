@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { loadSettings, saveSettings, type AppSettings } from "../lib/tauri";
 import FormRow from "../components/FormRow";
 
+/** Legacy Tauri settings page (defaults only). Vault connection lives in login/auth. */
 export default function Settings() {
   const [settings, setSettings] = useState<AppSettings>({
     vault_url: "",
@@ -36,35 +37,6 @@ export default function Settings() {
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Settings</h2>
-
-      <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>
-        Vault Connection
-      </h3>
-      <FormRow label="Server URL">
-        <input
-          type="text"
-          value={settings.vault_url}
-          onChange={(e) => setSettings({ ...settings, vault_url: e.target.value })}
-          placeholder="https://vault.example.com"
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
-        />
-      </FormRow>
-      <FormRow label="Username">
-        <input
-          type="text"
-          value={settings.vault_username}
-          onChange={(e) => setSettings({ ...settings, vault_username: e.target.value })}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
-        />
-      </FormRow>
-      <FormRow label="API Key">
-        <input
-          type="password"
-          value={settings.vault_key}
-          onChange={(e) => setSettings({ ...settings, vault_key: e.target.value })}
-          style={{ width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
-        />
-      </FormRow>
 
       <h3 style={{ margin: "1.5rem 0 0.75rem", fontSize: "1rem", color: "#374151" }}>
         Defaults

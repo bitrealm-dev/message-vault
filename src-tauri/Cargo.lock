@@ -2470,6 +2470,7 @@ dependencies = [
  "go-sms-pro-exporter",
  "imazing-exporter",
  "imessage-ir-exporter",
+ "media",
  "message-reexport",
  "message-vault-io-core",
  "openextract-exporter",
