@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import ConversationList, {
@@ -15,6 +15,7 @@ import TrashScreen from "../screens/TrashScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import MessageView from "../screens/MessageView";
 import type { Conversation } from "../lib/types";
+import type { ActiveView } from "../lib/views";
 
 function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string {
   if (kind === "direct") return `contact:${contactId} is:direct`;
@@ -35,8 +36,17 @@ function visibleBrowseQuery(
   return `contact:${contactId}${typeSuffix}`;
 }
 
+const emptyMainStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100%",
+  color: "var(--muted)",
+  fontSize: "0.875rem",
+} as const;
+
 export default function AppLayout() {
-  const [activeView, setActiveView] = useState("conversations");
+  const [activeView, setActiveView] = useState<ActiveView>("conversations");
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   /** Conversation list / message search box text. Independent of contact search. */
@@ -52,10 +62,6 @@ export default function AppLayout() {
 
   const contactsMode = activeView === "contacts";
   const searchQuery = contactsMode ? contactSearch : conversationSearch;
-
-  const handleNavigate = (view: string) => {
-    setActiveView(view);
-  };
 
   const handleSearch = (q: string) => {
     const isContactSearch =
@@ -133,42 +139,44 @@ export default function AppLayout() {
       />
     ) : null;
 
-  const mainContent = () => {
-    switch (activeView) {
-      case "conversations":
-        return selectedConversation ? (
-          <MessageView
-            conversation={selectedConversation}
-            onOpenContact={(contactId: string) =>
-              setSelectedContact({ id: contactId, name: "Loading…", handles: [] })
-            }
-          />
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)", fontSize: "0.875rem" }}>
-            Select a conversation to view messages
-          </div>
-        );
-      case "contacts":
-        return (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)", fontSize: "0.875rem" }}>
-            Select a contact to view details
-          </div>
-        );
-      case "trash": return <TrashScreen />;
-      case "import": return <ImportScreen />;
-      case "export": return <ExportScreen />;
-      case "settings":
-      case "profile":
-        return <SettingsScreen />;
-      default: return null;
-    }
-  };
+  let mainContent: ReactNode;
+  switch (activeView) {
+    case "conversations":
+      mainContent = selectedConversation ? (
+        <MessageView
+          conversation={selectedConversation}
+          onOpenContact={(contactId: string) =>
+            setSelectedContact({ id: contactId, name: "Loading…", handles: [] })
+          }
+        />
+      ) : (
+        <div style={emptyMainStyle}>Select a conversation to view messages</div>
+      );
+      break;
+    case "contacts":
+      mainContent = (
+        <div style={emptyMainStyle}>Select a contact to view details</div>
+      );
+      break;
+    case "trash":
+      mainContent = <TrashScreen />;
+      break;
+    case "import":
+      mainContent = <ImportScreen />;
+      break;
+    case "export":
+      mainContent = <ExportScreen />;
+      break;
+    case "settings":
+      mainContent = <SettingsScreen />;
+      break;
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui", background: "var(--bg)", color: "var(--text)" }}>
       <LeftPanel
         activeView={activeView}
-        onNavigate={handleNavigate}
+        onNavigate={setActiveView}
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
       />
@@ -183,7 +191,7 @@ export default function AppLayout() {
         </ListColumn>
       )}
       <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
-        {mainContent()}
+        {mainContent}
       </main>
       <ContactDrawer
         contactId={selectedContact?.id ?? null}

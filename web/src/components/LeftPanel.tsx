@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
 import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
+import type { ActiveView } from "../lib/views";
 import SavedGroupForm from "./SavedGroupForm";
 
 export default function LeftPanel({
@@ -10,14 +11,14 @@ export default function LeftPanel({
   onSearchChange,
   onSearch,
 }: {
-  activeView: string;
-  onNavigate: (view: string) => void;
+  activeView: ActiveView;
+  onNavigate: (view: ActiveView) => void;
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
 }) {
   const { logout } = useAuth();
 
-  const linkStyle = (view: string) => ({
+  const linkStyle = (view: ActiveView) => ({
     padding: "0.375rem 0.75rem",
     fontSize: "0.875rem",
     cursor: "pointer",
@@ -30,6 +31,14 @@ export default function LeftPanel({
     display: "block",
     color: "var(--text)",
   });
+
+  const signOutStyle = {
+    ...linkStyle("settings"),
+    background: "transparent",
+    fontWeight: 400 as const,
+    color: "var(--danger)",
+    marginTop: "0.25rem",
+  };
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
@@ -119,14 +128,7 @@ export default function LeftPanel({
         <button style={linkStyle("settings")} onClick={() => onNavigate("settings")}>
           Settings
         </button>
-        <button
-          onClick={logout}
-          style={{
-            ...linkStyle(""),
-            color: "var(--danger)",
-            marginTop: "0.25rem",
-          }}
-        >
+        <button onClick={logout} style={signOutStyle}>
           Sign out
         </button>
       </div>
