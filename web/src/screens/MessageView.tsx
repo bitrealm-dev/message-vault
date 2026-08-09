@@ -24,6 +24,7 @@ export default function MessageView({
   const [lightboxItems, setLightboxItems] = useState<LightboxItem[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showSources, setShowSources] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Year jump targets — estimate the offset from the conversation's date range
@@ -92,7 +93,24 @@ export default function MessageView({
     fetchPage(0);
   }, [fetchPage]);
 
-  const headerParticipants = messages[0]?.conversation.participants || [];
+  useEffect(() => {
+    setParticipantsOpen(true);
+  }, [conversation.id]);
+
+  /** Prefer list-API participants; fall back to the loaded page's conversation header. */
+  const displayParticipants = useMemo(() => {
+    if (conversation.participants.length > 0) {
+      return conversation.participants.map((p) => ({
+        label: p.name?.trim() || p.handle,
+        contact_id: p.contact_id,
+      }));
+    }
+    const fromMsg = messages[0]?.conversation.participants || [];
+    return fromMsg.map((p) => ({
+      label: p.name_hint || p.handle,
+      contact_id: p.contact_id,
+    }));
+  }, [conversation.participants, messages]);
 
   // Find bar: collect visible message IDs that match the find term
   const matchIds = useMemo(() => {
@@ -117,12 +135,108 @@ export default function MessageView({
         padding: "0.75rem 1.5rem", borderBottom: "1px solid var(--border)",
         background: "var(--elevated)",
       }}>
-        <div style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "0.25rem" }}>
-          {conversation.label ||
-            (conversation.is_group
-              ? `${conversation.participants.length} participants`
-              : conversation.participants[0]?.name || conversation.participants[0]?.handle)}
-        </div>
+        <button
+          type="button"
+          aria-expanded={participantsOpen}
+          onClick={() => setParticipantsOpen((o) => !o)}
+          disabled={displayParticipants.length === 0}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            width: "100%",
+            padding: 0,
+            margin: 0,
+            border: "none",
+            background: "transparent",
+            color: "var(--text)",
+            cursor: displayParticipants.length > 0 ? "pointer" : "default",
+            fontSize: "1rem",
+            fontWeight: 600,
+            textAlign: "left",
+          }}
+        >
+          {displayParticipants.length > 0 && (
+            <span
+              aria-hidden
+              style={{
+                display: "inline-block",
+                fontSize: "0.688rem",
+                color: "var(--muted)",
+                fontWeight: 600,
+                transform: participantsOpen ? "rotate(90deg)" : "none",
+                transition: "transform 0.15s ease",
+                flexShrink: 0,
+              }}
+            >
+              ▶
+            </span>
+          )}
+          <span style={{ minWidth: 0 }}>
+            {conversation.label ||
+              (conversation.is_group
+                ? `${conversation.participants.length} participants`
+                : conversation.participants[0]?.name || conversation.participants[0]?.handle)}
+          </span>
+        </button>
+
+        {participantsOpen && displayParticipants.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              gap: "0.375rem",
+              flexWrap: "wrap",
+              marginTop: "0.5rem",
+            }}
+          >
+            {displayParticipants.map((p, i) =>
+              p.contact_id ? (
+                <button
+                  key={`${p.contact_id}-${p.label}-${i}`}
+                  type="button"
+                  onClick={() => onOpenContact?.(p.contact_id!)}
+                  title={`Open contact for ${p.label}`}
+                  style={{
+                    fontSize: "0.75rem",
+                    padding: "0.125rem 0.5rem",
+                    borderRadius: "999px",
+                    border: "1px solid var(--border)",
+                    background: "var(--panel)",
+                    color: "var(--accent)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {p.label}
+                </button>
+              ) : (
+                <span
+                  key={`${p.label}-${i}`}
+                  style={{
+                    fontSize: "0.75rem",
+                    padding: "0.125rem 0.5rem",
+                    borderRadius: "999px",
+                    border: "1px solid var(--border)",
+                    background: "var(--elevated)",
+                    color: "var(--muted)",
+                  }}
+                >
+                  {p.label}
+                </span>
+              ),
+            )}
+          </div>
+        )}
+
+        <div
+          role="separator"
+          aria-hidden
+          style={{
+            height: 1,
+            background: "var(--border)",
+            margin: "0.75rem 0",
+          }}
+        />
+
         <div style={{ display: "flex", gap: "1rem", fontSize: "0.75rem", color: "var(--muted)", flexWrap: "wrap" }}>
           <span>{conversation.service}</span>
           {conversation.date_range_start && conversation.date_range_end && (
@@ -133,6 +247,7 @@ export default function MessageView({
           )}
           <span>{conversation.message_count} messages</span>
           <button
+            type="button"
             onClick={() => setShowSources(true)}
             style={{
               fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
@@ -143,37 +258,6 @@ export default function MessageView({
             Sources
           </button>
         </div>
-        {headerParticipants.length > 0 && (
-          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem" }}>
-            {headerParticipants.map((p, i) => {
-              const label = p.name_hint || p.handle;
-              return p.contact_id ? (
-                <button
-                  key={i}
-                  onClick={() => onOpenContact?.(p.contact_id!)}
-                  title={`Open contact for ${label}`}
-                  style={{
-                    fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-                    border: "1px solid var(--border)", background: "var(--panel)",
-                    color: "var(--accent)", cursor: "pointer",
-                  }}
-                >
-                  {label}
-                </button>
-              ) : (
-                <span
-                  key={i}
-                  style={{
-                    fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-                    border: "1px solid var(--border)", background: "var(--elevated)", color: "var(--muted)",
-                  }}
-                >
-                  {label}
-                </span>
-              );
-            })}
-          </div>
-        )}
 
         {/* Date jump links */}
         {dateJumps.length > 0 && (
@@ -181,6 +265,7 @@ export default function MessageView({
             {dateJumps.map((jump) => (
               <button
                 key={jump.year}
+                type="button"
                 onClick={() => fetchPage(jump.estimatedOffset)}
                 title={`Jump to ${jump.year} (estimated offset ${jump.estimatedOffset})`}
                 style={{
