@@ -37,7 +37,9 @@ export default function GlobalSearch({
     : "";
 
   useEffect(() => {
-    if (isFilter || !completingValue) {
+    // Only contact-complete for handle:/contact: — not participants:/is:.
+    const contactOps = opLower === "handle:" || opLower === "contact:";
+    if (isFilter || !completingValue || !contactOps) {
       setContacts([]);
       return;
     }
@@ -68,15 +70,16 @@ export default function GlobalSearch({
       window.clearTimeout(t);
       ac.abort();
     };
-  }, [isFilter, completingValue, valuePart]);
+  }, [isFilter, completingValue, valuePart, opLower]);
 
   // Empty lastToken must not match every operator via startsWith("") — that made Enter
   // insert an operator after a trailing space instead of running the search.
+  const contactOps = opLower === "handle:" || opLower === "contact:";
   const suggestions: string[] = isFilter
     ? []
-    : completingValue
+    : completingValue && contactOps
       ? contacts.map((c) => c.name).slice(0, 6)
-      : lastToken.length > 0
+      : !completingValue && lastToken.length > 0
         ? OPERATORS.filter((op) => op.startsWith(lastToken.toLowerCase())).slice(
             0,
             6,

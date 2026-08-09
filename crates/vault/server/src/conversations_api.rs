@@ -1000,6 +1000,30 @@ mod tests {
     }
 
     #[test]
+    fn list_conversations_participants_eq_on_demo_fixture_db() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../data/vault.db");
+        if !path.is_file() {
+            eprintln!("skip — missing {}", path.display());
+            return;
+        }
+        let conn = Connection::open(&path).unwrap();
+        let account = "00000000-0000-0000-0000-00000000d001";
+        let page = list_conversations(&conn, account, "participants:=3", 50, 0).unwrap();
+        assert!(
+            page.total >= 1,
+            "demo db should have conversations with 3 participants; total={}",
+            page.total
+        );
+        assert!(
+            page.conversations
+                .iter()
+                .all(|c| c.participants.len() == 3),
+            "every returned conversation should have 3 participants"
+        );
+    }
+
+    #[test]
     fn display_service_label_from_sources() {
         assert_eq!(
             display_service_label(&["imessage".into()], None),
