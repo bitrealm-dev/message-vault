@@ -28,7 +28,7 @@ struct Cli {
     #[arg(long, default_value = "")]
     username: String,
 
-    /// Per-account Import API token (Vault key). Prefer VAULT_KEY env.
+    /// App password / Vault key (Settings → Account). Prefer VAULT_KEY env.
     #[arg(long, env = "VAULT_KEY")]
     key: String,
 

@@ -1,28 +1,19 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "../../lib/auth";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
-import { ProfileDangerZone } from "./ProfileDangerZone";
 import {
   type AccountProfile,
   inputStyle,
   sectionTitle,
 } from "./profileStyles";
 
-/** Profile settings body for the Settings Profile tab (no page chrome). */
+/** Profile settings: display name and phone/email/WhatsApp handles. */
 export function ProfileSettingsPanel() {
-  const { token } = useAuth();
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loadError, setLoadError] = useState("");
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState("");
-
-  const [currentPw, setCurrentPw] = useState("");
-  const [newPw, setNewPw] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
-  const [pwMsg, setPwMsg] = useState("");
-  const [pwOk, setPwOk] = useState(false);
 
   const [newHandle, setNewHandle] = useState("");
   const [newHandleService, setNewHandleService] = useState<"phone" | "email" | "whatsapp">("phone");
@@ -50,8 +41,6 @@ export function ProfileSettingsPanel() {
   if (!profile) {
     return <div style={{ color: "var(--muted)" }}>Loading…</div>;
   }
-
-  const isDemo = profile.is_demo === true;
 
   const handleSaveName = async () => {
     setNameError("");
@@ -124,32 +113,6 @@ export function ProfileSettingsPanel() {
     }
   };
 
-  const handleChangePassword = async () => {
-    setPwMsg("");
-    setPwOk(false);
-    if (newPw.length < 8) {
-      setPwMsg("New password must be at least 8 characters.");
-      return;
-    }
-    if (newPw !== confirmPw) {
-      setPwMsg("New password and confirmation do not match.");
-      return;
-    }
-    try {
-      await apiClient.post("/v1/auth/change-password", {
-        current_password: currentPw,
-        new_password: newPw,
-      });
-      setPwOk(true);
-      setPwMsg("Password changed.");
-      setCurrentPw("");
-      setNewPw("");
-      setConfirmPw("");
-    } catch (e) {
-      setPwMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const handles = [
     ...profile.phones.map((handle) => ({ handle, service: "phone" })),
     ...profile.emails.map((handle) => ({ handle, service: "email" })),
@@ -157,9 +120,6 @@ export function ProfileSettingsPanel() {
 
   return (
     <div>
-      <h3 style={sectionTitle}>Username</h3>
-      <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", backgroundColor: "var(--elevated)", color: "var(--muted)" }} />
-
       <h3 style={sectionTitle}>Display Name</h3>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
         <input
@@ -270,87 +230,6 @@ export function ProfileSettingsPanel() {
           {handleError}
         </div>
       )}
-      {!handleError && <div style={{ marginBottom: "1.5rem" }} />}
-
-      <h3 style={sectionTitle}>Message import</h3>
-      <p style={{ margin: "0 0 0.5rem", fontSize: "0.813rem", color: "var(--muted)" }}>
-        API token used for Import and Push into this vault.
-      </p>
-      {token ? (
-        <div
-          style={{
-            ...inputStyle,
-            marginBottom: "1.5rem",
-            backgroundColor: "var(--elevated)",
-            color: "var(--text)",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-            fontSize: "0.813rem",
-            wordBreak: "break-all",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {token}
-        </div>
-      ) : (
-        <div style={{ fontSize: "0.813rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
-          Sign in again to see token
-        </div>
-      )}
-
-      <h3 style={sectionTitle}>Change Password</h3>
-      <div style={{ marginBottom: "1.5rem", maxWidth: "360px" }}>
-        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
-          Current password
-        </label>
-        <input
-          type="password"
-          value={currentPw}
-          onChange={(e) => setCurrentPw(e.target.value)}
-          autoComplete="current-password"
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
-        />
-        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
-          New password
-        </label>
-        <input
-          type="password"
-          value={newPw}
-          onChange={(e) => setNewPw(e.target.value)}
-          autoComplete="new-password"
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
-        />
-        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
-          Confirm new password
-        </label>
-        <input
-          type="password"
-          value={confirmPw}
-          onChange={(e) => setConfirmPw(e.target.value)}
-          autoComplete="new-password"
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
-        />
-        <Button
-          variant="primary"
-          onClick={handleChangePassword}
-          disabled={!currentPw || !newPw || !confirmPw}
-          style={{ padding: "0.375rem 0.75rem" }}
-        >
-          Change password
-        </Button>
-        {pwMsg && (
-          <div
-            style={{
-              marginTop: "0.375rem",
-              fontSize: "0.813rem",
-              color: pwOk ? "var(--ok)" : "var(--danger)",
-            }}
-          >
-            {pwMsg}
-          </div>
-        )}
-      </div>
-
-      <ProfileDangerZone isDemo={isDemo} username={profile.username} />
     </div>
   );
 }

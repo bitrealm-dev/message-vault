@@ -79,4 +79,7 @@ export const apiClient = {
   post<T>(path: string, body?: unknown, opts?: ApiRequestOptions): Promise<T> {
     return request<T>("POST", path, body, opts?.signal);
   },
+  delete<T>(path: string, opts?: ApiRequestOptions): Promise<T> {
+    return request<T>("DELETE", path, undefined, opts?.signal);
+  },
 };

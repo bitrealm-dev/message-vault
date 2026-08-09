@@ -11,7 +11,7 @@ After you have a JSONL export folder (with an `attachments/` directory when medi
 - The desktop app signed in to that vault (server URL such as `http://localhost:8080`, plus your username and password)
 - A JSONL export folder, or a phone backup you will extract during Import
 
-For CLI-only import (`vault-push`), generate an Import API token under **Settings → Profile** in the vault UI.
+For CLI-only import (`vault-push`), create an app password under **Settings → Account** in the vault UI.
 
 ## Use Import in the desktop app
 

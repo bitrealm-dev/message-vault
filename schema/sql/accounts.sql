@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     created_at TEXT NOT NULL
 );
 
+-- Named CLI credentials (app passwords). Many per account.
+-- scopes: 'import' | 'export' | 'both'
+CREATE TABLE IF NOT EXISTS account_app_passwords (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    scopes TEXT NOT NULL DEFAULT 'both',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_account_app_passwords_account
+    ON account_app_passwords(account_id);
+
 CREATE TABLE IF NOT EXISTS account_prefs (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     key TEXT NOT NULL,

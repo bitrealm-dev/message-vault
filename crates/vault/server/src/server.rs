@@ -23,17 +23,76 @@ use crate::assets;
 use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
+use crate::db::app_passwords;
+use crate::db::schema;
 use crate::dedupe;
 use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
 };
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
-use crate::db::schema;
 
-/// Authenticated vault account from a per-account Import API token.
+/// What a Bearer credential is allowed to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthCapability {
+    /// GUI session token — full API access.
+    Full,
+    /// Named app password with import and/or export rights.
+    AppPassword(crate::db::app_passwords::AppPasswordScopes),
+}
+
+/// Authenticated vault account from a session token or app password.
 #[derive(Debug, Clone)]
 pub struct AuthIdentity {
     pub account_id: String,
+    pub capability: AuthCapability,
+}
+
+/// Reject app passwords on routes that require a GUI session.
+pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    match auth.capability {
+        AuthCapability::Full => Ok(()),
+        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
+            "this endpoint requires a signed-in session; use an app password only for import/export"
+                .into(),
+        )),
+    }
+}
+
+/// Allow session or an app password that includes import.
+pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    match auth.capability {
+        AuthCapability::Full => Ok(()),
+        AuthCapability::AppPassword(scopes) if scopes.allows_import() => Ok(()),
+        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
+            "this app password does not allow import".into(),
+        )),
+    }
+}
+
+/// Allow session or an app password that includes export.
+pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    match auth.capability {
+        AuthCapability::Full => Ok(()),
+        AuthCapability::AppPassword(scopes) if scopes.allows_export() => Ok(()),
+        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
+            "this app password does not allow export".into(),
+        )),
+    }
+}
+
+/// Allow session or any app password (import, export, or both) for asset probes.
+pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
+    match auth.capability {
+        AuthCapability::Full => Ok(()),
+        AuthCapability::AppPassword(scopes)
+            if scopes.allows_import() || scopes.allows_export() =>
+        {
+            Ok(())
+        }
+        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
+            "this app password cannot access assets".into(),
+        )),
+    }
 }
 
 #[derive(Clone)]
@@ -193,6 +252,15 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .route("/v1/account/storage", get(account_storage_handler))
         .route(
+            "/v1/account/app-passwords",
+            get(crate::app_passwords_api::list_app_passwords_handler)
+                .post(crate::app_passwords_api::create_app_password_handler),
+        )
+        .route(
+            "/v1/account/app-passwords/{id}",
+            delete(crate::app_passwords_api::delete_app_password_handler),
+        )
+        .route(
             "/v1/export/messages/count",
             get(export_messages_count_handler),
         )
@@ -245,7 +313,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
-    eprintln!("  GET  /v1/auth/check   (Bearer per-account Import API token)");
+    eprintln!("  GET  /v1/auth/check   (Bearer session token or app password)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
@@ -433,18 +501,30 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     // without restarting serve (no process-local token cache).
     let db = state.cfg.paths.db.clone();
     let token_owned = token.clone();
-    let account_id = tokio::task::spawn_blocking(move || {
+    let resolved = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<AuthIdentity>> {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
         schema::ensure_accounts_schema(&conn)?;
-        api_tokens::lookup_account_for_token(&conn, &token_owned)
+        if let Some(account_id) = api_tokens::lookup_account_for_token(&conn, &token_owned)? {
+            return Ok(Some(AuthIdentity {
+                account_id,
+                capability: AuthCapability::Full,
+            }));
+        }
+        if let Some(app) = app_passwords::lookup_account_for_app_password(&conn, &token_owned)? {
+            return Ok(Some(AuthIdentity {
+                account_id: app.account_id,
+                capability: AuthCapability::AppPassword(app.scopes),
+            }));
+        }
+        Ok(None)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("auth lookup task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    match account_id {
-        Some(account_id) => Ok(AuthIdentity { account_id }),
+    match resolved {
+        Some(identity) => Ok(identity),
         None => Err(ApiError::Unauthorized("invalid API token".into())),
     }
 }
@@ -572,6 +652,7 @@ async fn contacts_list_handler(
     Query(query): Query<ListContactsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let q = query.q.unwrap_or_default();
     let limit = query
@@ -611,6 +692,7 @@ async fn conversations_list_handler(
     Query(query): Query<ListConversationsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let q = query.q.unwrap_or_default();
     let limit = query
@@ -640,6 +722,7 @@ async fn conversation_sources_handler(
     AxumPath(conversation_id): AxumPath<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let page = tokio::task::spawn_blocking(move || {
         let conn = db
@@ -666,6 +749,7 @@ async fn contact_detail_handler(
     AxumPath(contact_id): AxumPath<i64>,
 ) -> Result<Json<crate::contacts_api::ContactDetail>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let detail = tokio::task::spawn_blocking(move || {
         let conn = db
@@ -694,6 +778,7 @@ async fn imports_list_handler(
     Query(query): Query<ListImportsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
     let account =
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
 
@@ -717,6 +802,7 @@ async fn account_storage_handler(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let account_id = auth.account_id;
     let db = Arc::clone(&state.db);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
@@ -748,6 +834,7 @@ async fn imports_create_handler(
     Json(body): Json<CreateImportBody>,
 ) -> Result<Json<CreateImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "body field source is required".into(),
@@ -789,6 +876,7 @@ async fn imports_complete_handler(
     Json(body): Json<CompleteImportBody>,
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
     let db = Arc::clone(&state.db);
     let args = crate::db::vault_imports::CompleteImportArgs {
@@ -831,6 +919,7 @@ async fn import_handler(
     request: Request,
 ) -> Result<Json<ImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
@@ -887,13 +976,28 @@ struct AssetPutResponse {
     already_present: bool,
 }
 
+enum AssetAccess {
+    /// GET asset bytes — needs export (or full session).
+    Read,
+    /// PUT / multipart upload — needs import (or full session).
+    Write,
+    /// HEAD probe — import or export.
+    Probe,
+}
+
 async fn resolve_asset_lookup(
     state: &AppState,
     headers: &HeaderMap,
     sha256: &str,
     query: &AssetPutQuery,
+    access: AssetAccess,
 ) -> Result<(String, String, Option<assets::StoredAsset>), ApiError> {
     let auth = resolve_auth(headers, state).await?;
+    match access {
+        AssetAccess::Read => require_export_access(&auth)?,
+        AssetAccess::Write => require_import_access(&auth)?,
+        AssetAccess::Probe => require_import_or_export_access(&auth)?,
+    }
     if query.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "query param source is required".into(),
@@ -927,7 +1031,7 @@ async fn asset_head_handler(
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (_account, _source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Probe).await?;
     let Some(stored) = existing else {
         return Err(ApiError::NotFound("asset not found".into()));
     };
@@ -947,7 +1051,7 @@ async fn asset_get_handler(
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Response, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Read).await?;
     let Some(stored) = existing else {
         return Err(ApiError::NotFound("asset not found".into()));
     };
@@ -1008,6 +1112,7 @@ async fn export_messages_count_handler(
     Query(query): Query<ExportMessagesCountQuery>,
 ) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
     let account =
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let q = query.q.clone();
@@ -1044,6 +1149,7 @@ async fn export_messages_handler(
     Query(query): Query<ExportMessagesQuery>,
 ) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
     let account =
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
@@ -1088,7 +1194,7 @@ async fn asset_put_handler(
     request: Request,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
 
     let mime = headers
         .get(header::CONTENT_TYPE)
@@ -1203,7 +1309,7 @@ async fn asset_upload_start_handler(
     Json(body): Json<AssetUploadStartBody>,
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -1247,7 +1353,7 @@ async fn asset_upload_part_handler(
     request: Request,
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1275,7 +1381,7 @@ async fn asset_upload_complete_handler(
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -1329,7 +1435,7 @@ async fn asset_upload_abort_handler(
     Query(query): Query<AssetPutQuery>,
 ) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
     let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query).await?;
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let sha = sha256.clone();
     let uid = upload_id.clone();

@@ -1,6 +1,7 @@
 mod asset_uploads;
 mod assets;
 mod auth;
+mod app_passwords_api;
 mod config;
 mod contacts_api;
 mod conversations_api;

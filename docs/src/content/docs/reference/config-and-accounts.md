@@ -51,8 +51,9 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 - Web login uses username + password (Argon2id hash in `accounts.password_hash`).
   Accounts may opt into no password (`password_hash` NULL); empty password is
   accepted only for those accounts.
-- Each account can generate a Vault Import API token for `serve` / vault-push
-  (stored hashed; shown once when created).
+- Each account can create named **app passwords** for `vault-push` / `vault-pull`
+  (stored hashed; shown once when created). GUI sessions use a separate rotating
+  token.
 - New accounts start with browsing edits enabled.
 - Demo seed identity: username `demo` (`demo/config/seed.toml`), always
   no-password and read-only by default.

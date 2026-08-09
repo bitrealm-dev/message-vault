@@ -272,6 +272,30 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
 /// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(ACCOUNTS_DDL)?;
+    ensure_app_password_scopes_column(conn)?;
+    Ok(())
+}
+
+/// Older DBs created `account_app_passwords` before `scopes` existed.
+fn ensure_app_password_scopes_column(conn: &Connection) -> Result<()> {
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'account_app_passwords'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(());
+    }
+    let has_scopes: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = 'scopes'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_scopes {
+        conn.execute_batch(
+            "ALTER TABLE account_app_passwords ADD COLUMN scopes TEXT NOT NULL DEFAULT 'both';",
+        )?;
+    }
     Ok(())
 }
 

@@ -14,7 +14,7 @@ After you sign in (browser or desktop app), the left sidebar is the main way to 
 | **Trash** | Soft-deleted items when the Trash view is available (see [Trash](/browse/trash-and-undo/)) |
 | **Import** | Push backups into the vault (desktop app only) |
 | **Export** | Pull messages to disk (desktop app only) |
-| **Settings** | Profile, storage, and appearance |
+| **Settings** | Account, profile, storage, and appearance |
 | **Sign out** | End the session |
 
 **Saved groups** under the sidebar store search queries you reuse. Create one with **+ New**, then click a group name to run that search again.

@@ -26,7 +26,7 @@ The desktop path uses the same pull machinery as the `vault-pull` CLI: messages 
 
 ## From the terminal
 
-Use [`vault-pull`](/reference/cli/vault-pull/) with your vault base URL and Import API token (Settings → Profile) when you want a scriptable export.
+Use [`vault-pull`](/reference/cli/vault-pull/) with your vault base URL and an app password (Settings → Account) when you want a scriptable export.
 
 ## Related
 

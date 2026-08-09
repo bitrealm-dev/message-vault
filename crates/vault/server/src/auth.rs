@@ -397,6 +397,7 @@ pub async fn change_password_handler(
         ));
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
+    crate::server::require_full_access(&auth)?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
     let db = state.cfg.paths.db.clone();
@@ -436,6 +437,7 @@ pub async fn delete_account_handler(
         return Err(ApiError::BadRequest("confirmation flag must be true".into()));
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
+    crate::server::require_full_access(&auth)?;
     let account_id = auth.account_id;
     if account_profile::is_demo_account(&account_id) {
         return Err(ApiError::BadRequest(

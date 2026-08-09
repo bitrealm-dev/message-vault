@@ -3,6 +3,7 @@
     "accounts",
     "account_emails",
     "account_api_tokens",
+    "account_app_passwords",
     "account_prefs",
     "schema_meta",
     "vault_imports",
@@ -29,6 +30,7 @@
   ],
   "indexes": [
     "ix_account_emails_one_primary",
+    "ix_account_app_passwords_account",
     "ix_accounts_hanko_user_id",
     "ix_vault_imports_account_started",
     "ix_conversations_account_id",

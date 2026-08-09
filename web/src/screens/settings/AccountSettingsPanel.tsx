@@ -1,0 +1,143 @@
+import { useState, useEffect } from "react";
+import { apiClient } from "../../lib/api";
+import Button from "../../components/Button";
+import { ProfileDangerZone } from "./ProfileDangerZone";
+import { AppPasswordsSection } from "./AppPasswordsSection";
+import {
+  type AccountProfile,
+  inputStyle,
+  sectionTitle,
+} from "./profileStyles";
+
+/** Account settings: username, password, app passwords, danger zone. */
+export function AccountSettingsPanel() {
+  const [profile, setProfile] = useState<AccountProfile | null>(null);
+  const [loadError, setLoadError] = useState("");
+
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [pwOk, setPwOk] = useState(false);
+
+  useEffect(() => {
+    apiClient
+      .get<AccountProfile>("/v1/account/profile")
+      .then(setProfile)
+      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  if (loadError) {
+    return (
+      <div style={{ color: "var(--danger)" }}>
+        Could not load account: {loadError}
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return <div style={{ color: "var(--muted)" }}>Loading…</div>;
+  }
+
+  const isDemo = profile.is_demo === true;
+
+  const handleChangePassword = async () => {
+    setPwMsg("");
+    setPwOk(false);
+    if (newPw.length < 8) {
+      setPwMsg("New password must be at least 8 characters.");
+      return;
+    }
+    if (newPw !== confirmPw) {
+      setPwMsg("New password and confirmation do not match.");
+      return;
+    }
+    try {
+      await apiClient.post("/v1/auth/change-password", {
+        current_password: currentPw,
+        new_password: newPw,
+      });
+      setPwOk(true);
+      setPwMsg("Password changed.");
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+    } catch (e) {
+      setPwMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div>
+      <h3 style={sectionTitle}>Username</h3>
+      <input
+        type="text"
+        value={profile.username}
+        readOnly
+        style={{
+          ...inputStyle,
+          marginBottom: "1.5rem",
+          backgroundColor: "var(--elevated)",
+          color: "var(--muted)",
+        }}
+      />
+
+      <h3 style={sectionTitle}>Change Password</h3>
+      <div style={{ marginBottom: "1.5rem", maxWidth: "360px" }}>
+        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
+          Current password
+        </label>
+        <input
+          type="password"
+          value={currentPw}
+          onChange={(e) => setCurrentPw(e.target.value)}
+          autoComplete="current-password"
+          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+        />
+        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
+          New password
+        </label>
+        <input
+          type="password"
+          value={newPw}
+          onChange={(e) => setNewPw(e.target.value)}
+          autoComplete="new-password"
+          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+        />
+        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
+          Confirm new password
+        </label>
+        <input
+          type="password"
+          value={confirmPw}
+          onChange={(e) => setConfirmPw(e.target.value)}
+          autoComplete="new-password"
+          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+        />
+        <Button
+          variant="primary"
+          onClick={handleChangePassword}
+          disabled={!currentPw || !newPw || !confirmPw}
+          style={{ padding: "0.375rem 0.75rem" }}
+        >
+          Change password
+        </Button>
+        {pwMsg && (
+          <div
+            style={{
+              marginTop: "0.375rem",
+              fontSize: "0.813rem",
+              color: pwOk ? "var(--ok)" : "var(--danger)",
+            }}
+          >
+            {pwMsg}
+          </div>
+        )}
+      </div>
+
+      <AppPasswordsSection />
+
+      <ProfileDangerZone isDemo={isDemo} username={profile.username} />
+    </div>
+  );
+}

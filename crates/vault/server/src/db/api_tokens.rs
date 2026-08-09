@@ -5,8 +5,9 @@ use sha2::{Digest, Sha256};
 const API_TOKEN_ALPHANUM: &[u8] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-/// Generate a new import API token (`mv-user-` + 32 alphanumeric characters).
-#[allow(dead_code)] // used by rotate_account_api_token (CLI); web generates in Node
+/// Generate a new GUI session token (`mv-user-` + 32 alphanumeric characters).
+/// Rotates on login; not for long-lived CLI use (see `app_passwords`).
+#[allow(dead_code)] // used by rotate_account_api_token
 pub fn generate_api_token() -> String {
     let mut buf = [0u8; 32];
     fill_random(&mut buf);
@@ -84,8 +85,9 @@ pub fn account_has_api_token(conn: &Connection, account_id: &str) -> Result<bool
     Ok(n > 0)
 }
 
-/// Create or replace the account's API token hash; returns the new plaintext once.
-#[allow(dead_code)] // available for CLI tooling; web manages tokens via Next.js
+/// Create or replace the account's **session** token hash; returns plaintext once.
+/// Login uses this path so each sign-in invalidates the previous session Bearer.
+#[allow(dead_code)]
 pub fn rotate_account_api_token(conn: &Connection, account_id: &str) -> Result<String> {
     let token = generate_api_token();
     let token_hash = hash_api_token(&token);
@@ -119,8 +121,8 @@ pub fn insert_account_api_token(conn: &Connection, account_id: &str) -> Result<S
     Ok(token)
 }
 
-/// Retrieve or create an API token for the account. If a token row already
-/// exists, rotates it; otherwise inserts a fresh one. Returns the plaintext.
+/// Session token for GUI: if a row exists, rotate it; otherwise insert.
+/// Returns the new plaintext session Bearer.
 pub fn get_or_create_api_token(conn: &Connection, account_id: &str) -> Result<String> {
     let existing: Option<String> = conn
         .query_row(

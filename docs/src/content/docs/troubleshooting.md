@@ -124,13 +124,13 @@ Running both `compose-dev.yml` and `compose-release.yml` at the same time will c
 
 **Symptom**: `--account` value is not recognized.
 
-**Fix**: use the exact username (not display name) shown under **Settings → Profile** in the web UI, or the account UUID. Both work.
+**Fix**: use the exact username (not display name) shown under **Settings → Account** in the web UI, or the account UUID. Both work.
 
 #### Token issues
 
 **Symptom**: `401 Unauthorized` from the import API.
 
-**Fix**: API tokens are shown once when created under **Settings → Profile**. If you lost the token, generate a new one. The old token stops working when a new one is created (rotation). Tokens are stored as SHA-256 hashes — the server never stores the plain text.
+**Fix**: create a named app password under **Settings → Account**. The plaintext is shown once. If you lost it, revoke the old one and create a new password. Signing in to the GUI rotates a separate session token and does not change your app passwords. Secrets are stored as SHA-256 hashes — the server never stores the plain text.
 
 #### Import validation errors
 

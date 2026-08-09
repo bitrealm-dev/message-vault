@@ -1,24 +1,29 @@
 ---
 title: Settings
-description: Profile, storage, and appearance settings.
+description: Account, profile, storage, and appearance settings.
 ---
 
-Open **Settings** in the sidebar. Settings has three tabs:
+Open **Settings** in the sidebar. Settings has four tabs:
+
+## Account
+
+- **Username** — read-only account id used for sign-in
+- **Password** — change password when local auth is enabled
+- **App passwords** — create named Bearer secrets for `vault-push` / `vault-pull`. When creating one, choose **import**, **export**, or **both**. Each secret is shown once at creation; revoke when finished. Signing in to the GUI uses a separate session token that changes on each login and does not revoke these passwords
+- **Danger zone** — delete all messages for the account, or delete the account (the demo account cannot be deleted)
+
+The desktop app and web UI sign in with username and password. Use app passwords for CLI and automation.
 
 ## Profile
 
-- **Your identity** — username, display name for messages you sent, and handles (phone numbers or emails) used to recognize you
-- **Import API token** — generate a Bearer token for `vault-push` / `vault-pull` and other API clients. It is shown once; delete and generate again if needed
-- **Password** — change password when local auth is enabled
-- **Danger zone** — delete all messages for the account, or delete the account (the demo account cannot be deleted)
-
-The desktop app signs in with username and password against the vault URL. The Import API token is mainly for CLI and automation.
+- **Display name** — name shown for messages you sent
+- **Handles** — phone numbers or emails used to recognize you in imports
 
 ## Storage
 
 - **Usage** — attachment storage for this account
 - **Largest attachments** — top attachments by file size
-- Import history may also appear here or under a related import-history view when available
+- Import history may also appear here when available
 
 ## Appearance
 

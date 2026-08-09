@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema};
-use crate::server::{ApiError, AppState, resolve_auth};
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
 #[derive(Debug, Serialize)]
 pub struct AccountProfileResponse {
@@ -46,6 +46,7 @@ pub async fn account_profile_handler(
     headers: HeaderMap,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
     let db = state.cfg.paths.db.clone();
@@ -175,6 +176,7 @@ pub async fn account_profile_update_handler(
     Json(req): Json<AccountProfileUpdateRequest>,
 ) -> Result<Json<AccountProfileResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let account_id = auth.account_id;
 
     let db = state.cfg.paths.db.clone();
@@ -256,6 +258,7 @@ pub async fn delete_messages_handler(
         return Err(ApiError::BadRequest("confirmation flag must be true".into()));
     }
     let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
     let account_id = auth.account_id;
     let db = state.cfg.paths.db.clone();
     let data_dir = state.cfg.paths.data_dir.clone();

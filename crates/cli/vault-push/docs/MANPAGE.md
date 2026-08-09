@@ -21,7 +21,7 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 | Flag | Env | Meaning |
 |------|-----|---------|
 | `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` — UI and API share this origin) |
-| `--key` | `VAULT_KEY` | Per-account Import API token (Vault key) |
+| `--key` | `VAULT_KEY` | App password from Settings → Account (Vault key) |
 | `--username` | | Optional; account is resolved from the vault key |
 | `--input` | | JSONL export directory |
 | `--mode append\|replace` | | Default `append` (resume-safe) |
