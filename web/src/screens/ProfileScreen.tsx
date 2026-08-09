@@ -21,7 +21,8 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: "4px",
   boxSizing: "border-box",
-  background: "var(--bg)",
+  // backgroundColor (not background) so select keeps the themed chevron.
+  backgroundColor: "var(--elevated)",
   color: "var(--text)",
 };
 
@@ -228,7 +229,7 @@ export function ProfileSettingsPanel() {
   return (
     <div>
       <h3 style={sectionTitle}>Username</h3>
-      <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", background: "var(--elevated)", color: "var(--muted)" }} />
+      <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", backgroundColor: "var(--elevated)", color: "var(--muted)" }} />
 
       <h3 style={sectionTitle}>Display Name</h3>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
@@ -272,13 +273,19 @@ export function ProfileSettingsPanel() {
                 fontSize: "0.875rem",
               }}
             >
-              <span style={{ flex: 1 }}>{h.handle}</span>
-              <span style={{ color: "var(--muted)", minWidth: "3.5rem" }}>{h.service}</span>
+              <span style={{ color: "var(--muted)", minWidth: "7rem", flexShrink: 0 }}>
+                {h.service}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>{h.handle}</span>
               <Button
-                variant="danger"
+                variant="ghost"
                 onClick={() => handleRemoveHandle(h.handle, h.service)}
                 disabled={handleBusy}
-                style={{ fontSize: "0.813rem", padding: "0.2rem 0.5rem" }}
+                style={{
+                  fontSize: "0.813rem",
+                  padding: "0.2rem 0.5rem",
+                  color: "var(--danger)",
+                }}
               >
                 Remove
               </Button>
@@ -345,7 +352,7 @@ export function ProfileSettingsPanel() {
           style={{
             ...inputStyle,
             marginBottom: "1.5rem",
-            background: "var(--elevated)",
+            backgroundColor: "var(--elevated)",
             color: "var(--text)",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             fontSize: "0.813rem",

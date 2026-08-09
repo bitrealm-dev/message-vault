@@ -250,7 +250,7 @@ export default function ContactDrawer({
               border: "1px solid var(--border)",
               borderRadius: "4px",
               width: "110px",
-              background: "var(--bg)",
+              backgroundColor: "var(--elevated)",
               color: "var(--text)",
             }}
           >
@@ -269,7 +269,7 @@ export default function ContactDrawer({
               fontSize: "0.813rem",
               border: "1px solid var(--border)",
               borderRadius: "4px",
-              background: "var(--bg)",
+              backgroundColor: "var(--elevated)",
               color: "var(--text)",
             }}
           />

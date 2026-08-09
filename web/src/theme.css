@@ -180,14 +180,44 @@ select option {
   outline-offset: 1px;
 }
 
-/* Default form controls inherit theme (screens can still override). */
+/* Default form controls inherit theme (screens can still override).
+   color-scheme must match data-theme — "light dark" lets OS pick a light
+   popup for <select> even when the app chrome is dark. */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
 select,
 textarea {
   background-color: var(--elevated);
   color: var(--text);
   border-color: var(--border);
-  color-scheme: light dark;
+}
+
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  color-scheme: dark;
+}
+
+[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+  color-scheme: light;
+}
+
+/* Native <select> often ignores background and paints OS chrome (muddy on
+   WebKit). Force our surface + a themed chevron instead. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--elevated);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 0.75rem;
+  padding-right: 1.75rem;
+}
+
+[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23c8c8c8' d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
 
 input::placeholder,
