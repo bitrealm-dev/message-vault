@@ -2,37 +2,28 @@ import { useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../lib/types";
 import { useListColumnResizing } from "./ListColumnResizeContext";
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+/** Calendar date: year, month, and day (e.g. "Sep 9, 2024"). */
+function formatYmd(iso: string): string {
+  return new Date(iso).toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
-  if (diffDays === 0) {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+/** First and last message dates for the bottom-right corner. */
+function formatDateSpan(start: string | null, end: string | null): string | null {
+  if (start && end) {
+    const a = formatYmd(start);
+    const b = formatYmd(end);
+    return a === b ? a : `${a} – ${b}`;
   }
-  if (diffDays === 1) return "yesterday";
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (d.getFullYear() === now.getFullYear()) {
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
-  }
-  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  if (end) return formatYmd(end);
+  if (start) return formatYmd(start);
+  return null;
 }
 
-/** Month + year for conversation date ranges (e.g. "Sep 2020"). */
-function formatMonthYear(iso: string): string {
-  return new Date(iso).toLocaleDateString([], { month: "short", year: "numeric" });
-}
-
-function formatDateRange(start: string | null, end: string | null): string | null {
-  if (!start || !end) return null;
-  return `${formatMonthYear(start)} – ${formatMonthYear(end)}`;
-}
-
-function isLargeGroup(conv: Conversation): boolean {
-  return conv.is_group && conv.participants.length > 7;
-}
-
-/** Short service label for group meta (no message counts). */
+/** Short service label (imessage / sms/mms). */
 function formatServiceLabel(service: string): string | null {
   const s = service.trim();
   if (!s || s.toLowerCase() === "unknown") return null;
@@ -66,140 +57,92 @@ function GroupIcon() {
   );
 }
 
-function ParticipantCount({ count }: { count: number }) {
+function participantLabel(p: { name: string | null; handle: string }): string {
+  return p.name || p.handle;
+}
+
+/** Plain-text title used for rename baseline. */
+function displayNameText(conv: Conversation): string {
+  if (conv.label) return conv.label;
+  if (!conv.is_group) {
+    const p = conv.participants[0];
+    return p?.name || p?.handle || "(unknown)";
+  }
+  return conv.participants.map(participantLabel).join(", ");
+}
+
+const NAME_LINE_HEIGHT = 1.35;
+
+/** Comma-separated names; each name stays whole; at most two lines then ellipsis. */
+function GroupNames({ conv }: { conv: Conversation }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-      {count}
-      <GroupIcon />
+    <span
+      style={{
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2,
+        overflow: "hidden",
+        lineHeight: NAME_LINE_HEIGHT,
+        wordBreak: "normal",
+        overflowWrap: "break-word",
+      }}
+    >
+      {conv.participants.map((p, i) => {
+        const label = participantLabel(p);
+        return (
+          <span key={`${p.handle}-${i}`}>
+            {i > 0 ? ", " : null}
+            <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+          </span>
+        );
+      })}
     </span>
   );
 }
 
-/** Meta line: participant count, optional service, optional date range. */
-function MetaLine({
-  participantCount,
-  service,
-  range,
-}: {
-  participantCount: number;
-  service?: string | null;
-  range?: string | null;
-}) {
-  const serviceLabel = service ? formatServiceLabel(service) : null;
+function titleContent(conv: Conversation): ReactNode {
+  if (conv.label) return conv.label;
+  if (!conv.is_group) {
+    const p = conv.participants[0];
+    return p?.name || p?.handle || "(unknown)";
+  }
+  return <GroupNames conv={conv} />;
+}
+
+function Dot() {
+  return (
+    <span aria-hidden="true" style={{ opacity: 0.55, margin: "0 0.15rem" }}>
+      ·
+    </span>
+  );
+}
+
+/** Bottom-left for groups: service · icon + count. */
+function GroupMeta({ conv }: { conv: Conversation }) {
+  const serviceLabel = formatServiceLabel(conv.service);
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "0.65rem",
+        gap: "0.35rem",
         minWidth: 0,
         flexWrap: "wrap",
       }}
     >
-      <ParticipantCount count={participantCount} />
-      {serviceLabel ? (
-        <>
-          <span aria-hidden="true" style={{ opacity: 0.55 }}>·</span>
-          <span>{serviceLabel}</span>
-        </>
-      ) : null}
-      {range ? (
-        <>
-          <span aria-hidden="true" style={{ opacity: 0.55 }}>·</span>
-          <span>{range}</span>
-        </>
-      ) : null}
+      {serviceLabel ? <span>{serviceLabel}</span> : null}
+      {serviceLabel ? <Dot /> : null}
+      <GroupIcon />
+      <span>{conv.participants.length}</span>
     </span>
   );
 }
 
-/** Plain-text title used for rename baseline (no icon). */
-function displayNameText(conv: Conversation): string {
-  if (conv.label) return conv.label;
-
-  if (!conv.is_group) {
-    const p = conv.participants[0];
-    return p?.name || p?.handle || "(unknown)";
-  }
-
-  if (conv.participants.length <= 7) {
-    return conv.participants.map((p) => p.name || p.handle).join(", ");
-  }
-
-  const parts = [`${conv.participants.length}`];
-  const serviceLabel = formatServiceLabel(conv.service);
-  if (serviceLabel) parts.push(serviceLabel);
-  const range = formatDateRange(conv.date_range_start, conv.date_range_end);
-  if (range) parts.push(range);
-  return parts.join(" · ");
-}
-
-function titleContent(conv: Conversation): ReactNode {
-  if (conv.label) return conv.label;
-
-  if (!conv.is_group) {
-    const p = conv.participants[0];
-    return p?.name || p?.handle || "(unknown)";
-  }
-
-  if (conv.participants.length <= 7) {
-    // Each preferred name stays on one line; wrap between people.
-    return (
-      <span>
-        {conv.participants.map((p, i) => {
-          const label = p.name || p.handle;
-          return (
-            <span key={`${p.handle}-${i}`}>
-              {i > 0 ? ", " : null}
-              <span style={{ whiteSpace: "nowrap" }}>{label}</span>
-            </span>
-          );
-        })}
-      </span>
-    );
-  }
-
-  // Large groups: count + icon · service · date range
-  return (
-    <MetaLine
-      participantCount={conv.participants.length}
-      service={conv.service}
-      range={formatDateRange(conv.date_range_start, conv.date_range_end)}
-    />
-  );
-}
-
-/** Small-group name lists wrap; other titles stay single-line. */
-function titleWraps(conv: Conversation): boolean {
-  return (
-    conv.is_group &&
-    !conv.label &&
-    conv.participants.length >= 2 &&
-    conv.participants.length <= 7
-  );
-}
-
-function subtitleContent(conv: Conversation): ReactNode {
-  if (!conv.is_group) {
-    const p = conv.participants[0];
-    return p ? `${p.handle} · ${p.service}` : null;
-  }
-
-  // Large groups put everything in the title line.
-  if (isLargeGroup(conv)) return null;
-
-  // Small groups: N + icon · service
-  return (
-    <MetaLine
-      participantCount={conv.participants.length}
-      service={conv.service}
-    />
-  );
-}
-
-/** Trailing last-message date: hidden for unlabeled large groups (range is in the title). */
-function showTrailingDate(conv: Conversation): boolean {
-  return !isLargeGroup(conv) || !!conv.label;
+function directService(conv: Conversation): string | null {
+  const fromConv = formatServiceLabel(conv.service);
+  if (fromConv) return fromConv;
+  const p = conv.participants[0];
+  return p ? formatServiceLabel(p.service) : null;
 }
 
 export default function ConversationRow({
@@ -236,7 +179,6 @@ export default function ConversationRow({
       return;
     }
     const next = labelValue.trim();
-    // Clicking the name alone must not rename — only persist a real change.
     if (next === editBaselineRef.current.trim()) {
       setEditing(false);
       return;
@@ -246,10 +188,18 @@ export default function ConversationRow({
     setEditing(false);
   };
 
-  const sub = subtitleContent(conversation);
   const columnResizing = useListColumnResizing();
-  // Freeze wrapping while the column width is dragged — avoids per-frame reflow jitter.
-  const wraps = titleWraps(conversation) && !columnResizing;
+  const isGroup = conversation.is_group;
+  const wraps = isGroup && !conversation.label && !columnResizing;
+  const dateSpan = formatDateSpan(
+    conversation.date_range_start,
+    conversation.last_message_at || conversation.date_range_end,
+  );
+  const bottomLeft = isGroup ? (
+    <GroupMeta conv={conversation} />
+  ) : (
+    directService(conversation)
+  );
 
   return (
     <button
@@ -257,8 +207,6 @@ export default function ConversationRow({
       style={{
         display: "flex",
         width: "100%",
-        // Content-driven height so dynamic virtual rows measure wrap correctly.
-        // height:100% kept the previous estimated row size and caused overlaps.
         boxSizing: "border-box",
         textAlign: "left",
         border: "none",
@@ -274,16 +222,23 @@ export default function ConversationRow({
         <input
           type="checkbox"
           checked={checked || false}
-          onChange={(e) => { e.stopPropagation(); onCheckChange(conversation.id); }}
+          onChange={(e) => {
+            e.stopPropagation();
+            onCheckChange(conversation.id);
+          }}
           onClick={(e) => e.stopPropagation()}
           style={{ marginTop: "2px", flexShrink: 0 }}
         />
       )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "baseline",
-        marginBottom: "2px",
-      }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: "2px",
+        }}
+      >
         {editing ? (
           <input
             type="text"
@@ -293,7 +248,7 @@ export default function ConversationRow({
               if (e.key === "Enter") handleSaveLabel();
               if (e.key === "Escape") {
                 cancelEditRef.current = true;
-                setEditing(false);
+                handleSaveLabel();
               }
             }}
             onBlur={handleSaveLabel}
@@ -316,28 +271,51 @@ export default function ConversationRow({
             title="Click to rename"
             style={{
               cursor: "pointer",
-              fontSize: "0.875rem", fontWeight: 500, color: "var(--text)",
-              flex: 1, marginRight: "0.5rem",
+              fontSize: "0.875rem",
+              fontWeight: 500,
+              color: "var(--text)",
+              minWidth: 0,
               ...(wraps
-                ? { whiteSpace: "normal", overflow: "visible", lineHeight: 1.35 }
-                : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
+                ? { overflow: "hidden" }
+                : {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }),
             }}
           >
             {titleContent(conversation)}
-            {conversation.label && <span style={{ fontSize: "0.688rem", color: "var(--muted)", marginLeft: "0.25rem" }}>(renamed)</span>}
+            {conversation.label ? (
+              <span
+                style={{
+                  fontSize: "0.688rem",
+                  color: "var(--muted)",
+                  marginLeft: "0.25rem",
+                }}
+              >
+                (renamed)
+              </span>
+            ) : null}
           </span>
         )}
-        {showTrailingDate(conversation) ? (
-          <span style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
-            {formatDate(conversation.last_message_at)}
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            gap: "0.5rem",
+            fontSize: "0.75rem",
+            color: "var(--muted)",
+          }}
+        >
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {bottomLeft}
           </span>
-        ) : null}
-      </div>
-      {sub ? (
-        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-          {sub}
+          {dateSpan ? (
+            <span style={{ flexShrink: 0, textAlign: "right" }}>{dateSpan}</span>
+          ) : null}
         </div>
-      ) : null}
       </div>
     </button>
   );
