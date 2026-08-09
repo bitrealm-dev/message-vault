@@ -107,9 +107,9 @@ export default function RegisterScreen({
         >
           {error || "\u00a0"}
         </div>
-      </div>
 
-      <AuthBackButton label="Back to login" onClick={onBack} />
+        <AuthBackButton label="Back to login" onClick={onBack} />
+      </div>
     </div>
   );
 }

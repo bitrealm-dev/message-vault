@@ -13,12 +13,17 @@ export const pageCenter: CSSProperties = {
 };
 
 export const authCard: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
   background: "var(--panel)",
   color: "var(--text)",
   padding: "2rem",
   borderRadius: "8px",
-  width: "100%",
-  maxWidth: "400px",
+  width: "400px",
+  height: "32rem",
+  maxWidth: "100%",
+  boxSizing: "border-box",
+  overflow: "hidden",
   border: "1px solid var(--border)",
   boxShadow: "0 8px 24px var(--scrim)",
 };

@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-/** Fixed lower-left back control for auth screens (icon + plain label). */
+/** In-card lower-left back control for auth screens (icon + plain label). */
 export default function AuthBackButton({
   label,
   onClick,
@@ -38,13 +38,12 @@ function BackArrowIcon() {
 const buttonStyle: CSSProperties = {
   all: "unset",
   boxSizing: "border-box",
-  position: "fixed",
-  left: "1.25rem",
-  bottom: "1.25rem",
-  zIndex: 10,
   display: "inline-flex",
   alignItems: "center",
+  alignSelf: "flex-start",
   gap: "0.4rem",
+  marginTop: "auto",
+  paddingTop: "1.25rem",
   fontFamily: "inherit",
   fontSize: "0.875rem",
   fontWeight: 500,

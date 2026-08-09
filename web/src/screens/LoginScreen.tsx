@@ -12,7 +12,6 @@ import {
   authInput,
   authLabel,
   authTitle,
-  divider,
   mutedText,
   pageCenter,
 } from "../lib/uiStyles";
@@ -154,7 +153,7 @@ export default function LoginScreen({
     <div style={pageCenter}>
       <div style={authCard}>
         <h1 style={authTitle}>
-          {authMode === null ? "Message Vault" : "Message Vault Sign in"}
+          {authMode === null ? "Message Vault" : "Sign In"}
         </h1>
 
         {authMode === null && (
@@ -181,16 +180,20 @@ export default function LoginScreen({
 
             {isTauri() && (
               <>
-                <hr style={divider} />
+                <div style={{ ...orRowStyle, margin: "0.75rem 0 0.5rem" }}>
+                  <span style={orLineStyle} />
+                  <span style={orTextStyle}>OR</span>
+                  <span style={orLineStyle} />
+                </div>
                 <p
                   style={{
                     ...mutedText,
                     fontSize: "0.813rem",
                     textAlign: "center",
-                    marginBottom: "0.75rem",
+                    margin: "0 0 0.5rem",
                   }}
                 >
-                  No vault? Use offline tools instead.
+                  Use offline message tools.
                 </p>
                 <div style={{ display: "flex", gap: "0.75rem" }}>
                   <Button
@@ -278,11 +281,11 @@ export default function LoginScreen({
             <ErrorFooter error={error} />
           </>
         )}
-      </div>
 
-      {authMode !== null && (
-        <AuthBackButton label="Back to Vault Selection" onClick={changeServer} />
-      )}
+        {authMode !== null && (
+          <AuthBackButton label="Back to Vault Selection" onClick={changeServer} />
+        )}
+      </div>
     </div>
   );
 }

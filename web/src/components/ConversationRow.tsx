@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Conversation } from "../lib/types";
 
 function formatDate(iso: string): string {
@@ -63,10 +63,32 @@ export default function ConversationRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [labelValue, setLabelValue] = useState(conversation.label || "");
+  const editBaselineRef = useRef(conversation.label || "");
+  const cancelEditRef = useRef(false);
+
+  const startEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const baseline = conversation.label || displayName(conversation);
+    editBaselineRef.current = baseline;
+    cancelEditRef.current = false;
+    setLabelValue(baseline);
+    setEditing(true);
+  };
 
   const handleSaveLabel = () => {
+    if (cancelEditRef.current) {
+      cancelEditRef.current = false;
+      setEditing(false);
+      return;
+    }
+    const next = labelValue.trim();
+    // Clicking the name alone must not rename — only persist a real change.
+    if (next === editBaselineRef.current.trim()) {
+      setEditing(false);
+      return;
+    }
     // Store locally — the API endpoint for persisting labels is follow-up (Tier 4)
-    conversation.label = labelValue.trim() || null;
+    conversation.label = next || null;
     setEditing(false);
   };
 
@@ -101,7 +123,10 @@ export default function ConversationRow({
             onChange={(e) => setLabelValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSaveLabel();
-              if (e.key === "Escape") setEditing(false);
+              if (e.key === "Escape") {
+                cancelEditRef.current = true;
+                setEditing(false);
+              }
             }}
             onBlur={handleSaveLabel}
             onClick={(e) => e.stopPropagation()}
@@ -119,7 +144,7 @@ export default function ConversationRow({
           />
         ) : (
           <span
-            onClick={(e) => { e.stopPropagation(); setEditing(true); setLabelValue(conversation.label || displayName(conversation)); }}
+            onClick={startEditing}
             title="Click to rename"
             style={{
               cursor: "pointer",

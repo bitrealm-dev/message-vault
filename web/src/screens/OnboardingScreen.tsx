@@ -78,7 +78,7 @@ export default function OnboardingScreen() {
 
   return (
     <div style={pageCenter}>
-      <div style={{ ...authCard, maxWidth: "480px" }}>
+      <div style={authCard}>
         <h1 style={{ ...authTitle, marginBottom: "0.5rem" }}>Profile Setup</h1>
         <p style={greetingStyle}>Welcome to the Message Vault!</p>
         <p style={bodyStyle}>
