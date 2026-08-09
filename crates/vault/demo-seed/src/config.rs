@@ -75,6 +75,14 @@ pub struct GroupsConfig {
     pub participants_mean: f64,
     pub participants_min: u32,
     pub participants_max: u32,
+    /// Minimum number of named groups with size in
+    /// `[large_participants_min, large_participants_max]`.
+    #[serde(default = "default_large_min_count")]
+    pub large_min_count: usize,
+    #[serde(default = "default_large_participants_min")]
+    pub large_participants_min: u32,
+    #[serde(default = "default_large_participants_max")]
+    pub large_participants_max: u32,
     pub typical_min: u32,
     pub typical_max: u32,
     pub min_per_year: u32,
@@ -84,6 +92,16 @@ pub struct GroupsConfig {
     pub span_mean_years: f64,
     pub span_max_years: f64,
     pub phone_only_fraction: f64,
+}
+
+fn default_large_min_count() -> usize {
+    10
+}
+fn default_large_participants_min() -> u32 {
+    8
+}
+fn default_large_participants_max() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,10 +172,62 @@ impl SeedConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("read demo-seed config {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
+        let cfg: Self =
+            toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let g = &self.groups;
+        if g.large_min_count == 0 {
+            return Ok(());
+        }
+        if g.large_participants_min > g.large_participants_max {
+            anyhow::bail!(
+                "groups.large_participants_min ({}) > large_participants_max ({})",
+                g.large_participants_min,
+                g.large_participants_max
+            );
+        }
+        if g.large_participants_min < g.participants_min {
+            anyhow::bail!(
+                "groups.large_participants_min ({}) < participants_min ({})",
+                g.large_participants_min,
+                g.participants_min
+            );
+        }
+        if g.large_participants_max > g.participants_max {
+            anyhow::bail!(
+                "groups.large_participants_max ({}) > participants_max ({})",
+                g.large_participants_max,
+                g.participants_max
+            );
+        }
+        Ok(())
     }
 
     pub fn default_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo_seed.toml")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_large_band_outside_participants_max() {
+        let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
+        cfg.groups.large_participants_max = cfg.groups.participants_max + 1;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_inverted_large_band() {
+        let mut cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load");
+        cfg.groups.large_participants_min = 15;
+        cfg.groups.large_participants_max = 10;
+        assert!(cfg.validate().is_err());
     }
 }

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use anyhow::{bail, Result};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Normal, Poisson};
@@ -79,7 +80,7 @@ const GROUP_TITLES: &[&str] = &[
     "Volunteer Squad",
 ];
 
-pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> Roster {
+pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> Result<Roster> {
     let mut used_phones = HashSet::new();
     used_phones.insert(OWNER_PHONE.to_string());
 
@@ -88,14 +89,14 @@ pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> R
         contacts.push(make_contact(cfg, names, rng, &mut used_phones));
     }
 
-    let groups = build_groups(cfg, &contacts, rng, &mut used_phones);
+    let groups = build_groups(cfg, &contacts, rng, &mut used_phones)?;
     let unassigned = build_unassigned(cfg, rng, &mut used_phones);
 
-    Roster {
+    Ok(Roster {
         contacts,
         unassigned,
         groups,
-    }
+    })
 }
 
 fn make_contact(
@@ -267,14 +268,14 @@ fn sample_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     n.clamp(g.participants_min as i32, g.participants_max as i32) as usize
 }
 
-fn build_groups(
-    cfg: &SeedConfig,
-    contacts: &[Contact],
-    rng: &mut impl Rng,
-    used_phones: &mut HashSet<String>,
-) -> Vec<GroupSpec> {
-    let contact_count = contacts.len();
-    let mut remaining: Vec<usize> = contacts
+fn sample_large_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
+    let lo = cfg.groups.large_participants_min as usize;
+    let hi = cfg.groups.large_participants_max as usize;
+    rng.random_range(lo..=hi)
+}
+
+fn membership_budgets(cfg: &SeedConfig, contacts: &[Contact], rng: &mut impl Rng) -> Vec<usize> {
+    contacts
         .iter()
         .map(|c| {
             if !c.has_messages || c.has_label("Inactive") {
@@ -290,12 +291,140 @@ fn build_groups(
                 sample_groups_per_contact(cfg, rng)
             }
         })
+        .collect()
+}
+
+/// Prefer contacts with remaining membership budget; if that pool is too small,
+/// fill from other active contacts (same spirit as the tiny-group fallback).
+fn pick_group_members(
+    target_size: usize,
+    min_size: usize,
+    remaining: &mut [usize],
+    contacts: &[Contact],
+    rng: &mut impl Rng,
+) -> Result<Vec<usize>> {
+    let mut member_idxs = Vec::new();
+    let mut candidates: Vec<usize> = remaining
+        .iter()
+        .enumerate()
+        .filter(|&(_, &n)| n > 0)
+        .map(|(i, _)| i)
         .collect();
+    candidates.shuffle(rng);
+    for &idx in candidates.iter().take(target_size) {
+        member_idxs.push(idx);
+        remaining[idx] = remaining[idx].saturating_sub(1);
+    }
+
+    if member_idxs.len() < target_size {
+        let mut all: Vec<usize> = contacts
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.has_messages && !c.has_label("Inactive"))
+            .map(|(i, _)| i)
+            .filter(|i| !member_idxs.contains(i))
+            .collect();
+        all.shuffle(rng);
+        for idx in all {
+            member_idxs.push(idx);
+            if member_idxs.len() >= target_size {
+                break;
+            }
+        }
+    }
+
+    if member_idxs.len() < min_size {
+        bail!(
+            "could not assemble a group with at least {min_size} participants (got {}); \
+             raise contacts.count or lower groups.large_min_count / large_participants_min",
+            member_idxs.len()
+        );
+    }
+    Ok(member_idxs)
+}
+
+fn finish_group_spec(
+    cfg: &SeedConfig,
+    index: usize,
+    member_idxs: Vec<usize>,
+    phone_only: bool,
+    phone_only_handles: Vec<String>,
+    rng: &mut impl Rng,
+    title_index: usize,
+) -> GroupSpec {
+    let msgs_per_year = sample_group_msgs_per_year(cfg, rng);
+    let span_years = sample_span_years(
+        cfg.groups.span_mean_years,
+        1.5,
+        cfg.groups.span_max_years,
+        cfg.one_to_one.newest_days,
+        rng,
+    );
+    let title = if rng.random_bool(0.55) {
+        let base = GROUP_TITLES[title_index % GROUP_TITLES.len()];
+        Some(
+            if title_index >= GROUP_TITLES.len() && rng.random_bool(0.35) {
+                format!("{base} {}", (title_index / GROUP_TITLES.len()) + 1)
+            } else {
+                base.to_string()
+            },
+        )
+    } else {
+        None
+    };
+
+    GroupSpec {
+        index,
+        member_idxs,
+        phone_only,
+        phone_only_handles,
+        msgs_per_year,
+        span_years,
+        title,
+    }
+}
+
+fn build_groups(
+    cfg: &SeedConfig,
+    contacts: &[Contact],
+    rng: &mut impl Rng,
+    used_phones: &mut HashSet<String>,
+) -> Result<Vec<GroupSpec>> {
+    let contact_count = contacts.len();
+    let mut remaining = membership_budgets(cfg, contacts, rng);
 
     let mut groups: Vec<GroupSpec> = Vec::new();
-    let mut safety = 0usize;
     let max_groups = (contact_count * cfg.groups.per_contact_max as usize / 2).max(8);
 
+    // Reserve named large groups so UI filters like participants:>=8 always have hits.
+    for _ in 0..cfg.groups.large_min_count {
+        if groups.len() >= max_groups {
+            bail!(
+                "hit max_groups ({max_groups}) before reserving {} large groups",
+                cfg.groups.large_min_count
+            );
+        }
+        let target_size = sample_large_group_size(cfg, rng);
+        let member_idxs = pick_group_members(
+            target_size,
+            cfg.groups.large_participants_min as usize,
+            &mut remaining,
+            contacts,
+            rng,
+        )?;
+        let index = groups.len();
+        groups.push(finish_group_spec(
+            cfg,
+            index,
+            member_idxs,
+            false,
+            Vec::new(),
+            rng,
+            index,
+        ));
+    }
+
+    let mut safety = 0usize;
     while remaining.iter().any(|&n| n > 0) && groups.len() < max_groups && safety < max_groups * 4 {
         safety += 1;
         let phone_only = rng.random_bool(cfg.groups.phone_only_fraction);
@@ -313,77 +442,25 @@ fn build_groups(
                 ));
             }
         } else {
-            let mut candidates: Vec<usize> = remaining
-                .iter()
-                .enumerate()
-                .filter(|&(_, &n)| n > 0)
-                .map(|(i, _)| i)
-                .collect();
-            if candidates.is_empty() {
-                break;
-            }
-            candidates.shuffle(rng);
-            for &idx in candidates.iter().take(target_size) {
-                member_idxs.push(idx);
-                remaining[idx] = remaining[idx].saturating_sub(1);
-            }
-            if member_idxs.len() < 2 {
-                let mut all: Vec<usize> = contacts
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| c.has_messages && !c.has_label("Inactive"))
-                    .map(|(i, _)| i)
-                    .collect();
-                all.shuffle(rng);
-                for idx in all {
-                    if member_idxs.contains(&idx) {
-                        continue;
-                    }
-                    member_idxs.push(idx);
-                    if member_idxs.len() >= 2 {
-                        break;
-                    }
-                }
-            }
-            if member_idxs.len() < 2 {
-                continue;
+            match pick_group_members(target_size, 2, &mut remaining, contacts, rng) {
+                Ok(idxs) => member_idxs = idxs,
+                Err(_) => continue,
             }
         }
 
-        let msgs_per_year = sample_group_msgs_per_year(cfg, rng);
-        let span_years = sample_span_years(
-            cfg.groups.span_mean_years,
-            1.5,
-            cfg.groups.span_max_years,
-            cfg.one_to_one.newest_days,
-            rng,
-        );
-        let title = if rng.random_bool(0.55) {
-            let base = GROUP_TITLES[groups.len() % GROUP_TITLES.len()];
-            Some(
-                if groups.len() >= GROUP_TITLES.len() && rng.random_bool(0.35) {
-                    format!("{base} {}", (groups.len() / GROUP_TITLES.len()) + 1)
-                } else {
-                    base.to_string()
-                },
-            )
-        } else {
-            None
-        };
-
         let index = groups.len();
-        groups.push(GroupSpec {
+        groups.push(finish_group_spec(
+            cfg,
             index,
             member_idxs,
             phone_only,
             phone_only_handles,
-            msgs_per_year,
-            span_years,
-            title,
-        });
+            rng,
+            index,
+        ));
     }
 
-    groups
+    Ok(groups)
 }
 
 fn build_unassigned(
@@ -459,5 +536,36 @@ impl Contact {
         }
         let n = (self.msgs_per_year * self.span_years).round() as isize;
         n.max(1) as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    use super::*;
+    use crate::config::SeedConfig;
+    use crate::names::NameBank;
+
+    #[test]
+    fn roster_guarantees_large_groups() {
+        let cfg = SeedConfig::load(&SeedConfig::default_path()).expect("load demo_seed.toml");
+        let names = NameBank::load_default().expect("names");
+        let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
+        let roster = build_roster(&cfg, &names, &mut rng).expect("roster");
+
+        let lo = cfg.groups.large_participants_min as usize;
+        let hi = cfg.groups.large_participants_max as usize;
+        let large = roster
+            .groups
+            .iter()
+            .filter(|g| !g.phone_only && (lo..=hi).contains(&g.member_idxs.len()))
+            .count();
+        assert!(
+            large >= cfg.groups.large_min_count,
+            "expected >= {} groups sized {lo}..={hi}, got {large}",
+            cfg.groups.large_min_count
+        );
     }
 }

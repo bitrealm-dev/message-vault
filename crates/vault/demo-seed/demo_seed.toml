@@ -54,6 +54,10 @@ per_contact_max = 20
 participants_mean = 4.0
 participants_min = 2
 participants_max = 25
+# Guaranteed named groups in this size band (reserved before the Normal sampler).
+large_min_count = 10
+large_participants_min = 8
+large_participants_max = 20
 # Messages per year. Typical band + log-skewed high tail (same shape as 1:1).
 # Timestamps are bursty: several msgs on active days, quiet gaps, occasional floods.
 typical_min = 180

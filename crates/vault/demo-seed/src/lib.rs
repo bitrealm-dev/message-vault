@@ -47,7 +47,7 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     // Same blobs under the Android tree so relative attachment paths resolve on import.
     copy_dir_files(&imessage_attachments, &sbr_attachments)?;
 
-    let roster = personas::build_roster(cfg, &names, &mut rng);
+    let roster = personas::build_roster(cfg, &names, &mut rng)?;
     contacts::write_vcf(&config_dir, &roster)?;
     contacts::write_config_toml(&config_dir)?;
     contacts::write_seed_toml(&config_dir)?;
@@ -155,7 +155,7 @@ Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corp
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year
 - **History** — typical first contact ~3–5 years ago; longest ~14 years; newest ~1 week
-- **Group Chats** — membership mean ~5 groups/contact; size mean ~4; bursty days (several / none / a lot)
+- **Group Chats** — membership mean ~5 groups/contact; size mean ~4; at least 10 groups with 8–20 participants; bursty days (several / none / a lot)
 - **Replies, tapbacks, attachments** — including one intentionally missing file
 - **orphaned.jsonl** — synthetic orphaned conversation
 "#,
