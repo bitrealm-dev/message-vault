@@ -4,35 +4,59 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Result, bail};
 
-struct ToolCache {
+struct ToolsState {
+    override_dir: Option<PathBuf>,
+    generation: u64,
     ffmpeg: Option<PathBuf>,
     ffprobe: Option<PathBuf>,
 }
 
-fn tool_cache() -> &'static Mutex<ToolCache> {
-    static CACHE: OnceLock<Mutex<ToolCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(ToolCache {
-        ffmpeg: None,
-        ffprobe: None,
-    }))
+impl ToolsState {
+    fn cached(&self, name: &str) -> Option<PathBuf> {
+        match name {
+            "ffmpeg" => self.ffmpeg.clone(),
+            "ffprobe" => self.ffprobe.clone(),
+            _ => None,
+        }
+    }
+
+    fn set_cached(&mut self, name: &str, path: Option<PathBuf>) {
+        match name {
+            "ffmpeg" => self.ffmpeg = path,
+            "ffprobe" => self.ffprobe = path,
+            _ => {}
+        }
+    }
 }
 
-fn tools_override() -> &'static Mutex<Option<PathBuf>> {
-    static OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
-    OVERRIDE.get_or_init(|| Mutex::new(None))
+fn tools_state() -> &'static Mutex<ToolsState> {
+    static STATE: OnceLock<Mutex<ToolsState>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        Mutex::new(ToolsState {
+            override_dir: None,
+            generation: 0,
+            ffmpeg: None,
+            ffprobe: None,
+        })
+    })
 }
 
 /// Store a folder-only override for ffmpeg/ffprobe discovery and clear cached paths.
 pub fn set_tools_dir(dir: Option<PathBuf>) {
-    *tools_override().lock().expect("tools override lock") = dir;
-    let mut cache = tool_cache().lock().expect("tool cache lock");
-    cache.ffmpeg = None;
-    cache.ffprobe = None;
+    let mut state = tools_state().lock().expect("tools state lock");
+    state.override_dir = dir;
+    state.generation = state.generation.wrapping_add(1);
+    state.ffmpeg = None;
+    state.ffprobe = None;
 }
 
 /// Current tools-folder override, if any (primarily for tests).
 pub fn tools_dir() -> Option<PathBuf> {
-    tools_override().lock().expect("tools override lock").clone()
+    tools_state()
+        .lock()
+        .expect("tools state lock")
+        .override_dir
+        .clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,17 +98,35 @@ fn command_ok(bin: &Path, args: &[&str]) -> bool {
 /// `lib/` next to the GUI, `../lib/` from `cli/`, legacy parent dir,
 /// `MESSAGE_VAULT_IO_BIN`, then PATH.
 fn resolve_tool(name: &str) -> Option<PathBuf> {
-    let override_dir = tools_override().lock().expect("tools override lock").clone();
-    let mut cache = tool_cache().lock().expect("tool cache lock");
-    let slot = match name {
-        "ffmpeg" => &mut cache.ffmpeg,
-        "ffprobe" => &mut cache.ffprobe,
-        _ => return find_tool_with_override(name, override_dir.as_deref()),
-    };
-    if slot.is_none() {
-        *slot = find_tool_with_override(name, override_dir.as_deref());
+    if !matches!(name, "ffmpeg" | "ffprobe") {
+        let override_dir = tools_state()
+            .lock()
+            .expect("tools state lock")
+            .override_dir
+            .clone();
+        return find_tool_with_override(name, override_dir.as_deref());
     }
-    slot.clone()
+
+    loop {
+        let (generation, override_dir) = {
+            let state = tools_state().lock().expect("tools state lock");
+            if let Some(cached) = state.cached(name) {
+                return Some(cached);
+            }
+            (state.generation, state.override_dir.clone())
+        };
+
+        let resolved = find_tool_with_override(name, override_dir.as_deref());
+
+        let mut state = tools_state().lock().expect("tools state lock");
+        if state.generation != generation {
+            continue;
+        }
+        if state.cached(name).is_none() {
+            state.set_cached(name, resolved.clone());
+        }
+        return resolved;
+    }
 }
 
 fn find_tool_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -127,7 +169,11 @@ pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
 }
 
 fn find_tool(name: &str) -> Option<PathBuf> {
-    let override_dir = tools_override().lock().expect("tools override lock").clone();
+    let override_dir = tools_state()
+        .lock()
+        .expect("tools state lock")
+        .override_dir
+        .clone();
     find_tool_with_override(name, override_dir.as_deref())
 }
 
