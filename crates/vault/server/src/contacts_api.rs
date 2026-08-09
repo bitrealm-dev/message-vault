@@ -1,10 +1,21 @@
 //! Read-only contact query used by `GET /v1/export/contacts`
 //! and `GET /v1/export/contacts/{id}`.
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::export_api::ExportQueryError;
+
+pub const DEFAULT_LIST_LIMIT: usize = 40;
+pub const MAX_LIST_LIMIT: usize = 100;
+
+#[derive(Debug, Serialize)]
+pub struct ContactListPage {
+    pub contacts: Vec<ContactSummary>,
+    pub total: u64,
+    pub limit: usize,
+    pub offset: usize,
+}
 
 #[derive(Debug, Serialize)]
 pub struct ContactSummary {
@@ -57,55 +68,134 @@ fn involves_contact_sql() -> &'static str {
      )"
 }
 
-/// Flat list of contacts: id, display name, handle count, last message date.
+/// Flat list of contacts: id, display name, handle count, last message date (paged).
+///
+/// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
+/// `handle:<raw>` restricts to contacts that have that handle substring.
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
-) -> Result<Vec<ContactSummary>, ExportQueryError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT ct.id,
-                    COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
-                    (SELECT COUNT(*)
-                     FROM contact_handles ch
-                     WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
-                    (SELECT GROUP_CONCAT(val, char(31))
-                     FROM (
-                       SELECT DISTINCT h.normalized AS val
-                       FROM contact_handles ch
-                       JOIN handles h ON h.id = ch.handle_id
-                       WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                         AND h.normalized IS NOT NULL AND trim(h.normalized) != ''
-                       UNION
-                       SELECT DISTINCT h.raw AS val
-                       FROM contact_handles ch
-                       JOIN handles h ON h.id = ch.handle_id
-                       WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
-                         AND h.raw IS NOT NULL AND trim(h.raw) != ''
-                     )) AS handles,
-                    (SELECT MAX(m.timestamp)
-                     FROM messages m
-                     JOIN conversations c ON c.id = m.conversation_id
-                     WHERE c.account_id = ct.account_id
-                       AND m.duplicate_of IS NULL
-                       AND EXISTS (
-                         SELECT 1 FROM contact_handles ch2
-                         WHERE ch2.account_id = c.account_id AND ch2.contact_id = ct.id
-                           AND (
-                             ch2.handle_id = c.chat_handle_id
-                             OR EXISTS (
-                               SELECT 1 FROM participants p
-                               WHERE p.conversation_id = c.id AND p.handle_id = ch2.handle_id
-                             )
-                           )
-                       )) AS last_message_at
-             FROM contacts ct
-             WHERE ct.account_id = ?1
-             ORDER BY name COLLATE NOCASE",
+    q: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<ContactListPage, ExportQueryError> {
+    let limit = limit.clamp(1, MAX_LIST_LIMIT);
+    let offset = offset;
+
+    let (handle_filter, mut text) = parse_contact_list_query(q);
+    // Strip advanced tokens the UI may still emit.
+    text = text
+        .split_whitespace()
+        .filter(|t| {
+            let lower = t.to_ascii_lowercase();
+            lower != "search:contacts"
+                && !lower.starts_with("first-contact:")
+                && !lower.starts_with("last-contact:")
+                && !lower.starts_with("message-count:")
+                && !lower.starts_with("group-count:")
+                && !lower.starts_with("handle:")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut where_parts = vec!["ct.account_id = ?1".to_string()];
+    let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
+
+    if let Some(ref handle) = handle_filter {
+        where_parts.push(
+            "EXISTS (
+               SELECT 1 FROM contact_handles ch
+               JOIN handles h ON h.id = ch.handle_id
+               WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                 AND (h.raw LIKE ? OR coalesce(h.normalized, '') LIKE ?)
+             )"
+            .into(),
+        );
+        let like = format!("%{handle}%");
+        params.push(like.clone().into());
+        params.push(like.into());
+    }
+
+    if !text.is_empty() {
+        where_parts.push(
+            "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') LIKE ?
+              OR EXISTS (
+                SELECT 1 FROM contact_handles ch
+                JOIN handles h ON h.id = ch.handle_id
+                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                  AND (h.raw LIKE ? OR coalesce(h.normalized, '') LIKE ?)
+              ))"
+            .into(),
+        );
+        let like = format!("%{text}%");
+        params.push(like.clone().into());
+        params.push(like.clone().into());
+        params.push(like.into());
+    }
+
+    let where_sql = where_parts.join(" AND ");
+
+    let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
+    let total: i64 = conn
+        .query_row(
+            &count_sql,
+            params_from_iter(params.iter().cloned()),
+            |row| row.get(0),
         )
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let total = total.max(0) as u64;
+
+    let sql = format!(
+        "SELECT ct.id,
+                COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
+                (SELECT COUNT(*)
+                 FROM contact_handles ch
+                 WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
+                (SELECT GROUP_CONCAT(val, char(31))
+                 FROM (
+                   SELECT DISTINCT h.normalized AS val
+                   FROM contact_handles ch
+                   JOIN handles h ON h.id = ch.handle_id
+                   WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                     AND h.normalized IS NOT NULL AND trim(h.normalized) != ''
+                   UNION
+                   SELECT DISTINCT h.raw AS val
+                   FROM contact_handles ch
+                   JOIN handles h ON h.id = ch.handle_id
+                   WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                     AND h.raw IS NOT NULL AND trim(h.raw) != ''
+                 )) AS handles,
+                (SELECT MAX(m.timestamp)
+                 FROM messages m
+                 JOIN conversations c ON c.id = m.conversation_id
+                 WHERE c.account_id = ct.account_id
+                   AND m.duplicate_of IS NULL
+                   AND EXISTS (
+                     SELECT 1 FROM contact_handles ch2
+                     WHERE ch2.account_id = c.account_id AND ch2.contact_id = ct.id
+                       AND (
+                         ch2.handle_id = c.chat_handle_id
+                         OR EXISTS (
+                           SELECT 1 FROM participants p
+                           WHERE p.conversation_id = c.id AND p.handle_id = ch2.handle_id
+                         )
+                       )
+                   )) AS last_message_at
+         FROM contacts ct
+         WHERE {where_sql}
+         ORDER BY name COLLATE NOCASE, ct.id
+         LIMIT ? OFFSET ?"
+    );
+
+    let mut page_params = params.clone();
+    page_params.push((limit as i64).into());
+    page_params.push((offset as i64).into());
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
     let rows = stmt
-        .query_map([account_id], |row| {
+        .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             let handles_blob: Option<String> = row.get(3)?;
             let handles = handles_blob
                 .map(|s| {
@@ -127,7 +217,56 @@ pub fn list_contacts(
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
-    Ok(rows)
+
+    Ok(ContactListPage {
+        contacts: rows,
+        total,
+        limit,
+        offset,
+    })
+}
+
+/// Parse `q` into optional handle filter + free-text remainder.
+fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
+    let q = q.trim();
+    if q.is_empty() {
+        return (None, String::new());
+    }
+    let lower = q.to_ascii_lowercase();
+    if let Some(start) = lower.find("handle:\"") {
+        let after = start + "handle:\"".len();
+        if let Some(rel_end) = q[after..].find('"') {
+            let end = after + rel_end;
+            let handle = q[after..end].to_string();
+            let mut rest = String::new();
+            rest.push_str(&q[..start]);
+            rest.push_str(&q[end + 1..]);
+            return (
+                Some(handle).filter(|s| !s.is_empty()),
+                rest.split_whitespace().collect::<Vec<_>>().join(" "),
+            );
+        }
+    }
+    if let Some(start) = lower.find("handle:") {
+        let after = start + "handle:".len();
+        if q.get(after..after + 1) != Some("\"") {
+            let end = q[after..]
+                .find(char::is_whitespace)
+                .map(|i| after + i)
+                .unwrap_or(q.len());
+            if end > after {
+                let handle = q[after..end].trim_matches('"').to_string();
+                let mut rest = String::new();
+                rest.push_str(&q[..start]);
+                rest.push_str(&q[end..]);
+                return (
+                    Some(handle).filter(|s| !s.is_empty()),
+                    rest.split_whitespace().collect::<Vec<_>>().join(" "),
+                );
+            }
+        }
+    }
+    (None, q.to_string())
 }
 
 /// Full contact view: per-handle service + date range + direct message count,
@@ -285,17 +424,70 @@ mod tests {
         )
         .unwrap();
 
-        let list = list_contacts(&conn, &account).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].name, "Pat");
-        assert_eq!(list[0].handle_count, 1);
+        let page = list_contacts(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.contacts.len(), 1);
+        assert_eq!(page.contacts[0].name, "Pat");
+        assert_eq!(page.contacts[0].handle_count, 1);
         assert!(
-            list[0]
+            page.contacts[0]
                 .handles
                 .iter()
                 .any(|h| h.contains("5555550100") || h.contains("+15555550100")),
             "handles={:?}",
-            list[0].handles
+            page.contacts[0].handles
         );
+    }
+
+    #[test]
+    fn list_contacts_filters_and_paginates() {
+        let (conn, account) = setup();
+        for (name, phone) in [("Pat", "+15555550100"), ("Sam", "+15555550200"), ("Alex", "+15555550300")]
+        {
+            conn.execute(
+                "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
+                params![&account, name],
+            )
+            .unwrap();
+            let contact_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = ?2",
+                    params![&account, name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let handle_id =
+                account_profile::link_account_handle(&conn, &account, phone, HandleType::Phone)
+                    .unwrap();
+            conn.execute(
+                "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+                 VALUES (?1, ?2, ?3)",
+                params![&account, handle_id, contact_id],
+            )
+            .unwrap();
+        }
+
+        let by_name = list_contacts(&conn, &account, "sam", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(by_name.total, 1);
+        assert_eq!(by_name.contacts[0].name, "Sam");
+
+        let by_handle = list_contacts(&conn, &account, "handle:5555550200", DEFAULT_LIST_LIMIT, 0)
+            .unwrap();
+        assert_eq!(by_handle.total, 1);
+        assert_eq!(by_handle.contacts[0].name, "Sam");
+
+        let page0 = list_contacts(&conn, &account, "", 2, 0).unwrap();
+        assert_eq!(page0.total, 3);
+        assert_eq!(page0.limit, 2);
+        assert_eq!(page0.offset, 0);
+        assert_eq!(page0.contacts.len(), 2);
+        let page1 = list_contacts(&conn, &account, "", 2, 2).unwrap();
+        assert_eq!(page1.total, 3);
+        assert_eq!(page1.offset, 2);
+        assert_eq!(page1.contacts.len(), 1);
+
+        let clamped = list_contacts(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
+        assert_eq!(clamped.limit, MAX_LIST_LIMIT);
+        assert_eq!(clamped.total, 3);
     }
 }

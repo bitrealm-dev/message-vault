@@ -17,6 +17,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (!baseUrl) throw new Error("Server URL not configured");
 
@@ -31,6 +32,7 @@ async function request<T>(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
 
   if (!res.ok) {
@@ -41,11 +43,15 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+export type ApiRequestOptions = {
+  signal?: AbortSignal;
+};
+
 export const apiClient = {
-  get<T>(path: string): Promise<T> {
-    return request<T>("GET", path);
+  get<T>(path: string, opts?: ApiRequestOptions): Promise<T> {
+    return request<T>("GET", path, undefined, opts?.signal);
   },
-  post<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>("POST", path, body);
+  post<T>(path: string, body?: unknown, opts?: ApiRequestOptions): Promise<T> {
+    return request<T>("POST", path, body, opts?.signal);
   },
 };

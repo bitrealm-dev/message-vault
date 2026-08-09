@@ -1,5 +1,14 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { apiClient } from "../lib/api";
+import ContactInitialCircle from "../components/ContactInitialCircle";
+import VirtualList, { type VisibleRange } from "../components/VirtualList";
+import {
+  formatVisibleRange,
+  usePagedList,
+  type PagedFetchPage,
+} from "../lib/usePagedList";
+
+const FILTER_DEBOUNCE_MS = 300;
 
 interface Contact {
   id: string;
@@ -9,8 +18,17 @@ interface Contact {
   last_message_at: string | null;
 }
 
-/** Strip advanced-search tokens; keep plain text + handle:"…" values for filtering. */
-function filterNeedle(raw: string): { text: string; handle: string | null } {
+type ContactsPage = {
+  contacts: Array<Omit<Contact, "id"> & { id: string | number }>;
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type FilterNeedles = { text: string; handle: string | null };
+
+/** Strip advanced tokens; keep plain text + handle:"…" for subtitle matching. */
+function filterNeedles(raw: string): FilterNeedles {
   let q = raw.trim();
   if (!q) return { text: "", handle: null };
 
@@ -34,26 +52,69 @@ function filterNeedle(raw: string): { text: string; handle: string | null } {
   return { text: q, handle };
 }
 
-function contactMatches(c: Contact, filter: string): boolean {
-  const { text, handle } = filterNeedle(filter);
-  if (!text && !handle) return true;
+function handleMatchesNeedle(handle: string, needle: string): boolean {
+  const n = needle.trim().toLowerCase();
+  if (!n) return false;
+  return handle.toLowerCase().includes(n);
+}
 
-  const name = c.name.toLowerCase();
-  const handles = (c.handles ?? []).map((h) => h.toLowerCase());
-
-  if (handle) {
-    const h = handle.toLowerCase();
-    if (!handles.some((x) => x.includes(h))) return false;
-  }
-
-  if (text) {
-    const needle = text.toLowerCase();
-    if (name.includes(needle)) return true;
-    if (handles.some((x) => x.includes(needle))) return true;
+function matchingHandles(handles: string[] | undefined, filter: string): string[] {
+  const { text, handle } = filterNeedles(filter);
+  if (!text && !handle) return [];
+  return (handles ?? []).filter((h) => {
+    if (handle && handleMatchesNeedle(h, handle)) return true;
+    if (text && handleMatchesNeedle(h, text)) return true;
     return false;
-  }
+  });
+}
 
-  return true;
+function highlightNeedle(filter: string): string {
+  const { text, handle } = filterNeedles(filter);
+  return handle || text;
+}
+
+/** Client-side match so the list can shrink/expand as the user types without waiting on the API. */
+function contactMatchesFilter(c: Contact, filter: string): boolean {
+  const { text, handle } = filterNeedles(filter);
+  if (!text && !handle) return true;
+  if (text && c.name.toLowerCase().includes(text.toLowerCase())) return true;
+  return matchingHandles(c.handles, filter).length > 0;
+}
+
+function highlightText(text: string, term: string): ReactNode[] {
+  const t = term.trim().toLowerCase();
+  if (!t) return [text];
+  const out: ReactNode[] = [];
+  let rest = text;
+  let key = 0;
+  while (true) {
+    const idx = rest.toLowerCase().indexOf(t);
+    if (idx === -1) {
+      out.push(rest);
+      break;
+    }
+    if (idx > 0) out.push(rest.slice(0, idx));
+    out.push(
+      <mark
+        key={key++}
+        style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}
+      >
+        {rest.slice(idx, idx + t.length)}
+      </mark>,
+    );
+    rest = rest.slice(idx + t.length);
+  }
+  return out;
+}
+
+function normalizeContacts(
+  rows: ContactsPage["contacts"] | undefined,
+): Contact[] {
+  return (rows || []).map((c) => ({
+    ...c,
+    id: String(c.id),
+    handles: c.handles ?? [],
+  }));
 }
 
 export default function ContactList({
@@ -63,81 +124,176 @@ export default function ContactList({
   filter?: string;
   onSelect: (contact: Contact) => void;
 }) {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState(filter);
+  const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
 
   useEffect(() => {
-    setLoading(true);
-    setError("");
-    apiClient
-      .get<{ contacts: Contact[] }>("/v1/export/contacts")
-      .then((res) =>
-        setContacts(
-          (res.contacts || []).map((c) => ({
-            ...c,
-            id: String(c.id),
-            handles: c.handles ?? [],
-          })),
-        ),
-      )
-      .catch((e) => {
-        setContacts([]);
-        setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    const t = window.setTimeout(() => setDebouncedQ(filter), FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [filter]);
 
-  const visible = useMemo(
-    () => contacts.filter((c) => contactMatches(c, filter)),
-    [contacts, filter],
+  const fetchPage = useCallback<PagedFetchPage<Contact>>(
+    async ({ limit, offset, signal }) => {
+      const params = new URLSearchParams({
+        q: debouncedQ,
+        limit: String(limit),
+        offset: String(offset),
+      });
+      const res = await apiClient.get<ContactsPage>(
+        `/v1/export/contacts?${params}`,
+        { signal },
+      );
+      return {
+        items: normalizeContacts(res.contacts),
+        total: res.total ?? 0,
+      };
+    },
+    [debouncedQ],
   );
 
-  if (loading) return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>Loading…</div>;
-  if (error) {
+  const { items: contacts, total, loading, refreshing, filling, error } = usePagedList(
+    debouncedQ,
+    fetchPage,
+  );
+
+  const filterActive = filter.trim().length > 0;
+  const needles = filterNeedles(filter);
+  /** Prefer plain text for names; fall back to handle needle when that is all the user typed. */
+  const nameMarkTerm = needles.text || needles.handle || "";
+  const handleMarkTerm = highlightNeedle(filter);
+
+  // Live client filter for immediate feedback; server page replaces when debounce settles.
+  const displayContacts = filterActive
+    ? contacts.filter((c) => contactMatchesFilter(c, filter))
+    : contacts;
+
+  const rangeLabel =
+    loading && contacts.length === 0
+      ? "Loading…"
+      : formatVisibleRange(
+          visibleRange.start,
+          visibleRange.end,
+          total,
+          displayContacts.length,
+        );
+
+  if (error && contacts.length === 0) {
     return (
       <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--danger)" }}>
         Could not load contacts: {error}
       </div>
     );
   }
-  if (contacts.length === 0) {
-    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>No contacts</div>;
-  }
-  if (visible.length === 0) {
-    return (
-      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>
-        No contacts match this filter
-      </div>
-    );
-  }
 
   return (
-    <div style={{ overflow: "auto" }}>
-      {visible.map((c) => (
-        <button
-          key={c.id}
-          onClick={() => onSelect(c)}
-          style={{
-            display: "flex", justifyContent: "space-between", width: "100%",
-            textAlign: "left", border: "none", background: "transparent",
-            padding: "0.5rem 0.75rem", cursor: "pointer",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <div>
-            <div style={{ fontSize: "0.875rem", fontWeight: 500 }}>{c.name}</div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-              {c.handle_count} handle{c.handle_count !== 1 ? "s" : ""}
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+      <div
+        style={{
+          padding: "0.375rem 0.75rem",
+          fontSize: "0.688rem",
+          color: "var(--muted)",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+        }}
+      >
+        {rangeLabel}
+        {refreshing ? " · updating…" : filling ? " · loading…" : null}
+      </div>
+      <VirtualList
+        count={displayContacts.length}
+        estimateSize={56}
+        onVisibleRangeChange={setVisibleRange}
+        empty={
+          !loading ? (
+            <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+              {filterActive ? "No contacts match this filter" : "No contacts"}
             </div>
-          </div>
-          {c.last_message_at && (
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
-              {new Date(c.last_message_at).toLocaleDateString()}
-            </div>
-          )}
-        </button>
-      ))}
+          ) : null
+        }
+        renderItem={(index) => {
+          const c = displayContacts[index];
+          if (!c) return null;
+          // If the preferred name is itself a handle, don't repeat it under the name.
+          const nameKey = c.name.trim().toLowerCase();
+          const shownHandles = filterActive
+            ? matchingHandles(c.handles, filter).filter(
+                (h) => h.trim().toLowerCase() !== nameKey,
+              )
+            : [];
+          return (
+            <button
+              type="button"
+              onClick={() => onSelect(c)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.625rem",
+                width: "100%",
+                textAlign: "left",
+                border: "none",
+                background: "transparent",
+                padding: "0.5rem 0.75rem",
+                cursor: "pointer",
+                borderBottom: "1px solid var(--border)",
+                color: "var(--text)",
+              }}
+            >
+              <span
+                style={{
+                  width: "2.5rem",
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <ContactInitialCircle
+                  displayName={c.name}
+                  preferredHandle={c.handles?.[0] ?? null}
+                />
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {filterActive && nameMarkTerm
+                    ? highlightText(c.name, nameMarkTerm)
+                    : c.name}
+                </div>
+                {shownHandles.length > 0 && (
+                  <div style={{ marginTop: "0.125rem" }}>
+                    {shownHandles.map((h) => (
+                      <div
+                        key={h}
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--muted)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {highlightText(h, handleMarkTerm)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {c.last_message_at && (
+                <div style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
+                  {new Date(c.last_message_at).toLocaleDateString()}
+                </div>
+              )}
+            </button>
+          );
+        }}
+      />
     </div>
   );
 }

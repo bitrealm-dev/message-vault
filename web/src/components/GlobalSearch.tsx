@@ -29,27 +29,50 @@ export default function GlobalSearch({
   const [contacts, setContacts] = useState<ContactName[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (isFilter) return;
-    apiClient
-      .get<{ contacts: ContactName[] }>("/v1/export/contacts")
-      .then((res) => setContacts(res.contacts))
-      .catch(() => setContacts([]));
-  }, [isFilter]);
-
   const lastToken = value.split(/\s+/).pop() || "";
   const colonIdx = lastToken.indexOf(":");
   const completingValue = colonIdx !== -1;
   const opPrefix = completingValue ? lastToken.slice(0, colonIdx + 1) : "";
-  const valuePart = completingValue ? lastToken.slice(colonIdx + 1) : "";
+  const valuePart = completingValue ? lastToken.slice(colonIdx + 1).replace(/^"|"$/g, "") : "";
+
+  useEffect(() => {
+    if (isFilter || !completingValue) {
+      setContacts([]);
+      return;
+    }
+    const ac = new AbortController();
+    const t = window.setTimeout(() => {
+      const params = new URLSearchParams({
+        q: valuePart,
+        limit: "20",
+        offset: "0",
+      });
+      apiClient
+        .get<{ contacts: ContactName[] }>(`/v1/export/contacts?${params}`, {
+          signal: ac.signal,
+        })
+        .then((res) =>
+          setContacts(
+            (res.contacts || []).map((c) => ({
+              ...c,
+              id: String(c.id),
+            })),
+          ),
+        )
+        .catch(() => {
+          if (!ac.signal.aborted) setContacts([]);
+        });
+    }, 150);
+    return () => {
+      window.clearTimeout(t);
+      ac.abort();
+    };
+  }, [isFilter, completingValue, valuePart]);
 
   const suggestions: string[] = isFilter
     ? []
     : completingValue
-      ? contacts
-          .map((c) => c.name)
-          .filter((n) => n.toLowerCase().includes(valuePart.toLowerCase()))
-          .slice(0, 6)
+      ? contacts.map((c) => c.name).slice(0, 6)
       : OPERATORS.filter((op) => op.startsWith(lastToken.toLowerCase())).slice(0, 6);
 
   const applySuggestion = (s: string) => {
@@ -121,6 +144,7 @@ export default function GlobalSearch({
           {suggestions.map((s, i) => (
             <button
               key={s}
+              type="button"
               onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
               style={{
                 display: "block", width: "100%", textAlign: "left", border: "none",

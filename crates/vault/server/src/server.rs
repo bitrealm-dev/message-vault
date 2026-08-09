@@ -552,28 +552,53 @@ struct CompleteImportResponse {
     bytes_uploaded: i64,
 }
 
+#[derive(Debug, Deserialize)]
+struct ListContactsQuery {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+}
+
 async fn contacts_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<ListContactsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     let db = Arc::clone(&state.db);
-    let contacts = tokio::task::spawn_blocking(move || {
+    let q = query.q.unwrap_or_default();
+    let limit = query
+        .limit
+        .unwrap_or(crate::contacts_api::DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = tokio::task::spawn_blocking(move || {
         let conn = db
             .lock()
             .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
-        crate::contacts_api::list_contacts(&conn, &auth.account_id)
+        crate::contacts_api::list_contacts(&conn, &auth.account_id, &q, limit, offset)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("contacts list task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(Json(serde_json::json!({ "contacts": contacts })))
+    Ok(Json(serde_json::json!({
+        "contacts": page.contacts,
+        "total": page.total,
+        "limit": page.limit,
+        "offset": page.offset,
+    })))
 }
 
 #[derive(Debug, Deserialize)]
 struct ListConversationsQuery {
     #[serde(default)]
     q: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
 }
 
 async fn conversations_list_handler(
@@ -584,16 +609,25 @@ async fn conversations_list_handler(
     let auth = resolve_auth(&headers, &state).await?;
     let db = Arc::clone(&state.db);
     let q = query.q.unwrap_or_default();
-    let conversations = tokio::task::spawn_blocking(move || {
+    let limit = query
+        .limit
+        .unwrap_or(crate::conversations_api::DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = tokio::task::spawn_blocking(move || {
         let conn = db
             .lock()
             .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
-        crate::conversations_api::list_conversations(&conn, &auth.account_id, &q)
+        crate::conversations_api::list_conversations(&conn, &auth.account_id, &q, limit, offset)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("conversations list task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(Json(serde_json::json!({ "conversations": conversations })))
+    Ok(Json(serde_json::json!({
+        "conversations": page.conversations,
+        "total": page.total,
+        "limit": page.limit,
+        "offset": page.offset,
+    })))
 }
 
 async fn contact_detail_handler(

@@ -56,7 +56,7 @@ export default function ContactDrawer({
     if (!newHandle.trim()) return;
     try {
       const res = await apiClient.get<{ conversations: Conversation[] }>(
-        `/v1/export/conversations?q=handle:${encodeURIComponent(newHandle)}`,
+        `/v1/export/conversations?q=${encodeURIComponent(`handle:${newHandle}`)}&limit=100&offset=0`,
       );
       setMatchResults(res.conversations);
     } catch {

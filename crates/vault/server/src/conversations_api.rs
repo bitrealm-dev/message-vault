@@ -5,6 +5,17 @@ use serde::Serialize;
 
 use crate::export_api::ExportQueryError;
 
+pub const DEFAULT_LIST_LIMIT: usize = 40;
+pub const MAX_LIST_LIMIT: usize = 100;
+
+#[derive(Debug, Serialize)]
+pub struct ConversationListPage {
+    pub conversations: Vec<ConversationSummary>,
+    pub total: u64,
+    pub limit: usize,
+    pub offset: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ConversationParticipant {
     pub name: Option<String>,
@@ -42,7 +53,7 @@ struct RawConversation {
     date_range_end: Option<String>,
 }
 
-/// List conversations for the account, newest first.
+/// List conversations for the account, newest first (paged).
 ///
 /// Supported `q` values:
 /// - empty / whitespace: all non-trashed conversations with at least one message
@@ -53,7 +64,12 @@ pub fn list_conversations(
     conn: &Connection,
     account_id: &str,
     q: &str,
-) -> Result<Vec<ConversationSummary>, ExportQueryError> {
+    limit: usize,
+    offset: usize,
+) -> Result<ConversationListPage, ExportQueryError> {
+    let limit = limit.clamp(1, MAX_LIST_LIMIT);
+    let offset = offset;
+
     let q = q.trim();
     let trash_only = q.eq_ignore_ascii_case("is:trash");
     let handle_filter = q
@@ -135,6 +151,23 @@ pub fn list_conversations(
         params.push(like.into());
     }
 
+    let where_sql = where_parts.join(" AND ");
+
+    let count_sql = format!(
+        "SELECT COUNT(*)
+         FROM conversations c
+         JOIN handles hc ON hc.id = c.chat_handle_id
+         WHERE {where_sql}"
+    );
+    let total: i64 = conn
+        .query_row(
+            &count_sql,
+            params_from_iter(params.iter().cloned()),
+            |row| row.get(0),
+        )
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+    let total = total.max(0) as u64;
+
     let sql = format!(
         "SELECT c.id,
                 c.service,
@@ -150,16 +183,20 @@ pub fn list_conversations(
                  WHERE m.conversation_id = c.id AND m.duplicate_of IS NULL) AS date_range_end
          FROM conversations c
          JOIN handles hc ON hc.id = c.chat_handle_id
-         WHERE {}
-         ORDER BY last_message_at DESC, c.id DESC",
-        where_parts.join(" AND ")
+         WHERE {where_sql}
+         ORDER BY last_message_at DESC, c.id DESC
+         LIMIT ? OFFSET ?"
     );
+
+    let mut page_params = params.clone();
+    page_params.push((limit as i64).into());
+    page_params.push((offset as i64).into());
 
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
     let rows = stmt
-        .query_map(params_from_iter(params.iter().cloned()), |row| {
+        .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             Ok(RawConversation {
                 id: row.get(0)?,
                 service: row.get(1)?,
@@ -213,7 +250,12 @@ pub fn list_conversations(
                 .filter(|s| !s.is_empty()),
         });
     }
-    Ok(out)
+    Ok(ConversationListPage {
+        conversations: out,
+        total,
+        limit,
+        offset,
+    })
 }
 
 fn chat_handle_as_participant(
@@ -366,21 +408,72 @@ mod tests {
     #[test]
     fn list_conversations_returns_summary() {
         let (conn, account) = setup();
-        let list = list_conversations(&conn, &account, "").unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, "1");
-        assert_eq!(list[0].message_count, 1);
-        assert!(!list[0].is_group);
-        assert_eq!(list[0].participants.len(), 1);
-        assert_eq!(list[0].participants[0].handle, "+15555550200");
+        let page = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.conversations.len(), 1);
+        assert_eq!(page.conversations[0].id, "1");
+        assert_eq!(page.conversations[0].message_count, 1);
+        assert!(!page.conversations[0].is_group);
+        assert_eq!(page.conversations[0].participants.len(), 1);
+        assert_eq!(page.conversations[0].participants[0].handle, "+15555550200");
     }
 
     #[test]
     fn list_conversations_filters_by_handle() {
         let (conn, account) = setup();
-        let hit = list_conversations(&conn, &account, "handle:+15555550200").unwrap();
-        assert_eq!(hit.len(), 1);
-        let miss = list_conversations(&conn, &account, "handle:+19999999999").unwrap();
-        assert!(miss.is_empty());
+        let hit =
+            list_conversations(&conn, &account, "handle:+15555550200", DEFAULT_LIST_LIMIT, 0)
+                .unwrap();
+        assert_eq!(hit.total, 1);
+        assert_eq!(hit.conversations.len(), 1);
+        let miss =
+            list_conversations(&conn, &account, "handle:+19999999999", DEFAULT_LIST_LIMIT, 0)
+                .unwrap();
+        assert_eq!(miss.total, 0);
+        assert!(miss.conversations.is_empty());
+    }
+
+    #[test]
+    fn list_conversations_paginates() {
+        let (conn, account) = setup();
+        // Second conversation + message.
+        let peer2 =
+            account_profile::link_account_handle(&conn, &account, "+15555550300", HandleType::Phone)
+                .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, source_file
+             ) VALUES (2, ?1, ?2, 'iMessage', 'individual', 'c2.jsonl')",
+            params![&account, peer2],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later')",
+            params![&account],
+        )
+        .unwrap();
+
+        let page0 = list_conversations(&conn, &account, "", 1, 0).unwrap();
+        assert_eq!(page0.total, 2);
+        assert_eq!(page0.limit, 1);
+        assert_eq!(page0.offset, 0);
+        assert_eq!(page0.conversations.len(), 1);
+        assert_eq!(page0.conversations[0].id, "2"); // newer first
+
+        let page1 = list_conversations(&conn, &account, "", 1, 1).unwrap();
+        assert_eq!(page1.total, 2);
+        assert_eq!(page1.offset, 1);
+        assert_eq!(page1.conversations.len(), 1);
+        assert_eq!(page1.conversations[0].id, "1");
+
+        let by_text = list_conversations(&conn, &account, "5555550300", 10, 0).unwrap();
+        assert_eq!(by_text.total, 1);
+        assert_eq!(by_text.conversations[0].id, "2");
+
+        let clamped = list_conversations(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
+        assert_eq!(clamped.limit, MAX_LIST_LIMIT);
+        assert_eq!(clamped.total, 2);
     }
 }
