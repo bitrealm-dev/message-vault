@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient } from "../lib/api";
+import DeleteAccountDialog from "../components/DeleteAccountDialog";
 
 interface AccountProfile {
   account_id: string;
@@ -8,6 +9,8 @@ interface AccountProfile {
   preferred_name: string | null;
   phones: string[];
   emails: string[];
+  is_demo?: boolean;
+  read_only?: boolean;
 }
 
 interface StorageStats {
@@ -31,6 +34,18 @@ const sectionTitle: React.CSSProperties = {
   margin: "0 0 0.5rem",
 };
 
+const dangerButtonStyle: React.CSSProperties = {
+  width: "10rem",
+  flexShrink: 0,
+  padding: "0.5rem 0.75rem",
+  fontSize: "0.813rem",
+  color: "#dc2626",
+  border: "1px solid #fecaca",
+  background: "#fef2f2",
+  borderRadius: "4px",
+  cursor: "pointer",
+};
+
 export default function ProfileScreen() {
   const { logout } = useAuth();
   const [profile, setProfile] = useState<AccountProfile | null>(null);
@@ -51,6 +66,19 @@ export default function ProfileScreen() {
   const [handleError, setHandleError] = useState("");
   const [handleBusy, setHandleBusy] = useState(false);
 
+  const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deletingMessages, setDeletingMessages] = useState(false);
+  const [dangerError, setDangerError] = useState("");
+
+  const refreshStorage = () => {
+    apiClient
+      .get<StorageStats>("/v1/export/messages/count?q=")
+      .then(setStorage)
+      .catch(() => {});
+  };
+
   useEffect(() => {
     apiClient
       .get<AccountProfile>("/v1/account/profile")
@@ -60,10 +88,7 @@ export default function ProfileScreen() {
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
 
-    apiClient
-      .get<StorageStats>("/v1/export/messages/count?q=")
-      .then(setStorage)
-      .catch(() => {});
+    refreshStorage();
   }, []);
 
   if (loadError) {
@@ -77,6 +102,8 @@ export default function ProfileScreen() {
   if (!profile) {
     return <div style={{ padding: "1.5rem", color: "#9ca3af" }}>Loading…</div>;
   }
+
+  const isDemo = profile.is_demo === true;
 
   const handleSaveName = async () => {
     setNameError("");
@@ -93,6 +120,19 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleListIncludes = (p: AccountProfile, handle: string, service: string) => {
+    const needle = handle.trim().toLowerCase();
+    if (service === "email") {
+      return p.emails.some((e) => e.toLowerCase() === needle);
+    }
+    // Phones/WhatsApp are E.164-normalized server-side; match by digit suffix.
+    const digits = handle.replace(/\D/g, "");
+    return p.phones.some((phone) => {
+      const phoneDigits = phone.replace(/\D/g, "");
+      return phoneDigits === digits || phone.toLowerCase() === needle;
+    });
+  };
+
   const handleAddHandle = async () => {
     const value = newHandle.trim();
     if (!value) return;
@@ -102,6 +142,11 @@ export default function ProfileScreen() {
       const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
         handles: [{ handle: value, service: newHandleService }],
       });
+      if (!handleListIncludes(updated, value, newHandleService)) {
+        throw new Error(
+          "Server did not save the handle. Restart the vault server (docker compose restart vault) and try again.",
+        );
+      }
       setProfile(updated);
       setNewHandle("");
     } catch (e) {
@@ -118,6 +163,11 @@ export default function ProfileScreen() {
       const updated = await apiClient.post<AccountProfile>("/v1/account/profile", {
         remove_handles: [{ handle, service }],
       });
+      if (handleListIncludes(updated, handle, service)) {
+        throw new Error(
+          "Server did not remove the handle. Restart the vault server (docker compose restart vault) and try again.",
+        );
+      }
       setProfile(updated);
     } catch (e) {
       setHandleError(e instanceof Error ? e.message : String(e));
@@ -152,15 +202,37 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    if (!confirm("Permanently delete your account and all data? This cannot be undone.")) {
+  const deleteAllMessages = async () => {
+    if (
+      !confirm(
+        "Delete all messages and attachments? Your contacts and settings will remain.",
+      )
+    ) {
       return;
     }
+    setDeletingMessages(true);
+    setDangerError("");
+    try {
+      await apiClient.post("/v1/account/delete-messages", { confirm: true });
+      refreshStorage();
+    } catch (e) {
+      setDangerError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeletingMessages(false);
+    }
+  };
+
+  const performDeleteAccount = async () => {
+    setDeleting(true);
+    setDangerError("");
     try {
       await apiClient.post("/v1/auth/delete-account", { confirm: true });
+      setDeleteDialogOpen(false);
       logout();
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      setDangerError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -168,6 +240,8 @@ export default function ProfileScreen() {
     ...profile.phones.map((handle) => ({ handle, service: "phone" })),
     ...profile.emails.map((handle) => ({ handle, service: "email" })),
   ];
+
+  const busy = deleting || deletingMessages;
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
@@ -356,38 +430,108 @@ export default function ProfileScreen() {
         )}
       </div>
 
-      <div style={{ marginTop: "0.5rem", paddingTop: "1rem", borderTop: "1px solid #e5e7eb", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+      <section style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid #e5e7eb" }}>
         <button
           type="button"
-          onClick={logout}
+          aria-expanded={dangerZoneOpen}
+          onClick={() => setDangerZoneOpen((open) => !open)}
           style={{
-            color: "#374151",
-            border: "1px solid #d1d5db",
-            background: "#fff",
-            padding: "0.5rem 1rem",
-            borderRadius: "4px",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            width: "100%",
+            padding: 0,
+            border: "none",
+            background: "transparent",
             cursor: "pointer",
-            fontSize: "0.875rem",
+            textAlign: "left",
           }}
         >
-          Sign out
+          <span
+            style={{
+              display: "inline-block",
+              transform: dangerZoneOpen ? "rotate(90deg)" : "none",
+              transition: "transform 0.15s ease",
+              color: "#dc2626",
+              fontSize: "0.75rem",
+            }}
+          >
+            ▶
+          </span>
+          <span
+            style={{
+              fontSize: "0.75rem",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              color: "#dc2626",
+            }}
+          >
+            Danger zone
+          </span>
         </button>
-        <button
-          type="button"
-          onClick={handleDeleteAccount}
-          style={{
-            color: "#dc2626",
-            border: "1px solid #fecaca",
-            background: "#fef2f2",
-            padding: "0.5rem 1rem",
-            borderRadius: "4px",
-            cursor: "pointer",
-            fontSize: "0.875rem",
-          }}
-        >
-          Delete account
-        </button>
-      </div>
+        <p style={{ margin: "0.35rem 0 0 1.25rem", fontSize: "0.813rem", color: "#6b7280" }}>
+          Delete messages or permanently remove your account.
+        </p>
+
+        {dangerZoneOpen && (
+          <div style={{ marginTop: "1rem", marginLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "#6b7280" }}>
+                Delete all messages and attachments. Your contacts and settings remain.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void deleteAllMessages()}
+                style={{
+                  ...dangerButtonStyle,
+                  opacity: busy ? 0.5 : 1,
+                  cursor: busy ? "not-allowed" : "pointer",
+                }}
+              >
+                {deletingMessages ? "Deleting…" : "Delete all messages"}
+              </button>
+            </div>
+
+            {!isDemo && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+                <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "#6b7280" }}>
+                  Delete this account and everything in it.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setDeleteDialogOpen(true)}
+                  style={{
+                    ...dangerButtonStyle,
+                    opacity: busy ? 0.5 : 1,
+                    cursor: busy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Delete account
+                </button>
+              </div>
+            )}
+
+            {dangerError && (
+              <div style={{ fontSize: "0.813rem", color: "#dc2626" }} role="alert">
+                {dangerError}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <DeleteAccountDialog
+        open={deleteDialogOpen}
+        username={profile.username}
+        deleting={deleting}
+        onClose={() => {
+          if (!deleting) setDeleteDialogOpen(false);
+        }}
+        onConfirm={() => void performDeleteAccount()}
+      />
     </div>
   );
 }

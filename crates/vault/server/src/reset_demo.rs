@@ -16,7 +16,7 @@ use crate::import::{self, ImportMode};
 use crate::process_assets::{self, ProcessAssetsOptions};
 
 /// Stable demo account id used when `reset-demo` runs without `--account`.
-pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
+pub use crate::db::account_profile::DEMO_ACCOUNT_ID;
 
 const DEMO_SOURCE: &str = "imessage";
 

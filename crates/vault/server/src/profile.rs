@@ -1,6 +1,6 @@
 //! Account profile read + update handlers.
 
-use anyhow::{bail, Result};
+use anyhow::{Context, bail, Result};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -18,6 +18,9 @@ pub struct AccountProfileResponse {
     pub preferred_name: Option<String>,
     pub phones: Vec<String>,
     pub emails: Vec<String>,
+    /// True for the seeded demo account (cannot be deleted).
+    pub is_demo: bool,
+    pub read_only: bool,
 }
 
 fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileResponse> {
@@ -25,12 +28,15 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
         .unwrap_or_else(|| account_id.to_string());
     let preferred_name = account_profile::load_preferred_name(conn, account_id)?;
     let profile = account_profile::load_account_profile(conn, account_id)?;
+    let read_only = account_profile::account_is_read_only(conn, account_id)?;
     Ok(AccountProfileResponse {
         account_id: account_id.to_string(),
         username,
         preferred_name,
         phones: profile.phones,
         emails: profile.emails,
+        is_demo: account_profile::is_demo_account(account_id),
+        read_only,
     })
 }
 
@@ -196,6 +202,82 @@ pub async fn account_profile_update_handler(
     })?;
 
     Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteMessagesRequest {
+    pub confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteMessagesResponse {
+    pub ok: bool,
+    pub conversations: u64,
+    pub attachments: u64,
+}
+
+fn remove_account_asset_trees(
+    data_dir: &std::path::Path,
+    account_id: &str,
+    assets_name: &str,
+    converted_name: &str,
+) -> Result<()> {
+    let account_root = data_dir.join(account_id);
+    if !account_root.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&account_root)
+        .with_context(|| format!("read {}", account_root.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let source_root = entry.path();
+        for name in [assets_name, converted_name] {
+            let dir = source_root.join(name);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir)
+                    .with_context(|| format!("remove {}", dir.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `POST /v1/account/delete-messages` — delete conversations/messages/attachments;
+/// keep contacts and account login.
+pub async fn delete_messages_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeleteMessagesRequest>,
+) -> Result<Json<DeleteMessagesResponse>, ApiError> {
+    if !req.confirm {
+        return Err(ApiError::BadRequest("confirmation flag must be true".into()));
+    }
+    let auth = resolve_auth(&headers, &state).await?;
+    let account_id = auth.account_id;
+    let db = state.cfg.paths.db.clone();
+    let data_dir = state.cfg.paths.data_dir.clone();
+    let assets_name = state.cfg.paths.assets_dir.clone();
+    let converted_name = state.cfg.paths.assets_converted_dir.clone();
+
+    let stats = tokio::task::spawn_blocking(move || -> Result<account_profile::DeletedMessagesStats> {
+        let conn = Connection::open(&db)?;
+        schema::configure_connection(&conn)?;
+        let stats = account_profile::delete_all_messages_for_account(&conn, &account_id)?;
+        remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
+        Ok(stats)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("delete messages task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(DeleteMessagesResponse {
+        ok: true,
+        conversations: stats.conversations,
+        attachments: stats.attachments,
+    }))
 }
 
 #[cfg(test)]

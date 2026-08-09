@@ -188,6 +188,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .route("/v1/account/profile", get(crate::profile::account_profile_handler).post(crate::profile::account_profile_update_handler))
         .route(
+            "/v1/account/delete-messages",
+            post(crate::profile::delete_messages_handler),
+        )
+        .route(
             "/v1/export/messages/count",
             get(export_messages_count_handler),
         )

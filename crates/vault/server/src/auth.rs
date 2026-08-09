@@ -437,12 +437,23 @@ pub async fn delete_account_handler(
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     let account_id = auth.account_id;
+    if account_profile::is_demo_account(&account_id) {
+        return Err(ApiError::BadRequest(
+            "the demo account cannot be deleted; use reset-demo to restore it".into(),
+        ));
+    }
     let db = state.cfg.paths.db.clone();
+    let account_root = state.cfg.paths.data_dir.join(&account_id);
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
         account_profile::delete_account(&conn, &account_id)?;
+        if account_root.exists() {
+            std::fs::remove_dir_all(&account_root).with_context(|| {
+                format!("remove account data dir {}", account_root.display())
+            })?;
+        }
         Ok(())
     })
     .await
