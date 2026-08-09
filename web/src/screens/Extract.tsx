@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from "react";
-import { invokeExtract, invokeCancel, onExtractEvents } from "../lib/tauri";
+import { useState } from "react";
+import { invokeExtract } from "../lib/tauri";
+import { useTauriJob } from "../hooks/useTauriJob";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import Button from "../components/Button";
 
 const SOURCES = [
@@ -18,64 +18,31 @@ const SOURCES = [
   { id: "openextract", label: "OpenExtract" },
 ];
 
-const INDETERMINATE_KEYFRAMES = `
-@keyframes indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-`;
-
-export default function Extract({ onError, onBack }: { onError?: (msg: string) => void; onBack?: () => void }) {
+export default function Extract({
+  onError,
+  onBack,
+}: {
+  onError?: (msg: string) => void;
+  onBack?: () => void;
+}) {
   const [source, setSource] = useState("sms-backup-restore");
   const [backupPath, setBackupPath] = useState("");
   const [outputDir, setOutputDir] = useState("");
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-
-  const start = useCallback(async () => {
-    setRunning(true);
-    setLog([]);
-
-    unlistenRef.current = await onExtractEvents({
-      onLog: (line) => {
-        setLog((prev) => [...prev, line]);
-      },
-      onFinished: (summary) => {
-        setLog((prev) => [...prev, summary]);
-        setRunning(false);
-      },
-      onError: (err) => {
-        setLog((prev) => [...prev, `Error: ${err.detail}`]);
-        if (err.user_message) {
-          setLog((prev) => [...prev, err.user_message!]);
-        }
-        setRunning(false);
-        onError?.(err.user_message ?? err.detail);
-      },
-    });
-
-    try {
-      await invokeExtract({ source, path: backupPath, output_dir: outputDir });
-    } catch (err) {
-      setLog((prev) => [...prev, `Error starting extraction: ${err}`]);
-      setRunning(false);
-    }
-  }, [source, backupPath, outputDir]);
-
-  const cancel = useCallback(async () => {
-    await invokeCancel();
-  }, []);
+  const { running, log, start, cancel } = useTauriJob({ onError });
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
-      <style>{INDETERMINATE_KEYFRAMES}</style>
       {onBack && (
         <button
           onClick={onBack}
           style={{
-            marginBottom: "1rem", border: "none", background: "none",
-            color: "var(--accent)", cursor: "pointer", fontSize: "0.875rem", padding: 0,
+            marginBottom: "1rem",
+            border: "none",
+            background: "none",
+            color: "var(--accent)",
+            cursor: "pointer",
+            fontSize: "0.875rem",
+            padding: 0,
           }}
         >
           ← Back to login
@@ -116,7 +83,17 @@ export default function Extract({ onError, onBack }: { onError?: (msg: string) =
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
         <Button
           variant="primary"
-          onClick={start}
+          onClick={() =>
+            start(
+              () =>
+                invokeExtract({
+                  source,
+                  path: backupPath,
+                  output_dir: outputDir,
+                }),
+              "Error starting extraction",
+            )
+          }
           disabled={running || !backupPath || !outputDir}
           style={{ padding: "0.5rem 1.5rem" }}
         >

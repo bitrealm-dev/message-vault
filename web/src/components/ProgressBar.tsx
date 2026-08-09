@@ -3,9 +3,17 @@ interface ProgressBarProps {
   running: boolean;
 }
 
+const INDETERMINATE_KEYFRAMES = `
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+`;
+
 export default function ProgressBar({ log, running }: ProgressBarProps) {
   return (
     <div>
+      <style>{INDETERMINATE_KEYFRAMES}</style>
       {running && (
         <div style={{ marginBottom: "0.5rem" }}>
           <div

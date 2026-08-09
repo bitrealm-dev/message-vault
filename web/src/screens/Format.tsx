@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from "react";
-import { invokeFormat, invokeCancel, onExtractEvents } from "../lib/tauri";
+import { useState } from "react";
+import { invokeFormat } from "../lib/tauri";
+import { useTauriJob } from "../hooks/useTauriJob";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import Button from "../components/Button";
 
 const FORMATS = [
@@ -15,60 +15,31 @@ const FORMATS = [
   { id: "xml", label: "XML (smses.xml)" },
 ];
 
-const INDETERMINATE_KEYFRAMES = `
-@keyframes indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-`;
-
-export default function Format({ onError, onBack }: { onError?: (msg: string) => void; onBack?: () => void }) {
+export default function Format({
+  onError,
+  onBack,
+}: {
+  onError?: (msg: string) => void;
+  onBack?: () => void;
+}) {
   const [inputDir, setInputDir] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [outputFormat, setOutputFormat] = useState("jsonl");
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-
-  const start = useCallback(async () => {
-    setRunning(true);
-    setLog([]);
-
-    unlistenRef.current = await onExtractEvents({
-      onLog: (line) => setLog((prev) => [...prev, line]),
-      onFinished: (summary) => {
-        setLog((prev) => [...prev, summary]);
-        setRunning(false);
-      },
-      onError: (err) => {
-        setLog((prev) => [...prev, `Error: ${err.detail}`]);
-        if (err.user_message) setLog((prev) => [...prev, err.user_message!]);
-        setRunning(false);
-        onError?.(err.user_message ?? err.detail);
-      },
-    });
-
-    try {
-      await invokeFormat({ input_dir: inputDir, output_dir: outputDir, output_format: outputFormat });
-    } catch (err) {
-      setLog((prev) => [...prev, `Error starting format: ${err}`]);
-      setRunning(false);
-    }
-  }, [inputDir, outputDir, outputFormat]);
-
-  const cancel = useCallback(async () => {
-    await invokeCancel();
-  }, []);
+  const { running, log, start, cancel } = useTauriJob({ onError });
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
-      <style>{INDETERMINATE_KEYFRAMES}</style>
       {onBack && (
         <button
           onClick={onBack}
           style={{
-            marginBottom: "1rem", border: "none", background: "none",
-            color: "var(--accent)", cursor: "pointer", fontSize: "0.875rem", padding: 0,
+            marginBottom: "1rem",
+            border: "none",
+            background: "none",
+            color: "var(--accent)",
+            cursor: "pointer",
+            fontSize: "0.875rem",
+            padding: 0,
           }}
         >
           ← Back to login
@@ -77,7 +48,12 @@ export default function Format({ onError, onBack }: { onError?: (msg: string) =>
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Format Conversion</h2>
 
       <FormRow label="Input directory">
-        <PathPicker value={inputDir} onChange={setInputDir} directory placeholder="Previous extract output" />
+        <PathPicker
+          value={inputDir}
+          onChange={setInputDir}
+          directory
+          placeholder="Previous extract output"
+        />
       </FormRow>
 
       <FormRow label="Output directory">
@@ -99,7 +75,9 @@ export default function Format({ onError, onBack }: { onError?: (msg: string) =>
           }}
         >
           {FORMATS.map((f) => (
-            <option key={f.id} value={f.id}>{f.label}</option>
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
           ))}
         </select>
       </FormRow>
@@ -107,7 +85,17 @@ export default function Format({ onError, onBack }: { onError?: (msg: string) =>
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
         <Button
           variant="primary"
-          onClick={start}
+          onClick={() =>
+            start(
+              () =>
+                invokeFormat({
+                  input_dir: inputDir,
+                  output_dir: outputDir,
+                  output_format: outputFormat,
+                }),
+              "Error starting format",
+            )
+          }
           disabled={running || !inputDir || !outputDir}
           style={{ padding: "0.5rem 1.5rem" }}
         >
