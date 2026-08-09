@@ -6,49 +6,16 @@ import {
   invalidateContactDetail,
   type CachedContactDetail,
 } from "../lib/contactDetailCache";
-import Button from "./Button";
+import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
+import {
+  type ContactPreview,
+  type ContactBrowseKind,
+  yearRangeLabel,
+} from "./contactDrawer/contactDrawerTypes";
+
+export type { ContactPreview, ContactBrowseKind };
 
 type ContactDetail = CachedContactDetail;
-
-/** Lightweight row data so the drawer can paint before the detail API returns. */
-export type ContactPreview = {
-  id: string;
-  name: string;
-  handles?: string[];
-};
-
-export type ContactBrowseKind = "all" | "direct" | "group";
-
-const SERVICES = ["phone", "email", "discord", "instagram", "telegram", "signal"];
-
-function inferService(handle: string, service: string | null | undefined): string {
-  if (service && service.trim()) return service.trim().toLowerCase();
-  const h = handle.trim();
-  if (h.includes("@") && !h.startsWith("@")) return "email";
-  if (/^\+?\d[\d\s().-]{6,}$/.test(h)) return "phone";
-  return "unknown";
-}
-
-function yearRangeLabel(
-  handles: ContactDetail["handles"],
-): string | null {
-  let minY: number | null = null;
-  let maxY: number | null = null;
-  for (const h of handles) {
-    if (h.start_date) {
-      const y = new Date(h.start_date).getFullYear();
-      if (!Number.isNaN(y)) minY = minY === null ? y : Math.min(minY, y);
-    }
-    if (h.end_date) {
-      const y = new Date(h.end_date).getFullYear();
-      if (!Number.isNaN(y)) maxY = maxY === null ? y : Math.max(maxY, y);
-    }
-  }
-  if (minY === null && maxY === null) return null;
-  if (minY === null) return String(maxY);
-  if (maxY === null) return String(minY);
-  return minY === maxY ? String(minY) : `${minY}–${maxY}`;
-}
 
 export default function ContactDrawer({
   contactId,
@@ -68,8 +35,6 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
-  const [newHandle, setNewHandle] = useState("");
-  const [newService, setNewService] = useState("discord");
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -100,7 +65,6 @@ export default function ContactDrawer({
 
   useEffect(() => {
     setEditingName(false);
-    setNewHandle("");
     if (!contactId) {
       setDetail(null);
       return;
@@ -147,19 +111,6 @@ export default function ContactDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [contactId, editingName, displayName, onClose]);
-
-  const addHandle = async () => {
-    if (!newHandle.trim()) return;
-    try {
-      await apiClient.post(`/v1/export/contacts/${contactId}`, {
-        add_handle: { handle: newHandle.trim(), service: newService },
-      });
-      setNewHandle("");
-      loadDetail();
-    } catch {
-      // Leave the input in place so the user can retry
-    }
-  };
 
   if (!contactId) return null;
 
@@ -268,91 +219,12 @@ export default function ContactDrawer({
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)", flexShrink: 0 }}>×</button>
         </div>
 
-        <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>Handles</h3>
-        {handleRows.length === 0 ? (
-          <div style={{ fontSize: "0.813rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
-            {loading ? "Loading…" : "No handles"}
-          </div>
-        ) : (
-          <div style={{ marginBottom: "0.75rem" }}>
-            {handleRows.map((h, i) => (
-              <div
-                key={`${h.handle}-${i}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.75rem",
-                  padding: "0.375rem 0",
-                  borderBottom: "1px solid var(--border)",
-                  fontSize: "0.875rem",
-                }}
-              >
-                <span style={{ color: "var(--muted)", minWidth: "5.5rem", flexShrink: 0 }}>
-                  {inferService(h.handle, h.service)}
-                </span>
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {h.handle}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div
-          style={{
-            display: "flex",
-            gap: "0.5rem",
-            flexWrap: "wrap",
-            marginBottom: "0.35rem",
-            alignItems: "center",
-          }}
-        >
-          <select
-            value={newService}
-            onChange={(e) => setNewService(e.target.value)}
-            style={{
-              padding: "0.375rem 0.5rem",
-              fontSize: "0.813rem",
-              border: "1px solid var(--border)",
-              borderRadius: "4px",
-              width: "110px",
-              backgroundColor: "var(--elevated)",
-              color: "var(--text)",
-            }}
-          >
-            {SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <input
-            type="text"
-            value={newHandle}
-            onChange={(e) => setNewHandle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void addHandle();
-              }
-            }}
-            placeholder="user#1234, @handle…"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: "0.375rem 0.5rem",
-              fontSize: "0.813rem",
-              border: "1px solid var(--border)",
-              borderRadius: "4px",
-              backgroundColor: "var(--elevated)",
-              color: "var(--text)",
-            }}
-          />
-          <Button
-            variant="primary"
-            onClick={addHandle}
-            disabled={!newHandle.trim() || loading}
-            style={{ fontSize: "0.813rem", padding: "0.25rem 0.75rem" }}
-          >
-            Add
-          </Button>
-        </div>
+        <ContactDrawerHandles
+          contactId={contactId}
+          handleRows={handleRows}
+          loading={loading}
+          onHandlesChanged={loadDetail}
+        />
 
         <div style={{ marginTop: "1.25rem", fontSize: "0.875rem" }}>
           <h3

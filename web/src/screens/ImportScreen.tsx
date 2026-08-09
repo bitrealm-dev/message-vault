@@ -3,120 +3,27 @@ import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
 import { invokeExtract, invokeCancel } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
+import { EXPORT_SOURCES } from "../lib/exportSources";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
 import Button from "../components/Button";
-
-const SOURCES: { id: string; label: string }[] = [
-  { id: "imessage-ios", label: "iPhone - iOS" },
-  { id: "imessage-macos", label: "iMessage - macOS" },
-  { id: "whatsapp-android", label: "WhatsApp - Android" },
-  { id: "whatsapp-ios", label: "WhatsApp - iOS" },
-  { id: "sms-backup-restore", label: "SMS Backup & Restore" },
-  { id: "go-sms-pro", label: "GO SMS Pro" },
-  { id: "imazing", label: "iMazing" },
-  { id: "sms-backup-plus", label: "SMS Backup+" },
-  { id: "openextract", label: "OpenExtract" },
-];
-
-const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
-  { id: "copy", label: "Copy" },
-  { id: "convert", label: "Convert" },
-  { id: "compress", label: "Compress & Convert" },
-  { id: "skip", label: "Skip" },
-];
-
-const RESOLUTION_OPTIONS = ["720p", "1080p", "4k"];
-
-const IPHONE_HELP_URL =
-  "https://bitrealm-dev.github.io/prepare-your-backups/iphone-ipad/";
-
-const fieldStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.4rem 0.6rem",
-  fontSize: "0.875rem",
-  borderRadius: "6px",
-  border: "1px solid var(--border)",
-  boxSizing: "border-box",
-  background: "var(--bg)",
-  color: "var(--text)",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  marginBottom: "0.35rem",
-};
-
-const hintStyle: React.CSSProperties = {
-  fontSize: "0.75rem",
-  color: "var(--muted)",
-  marginTop: "0.25rem",
-};
-
-const sectionGap: React.CSSProperties = { marginBottom: "1.1rem" };
-
-const collapsibleHeaderStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  textAlign: "left",
-  padding: "0.5rem 0.75rem",
-  borderRadius: "8px",
-  border: "1px solid var(--border)",
-  background: "var(--elevated)",
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  cursor: "pointer",
-};
+import {
+  ATTACHMENT_OPTIONS,
+  RESOLUTION_OPTIONS,
+  IPHONE_HELP_URL,
+  fieldStyle,
+  hintStyle,
+  sectionGap,
+  StackedField,
+  CollapsibleSection,
+} from "./import/ImportFormUi";
 
 interface ImportStep {
   label: string;
   status: "pending" | "active" | "done" | "error";
   detail?: string;
-}
-
-function StackedField({
-  label,
-  children,
-  trailing,
-}: {
-  label: string;
-  children: React.ReactNode;
-  trailing?: React.ReactNode;
-}) {
-  return (
-    <div style={sectionGap}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem" }}>
-        <label style={{ ...labelStyle, flex: 1, marginBottom: "0.35rem" }}>{label}</label>
-        {trailing}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  open,
-  onToggle,
-  children,
-}: {
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ marginBottom: open ? "0.75rem" : "1.25rem" }}>
-      <button type="button" onClick={onToggle} style={collapsibleHeaderStyle} aria-expanded={open}>
-        {open ? "v" : ">"} {title}
-      </button>
-      {open ? <div style={{ marginTop: "0.75rem", marginLeft: "0.75rem" }}>{children}</div> : null}
-    </div>
-  );
 }
 
 export default function ImportScreen() {
@@ -283,7 +190,7 @@ export default function ImportScreen() {
                 onChange={(e) => setSource(e.target.value)}
                 style={fieldStyle}
               >
-                {SOURCES.map((s) => (
+                {EXPORT_SOURCES.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
                   </option>

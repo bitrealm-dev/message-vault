@@ -1,22 +1,11 @@
 import { useState } from "react";
 import { invokeExtract } from "../lib/tauri";
+import { EXPORT_SOURCES } from "../lib/exportSources";
 import { useTauriJob } from "../hooks/useTauriJob";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import Button from "../components/Button";
-
-const SOURCES = [
-  { id: "sms-backup-restore", label: "SMS Backup & Restore" },
-  { id: "imessage-ios", label: "iMessage (iOS)" },
-  { id: "imessage-macos", label: "iMessage (macOS)" },
-  { id: "whatsapp-android", label: "WhatsApp (Android)" },
-  { id: "whatsapp-ios", label: "WhatsApp (iOS)" },
-  { id: "go-sms-pro", label: "GO SMS Pro" },
-  { id: "imazing", label: "iMazing" },
-  { id: "sms-backup-plus", label: "SMS Backup+" },
-  { id: "openextract", label: "OpenExtract" },
-];
 
 export default function Extract({
   onError,
@@ -64,7 +53,7 @@ export default function Extract({
             borderRadius: "4px",
           }}
         >
-          {SOURCES.map((s) => (
+          {EXPORT_SOURCES.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}
             </option>
