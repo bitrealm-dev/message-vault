@@ -25,8 +25,6 @@ pub struct ContactSummary {
     /// Normalized (and raw when distinct) handle values for client-side filter.
     #[serde(default)]
     pub handles: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_message_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,10 +68,11 @@ pub(crate) fn involves_contact_sql() -> &'static str {
      )"
 }
 
-/// Flat list of contacts: id, display name, handle count, last message date (paged).
+/// Flat list of contacts: id, display name, handle count, and handle values (paged).
 ///
 /// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
 /// `handle:<raw>` restricts to contacts that have that handle substring.
+/// Message-date stats belong on contact detail, not this list (keeps list SQL cheap).
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
@@ -166,23 +165,7 @@ pub fn list_contacts(
                    JOIN handles h ON h.id = ch.handle_id
                    WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
                      AND h.raw IS NOT NULL AND trim(h.raw) != ''
-                 )) AS handles,
-                (SELECT MAX(m.timestamp)
-                 FROM messages m
-                 JOIN conversations c ON c.id = m.conversation_id
-                 WHERE c.account_id = ct.account_id
-                   AND m.duplicate_of IS NULL
-                   AND EXISTS (
-                     SELECT 1 FROM contact_handles ch2
-                     WHERE ch2.account_id = c.account_id AND ch2.contact_id = ct.id
-                       AND (
-                         ch2.handle_id = c.chat_handle_id
-                         OR EXISTS (
-                           SELECT 1 FROM participants p
-                           WHERE p.conversation_id = c.id AND p.handle_id = ch2.handle_id
-                         )
-                       )
-                   )) AS last_message_at
+                 )) AS handles
          FROM contacts ct
          WHERE {where_sql}
          ORDER BY name COLLATE NOCASE, ct.id
@@ -213,7 +196,6 @@ pub fn list_contacts(
                 name: row.get(1)?,
                 handle_count: row.get::<_, i64>(2)?.max(0) as u64,
                 handles,
-                last_message_at: row.get(4)?,
             })
         })
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?
@@ -337,33 +319,34 @@ pub fn get_contact_detail(
         handles.push(row.map_err(|e| ExportQueryError::Internal(e.to_string()))?);
     }
 
-    // Conversation + message stats across all handles of this contact.
+    // Conversation + message stats across handles of this contact only.
+    // Do not GROUP BY the entire account messages table — that dominated drawer latency.
     let mut stats_stmt = conn
         .prepare(&format!(
-            "SELECT COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN c.id END),
-                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'group' THEN c.id END),
-                    COALESCE(SUM(mc.m_count), 0)
-             FROM conversations c
-             LEFT JOIN (
-               SELECT conversation_id, COUNT(*) AS m_count
-               FROM messages
-               WHERE account_id = ?1 AND duplicate_of IS NULL
-               GROUP BY conversation_id
-             ) mc ON mc.conversation_id = c.id
-             WHERE c.account_id = ?1
-               AND {involves_contact_sql}
-               AND NOT EXISTS (
-                 SELECT 1 FROM trashed_conversations tc
-                 WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM trashed_handles th
-                 WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-               )",
+            "WITH involved AS (
+               SELECT c.id, c.conversation_type
+               FROM conversations c
+               WHERE c.account_id = ?1
+                 AND {involves_contact_sql}
+                 AND NOT EXISTS (
+                   SELECT 1 FROM trashed_conversations tc
+                   WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM trashed_handles th
+                   WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
+                 )
+             )
+             SELECT
+               (SELECT COUNT(*) FROM involved WHERE conversation_type = 'individual'),
+               (SELECT COUNT(*) FROM involved WHERE conversation_type = 'group'),
+               (SELECT COUNT(*) FROM messages m
+                WHERE m.duplicate_of IS NULL
+                  AND m.conversation_id IN (SELECT id FROM involved))",
             involves_contact_sql = involves_contact_sql(),
         ))
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
-    let (direct, groups, total): (Option<i64>, Option<i64>, Option<i64>) = stats_stmt
+    let (direct, groups, total): (i64, i64, i64) = stats_stmt
         .query_row(rusqlite::params![account_id, contact_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
@@ -373,9 +356,9 @@ pub fn get_contact_detail(
         id: contact_id,
         name,
         handles,
-        direct_conversations: direct.unwrap_or(0).max(0) as u64,
-        group_conversations: groups.unwrap_or(0).max(0) as u64,
-        total_messages: total.unwrap_or(0).max(0) as u64,
+        direct_conversations: direct.max(0) as u64,
+        group_conversations: groups.max(0) as u64,
+        total_messages: total.max(0) as u64,
     }))
 }
 
@@ -491,5 +474,121 @@ mod tests {
         let clamped = list_contacts(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 3);
+    }
+
+    #[test]
+    fn get_contact_detail_counts_direct_group_and_messages() {
+        let (conn, account) = setup();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let peer =
+            account_profile::link_account_handle(&conn, &account, "+15555550200", HandleType::Phone)
+                .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![&account, peer, contact_id],
+        )
+        .unwrap();
+
+        // Direct conversation with 2 messages.
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, source_file
+             ) VALUES (1, ?1, ?2, 'iMessage', 'individual', 'd.jsonl')",
+            params![&account, peer],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+             VALUES (1, ?1, 'Sam')",
+            params![peer],
+        )
+        .unwrap();
+        for (body, ts) in [
+            ("hi", "2024-06-01T12:00:00Z"),
+            ("there", "2024-06-01T13:00:00Z"),
+        ] {
+            conn.execute(
+                "INSERT INTO messages (
+                    conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+                 ) VALUES (1, ?1, 'imessage', ?2, 0, 0, ?3)",
+                params![&account, ts, body],
+            )
+            .unwrap();
+        }
+
+        // Group conversation that includes Sam, with 1 message.
+        let group_chat = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "chat-sam-group",
+            HandleType::Other,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
+             ) VALUES (2, ?1, ?2, 'iMessage', 'group', 'Sam Group', 'g.jsonl')",
+            params![&account, group_chat],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+             VALUES (2, ?1, 'Sam')",
+            params![peer],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
+            params![&account],
+        )
+        .unwrap();
+
+        // Unrelated conversation should not be counted.
+        let other =
+            account_profile::link_account_handle(&conn, &account, "+15555550999", HandleType::Phone)
+                .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, source_file
+             ) VALUES (9, ?1, ?2, 'iMessage', 'individual', 'other.jsonl')",
+            params![&account, other],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (9, ?1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'nope')",
+            params![&account],
+        )
+        .unwrap();
+
+        let detail = get_contact_detail(&conn, &account, contact_id)
+            .unwrap()
+            .expect("contact exists");
+        assert_eq!(detail.name, "Sam");
+        assert_eq!(detail.direct_conversations, 1);
+        assert_eq!(detail.group_conversations, 1);
+        assert_eq!(detail.total_messages, 3);
+        assert_eq!(detail.handles.len(), 1);
+        assert!(
+            detail.handles[0].handle.contains("5555550200")
+                || detail.handles[0].handle.contains("+15555550200"),
+            "handle={:?}",
+            detail.handles[0].handle
+        );
     }
 }

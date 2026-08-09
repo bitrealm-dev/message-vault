@@ -19,7 +19,6 @@ interface Contact {
   name: string;
   handle_count: number;
   handles?: string[];
-  last_message_at: string | null;
 }
 
 type ContactsPage = {
@@ -326,11 +325,6 @@ export default function ContactList({
                   </div>
                 )}
               </div>
-              {c.last_message_at && (
-                <div style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
-                  {new Date(c.last_message_at).toLocaleDateString()}
-                </div>
-              )}
             </button>
           );
         }}
