@@ -53,12 +53,73 @@ struct RawConversation {
     date_range_end: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConversationTypeFilter {
+    Direct,
+    Group,
+}
+
+#[derive(Debug, Default)]
+struct ConversationListQuery {
+    trash_only: bool,
+    handle: Option<String>,
+    contact_id: Option<i64>,
+    type_filter: Option<ConversationTypeFilter>,
+    text: Option<String>,
+}
+
+/// Parse space-separated tokens from `q`.
+///
+/// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
+/// `contact:<id>`. Remaining tokens become a free-text filter.
+fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
+    let mut out = ConversationListQuery::default();
+    let mut text_parts: Vec<&str> = Vec::new();
+
+    for token in q.split_whitespace() {
+        let lower = token.to_ascii_lowercase();
+        if lower == "is:trash" {
+            out.trash_only = true;
+        } else if lower == "is:direct" {
+            out.type_filter = Some(ConversationTypeFilter::Direct);
+        } else if lower == "is:group" {
+            out.type_filter = Some(ConversationTypeFilter::Group);
+        } else if let Some(rest) = token
+            .strip_prefix("handle:")
+            .or_else(|| token.strip_prefix("HANDLE:"))
+        {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                out.handle = Some(rest.to_string());
+            }
+        } else if let Some((_, id_part)) = token.split_once(':') {
+            if lower.starts_with("contact:") {
+                if let Ok(id) = id_part.trim().parse::<i64>() {
+                    out.contact_id = Some(id);
+                }
+            } else {
+                text_parts.push(token);
+            }
+        } else {
+            text_parts.push(token);
+        }
+    }
+
+    let text = text_parts.join(" ");
+    if !text.is_empty() {
+        out.text = Some(text);
+    }
+    out
+}
+
 /// List conversations for the account, newest first (paged).
 ///
-/// Supported `q` values:
+/// Supported `q` tokens (combinable except free text with structured filters):
 /// - empty / whitespace: all non-trashed conversations with at least one message
 /// - `is:trash`: only trashed conversations
 /// - `handle:<raw>`: conversations involving that handle (chat or participant)
+/// - `contact:<id>`: conversations involving any handle of that contact
+/// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
 pub fn list_conversations(
     conn: &Connection,
@@ -70,24 +131,12 @@ pub fn list_conversations(
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
     let offset = offset;
 
-    let q = q.trim();
-    let trash_only = q.eq_ignore_ascii_case("is:trash");
-    let handle_filter = q
-        .strip_prefix("handle:")
-        .or_else(|| q.strip_prefix("HANDLE:"))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let text_filter = if trash_only || handle_filter.is_some() || q.is_empty() {
-        None
-    } else {
-        Some(q.to_string())
-    };
+    let parsed = parse_conversation_list_query(q.trim());
 
     let mut where_parts = vec!["c.account_id = ?1".to_string()];
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
-    if trash_only {
+    if parsed.trash_only {
         where_parts.push(
             "EXISTS (
                SELECT 1 FROM trashed_conversations tc
@@ -121,7 +170,7 @@ pub fn list_conversations(
         .into(),
     );
 
-    if let Some(ref handle) = handle_filter {
+    if let Some(ref handle) = parsed.handle {
         where_parts.push(
             "(hc.raw = ? OR EXISTS (
                 SELECT 1 FROM participants p
@@ -134,7 +183,22 @@ pub fn list_conversations(
         params.push(handle.clone().into());
     }
 
-    if let Some(ref text) = text_filter {
+    if let Some(contact_id) = parsed.contact_id {
+        where_parts.push(crate::contacts_api::involves_contact_sql().into());
+        params.push(contact_id.into());
+    }
+
+    match parsed.type_filter {
+        Some(ConversationTypeFilter::Direct) => {
+            where_parts.push("c.conversation_type = 'individual'".into());
+        }
+        Some(ConversationTypeFilter::Group) => {
+            where_parts.push("c.conversation_type = 'group'".into());
+        }
+        None => {}
+    }
+
+    if let Some(ref text) = parsed.text {
         where_parts.push(
             "(c.group_title LIKE ? OR hc.raw LIKE ? OR EXISTS (
                 SELECT 1 FROM participants p
@@ -475,5 +539,134 @@ mod tests {
         let clamped = list_conversations(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 2);
+    }
+
+    #[test]
+    fn list_conversations_filters_by_contact_and_type() {
+        let (conn, account) = setup();
+        // Link peer handle to a contact.
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let peer_handle_id: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
+                params![&account, "+15555550200"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![&account, peer_handle_id, contact_id],
+        )
+        .unwrap();
+
+        // Unrelated group conversation (no link to Sam).
+        let other =
+            account_profile::link_account_handle(&conn, &account, "+15555550999", HandleType::Phone)
+                .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
+             ) VALUES (9, ?1, ?2, 'iMessage', 'group', 'Other', 'g.jsonl')",
+            params![&account, other],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (9, ?1, 'imessage', '2024-08-01T12:00:00Z', 0, 0, 'group')",
+            params![&account],
+        )
+        .unwrap();
+
+        // Group that includes Sam (distinct chat handle; Sam is a participant).
+        let group_chat = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "chat123456",
+            HandleType::Other,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
+             ) VALUES (3, ?1, ?2, 'iMessage', 'group', 'Sam Group', 'sg.jsonl')",
+            params![&account, group_chat],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+             VALUES (3, ?1, 'Sam')",
+            params![peer_handle_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (3, ?1, 'imessage', '2024-09-01T12:00:00Z', 0, 0, 'hi group')",
+            params![&account],
+        )
+        .unwrap();
+
+        let all = list_conversations(
+            &conn,
+            &account,
+            &format!("contact:{contact_id}"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(all.total, 2);
+        let ids: Vec<&str> = all.conversations.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"1"));
+        assert!(ids.contains(&"3"));
+
+        let direct = list_conversations(
+            &conn,
+            &account,
+            &format!("contact:{contact_id} is:direct"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(direct.total, 1);
+        assert_eq!(direct.conversations[0].id, "1");
+        assert!(!direct.conversations[0].is_group);
+
+        let groups = list_conversations(
+            &conn,
+            &account,
+            &format!("contact:{contact_id} is:group"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(groups.total, 1);
+        assert_eq!(groups.conversations[0].id, "3");
+        assert!(groups.conversations[0].is_group);
+    }
+
+    #[test]
+    fn parse_conversation_list_query_tokens() {
+        let q = parse_conversation_list_query("contact:42 is:direct handle:+15555550100");
+        assert_eq!(q.contact_id, Some(42));
+        assert_eq!(q.type_filter, Some(ConversationTypeFilter::Direct));
+        assert_eq!(q.handle.as_deref(), Some("+15555550100"));
+        assert!(q.text.is_none());
+        assert!(!q.trash_only);
+
+        let trash = parse_conversation_list_query("is:trash");
+        assert!(trash.trash_only);
     }
 }

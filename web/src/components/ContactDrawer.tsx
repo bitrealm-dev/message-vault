@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties } from "react";
 import { apiClient } from "../lib/api";
-import type { Conversation } from "../lib/types";
 import Button from "./Button";
 
 interface ContactDetail {
@@ -25,23 +24,59 @@ export type ContactPreview = {
   handles?: string[];
 };
 
+export type ContactBrowseKind = "all" | "direct" | "group";
+
 const SERVICES = ["phone", "email", "discord", "instagram", "telegram", "signal"];
+
+function inferService(handle: string, service: string | null | undefined): string {
+  if (service && service.trim()) return service.trim().toLowerCase();
+  const h = handle.trim();
+  if (h.includes("@") && !h.startsWith("@")) return "email";
+  if (/^\+?\d[\d\s().-]{6,}$/.test(h)) return "phone";
+  return "unknown";
+}
+
+function yearRangeLabel(
+  handles: ContactDetail["handles"],
+): string | null {
+  let minY: number | null = null;
+  let maxY: number | null = null;
+  for (const h of handles) {
+    if (h.start_date) {
+      const y = new Date(h.start_date).getFullYear();
+      if (!Number.isNaN(y)) minY = minY === null ? y : Math.min(minY, y);
+    }
+    if (h.end_date) {
+      const y = new Date(h.end_date).getFullYear();
+      if (!Number.isNaN(y)) maxY = maxY === null ? y : Math.max(maxY, y);
+    }
+  }
+  if (minY === null && maxY === null) return null;
+  if (minY === null) return String(maxY);
+  if (maxY === null) return String(minY);
+  return minY === maxY ? String(minY) : `${minY}–${maxY}`;
+}
 
 export default function ContactDrawer({
   contactId,
   preview = null,
   onClose,
+  onBrowseConversations,
 }: {
   contactId: string | null;
   preview?: ContactPreview | null;
   onClose: () => void;
+  onBrowseConversations?: (args: {
+    contactId: string;
+    kind: ContactBrowseKind;
+    handles?: string[];
+  }) => void;
 }) {
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const [newHandle, setNewHandle] = useState("");
   const [newService, setNewService] = useState("discord");
-  const [matchResults, setMatchResults] = useState<Conversation[] | null>(null);
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -69,7 +104,6 @@ export default function ContactDrawer({
   };
 
   useEffect(() => {
-    setMatchResults(null);
     setEditingName(false);
     setNewHandle("");
     if (!contactId) {
@@ -115,18 +149,6 @@ export default function ContactDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [contactId, editingName, displayName, onClose]);
 
-  const checkMatches = async () => {
-    if (!newHandle.trim()) return;
-    try {
-      const res = await apiClient.get<{ conversations: Conversation[] }>(
-        `/v1/export/conversations?q=${encodeURIComponent(`handle:${newHandle}`)}&limit=100&offset=0`,
-      );
-      setMatchResults(res.conversations);
-    } catch {
-      setMatchResults([]);
-    }
-  };
-
   const addHandle = async () => {
     if (!newHandle.trim()) return;
     try {
@@ -134,7 +156,6 @@ export default function ContactDrawer({
         add_handle: { handle: newHandle.trim(), service: newService },
       });
       setNewHandle("");
-      setMatchResults(null);
       loadDetail();
     } catch {
       // Leave the input in place so the user can retry
@@ -152,6 +173,35 @@ export default function ContactDrawer({
         end_date: null,
         message_count: 0,
       })) ?? [];
+
+  const years = detailMatches ? yearRangeLabel(detail!.handles) : null;
+  const totalMessages = detailMatches ? detail!.total_messages : null;
+  const directCount = detailMatches ? detail!.direct_conversations : null;
+  const groupCount = detailMatches ? detail!.group_conversations : null;
+
+  const browse = (kind: ContactBrowseKind) => {
+    if (!onBrowseConversations || !contactId) return;
+    onBrowseConversations({
+      contactId,
+      kind,
+      handles: handleRows.map((h) => h.handle).filter(Boolean),
+    });
+  };
+
+  const browseLinkStyle: CSSProperties = {
+    background: "none",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    fontWeight: 600,
+    color: "var(--accent)",
+    cursor: onBrowseConversations ? "pointer" : "default",
+    textAlign: "left",
+    display: "block",
+    marginBottom: "0.25rem",
+    textDecoration: "none",
+  };
 
   return (
     <>
@@ -193,7 +243,7 @@ export default function ContactDrawer({
                 fontWeight: 600,
                 padding: "0.25rem",
                 width: "100%",
-                background: "var(--bg)",
+                backgroundColor: "var(--elevated)",
                 color: "var(--text)",
                 border: "1px solid var(--border)",
                 borderRadius: "4px",
@@ -225,22 +275,39 @@ export default function ContactDrawer({
             {loading ? "Loading…" : "No handles"}
           </div>
         ) : (
-          handleRows.map((h, i) => (
-            <div key={`${h.handle}-${i}`} style={{ marginBottom: "0.5rem", fontSize: "0.875rem" }}>
-              <div style={{ fontWeight: 500 }}>{h.handle}</div>
-              {(h.service || h.start_date || h.message_count > 0) && (
-                <div style={{ color: "var(--muted)" }}>
-                  {h.service}
-                  {h.start_date && ` · ${new Date(h.start_date).getFullYear()}–${h.end_date ? new Date(h.end_date).getFullYear() : "present"}`}
-                  {h.message_count > 0 && ` · ${h.message_count} messages`}
-                </div>
-              )}
-            </div>
-          ))
+          <div style={{ marginBottom: "0.75rem" }}>
+            {handleRows.map((h, i) => (
+              <div
+                key={`${h.handle}-${i}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                  padding: "0.375rem 0",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: "0.875rem",
+                }}
+              >
+                <span style={{ color: "var(--muted)", minWidth: "5.5rem", flexShrink: 0 }}>
+                  {inferService(h.handle, h.service)}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {h.handle}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
 
-        <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", margin: "1rem 0 0.5rem" }}>Add Handle</h3>
-        <div style={{ display: "flex", gap: "0.375rem" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            flexWrap: "wrap",
+            marginBottom: "0.35rem",
+            alignItems: "center",
+          }}
+        >
           <select
             value={newService}
             onChange={(e) => setNewService(e.target.value)}
@@ -260,7 +327,12 @@ export default function ContactDrawer({
             type="text"
             value={newHandle}
             onChange={(e) => setNewHandle(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") checkMatches(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addHandle();
+              }
+            }}
             placeholder="user#1234, @handle…"
             style={{
               flex: 1,
@@ -273,39 +345,61 @@ export default function ContactDrawer({
               color: "var(--text)",
             }}
           />
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-          <Button
-            onClick={checkMatches}
-            disabled={!newHandle.trim()}
-            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
-          >
-            Check matches
-          </Button>
           <Button
             variant="primary"
             onClick={addHandle}
             disabled={!newHandle.trim() || loading}
-            style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
+            style={{ fontSize: "0.813rem", padding: "0.25rem 0.75rem" }}
           >
-            Add handle
+            Add
           </Button>
         </div>
-        {matchResults !== null && matchResults.length > 0 && (
-          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "var(--info-soft-bg)", borderRadius: "4px", fontSize: "0.813rem" }}>
-            We found {matchResults.length} conversation{matchResults.length !== 1 ? "s" : ""} matching {newHandle} on {newService}.
-          </div>
-        )}
 
-        <div style={{ marginTop: "1rem", fontSize: "0.875rem", color: "var(--muted)" }}>
+        <div style={{ marginTop: "1.25rem", fontSize: "0.875rem" }}>
+          <h3
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              marginBottom: "0.35rem",
+            }}
+          >
+            Messages
+          </h3>
           {detailMatches ? (
             <>
-              <div>{detail!.direct_conversations} direct conversation{detail!.direct_conversations !== 1 ? "s" : ""}</div>
-              <div>{detail!.group_conversations} group conversation{detail!.group_conversations !== 1 ? "s" : ""}</div>
-              <div>{detail!.total_messages} total messages</div>
+              {years ? (
+                <div style={{ color: "var(--muted)", marginBottom: "0.5rem" }}>
+                  {years}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="contact-drawer-browse-link"
+                onClick={() => browse("direct")}
+                style={browseLinkStyle}
+              >
+                {directCount} direct conversation{directCount === 1 ? "" : "s"}
+              </button>
+              <button
+                type="button"
+                className="contact-drawer-browse-link"
+                onClick={() => browse("group")}
+                style={browseLinkStyle}
+              >
+                {groupCount} group conversation{groupCount === 1 ? "" : "s"}
+              </button>
+              <button
+                type="button"
+                className="contact-drawer-browse-link"
+                onClick={() => browse("all")}
+                style={{ ...browseLinkStyle, marginBottom: 0 }}
+              >
+                {totalMessages} total message{totalMessages === 1 ? "" : "s"}
+              </button>
             </>
           ) : (
-            <div>Loading details…</div>
+            <div style={{ color: "var(--muted)" }}>Loading details…</div>
           )}
         </div>
       </div>

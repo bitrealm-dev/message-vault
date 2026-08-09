@@ -53,7 +53,9 @@ pub struct ContactDetail {
 
 /// A contact is linked to a conversation when one of its handles is either
 /// the conversation's chat handle or a participant handle in it.
-fn involves_contact_sql() -> &'static str {
+///
+/// Expects one bind parameter: `contact_id` (i64). Alias `c` = conversations.
+pub(crate) fn involves_contact_sql() -> &'static str {
     "EXISTS (
        SELECT 1 FROM contact_handles ch
        WHERE ch.account_id = c.account_id

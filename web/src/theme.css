@@ -261,3 +261,8 @@ button.btn-link {
   color: var(--accent);
   text-decoration: underline;
 }
+
+button.contact-drawer-browse-link:hover,
+button.contact-drawer-browse-link:focus-visible {
+  text-decoration: underline;
+}

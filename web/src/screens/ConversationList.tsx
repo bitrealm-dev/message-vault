@@ -31,6 +31,11 @@ export default function ConversationList({
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
 
   useEffect(() => {
+    // Structured filters should apply immediately (no debounce flicker/empty wait).
+    if (/\b(contact:|handle:|is:direct|is:group|is:trash)\b/i.test(query)) {
+      setDebouncedQ(query);
+      return;
+    }
     const t = window.setTimeout(() => setDebouncedQ(query), QUERY_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [query]);
