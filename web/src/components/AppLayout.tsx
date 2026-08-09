@@ -13,9 +13,7 @@ import ImportScreen from "../screens/ImportScreen";
 import ExportScreen from "../screens/ExportScreen";
 import TrashScreen from "../screens/TrashScreen";
 import SettingsScreen from "../screens/SettingsScreen";
-import ImportHistoryScreen from "../screens/ImportHistoryScreen";
 import MessageView from "../screens/MessageView";
-import SearchResults from "../screens/SearchResults";
 import type { Conversation } from "../lib/types";
 
 function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string {
@@ -50,18 +48,13 @@ export default function AppLayout() {
    * Kept separate so contact ids never appear in the search field.
    */
   const [conversationFilter, setConversationFilter] = useState("");
-  const [searchActive, setSearchActive] = useState(false);
-  const [findTerm, setFindTerm] = useState("");
   const [autoSelect, setAutoSelect] = useState<ConversationAutoSelect | null>(null);
-  const [exportScope] = useState<"all" | "current-view" | "selected">("all");
 
   const contactsMode = activeView === "contacts";
   const searchQuery = contactsMode ? contactSearch : conversationSearch;
 
   const handleNavigate = (view: string) => {
     setActiveView(view);
-    // Message-search results only apply on the conversations view.
-    if (view !== "conversations") setSearchActive(false);
   };
 
   const handleSearch = (q: string) => {
@@ -70,14 +63,10 @@ export default function AppLayout() {
     if (isContactSearch) {
       setContactSearch(q);
       setActiveView("contacts");
-      setSearchActive(false);
     } else {
       setConversationFilter("");
       setConversationSearch(q);
       setActiveView("conversations");
-      // Filter the conversation list — do not switch to message SearchResults
-      // (that path calls an unsupported API and blanked the panel).
-      setSearchActive(false);
       setAutoSelect(null);
     }
   };
@@ -90,13 +79,6 @@ export default function AppLayout() {
     setConversationFilter("");
     setConversationSearch(q);
     setAutoSelect(null);
-    if (!q.trim()) setSearchActive(false);
-  };
-
-  const handleSelectResult = (conversation: Conversation, term: string) => {
-    setSelectedConversation(conversation);
-    setActiveView("conversations");
-    setFindTerm(term);
   };
 
   const handleBrowseContactConversations = ({
@@ -115,8 +97,6 @@ export default function AppLayout() {
     setActiveView("conversations");
     setConversationSearch(visible);
     setConversationFilter(apiQuery);
-    setSearchActive(false);
-    setFindTerm("");
     setSelectedConversation(null);
     setAutoSelect(kind === "direct" ? "first" : "sole");
   };
@@ -133,21 +113,17 @@ export default function AppLayout() {
 
   const listContent =
     activeView === "conversations" || activeView === "trash" ? (
-      searchActive && conversationSearch.trim() && activeView === "conversations" ? (
-        <SearchResults query={conversationSearch} onSelectResult={handleSelectResult} />
-      ) : (
-        <ConversationList
-          selectedId={selectedConversation?.id || null}
-          onSelect={(c) => {
-            setSelectedConversation(c);
-            setActiveView("conversations");
-            setAutoSelect(null);
-          }}
-          query={conversationListQuery}
-          autoSelect={autoSelect}
-          onAutoSelectDone={() => setAutoSelect(null)}
-        />
-      )
+      <ConversationList
+        selectedId={selectedConversation?.id || null}
+        onSelect={(c) => {
+          setSelectedConversation(c);
+          setActiveView("conversations");
+          setAutoSelect(null);
+        }}
+        query={conversationListQuery}
+        autoSelect={autoSelect}
+        onAutoSelectDone={() => setAutoSelect(null)}
+      />
     ) : activeView === "contacts" ? (
       <ContactList
         filter={contactSearch}
@@ -166,7 +142,6 @@ export default function AppLayout() {
             onOpenContact={(contactId: string) =>
               setSelectedContact({ id: contactId, name: "Loading…", handles: [] })
             }
-            initialFindTerm={findTerm}
           />
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)", fontSize: "0.875rem" }}>
@@ -181,8 +156,7 @@ export default function AppLayout() {
         );
       case "trash": return <TrashScreen />;
       case "import": return <ImportScreen />;
-      case "import-history": return <ImportHistoryScreen />;
-      case "export": return <ExportScreen scope={exportScope} selectedCount={0} />;
+      case "export": return <ExportScreen />;
       case "settings":
       case "profile":
         return <SettingsScreen />;

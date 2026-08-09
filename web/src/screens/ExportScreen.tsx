@@ -7,7 +7,6 @@ import PathPicker from "../components/PathPicker";
 import StepProgress from "../components/StepProgress";
 import Button from "../components/Button";
 
-type ExportScope = "all" | "current-view" | "selected";
 const FORMATS = ["jsonl", "json", "csv"];
 
 interface ExportStep {
@@ -16,13 +15,7 @@ interface ExportStep {
   detail?: string;
 }
 
-export default function ExportScreen({
-  scope,
-  selectedCount,
-}: {
-  scope: ExportScope;
-  selectedCount: number;
-}) {
+export default function ExportScreen() {
   const { token } = useAuth();
   const [savePath, setSavePath] = useState("");
   const [format, setFormat] = useState("jsonl");
@@ -35,11 +28,6 @@ export default function ExportScreen({
   const [log, setLog] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
-
-  const scopeLabel =
-    scope === "all" ? "entire vault" :
-    scope === "current-view" ? "current view" :
-    `${selectedCount} conversation${selectedCount !== 1 ? "s" : ""}`;
 
   const startExport = async () => {
     if (!token) {
@@ -59,13 +47,12 @@ export default function ExportScreen({
       if (isTauri()) {
         const { invokePull } = await import("../lib/tauri");
         const baseUrl = getBaseUrl();
-        const query = scope === "all" ? "" : "";
         await invokePull({
           base_url: baseUrl,
           username: "",
           key: token,
           out_dir: savePath,
-          query,
+          query: "",
           skip_attachments: false,
         });
       } else {
@@ -120,7 +107,7 @@ export default function ExportScreen({
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Export</h2>
 
       <p style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
-        Exporting {scopeLabel}
+        Exporting entire vault
       </p>
 
       <FormRow label="Save to">

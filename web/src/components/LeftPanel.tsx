@@ -33,7 +33,6 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
-  const [showExportPopover, setShowExportPopover] = useState(false);
 
   return (
     <div style={{
@@ -60,34 +59,9 @@ export default function LeftPanel({
           <button style={linkStyle("import")} onClick={() => onNavigate("import")}>
             Import
           </button>
-          <div style={{ position: "relative" }}>
-            <button
-              style={linkStyle("export")}
-              onClick={() => setShowExportPopover(!showExportPopover)}
-            >
-              Export
-            </button>
-            {showExportPopover && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0,
-                background: "var(--elevated)", border: "1px solid var(--border)", borderRadius: "6px",
-                boxShadow: "0 4px 12px var(--scrim)", zIndex: 80, padding: "0.25rem",
-              }}>
-                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
-                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px", color: "var(--text)" }}>
-                  Export entire vault
-                </button>
-                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
-                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px", color: "var(--text)" }}>
-                  Export current view
-                </button>
-                <button onClick={() => { onNavigate("export"); setShowExportPopover(false); }}
-                  style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "0.375rem 0.5rem", fontSize: "0.813rem", cursor: "pointer", borderRadius: "4px", color: "var(--text)" }}>
-                  Export selected
-                </button>
-              </div>
-            )}
-          </div>
+          <button style={linkStyle("export")} onClick={() => onNavigate("export")}>
+            Export
+          </button>
         </div>
       )}
 

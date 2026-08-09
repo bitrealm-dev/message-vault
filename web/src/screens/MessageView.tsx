@@ -11,11 +11,9 @@ const PAGE_SIZE = 50;
 export default function MessageView({
   conversation,
   onOpenContact,
-  initialFindTerm,
 }: {
   conversation: Conversation;
   onOpenContact?: (contactId: string) => void;
-  initialFindTerm?: string;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);
@@ -93,14 +91,6 @@ export default function MessageView({
   useEffect(() => {
     fetchPage(0);
   }, [fetchPage]);
-
-  // Pre-fill the find bar when arriving from a search result
-  useEffect(() => {
-    if (initialFindTerm) {
-      setFindTerm(initialFindTerm);
-      setActiveMatch(0);
-    }
-  }, [initialFindTerm, conversation.id]);
 
   const headerParticipants = messages[0]?.conversation.participants || [];
 
