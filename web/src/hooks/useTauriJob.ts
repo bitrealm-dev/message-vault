@@ -11,12 +11,15 @@ export function useTauriJob(options?: {
   onError?: (msg: string) => void;
 }): {
   running: boolean;
+  /** True after a successful `extract:finished` for the current run. */
+  finished: boolean;
   log: string[];
   start: (invokeFn: () => Promise<void>, startErrorLabel: string) => Promise<void>;
   cancel: () => Promise<void>;
 } {
   const onError = options?.onError;
   const [running, setRunning] = useState(false);
+  const [finished, setFinished] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -31,6 +34,7 @@ export function useTauriJob(options?: {
     async (invokeFn: () => Promise<void>, startErrorLabel: string) => {
       tearDown();
       setRunning(true);
+      setFinished(false);
       setLog([]);
 
       unlistenRef.current = await onExtractEvents({
@@ -40,6 +44,7 @@ export function useTauriJob(options?: {
         onFinished: (summary) => {
           setLog((prev) => [...prev, summary]);
           setRunning(false);
+          setFinished(true);
           tearDown();
         },
         onError: (err) => {
@@ -49,6 +54,7 @@ export function useTauriJob(options?: {
             return next;
           });
           setRunning(false);
+          setFinished(false);
           onError?.(err.user_message ?? err.detail);
           tearDown();
         },
@@ -59,6 +65,7 @@ export function useTauriJob(options?: {
       } catch (err) {
         setLog((prev) => [...prev, `${startErrorLabel}: ${err}`]);
         setRunning(false);
+        setFinished(false);
         tearDown();
       }
     },
@@ -69,5 +76,5 @@ export function useTauriJob(options?: {
     await invokeCancel();
   }, []);
 
-  return { running, log, start, cancel };
+  return { running, finished, log, start, cancel };
 }
