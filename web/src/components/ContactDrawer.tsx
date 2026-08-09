@@ -8,7 +8,7 @@ interface ContactDetail {
   name: string;
   handles: {
     handle: string;
-    service: string;
+    service: string | null;
     start_date: string | null;
     end_date: string | null;
     message_count: number;
@@ -18,39 +18,87 @@ interface ContactDetail {
   total_messages: number;
 }
 
+/** Lightweight row data so the drawer can paint before the detail API returns. */
+export type ContactPreview = {
+  id: string;
+  name: string;
+  handles?: string[];
+};
+
 const SERVICES = ["phone", "email", "discord", "instagram", "telegram", "signal"];
 
 export default function ContactDrawer({
   contactId,
+  preview = null,
   onClose,
 }: {
   contactId: string | null;
+  preview?: ContactPreview | null;
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState(detail?.name ?? "");
+  const [nameValue, setNameValue] = useState("");
   const [newHandle, setNewHandle] = useState("");
   const [newService, setNewService] = useState("discord");
   const [matchResults, setMatchResults] = useState<Conversation[] | null>(null);
+
+  const detailMatches =
+    !!contactId && !!detail && String(detail.id) === String(contactId);
+  const previewMatches =
+    !!contactId && !!preview && String(preview.id) === String(contactId);
+
+  const displayName = detailMatches
+    ? detail!.name
+    : previewMatches
+      ? preview!.name
+      : "Loading…";
+  const loading = !detailMatches;
 
   const loadDetail = () => {
     if (!contactId) return;
     apiClient
       .get<ContactDetail>(`/v1/export/contacts/${contactId}`)
-      .then(setDetail)
-      .catch(() => setDetail(null));
+      .then((next) => {
+        if (String(next.id) !== String(contactId)) return;
+        setDetail(next);
+      })
+      .catch(() => {
+        /* keep preview; detail stays unset */
+      });
   };
 
   useEffect(() => {
-    loadDetail();
+    setMatchResults(null);
+    setEditingName(false);
+    setNewHandle("");
+    if (!contactId) {
+      setDetail(null);
+      return;
+    }
+
+    // Keep detail only when re-selecting the same contact (instant reopen).
+    setDetail((prev) =>
+      prev && String(prev.id) === String(contactId) ? prev : null,
+    );
+
+    const ac = new AbortController();
+    apiClient
+      .get<ContactDetail>(`/v1/export/contacts/${contactId}`, { signal: ac.signal })
+      .then((next) => {
+        if (ac.signal.aborted) return;
+        setDetail(next);
+      })
+      .catch(() => {
+        /* aborted or failed — preview still shown */
+      });
+    return () => ac.abort();
   }, [contactId]);
 
-  // Sync when detail changes (new contact selected)
   useEffect(() => {
-    setNameValue(detail?.name ?? "");
+    setNameValue(displayName === "Loading…" ? "" : displayName);
     setEditingName(false);
-  }, [detail?.name]);
+  }, [displayName, contactId]);
 
   useEffect(() => {
     if (!contactId) return;
@@ -58,14 +106,14 @@ export default function ContactDrawer({
       if (e.key !== "Escape") return;
       if (editingName) {
         setEditingName(false);
-        setNameValue(detail?.name ?? "");
+        setNameValue(displayName === "Loading…" ? "" : displayName);
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [contactId, editingName, detail?.name, onClose]);
+  }, [contactId, editingName, displayName, onClose]);
 
   const checkMatches = async () => {
     if (!newHandle.trim()) return;
@@ -93,7 +141,17 @@ export default function ContactDrawer({
     }
   };
 
-  if (!contactId || !detail) return null;
+  if (!contactId) return null;
+
+  const handleRows: ContactDetail["handles"] = detailMatches
+    ? detail!.handles
+    : (previewMatches ? preview!.handles : undefined)?.map((h) => ({
+        handle: h,
+        service: null,
+        start_date: null,
+        end_date: null,
+        message_count: 0,
+      })) ?? [];
 
   return (
     <>
@@ -105,8 +163,8 @@ export default function ContactDrawer({
         background: "var(--panel)", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
         overflow: "auto", padding: "1.5rem",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
-          {editingName ? (
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem", gap: "0.5rem" }}>
+          {editingName && detailMatches ? (
             <input
               type="text"
               value={nameValue}
@@ -119,11 +177,11 @@ export default function ContactDrawer({
                 } else if (e.key === "Escape") {
                   e.stopPropagation();
                   setEditingName(false);
-                  setNameValue(detail.name);
+                  setNameValue(detail!.name);
                 }
               }}
               onBlur={async () => {
-                if (nameValue !== detail.name) {
+                if (nameValue !== detail!.name) {
                   await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
                   loadDetail();
                 }
@@ -143,27 +201,43 @@ export default function ContactDrawer({
             />
           ) : (
             <h2
-              onClick={() => setEditingName(true)}
-              style={{ margin: 0, fontSize: "1.125rem", cursor: "pointer" }}
-              title="Click to edit"
+              onClick={() => {
+                if (detailMatches) setEditingName(true);
+              }}
+              style={{
+                margin: 0,
+                fontSize: "1.125rem",
+                cursor: detailMatches ? "pointer" : "default",
+                minWidth: 0,
+              }}
+              title={detailMatches ? "Click to edit" : undefined}
             >
-              {detail.name} ✎
+              {displayName}
+              {detailMatches ? " ✎" : null}
             </h2>
           )}
-          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)" }}>×</button>
+          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)", flexShrink: 0 }}>×</button>
         </div>
 
         <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>Handles</h3>
-        {detail.handles.map((h, i) => (
-          <div key={i} style={{ marginBottom: "0.5rem", fontSize: "0.875rem" }}>
-            <div style={{ fontWeight: 500 }}>{h.handle}</div>
-            <div style={{ color: "var(--muted)" }}>
-              {h.service}
-              {h.start_date && ` · ${new Date(h.start_date).getFullYear()}–${h.end_date ? new Date(h.end_date).getFullYear() : "present"}`}
-              {h.message_count > 0 && ` · ${h.message_count} messages`}
-            </div>
+        {handleRows.length === 0 ? (
+          <div style={{ fontSize: "0.813rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+            {loading ? "Loading…" : "No handles"}
           </div>
-        ))}
+        ) : (
+          handleRows.map((h, i) => (
+            <div key={`${h.handle}-${i}`} style={{ marginBottom: "0.5rem", fontSize: "0.875rem" }}>
+              <div style={{ fontWeight: 500 }}>{h.handle}</div>
+              {(h.service || h.start_date || h.message_count > 0) && (
+                <div style={{ color: "var(--muted)" }}>
+                  {h.service}
+                  {h.start_date && ` · ${new Date(h.start_date).getFullYear()}–${h.end_date ? new Date(h.end_date).getFullYear() : "present"}`}
+                  {h.message_count > 0 && ` · ${h.message_count} messages`}
+                </div>
+              )}
+            </div>
+          ))
+        )}
 
         <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", margin: "1rem 0 0.5rem" }}>Add Handle</h3>
         <div style={{ display: "flex", gap: "0.375rem" }}>
@@ -211,7 +285,7 @@ export default function ContactDrawer({
           <Button
             variant="primary"
             onClick={addHandle}
-            disabled={!newHandle.trim()}
+            disabled={!newHandle.trim() || loading}
             style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
           >
             Add handle
@@ -224,9 +298,15 @@ export default function ContactDrawer({
         )}
 
         <div style={{ marginTop: "1rem", fontSize: "0.875rem", color: "var(--muted)" }}>
-          <div>{detail.direct_conversations} direct conversation{detail.direct_conversations !== 1 ? "s" : ""}</div>
-          <div>{detail.group_conversations} group conversation{detail.group_conversations !== 1 ? "s" : ""}</div>
-          <div>{detail.total_messages} total messages</div>
+          {detailMatches ? (
+            <>
+              <div>{detail!.direct_conversations} direct conversation{detail!.direct_conversations !== 1 ? "s" : ""}</div>
+              <div>{detail!.group_conversations} group conversation{detail!.group_conversations !== 1 ? "s" : ""}</div>
+              <div>{detail!.total_messages} total messages</div>
+            </>
+          ) : (
+            <div>Loading details…</div>
+          )}
         </div>
       </div>
     </>

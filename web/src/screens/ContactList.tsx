@@ -9,6 +9,8 @@ import {
 } from "../lib/usePagedList";
 
 const FILTER_DEBOUNCE_MS = 300;
+/** Fixed row height keeps virtualization slots aligned with flex-centered content. */
+const CONTACT_ROW_HEIGHT = 49;
 
 interface Contact {
   id: string;
@@ -201,7 +203,9 @@ export default function ContactList({
       </div>
       <VirtualList
         count={displayContacts.length}
-        estimateSize={56}
+        estimateSize={CONTACT_ROW_HEIGHT}
+        // Expanded filter subtitles need dynamic measure; plain rows stay fixed.
+        dynamicSize={filterActive}
         onVisibleRangeChange={setVisibleRange}
         empty={
           !loading ? (
@@ -229,6 +233,9 @@ export default function ContactList({
                 alignItems: "center",
                 gap: "0.625rem",
                 width: "100%",
+                height: filterActive ? "auto" : "100%",
+                minHeight: filterActive ? CONTACT_ROW_HEIGHT : undefined,
+                boxSizing: "border-box",
                 textAlign: "left",
                 border: "none",
                 background: "transparent",
@@ -240,11 +247,13 @@ export default function ContactList({
             >
               <span
                 style={{
-                  width: "2.5rem",
+                  width: 28,
+                  height: 28,
                   flexShrink: 0,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  alignSelf: "center",
                 }}
               >
                 <ContactInitialCircle

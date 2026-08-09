@@ -20,6 +20,11 @@ export type VisibleRange = {
 type VirtualListProps = {
   count: number;
   estimateSize?: number;
+  /**
+   * When false (default), every row uses `estimateSize` exactly — avoids scroll
+   * drift from measureElement on uniform lists. Set true only when row heights vary.
+   */
+  dynamicSize?: boolean;
   overscan?: number;
   onVisibleRangeChange?: (range: VisibleRange) => void;
   renderItem: (index: number, virtualRow: VirtualItem) => ReactNode;
@@ -57,6 +62,7 @@ function rangeFromVirtualItems(
 export default function VirtualList({
   count,
   estimateSize = 56,
+  dynamicSize = false,
   overscan = 10,
   onVisibleRangeChange,
   renderItem,
@@ -167,13 +173,15 @@ export default function VirtualList({
           <div
             key={virtualRow.key}
             data-index={virtualRow.index}
-            ref={virtualizer.measureElement}
+            ref={dynamicSize ? virtualizer.measureElement : undefined}
             style={{
               position: "absolute",
               top: 0,
               left: 0,
               width: "100%",
+              height: dynamicSize ? undefined : `${estimateSize}px`,
               transform: `translateY(${virtualRow.start}px)`,
+              boxSizing: "border-box",
             }}
           >
             {renderItem(virtualRow.index, virtualRow)}

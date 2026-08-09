@@ -3,7 +3,7 @@ import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import ConversationList from "../screens/ConversationList";
 import ContactList from "../screens/ContactList";
-import ContactDrawer from "./ContactDrawer";
+import ContactDrawer, { type ContactPreview } from "./ContactDrawer";
 import ImportScreen from "../screens/ImportScreen";
 import ExportScreen from "../screens/ExportScreen";
 import TrashScreen from "../screens/TrashScreen";
@@ -16,7 +16,7 @@ import type { Conversation } from "../lib/types";
 export default function AppLayout() {
   const [activeView, setActiveView] = useState("conversations");
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActive, setSearchActive] = useState(false);
   const [findTerm, setFindTerm] = useState("");
@@ -60,7 +60,9 @@ export default function AppLayout() {
     ) : activeView === "contacts" ? (
       <ContactList
         filter={searchQuery}
-        onSelect={(c) => setSelectedContactId(c.id)}
+        onSelect={(c) =>
+          setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
+        }
       />
     ) : null;
 
@@ -70,7 +72,9 @@ export default function AppLayout() {
         return selectedConversation ? (
           <MessageView
             conversation={selectedConversation}
-            onOpenContact={(contactId: string) => setSelectedContactId(contactId)}
+            onOpenContact={(contactId: string) =>
+              setSelectedContact({ id: contactId, name: "Loading…", handles: [] })
+            }
             initialFindTerm={findTerm}
           />
         ) : (
@@ -116,7 +120,11 @@ export default function AppLayout() {
       <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
         {mainContent()}
       </main>
-      <ContactDrawer contactId={selectedContactId} onClose={() => setSelectedContactId(null)} />
+      <ContactDrawer
+        contactId={selectedContact?.id ?? null}
+        preview={selectedContact}
+        onClose={() => setSelectedContact(null)}
+      />
     </div>
   );
 }

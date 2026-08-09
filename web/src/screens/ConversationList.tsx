@@ -94,6 +94,7 @@ export default function ConversationList({
       <VirtualList
         count={conversations.length}
         estimateSize={64}
+        dynamicSize={false}
         onVisibleRangeChange={setVisibleRange}
         empty={
           !loading ? (

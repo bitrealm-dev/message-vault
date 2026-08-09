@@ -96,10 +96,18 @@ export default function ConversationRow({
     <button
       onClick={onClick}
       style={{
-        display: "flex", width: "100%", textAlign: "left", border: "none",
+        display: "flex",
+        width: "100%",
+        height: "100%",
+        boxSizing: "border-box",
+        textAlign: "left",
+        border: "none",
         background: isSelected ? "var(--hover)" : "transparent",
-        padding: "0.5rem 0.75rem", cursor: "pointer",
-        borderBottom: "1px solid var(--border)", gap: "0.5rem", alignItems: "flex-start",
+        padding: "0.5rem 0.75rem",
+        cursor: "pointer",
+        borderBottom: "1px solid var(--border)",
+        gap: "0.5rem",
+        alignItems: "center",
       }}
     >
       {onCheckChange && (
