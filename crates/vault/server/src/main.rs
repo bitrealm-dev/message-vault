@@ -141,13 +141,13 @@ enum Commands {
         config: PathBuf,
     },
 
-    /// Generate browser-friendly derived media under assets_converted/
+    /// Convert media under assets/ into browser previews under assets_converted/
     ProcessAssets {
         /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
         config: PathBuf,
 
-        /// Re-derive even when a derived file already exists
+        /// Re-convert even when a browser preview already exists
         #[arg(long)]
         force: bool,
 
@@ -245,11 +245,23 @@ fn main() -> Result<()> {
             if stats.import.mode == "append" {
                 println!("  messages appended: {}", stats.import.messages_appended);
             }
-            println!("  attachments:   {}", stats.import.attachments);
+            println!(
+                "  attachment records: {} (message↔media links in the database)",
+                stats.import.attachments
+            );
             println!("  tapbacks:      {}", stats.import.tapbacks);
-            println!("  assets copied: {}", stats.import.assets_copied);
-            println!("  assets deduped:{}", stats.import.assets_deduped);
-            println!("  assets missing:{}", stats.import.assets_missing);
+            println!(
+                "  media files stored:  {} (unique blobs under assets/)",
+                stats.import.assets_copied
+            );
+            println!(
+                "  media files reused:  {} (same content hash already on disk)",
+                stats.import.assets_deduped
+            );
+            println!(
+                "  media files missing: {} (attachment path not found on disk)",
+                stats.import.assets_missing
+            );
             if stats.import.phones_needing_review > 0 {
                 println!(
                     "  phones needing review: {} (ambiguous numbers — fix them in the vault)",
@@ -257,13 +269,25 @@ fn main() -> Result<()> {
                 );
             }
             if let Some(d) = stats.dedupe {
-                println!("Cross-source dedupe");
-                println!("  keys filled:   {}", d.keys_filled);
-                println!("  exact groups:  {}", d.exact_groups);
-                println!("  exact flagged: {}", d.exact_flagged);
-                println!("  near flagged:  {}", d.near_flagged);
+                println!("Cross-source soft-dedupe (hide the same SMS across sources)");
+                println!(
+                    "  fingerprints set:   {} (one per message; not a duplicate count)",
+                    d.keys_filled
+                );
+                println!(
+                    "  exact duplicate groups: {}",
+                    d.exact_groups
+                );
+                println!(
+                    "  exact duplicates hidden: {}",
+                    d.exact_flagged
+                );
+                println!(
+                    "  near duplicates flagged: {}",
+                    d.near_flagged
+                );
             } else {
-                println!("Cross-source dedupe skipped (--skip-dedupe)");
+                println!("Cross-source soft-dedupe skipped (--skip-dedupe)");
             }
         }
 
@@ -300,10 +324,13 @@ fn main() -> Result<()> {
             );
 
             let stats = dedupe::run_dedupe(&db, &account, window_secs)?;
-            println!("  keys filled:  {}", stats.keys_filled);
-            println!("  exact groups: {}", stats.exact_groups);
-            println!("  exact flagged:{}", stats.exact_flagged);
-            println!("  near flagged: {}", stats.near_flagged);
+            println!(
+                "  fingerprints set:   {} (one per message; not a duplicate count)",
+                stats.keys_filled
+            );
+            println!("  exact duplicate groups: {}", stats.exact_groups);
+            println!("  exact duplicates hidden: {}", stats.exact_flagged);
+            println!("  near duplicates flagged: {}", stats.near_flagged);
         }
 
         Commands::ImportContacts {
@@ -345,19 +372,48 @@ fn main() -> Result<()> {
             println!();
             println!("Demo reset complete");
             if stats.seed.messages > 0 {
-                println!("  generated msgs:  {}", stats.seed.messages);
+                println!("  generated messages: {}", stats.seed.messages);
             }
-            println!("  conversations:   {}", stats.import.conversations);
-            println!("  messages:        {}", stats.import.messages);
-            println!("  attachments:     {}", stats.import.attachments);
-            println!("  tapbacks:        {}", stats.import.tapbacks);
-            println!("  contacts:        {}", stats.import.contacts);
-            println!("  assets copied:   {}", stats.import.assets_copied);
-            println!("  assets missing:  {}", stats.import.assets_missing);
-            println!("  dedupe keys:     {}", stats.dedupe_keys_filled);
-            println!("  derived media:   {}", stats.process_assets.derived);
-            println!("  derive skipped:  {}", stats.process_assets.skipped);
-            println!("  derive errors:   {}", stats.process_assets.errors);
+            println!();
+            println!("Imported into vault");
+            println!("  conversations:        {}", stats.import.conversations);
+            println!("  messages:             {}", stats.import.messages);
+            println!(
+                "  attachment records:    {} (message↔media links; not unique files)",
+                stats.import.attachments
+            );
+            println!("  tapbacks:             {}", stats.import.tapbacks);
+            println!("  contacts:             {}", stats.import.contacts);
+            println!();
+            println!("Media files on disk (assets/)");
+            println!(
+                "  unique files stored:   {} (content-addressed blobs)",
+                stats.import.assets_copied
+            );
+            println!(
+                "  files missing:         {} (referenced by attachments but not found)",
+                stats.import.assets_missing
+            );
+            println!();
+            println!("Duplicate detection across sources");
+            println!(
+                "  fingerprints set:      {} (one per message; used to match the same SMS)",
+                stats.dedupe_keys_filled
+            );
+            println!();
+            println!("Browser previews (assets_converted/; needs ffmpeg)");
+            println!(
+                "  converted for web:     {} (JPEG/MP4/MP3 written)",
+                stats.process_assets.derived
+            );
+            println!(
+                "  left as-is:            {} (already converted, non-media, or small JPEG)",
+                stats.process_assets.skipped
+            );
+            println!(
+                "  conversion failures:   {}",
+                stats.process_assets.errors
+            );
         }
 
         Commands::Serve { config } => {

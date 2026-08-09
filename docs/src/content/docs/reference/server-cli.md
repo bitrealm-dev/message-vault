@@ -48,7 +48,17 @@ HTTP `serve` import is unchanged and still takes `source` as a query parameter.
 
 ## `process-assets`
 
-Generate browser-friendly derived media under `assets_converted/`. Requires ffmpeg.
+Create browser-friendly previews under `assets_converted/` (JPEG / MP4 / MP3) while leaving the originals in `assets/` unchanged. Requires ffmpeg.
+
+**Attachment records vs media files:** an *attachment* is a database row that links a message to media. An *asset* (media file) is the unique on-disk blob under `assets/`, named by content hash. Many attachment records can point at the same file.
+
+Summary counters mean:
+
+| Counter | Meaning |
+|---------|---------|
+| `converted_for_web` | New preview written under `assets_converted/` |
+| `left_as_is` | Already converted, non-media (PDF, etc.), or small JPEG that needs no rewrite |
+| `conversion_failures` | ffmpeg (or related) error for that file |
 
 ```bash
 cargo run --release -- process-assets [--force] [--dry-run] \
@@ -80,6 +90,13 @@ cargo run --release -- reset-demo \
 |------|-------------|
 | `--bundle` | Bundle directory (default `demo`) |
 | `--config` | Config path (default `config/config.toml` — **overwrites** it with the demo config, which comments out `[server]`) |
+
+The final summary groups counters so they are easier to read:
+
+- **Imported into vault** — conversations, messages, attachment records (links), tapbacks, contacts
+- **Media files on disk** — unique blobs stored under `assets/`, plus attachment paths whose files were missing
+- **Duplicate detection** — *fingerprints set* is one fingerprint per message (used later to match the same SMS across sources). It is **not** a count of duplicates found
+- **Browser previews** — how many media files were converted for the web, left unchanged, or failed conversion
 
 After running `reset-demo`, copy `config/config.toml.example` back (or uncomment `[server]`) before running `serve`.
 

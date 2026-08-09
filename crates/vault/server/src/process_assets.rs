@@ -152,7 +152,7 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
     }
 
     println!(
-        "done: scanned={} derived={} skipped={} errors={}{}",
+        "done: scanned={} converted_for_web={} left_as_is={} conversion_failures={}{}",
         stats.scanned,
         stats.derived,
         stats.skipped,

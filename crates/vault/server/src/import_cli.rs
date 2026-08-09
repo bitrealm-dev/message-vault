@@ -181,7 +181,7 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     } else {
         let dedupe_stats = dedupe::run_dedupe(&db_path, &account_id, opts.window_secs)?;
         println!(
-            "  dedupe:       keys_filled={} exact_flagged={} near_flagged={}",
+            "  dedupe:       fingerprints_set={} exact_hidden={} near_flagged={} (fingerprints are one per message, not duplicates)",
             dedupe_stats.keys_filled, dedupe_stats.exact_flagged, dedupe_stats.near_flagged
         );
         Some(dedupe_stats)
