@@ -244,16 +244,8 @@ pub fn push_extract(ui: &AppWindow, state: &AppState) {
     extract.set_attachment_root(SharedString::from(form.attachment_root.as_str()));
     extract.set_conversation_filter(SharedString::from(form.conversation_filter.as_str()));
 
-    let is_whatsapp = exporter == Exporter::Whatsapp;
-    let is_imessage = exporter == Exporter::Imessage;
-    let is_imazing = exporter == Exporter::Imazing;
-    let is_sms_backup_plus = exporter == Exporter::SmsBackupPlus;
-    let needs_owner_phones = matches!(
-        exporter,
-        Exporter::GoSmsPro | Exporter::SmsBackupRestore | Exporter::SmsBackupPlus
-    );
+    let flags = extract_visibility_flags(exporter);
     let whatsapp_is_ios = form.whatsapp_platform == WhatsappPlatform::Ios;
-    let show_contacts = !is_imessage && !is_whatsapp;
     let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
     let show_ffmpeg_warning =
         !obfuscate_active && form.attachment_media.needs_ffmpeg() && !ffmpeg_available();
@@ -264,16 +256,43 @@ pub fn push_extract(ui: &AppWindow, state: &AppState) {
         "Input directory"
     };
 
-    extract.set_is_whatsapp(is_whatsapp);
-    extract.set_is_imessage(is_imessage);
-    extract.set_is_imazing(is_imazing);
-    extract.set_is_sms_backup_plus(is_sms_backup_plus);
-    extract.set_needs_owner_phones(needs_owner_phones);
+    extract.set_is_whatsapp(flags.is_whatsapp);
+    extract.set_is_imessage(flags.is_imessage);
+    extract.set_is_imazing(flags.is_imazing);
+    extract.set_is_sms_backup_plus(flags.is_sms_backup_plus);
+    extract.set_needs_owner_phones(flags.needs_owner_phones);
     extract.set_whatsapp_is_ios(whatsapp_is_ios);
-    extract.set_show_contacts(show_contacts);
+    extract.set_show_contacts(flags.show_contacts);
     extract.set_show_ffmpeg_warning(show_ffmpeg_warning);
     extract.set_show_compress_options(show_compress_options);
     extract.set_input_label(SharedString::from(input_label));
+}
+
+/// Exporter-dependent Extract screen visibility flags (no Slint / display needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExtractVisibilityFlags {
+    is_whatsapp: bool,
+    is_imessage: bool,
+    is_imazing: bool,
+    is_sms_backup_plus: bool,
+    needs_owner_phones: bool,
+    show_contacts: bool,
+}
+
+fn extract_visibility_flags(exporter: Exporter) -> ExtractVisibilityFlags {
+    let is_whatsapp = exporter == Exporter::Whatsapp;
+    let is_imessage = exporter == Exporter::Imessage;
+    ExtractVisibilityFlags {
+        is_whatsapp,
+        is_imessage,
+        is_imazing: exporter == Exporter::Imazing,
+        is_sms_backup_plus: exporter == Exporter::SmsBackupPlus,
+        needs_owner_phones: matches!(
+            exporter,
+            Exporter::GoSmsPro | Exporter::SmsBackupRestore | Exporter::SmsBackupPlus
+        ),
+        show_contacts: !is_imessage && !is_whatsapp,
+    }
 }
 
 pub fn pull_extract(ui: &AppWindow, state: &mut AppState) {
@@ -451,33 +470,26 @@ mod tests {
 
     #[test]
     fn all_exporters_populate_extract_flags() {
-        let ui = AppWindow::new().expect("create AppWindow");
-        push_static_option_models(&ui);
-        let mut state = AppState::load();
-
+        // Headless: do not create AppWindow (needs DISPLAY/WAYLAND; CI has neither).
         for exporter in EXPORTERS {
-            state.exporter = exporter;
-            state.export_ini.switch_exporter(exporter, &mut state.form);
-            push_extract(&ui, &state);
-
-            let extract = ui.global::<ExtractAdapter>();
+            let flags = extract_visibility_flags(exporter);
             assert_eq!(
-                extract.get_is_whatsapp(),
+                flags.is_whatsapp,
                 exporter == Exporter::Whatsapp,
                 "{exporter:?} is_whatsapp"
             );
             assert_eq!(
-                extract.get_is_imessage(),
+                flags.is_imessage,
                 exporter == Exporter::Imessage,
                 "{exporter:?} is_imessage"
             );
             assert_eq!(
-                extract.get_is_imazing(),
+                flags.is_imazing,
                 exporter == Exporter::Imazing,
                 "{exporter:?} is_imazing"
             );
             assert_eq!(
-                extract.get_is_sms_backup_plus(),
+                flags.is_sms_backup_plus,
                 exporter == Exporter::SmsBackupPlus,
                 "{exporter:?} is_sms_backup_plus"
             );
@@ -486,18 +498,17 @@ mod tests {
                 Exporter::GoSmsPro | Exporter::SmsBackupRestore | Exporter::SmsBackupPlus
             );
             assert_eq!(
-                extract.get_needs_owner_phones(),
-                needs_owner,
+                flags.needs_owner_phones, needs_owner,
                 "{exporter:?} needs_owner_phones"
             );
             assert_eq!(
-                extract.get_show_contacts(),
+                flags.show_contacts,
                 !matches!(exporter, Exporter::Imessage | Exporter::Whatsapp),
                 "{exporter:?} show_contacts"
             );
             assert_eq!(
-                extract.get_exporter_index(),
-                options::exporter_index(exporter),
+                options::exporter_index(exporter) as usize,
+                EXPORTERS.iter().position(|&e| e == exporter).unwrap(),
                 "{exporter:?} exporter_index"
             );
         }
