@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { useListColumnResizing } from "./ListColumnResizeContext";
 
 /** How often the x–y of z label may update while scrolling. */
 const RANGE_REPORT_MS = 50;
@@ -84,8 +85,14 @@ export default function VirtualList({
   const publishedRef = useRef<VisibleRange>({ start: 0, end: 0 });
   const pendingRef = useRef<VisibleRange | null>(null);
   const throttleTimerRef = useRef<number | null>(null);
+  const lastScrollHeightRef = useRef<number | null>(null);
   // Bump after layout/resize so scrollport metrics are re-read once the DOM has size.
   const [layoutTick, setLayoutTick] = useState(0);
+
+  // Column drag: freeze dynamic row measurement so width changes don't remasure every frame.
+  const columnResizing = useListColumnResizing();
+  const measureRows = dynamicSize && !columnResizing;
+  const wasResizingRef = useRef(false);
 
   const virtualizer = useVirtualizer({
     count,
@@ -93,6 +100,28 @@ export default function VirtualList({
     estimateSize: () => estimateSize,
     overscan,
   });
+
+  // After column drag ends: wait for wrap layout + measureElement refs, then remasure once.
+  useEffect(() => {
+    if (columnResizing) {
+      wasResizingRef.current = true;
+      return;
+    }
+    if (!dynamicSize || !wasResizingRef.current) return;
+    wasResizingRef.current = false;
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        virtualizer.measure();
+        setLayoutTick((n) => n + 1);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [columnResizing, dynamicSize, virtualizer]);
 
   const virtualItems = virtualizer.getVirtualItems();
   const scrollOffset = parentRef.current?.scrollTop ?? 0;
@@ -160,15 +189,27 @@ export default function VirtualList({
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      // Width-only changes (list column drag) must not remasure/re-render every pixel —
+      // that is what made the conversation panel jitter. React only when height changes.
+      const nextH = entries[0]?.contentRect.height ?? el.clientHeight;
+      if (
+        lastScrollHeightRef.current != null &&
+        Math.abs(nextH - lastScrollHeightRef.current) < 0.5
+      ) {
+        return;
+      }
+      lastScrollHeightRef.current = nextH;
+      if (columnResizing) return;
       virtualizer.measure();
       setLayoutTick((n) => n + 1);
     });
     ro.observe(el);
     // First paint often has clientHeight 0 until flex layout settles.
+    lastScrollHeightRef.current = el.clientHeight;
     setLayoutTick((n) => n + 1);
     return () => ro.disconnect();
-  }, [virtualizer, count]);
+  }, [virtualizer, count, columnResizing]);
 
   if (count === 0 && empty) {
     return (
@@ -191,13 +232,13 @@ export default function VirtualList({
           <div
             key={virtualRow.key}
             data-index={virtualRow.index}
-            ref={dynamicSize ? virtualizer.measureElement : undefined}
+            ref={measureRows ? virtualizer.measureElement : undefined}
             style={{
               position: "absolute",
               top: 0,
               left: 0,
               width: "100%",
-              height: dynamicSize ? undefined : `${estimateSize}px`,
+              height: measureRows ? undefined : `${virtualRow.size}px`,
               transform: `translateY(${virtualRow.start}px)`,
               boxSizing: "border-box",
             }}

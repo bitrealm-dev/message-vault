@@ -75,7 +75,9 @@ export default function AppLayout() {
       setConversationFilter("");
       setConversationSearch(q);
       setActiveView("conversations");
-      setSearchActive(q.trim() !== "");
+      // Filter the conversation list — do not switch to message SearchResults
+      // (that path calls an unsupported API and blanked the panel).
+      setSearchActive(false);
       setAutoSelect(null);
     }
   };

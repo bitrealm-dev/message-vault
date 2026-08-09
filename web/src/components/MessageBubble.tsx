@@ -5,6 +5,11 @@ import DiscordBubble from "./messages/DiscordBubble";
 import WhatsAppBubble from "./messages/WhatsAppBubble";
 import InstagramBubble from "./messages/InstagramBubble";
 
+export type AttachmentClickHandler = (
+  attachment: MessageAttachment,
+  source: string,
+) => void;
+
 export default function MessageBubble({
   message,
   highlight,
@@ -14,19 +19,21 @@ export default function MessageBubble({
   message: Message;
   highlight?: string;
   isActive?: boolean;
-  onAttachmentClick?: (attachment: MessageAttachment) => void;
+  onAttachmentClick?: AttachmentClickHandler;
 }) {
+  const props = { message, highlight, isActive, onAttachmentClick };
+
   switch (message.conversation.service?.toLowerCase()) {
     case "imessage":
     case "ios":
-      return <ImessageBubble message={message} highlight={highlight} isActive={isActive} />;
+      return <ImessageBubble {...props} />;
     case "discord":
-      return <DiscordBubble message={message} highlight={highlight} isActive={isActive} />;
+      return <DiscordBubble {...props} />;
     case "whatsapp":
-      return <WhatsAppBubble message={message} highlight={highlight} isActive={isActive} />;
+      return <WhatsAppBubble {...props} />;
     case "instagram":
-      return <InstagramBubble message={message} highlight={highlight} isActive={isActive} />;
+      return <InstagramBubble {...props} />;
     default:
-      return <SmsBubble message={message} highlight={highlight} isActive={isActive} onAttachmentClick={onAttachmentClick} />;
+      return <SmsBubble {...props} />;
   }
 }

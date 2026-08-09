@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { Message } from "../../lib/types";
+import type { Message, MessageAttachment } from "../../lib/types";
+import MessageAttachments from "../MessageAttachments";
 
 function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
@@ -38,10 +39,12 @@ export default function InstagramBubble({
   message,
   highlight,
   isActive,
+  onAttachmentClick,
 }: {
   message: Message;
   highlight?: string;
   isActive?: boolean;
+  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
 }) {
   const time = new Date(message.timestamp).toLocaleString([], {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -75,6 +78,8 @@ export default function InstagramBubble({
       }}>
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
       </div>
+
+      <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
     </div>
   );
 }

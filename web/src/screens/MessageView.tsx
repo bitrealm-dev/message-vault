@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation, Message, MessageAttachment } from "../lib/types";
 import MessageBubble from "../components/MessageBubble";
-import AttachmentLightbox from "../components/AttachmentLightbox";
+import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentLightbox";
 import SourcesPanel from "../components/SourcesPanel";
 import Button from "../components/Button";
 
@@ -23,7 +23,7 @@ export default function MessageView({
   const [findTerm, setFindTerm] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [lightboxAttachments, setLightboxAttachments] = useState<MessageAttachment[] | null>(null);
+  const [lightboxItems, setLightboxItems] = useState<LightboxItem[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showSources, setShowSources] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -51,14 +51,16 @@ export default function MessageView({
   }, [conversation]);
 
   // Open the lightbox at the clicked image; prev/next walks this page's images
-  const handleAttachmentClick = useCallback((att: MessageAttachment) => {
+  const handleAttachmentClick = useCallback((att: MessageAttachment, source: string) => {
     const images = messages.flatMap((m) =>
-      (m.attachments || []).filter(
-        (a) => a.sha256 && a.mime_type?.startsWith("image/"),
-      ),
+      (m.attachments || [])
+        .filter((a) => a.sha256 && a.mime_type?.startsWith("image/"))
+        .map((a) => ({ attachment: a, source: m.source })),
     );
-    const idx = images.findIndex((a) => a.sha256 === att.sha256);
-    setLightboxAttachments(images.length > 0 ? images : [att]);
+    const idx = images.findIndex(
+      (item) => item.attachment.sha256 === att.sha256 && item.source === source,
+    );
+    setLightboxItems(images.length > 0 ? images : [{ attachment: att, source }]);
     setLightboxIndex(idx >= 0 ? idx : 0);
   }, [messages]);
 
@@ -281,13 +283,13 @@ export default function MessageView({
       </div>
 
       {/* Attachment lightbox */}
-      {lightboxAttachments && (
+      {lightboxItems && (
         <AttachmentLightbox
-          attachments={lightboxAttachments}
+          items={lightboxItems}
           currentIndex={lightboxIndex}
-          onClose={() => setLightboxAttachments(null)}
-          onPrev={() => setLightboxIndex((i) => (i - 1 + lightboxAttachments.length) % lightboxAttachments.length)}
-          onNext={() => setLightboxIndex((i) => (i + 1) % lightboxAttachments.length)}
+          onClose={() => setLightboxItems(null)}
+          onPrev={() => setLightboxIndex((i) => (i - 1 + lightboxItems.length) % lightboxItems.length)}
+          onNext={() => setLightboxIndex((i) => (i + 1) % lightboxItems.length)}
         />
       )}
 

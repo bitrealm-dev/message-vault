@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { Message } from "../../lib/types";
+import type { Message, MessageAttachment } from "../../lib/types";
+import MessageAttachments from "../MessageAttachments";
 
 function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
@@ -38,10 +39,12 @@ export default function ImessageBubble({
   message,
   highlight,
   isActive,
+  onAttachmentClick,
 }: {
   message: Message;
   highlight?: string;
   isActive?: boolean;
+  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
 }) {
   const time = new Date(message.timestamp).toLocaleString([], {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -68,7 +71,6 @@ export default function ImessageBubble({
         )}
       </div>
 
-      {/* Edit history indicator */}
       {message.edit_history && message.edit_history.length > 0 && (
         <div style={{ fontSize: "0.688rem", color: "var(--muted)", fontStyle: "italic", marginBottom: "0.25rem" }}>
           Edited
@@ -82,7 +84,8 @@ export default function ImessageBubble({
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
       </div>
 
-      {/* Tapback reactions */}
+      <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
+
       {message.reactions && message.reactions.length > 0 && (
         <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
           {message.reactions.map((r, i) => (

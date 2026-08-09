@@ -14,15 +14,20 @@ The current message-vault-rs browsing interface has layout and data-model issues
 
 ## Architecture decisions
 
+
+
 ### Framework: Vite+React
 
 The existing Tauri Vite+React app in message-vault-io becomes the canonical GUI. The vault browsing UI from message-vault-rs is ported into this app. The Next.js web app in message-vault-rs is retired.
 
 **Rationale:**
+
 - Tauri dev experience already works with hot reload on `cargo tauri dev`
 - Server-side rendering provides no benefit — all data lives behind the axum API and requires authentication
 - API routes in Next.js are redundant — the browser calls axum directly via `fetch()`
 - One build output (`dist/`) serves both contexts: bundled into Tauri binary, served as static files by axum in the Docker image
+
+
 
 ### Two build targets, one codebase
 
@@ -48,6 +53,8 @@ Tauri → invoke() → Rust commands (extract, format, push, pull, ffmpeg, files
 Tauri → fetch()  → axum API (browse, search, contacts, settings)
 ```
 
+
+
 ## Data model philosophy
 
 The old model was contact-centric — a phone number was the primary handle, contacts were the navigation unit, and messages lived under contacts. This breaks down with multi-service data (Discord, Instagram, SMS, iMessage).
@@ -60,22 +67,28 @@ The new model is conversation-centric:
 - A **profile** is reached by clicking a participant's name from within a conversation — it shows their handles, conversation history, and metadata
 - The profile is created at signup, not hidden in settings
 
+
+
 ### Handles
 
 A person can have multiple handles across services:
 
-| Handle type | Example |
-|-------------|---------|
-| Phone | `+1 555-1234` |
-| Email | `bob@example.com` |
-| Discord | `bob#1234` |
-| Instagram | `@bob.ig` |
-| Telegram | `@bob_tg` |
-| Signal | `+1 555-1234` |
+
+| Handle type | Example           |
+| ----------- | ----------------- |
+| Phone       | `+1 555-1234`     |
+| Email       | `bob@example.com` |
+| Discord     | `bob#1234`        |
+| Instagram   | `@bob.ig`         |
+| Telegram    | `@bob_tg`         |
+| Signal      | `+1 555-1234`     |
+
 
 Handles are set on the user's own profile during onboarding and can be edited later. The system uses handles to match imported messages to the vault owner and to other participants.
 
 ## Screen flow
+
+
 
 ### Login
 
@@ -106,12 +119,14 @@ Handles are set on the user's own profile during onboarding and can be edited la
 The user enters the vault server URL. The client calls the server's auth-mode endpoint to determine whether it uses Hanko passkeys or local username/password. The login form renders the appropriate fields. Auth mode is a server-side setting (configured in the Docker container) — the client never chooses.
 
 After entering the server URL, the login form adapts to the server's mode:
+
 - **Hanko**: Show the Hanko passkey login flow
 - **Local**: Show username and password fields
 
 The SPA stores the auth token and navigates to the conversation list.
 
 Below the auth section, two offline tools are available without login:
+
 - **Extract messages**: Parse a backup to JSONL without connecting to a vault
 - **Format conversion**: Convert between output formats (JSONL/EML/MBOX/CSV/XML)
 
@@ -124,6 +139,8 @@ New user flow: Create account → Create profile. The profile is created at sign
 - Display name
 - Handles (phone, email, Discord, Instagram, etc.) — used to match imported messages to the owner
 - Profile photo
+
+
 
 ### Home — Conversation list
 
@@ -164,23 +181,29 @@ The right panel shows a placeholder until a conversation is selected. Import and
 ### Conversation rows — display logic
 
 **Direct messages (1 other participant):**
+
 ```
 Bob Smith                              Aug 6
   +1 555-1234 · SMS
 ```
+
 If the name is resolved from contacts, show it. Otherwise show the handle. Service indicator underneath.
 
 **Small groups (2-7 participants):**
+
 ```
 Bob Smith, Carol J., Ted A.            Jul 28
   3 participants · 142 messages · SMS
 ```
+
 Show all names, then count + message count + service.
 
 **Large groups (8+ participants):**
+
 ```
 20 participants · 214 messages · Sep 2020 – Jan 2022 · SMS
 ```
+
 Don't show participant names — the date range distinguishes it. Users can rename locally.
 
 **Local rename:** Any conversation can be given a custom label that overrides the auto-generated display. Original data is not modified.
@@ -222,6 +245,8 @@ When a conversation is selected:
 - **No permanent right panel** — metadata lives in the header, participant details in a drawer
 - **Pagination**: Messages are loaded in pages from the API (`offset`/`limit`). The header shows "Messages 1–50 of 1,423" with prev/next controls. Date jump links resolve to the correct page offset. No giant DOM — only the visible page is rendered.
 
+
+
 ### Participant contact view
 
 Clicking a participant name or chip opens a slide-over drawer. This is a contact view, not a conversation browser — the user is "who is this person?" not "what conversations are they in?"
@@ -260,6 +285,7 @@ The existing message-vault-rs search system is the foundation — port it to the
 **Search bar** (left panel header): Operator-based query input with autocomplete for contacts and labels. Supports `from:`, `to:`, `with:`, `within:`, `label:`, `handle:`, `has:`, `date:`, `source:` operators.
 
 **Advanced search form** (dropdown from search bar): Two tabs:
+
 - **Messages** (default): from, to, with person (expandable for first/last name, phone), has/doesn't have words, subject, date range, message type (all/direct/group), source, attachment filter (type, filename, size), results grouping, sort, context
 - **Contacts**: handle (expandable for first/last name, phone), first/last message date range, group/direct message counts
 
@@ -277,12 +303,14 @@ Toggleable from the left panel under "Contacts." A flat list of all people in th
 
 The left panel has a "Saved Groups" section above the conversation list. Each saved group is a named search query:
 
-| Group name | Query |
-|------------|-------|
-| Work team | `from:bob or carol service:discord` |
-| Family | `participants:bob,carol,ted,alice` |
-| 2023 Archive | `date:2023` |
-| Videos | `has:attachment type:video` |
+
+| Group name   | Query                               |
+| ------------ | ----------------------------------- |
+| Work team    | `from:bob or carol service:discord` |
+| Family       | `participants:bob,carol,ted,alice`  |
+| 2023 Archive | `date:2023`                         |
+| Videos       | `has:attachment type:video`         |
+
 
 Clicking a saved group filters the conversation list to matching conversations. No manual labeling of messages — the group is a saved query. Users can create, rename, reorder, and delete saved groups. Messages are imported data and cannot be edited to add tags.
 
@@ -291,10 +319,12 @@ Clicking a saved group filters the conversation list to matching conversations. 
 Four desktop actions, divided by whether they need vault authentication:
 
 **Require auth** (left panel buttons, visible when logged in):
+
 - **Import**: Combined extract + push. Left panel button, replaces main view with import form.
 - **Export**: Pull from vault to local files. Left panel button, popover for scope selection.
 
 **No auth required** (login screen, below the auth form):
+
 - **Extract**: Parse backup to JSONL without connecting to a vault. For offline use.
 - **Format**: Convert between output formats. Also accessible from the authenticated view via a Tools menu.
 
@@ -328,10 +358,12 @@ The import button lives in the left panel sidebar. Clicking it switches the main
 
 **4. Conflict review:** If a contacts file is provided, show side-by-side comparison:
 
-| Contact file name | Vault name | Handle | Action |
-|-------------------|------------|--------|--------|
-| Bob Smith | Bobby Smith | +1 555-1234 | [Use file] [Use vault] [Edit] |
-| Mom | — | (none) | [Add handle: ___] |
+
+| Contact file name | Vault name  | Handle      | Action                        |
+| ----------------- | ----------- | ----------- | ----------------------------- |
+| Bob Smith         | Bobby Smith | +1 555-1234 | [Use file] [Use vault] [Edit] |
+| Mom               | —           | (none)      | [Add handle: ___]             |
+
 
 - If the vault has a matching name for a handle, auto-suggest linking
 - Contacts without handles appear as unmatched — user can add a handle or skip
@@ -355,6 +387,8 @@ Primary view shows the high-level steps. A "Show details" toggle reveals the raw
 - **Auto-suggest**: If the vault has a contact named "Mom" with a phone number, suggest linking an unmatched name to that handle.
 - **Unmatched names**: Shown with a prompt to add a handle. Can be skipped — the name is stored but won't link to conversations.
 
+
+
 ## Sources and deduplication
 
 When a conversation is reconstructed from multiple backups:
@@ -366,12 +400,16 @@ When a conversation is reconstructed from multiple backups:
   - Net contribution: Backup A 10,000 + Backup B 500 unique = 10,500 total
 - Individual messages can optionally show a source indicator for debugging
 
+
+
 ## Attachments (images, video)
 
 - Thumbnails rendered inline in the message stream
 - Click to expand to full-size viewer with lightbox navigation
 - Video: inline player with play/pause/seek controls
 - Attachments are streamed from the vault server API (or read from local filesystem in Tauri for un-uploaded data)
+
+
 
 ## Export (desktop only)
 
@@ -390,6 +428,7 @@ All three paths lead to the same export form:
 **3. Progress:** Linear step indicator with collapsible detail log, same pattern as import.
 
 The export button opens a popover with three options:
+
 - Export entire vault
 - Export current view (available when a saved group or search is active)
 - Export selected (available when conversations are checked)
@@ -401,17 +440,22 @@ Export is not expected to be a high-frequency action — two clicks is acceptabl
 
 Three levels of deletion:
 
-| Unit | What happens | Trash display |
-|------|-------------|---------------|
-| Message | Message moves to trash. Conversation remains. | "Conversation with Bob — 1 message" |
-| Conversation | All messages move to trash. Conversation metadata preserved. | "Conversation with Bob — 10,000 messages" |
-| Contact | Profile and name mapping removed. Messages remain — they revert to showing raw handles. | "Contact Bob Smith" |
+
+| Unit         | What happens                                                                            | Trash display                             |
+| ------------ | --------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Message      | Message moves to trash. Conversation remains.                                           | "Conversation with Bob — 1 message"       |
+| Conversation | All messages move to trash. Conversation metadata preserved.                            | "Conversation with Bob — 10,000 messages" |
+| Contact      | Profile and name mapping removed. Messages remain — they revert to showing raw handles. | "Contact Bob Smith"                       |
+
+
+
 
 ### Trash is conversation-grouped
 
 The trash view always shows conversations as containers. What varies is the message count inside. This avoids deduplication problems — you never have individual messages and conversation deletes overlapping.
 
 **Restore logic:**
+
 - If the conversation still exists → merge restored messages back in
 - If the conversation was fully deleted → recreate it from preserved metadata, then restore messages
 
@@ -426,34 +470,43 @@ No partial restores. No orphaned trash entries. The conversation is the containe
 Accessed from the ⚙ icon in the left panel. Replaces the main view area.
 
 **Vault connection:**
+
 - Server URL
 - Authentication (Hanko vs. local username/password)
 - Connection test button
 
 **Media:**
+
 - ffmpeg path: Text field with Browse button. Defaults to system PATH. If ffmpeg is not found at startup, the app shows a notification with a link to documentation. Same model as VS Code's clangd path — system default unless overridden.
 - Link to documentation for per-platform ffmpeg install instructions
 
 **Appearance:**
+
 - Theme (light / dark / system)
 - Date/time format preferences
 
 **Storage:**
+
 - Conversation count, message count, attachment storage used
 - Export all data link
 
 **Account:**
+
 - Change password
 - Delete account (with confirmation)
+
+
 
 ## Import history
 
 Accessible from the Import button dropdown or the Settings screen. A chronological list of past imports:
 
-| Date | Source | Messages | Attachments | Size | Conversations | Duplicates |
-|------|--------|----------|-------------|------|---------------|------------|
-| Aug 6, 2026 2:34 PM | iMessage (iOS) | 14,203 | 342 | 1.2 GB | 87 | 312 |
-| Aug 4, 2026 9:15 AM | WhatsApp (Android) | 3,400 | 56 | 89 MB | 22 | 0 |
+
+| Date                | Source             | Messages | Attachments | Size   | Conversations | Duplicates |
+| ------------------- | ------------------ | -------- | ----------- | ------ | ------------- | ---------- |
+| Aug 6, 2026 2:34 PM | iMessage (iOS)     | 14,203   | 342         | 1.2 GB | 87            | 312        |
+| Aug 4, 2026 9:15 AM | WhatsApp (Android) | 3,400    | 56          | 89 MB  | 22            | 0          |
+
 
 Helps answer "did I already import that backup?" before re-importing. Click a row to see the per-conversation breakdown from that import session.
 
@@ -462,6 +515,8 @@ Helps answer "did I already import that backup?" before re-importing. Click a ro
 - Excluded conversations / spam filtering (marking conversations to exclude from views)
 - Contact editing and merging UI (combining two contact profiles)
 - New server endpoints: `GET /api/auth/mode`, import history API, paginated message queries
+
+
 
 ## Open questions
 

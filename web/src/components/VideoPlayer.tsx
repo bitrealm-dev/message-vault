@@ -1,11 +1,34 @@
-import { getBaseUrl } from "../lib/api";
 import type { MessageAttachment } from "../lib/types";
+import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
 
-export default function VideoPlayer({ attachment }: { attachment: MessageAttachment }) {
-  const url = attachment.sha256
-    ? `${getBaseUrl()}/v1/assets/${attachment.sha256}`
-    : null;
-  if (!url) return null;
+export default function VideoPlayer({
+  attachment,
+  source,
+}: {
+  attachment: MessageAttachment;
+  source: string;
+}) {
+  const { url, loading, error } = useAssetObjectUrl(attachment.sha256, source);
+  if (!attachment.sha256) return null;
+  if (error) {
+    return (
+      <div style={{ marginTop: "0.375rem", fontSize: "0.75rem", color: "var(--muted)" }}>
+        Video failed to load
+      </div>
+    );
+  }
+  if (loading || !url) {
+    return (
+      <div style={{
+        marginTop: "0.375rem", maxWidth: "400px", height: "160px",
+        background: "var(--elevated)", borderRadius: "6px",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: "0.75rem", color: "var(--muted)",
+      }}>
+        Loading video…
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginTop: "0.375rem", maxWidth: "400px" }}>

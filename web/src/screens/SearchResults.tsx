@@ -22,10 +22,10 @@ export default function SearchResults({
     if (!query.trim()) return;
     setLoading(true);
     apiClient
-      .get<{ results: SearchResult[] }>(
+      .get<{ results?: SearchResult[]; messages?: unknown[] }>(
         `/v1/export/messages?q=${encodeURIComponent(query)}&group_by=conversation&limit=50`,
       )
-      .then((res) => setResults(res.results))
+      .then((res) => setResults(Array.isArray(res.results) ? res.results : []))
       .catch(() => setResults([]))
       .finally(() => setLoading(false));
   }, [query]);

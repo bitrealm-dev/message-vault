@@ -31,7 +31,7 @@ API client, auth context (with localStorage persistence + token validation), log
 
 Types, ConversationList, ConversationRow (direct/small-group/large-group display logic), MessageView with offset pagination, MessageBubble, PaginationBar — all built and wired.
 
-**Minor gap:** ConversationRow for large groups shows `"N participants · M messages"` but the spec calls for including the date range: `"N participants · M messages · Sep 2020 – Jan 2022 · SMS"`. The plan's `formatDateRange` function exists in the plan code but was simplified in implementation.
+ConversationRow display logic matches the design (DM / small-group / large-group title + subtitle, including date range on large-group titles).
 
 ### Plan 4 — Search, Contacts, Saved Groups: ⚠️ ~50%
 

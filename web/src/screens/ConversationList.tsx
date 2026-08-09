@@ -47,7 +47,7 @@ export default function ConversationList({
 
   useEffect(() => {
     // Structured filters should apply immediately (no debounce flicker/empty wait).
-    if (/\b(contact:|handle:|is:direct|is:group|is:trash)\b/i.test(query)) {
+    if (/\b(contact:|handle:|is:direct|is:group|is:trash|participants:)\b/i.test(query)) {
       setDebouncedQ(query);
       return;
     }
@@ -147,7 +147,7 @@ export default function ConversationList({
       <VirtualList
         count={conversations.length}
         estimateSize={64}
-        dynamicSize={false}
+        dynamicSize
         onVisibleRangeChange={setVisibleRange}
         onNearEnd={() => {
           if (hasMore) loadMore();

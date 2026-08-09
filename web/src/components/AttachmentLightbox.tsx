@@ -1,24 +1,31 @@
 import { useEffect } from "react";
-import { getBaseUrl } from "../lib/api";
 import type { MessageAttachment } from "../lib/types";
+import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
+
+export type LightboxItem = {
+  attachment: MessageAttachment;
+  source: string;
+};
 
 export default function AttachmentLightbox({
-  attachments,
+  items,
   currentIndex,
   onClose,
   onPrev,
   onNext,
 }: {
-  attachments: MessageAttachment[];
+  items: LightboxItem[];
   currentIndex: number;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
 }) {
-  const attachment = attachments[currentIndex];
-  const url = attachment?.sha256
-    ? `${getBaseUrl()}/v1/assets/${attachment.sha256}`
-    : null;
+  const item = items[currentIndex];
+  const attachment = item?.attachment;
+  const { url, loading, error } = useAssetObjectUrl(
+    attachment?.sha256,
+    item?.source,
+  );
 
   // Close with Escape, navigate with arrow keys
   useEffect(() => {
@@ -31,7 +38,7 @@ export default function AttachmentLightbox({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onPrev, onNext]);
 
-  if (!attachment || !url) return null;
+  if (!attachment) return null;
 
   return (
     <div style={{
@@ -39,8 +46,7 @@ export default function AttachmentLightbox({
       display: "flex", alignItems: "center", justifyContent: "center",
       zIndex: 200,
     }} onClick={onClose}>
-      {/* Prev */}
-      {attachments.length > 1 && (
+      {items.length > 1 && (
         <button onClick={(e) => { e.stopPropagation(); onPrev(); }}
           style={{
             position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)",
@@ -52,15 +58,24 @@ export default function AttachmentLightbox({
         </button>
       )}
 
-      <img
-        src={url}
-        alt={attachment.original_name || "attachment"}
-        style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain" }}
-        onClick={(e) => e.stopPropagation()}
-      />
+      {error ? (
+        <div style={{ color: "#fff", fontSize: "0.875rem" }} onClick={(e) => e.stopPropagation()}>
+          Failed to load attachment
+        </div>
+      ) : loading || !url ? (
+        <div style={{ color: "#fff", fontSize: "0.875rem" }} onClick={(e) => e.stopPropagation()}>
+          Loading…
+        </div>
+      ) : (
+        <img
+          src={url}
+          alt={attachment.original_name || "attachment"}
+          style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain" }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
 
-      {/* Next */}
-      {attachments.length > 1 && (
+      {items.length > 1 && (
         <button onClick={(e) => { e.stopPropagation(); onNext(); }}
           style={{
             position: "absolute", right: "1rem", top: "50%", transform: "translateY(-50%)",
@@ -72,10 +87,9 @@ export default function AttachmentLightbox({
         </button>
       )}
 
-      {/* Close + counter */}
       <div style={{ position: "absolute", top: "1rem", right: "1rem", display: "flex", gap: "1rem", alignItems: "center" }}>
         <span style={{ color: "#fff", fontSize: "0.875rem" }}>
-          {currentIndex + 1} / {attachments.length}
+          {currentIndex + 1} / {items.length}
         </span>
         <button onClick={onClose}
           style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff",

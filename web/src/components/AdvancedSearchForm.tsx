@@ -5,6 +5,22 @@ import Button from "./Button";
 
 export type AdvancedSearchMode = "messages" | "contacts";
 
+/** Same operators as web-next CountField (Any / Equal to / More than / Less than). */
+type CountComparator = "=" | ">" | "<";
+type CountFilterInput = {
+  comparator: CountComparator | "any";
+  value: string;
+};
+
+const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
+
+function composeCountComparison(input: CountFilterInput): string | null {
+  if (input.comparator === "any") return null;
+  const value = input.value.trim();
+  if (!/^\d+$/.test(value)) return null;
+  return `${input.comparator}${value}`;
+}
+
 export default function AdvancedSearchForm({
   mode,
   onApply,
@@ -28,8 +44,9 @@ export default function AdvancedSearchForm({
   const [handle, setHandle] = useState("");
   const [firstMsgDate, setFirstMsgDate] = useState("");
   const [lastMsgDate, setLastMsgDate] = useState("");
-  const [msgCount, setMsgCount] = useState("");
-  const [groupCount, setGroupCount] = useState("");
+  const [msgCount, setMsgCount] = useState<CountFilterInput>(EMPTY_COUNT);
+  const [groupCount, setGroupCount] = useState<CountFilterInput>(EMPTY_COUNT);
+  const [participants, setParticipants] = useState<CountFilterInput>(EMPTY_COUNT);
 
   useEffect(() => {
     apiClient
@@ -64,12 +81,16 @@ export default function AdvancedSearchForm({
       if (msgType === "direct") push("is:direct");
       if (msgType === "group") push("is:group");
       if (source) push(`source:${source}`);
+      const participantCmp = composeCountComparison(participants);
+      if (participantCmp) push(`participants:${participantCmp}`);
     } else {
       if (handle) push(`handle:"${handle}"`);
       if (firstMsgDate) push(`first-contact:${firstMsgDate}`);
       if (lastMsgDate) push(`last-contact:${lastMsgDate}`);
-      if (msgCount) push(`message-count:${msgCount}`);
-      if (groupCount) push(`group-count:${groupCount}`);
+      const messageCmp = composeCountComparison(msgCount);
+      if (messageCmp) push(`message-count:${messageCmp}`);
+      const groupCmp = composeCountComparison(groupCount);
+      if (groupCmp) push(`group-count:${groupCmp}`);
       push("search:contacts");
     }
     return parts.join(" ");
@@ -104,20 +125,91 @@ export default function AdvancedSearchForm({
           <div><label style={labelStyle}>Source</label><select style={inputStyle} value={source} onChange={(e) => setSource(e.target.value)}>
             <option value="">Any</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select></div>
+          <CountField
+            label="Group participants"
+            value={participants}
+            onChange={setParticipants}
+            inputStyle={inputStyle}
+            labelStyle={labelStyle}
+          />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
           <div><label style={labelStyle}>Handle</label><input style={inputStyle} value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="bob#1234" /></div>
           <div><label style={labelStyle}>First message date from</label><input type="date" style={inputStyle} value={firstMsgDate} onChange={(e) => setFirstMsgDate(e.target.value)} /></div>
           <div><label style={labelStyle}>Last message date to</label><input type="date" style={inputStyle} value={lastMsgDate} onChange={(e) => setLastMsgDate(e.target.value)} /></div>
-          <div><label style={labelStyle}>Message count</label><input type="number" style={inputStyle} value={msgCount} onChange={(e) => setMsgCount(e.target.value)} placeholder="e.g. 1000" /></div>
-          <div><label style={labelStyle}>Group conversation count</label><input type="number" style={inputStyle} value={groupCount} onChange={(e) => setGroupCount(e.target.value)} placeholder="e.g. 3" /></div>
+          <CountField
+            label="Direct message count"
+            value={msgCount}
+            onChange={setMsgCount}
+            inputStyle={inputStyle}
+            labelStyle={labelStyle}
+          />
+          <CountField
+            label="Group message count"
+            value={groupCount}
+            onChange={setGroupCount}
+            inputStyle={inputStyle}
+            labelStyle={labelStyle}
+          />
         </div>
       )}
 
       <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.75rem" }}>
         <Button onClick={onClose} style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}>Cancel</Button>
         <Button variant="primary" onClick={() => onApply(buildQuery())} style={{ padding: "0.375rem 1rem", fontSize: "0.813rem" }}>Apply</Button>
+      </div>
+    </div>
+  );
+}
+
+function CountField({
+  label,
+  value,
+  onChange,
+  inputStyle,
+  labelStyle,
+}: {
+  label: string;
+  value: CountFilterInput;
+  onChange: (next: CountFilterInput) => void;
+  inputStyle: CSSProperties;
+  labelStyle: CSSProperties;
+}) {
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <div style={{ display: "grid", gridTemplateColumns: "7rem minmax(0, 1fr)", gap: "0.375rem" }}>
+        <select
+          style={inputStyle}
+          value={value.comparator}
+          aria-label={`${label} comparison`}
+          onChange={(e) => {
+            const comparator = e.target.value as CountComparator | "any";
+            onChange({
+              comparator,
+              value: comparator === "any" ? "" : value.value,
+            });
+          }}
+        >
+          <option value="any">Any</option>
+          <option value="=">Equal to</option>
+          <option value=">">More than</option>
+          <option value="<">Less than</option>
+        </select>
+        <input
+          type="number"
+          min={0}
+          step={1}
+          style={{
+            ...inputStyle,
+            opacity: value.comparator === "any" ? 0.4 : 1,
+          }}
+          value={value.comparator === "any" ? "" : value.value}
+          disabled={value.comparator === "any"}
+          aria-label={`${label} value`}
+          onChange={(e) => onChange({ ...value, value: e.target.value })}
+        />
       </div>
     </div>
   );

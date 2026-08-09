@@ -1,3 +1,5 @@
+import { buildAssetPath } from "./assetUrl";
+
 let baseUrl = "";
 let authToken: string | null = null;
 
@@ -41,6 +43,29 @@ async function request<T>(
   }
 
   return res.json() as Promise<T>;
+}
+
+/**
+ * Fetch a content-addressed asset with Bearer auth and return an object URL.
+ * Caller must revoke the URL when done (`URL.revokeObjectURL`).
+ */
+export async function fetchAssetObjectUrl(
+  sha256: string,
+  source: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const path = buildAssetPath(sha256, source);
+  const headers: Record<string, string> = {};
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+  const res = await fetch(`${baseUrl}${path}`, { method: "GET", headers, signal });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 export type ApiRequestOptions = {

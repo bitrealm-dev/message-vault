@@ -6,6 +6,7 @@ use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::export_api::ExportQueryError;
+use crate::search_query::{CountComparator, CountComparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
@@ -67,13 +68,47 @@ struct ConversationListQuery {
     handle: Option<String>,
     contact_id: Option<i64>,
     type_filter: Option<ConversationTypeFilter>,
+    /// Filter by number of rows in `participants` (`participants:=5`, `:>3`, `:<10`).
+    participants: Option<CountComparison>,
     text: Option<String>,
+}
+
+/// Parse `participants:` values: `=5`, `>3`, `<10`, `>=2`, `<=8`, or bare `5` (=).
+fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let (comparator, digits) = if let Some(rest) = t.strip_prefix(">=") {
+        (CountComparator::Gte, rest)
+    } else if let Some(rest) = t.strip_prefix("<=") {
+        (CountComparator::Lte, rest)
+    } else if let Some(rest) = t.strip_prefix('>') {
+        (CountComparator::Gt, rest)
+    } else if let Some(rest) = t.strip_prefix('<') {
+        (CountComparator::Lt, rest)
+    } else if let Some(rest) = t.strip_prefix('=') {
+        (CountComparator::Eq, rest)
+    } else if t.bytes().all(|b| b.is_ascii_digit()) {
+        (CountComparator::Eq, t)
+    } else {
+        return None;
+    };
+    let digits = digits.trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(CountComparison {
+        comparator,
+        value: digits.parse().ok()?,
+    })
 }
 
 /// Parse space-separated tokens from `q`.
 ///
 /// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
-/// `contact:<id>`. Remaining tokens become a free-text filter.
+/// `contact:<id>`, `participants:=N` / `:>N` / `:<N`. Remaining tokens become
+/// a free-text filter.
 fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
     let mut out = ConversationListQuery::default();
     let mut text_parts: Vec<&str> = Vec::new();
@@ -93,6 +128,12 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
             let rest = rest.trim();
             if !rest.is_empty() {
                 out.handle = Some(rest.to_string());
+            }
+        } else if lower.starts_with("participants:") {
+            if let Some((_, value)) = token.split_once(':') {
+                if let Some(cmp) = parse_participants_comparison(value) {
+                    out.participants = Some(cmp);
+                }
             }
         } else if let Some((_, id_part)) = token.split_once(':') {
             if lower.starts_with("contact:") {
@@ -198,6 +239,14 @@ pub fn list_conversations(
             where_parts.push("c.conversation_type = 'group'".into());
         }
         None => {}
+    }
+
+    if let Some(ref cmp) = parsed.participants {
+        where_parts.push(format!(
+            "(SELECT COUNT(*) FROM participants pcnt WHERE pcnt.conversation_id = c.id) {} ?",
+            cmp.comparator.as_str()
+        ));
+        params.push((cmp.value as i64).into());
     }
 
     if let Some(ref text) = parsed.text {
@@ -798,6 +847,112 @@ mod tests {
 
         let trash = parse_conversation_list_query("is:trash");
         assert!(trash.trash_only);
+
+        let parts = parse_conversation_list_query("is:group participants:>3");
+        assert_eq!(parts.type_filter, Some(ConversationTypeFilter::Group));
+        assert_eq!(
+            parts.participants,
+            Some(CountComparison {
+                comparator: CountComparator::Gt,
+                value: 3,
+            })
+        );
+
+        let eq_bare = parse_conversation_list_query("participants:5");
+        assert_eq!(
+            eq_bare.participants,
+            Some(CountComparison {
+                comparator: CountComparator::Eq,
+                value: 5,
+            })
+        );
+
+        let eq_prefix = parse_conversation_list_query("participants:=8");
+        assert_eq!(
+            eq_prefix.participants,
+            Some(CountComparison {
+                comparator: CountComparator::Eq,
+                value: 8,
+            })
+        );
+
+        let lt = parse_conversation_list_query("participants:<10");
+        assert_eq!(
+            lt.participants,
+            Some(CountComparison {
+                comparator: CountComparator::Lt,
+                value: 10,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_participants_comparison_values() {
+        assert_eq!(
+            parse_participants_comparison(">=2").unwrap(),
+            CountComparison {
+                comparator: CountComparator::Gte,
+                value: 2,
+            }
+        );
+        assert!(parse_participants_comparison("").is_none());
+        assert!(parse_participants_comparison("abc").is_none());
+        assert!(parse_participants_comparison(">").is_none());
+    }
+
+    #[test]
+    fn list_conversations_filters_by_participant_count() {
+        let (conn, account) = setup();
+        // setup() has conversation 1 with 1 participant.
+
+        let p2 =
+            account_profile::link_account_handle(&conn, &account, "+15555550301", HandleType::Phone)
+                .unwrap();
+        let p3 =
+            account_profile::link_account_handle(&conn, &account, "+15555550302", HandleType::Phone)
+                .unwrap();
+        let group_chat = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "chat-big",
+            HandleType::Other,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
+             ) VALUES (10, ?1, ?2, 'iMessage', 'group', 'Trio', 't.jsonl')",
+            params![&account, group_chat],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint) VALUES
+             (10, ?1, 'A'), (10, ?2, 'B')",
+            params![p2, p3],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (10, ?1, 'imessage', '2024-10-01T12:00:00Z', 0, 0, 'hi')",
+            params![&account],
+        )
+        .unwrap();
+
+        let eq2 = list_conversations(&conn, &account, "participants:=2", 50, 0).unwrap();
+        assert_eq!(eq2.total, 1);
+        assert_eq!(eq2.conversations[0].id, "10");
+
+        let gt1 = list_conversations(&conn, &account, "participants:>1", 50, 0).unwrap();
+        assert_eq!(gt1.total, 1);
+        assert_eq!(gt1.conversations[0].id, "10");
+
+        let eq1 = list_conversations(&conn, &account, "participants:1", 50, 0).unwrap();
+        assert_eq!(eq1.total, 1);
+        assert_eq!(eq1.conversations[0].id, "1");
+
+        let lt2 = list_conversations(&conn, &account, "is:group participants:<2", 50, 0).unwrap();
+        assert_eq!(lt2.total, 0);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { Conversation } from "../lib/types";
+import { useListColumnResizing } from "./ListColumnResizeContext";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -17,7 +18,103 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
-function displayName(conv: Conversation): string {
+/** Month + year for conversation date ranges (e.g. "Sep 2020"). */
+function formatMonthYear(iso: string): string {
+  return new Date(iso).toLocaleDateString([], { month: "short", year: "numeric" });
+}
+
+function formatDateRange(start: string | null, end: string | null): string | null {
+  if (!start || !end) return null;
+  return `${formatMonthYear(start)} – ${formatMonthYear(end)}`;
+}
+
+function isLargeGroup(conv: Conversation): boolean {
+  return conv.is_group && conv.participants.length > 7;
+}
+
+/** Short service label for group meta (no message counts). */
+function formatServiceLabel(service: string): string | null {
+  const s = service.trim();
+  if (!s || s.toLowerCase() === "unknown") return null;
+  const lower = s.toLowerCase();
+  if (lower === "imessage" || lower === "ios") return "imessage";
+  if (lower === "sms/mms" || lower === "sms" || lower === "mms" || lower.includes("sms")) {
+    return "sms/mms";
+  }
+  return s;
+}
+
+function GroupIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ display: "inline-block", verticalAlign: "-1px", flexShrink: 0 }}
+    >
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+function ParticipantCount({ count }: { count: number }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+      {count}
+      <GroupIcon />
+    </span>
+  );
+}
+
+/** Meta line: participant count, optional service, optional date range. */
+function MetaLine({
+  participantCount,
+  service,
+  range,
+}: {
+  participantCount: number;
+  service?: string | null;
+  range?: string | null;
+}) {
+  const serviceLabel = service ? formatServiceLabel(service) : null;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.65rem",
+        minWidth: 0,
+        flexWrap: "wrap",
+      }}
+    >
+      <ParticipantCount count={participantCount} />
+      {serviceLabel ? (
+        <>
+          <span aria-hidden="true" style={{ opacity: 0.55 }}>·</span>
+          <span>{serviceLabel}</span>
+        </>
+      ) : null}
+      {range ? (
+        <>
+          <span aria-hidden="true" style={{ opacity: 0.55 }}>·</span>
+          <span>{range}</span>
+        </>
+      ) : null}
+    </span>
+  );
+}
+
+/** Plain-text title used for rename baseline (no icon). */
+function displayNameText(conv: Conversation): string {
   if (conv.label) return conv.label;
 
   if (!conv.is_group) {
@@ -29,23 +126,80 @@ function displayName(conv: Conversation): string {
     return conv.participants.map((p) => p.name || p.handle).join(", ");
   }
 
-  return `${conv.participants.length} participants · ${conv.message_count} messages`;
+  const parts = [`${conv.participants.length}`];
+  const serviceLabel = formatServiceLabel(conv.service);
+  if (serviceLabel) parts.push(serviceLabel);
+  const range = formatDateRange(conv.date_range_start, conv.date_range_end);
+  if (range) parts.push(range);
+  return parts.join(" · ");
 }
 
-function subtitle(conv: Conversation): string {
-  if (conv.is_group) {
-    const parts = [conv.service];
-    if (conv.date_range_start && conv.date_range_end) {
-      const s = new Date(conv.date_range_start);
-      const e = new Date(conv.date_range_end);
-      const fmt = (d: Date) =>
-        d.toLocaleDateString([], { month: "short", year: "numeric" });
-      parts.push(`${fmt(s)} – ${fmt(e)}`);
-    }
-    return parts.join(" · ");
+function titleContent(conv: Conversation): ReactNode {
+  if (conv.label) return conv.label;
+
+  if (!conv.is_group) {
+    const p = conv.participants[0];
+    return p?.name || p?.handle || "(unknown)";
   }
-  const p = conv.participants[0];
-  return p ? `${p.handle} · ${p.service}` : "";
+
+  if (conv.participants.length <= 7) {
+    // Each preferred name stays on one line; wrap between people.
+    return (
+      <span>
+        {conv.participants.map((p, i) => {
+          const label = p.name || p.handle;
+          return (
+            <span key={`${p.handle}-${i}`}>
+              {i > 0 ? ", " : null}
+              <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+            </span>
+          );
+        })}
+      </span>
+    );
+  }
+
+  // Large groups: count + icon · service · date range
+  return (
+    <MetaLine
+      participantCount={conv.participants.length}
+      service={conv.service}
+      range={formatDateRange(conv.date_range_start, conv.date_range_end)}
+    />
+  );
+}
+
+/** Small-group name lists wrap; other titles stay single-line. */
+function titleWraps(conv: Conversation): boolean {
+  return (
+    conv.is_group &&
+    !conv.label &&
+    conv.participants.length >= 2 &&
+    conv.participants.length <= 7
+  );
+}
+
+function subtitleContent(conv: Conversation): ReactNode {
+  if (!conv.is_group) {
+    const p = conv.participants[0];
+    return p ? `${p.handle} · ${p.service}` : null;
+  }
+
+  // Large groups put everything in the title line.
+  if (isLargeGroup(conv)) return null;
+
+  // Small groups: N + icon · service
+  return (
+    <MetaLine
+      participantCount={conv.participants.length}
+      service={conv.service}
+    />
+  );
+}
+
+/** Trailing last-message date: hidden for unlabeled large groups (range is in the title). */
+function showTrailingDate(conv: Conversation): boolean {
+  return !isLargeGroup(conv) || !!conv.label;
 }
 
 export default function ConversationRow({
@@ -68,7 +222,7 @@ export default function ConversationRow({
 
   const startEditing = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const baseline = conversation.label || displayName(conversation);
+    const baseline = conversation.label || displayNameText(conversation);
     editBaselineRef.current = baseline;
     cancelEditRef.current = false;
     setLabelValue(baseline);
@@ -92,13 +246,19 @@ export default function ConversationRow({
     setEditing(false);
   };
 
+  const sub = subtitleContent(conversation);
+  const columnResizing = useListColumnResizing();
+  // Freeze wrapping while the column width is dragged — avoids per-frame reflow jitter.
+  const wraps = titleWraps(conversation) && !columnResizing;
+
   return (
     <button
       onClick={onClick}
       style={{
         display: "flex",
         width: "100%",
-        height: "100%",
+        // Content-driven height so dynamic virtual rows measure wrap correctly.
+        // height:100% kept the previous estimated row size and caused overlaps.
         boxSizing: "border-box",
         textAlign: "left",
         border: "none",
@@ -107,7 +267,7 @@ export default function ConversationRow({
         cursor: "pointer",
         borderBottom: "1px solid var(--border)",
         gap: "0.5rem",
-        alignItems: "center",
+        alignItems: "flex-start",
       }}
     >
       {onCheckChange && (
@@ -157,21 +317,27 @@ export default function ConversationRow({
             style={{
               cursor: "pointer",
               fontSize: "0.875rem", fontWeight: 500, color: "var(--text)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               flex: 1, marginRight: "0.5rem",
+              ...(wraps
+                ? { whiteSpace: "normal", overflow: "visible", lineHeight: 1.35 }
+                : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
             }}
           >
-            {displayName(conversation)}
+            {titleContent(conversation)}
             {conversation.label && <span style={{ fontSize: "0.688rem", color: "var(--muted)", marginLeft: "0.25rem" }}>(renamed)</span>}
           </span>
         )}
-        <span style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
-          {formatDate(conversation.last_message_at)}
-        </span>
+        {showTrailingDate(conversation) ? (
+          <span style={{ fontSize: "0.75rem", color: "var(--muted)", flexShrink: 0 }}>
+            {formatDate(conversation.last_message_at)}
+          </span>
+        ) : null}
       </div>
-      <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-        {subtitle(conversation)}
-      </div>
+      {sub ? (
+        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+          {sub}
+        </div>
+      ) : null}
       </div>
     </button>
   );

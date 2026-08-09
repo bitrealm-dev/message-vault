@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { Message } from "../../lib/types";
+import type { Message, MessageAttachment } from "../../lib/types";
+import MessageAttachments from "../MessageAttachments";
 
 function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
@@ -38,10 +39,12 @@ export default function DiscordBubble({
   message,
   highlight,
   isActive,
+  onAttachmentClick,
 }: {
   message: Message;
   highlight?: string;
   isActive?: boolean;
+  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
 }) {
   const time = new Date(message.timestamp).toLocaleString([], {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -73,7 +76,8 @@ export default function DiscordBubble({
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
       </div>
 
-      {/* Embeds */}
+      <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
+
       {message.embeds && message.embeds.length > 0 && message.embeds.map((embed, i) => (
         <div key={i} style={{
           marginTop: "0.5rem", borderLeft: "4px solid #5865f2",
@@ -90,7 +94,6 @@ export default function DiscordBubble({
         </div>
       ))}
 
-      {/* Reactions */}
       {message.reactions && message.reactions.length > 0 && (
         <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
           {message.reactions.map((r, i) => (

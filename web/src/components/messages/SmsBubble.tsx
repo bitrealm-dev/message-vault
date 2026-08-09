@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { Message, MessageAttachment } from "../../lib/types";
-import AttachmentThumbnail from "../AttachmentThumbnail";
-import VideoPlayer from "../VideoPlayer";
+import MessageAttachments from "../MessageAttachments";
 
 function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
@@ -45,7 +44,7 @@ export default function SmsBubble({
   message: Message;
   highlight?: string;
   isActive?: boolean;
-  onAttachmentClick?: (attachment: MessageAttachment) => void;
+  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
 }) {
   const time = new Date(message.timestamp).toLocaleString([], {
     month: "short", day: "numeric", year: "numeric",
@@ -79,22 +78,7 @@ export default function SmsBubble({
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
       </div>
 
-      {/* Attachments */}
-      {message.attachments.length > 0 && (
-        <div>
-          {message.attachments.map((att, i) => (
-            att.mime_type?.startsWith("video/") ? (
-              <VideoPlayer key={att.sha256 ?? att.path ?? i} attachment={att} />
-            ) : (
-              <AttachmentThumbnail
-                key={att.sha256 ?? att.path ?? i}
-                attachment={att}
-                onClick={() => onAttachmentClick?.(att)}
-              />
-            )
-          ))}
-        </div>
-      )}
+      <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
     </div>
   );
 }

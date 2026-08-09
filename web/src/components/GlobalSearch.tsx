@@ -4,6 +4,7 @@ import { apiClient } from "../lib/api";
 const OPERATORS = [
   "from:", "to:", "with:", "within:", "label:", "handle:",
   "has:", "after:", "before:", "source:", "subject:", "is:",
+  "participants:",
 ];
 
 interface ContactName {
@@ -124,7 +125,7 @@ export default function GlobalSearch({
         placeholder={
           isFilter
             ? "Filter by name or handle…"
-            : "Search vault — try from: or has:"
+            : "Search vault — try participants:=5 or is:group"
         }
         style={{
           width: "100%", padding: "0.375rem 0.5rem", fontSize: "0.813rem",
