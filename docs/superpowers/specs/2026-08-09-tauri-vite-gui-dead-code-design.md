@@ -68,7 +68,7 @@ All three call `onNavigate("export")`. `AppLayout` always passed `scope="all"` a
 Change:
 
 - Replace the popover with a single **Export** button that navigates to `"export"`, matching the Import button pattern.
-- Call `ExportScreen` without fake scope choices. Prefer simplifying `ExportScreen` so it always exports the entire vault (drop `scope` / `selectedCount` props and the unused scope label branches). If a minimal diff is preferred, hard-code `scope="all"` and `selectedCount={0}` at the call site and leave prop types for a follow-up — but the preferred outcome of this pass is to delete the unused props.
+- Call `ExportScreen` without fake scope choices. Simplify `ExportScreen` so it always exports the entire vault: delete the `scope` and `selectedCount` props and the unused scope-label branches.
 
 ## Out of scope
 
