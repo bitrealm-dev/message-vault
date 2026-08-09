@@ -1,22 +1,116 @@
 import { useState, useEffect } from "react";
 import { isTauri } from "../../lib/tauri-check";
+import {
+  probeFfmpegTools,
+  setFfmpegToolsDir,
+  type FfmpegToolsProbe,
+} from "../../lib/tauri";
 import FormRow from "../../components/FormRow";
 import ThemeSettings from "../../components/ThemeSettings";
+import PathPicker from "../../components/PathPicker";
 import Button from "../../components/Button";
+
+const STORAGE_KEY = "mv-ffmpeg-path";
+
+type Status =
+  | { type: "idle" }
+  | { type: "success"; message: string }
+  | { type: "error"; message: string };
+
+function formatProbePaths(probe: FfmpegToolsProbe): string {
+  const parts: string[] = [];
+  if (probe.ffmpeg_path) parts.push(`ffmpeg: ${probe.ffmpeg_path}`);
+  if (probe.ffprobe_path) parts.push(`ffprobe: ${probe.ffprobe_path}`);
+  return parts.join(" · ");
+}
+
+function formatDefaultDiscovery(probe: FfmpegToolsProbe): string {
+  const paths = formatProbePaths(probe);
+  return paths ? `Using default discovery. ${paths}` : "Using default discovery.";
+}
+
+function formatFolderSuccess(probe: FfmpegToolsProbe): string {
+  const paths = formatProbePaths(probe);
+  return paths || "ffmpeg tools folder saved.";
+}
 
 export function AppearanceSection() {
   const [ffmpegPath, setFfmpegPath] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  const handleSaveFfmpeg = () => {
-    localStorage.setItem("mv-ffmpeg-path", ffmpegPath);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  const [status, setStatus] = useState<Status>({ type: "idle" });
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    setFfmpegPath(localStorage.getItem("mv-ffmpeg-path") || "");
+    if (!isTauri()) return;
+
+    const stored = localStorage.getItem(STORAGE_KEY) || "";
+    setFfmpegPath(stored);
+
+    void (async () => {
+      setChecking(true);
+      try {
+        if (stored.trim()) {
+          const result = await setFfmpegToolsDir(stored.trim());
+          setStatus({ type: "success", message: formatFolderSuccess(result) });
+        } else {
+          const result = await probeFfmpegTools(null);
+          if (result.ok) {
+            setStatus({ type: "success", message: formatDefaultDiscovery(result) });
+          } else if (result.error) {
+            setStatus({ type: "error", message: result.error });
+          }
+        }
+      } catch (err) {
+        setStatus({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setChecking(false);
+      }
+    })();
   }, []);
+
+  const handleSaveFfmpeg = async () => {
+    const path = ffmpegPath.trim();
+    setChecking(true);
+    setStatus({ type: "idle" });
+
+    try {
+      if (!path) {
+        localStorage.removeItem(STORAGE_KEY);
+        const result = await setFfmpegToolsDir(null);
+        setStatus({ type: "success", message: formatDefaultDiscovery(result) });
+        return;
+      }
+
+      const probe = await probeFfmpegTools(path);
+      if (!probe.ok) {
+        setStatus({
+          type: "error",
+          message: probe.error ?? "ffmpeg and ffprobe not found in folder",
+        });
+        return;
+      }
+
+      const result = await setFfmpegToolsDir(path);
+      localStorage.setItem(STORAGE_KEY, path);
+      setStatus({ type: "success", message: formatFolderSuccess(result) });
+    } catch (err) {
+      setStatus({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const statusColor =
+    status.type === "error"
+      ? "var(--danger, #dc2626)"
+      : status.type === "success"
+        ? "var(--accent)"
+        : "var(--muted)";
 
   return (
     <div>
@@ -36,25 +130,16 @@ export function AppearanceSection() {
           >
             Media
           </h3>
-          <FormRow label="ffmpeg path">
-            <input
-              type="text"
+          <FormRow label="ffmpeg tools folder">
+            <PathPicker
               value={ffmpegPath}
-              onChange={(e) => setFfmpegPath(e.target.value)}
+              onChange={setFfmpegPath}
+              directory
               placeholder="Uses system PATH by default"
-              style={{
-                width: "100%",
-                padding: "0.25rem 0.5rem",
-                fontSize: "0.875rem",
-                border: "1px solid var(--border)",
-                borderRadius: "0.375rem",
-                background: "var(--bg)",
-                color: "var(--text)",
-              }}
             />
           </FormRow>
           <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
-            Leave blank to use system PATH.{" "}
+            Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
             <a
               href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
               target="_blank"
@@ -65,11 +150,15 @@ export function AppearanceSection() {
             </a>
           </p>
           <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <Button onClick={handleSaveFfmpeg} style={{ padding: "0.5rem 1.5rem" }}>
-              Save
+            <Button
+              onClick={() => void handleSaveFfmpeg()}
+              disabled={checking}
+              style={{ padding: "0.5rem 1.5rem" }}
+            >
+              {checking ? "Checking…" : "Save"}
             </Button>
-            {saved && (
-              <span style={{ fontSize: "0.875rem", color: "var(--accent)" }}>Saved</span>
+            {status.type !== "idle" && (
+              <span style={{ fontSize: "0.875rem", color: statusColor }}>{status.message}</span>
             )}
           </div>
         </div>

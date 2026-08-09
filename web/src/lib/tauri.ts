@@ -89,6 +89,21 @@ export async function invokePull(config: PullConfig): Promise<void> {
  * `extract:error` ({ detail, user_message? }).
  * Returns a single unlisten function that tears down all three listeners.
  */
+export interface FfmpegToolsProbe {
+  ok: boolean;
+  ffmpeg_path: string | null;
+  ffprobe_path: string | null;
+  error: string | null;
+}
+
+export async function probeFfmpegTools(dir: string | null): Promise<FfmpegToolsProbe> {
+  return invoke("probe_ffmpeg_tools", { dir });
+}
+
+export async function setFfmpegToolsDir(dir: string | null): Promise<FfmpegToolsProbe> {
+  return invoke("set_ffmpeg_tools_dir", { dir });
+}
+
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;
