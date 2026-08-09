@@ -1,8 +1,47 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Result, bail};
+
+struct ToolCache {
+    ffmpeg: Option<PathBuf>,
+    ffprobe: Option<PathBuf>,
+}
+
+fn tool_cache() -> &'static Mutex<ToolCache> {
+    static CACHE: OnceLock<Mutex<ToolCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(ToolCache {
+        ffmpeg: None,
+        ffprobe: None,
+    }))
+}
+
+fn tools_override() -> &'static Mutex<Option<PathBuf>> {
+    static OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+/// Store a folder-only override for ffmpeg/ffprobe discovery and clear cached paths.
+pub fn set_tools_dir(dir: Option<PathBuf>) {
+    *tools_override().lock().expect("tools override lock") = dir;
+    let mut cache = tool_cache().lock().expect("tool cache lock");
+    cache.ffmpeg = None;
+    cache.ffprobe = None;
+}
+
+/// Current tools-folder override, if any (primarily for tests).
+pub fn tools_dir() -> Option<PathBuf> {
+    tools_override().lock().expect("tools override lock").clone()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfmpegToolsProbe {
+    pub ok: bool,
+    pub ffmpeg_path: Option<PathBuf>,
+    pub ffprobe_path: Option<PathBuf>,
+    pub error: Option<String>,
+}
 
 pub fn ffmpeg_available() -> bool {
     resolve_tool("ffmpeg").is_some() && resolve_tool("ffprobe").is_some()
@@ -31,20 +70,66 @@ fn command_ok(bin: &Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve `ffmpeg` / `ffprobe`: sibling of current exe, `lib/` next to the GUI,
-/// `../lib/` from `cli/`, legacy parent dir, then `MESSAGE_VAULT_IO_BIN`, then PATH.
+/// Resolve `ffmpeg` / `ffprobe`: tools-dir override, then sibling of current exe,
+/// `lib/` next to the GUI, `../lib/` from `cli/`, legacy parent dir,
+/// `MESSAGE_VAULT_IO_BIN`, then PATH.
 fn resolve_tool(name: &str) -> Option<PathBuf> {
-    static FFMPEG: OnceLock<Option<PathBuf>> = OnceLock::new();
-    static FFPROBE: OnceLock<Option<PathBuf>> = OnceLock::new();
-    let cache = match name {
-        "ffmpeg" => &FFMPEG,
-        "ffprobe" => &FFPROBE,
+    let mut cache = tool_cache().lock().expect("tool cache lock");
+    let slot = match name {
+        "ffmpeg" => &mut cache.ffmpeg,
+        "ffprobe" => &mut cache.ffprobe,
         _ => return find_tool(name),
     };
-    cache.get_or_init(|| find_tool(name)).clone()
+    if slot.is_none() {
+        *slot = find_tool(name);
+    }
+    slot.clone()
+}
+
+fn find_tool_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
+    let candidate = dir.join(executable_name(name));
+    if candidate.is_file() && command_ok(&candidate, &["-version"]) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
+    let (ffmpeg, ffprobe) = match dir {
+        Some(d) => (find_tool_in_dir(d, "ffmpeg"), find_tool_in_dir(d, "ffprobe")),
+        None => (resolve_tool("ffmpeg"), resolve_tool("ffprobe")),
+    };
+    match (ffmpeg, ffprobe) {
+        (Some(f), Some(p)) => FfmpegToolsProbe {
+            ok: true,
+            ffmpeg_path: Some(f),
+            ffprobe_path: Some(p),
+            error: None,
+        },
+        (f, p) => {
+            let mut parts = Vec::new();
+            if f.is_none() {
+                parts.push("ffmpeg not found or failed -version");
+            }
+            if p.is_none() {
+                parts.push("ffprobe not found or failed -version");
+            }
+            FfmpegToolsProbe {
+                ok: false,
+                ffmpeg_path: f,
+                ffprobe_path: p,
+                error: Some(parts.join("; ")),
+            }
+        }
+    }
 }
 
 fn find_tool(name: &str) -> Option<PathBuf> {
+    if let Some(dir) = tools_override().lock().expect("tools override lock").clone() {
+        return find_tool_in_dir(&dir, name);
+    }
+
     let executable = executable_name(name);
 
     if let Ok(current) = std::env::current_exe()
@@ -182,6 +267,40 @@ mod tests {
         } else {
             assert_eq!(name, "ffmpeg");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_folder_requires_both_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = dir.path().join("ffmpeg");
+        std::fs::write(&ffmpeg, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut perms = std::fs::metadata(&ffmpeg).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&ffmpeg, perms).unwrap();
+
+        let probe = probe_ffmpeg_tools(Some(dir.path()));
+        assert!(!probe.ok);
+        assert!(probe.ffmpeg_path.is_some());
+        assert!(probe.ffprobe_path.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_tools_dir_overrides_and_clears_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["ffmpeg", "ffprobe"] {
+            let p = dir.path().join(name);
+            std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
+            let mut perms = std::fs::metadata(&p).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&p, perms).unwrap();
+        }
+        set_tools_dir(Some(dir.path().to_path_buf()));
+        assert_eq!(tools_dir(), Some(dir.path().to_path_buf()));
+        assert!(ffmpeg_available());
+        set_tools_dir(None);
+        assert_eq!(tools_dir(), None);
     }
 
     #[cfg(unix)]
