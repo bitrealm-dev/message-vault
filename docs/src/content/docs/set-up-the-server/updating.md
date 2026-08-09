@@ -14,11 +14,12 @@ docker stop message-vault
 docker rm message-vault
 docker pull mbeisser1/message-vault:latest
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=personal \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
+
 
 The named volume keeps your database and assets. The new container picks them up on restart. Database schema upgrades apply automatically when the server starts — nothing to run by hand.
 

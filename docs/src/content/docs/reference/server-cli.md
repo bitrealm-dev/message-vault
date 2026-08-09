@@ -109,7 +109,7 @@ cargo run --release -- reset-demo
 cargo run --release -- process-assets
 ```
 
-CLI contact import accepts the same address-book formats as Message Exporters:
+CLI contact import accepts the same address-book formats as the desktop extract/import flows:
 
 - **VCF** (`.vcf` / `.vcard`)
 - **vCard CSV** (VCF exported as CSV) with `First Name`, `Last Name`, and at

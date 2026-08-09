@@ -3,7 +3,7 @@ title: Docker install
 description: Run the vault server with Docker — the fastest setup, no host toolchain needed.
 ---
 
-The vault runs as a Docker container. One command starts the server, the import API, and the web interface. No Rust or Node.js toolchain required.
+The vault runs as a Docker container. One command starts the server: the import API and the web interface share a single origin on port **8080**. No Rust or Node.js toolchain required.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ cd message-vault
 docker compose up
 ```
 
-Bind-mounts the repo root so code changes reload at runtime. Includes a SQLite browser on port 8081 (localhost only).
+Bind-mounts the repo root so code changes reload at runtime. Serves the vault on port **8080**. Includes a SQLite browser on port **8081** (localhost only).
 
 ### Release mode
 
@@ -37,7 +37,7 @@ Bind-mounts the repo root so code changes reload at runtime. Includes a SQLite b
 docker compose -f compose-release.yml up --build
 ```
 
-Builds a slimmer production-shaped image from your checkout.
+Builds a slimmer production-shaped image from your checkout. Serves the vault on port **8080**.
 
 ## Docker run (single command)
 
@@ -45,13 +45,13 @@ The published image is `mbeisser1/message-vault:latest`:
 
 ```bash
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=demo \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-Port 3000 is the web interface. Port 8080 is the import API the desktop app connects to. The `message-vault-data` volume persists the database across restarts.
+Open **http://localhost:8080** for the web interface. The desktop app uses the same URL for import and browse. The `message-vault-data` volume persists the database across restarts.
 
 ### Personal vault
 
@@ -59,7 +59,7 @@ For your own messages, use `VAULT_MODE=personal`:
 
 ```bash
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=personal \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
@@ -71,7 +71,7 @@ Then create an account through the web interface and generate an import token. S
 
 | Component | Purpose |
 |---|---|
-| Vault server | Import API (port 8080) and web interface (port 3000) |
+| Vault server | Web interface and `/v1/*` API on port **8080** |
 | SQLite | Database for messages, contacts, and settings |
 | FFmpeg | Media conversion for browser playback |
 | Demo dataset | 390 conversations, ~627k messages (demo mode only) |

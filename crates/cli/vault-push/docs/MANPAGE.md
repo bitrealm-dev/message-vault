@@ -20,13 +20,13 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 | Flag | Env | Meaning |
 |------|-----|---------|
-| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`), **not** the web UI on `:3000` |
+| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` — UI and API share this origin) |
 | `--key` | `VAULT_KEY` | Per-account Import API token (Vault key) |
 | `--username` | | Optional; account is resolved from the vault key |
 | `--input` | | JSONL export directory |
 | `--mode append\|replace` | | Default `append` (resume-safe) |
 | `--continue-on-error` | | Keep going after a failed conversation (default true) |
-| `--force` | | Force reprocessing: ignore the local journal and send again (append + server dedupe; does not wipe the vault). See the [Import to Message Vault](../../../../docs/src/content/docs/use-the-desktop-app/import-into-vault.md) user guide. |
+| `--force` | | Force reprocessing: ignore the local journal and send again (append + server dedupe; does not wipe the vault). See the [Import into the vault](../../../../docs/src/content/docs/use-the-desktop-app/import-into-vault.md) user guide. |
 | `--skip-attachments` | | Import messages without uploading attachments |
 | `--max-retries N` | | Transient HTTP retries (default 3) |
 | `--batch-size N` | | Target messages per import request across conversations (default 1000; requests also flush near 8 MiB, under Cloudflare’s ~100 MB limit) |
@@ -37,4 +37,4 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 ## See also
 
-The Message Exporters desktop app **Vault** tab, or the [Import to Message Vault](https://bitrealm-dev.github.io/message-vault/use-the-desktop-app/import-into-vault/) user guide.
+The desktop app **Import** screen, or the [Import into the vault](https://bitrealm.dev/use-the-desktop-app/import-into-vault/) user guide.

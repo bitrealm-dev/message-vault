@@ -9,7 +9,7 @@ A personal vault stores your messages behind an account you create. No demo data
 
 ```bash
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=personal \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
@@ -19,30 +19,32 @@ If you are using Compose, set `VAULT_MODE=personal` in your environment or `.env
 
 ## 2. Create your account
 
-Open **http://localhost:3000** and create an account. This is your vault login — the username and password you choose here.
+Open **http://localhost:8080** and create an account. This is your vault login — the username and password you choose here. On first sign-in you may be asked to add your own handles (phone numbers or emails) so the vault can label messages you sent.
 
 ## 3. Generate an import token
 
-1. In the web interface, go to **Settings → Access**
-2. Choose **Generate token**
-3. Copy the token — it is shown only once
+1. In the web interface (or desktop app after login), open **Settings**
+2. Open the **Profile** tab
+3. Generate an Import API token and copy it — it is shown only once
 
-This token authenticates the desktop app when it pushes messages into the vault.
+This token authenticates CLI import (`vault-push`) and some automated workflows. The desktop app **Import** screen can also sign in with your username and password against the same server URL.
 
 ## 4. Connect the desktop app
 
-Open the desktop app on your computer. Go to the import view and enter:
+Open the desktop app. On the login screen, enter:
 
-- **Vault address**: `http://localhost:8080`
-- **Token**: the import token from step 3
+- **Server URL**: `http://localhost:8080`
+- Your vault username and password
+
+After you sign in, use **Import** in the sidebar to push a JSONL export into the vault. For CLI-only workflows, use the Import API token from Settings → Profile.
 
 ## 5. Extract and import
 
 Now you are ready to import messages:
 
 1. [Prepare a backup](/prepare-your-backups/iphone-ipad/) from your phone
-2. Use the desktop app to extract messages from the backup
-3. Import the result into the vault
+2. Use the desktop app to extract messages from the backup (or use **Import**, which can extract and push in one flow)
+3. Browse conversations in the app or at **http://localhost:8080**
 
 The desktop app sends messages to the vault over your local connection — nothing leaves your machine.
 
@@ -50,4 +52,5 @@ The desktop app sends messages to the vault over your local connection — nothi
 
 - [Extract messages](/use-the-desktop-app/extract-messages/)
 - [Import into the vault](/use-the-desktop-app/import-into-vault/)
+- [Export from the vault](/use-the-desktop-app/export-from-vault/)
 - [Docker install details](/set-up-the-server/docker-install/)

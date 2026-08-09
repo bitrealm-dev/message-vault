@@ -3,7 +3,9 @@ title: Convert between formats
 description: Change an export from one format to another — JSONL to CSV, JSON to EML, and every other combination.
 ---
 
-The **Format** tab reads a Message Vault export folder and writes it in a different format. Use it after extracting messages — or whenever you need the same conversations in a new format without re-extracting from the original backup.
+**Format** reads a Message Vault export folder and writes it in a different format. Use it after extracting messages — or whenever you need the same conversations in a new format without re-extracting from the original backup.
+
+Open Format from the desktop app **login screen** without signing into a vault (offline Format action).
 
 ## What Format reads
 
@@ -20,13 +22,13 @@ Create an empty output folder. Input and output cannot be the same.
 
 ## Run a conversion
 
-1. Open the desktop app and choose **Format**
+1. Open the desktop app and choose **Format** from the login screen
 2. Select the **Input directory** — the folder with the existing export
 3. Choose the **Output format** — CSV, JSON, JSONL, EML, MBOX, or Android XML
 4. Choose a different **Output directory**
 5. Pick the attachment mode — **Copy** keeps media when present
 6. Optionally enable obfuscation
-7. Select **Run**
+7. Start the run and watch the on-screen log
 
 The detector identifies the input format automatically. It ignores `attachments/` folders and old metadata files.
 

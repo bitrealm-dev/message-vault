@@ -3,12 +3,12 @@ title: HTTP import API
 description: Endpoints, auth, and defaults for the Rust serve import and export API.
 ---
 
-`cargo run --release -- serve` reads `[server]` in `config/config.toml`
-(`bind`). Prefer the desktop app **Vault tab** or **`vault-push`** CLI for
-day-to-day use; this page documents the HTTP surface those tools
-call. They send [JSONL](/reference/export-structure/) (and upload
-attachments by SHA-256) to these endpoints. Read-only export lets clients pull
-messages and asset bytes back out with the same Bearer token.
+`cargo run --release -p message-vault-server -- serve` reads `[server]` in `config/config.toml`
+(`bind`). Prefer the desktop app **Import** screen or **`vault-push`** CLI for
+day-to-day import; prefer **Export** or **`vault-pull`** for download. This page
+documents the HTTP surface those tools call. They send [JSONL](/reference/export-structure/)
+(and upload attachments by SHA-256) to these endpoints. Read-only export lets
+clients pull messages and asset bytes back out with the same Bearer token.
 
 ## Endpoints
 
@@ -27,7 +27,7 @@ messages and asset bytes back out with the same Bearer token.
 | `POST` | `/v1/import?source=&account=&mode=&dedupe=&import_id=` | Bearer token | Import JSONL |
 
 Auth is per-account only (no host-wide admin token). Tokens come from
-**Settings → Access** in the web UI. The same Bearer token authorizes import
+**Settings → Profile** in the web UI. The same Bearer token authorizes import
 (write) and export (read). **Export routes never delete or mutate** vault data;
 there is no message/asset DELETE API.
 
@@ -36,6 +36,7 @@ there is no message/asset DELETE API.
 import history. Messages promoted during that session store `messages.import_id`.
 If `import_id` is omitted on `POST /v1/import`, the server starts and finishes a
 one-shot session for that request so Storage still records the import.
+
 
 Bulk `POST /v1/import` opens its own SQLite connection for staging/promote so it
 does not hold the serve process’s short session mutex across JSONL and asset

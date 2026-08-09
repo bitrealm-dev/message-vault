@@ -1,41 +1,30 @@
 ---
 title: Settings
-description: Account, access, storage, and appearance settings.
+description: Profile, storage, and appearance settings.
 ---
 
-Settings opens at `/settings/account` with four tabs:
+Open **Settings** in the sidebar. Settings has three tabs:
 
-## Account
+## Profile
 
-- **Your identity** — user ID and sign-in method, plus the name shown for
-  messages you sent and phone numbers used to recognize you
-- **Danger zone** — delete all messages for the account, or delete the account
-  (demo account cannot be deleted)
+- **Your identity** — username, display name for messages you sent, and handles (phone numbers or emails) used to recognize you
+- **Import API token** — generate a Bearer token for `vault-push` / `vault-pull` and other API clients. It is shown once; delete and generate again if needed
+- **Password** — change password when local auth is enabled
+- **Danger zone** — delete all messages for the account, or delete the account (the demo account cannot be deleted)
 
-## Access
-
-- **View-only mode** — blocks edits and deletions while browsing. Settings and
-  imports remain available
-- **Message import** — generate an API token for importing messages. It is
-  shown once; delete and generate it again if needed
-
-New accounts start with view-only mode off. The demo account starts with it on.
+The desktop app signs in with username and password against the vault URL. The Import API token is mainly for CLI and automation.
 
 ## Storage
 
-- **Usage** — total attachment bytes for this account
-- **Import history** — date, import type (source), message count, and
-  attachment count for each recorded vault push or CLI import
+- **Usage** — attachment storage for this account
 - **Largest attachments** — top attachments by file size
+- Import history may also appear here or under a related import-history view when available
 
 ## Appearance
 
-- Message badges
-- Theme
-- Date/time format
+- Theme (light / dark / system)
+- Related display preferences for the web UI
 
 ## Demo reset
 
-**Reset demo** is CLI-only (`cargo run --release -- reset-demo`). For the demo
-account, the web menu shows instructions only. See
-[Try the demo](/set-up-the-server/try-the-demo/).
+**Reset demo** is CLI-only (`cargo run --release -p message-vault-server -- reset-demo`). For the demo account, reset from Docker as described in [Try the demo](/set-up-the-server/try-the-demo/).

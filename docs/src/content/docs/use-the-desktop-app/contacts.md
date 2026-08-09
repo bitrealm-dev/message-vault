@@ -1,31 +1,36 @@
 ---
 title: Work with contacts
-description: Validate a contacts file or write a cleaned copy — improve name resolution in your exports.
+description: Resolve display names during import and browse contacts in the vault.
 ---
 
-The **Contacts** tab checks phone numbers in a VCF or contacts CSV. It can validate your file without changing it, or write a cleaned copy with corrected numbers. Better contacts data means more display names in your exports.
+Contacts show up in two places: as optional name data when you extract or import, and as the **Contacts** list after messages are in the vault.
 
-## What you can use
+## During import
 
-- A VCF (vCard) file
-- A CSV with first name, last name, and phone columns
+On the desktop app **Import** screen you can choose how vault contact names apply to incoming messages:
 
-## Check contacts (dry run)
+- **Fill in missing names using vault contacts** — keep names already on the export; fill blanks from the vault
+- **Overwrite all import names with vault contacts** — prefer vault contact names for matching handles
 
-1. Open **Contacts**
-2. Choose your contacts **File**
-3. Keep **USA numbers** selected for US numbers, or clear it for international parsing
-4. Select **Check**
-5. Read the **Log** for uncertain numbers, duplicates, and the summary
+Some backup types also accept a contacts file (VCF or contacts CSV) when preparing or extracting. See the [prepare your backups](/prepare-your-backups/iphone-ipad/) guides for when a contacts export helps name resolution.
 
-Check is read-only. It does not write anything.
+Better contacts data means more readable display names in conversation lists.
 
-## Write a cleaned copy
+## In the vault (browse)
 
-1. Use the same file and country setting
-2. Select **Update**
-3. Read the **Log** for the written files
+After you sign in (browser or desktop app):
 
-The app writes a new file next to the original — like `contacts-update.vcf` — and a log. It never overwrites your original. Only unambiguous phone numbers are changed; uncertain ones stay as they were.
+1. Open **Contacts** in the sidebar
+2. Filter or search the list
+3. Open a contact to see related conversations and details
 
-Use the cleaned file when an export source asks for a contacts file. A missing contacts file usually means names are left blank rather than preventing the export from working.
+Labels and contact grouping in the vault come from imported data and profile settings, not from a separate “Contacts check” tab in the desktop app.
+
+## Cleaning a contacts file before import
+
+If you need to validate or normalize phone numbers in a VCF or CSV before using it with an exporter, prepare that file with your usual contacts tools, then point the extract/import flow at the cleaned file. The vault does not require a separate Check/Update contacts tab for day-to-day use.
+
+## Related
+
+- [Browse contacts](/browse/contacts-and-labels/)
+- [Import into the vault](/use-the-desktop-app/import-into-vault/)

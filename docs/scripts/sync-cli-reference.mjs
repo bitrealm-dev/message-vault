@@ -49,6 +49,13 @@ const pages = [
     source: 'crates/cli/vault-push/docs/MANPAGE.md',
   },
   {
+    slug: 'vault-pull',
+    title: 'Pull from Message Vault',
+    description:
+      'Command-line options for downloading messages from Message Vault into a local JSONL folder.',
+    source: 'crates/cli/vault-pull/docs/MANPAGE.md',
+  },
+  {
     slug: 'go-sms-pro-exporter',
     title: 'GO SMS Pro',
     description:

@@ -9,7 +9,7 @@ The demo vault comes with a built-in dataset: about 627,000 synthetic messages a
 
 ```bash
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=demo \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
@@ -19,7 +19,7 @@ The container seeds the demo dataset on first start. Subsequent restarts reuse t
 
 ## Browse the demo
 
-Open **http://localhost:3000/login** and sign in as username `demo` with an empty password.
+Open **http://localhost:8080** and sign in as username `demo` with an empty password.
 
 ## Reset the demo
 
@@ -29,7 +29,7 @@ To wipe the demo and start fresh:
 docker rm -f message-vault
 docker volume rm message-vault-data
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=demo \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
@@ -39,7 +39,7 @@ Removing the container and volume deletes the database. The new container seeds 
 
 ## Connect the desktop app
 
-You can also connect the desktop app to the demo vault. Enter `http://localhost:8080` as the vault address. The demo lets you try the import workflow with sample data before working with your own messages.
+You can also connect the desktop app to the demo vault. Enter `http://localhost:8080` as the server URL and sign in as `demo` with an empty password. The demo lets you try browse and import workflows before working with your own messages.
 
 ## Running from source
 

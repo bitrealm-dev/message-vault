@@ -17,7 +17,7 @@ One indented `.json` file per conversation. Use it as the default archive format
 
 One `.jsonl` file per conversation — a conversation header line followed by one message per line. Use JSON Lines when a script should stream or filter records without loading a whole conversation. [JSON Lines](https://jsonlines.org/) calls it "a convenient format for storing structured data that may be processed one record at a time." Copied media goes in `attachments/`.
 
-The **Extract Messages** tab always writes JSONL. Use the **Format** tab to convert to other formats afterward.
+The **Extract** flow always writes JSONL. Use **Format** to convert to other formats afterward.
 
 ## EML
 

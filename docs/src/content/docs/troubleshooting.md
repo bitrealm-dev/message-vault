@@ -37,11 +37,11 @@ Then set `WTSEXPORTER` to the full path or add it to your `PATH`.
 
 **ffmpeg or ffprobe not found.** The **Convert** and **Compress** attachment modes need FFmpeg. The app looks for `lib/ffmpeg` and `lib/ffprobe` next to the binary. If you unzipped the archive and kept the folders together, they are already there. If you are building from source, install ffmpeg from your package manager and make sure it is on `PATH`.
 
-**Conversion produces no output or low-quality results.** Check the **Compress options** in the advanced section. The defaults (1080p, 30 fps, 20 MB minimum) are conservative. Raise or lower them for your needs. The log tab shows which files were converted and which were skipped.
+**Conversion produces no output or low-quality results.** Check the compress options in the advanced section. The defaults (1080p, 30 fps, 20 MB minimum) are conservative. Raise or lower them for your needs. The on-screen log shows which files were converted and which were skipped.
 
 ### Output problems
 
-**"Input and output must differ" error (Format tab).** When converting between formats, the output directory must be different from the input directory. Choose a new empty folder.
+**"Input and output must differ" error (Format).** When converting between formats, the output directory must be different from the input directory. Choose a new empty folder.
 
 **Conversation names look unexpected.** Files named `group_...` or ending with `__whatsapp` are normal. The tool uses these stem suffixes to distinguish group chats and WhatsApp conversations from other message types.
 
@@ -82,6 +82,12 @@ winget install Gyan.FFmpeg
 
 Verify with `ffmpeg -version`. After installing, run `cargo run --release -- process-assets --force` to convert any assets that were skipped.
 
+### Cannot reach the vault from the desktop app
+
+**Symptom**: login fails with “Could not reach server.”
+
+**Fix**: the vault UI and API share **port 8080**. Use `http://localhost:8080` (or your host’s LAN URL with port 8080). There is no separate web UI on port 3000. Confirm the container is running (`docker ps`) and that nothing else has taken 8080.
+
 ### Port conflicts
 
 **Symptom**: "address already in use" on port 8080.
@@ -112,19 +118,19 @@ Running both `compose-dev.yml` and `compose-release.yml` at the same time will c
 
 **Symptom**: the CLI `import` command or `vault-push` reports no `.jsonl` files found.
 
-**Fix**: the input directory must contain `.jsonl` files at the top level or one level deep (per-conversation subdirectories). Verify the path and check that the files are not inside a subdirectory the tool is not scanning. If you used the Exporters app, the output folder is the correct input path.
+**Fix**: the input directory must contain `.jsonl` files at the top level or one level deep (per-conversation subdirectories). Verify the path and check that the files are not inside a subdirectory the tool is not scanning. If you used the desktop app **Extract** or **Format** flow, the output folder is the correct input path.
 
 #### Account resolution
 
 **Symptom**: `--account` value is not recognized.
 
-**Fix**: use the exact username (not display name) shown under **Settings → Access** in the web UI, or the account UUID. Both work.
+**Fix**: use the exact username (not display name) shown under **Settings → Profile** in the web UI, or the account UUID. Both work.
 
 #### Token issues
 
 **Symptom**: `401 Unauthorized` from the import API.
 
-**Fix**: API tokens are shown once when created under **Settings → Access → Vault Import**. If you lost the token, generate a new one. The old token stops working when a new one is created (rotation). Tokens are stored as SHA-256 hashes — the server never stores the plain text.
+**Fix**: API tokens are shown once when created under **Settings → Profile**. If you lost the token, generate a new one. The old token stops working when a new one is created (rotation). Tokens are stored as SHA-256 hashes — the server never stores the plain text.
 
 #### Import validation errors
 

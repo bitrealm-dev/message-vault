@@ -1,18 +1,19 @@
 ---
-title: Group Messages
-description: Four-panel layout for multi-party threads.
+title: Group messages
+description: How multi-party threads appear in Conversations.
 ---
 
-**Group Messages** (`/group-messages`) uses a four-panel layout:
+Group chats are ordinary conversations with more than two participants. They appear in **Conversations** alongside one-to-one threads — there is no separate `/group-messages` page.
 
-1. **Nav** — app sidebar
-2. **My contact** — your account identity (read-only chrome matching the contact list)
-3. **Group chats** — all multi-party threads for the account
-4. **Thread** — selected conversation messages
+## Finding groups
 
-URL query params include `?g=<conversationId>` and optional `?y=<year>` for
-year-scoped views.
+- Browse **Conversations** and open any multi-party thread
+- Search with `is:group` to limit results to group chats
+- Search with `is:direct` for one-to-one threads only
 
-Participant chips can open contact create/edit overlays when the vault is not
-read-only. Soft-delete group chats from the list; restore them from
-[Trash](/browse/trash-and-undo/).
+Open a group conversation to read messages, see participant names, and view attachments the same way you would in a direct thread.
+
+## Related
+
+- [Navigation](/browse/navigation-and-sources/)
+- [Search](/browse/search/)

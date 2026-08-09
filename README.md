@@ -25,19 +25,20 @@ Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/). Git
 
 ```bash
 docker run -d --name message-vault \
-  -p 3000:3000 -p 8080:8080 \
+  -p 8080:8080 \
   -e VAULT_MODE=demo \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-Open **http://localhost:3000** and sign in with username `demo` and an empty password.
+Open **http://localhost:8080** and sign in with username `demo` and an empty password. The web UI and API share that origin.
 
-**From source:**
+**From source (desktop app):**
 
 ```bash
-cargo build --workspace --release
-cargo run --release -p message-vault-io-gui
+cargo install tauri-cli --version "^2"
+cd web && npm ci && cd ..
+cargo tauri dev
 ```
 
 ### WSL2 development
@@ -87,7 +88,8 @@ npm --version
 The paths should be under `/home/...`, not `/mnt/c/...` or `C:\...`. Build in release mode for realistic export performance:
 
 ```bash
-cargo run --release -p message-vault-io-gui
+cd web && npm ci && cd ..
+cargo tauri dev
 ```
 
 More Linux package details and optional helpers such as `ffmpeg` are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -102,9 +104,9 @@ More Linux package details and optional helpers such as `ffmpeg` are documented 
 
 Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.dev/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
 
-Already exported? The desktop app **Format** tab converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
+Already exported? Use **Format** in the desktop app (available from the login screen without signing in) to convert a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 
-Import into Message Vault with the desktop app **Vault** tab (JSONL export folder + Import API token). For standalone CLI tools (`vault-push`, `vault-pull`, exporter CLIs), build from source in this repo.
+Import into Message Vault with the desktop app **Import** screen after signing in (or `vault-push` with an Import API token from Settings → Profile). Export a copy back to disk with **Export** or `vault-pull`. For standalone CLI tools, build from source in this repo.
 
 ## Contributing
 
