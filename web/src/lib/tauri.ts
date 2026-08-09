@@ -23,12 +23,6 @@ export async function invokeCancel(): Promise<void> {
   return invoke("cancel");
 }
 
-/**
- * Subscribes to the three extraction events emitted by the Rust backend:
- * `extract:log` (String log line), `extract:finished` (String summary),
- * `extract:error` ({ detail, user_message? }).
- * Returns a single unlisten function that tears down all three listeners.
- */
 export interface FormatConfig {
   input_dir: string;
   output_dir: string;
@@ -89,46 +83,12 @@ export async function invokePull(config: PullConfig): Promise<void> {
   });
 }
 
-export interface ContactCard {
-  name: string;
-  phone: string | null;
-  email: string | null;
-}
-
-export interface ContactsInfo {
-  count: number;
-  format: string;
-  preview: string[];
-  cards: ContactCard[];
-}
-
-export async function invokeContactsInfo(path: string): Promise<ContactsInfo> {
-  return invoke("contacts_info", { path });
-}
-
-export interface AppSettings {
-  vault_url: string;
-  vault_username: string;
-  vault_key: string;
-  default_output_dir: string;
-}
-
-export async function loadSettings(): Promise<AppSettings> {
-  return invoke("load_settings");
-}
-
-export async function saveSettings(settings: AppSettings): Promise<void> {
-  return invoke("save_settings", { settings });
-}
-
-export async function getErrors(): Promise<string[]> {
-  return invoke("get_errors");
-}
-
-export async function clearErrors(): Promise<void> {
-  return invoke("clear_errors");
-}
-
+/**
+ * Subscribes to the three extraction events emitted by the Rust backend:
+ * `extract:log` (String log line), `extract:finished` (String summary),
+ * `extract:error` ({ detail, user_message? }).
+ * Returns a single unlisten function that tears down all three listeners.
+ */
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;

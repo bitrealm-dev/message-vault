@@ -13,16 +13,11 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(Arc::new(Mutex::new(AppState::new())))
         .invoke_handler(tauri::generate_handler![
-            commands::contacts::contacts_info,
             commands::extract::extract,
             commands::extract::cancel,
             commands::format::format,
             commands::push::push,
             commands::pull::pull,
-            commands::settings::load_settings,
-            commands::settings::save_settings,
-            commands::settings::get_errors,
-            commands::settings::clear_errors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
