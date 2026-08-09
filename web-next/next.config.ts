@@ -11,7 +11,12 @@ const nextConfig: NextConfig = {
   },
   serverExternalPackages: ["better-sqlite3"],
   // Docker / local: browser may hit 127.0.0.1 while Next serves as localhost (or vice versa).
-  allowedDevOrigins: ["127.0.0.1", "localhost", "192.168.50.100"],
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "localhost",
+    "192.168.50.100",
+    "192.168.4.229",
+  ],
   async redirects() {
     return [
       { source: "/group-chats", destination: "/group-messages", permanent: false },

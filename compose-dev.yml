@@ -27,9 +27,11 @@ services:
     volumes:
       - .:/app
       - ./staging:/app/staging
+      # Host ./data (not a named volume) so web-next and the vault share
+      # the same per-account layout: data/<account_id>/<source_id>/assets.
+      - ./data:/app/data
       - cargo-target:/app/target
       - cargo-registry:/usr/local/cargo/registry
-      - vault-data:/app/data
     stdin_open: true
     tty: true
 
@@ -39,11 +41,10 @@ services:
     ports:
       - "127.0.0.1:8081:8080"
     volumes:
-      - vault-data:/data
+      - ./data:/data
     command: /data/vault.db
     restart: unless-stopped
 
 volumes:
   cargo-target:
   cargo-registry:
-  vault-data:

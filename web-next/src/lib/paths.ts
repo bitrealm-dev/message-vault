@@ -154,7 +154,13 @@ function sourceIdsForAccount(accountId: string): string[] {
   return [...ids].sort();
 }
 
-/** Per-account import sources with resolved asset roots (from DB + on-disk folders). */
+/**
+ * Per-account import sources with resolved asset roots (from DB + on-disk folders).
+ *
+ * Layout matches the Rust vault server:
+ *   data/<account_id>/<source_id>/<assets_dir>
+ *   data/<account_id>/<source_id>/<assets_converted_dir>
+ */
 export function loadSources(accountId = currentAccountId()): SourcePaths[] {
   const data = dataDir();
   const assetsName = assetsDirName();
