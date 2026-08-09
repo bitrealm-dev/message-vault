@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import { ProfileDangerZone } from "./ProfileDangerZone";
-import { AppPasswordsSection } from "./AppPasswordsSection";
+import { ApiTokensSection } from "./ApiTokensSection";
 import {
   type AccountProfile,
   inputStyle,
   sectionTitle,
 } from "./profileStyles";
 
-/** Account settings: username, password, app passwords, danger zone. */
+/** Account settings: username, password, API tokens, danger zone. */
 export function AccountSettingsPanel() {
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -135,7 +135,7 @@ export function AccountSettingsPanel() {
         )}
       </div>
 
-      <AppPasswordsSection />
+      <ApiTokensSection />
 
       <ProfileDangerZone isDemo={isDemo} username={profile.username} />
     </div>

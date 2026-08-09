@@ -13,7 +13,7 @@ use axum::http::HeaderMap;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{account_profile, api_tokens, schema};
+use crate::db::{account_profile, schema, session_tokens};
 use crate::server::{ApiError, AppState};
 
 // ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ pub async fn register_handler(
             account_profile::upsert_account_phone(&conn, &account_id, phone)?;
         }
 
-        let token = api_tokens::insert_account_api_token(&conn, &account_id)?;
+        let token = session_tokens::insert_account_session_token(&conn, &account_id)?;
         Ok(AuthTokenResponse {
             token,
             account_id,
@@ -198,7 +198,7 @@ pub async fn login_handler(
             bail!("invalid password");
         }
 
-        let token = api_tokens::get_or_create_api_token(&conn, &account_id)?;
+        let token = session_tokens::get_or_create_session_token(&conn, &account_id)?;
         let username = account_profile::username_for_account(&conn, &account_id)?
             .unwrap_or_else(|| account_id.clone());
 
@@ -338,7 +338,7 @@ pub async fn hanko_session_handler(
                 }
             };
 
-        let token = api_tokens::get_or_create_api_token(&conn, &account_id)?;
+        let token = session_tokens::get_or_create_session_token(&conn, &account_id)?;
         let username = account_profile::username_for_account(&conn, &account_id)?
             .unwrap_or_else(|| account_id.clone());
 

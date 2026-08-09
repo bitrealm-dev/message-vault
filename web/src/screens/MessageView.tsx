@@ -6,7 +6,51 @@ import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentL
 import SourcesPanel from "../components/SourcesPanel";
 import Button from "../components/Button";
 
+/** Page size for full-conversation browsing. */
 const PAGE_SIZE = 50;
+/** Server clamp in export_api (`MAX_EXPORT_LIMIT`). */
+const YEAR_FETCH_LIMIT = 500;
+
+function conversationYears(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+): number[] {
+  if (!startIso || !endIso) return [];
+  const startYear = new Date(startIso).getFullYear();
+  const endYear = new Date(endIso).getFullYear();
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear) || endYear < startYear) {
+    return [];
+  }
+  const years: number[] = [];
+  for (let y = startYear; y <= endYear; y++) years.push(y);
+  return years;
+}
+
+function yearQuery(conversationId: string, year: number): string {
+  return `in:${conversationId} after:${year} before:${year + 1}`;
+}
+
+async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[]; total: number }> {
+  const countRes = await apiClient.get<{ messages: number }>(
+    `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
+  );
+  const total = countRes.messages ?? 0;
+  if (total === 0) return { messages: [], total: 0 };
+
+  const collected: Message[] = [];
+  let offset = 0;
+  while (offset < total) {
+    const msgRes = await apiClient.get<{ messages: Message[] }>(
+      `/v1/export/messages?q=${encodeURIComponent(q)}&offset=${offset}&limit=${YEAR_FETCH_LIMIT}`,
+    );
+    const batch = msgRes.messages ?? [];
+    collected.push(...batch);
+    if (batch.length === 0) break;
+    offset += batch.length;
+    if (batch.length < YEAR_FETCH_LIMIT) break;
+  }
+  return { messages: collected, total };
+}
 
 export default function MessageView({
   conversation,
@@ -18,6 +62,8 @@ export default function MessageView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  /** `null` = all years (paged). Otherwise load every message in that calendar year. */
+  const [activeYear, setActiveYear] = useState<number | null>(null);
   const [findTerm, setFindTerm] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -27,27 +73,10 @@ export default function MessageView({
   const [participantsOpen, setParticipantsOpen] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Year jump targets — estimate the offset from the conversation's date range
-  const dateJumps = useMemo(() => {
-    if (!conversation.date_range_start || !conversation.date_range_end) return [];
-    const start = new Date(conversation.date_range_start);
-    const end = new Date(conversation.date_range_end);
-    const startYear = start.getFullYear();
-    const endYear = end.getFullYear();
-    const years: number[] = [];
-    for (let y = startYear; y <= endYear; y++) years.push(y);
-    const lastPageOffset = Math.max(0, conversation.message_count - PAGE_SIZE);
-    return years.map((year) => ({
-      year,
-      estimatedOffset: Math.min(
-        Math.floor(
-          ((year - startYear) / Math.max(1, endYear - startYear)) *
-            conversation.message_count,
-        ),
-        lastPageOffset,
-      ),
-    }));
-  }, [conversation]);
+  const years = useMemo(
+    () => conversationYears(conversation.date_range_start, conversation.date_range_end),
+    [conversation.date_range_start, conversation.date_range_end],
+  );
 
   // Open the lightbox at the clicked image; prev/next walks this page's images
   const handleAttachmentClick = useCallback((att: MessageAttachment, source: string) => {
@@ -63,8 +92,8 @@ export default function MessageView({
     setLightboxIndex(idx >= 0 ? idx : 0);
   }, [messages]);
 
-  const fetchPage = useCallback(
-    async (newOffset: number, _searchTerm?: string) => {
+  const fetchConversationPage = useCallback(
+    async (newOffset: number) => {
       setLoading(true);
       try {
         const q = `in:${conversation.id}`;
@@ -89,13 +118,52 @@ export default function MessageView({
     [conversation.id],
   );
 
+  const fetchYear = useCallback(
+    async (year: number) => {
+      setLoading(true);
+      try {
+        const { messages: all, total: yearTotal } = await fetchAllMessagesForQuery(
+          yearQuery(conversation.id, year),
+        );
+        setMessages(all);
+        setTotal(yearTotal);
+        setOffset(0);
+      } catch {
+        setMessages([]);
+        setTotal(0);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [conversation.id],
+  );
+
   useEffect(() => {
-    fetchPage(0);
-  }, [fetchPage]);
+    setActiveYear(null);
+    setFindTerm("");
+    setActiveMatch(0);
+    void fetchConversationPage(0);
+  }, [conversation.id, fetchConversationPage]);
 
   useEffect(() => {
     setParticipantsOpen(true);
   }, [conversation.id]);
+
+  const selectAllYears = () => {
+    setActiveYear(null);
+    setActiveMatch(0);
+    void fetchConversationPage(0);
+  };
+
+  const selectYear = (year: number) => {
+    if (activeYear === year) {
+      selectAllYears();
+      return;
+    }
+    setActiveYear(year);
+    setActiveMatch(0);
+    void fetchYear(year);
+  };
 
   /** Prefer list-API participants; fall back to the loaded page's conversation header. */
   const displayParticipants = useMemo(() => {
@@ -127,6 +195,26 @@ export default function MessageView({
     const el = document.getElementById(`msg-${matchIds[activeMatch]}`);
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [activeMatch, matchIds]);
+
+  const yearMode = activeYear !== null;
+  const footerLabel = yearMode
+    ? total === 0
+      ? `${activeYear}: 0 of 0`
+      : `${activeYear}: 1–${total} of ${total}`
+    : total === 0
+      ? "Messages 0 of 0"
+      : `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
+
+  const chipStyle = (active: boolean) => ({
+    fontSize: "0.688rem",
+    border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+    background: active ? "var(--accent)" : "var(--panel)",
+    padding: "0.125rem 0.375rem",
+    borderRadius: "4px",
+    cursor: "pointer" as const,
+    color: active ? "var(--sent-text, #fff)" : "var(--accent)",
+    fontWeight: active ? 600 : 400,
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -259,22 +347,29 @@ export default function MessageView({
           </button>
         </div>
 
-        {/* Date jump links */}
-        {dateJumps.length > 0 && (
-          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem" }}>
-            {dateJumps.map((jump) => (
+        {years.length > 0 && (
+          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem", alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={selectAllYears}
+              title="Show all years (paged)"
+              style={chipStyle(activeYear === null)}
+            >
+              All
+            </button>
+            {years.map((year) => (
               <button
-                key={jump.year}
+                key={year}
                 type="button"
-                onClick={() => fetchPage(jump.estimatedOffset)}
-                title={`Jump to ${jump.year} (estimated offset ${jump.estimatedOffset})`}
-                style={{
-                  fontSize: "0.688rem", border: "1px solid var(--border)", background: "var(--panel)",
-                  padding: "0.125rem 0.375rem", borderRadius: "4px", cursor: "pointer",
-                  color: "var(--accent)",
-                }}
+                onClick={() => selectYear(year)}
+                title={
+                  activeYear === year
+                    ? `Clear ${year} filter`
+                    : `Load all messages from ${year}`
+                }
+                style={chipStyle(activeYear === year)}
               >
-                {jump.year}
+                {year}
               </button>
             ))}
           </div>
@@ -307,7 +402,8 @@ export default function MessageView({
         {matchIds.length > 0 && (
           <>
             <span style={{ fontSize: "0.75rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
-              {activeMatch + 1} of {matchIds.length} on this page
+              {activeMatch + 1} of {matchIds.length}
+              {yearMode ? " in this year" : " on this page"}
             </span>
             <Button onClick={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
               style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem" }}>
@@ -338,23 +434,31 @@ export default function MessageView({
         )}
       </div>
 
-      {/* Pagination */}
+      {/* Pagination / year summary */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "center",
         gap: "1rem", padding: "0.5rem", borderTop: "1px solid var(--border)",
         fontSize: "0.813rem", color: "var(--muted)",
       }}>
-        <Button onClick={() => fetchPage(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}
-          style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
-          Previous
-        </Button>
-        <span>
-          Messages {total === 0 ? 0 : offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
-        </span>
-        <Button onClick={() => fetchPage(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}
-          style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
-          Next
-        </Button>
+        {!yearMode && (
+          <Button
+            onClick={() => void fetchConversationPage(Math.max(0, offset - PAGE_SIZE))}
+            disabled={offset === 0 || loading}
+            style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+          >
+            Previous
+          </Button>
+        )}
+        <span>{footerLabel}</span>
+        {!yearMode && (
+          <Button
+            onClick={() => void fetchConversationPage(offset + PAGE_SIZE)}
+            disabled={offset + PAGE_SIZE >= total || loading}
+            style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+          >
+            Next
+          </Button>
+        )}
       </div>
 
       {/* Attachment lightbox */}

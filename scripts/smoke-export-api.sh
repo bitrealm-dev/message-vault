@@ -45,7 +45,7 @@ db.executescript("""
 PRAGMA foreign_keys = ON;
 $(cat "$ROOT/schema/sql/accounts.sql")
 INSERT INTO accounts (id, username, read_only) VALUES ('${ACCOUNT}', 'smoke', 0);
-INSERT INTO account_api_tokens (account_id, token_hash, created_at)
+INSERT INTO account_session_tokens (account_id, token_hash, created_at)
 VALUES ('${ACCOUNT}', '${TOKEN_HASH}', 'smoke');
 """)
 db.commit()

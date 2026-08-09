@@ -2,7 +2,7 @@
 
 pub mod account_profile;
 pub mod api_tokens;
-pub mod app_passwords;
 pub mod contacts;
 pub mod schema;
+pub mod session_tokens;
 pub mod vault_imports;

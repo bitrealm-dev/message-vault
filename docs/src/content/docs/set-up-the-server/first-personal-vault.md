@@ -1,6 +1,6 @@
 ---
 title: Your first personal vault
-description: Set up a vault for your own messages — create an account, create an app password, and push in your first export.
+description: Set up a vault for your own messages — create an account, create an API token, and push in your first export.
 ---
 
 A personal vault stores your messages behind an account you create. No demo data — it starts empty and you import your own exports.
@@ -21,11 +21,11 @@ If you are using Compose, set `VAULT_MODE=personal` in your environment or `.env
 
 Open **http://localhost:8080** and create an account. This is your vault login — the username and password you choose here. On first sign-in you may be asked to add your own handles (phone numbers or emails) so the vault can label messages you sent.
 
-## 3. Create an app password
+## 3. Create an API token
 
 1. In the web interface (or desktop app after login), open **Settings**
 2. Open the **Account** tab
-3. Under **App passwords**, create a named password and copy it — it is shown only once
+3. Under **API tokens**, create a named token and copy it — it is shown only once
 
 This secret authenticates CLI import (`vault-push`) and export (`vault-pull`). The desktop app **Import** screen uses your signed-in session against the same server URL.
 
@@ -36,7 +36,7 @@ Open the desktop app. On the login screen, enter:
 - **Server URL**: `http://localhost:8080`
 - Your vault username and password
 
-After you sign in, use **Import** in the sidebar to push a JSONL export into the vault. For CLI-only workflows, use an app password from Settings → Account.
+After you sign in, use **Import** in the sidebar to push a JSONL export into the vault. For CLI-only workflows, use an API token from Settings → Account.
 
 ## 5. Extract and import
 

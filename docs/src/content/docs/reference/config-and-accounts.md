@@ -51,7 +51,7 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 - Web login uses username + password (Argon2id hash in `accounts.password_hash`).
   Accounts may opt into no password (`password_hash` NULL); empty password is
   accepted only for those accounts.
-- Each account can create named **app passwords** for `vault-push` / `vault-pull`
+- Each account can create named **API tokens** for `vault-push` / `vault-pull`
   (stored hashed; shown once when created). GUI sessions use a separate rotating
   token.
 - New accounts start with browsing edits enabled.

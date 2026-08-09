@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import Button from "./Button";
 
-export default function AppPasswordRevealDialog({
+export default function ApiTokenRevealDialog({
   open,
   label,
   token,
@@ -47,7 +47,7 @@ export default function AppPasswordRevealDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="mv-app-password-reveal-title"
+        aria-labelledby="mv-api-token-reveal-title"
         onClick={(e) => e.stopPropagation()}
         style={{
           position: "relative",
@@ -80,10 +80,10 @@ export default function AppPasswordRevealDialog({
         </button>
 
         <h3
-          id="mv-app-password-reveal-title"
+          id="mv-api-token-reveal-title"
           style={{ margin: "0 1.5rem 0.5rem 0", fontSize: "1.05rem", color: "var(--text)" }}
         >
-          App password created
+          API token created
         </h3>
         <p style={{ margin: "0 0 0.75rem", fontSize: "0.813rem", color: "var(--muted)" }}>
           Copy this secret for <strong style={{ color: "var(--text)" }}>{label}</strong> now.

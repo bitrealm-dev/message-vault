@@ -130,7 +130,7 @@ Running both `compose-dev.yml` and `compose-release.yml` at the same time will c
 
 **Symptom**: `401 Unauthorized` from the import API.
 
-**Fix**: create a named app password under **Settings → Account**. The plaintext is shown once. If you lost it, revoke the old one and create a new password. Signing in to the GUI rotates a separate session token and does not change your app passwords. Secrets are stored as SHA-256 hashes — the server never stores the plain text.
+**Fix**: create a named API token under **Settings → Account**. The plaintext is shown once. If you lost it, revoke the old one and create a new token. Signing in to the GUI rotates a separate session token and does not change your API tokens. Secrets are stored as SHA-256 hashes — the server never stores the plain text.
 
 #### Import validation errors
 

@@ -1,4 +1,4 @@
-//! CRUD for named app passwords (CLI import/export credentials).
+//! CRUD for named CLI API tokens.
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
@@ -6,25 +6,29 @@ use axum::http::HeaderMap;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db::app_passwords::{self, AppPasswordScopes};
+use crate::db::api_tokens::{self, ApiTokenScopes};
 use crate::db::schema;
 use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
 
 #[derive(Debug, Serialize)]
-pub struct AppPasswordItem {
+pub struct ApiTokenItem {
     pub id: String,
     pub label: String,
     pub scopes: String,
+    /// Masked secret for Settings (e.g. `mv-api-Sd1**********mE`).
+    pub token_hint: String,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_accessed_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ListAppPasswordsResponse {
-    pub items: Vec<AppPasswordItem>,
+pub struct ListApiTokensResponse {
+    pub items: Vec<ApiTokenItem>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateAppPasswordRequest {
+pub struct CreateApiTokenRequest {
     pub label: String,
     /// `import`, `export`, or `both` (default `both`).
     #[serde(default = "default_scopes")]
@@ -36,75 +40,79 @@ fn default_scopes() -> String {
 }
 
 #[derive(Debug, Serialize)]
-pub struct CreateAppPasswordResponse {
+pub struct CreateApiTokenResponse {
     pub id: String,
     pub label: String,
     pub scopes: String,
     pub created_at: String,
     /// Plaintext secret — returned once at creation.
     pub token: String,
+    /// Masked form for the Settings list (also persisted).
+    pub token_hint: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct DeleteAppPasswordResponse {
+pub struct DeleteApiTokenResponse {
     pub ok: bool,
 }
 
-/// `GET /v1/account/app-passwords`
-pub async fn list_app_passwords_handler(
+/// `GET /v1/account/api-tokens`
+pub async fn list_api_tokens_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ListAppPasswordsResponse>, ApiError> {
+) -> Result<Json<ListApiTokensResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
     let db = state.cfg.paths.db.clone();
 
-    let items = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<AppPasswordItem>> {
+    let items = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ApiTokenItem>> {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
         schema::ensure_accounts_schema(&conn)?;
-        let rows = app_passwords::list_app_passwords(&conn, &account_id)?;
+        let rows = api_tokens::list_api_tokens(&conn, &account_id)?;
         Ok(rows
             .into_iter()
-            .map(|r| AppPasswordItem {
+            .map(|r| ApiTokenItem {
                 id: r.id,
                 label: r.label,
                 scopes: r.scopes.as_str().to_string(),
+                token_hint: r.token_hint,
                 created_at: r.created_at,
+                last_accessed_at: r.last_accessed_at,
             })
             .collect())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("list app passwords task: {e}")))?
+    .map_err(|e| ApiError::Internal(format!("list API tokens task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    Ok(Json(ListAppPasswordsResponse { items }))
+    Ok(Json(ListApiTokensResponse { items }))
 }
 
-/// `POST /v1/account/app-passwords`
-pub async fn create_app_password_handler(
+/// `POST /v1/account/api-tokens`
+pub async fn create_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<CreateAppPasswordRequest>,
-) -> Result<Json<CreateAppPasswordResponse>, ApiError> {
+    Json(req): Json<CreateApiTokenRequest>,
+) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
     let label = req.label;
-    let scopes = AppPasswordScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let scopes = ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let db = state.cfg.paths.db.clone();
 
     let created = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(String, String, AppPasswordScopes, String, String)> {
+        move || -> anyhow::Result<(String, String, ApiTokenScopes, String, String)> {
             let conn = Connection::open(&db)?;
             schema::configure_connection(&conn)?;
             schema::ensure_accounts_schema(&conn)?;
-            app_passwords::create_app_password(&conn, &account_id, &label, scopes)
+            api_tokens::create_api_token(&conn, &account_id, &label, scopes)
         },
     )
     .await
-    .map_err(|e| ApiError::Internal(format!("create app password task: {e}")))?
+    .map_err(|e| ApiError::Internal(format!("create API token task: {e}")))?
     .map_err(|e| {
         let msg = e.to_string();
         if msg.contains("label is required")
@@ -117,21 +125,22 @@ pub async fn create_app_password_handler(
         }
     })?;
 
-    Ok(Json(CreateAppPasswordResponse {
+    Ok(Json(CreateApiTokenResponse {
         id: created.0,
         label: created.1,
         scopes: created.2.as_str().to_string(),
         created_at: created.3,
+        token_hint: api_tokens::mask_api_token(&created.4),
         token: created.4,
     }))
 }
 
-/// `DELETE /v1/account/app-passwords/{id}`
-pub async fn delete_app_password_handler(
+/// `DELETE /v1/account/api-tokens/{id}`
+pub async fn delete_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
-) -> Result<Json<DeleteAppPasswordResponse>, ApiError> {
+) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let account_id = auth.account_id;
@@ -141,14 +150,14 @@ pub async fn delete_app_password_handler(
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
         schema::ensure_accounts_schema(&conn)?;
-        app_passwords::delete_app_password(&conn, &account_id, &id)
+        api_tokens::delete_api_token(&conn, &account_id, &id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("delete app password task: {e}")))?
+    .map_err(|e| ApiError::Internal(format!("delete API token task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if !deleted {
-        return Err(ApiError::NotFound("app password not found".into()));
+        return Err(ApiError::NotFound("API token not found".into()));
     }
-    Ok(Json(DeleteAppPasswordResponse { ok: true }))
+    Ok(Json(DeleteApiTokenResponse { ok: true }))
 }

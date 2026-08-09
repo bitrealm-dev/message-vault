@@ -22,7 +22,7 @@ Uses the same Import API Bearer token as `vault-push`. Export HTTP routes are **
 
 Authenticates with the vault, pages matching messages, writes per-conversation JSONL under `--out`, and downloads attachments by SHA-256. A journal under the output directory supports resume on re-runs.
 
-Create a named app password under **Settings → Account** in the vault UI. The vault base URL is the same origin as the web UI (for example `http://127.0.0.1:8080`).
+Create a named API token under **Settings → Account** in the vault UI. The vault base URL is the same origin as the web UI (for example `http://127.0.0.1:8080`).
 
 Prefer the desktop app **Export** screen for a GUI. See the [Export from the vault](../../../../docs/src/content/docs/use-the-desktop-app/export-from-vault.md) user guide.
 
@@ -32,7 +32,7 @@ Prefer the desktop app **Export** screen for a GUI. See the [Export from the vau
 |------|-----|---------|
 | `--url` | `VAULT_URL` | Base URL of the vault (UI and API on the same origin) |
 | `--username` | | Optional; account is resolved from the vault key |
-| `--key` | `VAULT_KEY` | App password (Settings → Account) |
+| `--key` | `VAULT_KEY` | API token (Settings → Account) |
 | `--out` | | Output directory for JSONL + `attachments/` |
 | `--query` | | Fastmail-style search query (optional) |
 | `--after` / `--before` | | Optional date bounds (`YYYY-MM-DD`) |

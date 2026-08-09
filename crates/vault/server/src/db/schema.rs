@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use rusqlite::{Connection, params};
 
 /// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
@@ -271,30 +271,101 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
 
 /// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
+    migrate_session_and_api_token_tables(conn)?;
     conn.execute_batch(ACCOUNTS_DDL)?;
-    ensure_app_password_scopes_column(conn)?;
+    ensure_named_api_token_scopes_column(conn)?;
+    ensure_named_api_token_hint_column(conn)?;
+    ensure_named_api_token_last_accessed_column(conn)?;
     Ok(())
 }
 
-/// Older DBs created `account_app_passwords` before `scopes` existed.
-fn ensure_app_password_scopes_column(conn: &Connection) -> Result<()> {
-    let table_exists: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'account_app_passwords'",
-        [],
-        |row| row.get(0),
-    )?;
-    if !table_exists {
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    // pragma_table_info does not accept bound table names; only call with known literals.
+    let sql = match table {
+        "account_api_tokens" => "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = ?1",
+        "account_session_tokens" => {
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_session_tokens') WHERE name = ?1"
+        }
+        "account_app_passwords" => {
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = ?1"
+        }
+        other => bail!("column_exists: unsupported table {other}"),
+    };
+    let exists: bool = conn.query_row(sql, params![column], |row| row.get(0))?;
+    Ok(exists)
+}
+
+/// Move legacy session `account_api_tokens` → `account_session_tokens`, then
+/// `account_app_passwords` → `account_api_tokens` (named CLI tokens).
+fn migrate_session_and_api_token_tables(conn: &Connection) -> Result<()> {
+    // Old session table occupied `account_api_tokens` (no `label` column).
+    if table_exists(conn, "account_api_tokens")?
+        && !column_exists(conn, "account_api_tokens", "label")?
+        && !table_exists(conn, "account_session_tokens")?
+    {
+        conn.execute_batch("ALTER TABLE account_api_tokens RENAME TO account_session_tokens;")?;
+    }
+
+    if table_exists(conn, "account_app_passwords")? && !table_exists(conn, "account_api_tokens")? {
+        conn.execute_batch("ALTER TABLE account_app_passwords RENAME TO account_api_tokens;")?;
+        // Recreate index under the new name when the old one was renamed with the table
+        // (SQLite keeps the old index name on RENAME TABLE).
+        let has_old_ix: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = 'ix_account_app_passwords_account'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_old_ix {
+            conn.execute_batch("DROP INDEX IF EXISTS ix_account_app_passwords_account;")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS ix_account_api_tokens_account ON account_api_tokens(account_id);",
+        )?;
+    }
+    Ok(())
+}
+
+/// Older DBs may lack `scopes` on named API tokens.
+fn ensure_named_api_token_scopes_column(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "account_api_tokens")? {
         return Ok(());
     }
-    let has_scopes: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = 'scopes'",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_scopes {
+    // Session-shaped leftover should not happen after migrate; skip if no label.
+    if !column_exists(conn, "account_api_tokens", "label")? {
+        return Ok(());
+    }
+    if !column_exists(conn, "account_api_tokens", "scopes")? {
         conn.execute_batch(
-            "ALTER TABLE account_app_passwords ADD COLUMN scopes TEXT NOT NULL DEFAULT 'both';",
+            "ALTER TABLE account_api_tokens ADD COLUMN scopes TEXT NOT NULL DEFAULT 'both';",
         )?;
+    }
+    Ok(())
+}
+
+fn ensure_named_api_token_hint_column(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "account_api_tokens")? {
+        return Ok(());
+    }
+    if !column_exists(conn, "account_api_tokens", "label")? {
+        return Ok(());
+    }
+    if !column_exists(conn, "account_api_tokens", "token_hint")? {
+        conn.execute_batch(
+            "ALTER TABLE account_api_tokens ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'mv-api-**********';",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_named_api_token_last_accessed_column(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "account_api_tokens")? {
+        return Ok(());
+    }
+    if !column_exists(conn, "account_api_tokens", "label")? {
+        return Ok(());
+    }
+    if !column_exists(conn, "account_api_tokens", "last_accessed_at")? {
+        conn.execute_batch("ALTER TABLE account_api_tokens ADD COLUMN last_accessed_at TEXT;")?;
     }
     Ok(())
 }

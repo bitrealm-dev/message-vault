@@ -23,8 +23,8 @@ use crate::assets;
 use crate::config::{Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
-use crate::db::app_passwords;
 use crate::db::schema;
+use crate::db::session_tokens;
 use crate::dedupe;
 use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
@@ -36,61 +36,61 @@ use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 pub enum AuthCapability {
     /// GUI session token — full API access.
     Full,
-    /// Named app password with import and/or export rights.
-    AppPassword(crate::db::app_passwords::AppPasswordScopes),
+    /// Named API token with import and/or export rights.
+    ApiToken(crate::db::api_tokens::ApiTokenScopes),
 }
 
-/// Authenticated vault account from a session token or app password.
+/// Authenticated vault account from a session token or named API token.
 #[derive(Debug, Clone)]
 pub struct AuthIdentity {
     pub account_id: String,
     pub capability: AuthCapability,
 }
 
-/// Reject app passwords on routes that require a GUI session.
+/// Reject API tokens on routes that require a GUI session.
 pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
-        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
-            "this endpoint requires a signed-in session; use an app password only for import/export"
+        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
+            "this endpoint requires a signed-in session; use an API token only for import/export"
                 .into(),
         )),
     }
 }
 
-/// Allow session or an app password that includes import.
+/// Allow session or an API token that includes import.
 pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
-        AuthCapability::AppPassword(scopes) if scopes.allows_import() => Ok(()),
-        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
-            "this app password does not allow import".into(),
+        AuthCapability::ApiToken(scopes) if scopes.allows_import() => Ok(()),
+        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
+            "this API token does not allow import".into(),
         )),
     }
 }
 
-/// Allow session or an app password that includes export.
+/// Allow session or an API token that includes export.
 pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
-        AuthCapability::AppPassword(scopes) if scopes.allows_export() => Ok(()),
-        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
-            "this app password does not allow export".into(),
+        AuthCapability::ApiToken(scopes) if scopes.allows_export() => Ok(()),
+        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
+            "this API token does not allow export".into(),
         )),
     }
 }
 
-/// Allow session or any app password (import, export, or both) for asset probes.
+/// Allow session or any API token (import, export, or both) for asset probes.
 pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
-        AuthCapability::AppPassword(scopes)
+        AuthCapability::ApiToken(scopes)
             if scopes.allows_import() || scopes.allows_export() =>
         {
             Ok(())
         }
-        AuthCapability::AppPassword(_) => Err(ApiError::Forbidden(
-            "this app password cannot access assets".into(),
+        AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
+            "this API token cannot access assets".into(),
         )),
     }
 }
@@ -252,13 +252,13 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .route("/v1/account/storage", get(account_storage_handler))
         .route(
-            "/v1/account/app-passwords",
-            get(crate::app_passwords_api::list_app_passwords_handler)
-                .post(crate::app_passwords_api::create_app_password_handler),
+            "/v1/account/api-tokens",
+            get(crate::api_tokens_api::list_api_tokens_handler)
+                .post(crate::api_tokens_api::create_api_token_handler),
         )
         .route(
-            "/v1/account/app-passwords/{id}",
-            delete(crate::app_passwords_api::delete_app_password_handler),
+            "/v1/account/api-tokens/{id}",
+            delete(crate::api_tokens_api::delete_api_token_handler),
         )
         .route(
             "/v1/export/messages/count",
@@ -313,7 +313,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
     eprintln!("  GET  /v1/auth/mode     (unauthenticated — returns hanko or local)");
-    eprintln!("  GET  /v1/auth/check   (Bearer session token or app password)");
+    eprintln!("  GET  /v1/auth/check   (Bearer session token or API token)");
     eprintln!("  GET  /v1/export/messages?q=&limit=&cursor=&account=  (read-only export)");
     eprintln!("  GET  /v1/export/messages/count?q=&account=&source=  (export match counts)");
     eprintln!("  GET  /v1/assets/{{sha256}}?source=&account=  (download content-addressed media)");
@@ -505,16 +505,16 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
         schema::ensure_accounts_schema(&conn)?;
-        if let Some(account_id) = api_tokens::lookup_account_for_token(&conn, &token_owned)? {
+        if let Some(account_id) = session_tokens::lookup_account_for_token(&conn, &token_owned)? {
             return Ok(Some(AuthIdentity {
                 account_id,
                 capability: AuthCapability::Full,
             }));
         }
-        if let Some(app) = app_passwords::lookup_account_for_app_password(&conn, &token_owned)? {
+        if let Some(tok) = api_tokens::lookup_account_for_api_token(&conn, &token_owned)? {
             return Ok(Some(AuthIdentity {
-                account_id: app.account_id,
-                capability: AuthCapability::AppPassword(app.scopes),
+                account_id: tok.account_id,
+                capability: AuthCapability::ApiToken(tok.scopes),
             }));
         }
         Ok(None)

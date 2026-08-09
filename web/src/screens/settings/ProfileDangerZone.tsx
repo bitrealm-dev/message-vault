@@ -20,8 +20,10 @@ export function ProfileDangerZone({
   const [dangerError, setDangerError] = useState("");
 
   const busy = deleting || deletingMessages;
+  const demoLocked = isDemo;
 
   const deleteAllMessages = async () => {
+    if (demoLocked) return;
     if (
       !confirm(
         "Delete all messages and attachments? Your contacts and settings will remain.",
@@ -41,6 +43,7 @@ export function ProfileDangerZone({
   };
 
   const performDeleteAccount = async () => {
+    if (demoLocked) return;
     setDeleting(true);
     setDangerError("");
     try {
@@ -102,35 +105,41 @@ export function ProfileDangerZone({
 
         {dangerZoneOpen && (
           <div style={{ marginTop: "1rem", marginLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {demoLocked && (
+              <p style={{ margin: 0, fontSize: "0.813rem", color: "var(--muted)" }}>
+                These actions are unavailable on the demo account.
+              </p>
+            )}
+
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
               <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
                 Delete all messages and attachments. Your contacts and settings remain.
               </p>
               <Button
                 variant="danger"
-                disabled={busy}
+                disabled={busy || demoLocked}
                 onClick={() => void deleteAllMessages()}
                 style={dangerButtonStyle}
+                title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
                 {deletingMessages ? "Deleting…" : "Delete all messages"}
               </Button>
             </div>
 
-            {!isDemo && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
-                  Delete this account and everything in it.
-                </p>
-                <Button
-                  variant="danger"
-                  disabled={busy}
-                  onClick={() => setDeleteDialogOpen(true)}
-                  style={dangerButtonStyle}
-                >
-                  Delete account
-                </Button>
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
+                Delete this account and everything in it.
+              </p>
+              <Button
+                variant="danger"
+                disabled={busy || demoLocked}
+                onClick={() => setDeleteDialogOpen(true)}
+                style={dangerButtonStyle}
+                title={demoLocked ? "Unavailable on the demo account" : undefined}
+              >
+                Delete account
+              </Button>
+            </div>
 
             {dangerError && (
               <div style={{ fontSize: "0.813rem", color: "var(--danger)" }} role="alert">

@@ -24,25 +24,30 @@ CREATE TABLE IF NOT EXISTS account_handles (
     PRIMARY KEY (account_id, handle_id)
 );
 
-CREATE TABLE IF NOT EXISTS account_api_tokens (
+-- GUI session Bearer (one per account; rotates on login). Prefix: mv-user-
+CREATE TABLE IF NOT EXISTS account_session_tokens (
     account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
 );
 
--- Named CLI credentials (app passwords). Many per account.
+-- Named CLI API tokens (many per account). Prefix: mv-api-
 -- scopes: 'import' | 'export' | 'both'
-CREATE TABLE IF NOT EXISTS account_app_passwords (
+CREATE TABLE IF NOT EXISTS account_api_tokens (
     id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     scopes TEXT NOT NULL DEFAULT 'both',
-    created_at TEXT NOT NULL
+    -- Masked form for Settings (e.g. mv-api-Sd1**********mE). Not enough to recover the secret.
+    token_hint TEXT NOT NULL DEFAULT 'mv-api-**********',
+    created_at TEXT NOT NULL,
+    -- Unix-seconds string; NULL until first successful Bearer use.
+    last_accessed_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS ix_account_app_passwords_account
-    ON account_app_passwords(account_id);
+CREATE INDEX IF NOT EXISTS ix_account_api_tokens_account
+    ON account_api_tokens(account_id);
 
 CREATE TABLE IF NOT EXISTS account_prefs (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

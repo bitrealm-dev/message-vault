@@ -15,7 +15,7 @@ clients pull messages and asset bytes back out with the same Bearer token.
 | Method | Path | Auth | Role |
 |--------|------|------|------|
 | `GET` | `/health` | None | Liveness |
-| `GET` | `/v1/auth/check` | Bearer session token or app password | Validate token |
+| `GET` | `/v1/auth/check` | Bearer session token or API token | Validate token |
 | `GET` | `/v1/export/messages?q=&limit=&cursor=&account=&source=` | Bearer token | **Read-only** message export |
 | `GET` | `/v1/export/messages/count?q=&account=&source=` | Bearer token | **Read-only** match counts (no message bodies) |
 | `GET` | `/v1/assets/{sha256}?source=&account=` | Bearer token | **Read-only** asset download |
@@ -27,10 +27,10 @@ clients pull messages and asset bytes back out with the same Bearer token.
 | `POST` | `/v1/import?source=&account=&mode=&dedupe=&import_id=` | Bearer token | Import JSONL |
 
 Auth is per-account only (no host-wide admin token). For CLI tools, create a
-named **app password** under **Settings → Account** in the web UI (shown once
+named **API token** under **Settings → Account** in the web UI (shown once
 at creation). A GUI sign-in uses a separate **session** Bearer that rotates on
 each login; that session token is not what you copy into `vault-push` /
-`vault-pull`. An app password authorizes import (write) and message/asset
+`vault-pull`. An API token authorizes import (write) and message/asset
 export (read) only — not profile, settings, or browse. **Export routes never
 delete or mutate** vault data; there is no message/asset DELETE API.
 

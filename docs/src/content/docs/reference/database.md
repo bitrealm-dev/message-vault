@@ -59,14 +59,14 @@ derived (converted) paths for the browser. Reactions record `sender_handle_id`
 
 ## People and accounts
 
-### `accounts` / `account_emails` / `account_handles` / `account_api_tokens` / `account_app_passwords`
+### `accounts` / `account_emails` / `account_handles` / `account_session_tokens` / `account_api_tokens`
 
 Web accounts sign in with **user ID** (`username`) and optional password.
 `preferred_name` is the display name. `account_handles` (and optional
 `account_emails`) are handles used to recognize “you” in messages — emails are
-never used for login. GUI **session** tokens live in `account_api_tokens` (one
-per account; rotated on login). Named **app passwords** for CLI import/export
-live in `account_app_passwords` (many per account).
+never used for login. GUI **session** tokens live in `account_session_tokens` (one
+per account; rotated on login; prefix `mv-user-`). Named **API tokens** for CLI
+import/export live in `account_api_tokens` (many per account; prefix `mv-api-`).
 
 ### `handles`
 

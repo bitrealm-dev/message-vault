@@ -9,10 +9,10 @@ Open **Settings** in the sidebar. Settings has four tabs:
 
 - **Username** — read-only account id used for sign-in
 - **Password** — change password when local auth is enabled
-- **App passwords** — create named Bearer secrets for `vault-push` / `vault-pull`. When creating one, choose **import**, **export**, or **both**. Each secret is shown once at creation; revoke when finished. Signing in to the GUI uses a separate session token that changes on each login and does not revoke these passwords
+- **API tokens** — create named Bearer secrets for `vault-push` / `vault-pull`. When creating one, choose **import**, **export**, or **both**. Each secret is shown once at creation; revoke when finished. Signing in to the GUI uses a separate session token that changes on each login and does not revoke these tokens
 - **Danger zone** — delete all messages for the account, or delete the account (the demo account cannot be deleted)
 
-The desktop app and web UI sign in with username and password. Use app passwords for CLI and automation.
+The desktop app and web UI sign in with username and password. Use API tokens for CLI and automation.
 
 ## Profile
 

@@ -159,7 +159,7 @@ export function accountHasApiToken(accountId: string): boolean {
   try {
     const row = db
       .prepare(
-        `SELECT COUNT(*) AS n FROM account_api_tokens WHERE account_id = ?`,
+        `SELECT COUNT(*) AS n FROM account_session_tokens WHERE account_id = ?`,
       )
       .get(accountId) as { n: number };
     return row.n > 0;
@@ -178,7 +178,7 @@ export function rotateAccountApiToken(accountId: string): string {
     const tokenHash = hashApiToken(token);
     const createdAt = new Date().toISOString();
     db.prepare(
-      `INSERT INTO account_api_tokens (account_id, token_hash, created_at)
+      `INSERT INTO account_session_tokens (account_id, token_hash, created_at)
        VALUES (?, ?, ?)
        ON CONFLICT(account_id) DO UPDATE SET
          token_hash = excluded.token_hash,
@@ -195,7 +195,7 @@ export function deleteAccountApiToken(accountId: string): void {
   try {
     const row = getAccountRow(db, accountId);
     if (!row) throw new Error("account not found");
-    db.prepare(`DELETE FROM account_api_tokens WHERE account_id = ?`).run(
+    db.prepare(`DELETE FROM account_session_tokens WHERE account_id = ?`).run(
       accountId,
     );
   } finally {

@@ -1,25 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
-import AppPasswordRevealDialog from "../../components/AppPasswordRevealDialog";
+import ApiTokenRevealDialog from "../../components/ApiTokenRevealDialog";
 import { inputStyle, sectionTitle } from "./profileStyles";
 
-type AppPasswordScopes = "import" | "export" | "both";
+type ApiTokenScopes = "import" | "export" | "both";
 
-type AppPasswordItem = {
+type ApiTokenItem = {
   id: string;
   label: string;
-  scopes: AppPasswordScopes | string;
+  scopes: ApiTokenScopes | string;
+  /** Masked secret, e.g. `mv-api-Sd1**********mE`. */
+  token_hint: string;
   created_at: string;
+  /** Unix seconds string, or null/absent if never used. */
+  last_accessed_at?: string | null;
 };
 
-function formatCreatedAt(secs: string): string {
+function formatTimestamp(secs: string | null | undefined): string {
+  if (secs == null || secs === "") return "Never";
   const n = Number(secs);
-  if (!Number.isFinite(n) || n <= 0) return secs;
+  if (!Number.isFinite(n) || n <= 0) return "Never";
   try {
     return new Date(n * 1000).toLocaleString();
   } catch {
-    return secs;
+    return "Never";
   }
 }
 
@@ -36,20 +41,20 @@ function scopesLabel(scopes: string): string {
   }
 }
 
-/** Named CLI credentials (import/export). Separate from the rotating GUI session token. */
-export function AppPasswordsSection() {
-  const [items, setItems] = useState<AppPasswordItem[]>([]);
+/** Named CLI API tokens (import/export). Separate from the rotating GUI session token. */
+export function ApiTokensSection() {
+  const [items, setItems] = useState<ApiTokenItem[]>([]);
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
-  const [scopes, setScopes] = useState<AppPasswordScopes>("both");
+  const [scopes, setScopes] = useState<ApiTokenScopes>("both");
   const [actionError, setActionError] = useState("");
   const [reveal, setReveal] = useState<{ label: string; token: string } | null>(null);
 
   const reload = useCallback(async () => {
     setLoadError("");
     try {
-      const res = await apiClient.get<{ items: AppPasswordItem[] }>("/v1/account/app-passwords");
+      const res = await apiClient.get<{ items: ApiTokenItem[] }>("/v1/account/api-tokens");
       setItems(res.items ?? []);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
@@ -72,7 +77,7 @@ export function AppPasswordsSection() {
         scopes: string;
         created_at: string;
         token: string;
-      }>("/v1/account/app-passwords", { label: trimmed, scopes });
+      }>("/v1/account/api-tokens", { label: trimmed, scopes });
       setLabel("");
       setScopes("both");
       setReveal({ label: res.label, token: res.token });
@@ -84,14 +89,14 @@ export function AppPasswordsSection() {
     }
   };
 
-  const revoke = async (item: AppPasswordItem) => {
-    if (!confirm(`Revoke app password “${item.label}”? CLI tools using it will stop working.`)) {
+  const revoke = async (item: ApiTokenItem) => {
+    if (!confirm(`Revoke API token “${item.label}”? CLI tools using it will stop working.`)) {
       return;
     }
     setBusy(true);
     setActionError("");
     try {
-      await apiClient.delete(`/v1/account/app-passwords/${encodeURIComponent(item.id)}`);
+      await apiClient.delete(`/v1/account/api-tokens/${encodeURIComponent(item.id)}`);
       await reload();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
@@ -102,58 +107,16 @@ export function AppPasswordsSection() {
 
   return (
     <div style={{ marginBottom: "1.5rem" }}>
-      <h3 style={sectionTitle}>App passwords</h3>
+      <h3 style={sectionTitle}>API tokens</h3>
       <p style={{ margin: "0 0 0.75rem", fontSize: "0.813rem", color: "var(--muted)" }}>
         Long-lived secrets for CLI tools such as vault-push and vault-pull. Choose import,
         export, or both when creating one. Signing in to the GUI uses a separate session
-        token that changes on each login and does not revoke these passwords.
+        token that changes on each login and does not revoke these tokens.
       </p>
 
       {loadError && (
         <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "0.75rem" }}>
           {loadError}
-        </div>
-      )}
-
-      {items.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
-          No app passwords yet.
-        </div>
-      ) : (
-        <div style={{ marginBottom: "0.75rem" }}>
-          {items.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.75rem",
-                padding: "0.375rem 0",
-                borderBottom: "1px solid var(--border)",
-                fontSize: "0.875rem",
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, fontWeight: 500 }}>{item.label}</span>
-              <span style={{ color: "var(--muted)", fontSize: "0.75rem", flexShrink: 0 }}>
-                {scopesLabel(item.scopes)}
-              </span>
-              <span style={{ color: "var(--muted)", fontSize: "0.75rem", flexShrink: 0 }}>
-                {formatCreatedAt(item.created_at)}
-              </span>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => void revoke(item)}
-                style={{
-                  fontSize: "0.813rem",
-                  padding: "0.2rem 0.5rem",
-                  color: "var(--danger)",
-                }}
-              >
-                Revoke
-              </Button>
-            </div>
-          ))}
         </div>
       )}
 
@@ -163,7 +126,7 @@ export function AppPasswordsSection() {
           gap: "0.5rem",
           flexWrap: "wrap",
           alignItems: "center",
-          marginBottom: "0.35rem",
+          marginBottom: "0.75rem",
         }}
       >
         <input
@@ -182,9 +145,9 @@ export function AppPasswordsSection() {
         />
         <select
           value={scopes}
-          onChange={(e) => setScopes(e.target.value as AppPasswordScopes)}
+          onChange={(e) => setScopes(e.target.value as ApiTokenScopes)}
           disabled={busy}
-          aria-label="App password access"
+          aria-label="API token access"
           style={{ ...inputStyle, width: "auto", minWidth: "9.5rem" }}
         >
           <option value="both">Import + export</option>
@@ -201,12 +164,77 @@ export function AppPasswordsSection() {
         </Button>
       </div>
       {actionError && (
-        <div style={{ fontSize: "0.813rem", color: "var(--danger)" }} role="alert">
+        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "0.75rem" }} role="alert">
           {actionError}
         </div>
       )}
 
-      <AppPasswordRevealDialog
+      {items.length === 0 ? (
+        <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>
+          No API tokens yet.
+        </div>
+      ) : (
+        <div>
+          {items.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+                padding: "0.375rem 0",
+                borderBottom: "1px solid var(--border)",
+                fontSize: "0.875rem",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500 }}>{item.label}</div>
+                <div
+                  style={{
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                    marginTop: "0.125rem",
+                  }}
+                  title="Masked API token"
+                >
+                  {item.token_hint || "mv-api-**********"}
+                </div>
+              </div>
+              <span style={{ color: "var(--muted)", fontSize: "0.75rem", flexShrink: 0 }}>
+                {scopesLabel(item.scopes)}
+              </span>
+              <div
+                style={{
+                  color: "var(--muted)",
+                  fontSize: "0.75rem",
+                  flexShrink: 0,
+                  textAlign: "right",
+                  lineHeight: 1.35,
+                }}
+              >
+                <div>Created {formatTimestamp(item.created_at)}</div>
+                <div>Last accessed {formatTimestamp(item.last_accessed_at)}</div>
+              </div>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => void revoke(item)}
+                style={{
+                  fontSize: "0.813rem",
+                  padding: "0.2rem 0.5rem",
+                  color: "var(--danger)",
+                }}
+              >
+                Revoke
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ApiTokenRevealDialog
         open={reveal !== null}
         label={reveal?.label ?? ""}
         token={reveal?.token ?? ""}
