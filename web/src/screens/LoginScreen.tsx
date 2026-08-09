@@ -31,7 +31,10 @@ export default function LoginScreen({
   onRegister?: () => void;
 }) {
   const { login, setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
-  const [serverUrl, setServerUrl] = useState(savedUrl || "http://localhost:8080");
+  const [serverUrl, setServerUrl] = useState(() => {
+    if (typeof savedUrl === "string" && savedUrl.length > 0) return savedUrl;
+    return isTauri() ? "http://localhost:8080" : "";
+  });
   const [authMode, setAuthMode] = useState<AuthMode>(null);
   const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,18 +47,22 @@ export default function LoginScreen({
   const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
 
   const detectMode = async () => {
-    if (!serverUrl.trim()) return;
     setLoading(true);
     setError("");
     setAuthMode(null);
     try {
-      setBaseUrl(serverUrl);
+      const url = serverUrl.trim();
+      setBaseUrl(url);
       const res = await apiClient.get<AuthModeResponse>("/v1/auth/mode");
       setAuthMode(res.mode as AuthMode);
       setHankoApiUrl(res.hanko_api_url || null);
-      setAuthServer(serverUrl);
+      setAuthServer(url);
     } catch {
-      setError("Could not reach server. Check the URL and try again.");
+      setError(
+        isTauri()
+          ? "Could not reach server. Check the URL and try again."
+          : "Could not reach server. Leave the URL blank for this origin (Vite proxy / vault UI), or enter an absolute vault URL.",
+      );
     } finally {
       setLoading(false);
     }
@@ -73,7 +80,7 @@ export default function LoginScreen({
         token: string;
         account_id: string;
       }>("/v1/auth/login", { username, password });
-      login(serverUrl, res.token, res.account_id);
+      login(serverUrl.trim(), res.token, res.account_id);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -113,12 +120,12 @@ export default function LoginScreen({
           void (async () => {
             try {
               const jwt = hanko.getSessionToken();
-              setBaseUrl(serverUrl);
+              setBaseUrl(serverUrl.trim());
               const res = await apiClient.post<{
                 token: string;
                 account_id: string;
               }>("/v1/auth/hanko/session", { hanko_jwt: jwt });
-              login(serverUrl, res.token, res.account_id);
+              login(serverUrl.trim(), res.token, res.account_id);
             } catch (e) {
               setError(`Hanko login failed: ${e}`);
             }
@@ -159,13 +166,17 @@ export default function LoginScreen({
         {authMode === null && (
           <>
             <label style={authLabel}>Server URL</label>
-            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
               <input
                 type="text"
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && detectMode()}
-                placeholder="https://vault.example.com"
+                placeholder={
+                  isTauri()
+                    ? "https://vault.example.com"
+                    : "Leave blank for this origin"
+                }
                 style={{ ...authInput, flex: 1, width: "auto" }}
               />
               <Button
@@ -177,6 +188,12 @@ export default function LoginScreen({
                 {loading ? "Connecting…" : "Connect"}
               </Button>
             </div>
+            {!isTauri() && (
+              <p style={{ ...mutedText, fontSize: "0.75rem", marginBottom: "1rem" }}>
+                Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
+              </p>
+            )}
+            {isTauri() && <div style={{ marginBottom: "1rem" }} />}
 
             {isTauri() && (
               <>

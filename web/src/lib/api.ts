@@ -2,6 +2,7 @@ let baseUrl = "";
 let authToken: string | null = null;
 
 export function setBaseUrl(url: string) {
+  // Empty string = same-origin (Vite proxy or vault-hosted static UI).
   baseUrl = url.replace(/\/+$/, "");
 }
 
@@ -19,8 +20,7 @@ async function request<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (!baseUrl) throw new Error("Server URL not configured");
-
+  // baseUrl "" is valid (same-origin). Absolute URLs required for remote vaults.
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

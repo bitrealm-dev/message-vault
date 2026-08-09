@@ -1,7 +1,9 @@
 import { useState } from "react";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
-import ConversationList from "../screens/ConversationList";
+import ConversationList, {
+  type ConversationAutoSelect,
+} from "../screens/ConversationList";
 import ContactList from "../screens/ContactList";
 import ContactDrawer, {
   type ContactBrowseKind,
@@ -14,13 +16,7 @@ import SettingsScreen from "../screens/SettingsScreen";
 import ImportHistoryScreen from "../screens/ImportHistoryScreen";
 import MessageView from "../screens/MessageView";
 import SearchResults from "../screens/SearchResults";
-import { apiClient } from "../lib/api";
 import type { Conversation } from "../lib/types";
-
-type ConversationsPage = {
-  conversations: Conversation[];
-  total: number;
-};
 
 function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string {
   if (kind === "direct") return `contact:${contactId} is:direct`;
@@ -41,51 +37,6 @@ function visibleBrowseQuery(
   return `contact:${contactId}${typeSuffix}`;
 }
 
-async function fetchConversationsPage(q: string): Promise<Conversation[]> {
-  const params = new URLSearchParams({
-    q,
-    limit: "40",
-    offset: "0",
-  });
-  const res = await apiClient.get<ConversationsPage>(
-    `/v1/export/conversations?${params}`,
-  );
-  return res.conversations || [];
-}
-
-/** Prefer contact: filter; if empty, fall back to per-handle queries. */
-async function loadContactConversations(
-  contactId: string,
-  kind: ContactBrowseKind,
-  handles: string[],
-): Promise<Conversation[]> {
-  const primary = contactBrowseQuery(contactId, kind);
-  try {
-    const items = await fetchConversationsPage(primary);
-    if (items.length > 0 || handles.length === 0) return items;
-  } catch {
-    /* try handle fallback below */
-  }
-
-  const byId = new Map<string, Conversation>();
-  for (const handle of handles) {
-    try {
-      const page = await fetchConversationsPage(`handle:${handle}`);
-      for (const c of page) byId.set(c.id, c);
-    } catch {
-      /* skip failed handle */
-    }
-  }
-  let items = [...byId.values()];
-  if (kind === "direct") items = items.filter((c) => !c.is_group);
-  if (kind === "group") items = items.filter((c) => c.is_group);
-  items.sort(
-    (a, b) =>
-      new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime(),
-  );
-  return items;
-}
-
 export default function AppLayout() {
   const [activeView, setActiveView] = useState("conversations");
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -101,6 +52,7 @@ export default function AppLayout() {
   const [conversationFilter, setConversationFilter] = useState("");
   const [searchActive, setSearchActive] = useState(false);
   const [findTerm, setFindTerm] = useState("");
+  const [autoSelect, setAutoSelect] = useState<ConversationAutoSelect | null>(null);
   const [exportScope] = useState<"all" | "current-view" | "selected">("all");
 
   const contactsMode = activeView === "contacts";
@@ -124,6 +76,7 @@ export default function AppLayout() {
       setConversationSearch(q);
       setActiveView("conversations");
       setSearchActive(q.trim() !== "");
+      setAutoSelect(null);
     }
   };
 
@@ -134,6 +87,7 @@ export default function AppLayout() {
     }
     setConversationFilter("");
     setConversationSearch(q);
+    setAutoSelect(null);
     if (!q.trim()) setSearchActive(false);
   };
 
@@ -143,7 +97,7 @@ export default function AppLayout() {
     setFindTerm(term);
   };
 
-  const handleBrowseContactConversations = async ({
+  const handleBrowseContactConversations = ({
     contactId,
     kind,
     handles = [],
@@ -157,24 +111,12 @@ export default function AppLayout() {
 
     setSelectedContact(null);
     setActiveView("conversations");
-    // Show handle + is:direct / is:group in the conversation search box.
     setConversationSearch(visible);
     setConversationFilter(apiQuery);
     setSearchActive(false);
     setFindTerm("");
-
-    try {
-      const items = await loadContactConversations(contactId, kind, handles);
-      if (kind === "direct") {
-        setSelectedConversation(items[0] ?? null);
-      } else if (items.length === 1) {
-        setSelectedConversation(items[0]);
-      } else {
-        setSelectedConversation(null);
-      }
-    } catch {
-      setSelectedConversation(null);
-    }
+    setSelectedConversation(null);
+    setAutoSelect(kind === "direct" ? "first" : "sole");
   };
 
   const conversationListQuery =
@@ -194,8 +136,14 @@ export default function AppLayout() {
       ) : (
         <ConversationList
           selectedId={selectedConversation?.id || null}
-          onSelect={(c) => { setSelectedConversation(c); setActiveView("conversations"); }}
+          onSelect={(c) => {
+            setSelectedConversation(c);
+            setActiveView("conversations");
+            setAutoSelect(null);
+          }}
           query={conversationListQuery}
+          autoSelect={autoSelect}
+          onAutoSelectDone={() => setAutoSelect(null)}
         />
       )
     ) : activeView === "contacts" ? (

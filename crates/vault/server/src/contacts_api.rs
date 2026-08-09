@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
-pub const MAX_LIST_LIMIT: usize = 100;
+pub const MAX_LIST_LIMIT: usize = 500;
 
 #[derive(Debug, Serialize)]
 pub struct ContactListPage {

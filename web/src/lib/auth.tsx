@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { setBaseUrl, setToken, apiClient } from "./api";
+import { clearContactDetailCache } from "./contactDetailCache";
 
 interface AuthState {
   serverUrl: string;
@@ -80,7 +81,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authEpoch = useRef(0);
   const [state, setState] = useState<AuthState>(() => {
     const persisted = loadPersisted();
-    if (persisted?.serverUrl && persisted?.token && persisted?.accountId) {
+    // Allow empty serverUrl (same-origin) when token + accountId are present.
+    if (
+      persisted?.token &&
+      persisted?.accountId &&
+      typeof persisted.serverUrl === "string"
+    ) {
       return {
         serverUrl: persisted.serverUrl,
         token: persisted.token,
@@ -90,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
     return {
-      serverUrl: persisted?.serverUrl || "",
+      serverUrl: typeof persisted?.serverUrl === "string" ? persisted.serverUrl : "",
       token: null,
       accountId: null,
       isAuthenticated: false,
@@ -158,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (serverUrl: string, token: string, accountId: string) => {
       const epoch = ++authEpoch.current;
+      clearContactDetailCache();
       setBaseUrl(serverUrl);
       setToken(token);
 
@@ -189,6 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     authEpoch.current++;
     setToken(null);
+    clearContactDetailCache();
     clearPersisted();
     setState((s) => ({
       ...s,

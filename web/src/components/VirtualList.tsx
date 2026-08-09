@@ -27,6 +27,10 @@ type VirtualListProps = {
   dynamicSize?: boolean;
   overscan?: number;
   onVisibleRangeChange?: (range: VisibleRange) => void;
+  /** Fired when the last visible row is within `nearEndThreshold` of the end. */
+  onNearEnd?: () => void;
+  /** 0-based distance from the last index that counts as “near end” (default 10). */
+  nearEndThreshold?: number;
   renderItem: (index: number, virtualRow: VirtualItem) => ReactNode;
   style?: CSSProperties;
   empty?: ReactNode;
@@ -65,6 +69,8 @@ export default function VirtualList({
   dynamicSize = false,
   overscan = 10,
   onVisibleRangeChange,
+  onNearEnd,
+  nearEndThreshold = 10,
   renderItem,
   style,
   empty,
@@ -73,6 +79,8 @@ export default function VirtualList({
   const parentRef = useRef<HTMLDivElement | null>(null);
   const onRangeRef = useRef(onVisibleRangeChange);
   onRangeRef.current = onVisibleRangeChange;
+  const onNearEndRef = useRef(onNearEnd);
+  onNearEndRef.current = onNearEnd;
   const publishedRef = useRef<VisibleRange>({ start: 0, end: 0 });
   const pendingRef = useRef<VisibleRange | null>(null);
   const throttleTimerRef = useRef<number | null>(null);
@@ -104,6 +112,18 @@ export default function VirtualList({
       return;
     }
 
+    const publish = (range: VisibleRange) => {
+      publishedRef.current = range;
+      onRangeRef.current?.(range);
+      if (
+        range.end >= 1 &&
+        count > 0 &&
+        range.end >= count - nearEndThreshold
+      ) {
+        onNearEndRef.current?.();
+      }
+    };
+
     // First real measurement: publish immediately so the label is not stuck on "… of N".
     if (prev.start < 1 && nextRange.start >= 1) {
       if (throttleTimerRef.current != null) {
@@ -111,8 +131,7 @@ export default function VirtualList({
         throttleTimerRef.current = null;
       }
       pendingRef.current = null;
-      publishedRef.current = nextRange;
-      onRangeRef.current?.(nextRange);
+      publish(nextRange);
       return;
     }
 
@@ -126,10 +145,9 @@ export default function VirtualList({
       if (!pending) return;
       const last = publishedRef.current;
       if (last.start === pending.start && last.end === pending.end) return;
-      publishedRef.current = pending;
-      onRangeRef.current?.(pending);
+      publish(pending);
     }, RANGE_REPORT_MS);
-  }, [nextRange.start, nextRange.end]);
+  }, [nextRange.start, nextRange.end, count, nearEndThreshold]);
 
   useEffect(() => {
     return () => {

@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import {
   formatVisibleRange,
+  PAGE_SIZE_CONTACTS_FIRST,
+  PAGE_SIZE_FIRST,
   usePagedList,
   type PagedFetchPage,
 } from "../lib/usePagedList";
@@ -126,18 +128,14 @@ export default function ContactList({
   filter?: string;
   onSelect: (contact: Contact) => void;
 }) {
-  const [debouncedQ, setDebouncedQ] = useState(filter);
+  const [serverQ, setServerQ] = useState("");
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedQ(filter), FILTER_DEBOUNCE_MS);
-    return () => window.clearTimeout(t);
-  }, [filter]);
+  const catalogCompleteRef = useRef(false);
 
   const fetchPage = useCallback<PagedFetchPage<Contact>>(
     async ({ limit, offset, signal }) => {
       const params = new URLSearchParams({
-        q: debouncedQ,
+        q: serverQ,
         limit: String(limit),
         offset: String(offset),
       });
@@ -150,13 +148,38 @@ export default function ContactList({
         total: res.total ?? 0,
       };
     },
-    [debouncedQ],
+    [serverQ],
   );
 
-  const { items: contacts, total, loading, refreshing, filling, error } = usePagedList(
-    debouncedQ,
-    fetchPage,
-  );
+  const {
+    items: contacts,
+    total,
+    loading,
+    refreshing,
+    filling,
+    error,
+    hasMore,
+    loadMore,
+  } = usePagedList(serverQ, fetchPage, {
+    firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
+  });
+
+  const catalogComplete =
+    !loading && !refreshing && contacts.length >= total && (total > 0 || contacts.length === 0);
+  catalogCompleteRef.current = catalogComplete && !serverQ.trim();
+
+  useEffect(() => {
+    // Empty filter → catalog query.
+    if (!filter.trim()) {
+      setServerQ("");
+      return;
+    }
+    // Full catalog already in memory → client filter only (Next-like).
+    if (catalogCompleteRef.current) return;
+
+    const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [filter, catalogComplete]);
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
@@ -164,7 +187,7 @@ export default function ContactList({
   const nameMarkTerm = needles.text || needles.handle || "";
   const handleMarkTerm = highlightNeedle(filter);
 
-  // Live client filter for immediate feedback; server page replaces when debounce settles.
+  // Live client filter for immediate feedback.
   const displayContacts = filterActive
     ? contacts.filter((c) => contactMatchesFilter(c, filter))
     : contacts;
@@ -175,7 +198,9 @@ export default function ContactList({
       : formatVisibleRange(
           visibleRange.start,
           visibleRange.end,
-          total,
+          filterActive && (catalogCompleteRef.current || !serverQ.trim())
+            ? displayContacts.length
+            : total,
           displayContacts.length,
         );
 
@@ -199,7 +224,7 @@ export default function ContactList({
         }}
       >
         {rangeLabel}
-        {refreshing ? " · updating…" : filling ? " · loading…" : null}
+        {refreshing ? " · updating…" : filling ? " · loading more…" : null}
       </div>
       <VirtualList
         count={displayContacts.length}
@@ -207,6 +232,13 @@ export default function ContactList({
         // Expanded filter subtitles need dynamic measure; plain rows stay fixed.
         dynamicSize={filterActive}
         onVisibleRangeChange={setVisibleRange}
+        onNearEnd={() => {
+          if (hasMore && !filterActive) loadMore();
+          // When filtering a partial catalog, also load more so matches can appear.
+          if (hasMore && filterActive && !catalogCompleteRef.current && !serverQ.trim()) {
+            loadMore();
+          }
+        }}
         empty={
           !loading ? (
             <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>

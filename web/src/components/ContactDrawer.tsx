@@ -1,21 +1,14 @@
 import { useState, useEffect, type CSSProperties } from "react";
 import { apiClient } from "../lib/api";
+import {
+  fetchContactDetail,
+  getCachedContactDetail,
+  invalidateContactDetail,
+  type CachedContactDetail,
+} from "../lib/contactDetailCache";
 import Button from "./Button";
 
-interface ContactDetail {
-  id: string;
-  name: string;
-  handles: {
-    handle: string;
-    service: string | null;
-    start_date: string | null;
-    end_date: string | null;
-    message_count: number;
-  }[];
-  direct_conversations: number;
-  group_conversations: number;
-  total_messages: number;
-}
+type ContactDetail = CachedContactDetail;
 
 /** Lightweight row data so the drawer can paint before the detail API returns. */
 export type ContactPreview = {
@@ -92,8 +85,10 @@ export default function ContactDrawer({
 
   const loadDetail = () => {
     if (!contactId) return;
-    apiClient
-      .get<ContactDetail>(`/v1/export/contacts/${contactId}`)
+    invalidateContactDetail(contactId);
+    void fetchContactDetail(contactId, (path, opts) =>
+      apiClient.get<ContactDetail>(path, opts),
+    )
       .then((next) => {
         if (String(next.id) !== String(contactId)) return;
         setDetail(next);
@@ -111,21 +106,25 @@ export default function ContactDrawer({
       return;
     }
 
-    // Keep detail only when re-selecting the same contact (instant reopen).
-    setDetail((prev) =>
-      prev && String(prev.id) === String(contactId) ? prev : null,
-    );
+    const cached = getCachedContactDetail(contactId);
+    setDetail(cached);
 
     const ac = new AbortController();
-    apiClient
-      .get<ContactDetail>(`/v1/export/contacts/${contactId}`, { signal: ac.signal })
-      .then((next) => {
-        if (ac.signal.aborted) return;
-        setDetail(next);
-      })
-      .catch(() => {
-        /* aborted or failed — preview still shown */
-      });
+    // Cache hit: skip network. Miss: fetch and store.
+    if (!cached) {
+      void fetchContactDetail(
+        contactId,
+        (path, opts) => apiClient.get<ContactDetail>(path, opts),
+        ac.signal,
+      )
+        .then((next) => {
+          if (ac.signal.aborted) return;
+          setDetail(next);
+        })
+        .catch(() => {
+          /* aborted or failed — preview still shown */
+        });
+    }
     return () => ac.abort();
   }, [contactId]);
 

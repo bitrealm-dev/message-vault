@@ -41,7 +41,7 @@ export default function RegisterScreen({
 
     setLoading(true);
     try {
-      setBaseUrl(serverUrl);
+      setBaseUrl(serverUrl.trim());
       const res = await apiClient.post<{
         token: string;
         account_id: string;
@@ -52,7 +52,7 @@ export default function RegisterScreen({
         preferred_name: null,
         phone: null,
       });
-      login(serverUrl, res.token, res.account_id);
+      login(serverUrl.trim(), res.token, res.account_id);
     } catch (e) {
       setError(String(e));
     } finally {
