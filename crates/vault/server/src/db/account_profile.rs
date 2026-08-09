@@ -224,15 +224,18 @@ pub fn username_for_account(conn: &Connection, account_id: &str) -> Result<Optio
 }
 
 /// Load the argon2 password hash for an account id, if set.
+///
+/// Outer `Option` is "row missing"; inner is the nullable `password_hash`
+/// column (NULL/empty means passwordless login).
 pub fn load_password_hash(conn: &Connection, account_id: &str) -> Result<Option<String>> {
-    let hash: Option<String> = conn
+    let hash: Option<Option<String>> = conn
         .query_row(
             "SELECT password_hash FROM accounts WHERE id = ?1",
             params![account_id],
             |row| row.get(0),
         )
         .optional()?;
-    Ok(hash)
+    Ok(hash.flatten())
 }
 
 /// Replace the argon2 password hash for an account.
@@ -256,6 +259,78 @@ pub fn delete_account(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
         .with_context(|| format!("delete account {account_id}"))?;
     Ok(())
+}
+
+/// Stable id for the seeded demo account (`reset-demo`).
+pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
+
+pub fn is_demo_account(account_id: &str) -> bool {
+    account_id == DEMO_ACCOUNT_ID
+}
+
+/// Whether the account row is marked read-only (demo seed sets this).
+pub fn account_is_read_only(conn: &Connection, account_id: &str) -> Result<bool> {
+    schema::ensure_accounts_schema(conn)?;
+    let flag: Option<i64> = conn
+        .query_row(
+            "SELECT read_only FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(flag.unwrap_or(0) != 0)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DeletedMessagesStats {
+    pub conversations: u64,
+    pub attachments: u64,
+}
+
+/// Permanently delete one account's conversations (cascades to messages,
+/// attachments, participants, tapbacks), staging rows, and trash markers.
+/// Contacts, labels, login details, and import tokens are retained.
+pub fn delete_all_messages_for_account(
+    conn: &Connection,
+    account_id: &str,
+) -> Result<DeletedMessagesStats> {
+    schema::ensure_vault_schema(conn)?;
+    let attachment_count: i64 = conn.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM attachments a
+        JOIN messages m ON m.id = a.message_id
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = ?1
+        "#,
+        params![account_id],
+        |row| row.get(0),
+    )?;
+    let conversations = conn
+        .execute(
+            "DELETE FROM conversations WHERE account_id = ?1",
+            params![account_id],
+        )
+        .with_context(|| format!("delete conversations for {account_id}"))?;
+    conn.execute(
+        "DELETE FROM staging_conversations WHERE account_id = ?1",
+        params![account_id],
+    )
+    .with_context(|| format!("delete staging conversations for {account_id}"))?;
+    conn.execute(
+        "DELETE FROM trashed_conversations WHERE account_id = ?1",
+        params![account_id],
+    )
+    .with_context(|| format!("delete trashed conversations for {account_id}"))?;
+    conn.execute(
+        "DELETE FROM trashed_handles WHERE account_id = ?1",
+        params![account_id],
+    )
+    .with_context(|| format!("delete trashed handles for {account_id}"))?;
+    Ok(DeletedMessagesStats {
+        conversations: u64::try_from(conversations).unwrap_or(0),
+        attachments: u64::try_from(attachment_count).unwrap_or(0),
+    })
 }
 
 /// Look up account id by Hanko user id. Returns None if no account is linked.
@@ -439,6 +514,28 @@ mod tests {
     }
 
     #[test]
+    fn load_password_hash_returns_none_when_null() {
+        // Demo (and any passwordless account) stores password_hash as SQL NULL.
+        // Reading that column must not fail with "Invalid column type Null".
+        let conn = setup();
+        let hash = load_password_hash(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        assert_eq!(hash, None);
+    }
+
+    #[test]
+    fn load_password_hash_returns_set_value() {
+        let conn = setup();
+        update_password_hash(
+            &conn,
+            "00000000-0000-4000-8000-000000000001",
+            "$argon2id$example",
+        )
+        .unwrap();
+        let hash = load_password_hash(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
+        assert_eq!(hash.as_deref(), Some("$argon2id$example"));
+    }
+
+    #[test]
     fn load_profile_soft_defaults_and_preferred_name() {
         let conn = setup();
         let empty = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
@@ -491,5 +588,69 @@ mod tests {
         let loaded = load_account_profile(&conn, account).unwrap();
         assert_eq!(loaded.handle_ids.len(), 2);
         assert!(loaded.handle_ids.contains(&email));
+    }
+
+    #[test]
+    fn delete_all_messages_keeps_account_and_contacts() {
+        let conn = setup();
+        let account = "00000000-0000-4000-8000-000000000001";
+        let handle_id =
+            link_account_handle(&conn, account, "+15555550100", HandleType::Phone).unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
+            params![account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row("SELECT id FROM contacts WHERE account_id = ?1", params![account], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (1, ?1, ?2, 'individual', 'c.jsonl')",
+            params![account, handle_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (1, ?1, 'imessage', '2020-01-01T00:00:00Z', 1, 0, 'hi')",
+            params![account],
+        )
+        .unwrap();
+        let msg_id: i64 = conn
+            .query_row("SELECT id FROM messages WHERE account_id = ?1", params![account], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO attachments (message_id, path, original_name, mime_type)
+             VALUES (?1, 'a.jpg', 'a.jpg', 'image/jpeg')",
+            params![msg_id],
+        )
+        .unwrap();
+
+        let stats = delete_all_messages_for_account(&conn, account).unwrap();
+        assert_eq!(stats.conversations, 1);
+        assert_eq!(stats.attachments, 1);
+        let remaining_msgs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE account_id = ?1",
+                params![account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_msgs, 0);
+        let contacts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contacts WHERE id = ?1",
+                params![contact_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(contacts, 1);
+        assert!(username_for_account(&conn, account).unwrap().is_some());
     }
 }
