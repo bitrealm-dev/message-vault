@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Redirecting…</title>
+</head>
+<body>
+  <p><a id="fallback" href="/">Redirecting…</a></p>
+  <script>
+    var map = {
+      '/vault': '',
+      '/message-vault': '',
+      '/message-vault-io': '/',
+      '/message-exporters': '/',
+      '/message-vault-rs': '/',
+      '/exporters': '/',
+    };
+    var p = location.pathname;
+    for (var from in map) {
+      if (p === from || p.indexOf(from + '/') === 0) {
+        var to = map[from];
+        var next = to === '/' ? '/' : p.replace(from, to);
+        if (!next) next = '/';
+        location.replace(next);
+        break;
+      }
+    }
+  </script>
+</body>
+</html>

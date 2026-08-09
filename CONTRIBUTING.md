@@ -2,7 +2,7 @@
 
 How to set up, build, run, and contribute to Message Vault.
 
-End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/vault/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
+End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
 
@@ -154,7 +154,7 @@ Exporter smoke tests under `crates/*/tests/convert_smoke.rs` use committed fixtu
 
 ## Docs site (optional)
 
-User-facing docs are Astro Starlight under `docs/`:
+User-facing docs are Astro Starlight under `docs/`, published to **https://bitrealm.dev/** by `.github/workflows/docs.yml` (manual dispatch or push to `main` that touches `docs/**`).
 
 ```bash
 cd docs
@@ -174,6 +174,10 @@ npm run build
 ```
 
 Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand.
+
+### Publishing / custom domain
+
+GitHub Pages on this repo serves the built site. Custom domain is `bitrealm.dev` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. Cloudflare DNS for the apex should keep pointing at GitHub Pages; add a verification TXT record only if GitHub’s Pages settings request one.
 
 ## Workspace map
 
@@ -211,4 +215,4 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 - [Development and releases](docs/maintainers/developing.md)
 - [Exporter capability matrix](docs/maintainers/exporter-matrix.md)
 - [Code signing](docs/maintainers/signing.md)
-- End-user docs: <https://bitrealm.dev/vault/>
+- End-user docs: <https://bitrealm.dev/>

@@ -8,7 +8,14 @@ This repository is named **message-vault**. It was formed by merging the former 
 
 ## Docs site
 
-The public documentation is published from the unified [bitrealm-dev.github.io](https://bitrealm-dev.github.io/) hub repo. Edit content in `docs/src/content/docs/` — there is no docs deploy workflow in this repo anymore. The hub syncs content from here at build time. The docs site is a single Astro Starlight project under `docs/` covering both the exporter app and the vault server. Run `cd docs && npm run dev` for local preview.
+The public docs site is the Astro Starlight project under `docs/`, live at **https://bitrealm.dev/**. Edit content in `docs/src/content/docs/`. GitHub Pages deploys from this repo via `.github/workflows/docs.yml` on `workflow_dispatch` or when `docs/**` (or that workflow) changes on `main`.
+
+```bash
+cd docs && npm ci && npm run dev   # local preview
+cd docs && npm run check && npm run build
+```
+
+**Domain cutover (one-time, after first merge):** In this repo’s GitHub Settings → Pages, set source to GitHub Actions and custom domain `bitrealm.dev`. Remove the custom domain from `bitrealm-dev/bitrealm-dev.github.io`. Keep Cloudflare apex A records pointing at GitHub Pages (`185.199.108–111.153`); add any TXT verification record GitHub shows. Leave `api` / `app` / R2 alone. Then run the Docs workflow once.
 
 ## Quick start
 

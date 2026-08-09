@@ -13,9 +13,9 @@ Your messages stay on your own machine — nothing is uploaded to a cloud servic
 
 Read the full guide (install, desktop app, supported backups, formats, API):
 
-**https://bitrealm.dev/vault/**
+**https://bitrealm.dev/**
 
-Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
+Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/). GitHub Pages deploys from this repository (`.github/workflows/docs.yml`).
 
 ## Quick start
 
@@ -100,7 +100,7 @@ More Linux package details and optional helpers such as `ffmpeg` are documented 
 | SMS Backup & Restore (SyncTech XML) | `sms-backup-restore-exporter` |
 | WhatsApp (native DB / crypt) | `whatsapp-exporter` |
 
-Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.dev/vault/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
+Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.dev/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
 
 Already exported? The desktop app **Format** tab converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 

@@ -1,6 +1,5 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import { starlightBasePath } from 'starlight-base-path';
 
 const limitedBadge = {
   text: 'Limited',
@@ -8,14 +7,12 @@ const limitedBadge = {
 };
 
 export default defineConfig({
-  site: 'https://bitrealm-dev.github.io',
-  base: '/message-vault/',
+  site: 'https://bitrealm.dev',
   integrations: [
     starlight({
       title: 'Message Vault',
       description:
         'Extract messages from phone backups, import them into a local vault, and browse them in a website you control.',
-      plugins: [starlightBasePath()],
       editLink: {
         baseUrl:
           'https://github.com/bitrealm-dev/message-vault/edit/main/docs/',
