@@ -1,26 +1,19 @@
-import type { ReactNode } from "react";
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
 import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
 import SavedGroupForm from "./SavedGroupForm";
-import GlobalSearch from "./GlobalSearch";
-import AdvancedSearchForm from "./AdvancedSearchForm";
 
 export default function LeftPanel({
   activeView,
   onNavigate,
-  searchQuery,
   onSearchChange,
   onSearch,
-  conversationList,
 }: {
   activeView: string;
   onNavigate: (view: string) => void;
-  searchQuery: string;
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
-  conversationList?: ReactNode;
 }) {
   const { logout } = useAuth();
 
@@ -40,7 +33,6 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
-  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const [showExportPopover, setShowExportPopover] = useState(false);
 
   return (
@@ -49,34 +41,8 @@ export default function LeftPanel({
       background: "#f9fafb", display: "flex", flexDirection: "column",
       height: "100vh", overflow: "auto",
     }}>
-      {/* Global search */}
-      <div style={{ padding: "0.75rem" }}>
-        <GlobalSearch
-          value={searchQuery}
-          onChange={onSearchChange}
-          onSubmit={(q) => onSearch(q)}
-        />
-        <button
-          onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-          style={{
-            fontSize: "0.688rem", border: "none", background: "none",
-            color: "#6b7280", cursor: "pointer", padding: "0.25rem 0 0",
-          }}
-        >
-          {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
-        </button>
-        {showAdvancedSearch && (
-          <div style={{ marginTop: "0.5rem" }}>
-            <AdvancedSearchForm
-              onApply={(q) => { onSearchChange(q); onSearch(q); setShowAdvancedSearch(false); }}
-              onClose={() => setShowAdvancedSearch(false)}
-            />
-          </div>
-        )}
-      </div>
-
       {/* Saved groups */}
-      <div style={{ padding: "0 0.75rem", marginBottom: "0.5rem" }}>
+      <div style={{ padding: "0.75rem", marginBottom: "0.5rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
           <span style={{ fontSize: "0.688rem", fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             Saved Groups
@@ -122,14 +88,7 @@ export default function LeftPanel({
         )}
       </div>
 
-      <div style={{ borderTop: "1px solid #e5e7eb", margin: "0 0.75rem" }} />
-
-      {/* Conversation list slot */}
-      {conversationList && (
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {conversationList}
-        </div>
-      )}
+      <div style={{ flex: 1 }} />
 
       {/* Navigation */}
       <div style={{ padding: "0.5rem 0.75rem", borderTop: "1px solid #e5e7eb" }}>
@@ -187,11 +146,8 @@ export default function LeftPanel({
         </div>
       )}
 
-      {/* Profile + Settings */}
+      {/* Settings */}
       <div style={{ padding: "0.5rem 0.75rem", borderTop: "1px solid #e5e7eb" }}>
-        <button style={linkStyle("profile")} onClick={() => onNavigate("profile")}>
-          Profile
-        </button>
         <button style={linkStyle("settings")} onClick={() => onNavigate("settings")}>
           Settings
         </button>

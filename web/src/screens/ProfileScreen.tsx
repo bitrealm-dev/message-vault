@@ -13,12 +13,6 @@ interface AccountProfile {
   read_only?: boolean;
 }
 
-interface StorageStats {
-  conversations: number;
-  messages: number;
-  attachments: number;
-}
-
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "0.35rem 0.5rem",
@@ -46,14 +40,14 @@ const dangerButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
-export default function ProfileScreen() {
-  const { logout } = useAuth();
+/** Profile settings body for the Settings Profile tab (no page chrome). */
+export function ProfileSettingsPanel() {
+  const { logout, token } = useAuth();
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loadError, setLoadError] = useState("");
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState("");
-  const [storage, setStorage] = useState<StorageStats | null>(null);
 
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -72,13 +66,6 @@ export default function ProfileScreen() {
   const [deletingMessages, setDeletingMessages] = useState(false);
   const [dangerError, setDangerError] = useState("");
 
-  const refreshStorage = () => {
-    apiClient
-      .get<StorageStats>("/v1/export/messages/count?q=")
-      .then(setStorage)
-      .catch(() => {});
-  };
-
   useEffect(() => {
     apiClient
       .get<AccountProfile>("/v1/account/profile")
@@ -87,20 +74,18 @@ export default function ProfileScreen() {
         setName(p.preferred_name ?? "");
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
-
-    refreshStorage();
   }, []);
 
   if (loadError) {
     return (
-      <div style={{ padding: "1.5rem", color: "#dc2626" }}>
+      <div style={{ color: "#dc2626" }}>
         Could not load profile: {loadError}
       </div>
     );
   }
 
   if (!profile) {
-    return <div style={{ padding: "1.5rem", color: "#9ca3af" }}>Loading…</div>;
+    return <div style={{ color: "#9ca3af" }}>Loading…</div>;
   }
 
   const isDemo = profile.is_demo === true;
@@ -214,7 +199,6 @@ export default function ProfileScreen() {
     setDangerError("");
     try {
       await apiClient.post("/v1/account/delete-messages", { confirm: true });
-      refreshStorage();
     } catch (e) {
       setDangerError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -244,9 +228,7 @@ export default function ProfileScreen() {
   const busy = deleting || deletingMessages;
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
-      <h2 style={{ margin: "0 0 1.5rem 0" }}>My Profile</h2>
-
+    <div>
       <h3 style={sectionTitle}>Username</h3>
       <input type="text" value={profile.username} readOnly style={{ ...inputStyle, marginBottom: "1.5rem", background: "#f9fafb", color: "#6b7280" }} />
 
@@ -364,18 +346,30 @@ export default function ProfileScreen() {
       )}
       {!handleError && <div style={{ marginBottom: "1.5rem" }} />}
 
-      <h3 style={sectionTitle}>Storage</h3>
-      <div style={{ fontSize: "0.875rem", color: "#374151", marginBottom: "1.5rem" }}>
-        {storage ? (
-          <>
-            <div>{storage.messages.toLocaleString()} messages</div>
-            <div>{storage.attachments.toLocaleString()} attachments</div>
-            <div>{storage.conversations.toLocaleString()} conversations</div>
-          </>
-        ) : (
-          <div style={{ color: "#9ca3af" }}>Loading…</div>
-        )}
-      </div>
+      <h3 style={sectionTitle}>Message import</h3>
+      <p style={{ margin: "0 0 0.5rem", fontSize: "0.813rem", color: "#6b7280" }}>
+        API token used for Import and Push into this vault.
+      </p>
+      {token ? (
+        <div
+          style={{
+            ...inputStyle,
+            marginBottom: "1.5rem",
+            background: "#f9fafb",
+            color: "#374151",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            fontSize: "0.813rem",
+            wordBreak: "break-all",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {token}
+        </div>
+      ) : (
+        <div style={{ fontSize: "0.813rem", color: "#9ca3af", marginBottom: "1.5rem" }}>
+          Sign in again to see token
+        </div>
+      )}
 
       <h3 style={sectionTitle}>Change Password</h3>
       <div style={{ marginBottom: "1.5rem", maxWidth: "360px" }}>
@@ -532,6 +526,15 @@ export default function ProfileScreen() {
         }}
         onConfirm={() => void performDeleteAccount()}
       />
+    </div>
+  );
+}
+
+/** @deprecated Use SettingsScreen Profile tab / ProfileSettingsPanel */
+export default function ProfileScreen() {
+  return (
+    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
+      <ProfileSettingsPanel />
     </div>
   );
 }

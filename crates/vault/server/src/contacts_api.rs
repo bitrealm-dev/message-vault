@@ -45,10 +45,10 @@ fn involves_contact_sql() -> &'static str {
        WHERE ch.account_id = c.account_id
          AND ch.contact_id = ?
          AND (
-           ch.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
+           ch.handle_id = c.chat_handle_id
            OR EXISTS (
              SELECT 1 FROM participants p
-             WHERE p.conversation_id = c.id AND p.handle = ch.handle
+             WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
            )
          )
      )"
@@ -62,8 +62,10 @@ pub fn list_contacts(
     let mut stmt = conn
         .prepare(
             "SELECT ct.id,
-                    COALESCE(NULLIF(trim(ct.preferred_name), ''), NULLIF(trim(ct.preferred_handle), ''), '(unknown)') AS name,
-                    (SELECT COUNT(*) FROM contact_handles ch WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
+                    COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name,
+                    (SELECT COUNT(*)
+                     FROM contact_handles ch
+                     WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id) AS handle_count,
                     (SELECT MAX(m.timestamp)
                      FROM messages m
                      JOIN conversations c ON c.id = m.conversation_id
@@ -73,10 +75,10 @@ pub fn list_contacts(
                          SELECT 1 FROM contact_handles ch2
                          WHERE ch2.account_id = c.account_id AND ch2.contact_id = ct.id
                            AND (
-                             ch2.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
+                             ch2.handle_id = c.chat_handle_id
                              OR EXISTS (
                                SELECT 1 FROM participants p
-                               WHERE p.conversation_id = c.id AND p.handle = ch2.handle
+                               WHERE p.conversation_id = c.id AND p.handle_id = ch2.handle_id
                              )
                            )
                        )) AS last_message_at
@@ -109,7 +111,7 @@ pub fn get_contact_detail(
 ) -> Result<Option<ContactDetail>, ExportQueryError> {
     let name: Option<String> = conn
         .query_row(
-            "SELECT COALESCE(NULLIF(trim(preferred_name), ''), NULLIF(trim(preferred_handle), ''), '(unknown)')
+            "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)')
              FROM contacts WHERE id = ?1 AND account_id = ?2",
             rusqlite::params![contact_id, account_id],
             |row| row.get(0),
@@ -122,33 +124,32 @@ pub fn get_contact_detail(
 
     // One row per handle. Date range covers direct + group conversations;
     // message count is direct-messages only (group stats are not attributed).
-    // COUNT(DISTINCT ...) guards against a conversation matching two handles
-    // of the same contact (chat_identifier + participant).
     let mut stmt = conn
         .prepare(
-            "SELECT ch.handle,
+            "SELECT h.raw,
                     (SELECT c2.service FROM conversations c2
                      WHERE c2.account_id = ch.account_id
-                       AND ((SELECT h.raw FROM handles h WHERE h.id = c2.chat_handle_id) = ch.handle
+                       AND (c2.chat_handle_id = ch.handle_id
                             OR EXISTS (
                               SELECT 1 FROM participants p2
-                              WHERE p2.conversation_id = c2.id AND p2.handle = ch.handle
+                              WHERE p2.conversation_id = c2.id AND p2.handle_id = ch.handle_id
                             ))
                      ORDER BY c2.id DESC LIMIT 1) AS service,
                     MIN(m.timestamp) AS first_ts,
                     MAX(m.timestamp) AS last_ts,
                     COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN m.id END)
              FROM contact_handles ch
+             JOIN handles h ON h.id = ch.handle_id
              LEFT JOIN conversations c ON c.account_id = ch.account_id
-               AND ((SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id) = ch.handle
+               AND (c.chat_handle_id = ch.handle_id
                     OR EXISTS (
                       SELECT 1 FROM participants p
-                      WHERE p.conversation_id = c.id AND p.handle = ch.handle
+                      WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                     ))
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-             GROUP BY ch.handle
-             ORDER BY ch.handle",
+             GROUP BY ch.handle_id, h.raw
+             ORDER BY h.raw",
         )
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
     let mut handles = Vec::new();
@@ -188,7 +189,7 @@ pub fn get_contact_detail(
                )
                AND NOT EXISTS (
                  SELECT 1 FROM trashed_handles th
-                 WHERE th.account_id = c.account_id AND th.handle = (SELECT h.raw FROM handles h WHERE h.id = c.chat_handle_id)
+                 WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
                )",
             involves_contact_sql = involves_contact_sql(),
         ))
@@ -207,4 +208,58 @@ pub fn get_contact_detail(
         group_conversations: groups.unwrap_or(0).max(0) as u64,
         total_messages: total.unwrap_or(0).max(0) as u64,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use message_ir::HandleType;
+    use rusqlite::params;
+
+    use crate::db::{account_profile, schema};
+
+    fn setup() -> (Connection, String) {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        let account = "00000000-0000-4000-8000-0000000000c1".to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
+            params![&account],
+        )
+        .unwrap();
+        (conn, account)
+    }
+
+    #[test]
+    fn list_contacts_uses_preferred_name_and_handle_ids() {
+        let (conn, account) = setup();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let handle_id =
+            account_profile::link_account_handle(&conn, &account, "+15555550100", HandleType::Phone)
+                .unwrap();
+        // link_account_handle puts it on account_handles; also link as contact handle.
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![&account, handle_id, contact_id],
+        )
+        .unwrap();
+
+        let list = list_contacts(&conn, &account).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "Pat");
+        assert_eq!(list[0].handle_count, 1);
+    }
 }

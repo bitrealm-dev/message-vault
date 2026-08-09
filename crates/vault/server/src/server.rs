@@ -201,6 +201,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/export/contacts/{id}",
             get(contact_detail_handler),
         )
+        .route(
+            "/v1/export/conversations",
+            get(conversations_list_handler),
+        )
         .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
@@ -562,6 +566,32 @@ async fn contacts_list_handler(
     .map_err(|e| ApiError::Internal(format!("contacts list task: {e}")))?
     .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(serde_json::json!({ "contacts": contacts })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ListConversationsQuery {
+    #[serde(default)]
+    q: Option<String>,
+}
+
+async fn conversations_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListConversationsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let db = Arc::clone(&state.db);
+    let q = query.q.unwrap_or_default();
+    let conversations = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::conversations_api::list_conversations(&conn, &auth.account_id, &q)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("conversations list task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "conversations": conversations })))
 }
 
 async fn contact_detail_handler(

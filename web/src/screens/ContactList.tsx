@@ -11,16 +11,39 @@ interface Contact {
 export default function ContactList({ onSelect }: { onSelect: (contact: Contact) => void }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    setLoading(true);
+    setError("");
     apiClient
       .get<{ contacts: Contact[] }>("/v1/export/contacts")
-      .then((res) => setContacts(res.contacts))
-      .catch(() => setContacts([]))
+      .then((res) =>
+        setContacts(
+          (res.contacts || []).map((c) => ({
+            ...c,
+            id: String(c.id),
+          })),
+        ),
+      )
+      .catch((e) => {
+        setContacts([]);
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>Loading…</div>;
+  if (error) {
+    return (
+      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#dc2626" }}>
+        Could not load contacts: {error}
+      </div>
+    );
+  }
+  if (contacts.length === 0) {
+    return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>No contacts</div>;
+  }
 
   return (
     <div style={{ overflow: "auto" }}>

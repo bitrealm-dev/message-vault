@@ -14,20 +14,33 @@ export default function ConversationList({
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     setLoading(true);
+    setError("");
     apiClient
       .get<{ conversations: Conversation[] }>(
         `/v1/export/conversations?q=${encodeURIComponent(query)}`,
       )
-      .then((res) => setConversations(res.conversations))
-      .catch(() => setConversations([]))
+      .then((res) => setConversations(res.conversations || []))
+      .catch((e) => {
+        setConversations([]);
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }, [query]);
 
   if (loading) {
     return <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#9ca3af" }}>Loading…</div>;
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "#dc2626" }}>
+        Could not load conversations: {error}
+      </div>
+    );
   }
 
   if (conversations.length === 0) {
