@@ -125,7 +125,7 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
             .strip_prefix("handle:")
             .or_else(|| token.strip_prefix("HANDLE:"))
         {
-            let rest = rest.trim();
+            let rest = rest.trim().trim_matches('"');
             if !rest.is_empty() {
                 out.handle = Some(rest.to_string());
             }
@@ -254,12 +254,18 @@ pub fn list_conversations(
             "(c.group_title LIKE ? OR hc.raw LIKE ? OR EXISTS (
                 SELECT 1 FROM participants p
                 JOIN handles ph ON ph.id = p.handle_id
+                LEFT JOIN contacts ct ON ct.id = p.contact_id
                 WHERE p.conversation_id = c.id
-                  AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                  AND (
+                    ph.raw LIKE ?
+                    OR coalesce(p.name_hint, '') LIKE ?
+                    OR coalesce(ct.preferred_name, '') LIKE ?
+                  )
               ))"
             .into(),
         );
         let like = format!("%{text}%");
+        params.push(like.clone().into());
         params.push(like.clone().into());
         params.push(like.clone().into());
         params.push(like.clone().into());
@@ -884,6 +890,44 @@ mod tests {
                 value: 10,
             })
         );
+
+        let quoted_handle =
+            parse_conversation_list_query(r#"handle:"+15555550100""#);
+        assert_eq!(quoted_handle.handle.as_deref(), Some("+15555550100"));
+    }
+
+    #[test]
+    fn list_conversations_matches_contact_preferred_name() {
+        let (conn, account) = setup();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam Preferred')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let peer_handle_id: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
+                params![&account, "+15555550200"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE participants SET contact_id = ?1, name_hint = NULL
+             WHERE conversation_id = '1' AND handle_id = ?2",
+            params![contact_id, peer_handle_id],
+        )
+        .unwrap();
+
+        let by_name = list_conversations(&conn, &account, "Sam Preferred", 10, 0).unwrap();
+        assert_eq!(by_name.total, 1);
+        assert_eq!(by_name.conversations[0].id, "1");
     }
 
     #[test]
