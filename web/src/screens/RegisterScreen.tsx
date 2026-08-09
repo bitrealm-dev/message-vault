@@ -3,8 +3,8 @@ import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
+import AuthBackButton from "../components/AuthBackButton";
 import {
-  accentLink,
   authCard,
   authInput,
   authLabel,
@@ -95,10 +95,6 @@ export default function RegisterScreen({
           {loading ? "Creating account…" : "Create account"}
         </AuthSubmitButton>
 
-        <button type="button" onClick={onBack} style={{ ...accentLink, marginTop: "0.75rem" }}>
-          ← Back to login
-        </button>
-
         <div
           style={{
             marginTop: "1.25rem",
@@ -112,6 +108,8 @@ export default function RegisterScreen({
           {error || "\u00a0"}
         </div>
       </div>
+
+      <AuthBackButton label="Back to login" onClick={onBack} />
     </div>
   );
 }

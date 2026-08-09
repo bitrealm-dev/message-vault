@@ -4,6 +4,7 @@ import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
+import AuthBackButton from "../components/AuthBackButton";
 import Button from "../components/Button";
 import {
   accentLink,
@@ -12,7 +13,6 @@ import {
   authLabel,
   authTitle,
   divider,
-  mutedLink,
   mutedText,
   pageCenter,
 } from "../lib/uiStyles";
@@ -252,10 +252,6 @@ export default function LoginScreen({
               </>
             )}
 
-            <button type="button" onClick={changeServer} style={mutedLink}>
-              Change server
-            </button>
-
             <ErrorFooter error={error} />
           </>
         )}
@@ -279,14 +275,14 @@ export default function LoginScreen({
               )}
             </div>
 
-            <button type="button" onClick={changeServer} style={mutedLink}>
-              Change server
-            </button>
-
             <ErrorFooter error={error} />
           </>
         )}
       </div>
+
+      {authMode !== null && (
+        <AuthBackButton label="Back to Vault Selection" onClick={changeServer} />
+      )}
     </div>
   );
 }
