@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
-use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params};
+use rusqlite::{
+    Connection, OptionalExtension, Statement, Transaction, params, params_from_iter,
+};
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -1299,193 +1301,65 @@ fn promote_append(
     let _ = io::stdout().flush();
 
     // Skip per-row FTS trigger work during bulk message/attachment inserts; index once after.
+    let phase = Instant::now();
     println!("  sql:      promote: pausing FTS triggers…");
     let _ = io::stdout().flush();
     schema::drop_messages_fts_triggers(&tx)?;
+    promote_phase_done(started, phase, "FTS triggers paused");
 
-    let msg_map = if mode == ImportMode::Replace {
-        // Source rows were wiped already: one set-based INSERT, then zip new ids in order.
-        let max_before: i64 =
-            tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-        let inserted = tx.execute(
-            r#"
-            INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order, import_id
-            )
-            SELECT
-                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-                sm.import_id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            ORDER BY sm.id
-            "#,
-            [],
-        )?;
-        stats.messages = inserted as u64;
-        stats.messages_appended = inserted as u64;
-
-        let staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM staging_messages sm
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                ORDER BY sm.id
-                "#,
-            )?
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let prod_ids: Vec<i64> = tx
-            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-            .query_map(params![max_before], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        if staging_ids.len() != prod_ids.len() {
-            bail!(
-                "promote replace message id map mismatch: staging={} new_prod={}",
-                staging_ids.len(),
-                prod_ids.len()
-            );
-        }
-        staging_ids
-            .into_iter()
-            .zip(prod_ids)
-            .collect::<HashMap<_, _>>()
-    } else {
-        // Append: rely on partial unique index ix_messages_account_source_guid via
-        // INSERT OR IGNORE. Correlated NOT EXISTS / JOIN anti-joins mis-plan onto
-        // ix_messages_source and scan the whole source (~10s+ at 50k+ rows).
-        let max_before: i64 =
-            tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-
-        let inserted_guided = tx.execute(
-            r#"
-            INSERT OR IGNORE INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order, import_id
-            )
-            SELECT
-                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-                sm.import_id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND sm.guid IS NOT NULL
-              AND sm.guid != ''
-            ORDER BY sm.id
-            "#,
-            params![account_id],
-        )?;
-
-        // Null/empty guids are outside the partial unique index — always insert.
-        let inserted_empty = tx.execute(
-            r#"
-            INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order, import_id
-            )
-            SELECT
-                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-                sm.import_id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND (sm.guid IS NULL OR sm.guid = '')
-            ORDER BY sm.id
-            "#,
-            params![account_id],
-        )?;
-
-        let inserted = inserted_guided + inserted_empty;
-        stats.messages = inserted as u64;
-        stats.messages_appended = inserted as u64;
-        stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted as u64);
-
-        // New production rows were inserted in order: guided (by sm.id) then empty (by sm.id).
-        let mut staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM messages m
-                JOIN staging_messages sm
-                  ON sm.account_id = m.account_id
-                 AND sm.source = m.source
-                 AND sm.guid = m.guid
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE m.id > ?1
-                  AND m.account_id = ?2
-                  AND m.guid IS NOT NULL
-                  AND m.guid != ''
-                ORDER BY m.id
-                "#,
-            )?
-            .query_map(params![max_before, account_id], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let empty_staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM staging_messages sm
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE sm.account_id = ?1
-                  AND (sm.guid IS NULL OR sm.guid = '')
-                ORDER BY sm.id
-                "#,
-            )?
-            .query_map(params![account_id], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        staging_ids.extend(empty_staging_ids);
-
-        let prod_ids: Vec<i64> = tx
-            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-            .query_map(params![max_before], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        if staging_ids.len() != prod_ids.len() {
-            bail!(
-                "promote append message id map mismatch: staging_new={} new_prod={}",
-                staging_ids.len(),
-                prod_ids.len()
-            );
-        }
-        staging_ids
-            .into_iter()
-            .zip(prod_ids)
-            .collect::<HashMap<_, _>>()
-    };
-
-    println!(
-        "  sql:      promote: messages done (inserted={} skipped={})  ({:.1}s)",
-        stats.messages,
-        stats.messages_deduped,
-        started.elapsed().as_secs_f64()
-    );
-
-    tx.execute_batch(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
-            staging_id INTEGER PRIMARY KEY,
-            prod_id INTEGER NOT NULL
+    let existing_msgs: i64 =
+        tx.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
+    let drop_secondary = should_drop_messages_secondary_indexes(total_msgs, existing_msgs);
+    if drop_secondary {
+        let phase = Instant::now();
+        println!(
+            "  sql:      promote: dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
         );
-        DELETE FROM _promote_msg_map;
-        "#,
-    )?;
-    {
-        let mut ins =
-            tx.prepare("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES (?1, ?2)")?;
-        for (staging_id, prod_id) in &msg_map {
-            ins.execute(params![staging_id, prod_id])?;
-        }
+        let _ = io::stdout().flush();
+        schema::drop_messages_secondary_indexes(&tx)?;
+        promote_phase_done(started, phase, "secondary indexes dropped");
+    } else {
+        println!(
+            "  sql:      promote: keeping secondary message indexes (staging={total_msgs} existing={existing_msgs})"
+        );
+        let _ = io::stdout().flush();
     }
 
+    let msg_map = promote_messages_chunked(&tx, mode, account_id, total_msgs, &mut stats, started)?;
+
+    if drop_secondary {
+        let phase = Instant::now();
+        println!("  sql:      promote: rebuilding secondary message indexes…");
+        let _ = io::stdout().flush();
+        schema::create_messages_secondary_indexes(&tx)?;
+        promote_phase_done(
+            started,
+            phase,
+            format!(
+                "secondary indexes rebuilt (inserted={} skipped={})",
+                stats.messages, stats.messages_deduped
+            ),
+        );
+    } else {
+        println!(
+            "  sql:      promote: messages done (inserted={} skipped={})  (total {:.1}s)",
+            stats.messages,
+            stats.messages_deduped,
+            started.elapsed().as_secs_f64()
+        );
+        let _ = io::stdout().flush();
+    }
+
+    let phase = Instant::now();
+    println!(
+        "  sql:      promote: writing message id map ({} pairs)…",
+        msg_map.len()
+    );
+    let _ = io::stdout().flush();
+    fill_promote_msg_map(&tx, &msg_map)?;
+    promote_phase_done(started, phase, "message id map written");
+
+    let phase = Instant::now();
     println!("  sql:      promote: bulk-inserting attachments…");
     let _ = io::stdout().flush();
     let att_inserted = tx.execute(
@@ -1503,12 +1377,13 @@ fn promote_append(
         [],
     )?;
     stats.attachments = att_inserted as u64;
-    println!(
-        "  sql:      promote: attachments done (inserted={})  ({:.1}s)",
-        stats.attachments,
-        started.elapsed().as_secs_f64()
+    promote_phase_done(
+        started,
+        phase,
+        format!("attachments done (inserted={})", stats.attachments),
     );
 
+    let phase = Instant::now();
     println!("  sql:      promote: bulk-inserting tapbacks…");
     let _ = io::stdout().flush();
     let tap_inserted = tx.execute(
@@ -1524,45 +1399,405 @@ fn promote_append(
         [],
     )?;
     stats.tapbacks = tap_inserted as u64;
-    println!(
-        "  sql:      promote: tapbacks done (inserted={})  ({:.1}s)",
-        stats.tapbacks,
-        started.elapsed().as_secs_f64()
+    promote_phase_done(
+        started,
+        phase,
+        format!("tapbacks done (inserted={})", stats.tapbacks),
     );
 
+    let phase = Instant::now();
     println!("  sql:      promote: bulk-indexing FTS for new messages…");
     let _ = io::stdout().flush();
     let fts_indexed = schema::index_messages_fts_from_promote_map(&tx)?;
     schema::install_messages_fts_triggers(&tx)?;
-    println!(
-        "  sql:      promote: FTS indexed={fts_indexed} (triggers restored)  ({:.1}s)",
-        started.elapsed().as_secs_f64()
+    promote_phase_done(
+        started,
+        phase,
+        format!("FTS indexed={fts_indexed} (triggers restored)"),
     );
 
     if fill_content_keys {
+        let phase = Instant::now();
         println!("  sql:      promote: filling content keys…");
         let _ = io::stdout().flush();
         let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
-        println!(
-            "  sql:      promote: content keys filled={keys}  ({:.1}s)",
-            started.elapsed().as_secs_f64()
-        );
+        promote_phase_done(started, phase, format!("content keys filled={keys}"));
     }
 
+    let phase = Instant::now();
     println!("  sql:      promote: committing transaction…");
     let _ = io::stdout().flush();
     tx.commit()?;
-    println!(
-        "  sql:      promote: committed  ({:.1}s)  convs={} parts={} msgs={} atts={} taps={}",
-        started.elapsed().as_secs_f64(),
-        stats.conversations,
-        stats.participants,
-        stats.messages,
-        stats.attachments,
-        stats.tapbacks
+    promote_phase_done(
+        started,
+        phase,
+        format!(
+            "committed  convs={} parts={} msgs={} atts={} taps={}",
+            stats.conversations,
+            stats.participants,
+            stats.messages,
+            stats.attachments,
+            stats.tapbacks
+        ),
     );
 
     Ok(stats)
+}
+
+/// Staging rows per set-based insert window (progress + smaller WAL spikes).
+const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
+/// Pairs per multi-row INSERT into `_promote_msg_map` (SQLite default max variables is 999).
+const PROMOTE_MSG_MAP_VALUE_BATCH: usize = 400;
+/// Drop secondary indexes only for large promotes relative to the existing table.
+const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
+
+fn promote_phase_done(total: Instant, phase: Instant, msg: impl std::fmt::Display) {
+    println!(
+        "  sql:      promote: {msg}  (phase {:.1}s, total {:.1}s)",
+        phase.elapsed().as_secs_f64(),
+        total.elapsed().as_secs_f64()
+    );
+    let _ = io::stdout().flush();
+}
+
+fn should_drop_messages_secondary_indexes(staging_count: i64, existing_count: i64) -> bool {
+    staging_count >= PROMOTE_INDEX_DROP_MIN_STAGING
+        && staging_count.saturating_mul(5) >= existing_count.max(1)
+}
+
+fn promote_messages_chunked(
+    tx: &Transaction<'_>,
+    mode: ImportMode,
+    account_id: &str,
+    total_msgs: i64,
+    stats: &mut PromoteStats,
+    started: Instant,
+) -> Result<HashMap<i64, i64>> {
+    let bounds: (Option<i64>, Option<i64>) = tx.query_row(
+        r#"
+        SELECT MIN(sm.id), MAX(sm.id)
+        FROM staging_messages sm
+        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+        WHERE sm.account_id = ?1
+        "#,
+        params![account_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let (Some(min_id), Some(max_id)) = bounds else {
+        stats.messages = 0;
+        stats.messages_appended = 0;
+        stats.messages_deduped = 0;
+        return Ok(HashMap::new());
+    };
+
+    if mode == ImportMode::Replace {
+        promote_messages_replace_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
+    } else {
+        promote_messages_append_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
+    }
+}
+
+fn promote_messages_replace_chunked(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    min_id: i64,
+    max_id: i64,
+    total_msgs: i64,
+    stats: &mut PromoteStats,
+    started: Instant,
+) -> Result<HashMap<i64, i64>> {
+    let mut msg_map = HashMap::new();
+    let mut max_before: i64 =
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+    let mut inserted_total = 0u64;
+    let mut lo = min_id - 1;
+    let mut chunk_idx = 0u32;
+
+    while lo < max_id {
+        chunk_idx += 1;
+        let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
+        let phase = Instant::now();
+        println!(
+            "  sql:      promote: inserting messages chunk {chunk_idx} (staging id {}..{}, replace)…",
+            lo + 1,
+            hi
+        );
+        let _ = io::stdout().flush();
+
+        let inserted = tx.execute(
+            r#"
+            INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
+                thread_originator_part, num_replies, sort_order, import_id
+            )
+            SELECT
+                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+                sm.import_id
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = ?1
+              AND sm.id > ?2
+              AND sm.id <= ?3
+            ORDER BY sm.id
+            "#,
+            params![account_id, lo, hi],
+        )?;
+        inserted_total += inserted as u64;
+
+        let staging_ids: Vec<i64> = tx
+            .prepare(
+                r#"
+                SELECT sm.id
+                FROM staging_messages sm
+                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+                WHERE sm.account_id = ?1
+                  AND sm.id > ?2
+                  AND sm.id <= ?3
+                ORDER BY sm.id
+                "#,
+            )?
+            .query_map(params![account_id, lo, hi], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let prod_ids: Vec<i64> = tx
+            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
+            .query_map(params![max_before], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if staging_ids.len() != prod_ids.len() {
+            bail!(
+                "promote replace message id map mismatch: staging={} new_prod={} (chunk staging id {}..{})",
+                staging_ids.len(),
+                prod_ids.len(),
+                lo + 1,
+                hi
+            );
+        }
+        for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
+            msg_map.insert(staging_id, prod_id);
+        }
+        max_before = tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+
+        promote_phase_done(
+            started,
+            phase,
+            format!(
+                "chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"
+            ),
+        );
+        lo = hi;
+    }
+
+    stats.messages = inserted_total;
+    stats.messages_appended = inserted_total;
+    Ok(msg_map)
+}
+
+fn promote_messages_append_chunked(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    min_id: i64,
+    max_id: i64,
+    total_msgs: i64,
+    stats: &mut PromoteStats,
+    started: Instant,
+) -> Result<HashMap<i64, i64>> {
+    // Append: rely on partial unique index ix_messages_account_source_guid via
+    // INSERT OR IGNORE. Correlated NOT EXISTS / JOIN anti-joins mis-plan onto
+    // ix_messages_source and scan the whole source (~10s+ at 50k+ rows).
+    let mut msg_map = HashMap::new();
+    let mut max_before: i64 =
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+    let mut inserted_total = 0u64;
+    let mut lo = min_id - 1;
+    let mut chunk_idx = 0u32;
+
+    while lo < max_id {
+        chunk_idx += 1;
+        let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
+        let phase = Instant::now();
+        println!(
+            "  sql:      promote: inserting messages chunk {chunk_idx} (staging id {}..{}, append)…",
+            lo + 1,
+            hi
+        );
+        let _ = io::stdout().flush();
+
+        let inserted = tx.execute(
+            r#"
+            INSERT OR IGNORE INTO messages (
+                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
+                thread_originator_part, num_replies, sort_order, import_id
+            )
+            SELECT
+                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+                sm.import_id
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = ?1
+              AND sm.guid IS NOT NULL
+              AND sm.guid != ''
+              AND sm.id > ?2
+              AND sm.id <= ?3
+            ORDER BY sm.id
+            "#,
+            params![account_id, lo, hi],
+        )?;
+        inserted_total += inserted as u64;
+
+        let staging_ids: Vec<i64> = tx
+            .prepare(
+                r#"
+                SELECT sm.id
+                FROM messages m
+                JOIN staging_messages sm
+                  ON sm.account_id = m.account_id
+                 AND sm.source = m.source
+                 AND sm.guid = m.guid
+                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+                WHERE m.id > ?1
+                  AND m.account_id = ?2
+                  AND m.guid IS NOT NULL
+                  AND m.guid != ''
+                  AND sm.id > ?3
+                  AND sm.id <= ?4
+                ORDER BY m.id
+                "#,
+            )?
+            .query_map(params![max_before, account_id, lo, hi], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let prod_ids: Vec<i64> = tx
+            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
+            .query_map(params![max_before], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if staging_ids.len() != prod_ids.len() {
+            bail!(
+                "promote append message id map mismatch: staging_new={} new_prod={} (chunk staging id {}..{})",
+                staging_ids.len(),
+                prod_ids.len(),
+                lo + 1,
+                hi
+            );
+        }
+        for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
+            msg_map.insert(staging_id, prod_id);
+        }
+        max_before = tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+
+        promote_phase_done(
+            started,
+            phase,
+            format!(
+                "chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"
+            ),
+        );
+        lo = hi;
+    }
+
+    // Null/empty guids are outside the partial unique index — always insert.
+    let phase = Instant::now();
+    println!("  sql:      promote: inserting messages with empty guids…");
+    let _ = io::stdout().flush();
+    let empty_max_before = max_before;
+    let inserted_empty = tx.execute(
+        r#"
+        INSERT INTO messages (
+            conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
+            sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
+            thread_originator_part, num_replies, sort_order, import_id
+        )
+        SELECT
+            cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
+            sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+            sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
+            sm.import_id
+        FROM staging_messages sm
+        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+        WHERE sm.account_id = ?1
+          AND (sm.guid IS NULL OR sm.guid = '')
+        ORDER BY sm.id
+        "#,
+        params![account_id],
+    )?;
+    inserted_total += inserted_empty as u64;
+
+    let empty_staging_ids: Vec<i64> = tx
+        .prepare(
+            r#"
+            SELECT sm.id
+            FROM staging_messages sm
+            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+            WHERE sm.account_id = ?1
+              AND (sm.guid IS NULL OR sm.guid = '')
+            ORDER BY sm.id
+            "#,
+        )?
+        .query_map(params![account_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let empty_prod_ids: Vec<i64> = tx
+        .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
+        .query_map(params![empty_max_before], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if empty_staging_ids.len() != empty_prod_ids.len() {
+        bail!(
+            "promote append empty-guid id map mismatch: staging={} new_prod={}",
+            empty_staging_ids.len(),
+            empty_prod_ids.len()
+        );
+    }
+    for (staging_id, prod_id) in empty_staging_ids.into_iter().zip(empty_prod_ids) {
+        msg_map.insert(staging_id, prod_id);
+    }
+    promote_phase_done(
+        started,
+        phase,
+        format!("empty-guid messages inserted={inserted_empty}"),
+    );
+
+    stats.messages = inserted_total;
+    stats.messages_appended = inserted_total;
+    stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted_total);
+    Ok(msg_map)
+}
+
+fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Result<()> {
+    tx.execute_batch(
+        r#"
+        CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
+            staging_id INTEGER PRIMARY KEY,
+            prod_id INTEGER NOT NULL
+        );
+        DELETE FROM _promote_msg_map;
+        "#,
+    )?;
+    if msg_map.is_empty() {
+        return Ok(());
+    }
+
+    let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
+    for chunk in pairs.chunks(PROMOTE_MSG_MAP_VALUE_BATCH) {
+        let mut sql =
+            String::from("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ");
+        for (i, _) in chunk.iter().enumerate() {
+            if i > 0 {
+                sql.push(',');
+            }
+            let base = i * 2;
+            sql.push_str(&format!("(?{}, ?{})", base + 1, base + 2));
+        }
+        let mut stmt = tx.prepare(&sql)?;
+        let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
+        for &(staging_id, prod_id) in chunk {
+            vals.push(staging_id.into());
+            vals.push(prod_id.into());
+        }
+        stmt.execute(params_from_iter(vals))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

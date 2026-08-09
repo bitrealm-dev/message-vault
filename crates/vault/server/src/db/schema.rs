@@ -116,6 +116,55 @@ pub(crate) fn install_messages_fts_triggers(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Non-unique indexes on `messages` (kept out of bulk promote inserts, then rebuilt).
+/// Unique `ix_messages_account_source_guid` stays in place for `INSERT OR IGNORE` dedup.
+const MESSAGES_SECONDARY_INDEX_DDL: &[(&str, &str)] = &[
+    (
+        "ix_messages_conversation_timestamp",
+        "CREATE INDEX IF NOT EXISTS ix_messages_conversation_timestamp ON messages (conversation_id, timestamp)",
+    ),
+    (
+        "ix_messages_conversation_source_timestamp",
+        "CREATE INDEX IF NOT EXISTS ix_messages_conversation_source_timestamp ON messages (conversation_id, source, timestamp)",
+    ),
+    (
+        "ix_messages_account_id",
+        "CREATE INDEX IF NOT EXISTS ix_messages_account_id ON messages (account_id)",
+    ),
+    (
+        "ix_messages_content_key",
+        "CREATE INDEX IF NOT EXISTS ix_messages_content_key ON messages (content_key) WHERE content_key IS NOT NULL AND content_key != ''",
+    ),
+    (
+        "ix_messages_duplicate_of",
+        "CREATE INDEX IF NOT EXISTS ix_messages_duplicate_of ON messages (duplicate_of) WHERE duplicate_of IS NOT NULL",
+    ),
+    (
+        "ix_messages_import_id",
+        "CREATE INDEX IF NOT EXISTS ix_messages_import_id ON messages (import_id) WHERE import_id IS NOT NULL",
+    ),
+    (
+        "ix_messages_source",
+        "CREATE INDEX IF NOT EXISTS ix_messages_source ON messages (source)",
+    ),
+];
+
+/// Drop secondary `messages` indexes during bulk promote (transactional with the promote tx).
+pub(crate) fn drop_messages_secondary_indexes(conn: &Connection) -> Result<()> {
+    for (name, _) in MESSAGES_SECONDARY_INDEX_DDL {
+        conn.execute(&format!("DROP INDEX IF EXISTS {name}"), [])?;
+    }
+    Ok(())
+}
+
+/// Recreate secondary `messages` indexes after bulk promote inserts.
+pub(crate) fn create_messages_secondary_indexes(conn: &Connection) -> Result<()> {
+    for (_, ddl) in MESSAGES_SECONDARY_INDEX_DDL {
+        conn.execute_batch(ddl)?;
+    }
+    Ok(())
+}
+
 /// Bulk-index promoted messages (joined via temp `_promote_msg_map`) into `messages_fts`.
 /// Call after attachment rows exist so `attachment_text` is complete.
 pub(crate) fn index_messages_fts_from_promote_map(conn: &Connection) -> Result<u64> {
