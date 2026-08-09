@@ -1,0 +1,102 @@
+import { Button, Spinner } from "std-widgets.slint";
+import {
+    PageSummary, FormMetrics, LogTextView
+} from "../widgets.slint";
+
+export global LogAdapter {
+    in-out property <string> text;
+    in property <bool> running;
+    in property <string> session-log-name;
+    callback cancel();
+    callback clear-view();
+}
+
+export component LogPage inherits VerticalLayout {
+    padding: FormMetrics.page-padding;
+    spacing: FormMetrics.row-spacing;
+    alignment: stretch;
+
+    // Follow new output unless the user scrolls up to read history.
+    private property <bool> stick-to-end: true;
+    private property <string> log-text: LogAdapter.text;
+
+    init => {
+        if root.stick-to-end {
+            scroll-timer.running = true;
+        }
+    }
+
+    changed log-text => {
+        if root.stick-to-end {
+            scroll-timer.running = true;
+        }
+    }
+
+    function scroll-to-end() {
+        log-view.viewport-y = min(0px, log-view.visible-height - log-view.viewport-height);
+    }
+
+    scroll-timer := Timer {
+        interval: 16ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if root.stick-to-end {
+                root.scroll-to-end();
+            }
+        }
+    }
+
+    follow-timer := Timer {
+        interval: 300ms;
+        running: LogAdapter.running && root.stick-to-end;
+        triggered => { root.scroll-to-end(); }
+    }
+
+    PageSummary {
+        message: "Review progress and errors from the current or most recent operation.";
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding: 0;
+        alignment: start;
+        vertical-stretch: 0;
+        if LogAdapter.running: Spinner { }
+        Text {
+            text: LogAdapter.session-log-name == "" ? "(no session log)" : LogAdapter.session-log-name;
+            font-size: 11px;
+            vertical-alignment: center;
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+        }
+    }
+
+    log-view := LogTextView {
+        text: LogAdapter.text;
+        scrolled => {
+            root.stick-to-end =
+                log-view.viewport-y <= log-view.visible-height - log-view.viewport-height + 8px;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding-top: FormMetrics.section-spacing;
+        padding-bottom: 0;
+        padding-left: 0;
+        padding-right: 0;
+        alignment: start;
+        vertical-stretch: 0;
+        Button {
+            text: "Clear view";
+            enabled: !LogAdapter.running && LogAdapter.text != "";
+            clicked => { LogAdapter.clear-view(); }
+        }
+        Button {
+            text: "Cancel";
+            enabled: LogAdapter.running;
+            clicked => { LogAdapter.cancel(); }
+        }
+    }
+}

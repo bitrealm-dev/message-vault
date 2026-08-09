@@ -1,0 +1,1259 @@
+import { Button, CheckBox, Date, LineEdit, ScrollView, TextEdit } from "std-widgets.slint";
+import { CompactComboBox } from "compact-combo-box.slint";
+import { Theme } from "theme.slint";
+// Bundled so log columns align on every platform (generic "monospace" is unreliable in Slint).
+import "./fonts/LiberationMono-Regular.ttf";
+
+// Classic desktop dialog grid:
+//   [ right-aligned label | flexible control | trailing button ]
+// IMPORTANT: use Layout primitives with padding: 0 — HorizontalBox/VerticalBox
+// inject StyleMetrics.layout-padding (8px Fluent) and inflate every row.
+export global FormMetrics {
+    out property <length> label-width: 148px;
+    out property <length> button-width: 36px;
+    out property <length> field-spacing: 8px;
+    out property <length> page-padding: 12px;
+    out property <length> row-spacing: 10px;
+    out property <length> section-spacing: 10px;
+    out property <length> row-height: 32px;
+    // Inset for stacked controls / checkboxes under their labels.
+    out property <length> stacked-control-indent: 12px;
+    // Align helper text with LineEdit content (control indent + field text padding).
+    out property <length> stacked-hint-indent: 20px;
+}
+
+// Right-aligned label sitting in the fixed left column.
+export component FieldLabel inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    width: FormMetrics.label-width;
+    height: FormMetrics.row-height;
+    spacing: 2px;
+    padding: 0;
+    alignment: end;
+    vertical-stretch: 0;
+    horizontal-stretch: 0;
+
+    Text {
+        text: root.label;
+        font-size: 12px;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+        overflow: elide;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
+    if root.required: Text {
+        text: "*";
+        font-size: 12px;
+        color: Theme.danger;
+        vertical-alignment: center;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+}
+
+// Three-column form row: label | editor area | optional trailing button slot.
+// Rows without a trailing button still reserve the button column so editors align.
+export component FormRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    // When false, reserve an empty trailing button column for gutter alignment.
+    in property <bool> has-trailing: false;
+    spacing: FormMetrics.field-spacing;
+    padding: 0;
+    alignment: stretch;
+    vertical-stretch: 0;
+    height: self.preferred-height;
+
+    FieldLabel {
+        label: root.label;
+        required: root.required;
+    }
+
+    HorizontalLayout {
+        spacing: FormMetrics.field-spacing;
+        padding: 0;
+        alignment: stretch;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        @children
+    }
+
+    if !root.has-trailing: Rectangle {
+        width: FormMetrics.button-width;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+}
+
+export component LabeledLineEdit inherits FormRow {
+    in property <string> placeholder: "";
+    in-out property <string> value;
+    in property <bool> password: false;
+    in property <bool> enabled: true;
+    has-trailing: false;
+
+    if !root.password: LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        enabled: root.enabled;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+    if root.password: LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        enabled: root.enabled;
+        input-type: InputType.password;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+}
+
+export component LabeledDateEdit inherits FormRow {
+    in property <string> placeholder: "YYYY-MM-DD (optional)";
+    in-out property <string> value;
+    private property <Date> picker-date;
+    private property <int> display-year;
+    private property <int> display-month;
+    private property <[string]> month-names: [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    private property <[string]> weekday-names: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    private property <int> first-weekday: root.weekday(root.display-year, root.display-month, 1);
+    private property <int> month-days: root.days-in-month(root.display-year, root.display-month);
+    callback date-for-text(string) -> Date;
+    has-trailing: true;
+
+    function two-digits(value: int) -> string {
+        return value < 10 ? "0\{value}" : "\{value}";
+    }
+
+    function days-in-month(year: int, month: int) -> int {
+        if month == 2 {
+            return (Math.mod(year, 400) == 0
+                || (Math.mod(year, 4) == 0 && Math.mod(year, 100) != 0)) ? 29 : 28;
+        }
+        return (month == 4 || month == 6 || month == 9 || month == 11) ? 30 : 31;
+    }
+
+    // Gregorian weekday, Monday = 0.
+    function weekday(year: int, month: int, day: int) -> int {
+        let adjusted-year = month < 3 ? year - 1 : year;
+        let adjusted-month = month < 3 ? month + 12 : month;
+        let year-of-century = Math.mod(adjusted-year, 100);
+        let century = floor(adjusted-year / 100);
+        let zeller = Math.mod(day + floor(13 * (adjusted-month + 1) / 5)
+            + year-of-century + floor(year-of-century / 4)
+            + floor(century / 4) + 5 * century, 7);
+        return Math.mod(zeller + 5, 7);
+    }
+
+    function previous-month() {
+        if root.display-month == 1 {
+            root.display-month = 12;
+            root.display-year -= 1;
+        } else {
+            root.display-month -= 1;
+        }
+    }
+
+    function next-month() {
+        if root.display-month == 12 {
+            root.display-month = 1;
+            root.display-year += 1;
+        } else {
+            root.display-month += 1;
+        }
+    }
+
+    function open-picker() {
+        root.picker-date = root.date-for-text(root.value);
+        root.display-year = root.picker-date.year;
+        root.display-month = root.picker-date.month;
+        picker.show();
+    }
+
+    LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+    Button {
+        text: "▦";
+        width: FormMetrics.button-width;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+        clicked => { root.open-picker(); }
+    }
+
+    picker := PopupWindow {
+        x: root.width - self.width;
+        y: root.height;
+        width: 252px;
+        height: 246px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 3px;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    vertical-stretch: 0;
+                    spacing: 4px;
+
+                    Button {
+                        text: "‹";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.previous-month(); }
+                    }
+                    Text {
+                        text: root.month-names[root.display-month - 1] + " " + root.display-year;
+                        color: Theme.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "›";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.next-month(); }
+                    }
+                }
+
+                Rectangle {
+                    height: 20px;
+                    vertical-stretch: 0;
+                    for weekday[index] in root.weekday-names: Text {
+                        x: index * parent.width / 7;
+                        width: parent.width / 7;
+                        height: parent.height;
+                        text: weekday;
+                        color: Theme.muted;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    for cell[index] in 42: day-cell := Rectangle {
+                        property <int> day: index - root.first-weekday + 1;
+                        property <bool> valid: self.day >= 1 && self.day <= root.month-days;
+                        property <bool> selected: self.valid
+                            && root.picker-date.year == root.display-year
+                            && root.picker-date.month == root.display-month
+                            && root.picker-date.day == self.day;
+                        x: Math.mod(index, 7) * parent.width / 7;
+                        y: floor(index / 7) * parent.height / 6;
+                        width: parent.width / 7;
+                        height: parent.height / 6;
+                        border-radius: 3px;
+                        background: self.selected
+                            ? Theme.selection
+                            : day-touch.has-hover && self.valid
+                                ? Theme.elevated
+                                : Theme.panel;
+
+                        Text {
+                            text: day-cell.valid ? day-cell.day : "";
+                            color: day-cell.selected
+                                ? Theme.selection-text
+                                : Theme.text;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        day-touch := TouchArea {
+                            enabled: day-cell.valid;
+                            clicked => {
+                                root.picker-date = {
+                                    year: root.display-year,
+                                    month: root.display-month,
+                                    day: day-cell.day
+                                };
+                                root.value = "\{root.picker-date.year}-\{root.two-digits(root.picker-date.month)}-\{root.two-digits(root.picker-date.day)}";
+                                picker.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component LabeledTextEdit inherits FormRow {
+    in property <string> placeholder: "";
+    in-out property <string> value;
+    has-trailing: false;
+
+    TextEdit {
+        text <=> root.value;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        preferred-height: 56px;
+        min-height: 56px;
+    }
+}
+
+export component LabeledPathField inherits FormRow {
+    in property <string> placeholder: "";
+    in property <string> field-id;
+    in-out property <string> value;
+    callback browse-requested(string);
+    has-trailing: true;
+
+    LineEdit {
+        text <=> root.value;
+        placeholder-text: root.placeholder;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+    Button {
+        text: "…";
+        width: FormMetrics.button-width;
+        height: FormMetrics.row-height;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+        clicked => { root.browse-requested(root.field-id); }
+    }
+}
+
+export component LabeledComboBox inherits FormRow {
+    in property <[string]> model;
+    in-out property <int> current-index;
+    in property <int> separator-before-index: -1;
+    callback selected(string);
+    has-trailing: false;
+
+    CompactComboBox {
+        model: root.model;
+        current-index <=> root.current-index;
+        separator-before-index: root.separator-before-index;
+        selected(value) => { root.selected(value); }
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+}
+
+// Checkbox indented so the box aligns with the editor gutter.
+export component CheckBoxRow inherits FormRow {
+    in property <string> text;
+    in-out property <bool> checked;
+    label: "";
+    has-trailing: false;
+
+    CheckBox {
+        text: root.text;
+        checked <=> root.checked;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+}
+
+/// Label above the control (guided Import / Credentials layout).
+/// When `indent` is true, offset matches `stacked-control-indent` so labels line up with fields.
+export component StackedFieldLabel inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <bool> indent: true;
+    spacing: 0;
+    padding: 0;
+    alignment: start;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+    height: 22px;
+
+    if root.indent: Rectangle {
+        width: FormMetrics.stacked-control-indent;
+        horizontal-stretch: 0;
+        vertical-stretch: 0;
+        height: 22px;
+    }
+    HorizontalLayout {
+        spacing: 2px;
+        padding: 0;
+        alignment: start;
+        vertical-stretch: 0;
+        horizontal-stretch: 1;
+        height: 22px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: Theme.text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        if root.required: Text {
+            text: "*";
+            font-size: 12px;
+            font-weight: 700;
+            color: Theme.danger;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
+export component StackedLineEdit inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <string> placeholder: "";
+    in-out property <string> value;
+    in property <bool> password: false;
+    in property <bool> enabled: true;
+    in property <bool> indent: true;
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+        indent: root.indent;
+    }
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        if root.indent: Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        if !root.password: LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            enabled: root.enabled;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+        if root.password: LineEdit {
+            text <=> root.value;
+            placeholder-text: root.placeholder;
+            enabled: root.enabled;
+            input-type: InputType.password;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+    }
+}
+
+export component StackedPathField inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <string> placeholder: "";
+    in property <string> field-id;
+    in-out property <string> value;
+    callback browse-requested(string);
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+    }
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        HorizontalLayout {
+            spacing: FormMetrics.field-spacing;
+            padding: 0;
+            alignment: stretch;
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            LineEdit {
+                text <=> root.value;
+                placeholder-text: root.placeholder;
+                horizontal-stretch: 1;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+            }
+            Button {
+                text: "Browse…";
+                horizontal-stretch: 0;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+                clicked => { root.browse-requested(root.field-id); }
+            }
+        }
+    }
+}
+
+export component StackedComboBox inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> required: false;
+    in property <[string]> model;
+    in-out property <int> current-index;
+    in property <int> separator-before-index: -1;
+    in property <bool> indent: true;
+    callback selected(string);
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    StackedFieldLabel {
+        label: root.label;
+        required: root.required;
+        indent: root.indent;
+    }
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        if root.indent: Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        CompactComboBox {
+            model: root.model;
+            current-index <=> root.current-index;
+            separator-before-index: root.separator-before-index;
+            selected(value) => { root.selected(value); }
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            vertical-stretch: 0;
+        }
+    }
+}
+
+export component StackedDateEdit inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder: "";
+    in-out property <string> value;
+    private property <Date> picker-date;
+    private property <int> display-year;
+    private property <int> display-month;
+    private property <[string]> month-names: [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    private property <[string]> weekday-names: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    private property <int> first-weekday: root.weekday(root.display-year, root.display-month, 1);
+    private property <int> month-days: root.days-in-month(root.display-year, root.display-month);
+    callback date-for-text(string) -> Date;
+    spacing: 2px;
+    padding: 0;
+    vertical-stretch: 0;
+
+    function two-digits(value: int) -> string {
+        return value < 10 ? "0\{value}" : "\{value}";
+    }
+
+    function days-in-month(year: int, month: int) -> int {
+        if month == 2 {
+            return (Math.mod(year, 400) == 0
+                || (Math.mod(year, 4) == 0 && Math.mod(year, 100) != 0)) ? 29 : 28;
+        }
+        return (month == 4 || month == 6 || month == 9 || month == 11) ? 30 : 31;
+    }
+
+    function weekday(year: int, month: int, day: int) -> int {
+        let adjusted-year = month < 3 ? year - 1 : year;
+        let adjusted-month = month < 3 ? month + 12 : month;
+        let year-of-century = Math.mod(adjusted-year, 100);
+        let century = floor(adjusted-year / 100);
+        let zeller = Math.mod(day + floor(13 * (adjusted-month + 1) / 5)
+            + year-of-century + floor(year-of-century / 4)
+            + floor(century / 4) + 5 * century, 7);
+        return Math.mod(zeller + 5, 7);
+    }
+
+    function previous-month() {
+        if root.display-month == 1 {
+            root.display-month = 12;
+            root.display-year -= 1;
+        } else {
+            root.display-month -= 1;
+        }
+    }
+
+    function next-month() {
+        if root.display-month == 12 {
+            root.display-month = 1;
+            root.display-year += 1;
+        } else {
+            root.display-month += 1;
+        }
+    }
+
+    function open-picker() {
+        root.picker-date = root.date-for-text(root.value);
+        root.display-year = root.picker-date.year;
+        root.display-month = root.picker-date.month;
+        picker.show();
+    }
+
+    StackedFieldLabel { label: root.label; }
+    HorizontalLayout {
+        spacing: 0;
+        padding: 0;
+        alignment: stretch;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+        Rectangle {
+            width: FormMetrics.stacked-control-indent;
+            horizontal-stretch: 0;
+        }
+        HorizontalLayout {
+            spacing: FormMetrics.field-spacing;
+            padding: 0;
+            alignment: stretch;
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+            height: FormMetrics.row-height;
+            LineEdit {
+                text <=> root.value;
+                placeholder-text: root.placeholder;
+                horizontal-stretch: 1;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+            }
+            Button {
+                text: "▦";
+                width: FormMetrics.button-width;
+                height: FormMetrics.row-height;
+                vertical-stretch: 0;
+                horizontal-stretch: 0;
+                clicked => { root.open-picker(); }
+            }
+        }
+    }
+
+    picker := PopupWindow {
+        x: root.width - self.width;
+        y: root.height;
+        width: 252px;
+        height: 246px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 3px;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    vertical-stretch: 0;
+                    spacing: 4px;
+
+                    Button {
+                        text: "‹";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.previous-month(); }
+                    }
+                    Text {
+                        text: root.month-names[root.display-month - 1] + " " + root.display-year;
+                        color: Theme.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "›";
+                        width: 30px;
+                        horizontal-stretch: 0;
+                        clicked => { root.next-month(); }
+                    }
+                }
+
+                Rectangle {
+                    height: 20px;
+                    vertical-stretch: 0;
+                    for weekday[index] in root.weekday-names: Text {
+                        x: index * parent.width / 7;
+                        width: parent.width / 7;
+                        height: parent.height;
+                        text: weekday;
+                        color: Theme.muted;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    for cell[index] in 42: day-cell := Rectangle {
+                        property <int> day: index - root.first-weekday + 1;
+                        property <bool> valid: self.day >= 1 && self.day <= root.month-days;
+                        property <bool> selected: self.valid
+                            && root.picker-date.year == root.display-year
+                            && root.picker-date.month == root.display-month
+                            && root.picker-date.day == self.day;
+                        x: Math.mod(index, 7) * parent.width / 7;
+                        y: floor(index / 7) * parent.height / 6;
+                        width: parent.width / 7;
+                        height: parent.height / 6;
+                        border-radius: 3px;
+                        background: self.selected
+                            ? Theme.selection
+                            : day-touch.has-hover && self.valid
+                                ? Theme.elevated
+                                : Theme.panel;
+
+                        Text {
+                            text: day-cell.valid ? day-cell.day : "";
+                            color: day-cell.selected
+                                ? Theme.selection-text
+                                : Theme.text;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        day-touch := TouchArea {
+                            enabled: day-cell.valid;
+                            clicked => {
+                                root.picker-date = {
+                                    year: root.display-year,
+                                    month: root.display-month,
+                                    day: day-cell.day
+                                };
+                                root.value = "\{root.picker-date.year}-\{root.two-digits(root.picker-date.month)}-\{root.two-digits(root.picker-date.day)}";
+                                picker.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component StackedHint inherits HorizontalLayout {
+    in property <string> message;
+    // When false, helper text shares the field/heading left edge (credentials).
+    in property <bool> indent: true;
+    spacing: 0;
+    padding: 0;
+    vertical-stretch: 0;
+    if root.indent: Rectangle {
+        width: FormMetrics.stacked-hint-indent;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        wrap: word-wrap;
+        color: Theme.muted;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
+}
+
+export component StackedDangerHint inherits HorizontalLayout {
+    in property <string> message;
+    spacing: 0;
+    padding: 0;
+    vertical-stretch: 0;
+    Rectangle {
+        width: FormMetrics.stacked-hint-indent;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        wrap: word-wrap;
+        color: Theme.danger;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
+}
+
+export component StackedCheckBox inherits HorizontalLayout {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    spacing: 0;
+    padding: 0;
+    alignment: stretch;
+    vertical-stretch: 0;
+    height: FormMetrics.row-height;
+
+    Rectangle {
+        width: FormMetrics.stacked-control-indent;
+        horizontal-stretch: 0;
+    }
+    CheckBox {
+        text: root.text;
+        checked <=> root.checked;
+        enabled: root.enabled;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+        height: FormMetrics.row-height;
+    }
+}
+
+/// Bordered group for related options (compress settings, advanced filters, …).
+export component OptionGroup inherits Rectangle {
+    in property <string> title: "";
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: 6px;
+    background: Theme.elevated;
+    vertical-stretch: 0;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: FormMetrics.section-spacing;
+        vertical-stretch: 0;
+
+        if root.title != "": Text {
+            text: root.title;
+            font-size: 12px;
+            font-weight: 700;
+            color: Theme.text;
+            vertical-stretch: 0;
+        }
+        @children
+    }
+}
+
+export component AdvancedSection inherits VerticalLayout {
+    in-out property <bool> open: false;
+    in property <string> title: "Advanced Options";
+    // When true, wrap body fields in a bordered OptionGroup-style panel.
+    in property <bool> grouped: true;
+    spacing: FormMetrics.row-spacing;
+    // Extra air above the heading so it separates from the prior section's last row.
+    padding-top: 8px;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    vertical-stretch: 0;
+
+    // Clickable text heading (not a Button) with a rule under the title.
+    VerticalLayout {
+        spacing: 0;
+        padding: 0;
+        vertical-stretch: 0;
+
+        TouchArea {
+            mouse-cursor: pointer;
+            vertical-stretch: 0;
+            clicked => { root.open = !root.open; }
+
+            HorizontalLayout {
+                padding: 0;
+                spacing: 6px;
+                alignment: start;
+                vertical-stretch: 0;
+                height: 30px;
+
+                Text {
+                    text: root.open ? "⌄" : "›";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: root.title;
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 0;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.separator;
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+        }
+    }
+
+    // @children cannot live inside `if`; clip/height toggles visibility instead.
+    // `grouped` applies OptionGroup chrome without duplicating @children.
+    Rectangle {
+        visible: root.open;
+        height: root.open ? self.preferred-height : 0px;
+        clip: true;
+        vertical-stretch: 0;
+        horizontal-stretch: 1;
+        border-width: root.grouped ? 1px : 0px;
+        border-color: Theme.border;
+        border-radius: root.grouped ? 6px : 0px;
+        background: root.grouped ? Theme.elevated : transparent;
+
+        VerticalLayout {
+            padding: root.grouped ? 10px : 0px;
+            spacing: FormMetrics.section-spacing;
+            vertical-stretch: 0;
+            @children
+        }
+    }
+}
+
+// Hint indented under the editor column (not under the label).
+export component Hint inherits HorizontalLayout {
+    in property <string> message;
+    spacing: FormMetrics.field-spacing;
+    padding: 0;
+    alignment: stretch;
+    vertical-stretch: 0;
+
+    Rectangle {
+        width: FormMetrics.label-width;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        wrap: word-wrap;
+        color: Theme.muted;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
+    Rectangle {
+        width: FormMetrics.button-width;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+}
+
+export component DangerHint inherits HorizontalLayout {
+    in property <string> message;
+    spacing: FormMetrics.field-spacing;
+    padding: 0;
+    alignment: stretch;
+    vertical-stretch: 0;
+
+    Rectangle {
+        width: FormMetrics.label-width;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+    Text {
+        text: root.message;
+        font-size: 11px;
+        color: Theme.danger;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+        vertical-stretch: 0;
+    }
+    Rectangle {
+        width: FormMetrics.button-width;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+    }
+}
+
+export component PageSummary inherits Text {
+    in property <string> message;
+    text: root.message;
+    font-size: 12px;
+    color: Theme.muted;
+    wrap: word-wrap;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+}
+
+export component SectionHeading inherits Text {
+    in property <string> title;
+    text: root.title;
+    font-size: 13px;
+    font-weight: 700;
+    color: Theme.text;
+    vertical-alignment: center;
+    vertical-stretch: 0;
+    height: 28px;
+}
+
+export component SectionDivider inherits Rectangle {
+    height: 1px;
+    background: Theme.separator;
+    vertical-stretch: 0;
+}
+
+export component PageHeader inherits HorizontalLayout {
+    in property <string> title;
+    in property <bool> show-required: true;
+    spacing: 8px;
+    padding: 0;
+    alignment: start;
+    vertical-stretch: 0;
+    height: 28px;
+
+    Text {
+        text: root.title;
+        font-size: 13px;
+        font-weight: 700;
+        color: Theme.text;
+        vertical-alignment: center;
+        vertical-stretch: 0;
+    }
+    if root.show-required: Text {
+        text: "* Required field";
+        font-size: 11px;
+        color: Theme.muted;
+        vertical-alignment: center;
+        vertical-stretch: 0;
+    }
+}
+
+export component ActionRow inherits HorizontalLayout {
+    spacing: 8px;
+    padding-top: FormMetrics.section-spacing;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    alignment: end;
+    vertical-stretch: 0;
+    @children
+}
+
+/// High-contrast tab button for Form / Log panel switches.
+export component PanelTabButton inherits Rectangle {
+    in property <string> title;
+    in property <bool> active: false;
+    in property <length> min-tab-width: 0px;
+    callback clicked();
+
+    height: 36px;
+    min-width: root.min-tab-width;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: 0px;
+    background: root.active ? Theme.tab-active : Theme.tab-inactive;
+    border-width: 0px;
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        alignment: center;
+        Text {
+            text: root.title;
+            font-size: 13px;
+            font-weight: root.active ? 700 : 600;
+            color: root.active ? Theme.text : Theme.muted;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Active underline.
+    if root.active: Rectangle {
+        y: parent.height - 3px;
+        height: 3px;
+        width: parent.width;
+        background: Theme.accent;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// Two-tab strip with clear selected / unselected contrast.
+export component PanelTabBar inherits VerticalLayout {
+    in-out property <int> current-index: 0;
+    in property <string> first-title;
+    in property <string> second-title;
+    spacing: 0;
+    padding: 0;
+    vertical-stretch: 0;
+
+    Rectangle {
+        height: 38px;
+        vertical-stretch: 0;
+        background: Theme.tab-bar;
+
+        HorizontalLayout {
+            padding: 0;
+            spacing: 0;
+            alignment: start;
+            PanelTabButton {
+                title: root.first-title;
+                active: root.current-index == 0;
+                clicked => { root.current-index = 0; }
+            }
+            PanelTabButton {
+                title: root.second-title;
+                active: root.current-index == 1;
+                // Wider hit target than the short "Log" label, but still content-sized.
+                min-tab-width: 120px;
+                clicked => { root.current-index = 1; }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+        }
+    }
+    Rectangle {
+        height: 1px;
+        vertical-stretch: 0;
+        background: Theme.separator;
+    }
+}
+
+/// Selectable, read-only log buffer with a dark terminal-style look.
+export component LogTextView inherits Rectangle {
+    in property <string> text;
+    in-out property <length> viewport-y <=> scroll-view.viewport-y;
+    out property <length> visible-height <=> scroll-view.visible-height;
+    out property <length> viewport-height <=> scroll-view.viewport-height;
+    callback scrolled <=> scroll-view.scrolled;
+
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.log-bg;
+    vertical-stretch: 1;
+    min-height: 160px;
+    clip: true;
+
+    ContextMenuArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+
+        scroll-view := ScrollView {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 16px;
+            viewport-width: self.visible-width;
+            viewport-height: max(self.visible-height, text-input.preferred-height);
+
+            text-input := TextInput {
+                width: 100%;
+                text: root.text;
+                read-only: true;
+                single-line: false;
+                // no-wrap: word-wrap on a multi-MB buffer freezes the UI thread.
+                wrap: no-wrap;
+                color: Theme.log-text;
+                font-family: "Liberation Mono";
+                font-size: 13px;
+                selection-background-color: Theme.selection;
+                selection-foreground-color: Theme.selection-text;
+                page-height: scroll-view.visible-height;
+            }
+        }
+
+        Menu {
+            MenuItem {
+                title: "Copy";
+                activated => { text-input.copy(); }
+            }
+            MenuItem {
+                title: "Select All";
+                activated => { text-input.select-all(); }
+            }
+            MenuItem {
+                title: "Copy All";
+                activated => {
+                    text-input.select-all();
+                    text-input.copy();
+                }
+            }
+        }
+    }
+}
+
+// Fill-tab page shell: page margin only, children pack to top.
+export component PageColumn inherits VerticalLayout {
+    padding: FormMetrics.page-padding;
+    spacing: FormMetrics.row-spacing;
+    alignment: start;
+    vertical-stretch: 1;
+    width: 100%;
+    height: 100%;
+    @children
+}
+
+// Content column inside ScrollView: pinned to the viewport's top-left.
+// Width follows the viewport so fields stretch; height tracks preferred size
+// so expanding the window never vertically redistributes form rows.
+export component ScrollForm inherits VerticalLayout {
+    padding: FormMetrics.page-padding;
+    spacing: FormMetrics.row-spacing;
+    alignment: start;
+    vertical-stretch: 0;
+    horizontal-stretch: 0;
+    x: 0px;
+    y: 0px;
+    width: 100%;
+    height: self.preferred-height;
+    @children
+}
+
+// Scrollable form page whose content stays anchored at the top-left when the
+// window grows. Extra space appears below/right; content scrolls when taller
+// than the visible area.
+export component AnchoredScrollPage inherits ScrollView {
+    vertical-stretch: 1;
+    horizontal-stretch: 1;
+    // Match the visible width so fields stay left-aligned; height follows the
+    // form so Flickable cannot center a shorter preferred-size layout.
+    viewport-width: self.visible-width;
+    viewport-height: form.preferred-height;
+
+    form := ScrollForm {
+        width: root.viewport-width;
+        x: 0px;
+        y: 0px;
+        @children
+    }
+}

@@ -24,6 +24,7 @@ members = [
     "crates/cli/vault-pull",
     "crates/vault/demo-seed",
     "crates/vault/server",
+    "crates/message-vault-io-gui",
 ]
 exclude = ["src-tauri"]
 

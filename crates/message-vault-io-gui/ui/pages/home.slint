@@ -1,0 +1,199 @@
+import { Theme, AppearanceAdapter } from "../theme.slint";
+import { CompactComboBox } from "../compact-combo-box.slint";
+
+export global HomeAdapter {
+    in property <bool> enabled: true;
+    callback vault-import();
+    callback convert-messages();
+    callback backup-account();
+    callback extract-messages();
+}
+
+component HomeCard inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> glyph;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: card-touch.has-hover && root.enabled
+        ? Theme.elevated
+        : Theme.panel;
+    vertical-stretch: 0;
+    min-height: 72px;
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+        alignment: stretch;
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: Theme.glyph-bg;
+            vertical-stretch: 0;
+            horizontal-stretch: 0;
+            Text {
+                text: root.glyph;
+                font-size: 18px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: Theme.glyph-fg;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.subtitle;
+                font-size: 12px;
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+
+        Text {
+            text: "›";
+            font-size: 22px;
+            font-weight: 700;
+            color: Theme.muted;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    card-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component HomePage inherits VerticalLayout {
+    padding: 24px;
+    spacing: 0;
+    alignment: center;
+    vertical-stretch: 1;
+
+    VerticalLayout {
+        spacing: 8px;
+        alignment: center;
+        vertical-stretch: 0;
+        horizontal-stretch: 0;
+        max-width: 520px;
+        width: 100%;
+
+        Text {
+            text: "What was said matters.";
+            font-size: 28px;
+            font-weight: 700;
+            color: Theme.text;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Bring your conversations into one place.";
+            font-size: 14px;
+            color: Theme.muted;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        Rectangle { height: 28px; }
+
+        HomeCard {
+            title: "Extract Messages";
+            subtitle: "Choose a backup exporter and extract messages to JSONL.";
+            glyph: "⌘";
+            enabled: HomeAdapter.enabled;
+            clicked => { HomeAdapter.extract-messages(); }
+        }
+
+        Rectangle { height: 12px; }
+
+        HomeCard {
+            title: "Vault Import & Export";
+            subtitle: "Upload and unify your message history.";
+            glyph: "✈";
+            enabled: HomeAdapter.enabled;
+            clicked => { HomeAdapter.vault-import(); }
+        }
+
+        Rectangle { height: 12px; }
+
+        HomeCard {
+            title: "Backup Account";
+            subtitle: "Download your entire message history from Message Vault.";
+            glyph: "↓";
+            enabled: HomeAdapter.enabled;
+            clicked => { HomeAdapter.backup-account(); }
+        }
+
+        Rectangle { height: 12px; }
+
+        HomeCard {
+            title: "Convert messages (Advanced)";
+            subtitle: "Transform message exports between formats.";
+            glyph: "↻";
+            enabled: HomeAdapter.enabled;
+            clicked => { HomeAdapter.convert-messages(); }
+        }
+
+        Rectangle { height: 36px; }
+
+        VerticalLayout {
+            spacing: 8px;
+            vertical-stretch: 0;
+            HorizontalLayout {
+                spacing: 12px;
+                vertical-stretch: 0;
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Theme";
+                        font-size: 11px;
+                        color: Theme.muted;
+                    }
+                    CompactComboBox {
+                        model: AppearanceAdapter.mode-options;
+                        current-index <=> AppearanceAdapter.mode-index;
+                        enabled: HomeAdapter.enabled;
+                        selected => {
+                            AppearanceAdapter.mode-changed(AppearanceAdapter.mode-index);
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Colors";
+                        font-size: 11px;
+                        color: Theme.muted;
+                    }
+                    CompactComboBox {
+                        model: AppearanceAdapter.preset-options;
+                        current-index <=> AppearanceAdapter.preset-index;
+                        enabled: HomeAdapter.enabled;
+                        selected => {
+                            AppearanceAdapter.preset-changed(AppearanceAdapter.preset-index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

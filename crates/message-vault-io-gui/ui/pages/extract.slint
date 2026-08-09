@@ -1,0 +1,327 @@
+import { Button, Date } from "std-widgets.slint";
+import {
+    LabeledDateEdit, LabeledLineEdit, LabeledPathField, LabeledTextEdit, LabeledComboBox,
+    AdvancedSection, Hint, DangerHint, ActionRow, SectionHeading, SectionDivider,
+    PageSummary, CheckBoxRow, AnchoredScrollPage
+} from "../widgets.slint";
+
+export global ExtractAdapter {
+    in-out property <string> exporter-key;
+    in-out property <int> exporter-index;
+    in property <[string]> exporter-options;
+    in property <int> exporter-separator-before-index: -1;
+    in property <string> product-link-label;
+    in property <string> product-url;
+
+    in-out property <string> input;
+    in-out property <string> output;
+    in-out property <string> db-path;
+    in-out property <string> contacts;
+    in-out property <string> owner-phones;
+    in-out property <string> owner-emails;
+    in-out property <string> name-mapping;
+    in-out property <int> timezone-index;
+    in property <[string]> timezone-options;
+
+    in-out property <int> attachment-media-index;
+    in property <[string]> attachment-media-options;
+    in-out property <int> max-resolution-index;
+    in property <[string]> max-resolution-options;
+    in-out property <string> media-max-fps: "30";
+    in-out property <string> media-min-size: "20M";
+    in-out property <bool> media-skip-efficient: true;
+
+    in-out property <string> start-date;
+    in-out property <string> end-date;
+    in-out property <bool> obfuscate;
+    in-out property <string> obfuscate-seed;
+    in-out property <bool> advanced;
+
+    in-out property <int> whatsapp-platform-index;
+    in property <[string]> whatsapp-platform-options;
+    in-out property <string> whatsapp-backup;
+    in-out property <string> whatsapp-wa;
+    in-out property <string> whatsapp-key;
+    in-out property <string> whatsapp-media;
+    in-out property <string> whatsapp-db;
+    in-out property <bool> whatsapp-business;
+
+    in-out property <int> apple-platform-index;
+    in property <[string]> apple-platform-options;
+    in-out property <string> backup-password;
+    in-out property <string> apple-contacts;
+    in-out property <string> attachment-root;
+    in-out property <string> conversation-filter;
+
+    in property <bool> is-whatsapp;
+    in property <bool> is-imessage;
+    in property <bool> is-imazing;
+    in property <bool> is-sms-backup-plus;
+    in property <bool> needs-owner-phones;
+    in property <bool> whatsapp-is-ios;
+    in property <bool> show-contacts;
+    in property <bool> show-ffmpeg-warning;
+    in property <bool> show-compress-options;
+    in property <string> input-label: "Input directory";
+    in property <bool> enabled: true;
+
+    callback browse(string);
+    callback exporter-changed(int);
+    callback open-product-url();
+    callback date-for-text(string) -> Date;
+    callback run();
+    callback clear();
+}
+
+export component ExtractPage inherits AnchoredScrollPage {
+        PageSummary {
+            message: "Choose a backup to extract its messages to a JSONL archive.";
+        }
+
+        LabeledComboBox {
+            label: "Backup type";
+            model: ExtractAdapter.exporter-options;
+            current-index <=> ExtractAdapter.exporter-index;
+            separator-before-index: ExtractAdapter.exporter-separator-before-index;
+            selected(_) => { ExtractAdapter.exporter-changed(ExtractAdapter.exporter-index); }
+        }
+
+        if ExtractAdapter.is-whatsapp: LabeledComboBox {
+            label: "Platform";
+            model: ExtractAdapter.whatsapp-platform-options;
+            current-index <=> ExtractAdapter.whatsapp-platform-index;
+            selected(_) => { ExtractAdapter.exporter-changed(ExtractAdapter.exporter-index); }
+        }
+
+        if !ExtractAdapter.is-whatsapp && ExtractAdapter.is-imessage: LabeledPathField {
+            label: "Backup path";
+            placeholder: "Path";
+            field-id: "extract.db_path";
+            value <=> ExtractAdapter.db-path;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if !ExtractAdapter.is-whatsapp && !ExtractAdapter.is-imessage: LabeledPathField {
+            label: ExtractAdapter.input-label;
+            required: true;
+            placeholder: "Path";
+            field-id: "extract.input";
+            value <=> ExtractAdapter.input;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if !ExtractAdapter.is-whatsapp: LabeledPathField {
+            label: "Output directory";
+            required: true;
+            placeholder: "Path";
+            field-id: "extract.output";
+            value <=> ExtractAdapter.output;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+
+        if ExtractAdapter.is-whatsapp && ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+            label: "Backup path";
+            required: true;
+            placeholder: "Path";
+            field-id: "extract.whatsapp_backup";
+            value <=> ExtractAdapter.whatsapp-backup;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if ExtractAdapter.is-whatsapp && ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+            label: "Contacts";
+            placeholder: "ContactsV2.sqlite (optional)";
+            field-id: "extract.whatsapp_wa";
+            value <=> ExtractAdapter.whatsapp-wa;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if ExtractAdapter.is-whatsapp && !ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+            label: "Backup path";
+            placeholder: "Path";
+            field-id: "extract.whatsapp_backup";
+            value <=> ExtractAdapter.whatsapp-backup;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if ExtractAdapter.is-whatsapp && !ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+            label: "Contacts";
+            placeholder: "wa.db (optional)";
+            field-id: "extract.whatsapp_wa";
+            value <=> ExtractAdapter.whatsapp-wa;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if ExtractAdapter.is-whatsapp: LabeledPathField {
+            label: "Output directory";
+            required: true;
+            placeholder: "Path";
+            field-id: "extract.output";
+            value <=> ExtractAdapter.output;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+
+        if ExtractAdapter.show-contacts: LabeledPathField {
+            label: "Contacts file";
+            placeholder: ".csv or .vcf (optional)";
+            field-id: "extract.contacts";
+            value <=> ExtractAdapter.contacts;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+
+        LabeledComboBox {
+            label: "Attachments";
+            model: ExtractAdapter.attachment-media-options;
+            current-index <=> ExtractAdapter.attachment-media-index;
+            selected(_) => { ExtractAdapter.exporter-changed(ExtractAdapter.exporter-index); }
+        }
+        if ExtractAdapter.obfuscate: Hint {
+            message: "Obfuscate replaces all media with shared placeholders (real files are not copied or converted).";
+        }
+        if ExtractAdapter.show-ffmpeg-warning: DangerHint {
+            message: "The Convert and Compress & Convert attachment modes need ffmpeg and ffprobe beside the app, in MESSAGE_VAULT_IO_BIN, or on PATH.";
+        }
+        if ExtractAdapter.show-compress-options: LabeledComboBox {
+            label: "Max resolution";
+            model: ExtractAdapter.max-resolution-options;
+            current-index <=> ExtractAdapter.max-resolution-index;
+        }
+        if ExtractAdapter.show-compress-options: LabeledLineEdit {
+            label: "Max fps";
+            required: true;
+            placeholder: "e.g. 30";
+            value <=> ExtractAdapter.media-max-fps;
+        }
+        if ExtractAdapter.show-compress-options: LabeledLineEdit {
+            label: "Min size";
+            required: true;
+            placeholder: "e.g. 20M";
+            value <=> ExtractAdapter.media-min-size;
+        }
+        if ExtractAdapter.show-compress-options: CheckBoxRow {
+            text: "Skip already-efficient HEVC";
+            checked <=> ExtractAdapter.media-skip-efficient;
+        }
+
+        if ExtractAdapter.needs-owner-phones: LabeledTextEdit {
+            label: "Your phone number(s)";
+            required: true;
+            placeholder: "+19995551234 (one per line)";
+            value <=> ExtractAdapter.owner-phones;
+        }
+        if ExtractAdapter.is-sms-backup-plus: LabeledTextEdit {
+            label: "Backup email(s)";
+            required: true;
+            placeholder: "you@example.com (one per line)";
+            value <=> ExtractAdapter.owner-emails;
+        }
+        if ExtractAdapter.is-sms-backup-plus: LabeledPathField {
+            label: "Name mapping";
+            placeholder: "Phone,Incorrect Name CSV (optional)";
+            field-id: "extract.name_mapping";
+            value <=> ExtractAdapter.name-mapping;
+            browse-requested(id) => { ExtractAdapter.browse(id); }
+        }
+        if ExtractAdapter.is-imazing: LabeledComboBox {
+            label: "Timezone";
+            model: ExtractAdapter.timezone-options;
+            current-index <=> ExtractAdapter.timezone-index;
+        }
+
+        if ExtractAdapter.is-whatsapp && !ExtractAdapter.whatsapp-is-ios: LabeledLineEdit {
+            label: "Decryption key";
+            placeholder: "Key file or crypt15 hex";
+            value <=> ExtractAdapter.whatsapp-key;
+        }
+        if ExtractAdapter.is-whatsapp: AdvancedSection {
+            open <=> ExtractAdapter.advanced;
+            if !ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+                label: "Media folder";
+                placeholder: "WhatsApp media directory (optional)";
+                field-id: "extract.whatsapp_media";
+                value <=> ExtractAdapter.whatsapp-media;
+                browse-requested(id) => { ExtractAdapter.browse(id); }
+            }
+            if !ExtractAdapter.whatsapp-is-ios: LabeledPathField {
+                label: "Message database";
+                placeholder: "msgstore.db override (optional)";
+                field-id: "extract.whatsapp_db";
+                value <=> ExtractAdapter.whatsapp-db;
+                browse-requested(id) => { ExtractAdapter.browse(id); }
+            }
+            CheckBoxRow {
+                text: "WhatsApp Business";
+                checked <=> ExtractAdapter.whatsapp-business;
+            }
+        }
+
+        if ExtractAdapter.is-imessage: AdvancedSection {
+            open <=> ExtractAdapter.advanced;
+            LabeledComboBox {
+                label: "Platform";
+                model: ExtractAdapter.apple-platform-options;
+                current-index <=> ExtractAdapter.apple-platform-index;
+            }
+            LabeledLineEdit {
+                label: "Backup password";
+                placeholder: "Encrypted iOS backup password (optional)";
+                password: true;
+                value <=> ExtractAdapter.backup-password;
+            }
+            LabeledPathField {
+                label: "AddressBook DB";
+                placeholder: "Path (optional)";
+                field-id: "extract.apple_contacts";
+                value <=> ExtractAdapter.apple-contacts;
+                browse-requested(id) => { ExtractAdapter.browse(id); }
+            }
+            LabeledPathField {
+                label: "Attachment root";
+                placeholder: "Path (optional)";
+                field-id: "extract.attachment_root";
+                value <=> ExtractAdapter.attachment-root;
+                browse-requested(id) => { ExtractAdapter.browse(id); }
+            }
+            LabeledLineEdit {
+                label: "Conversation filter";
+                placeholder: "Names, numbers, or emails (optional)";
+                value <=> ExtractAdapter.conversation-filter;
+            }
+        }
+
+        SectionDivider { }
+        SectionHeading { title: "Message filtering (optional)"; }
+        Hint {
+            message: "Leave both dates blank to include all messages.";
+        }
+        LabeledDateEdit {
+            label: "Start date";
+            value <=> ExtractAdapter.start-date;
+            date-for-text(value) => { return ExtractAdapter.date-for-text(value); }
+        }
+        LabeledDateEdit {
+            label: "End date (exclusive)";
+            value <=> ExtractAdapter.end-date;
+            date-for-text(value) => { return ExtractAdapter.date-for-text(value); }
+        }
+        CheckBoxRow {
+            text: "Obfuscate";
+            checked <=> ExtractAdapter.obfuscate;
+        }
+        if ExtractAdapter.obfuscate: Hint {
+            message: "Names, phones, message text, and media are replaced. Attachment files become placeholders only.";
+        }
+        if ExtractAdapter.obfuscate: LabeledLineEdit {
+            label: "Seed";
+            placeholder: "8-hex seed (optional)";
+            value <=> ExtractAdapter.obfuscate-seed;
+        }
+
+    ActionRow {
+        Button {
+            text: "Clear";
+            enabled: ExtractAdapter.enabled;
+            clicked => { ExtractAdapter.clear(); }
+        }
+        Button {
+            text: "Extract messages";
+            primary: true;
+            enabled: ExtractAdapter.enabled;
+            clicked => { ExtractAdapter.run(); }
+        }
+    }
+}
