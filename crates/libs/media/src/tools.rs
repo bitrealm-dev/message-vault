@@ -74,14 +74,15 @@ fn command_ok(bin: &Path, args: &[&str]) -> bool {
 /// `lib/` next to the GUI, `../lib/` from `cli/`, legacy parent dir,
 /// `MESSAGE_VAULT_IO_BIN`, then PATH.
 fn resolve_tool(name: &str) -> Option<PathBuf> {
+    let override_dir = tools_override().lock().expect("tools override lock").clone();
     let mut cache = tool_cache().lock().expect("tool cache lock");
     let slot = match name {
         "ffmpeg" => &mut cache.ffmpeg,
         "ffprobe" => &mut cache.ffprobe,
-        _ => return find_tool(name),
+        _ => return find_tool_with_override(name, override_dir.as_deref()),
     };
     if slot.is_none() {
-        *slot = find_tool(name);
+        *slot = find_tool_with_override(name, override_dir.as_deref());
     }
     slot.clone()
 }
@@ -126,8 +127,13 @@ pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
 }
 
 fn find_tool(name: &str) -> Option<PathBuf> {
-    if let Some(dir) = tools_override().lock().expect("tools override lock").clone() {
-        return find_tool_in_dir(&dir, name);
+    let override_dir = tools_override().lock().expect("tools override lock").clone();
+    find_tool_with_override(name, override_dir.as_deref())
+}
+
+fn find_tool_with_override(name: &str, override_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = override_dir {
+        return find_tool_in_dir(dir, name);
     }
 
     let executable = executable_name(name);
@@ -258,6 +264,35 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    fn tools_state_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("tools test state lock")
+    }
+
+    struct RestoreToolsDir(Option<PathBuf>);
+
+    impl RestoreToolsDir {
+        fn capture() -> Self {
+            Self(tools_dir())
+        }
+    }
+
+    impl Drop for RestoreToolsDir {
+        fn drop(&mut self) {
+            set_tools_dir(self.0.clone());
+        }
+    }
+
+    fn write_mock_tool(path: &Path) {
+        fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
 
     #[test]
     fn executable_name_matches_platform() {
@@ -272,12 +307,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn probe_folder_requires_both_tools() {
+        let _guard = tools_state_lock();
+        let _restore = RestoreToolsDir::capture();
         let dir = tempfile::tempdir().unwrap();
-        let ffmpeg = dir.path().join("ffmpeg");
-        std::fs::write(&ffmpeg, "#!/bin/sh\nexit 0\n").unwrap();
-        let mut perms = std::fs::metadata(&ffmpeg).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&ffmpeg, perms).unwrap();
+        write_mock_tool(&dir.path().join("ffmpeg"));
 
         let probe = probe_ffmpeg_tools(Some(dir.path()));
         assert!(!probe.ok);
@@ -288,13 +321,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn set_tools_dir_overrides_and_clears_cache() {
+        let _guard = tools_state_lock();
+        let _restore = RestoreToolsDir::capture();
         let dir = tempfile::tempdir().unwrap();
         for name in ["ffmpeg", "ffprobe"] {
-            let p = dir.path().join(name);
-            std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
-            let mut perms = std::fs::metadata(&p).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&p, perms).unwrap();
+            write_mock_tool(&dir.path().join(name));
         }
         set_tools_dir(Some(dir.path().to_path_buf()));
         assert_eq!(tools_dir(), Some(dir.path().to_path_buf()));
@@ -305,20 +336,37 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn probe_candidate_folder_does_not_change_override() {
+        let _guard = tools_state_lock();
+        let _restore = RestoreToolsDir::capture();
+        let live = tempfile::tempdir().unwrap();
+        for name in ["ffmpeg", "ffprobe"] {
+            write_mock_tool(&live.path().join(name));
+        }
+        set_tools_dir(Some(live.path().to_path_buf()));
+
+        let candidate = tempfile::tempdir().unwrap();
+        write_mock_tool(&candidate.path().join("ffmpeg"));
+
+        let _probe = probe_ffmpeg_tools(Some(candidate.path()));
+        assert_eq!(tools_dir(), Some(live.path().to_path_buf()));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn find_tool_prefers_message_vault_io_bin() {
+        let _guard = tools_state_lock();
+        let _restore = RestoreToolsDir::capture();
+        set_tools_dir(None);
         let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("ffmpeg");
-        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-        let mut perms = fs::metadata(&script).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).unwrap();
+        write_mock_tool(&dir.path().join("ffmpeg"));
 
         // SAFETY: test-only env mutation for discovery path coverage.
         unsafe {
             std::env::set_var("MESSAGE_VAULT_IO_BIN", dir.path());
         }
         let found = find_tool("ffmpeg").expect("ffmpeg from MESSAGE_VAULT_IO_BIN");
-        assert_eq!(found, script);
+        assert_eq!(found, dir.path().join("ffmpeg"));
         unsafe {
             std::env::remove_var("MESSAGE_VAULT_IO_BIN");
         }
