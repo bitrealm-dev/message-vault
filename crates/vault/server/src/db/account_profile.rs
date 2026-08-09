@@ -105,17 +105,42 @@ pub fn link_account_handle(
     raw: &str,
     handle_type: HandleType,
 ) -> Result<i64> {
+    link_account_handle_with_service(conn, account_id, raw, handle_type, None)
+}
+
+/// Like [`link_account_handle`], optionally recording a messaging `service`
+/// (for example `"whatsapp"`) on the handles row.
+pub fn link_account_handle_with_service(
+    conn: &Connection,
+    account_id: &str,
+    raw: &str,
+    handle_type: HandleType,
+    service: Option<&str>,
+) -> Result<i64> {
     let (normalized, note) = normalize_handle(raw, handle_type);
     conn.execute(
         "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
-        params![account_id, raw, normalized, note, handle_type.as_str()],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            account_id,
+            raw,
+            normalized,
+            note,
+            handle_type.as_str(),
+            service
+        ],
     )?;
     let handle_id: i64 = conn.query_row(
         "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
         params![account_id, normalized, handle_type.as_str()],
         |row| row.get(0),
     )?;
+    if let Some(svc) = service {
+        conn.execute(
+            "UPDATE handles SET service = COALESCE(service, ?1) WHERE id = ?2",
+            params![svc, handle_id],
+        )?;
+    }
     conn.execute(
         "INSERT OR IGNORE INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
         params![account_id, handle_id],

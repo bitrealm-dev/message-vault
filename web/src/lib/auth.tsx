@@ -18,12 +18,20 @@ interface AuthState {
 }
 
 interface Profile {
-  name: string;
-  handles: { handle: string; service: string }[];
+  preferred_name?: string | null;
+  phones?: string[];
+  emails?: string[];
+}
+
+function profileNeedsOnboarding(profile: Profile): boolean {
+  const hasName = !!profile.preferred_name?.trim();
+  const hasPhone = (profile.phones?.length ?? 0) > 0;
+  const hasEmail = (profile.emails?.length ?? 0) > 0;
+  return !hasName && !hasPhone && !hasEmail;
 }
 
 interface AuthContextValue extends AuthState {
-  login: (serverUrl: string, token: string, accountId: string) => void;
+  login: (serverUrl: string, token: string, accountId: string) => Promise<void>;
   logout: () => void;
   setServer: (url: string) => void;
 }
@@ -106,8 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const profile = await apiClient.get<Profile>("/v1/account/profile");
           if (!cancelled) {
-            const needsOnboarding =
-              !profile.name && (profile.handles?.length ?? 0) === 0;
+            const needsOnboarding = profileNeedsOnboarding(profile);
             setState((s) => {
               if (s.needsOnboarding === needsOnboarding) return s;
               const next: AuthState = { ...s, needsOnboarding };
@@ -158,8 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let needsOnboarding = false;
       try {
         const profile = await apiClient.get<Profile>("/v1/account/profile");
-        needsOnboarding =
-          !profile.name && (profile.handles?.length ?? 0) === 0;
+        needsOnboarding = profileNeedsOnboarding(profile);
       } catch {
         // Profile check failed — assume a profile exists so access is never blocked
       }

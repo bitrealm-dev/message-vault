@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
+import PasswordField from "../components/PasswordField";
 import ExtractScreen from "./Extract";
 import FormatScreen from "./Format";
 
@@ -49,6 +50,7 @@ export default function LoginScreen({
   };
 
   const handleLocalLogin = async () => {
+    if (!username.trim()) return;
     setLoading(true);
     setError("");
     try {
@@ -62,6 +64,12 @@ export default function LoginScreen({
     } finally {
       setLoading(false);
     }
+  };
+
+  const changeServer = () => {
+    setAuthMode(null);
+    setHankoApiUrl(null);
+    setError("");
   };
 
   // Wire Hanko elements when in hanko mode
@@ -127,221 +135,213 @@ export default function LoginScreen({
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "100vh",
-        background: "#f3f4f6",
-        fontFamily: "system-ui",
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          padding: "2rem",
-          borderRadius: "8px",
-          width: "100%",
-          maxWidth: "400px",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-        }}
-      >
-        <h1
-          style={{
-            margin: "0 0 1.5rem",
-            fontSize: "1.5rem",
-            textAlign: "center",
-          }}
-        >
-          Message Vault
+    <div style={pageStyle}>
+      <div style={cardStyle}>
+        <h1 style={titleStyle}>
+          {authMode === null ? "Message Vault" : "Message Vault Sign in"}
         </h1>
 
-        <label
-          style={{
-            fontSize: "0.875rem",
-            fontWeight: 500,
-            display: "block",
-            marginBottom: "0.25rem",
-          }}
-        >
-          Server URL
-        </label>
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-          <input
-            type="text"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && detectMode()}
-            placeholder="https://vault.example.com"
-            style={{
-              flex: 1,
-              padding: "0.5rem",
-              fontSize: "0.875rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "4px",
-            }}
-          />
-          <button
-            onClick={detectMode}
-            disabled={loading}
-            style={{
-              padding: "0.5rem 1rem",
-              fontSize: "0.875rem",
-              fontWeight: 600,
-            }}
-          >
-            Connect
-          </button>
-        </div>
+        {authMode === null && (
+          <>
+            <label style={labelStyle}>Server URL</label>
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+              <input
+                type="text"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && detectMode()}
+                placeholder="https://vault.example.com"
+                style={{
+                  flex: 1,
+                  padding: "0.5rem",
+                  fontSize: "0.875rem",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "4px",
+                }}
+              />
+              <button
+                onClick={detectMode}
+                disabled={loading}
+                style={{
+                  padding: "0.5rem 1rem",
+                  fontSize: "0.875rem",
+                  fontWeight: 600,
+                }}
+              >
+                {loading ? "Connecting…" : "Connect"}
+              </button>
+            </div>
 
-        {error && (
-          <div
-            style={{
-              padding: "0.5rem 0.75rem",
-              background: "#fef2f2",
-              border: "1px solid #fecaca",
-              borderRadius: "4px",
-              color: "#991b1b",
-              fontSize: "0.813rem",
-              marginBottom: "1rem",
-            }}
-          >
-            {error}
-          </div>
+            {isTauri() && (
+              <>
+                <hr style={dividerStyle} />
+                <p
+                  style={{
+                    fontSize: "0.813rem",
+                    color: "#6b7280",
+                    textAlign: "center",
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  No vault? Use offline tools instead.
+                </p>
+                <div style={{ display: "flex", gap: "0.75rem" }}>
+                  <button
+                    onClick={() => setOfflineScreen("extract")}
+                    style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
+                  >
+                    Extract messages
+                  </button>
+                  <button
+                    onClick={() => setOfflineScreen("format")}
+                    style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
+                  >
+                    Format conversion
+                  </button>
+                </div>
+              </>
+            )}
+
+            <ErrorFooter error={error} />
+          </>
         )}
 
         {authMode === "local" && (
           <>
-            <label
-              style={{
-                fontSize: "0.875rem",
-                fontWeight: 500,
-                display: "block",
-                marginBottom: "0.25rem",
-              }}
-            >
-              Username
-            </label>
+            <label style={labelStyle}>Username</label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
               style={inputStyle}
+              autoComplete="username"
             />
 
-            <label
-              style={{
-                fontSize: "0.875rem",
-                fontWeight: 500,
-                display: "block",
-                marginBottom: "0.25rem",
-                marginTop: "0.75rem",
-              }}
-            >
-              Password
-            </label>
-            <input
-              type="password"
+            <label style={{ ...labelStyle, marginTop: "0.75rem" }}>Password</label>
+            <PasswordField
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
-              style={{ ...inputStyle, marginBottom: "1rem" }}
             />
 
             <button
               onClick={handleLocalLogin}
-              disabled={loading || !username}
+              disabled={loading || !username.trim()}
               style={{
                 width: "100%",
                 padding: "0.75rem",
                 fontSize: "1rem",
                 fontWeight: 600,
+                marginTop: "1rem",
               }}
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
 
             {onRegister && (
-              <button
-                onClick={onRegister}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem",
-                  fontSize: "0.875rem",
-                  marginTop: "0.5rem",
-                  background: "transparent",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "4px",
-                  color: "#4f46e5",
-                  cursor: "pointer",
-                }}
-              >
-                Create account
-              </button>
+              <>
+                <div style={orRowStyle}>
+                  <span style={orLineStyle} />
+                  <span style={orTextStyle}>OR</span>
+                  <span style={orLineStyle} />
+                </div>
+                <button
+                  type="button"
+                  onClick={onRegister}
+                  style={linkButtonStyle}
+                >
+                  Create an account
+                </button>
+              </>
             )}
+
+            <button type="button" onClick={changeServer} style={changeServerStyle}>
+              Change server
+            </button>
+
+            <ErrorFooter error={error} />
           </>
         )}
 
         {authMode === "hanko" && (
-          <div ref={hankoRef}>
-            {hankoApiUrl ? (
-              <hanko-auth />
-            ) : (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "1rem",
-                  color: "#6b7280",
-                  fontSize: "0.875rem",
-                }}
-              >
-                Hanko API URL not configured on server.
-              </div>
-            )}
-          </div>
-        )}
-
-        {isTauri() && (
           <>
-            <hr
-              style={{
-                margin: "1.5rem 0",
-                border: "none",
-                borderTop: "1px solid #e5e7eb",
-              }}
-            />
-            <p
-              style={{
-                fontSize: "0.813rem",
-                color: "#6b7280",
-                textAlign: "center",
-                marginBottom: "0.75rem",
-              }}
-            >
-              No vault? Use offline tools instead.
-            </p>
-            <div style={{ display: "flex", gap: "0.75rem" }}>
-              <button
-                onClick={() => setOfflineScreen("extract")}
-                style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
-              >
-                Extract messages
-              </button>
-              <button
-                onClick={() => setOfflineScreen("format")}
-                style={{ flex: 1, padding: "0.5rem", fontSize: "0.875rem" }}
-              >
-                Format conversion
-              </button>
+            <div ref={hankoRef}>
+              {hankoApiUrl ? (
+                <hanko-auth />
+              ) : (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "1rem",
+                    color: "#6b7280",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  Hanko API URL not configured on server.
+                </div>
+              )}
             </div>
+
+            <button type="button" onClick={changeServer} style={changeServerStyle}>
+              Change server
+            </button>
+
+            <ErrorFooter error={error} />
           </>
         )}
       </div>
     </div>
   );
 }
+
+function ErrorFooter({ error }: { error: string }) {
+  return (
+    <div
+      style={{
+        marginTop: "1.25rem",
+        minHeight: "2.5rem",
+        fontSize: "0.813rem",
+        lineHeight: 1.35,
+        color: error ? "#991b1b" : "transparent",
+      }}
+      aria-live="polite"
+    >
+      {error || "\u00a0"}
+    </div>
+  );
+}
+
+const pageStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "100vh",
+  background: "#f3f4f6",
+  fontFamily: "system-ui",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  padding: "2rem",
+  borderRadius: "8px",
+  width: "100%",
+  maxWidth: "400px",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+};
+
+const titleStyle: React.CSSProperties = {
+  margin: "0 0 1.5rem",
+  fontSize: "1.5rem",
+  textAlign: "center",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: "0.875rem",
+  fontWeight: 500,
+  display: "block",
+  marginBottom: "0.25rem",
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -350,4 +350,55 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid #d1d5db",
   borderRadius: "4px",
   boxSizing: "border-box",
+};
+
+const dividerStyle: React.CSSProperties = {
+  margin: "1.5rem 0",
+  border: "none",
+  borderTop: "1px solid #e5e7eb",
+};
+
+const orRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "0.75rem",
+  margin: "1rem 0 0.75rem",
+};
+
+const orLineStyle: React.CSSProperties = {
+  flex: 1,
+  height: 1,
+  background: "#e5e7eb",
+};
+
+const orTextStyle: React.CSSProperties = {
+  fontSize: "0.75rem",
+  color: "#6b7280",
+  fontWeight: 500,
+};
+
+const linkButtonStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: "0.25rem",
+  fontSize: "0.875rem",
+  background: "transparent",
+  border: "none",
+  color: "#4f46e5",
+  textDecoration: "underline",
+  cursor: "pointer",
+  textAlign: "center",
+};
+
+const changeServerStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  marginTop: "1rem",
+  padding: "0.25rem",
+  fontSize: "0.813rem",
+  background: "transparent",
+  border: "none",
+  color: "#6b7280",
+  cursor: "pointer",
+  textAlign: "center",
 };
