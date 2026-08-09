@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Copy schema/sql/*.sql into web/src/lib/vaultSchema.generated.ts.
+ * Copy schema/sql/*.sql into web-next/src/lib/vaultSchema.generated.ts.
  * Optionally refresh fixtures/schema/current-schema.json from a fresh apply.
  *
  * Usage:
@@ -17,7 +17,7 @@ const root = path.resolve(__dirname, "..");
 const sqlDir = path.join(root, "schema", "sql");
 const generatedPath = path.join(
   root,
-  "web",
+  "web-next",
   "src",
   "lib",
   "vaultSchema.generated.ts",
@@ -81,10 +81,12 @@ function refreshFixture() {
   const require = createRequire(import.meta.url);
   let Database;
   try {
-    Database = require(path.join(root, "web", "node_modules", "better-sqlite3"));
+    Database = require(
+      path.join(root, "web-next", "node_modules", "better-sqlite3"),
+    );
   } catch {
     console.warn(
-      "sync-vault-schema: better-sqlite3 not found under web/; skipping fixture refresh",
+      "sync-vault-schema: better-sqlite3 not found under web-next/; skipping fixture refresh",
     );
     return false;
   }

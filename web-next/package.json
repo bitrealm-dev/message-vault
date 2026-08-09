@@ -1,0 +1,36 @@
+{
+  "name": "message-vault-web-next",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "node ./node_modules/tsx/dist/cli.mjs --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
+    "@teamhanko/hanko-elements": "^3.0.0",
+    "better-sqlite3": "^12.11.1",
+    "jose": "^6.2.7",
+    "libphonenumber-js": "^1.13.9",
+    "next": "16.2.12",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-resizable-panels": "^4.12.2",
+    "smol-toml": "^1.7.0",
+    "tsx": "^4.23.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.12",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

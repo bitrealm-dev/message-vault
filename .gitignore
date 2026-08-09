@@ -49,5 +49,10 @@ config/export-to-vault.sh
 # Frontend (web/) dependencies and build output
 /web/node_modules/
 /web/dist/
+
+# Restored Next.js browse UI (web-next/)
+/web-next/node_modules/
+/web-next/.next/
+/web-next/out/
 .claude/
 .worktrees/

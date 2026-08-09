@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+/*
+  Four-seed themes: JS sets --header + --accent (and data-theme).
+  Surfaces derive via color-mix. See web/STYLE_GUIDE.md.
+*/
+
+:root {
+  /* Fallback seeds (dark graphite blue) until boot script runs */
+  --header: #222426;
+  --accent: #5ea1ff;
+
+  --sidebar: var(--header);
+  --sent: var(--accent);
+  --popover: var(--elevated);
+  --received-text: var(--text);
+  --scrollbar-track: var(--panel);
+  --scrollbar-thumb: var(--muted);
+  --scrollbar-thumb-hover: var(--text);
+  --checkbox-border: var(--muted);
+}
+
+/* Dark: header is chrome; deepen for canvas, lift for elevated */
+[data-theme="dark"] {
+  --bg: color-mix(in srgb, var(--header) 55%, black);
+  --panel: color-mix(in srgb, var(--header) 78%, black);
+  --elevated: color-mix(in srgb, var(--header) 82%, white);
+  --border: color-mix(in srgb, var(--header) 65%, white);
+  --text: color-mix(in srgb, white 92%, var(--header));
+  --muted: color-mix(in srgb, white 55%, var(--header));
+  --received: color-mix(in srgb, var(--header) 70%, white);
+  --sent-text: #ffffff;
+  --hover: rgb(255 255 255 / 0.12);
+  --hover-strong: rgb(255 255 255 / 0.2);
+  --scrim: rgb(0 0 0 / 0.55);
+  --checkbox-bg: color-mix(in srgb, white 72%, var(--header));
+  --checkbox-check: color-mix(in srgb, black 85%, var(--header));
+  --danger: #f87171;
+}
+
+/* Light: header is chrome; open up toward white for panels */
+[data-theme="light"] {
+  --bg: color-mix(in srgb, var(--header) 45%, white);
+  --panel: #ffffff;
+  --elevated: color-mix(in srgb, var(--header) 35%, white);
+  --border: color-mix(in srgb, var(--header) 55%, black);
+  --text: color-mix(in srgb, black 88%, var(--header));
+  --muted: color-mix(in srgb, black 45%, var(--header));
+  --received: color-mix(in srgb, var(--header) 55%, white);
+  --sent-text: #ffffff;
+  --hover: rgb(0 0 0 / 0.06);
+  --hover-strong: rgb(0 0 0 / 0.1);
+  --scrim: rgb(0 0 0 / 0.4);
+  --checkbox-bg: #ffffff;
+  --checkbox-check: #ffffff;
+  --danger: #dc2626;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-sidebar: var(--sidebar);
+  --color-elevated: var(--elevated);
+  --color-popover: var(--popover);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-sent: var(--sent);
+  --color-sent-text: var(--sent-text);
+  --color-received: var(--received);
+  --color-received-text: var(--received-text);
+  --color-hover: var(--hover);
+  --color-hover-strong: var(--hover-strong);
+  --color-scrim: var(--scrim);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+.checkbox-list {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 3px;
+  border: 1px solid var(--checkbox-border);
+  background-color: var(--checkbox-bg);
+  cursor: pointer;
+}
+
+.checkbox-list:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-theme="light"] .checkbox-list:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+}
+
+.checkbox-list:indeterminate {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-theme="light"] .checkbox-list:indeterminate {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
+}
+
+.checkbox-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Hanko auth / profile widgets — map vault theme tokens (dark/light via data-theme). */
+hanko-auth,
+hanko-profile {
+  --color: var(--text);
+  --color-shade-1: var(--muted);
+  --color-shade-2: var(--border);
+  --brand-color: var(--accent);
+  --brand-color-shade-1: color-mix(in srgb, var(--accent) 80%, white);
+  --brand-contrast-color: var(--sent-text);
+  --background-color: transparent;
+  --error-color: var(--danger);
+  --link-color: var(--accent);
+  --font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  --font-size: 14px;
+  --font-weight: 400;
+  --border-radius: 0.375rem;
+  --border-style: solid;
+  --border-width: 1px;
+  --container-padding: 0;
+  --container-max-width: 100%;
+  --item-height: 2.5rem;
+}
+
+hanko-auth::part(container),
+hanko-profile::part(container) {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+hanko-auth::part(headline1),
+hanko-profile::part(headline1) {
+  /* Vault settings / login already provide section titles. */
+  display: none;
+}
