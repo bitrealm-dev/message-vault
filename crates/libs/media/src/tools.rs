@@ -168,15 +168,6 @@ pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
     }
 }
 
-fn find_tool(name: &str) -> Option<PathBuf> {
-    let override_dir = tools_state()
-        .lock()
-        .expect("tools state lock")
-        .override_dir
-        .clone();
-    find_tool_with_override(name, override_dir.as_deref())
-}
-
 fn find_tool_with_override(name: &str, override_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = override_dir {
         return find_tool_in_dir(dir, name);
@@ -407,11 +398,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_mock_tool(&dir.path().join("ffmpeg"));
 
-        // SAFETY: test-only env mutation for discovery path coverage.
+        // SAFETY: test-only env mutation; this test holds tools_state_lock so no
+        // concurrent resolve_tool calls run. In production, set_tools_dir override
+        // is checked before MESSAGE_VAULT_IO_BIN; job threads share the same override.
         unsafe {
             std::env::set_var("MESSAGE_VAULT_IO_BIN", dir.path());
         }
-        let found = find_tool("ffmpeg").expect("ffmpeg from MESSAGE_VAULT_IO_BIN");
+        let found = resolve_tool("ffmpeg").expect("ffmpeg from MESSAGE_VAULT_IO_BIN");
         assert_eq!(found, dir.path().join("ffmpeg"));
         unsafe {
             std::env::remove_var("MESSAGE_VAULT_IO_BIN");

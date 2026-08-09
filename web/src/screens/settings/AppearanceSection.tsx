@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { isTauri } from "../../lib/tauri-check";
+import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
   probeFfmpegTools,
   setFfmpegToolsDir,
@@ -9,8 +10,6 @@ import FormRow from "../../components/FormRow";
 import ThemeSettings from "../../components/ThemeSettings";
 import PathPicker from "../../components/PathPicker";
 import Button from "../../components/Button";
-
-const STORAGE_KEY = "mv-ffmpeg-path";
 
 type Status =
   | { type: "idle" }
@@ -42,22 +41,24 @@ export function AppearanceSection() {
   useEffect(() => {
     if (!isTauri()) return;
 
-    const stored = localStorage.getItem(STORAGE_KEY) || "";
+    const stored = localStorage.getItem(FFMPEG_TOOLS_STORAGE_KEY) || "";
     setFfmpegPath(stored);
 
     void (async () => {
       setChecking(true);
       try {
-        if (stored.trim()) {
-          const result = await setFfmpegToolsDir(stored.trim());
-          setStatus({ type: "success", message: formatFolderSuccess(result) });
-        } else {
-          const result = await probeFfmpegTools(null);
-          if (result.ok) {
-            setStatus({ type: "success", message: formatDefaultDiscovery(result) });
-          } else if (result.error) {
-            setStatus({ type: "error", message: result.error });
-          }
+        const result = stored.trim()
+          ? await probeFfmpegTools(stored.trim())
+          : await probeFfmpegTools(null);
+        if (result.ok) {
+          setStatus({
+            type: "success",
+            message: stored.trim()
+              ? formatFolderSuccess(result)
+              : formatDefaultDiscovery(result),
+          });
+        } else if (result.error) {
+          setStatus({ type: "error", message: result.error });
         }
       } catch (err) {
         setStatus({
@@ -77,9 +78,16 @@ export function AppearanceSection() {
 
     try {
       if (!path) {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(FFMPEG_TOOLS_STORAGE_KEY);
         const result = await setFfmpegToolsDir(null);
-        setStatus({ type: "success", message: formatDefaultDiscovery(result) });
+        if (result.ok) {
+          setStatus({ type: "success", message: formatDefaultDiscovery(result) });
+        } else {
+          setStatus({
+            type: "error",
+            message: result.error ?? "ffmpeg and ffprobe not found on PATH",
+          });
+        }
         return;
       }
 
@@ -93,7 +101,7 @@ export function AppearanceSection() {
       }
 
       const result = await setFfmpegToolsDir(path);
-      localStorage.setItem(STORAGE_KEY, path);
+      localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, path);
       setStatus({ type: "success", message: formatFolderSuccess(result) });
     } catch (err) {
       setStatus({

@@ -15,7 +15,7 @@ mod tools;
 
 pub use process::{MediaReport, process_attachments_dir, process_attachments_dir_with_log};
 use size::parse_size;
-pub use tools::{ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, FfmpegToolsProbe};
+pub use tools::{ffmpeg_available, probe_ffmpeg_tools, set_tools_dir, tools_dir, FfmpegToolsProbe};
 
 use std::fmt;
 use std::str::FromStr;

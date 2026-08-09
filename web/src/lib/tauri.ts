@@ -83,12 +83,6 @@ export async function invokePull(config: PullConfig): Promise<void> {
   });
 }
 
-/**
- * Subscribes to the three extraction events emitted by the Rust backend:
- * `extract:log` (String log line), `extract:finished` (String summary),
- * `extract:error` ({ detail, user_message? }).
- * Returns a single unlisten function that tears down all three listeners.
- */
 export interface FfmpegToolsProbe {
   ok: boolean;
   ffmpeg_path: string | null;
@@ -104,6 +98,12 @@ export async function setFfmpegToolsDir(dir: string | null): Promise<FfmpegTools
   return invoke("set_ffmpeg_tools_dir", { dir });
 }
 
+/**
+ * Subscribes to the three extraction events emitted by the Rust backend:
+ * `extract:log` (String log line), `extract:finished` (String summary),
+ * `extract:error` ({ detail, user_message? }).
+ * Returns a single unlisten function that tears down all three listeners.
+ */
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
   onFinished: (summary: string) => void;
