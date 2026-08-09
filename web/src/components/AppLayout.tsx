@@ -1,5 +1,6 @@
 import { useState } from "react";
 import LeftPanel from "./LeftPanel";
+import ListColumn from "./ListColumn";
 import ConversationList from "../screens/ConversationList";
 import ContactList from "../screens/ContactList";
 import ContactDrawer from "./ContactDrawer";
@@ -38,7 +39,12 @@ export default function AppLayout() {
     setFindTerm(term);
   };
 
-  const leftContent =
+  const showListColumn =
+    activeView === "conversations" ||
+    activeView === "contacts" ||
+    activeView === "trash";
+
+  const listContent =
     activeView === "conversations" || activeView === "trash" ? (
       searchActive && searchQuery.trim() && activeView === "conversations" ? (
         <SearchResults query={searchQuery} onSelectResult={handleSelectResult} />
@@ -89,12 +95,19 @@ export default function AppLayout() {
       <LeftPanel
         activeView={activeView}
         onNavigate={setActiveView}
-        searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
-        conversationList={leftContent}
       />
-      <main style={{ flex: 1, overflow: "auto", background: "#fff" }}>
+      {showListColumn && (
+        <ListColumn
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          onSearch={handleSearch}
+        >
+          {listContent}
+        </ListColumn>
+      )}
+      <main style={{ flex: 1, overflow: "auto", background: "#fff", minWidth: 0 }}>
         {mainContent()}
       </main>
       <ContactDrawer contactId={selectedContactId} onClose={() => setSelectedContactId(null)} />
