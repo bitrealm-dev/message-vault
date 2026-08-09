@@ -1,6 +1,6 @@
 # Message Vault demo dataset
 
-Committed JSONL bundle for local browsing without a real phone backup.
+Committed message-ir JSONL bundle for local browsing without a real phone backup.
 
 Regenerate + import in one step:
 
