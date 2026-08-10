@@ -29,6 +29,15 @@ type ContactsPage = {
 
 type FilterNeedles = { text: string; handle: string | null };
 
+/** Tokens that require server-side filtering (not applied in the client match). */
+const ADVANCED_TOKEN_RE =
+  /\b(search:contacts|has:(?:messages|no-messages|no-name)|(?:first-contact|last-contact|message-count|group-count|service):\S+)\b/gi;
+
+function hasAdvancedContactTokens(raw: string): boolean {
+  ADVANCED_TOKEN_RE.lastIndex = 0;
+  return ADVANCED_TOKEN_RE.test(raw);
+}
+
 /** Strip advanced tokens; keep plain text + handle:"…" for subtitle matching. */
 function filterNeedles(raw: string): FilterNeedles {
   let q = raw.trim();
@@ -46,8 +55,7 @@ function filterNeedles(raw: string): FilterNeedles {
   }
 
   q = q
-    .replace(/\bsearch:contacts\b/gi, " ")
-    .replace(/\b(first-contact|last-contact|message-count|group-count):\S+/gi, " ")
+    .replace(ADVANCED_TOKEN_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -167,18 +175,25 @@ export default function ContactList({
     !loading && !refreshing && contacts.length >= total && (total > 0 || contacts.length === 0);
   catalogCompleteRef.current = catalogComplete && !serverQ.trim();
 
+  const advancedActive = hasAdvancedContactTokens(filter);
+
   useEffect(() => {
     // Empty filter → catalog query.
     if (!filter.trim()) {
       setServerQ("");
       return;
     }
+    // Advanced predicates always hit the API (client cannot apply them).
+    if (advancedActive) {
+      const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
+      return () => window.clearTimeout(t);
+    }
     // Full catalog already in memory → client filter only (Next-like).
     if (catalogCompleteRef.current) return;
 
     const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [filter, catalogComplete]);
+  }, [filter, catalogComplete, advancedActive]);
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
@@ -186,13 +201,16 @@ export default function ContactList({
   const nameMarkTerm = needles.text || needles.handle || "";
   const handleMarkTerm = highlightNeedle(filter);
 
-  // Live client filter for immediate feedback.
-  const displayContacts = filterActive
-    ? contacts.filter((c) => contactMatchesFilter(c, filter))
-    : contacts;
+  // Live client filter for name/handle only. With advanced tokens, trust server results.
+  const displayContacts =
+    filterActive && !advancedActive
+      ? contacts.filter((c) => contactMatchesFilter(c, filter))
+      : contacts;
 
   const rangeTotal =
-    filterActive && (catalogCompleteRef.current || !serverQ.trim())
+    filterActive &&
+    !advancedActive &&
+    (catalogCompleteRef.current || !serverQ.trim())
       ? displayContacts.length
       : total;
 

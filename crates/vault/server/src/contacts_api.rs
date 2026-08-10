@@ -68,11 +68,136 @@ pub(crate) fn involves_contact_sql() -> &'static str {
      )"
 }
 
+/// Correlated: conversation `c` involves contact row `ct` (no bind params).
+fn involves_ct_sql() -> &'static str {
+    "EXISTS (
+       SELECT 1 FROM contact_handles ch
+       WHERE ch.account_id = c.account_id
+         AND ch.contact_id = ct.id
+         AND (
+           ch.handle_id = c.chat_handle_id
+           OR EXISTS (
+             SELECT 1 FROM participants p
+             WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
+           )
+         )
+     )"
+}
+
+/// Contact has at least one non-duplicate message in an involved conversation.
+fn contact_has_messages_sql() -> String {
+    format!(
+        "EXISTS (
+           SELECT 1
+           FROM conversations c
+           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+           WHERE c.account_id = ct.account_id
+             AND {involves}
+         )",
+        involves = involves_ct_sql()
+    )
+}
+
+#[derive(Debug, Default)]
+struct ContactListFilters {
+    handle: Option<String>,
+    text: String,
+    /// Earliest message on or after this YYYY-MM-DD.
+    first_contact: Option<String>,
+    /// Latest message on or before this YYYY-MM-DD.
+    last_contact: Option<String>,
+    /// `Some(true)` = has messages; `Some(false)` = never messaged.
+    has_messages: Option<bool>,
+    no_name: bool,
+    /// Lowercased service ids (`imessage`, `sms`, `mms`, `whatsapp`); OR match.
+    services: Vec<String>,
+}
+
+fn normalize_ymd(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
+        let ymd = &t[..10];
+        if ymd.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+            return Some(ymd.to_string());
+        }
+    }
+    None
+}
+
+fn expand_service_token(value: &str) -> Vec<String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "sms" | "mms" | "sms/mms" | "sms-mms" => vec!["sms".into(), "mms".into()],
+        "imessage" => vec!["imessage".into()],
+        "whatsapp" => vec!["whatsapp".into()],
+        other if !other.is_empty() => vec![other.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// Parse `q` into structured list filters (handle, free text, advanced tokens).
+fn parse_contact_list_filters(q: &str) -> ContactListFilters {
+    let (handle, rest) = parse_contact_list_query(q);
+    let mut out = ContactListFilters {
+        handle,
+        ..Default::default()
+    };
+    let mut text_parts = Vec::new();
+    for tok in rest.split_whitespace() {
+        let lower = tok.to_ascii_lowercase();
+        if lower == "search:contacts" {
+            continue;
+        }
+        if let Some(rest) = lower.strip_prefix("first-contact:") {
+            if let Some(d) = normalize_ymd(rest) {
+                out.first_contact = Some(d);
+            }
+            continue;
+        }
+        if let Some(rest) = lower.strip_prefix("last-contact:") {
+            if let Some(d) = normalize_ymd(rest) {
+                out.last_contact = Some(d);
+            }
+            continue;
+        }
+        if lower == "has:messages" {
+            out.has_messages = Some(true);
+            continue;
+        }
+        if lower == "has:no-messages" {
+            out.has_messages = Some(false);
+            continue;
+        }
+        if lower == "has:no-name" {
+            out.no_name = true;
+            continue;
+        }
+        if let Some(rest) = lower.strip_prefix("service:") {
+            for s in expand_service_token(rest) {
+                if !out.services.iter().any(|x| x == &s) {
+                    out.services.push(s);
+                }
+            }
+            continue;
+        }
+        // Legacy / unsupported tokens — ignore.
+        if lower.starts_with("message-count:")
+            || lower.starts_with("group-count:")
+            || lower.starts_with("handle:")
+        {
+            continue;
+        }
+        text_parts.push(tok);
+    }
+    out.text = text_parts.join(" ");
+    out
+}
+
 /// Flat list of contacts: id, display name, handle count, and handle values (paged).
 ///
 /// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
 /// `handle:<raw>` restricts to contacts that have that handle substring.
-/// Message-date stats belong on contact detail, not this list (keeps list SQL cheap).
+/// Advanced tokens: `first-contact:`, `last-contact:`, `has:messages`, `has:no-messages`,
+/// `has:no-name`, `service:` (OR across repeated service tokens).
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
@@ -83,26 +208,14 @@ pub fn list_contacts(
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
     let offset = offset;
 
-    let (handle_filter, mut text) = parse_contact_list_query(q);
-    // Strip advanced tokens the UI may still emit.
-    text = text
-        .split_whitespace()
-        .filter(|t| {
-            let lower = t.to_ascii_lowercase();
-            lower != "search:contacts"
-                && !lower.starts_with("first-contact:")
-                && !lower.starts_with("last-contact:")
-                && !lower.starts_with("message-count:")
-                && !lower.starts_with("group-count:")
-                && !lower.starts_with("handle:")
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let filters = parse_contact_list_filters(q);
+    let involves = involves_ct_sql();
+    let has_messages_sql = contact_has_messages_sql();
 
     let mut where_parts = vec!["ct.account_id = ?1".to_string()];
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
-    if let Some(ref handle) = handle_filter {
+    if let Some(ref handle) = filters.handle {
         where_parts.push(
             "EXISTS (
                SELECT 1 FROM contact_handles ch
@@ -117,7 +230,7 @@ pub fn list_contacts(
         params.push(like.into());
     }
 
-    if !text.is_empty() {
+    if !filters.text.is_empty() {
         where_parts.push(
             "(COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') LIKE ?
               OR EXISTS (
@@ -128,14 +241,87 @@ pub fn list_contacts(
               ))"
             .into(),
         );
-        let like = format!("%{text}%");
+        let like = format!("%{}%", filters.text);
         params.push(like.clone().into());
         params.push(like.clone().into());
         params.push(like.into());
     }
 
-    let where_sql = where_parts.join(" AND ");
+    match filters.has_messages {
+        Some(true) => where_parts.push(has_messages_sql.clone()),
+        Some(false) => where_parts.push(format!("NOT {has_messages_sql}")),
+        None => {}
+    }
 
+    if filters.no_name {
+        where_parts.push(
+            "(NULLIF(trim(ct.preferred_name), '') IS NULL
+              OR EXISTS (
+                SELECT 1 FROM contact_handles ch
+                JOIN handles h ON h.id = ch.handle_id
+                WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+                  AND (
+                    lower(trim(ct.preferred_name)) = lower(trim(h.raw))
+                    OR (
+                      h.normalized IS NOT NULL
+                      AND trim(h.normalized) != ''
+                      AND lower(trim(ct.preferred_name)) = lower(trim(h.normalized))
+                    )
+                  )
+              ))"
+            .into(),
+        );
+    }
+
+    if !filters.services.is_empty() {
+        let placeholders = filters
+            .services
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        where_parts.push(format!(
+            "EXISTS (
+               SELECT 1 FROM conversations c
+               WHERE c.account_id = ct.account_id
+                 AND lower(c.service) IN ({placeholders})
+                 AND {involves}
+             )"
+        ));
+        for s in &filters.services {
+            params.push(s.clone().into());
+        }
+    }
+
+    if let Some(ref first) = filters.first_contact {
+        // Earliest message timestamp must be on or after the given day.
+        where_parts.push(format!(
+            "(
+               SELECT MIN(m.timestamp)
+               FROM conversations c
+               JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+               WHERE c.account_id = ct.account_id
+                 AND {involves}
+             ) >= ?"
+        ));
+        params.push(first.clone().into());
+    }
+
+    if let Some(ref last) = filters.last_contact {
+        // Latest message calendar day must be on or before the given day.
+        where_parts.push(format!(
+            "date((
+               SELECT MAX(m.timestamp)
+               FROM conversations c
+               JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+               WHERE c.account_id = ct.account_id
+                 AND {involves}
+             )) <= date(?)"
+        ));
+        params.push(last.clone().into());
+    }
+
+    let where_sql = where_parts.join(" AND ");
     let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
     let total: i64 = conn
         .query_row(
@@ -590,5 +776,225 @@ mod tests {
             "handle={:?}",
             detail.handles[0].handle
         );
+    }
+
+    fn insert_contact_with_handle(
+        conn: &Connection,
+        account: &str,
+        name: &str,
+        phone: &str,
+    ) -> i64 {
+        // Schema requires preferred_name NOT NULL; empty string = no display name.
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
+            params![account, name],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let handle_id =
+            account_profile::link_account_handle(conn, account, phone, HandleType::Phone).unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![account, handle_id, contact_id],
+        )
+        .unwrap();
+        contact_id
+    }
+
+    fn insert_direct_conversation(
+        conn: &Connection,
+        account: &str,
+        conversation_id: i64,
+        phone: &str,
+        service: &str,
+        timestamps: &[&str],
+    ) {
+        let handle_id = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND (raw = ?2 OR normalized = ?2) LIMIT 1",
+                params![account, phone],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or_else(|_| {
+                account_profile::link_account_handle(conn, account, phone, HandleType::Phone)
+                    .unwrap()
+            });
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, service, conversation_type, source_file
+             ) VALUES (?1, ?2, ?3, ?4, 'individual', 't.jsonl')",
+            params![conversation_id, account, handle_id, service],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+             VALUES (?1, ?2, NULL)",
+            params![conversation_id, handle_id],
+        )
+        .unwrap();
+        for (i, ts) in timestamps.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO messages (
+                    conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+                 ) VALUES (?1, ?2, ?3, ?4, 0, ?5, 'hi')",
+                params![conversation_id, account, service, ts, i as i64],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn list_contacts_filters_has_messages_and_never_messaged() {
+        let (conn, account) = setup();
+        insert_contact_with_handle(&conn, &account, "Messaged", "+15555550100");
+        insert_contact_with_handle(&conn, &account, "Silent", "+15555550200");
+        insert_direct_conversation(
+            &conn,
+            &account,
+            1,
+            "+15555550100",
+            "imessage",
+            &["2024-06-01T12:00:00Z"],
+        );
+
+        let with_msg = list_contacts(
+            &conn,
+            &account,
+            "has:messages search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(with_msg.total, 1);
+        assert_eq!(with_msg.contacts[0].name, "Messaged");
+
+        let never = list_contacts(
+            &conn,
+            &account,
+            "has:no-messages search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(never.total, 1);
+        assert_eq!(never.contacts[0].name, "Silent");
+    }
+
+    #[test]
+    fn list_contacts_filters_no_preferred_name() {
+        let (conn, account) = setup();
+        insert_contact_with_handle(&conn, &account, "Pat", "+15555550100");
+        insert_contact_with_handle(&conn, &account, "", "+15555550200");
+        insert_contact_with_handle(&conn, &account, "+15555550300", "+15555550300");
+
+        let page = list_contacts(
+            &conn,
+            &account,
+            "has:no-name search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(page.total, 2);
+        let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"(unknown)"));
+        assert!(names.iter().any(|n| n.contains("5555550300")));
+    }
+
+    #[test]
+    fn list_contacts_filters_service_or() {
+        let (conn, account) = setup();
+        insert_contact_with_handle(&conn, &account, "IMsg", "+15555550100");
+        insert_contact_with_handle(&conn, &account, "Sms", "+15555550200");
+        insert_contact_with_handle(&conn, &account, "Wa", "+15555550300");
+        insert_direct_conversation(
+            &conn,
+            &account,
+            1,
+            "+15555550100",
+            "iMessage",
+            &["2024-06-01T12:00:00Z"],
+        );
+        insert_direct_conversation(
+            &conn,
+            &account,
+            2,
+            "+15555550200",
+            "sms",
+            &["2024-06-01T12:00:00Z"],
+        );
+        insert_direct_conversation(
+            &conn,
+            &account,
+            3,
+            "+15555550300",
+            "whatsapp",
+            &["2024-06-01T12:00:00Z"],
+        );
+
+        let page = list_contacts(
+            &conn,
+            &account,
+            "service:imessage service:sms search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(page.total, 2);
+        let names: Vec<_> = page.contacts.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"IMsg"));
+        assert!(names.contains(&"Sms"));
+    }
+
+    #[test]
+    fn list_contacts_filters_first_and_last_contact_dates() {
+        let (conn, account) = setup();
+        insert_contact_with_handle(&conn, &account, "Early", "+15555550100");
+        insert_contact_with_handle(&conn, &account, "Late", "+15555550200");
+        insert_direct_conversation(
+            &conn,
+            &account,
+            1,
+            "+15555550100",
+            "imessage",
+            &["2020-01-15T12:00:00Z", "2020-02-01T12:00:00Z"],
+        );
+        insert_direct_conversation(
+            &conn,
+            &account,
+            2,
+            "+15555550200",
+            "imessage",
+            &["2024-06-01T12:00:00Z", "2024-08-01T12:00:00Z"],
+        );
+
+        let first = list_contacts(
+            &conn,
+            &account,
+            "first-contact:2024-01-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(first.total, 1);
+        assert_eq!(first.contacts[0].name, "Late");
+
+        let last = list_contacts(
+            &conn,
+            &account,
+            "last-contact:2020-12-31 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(last.total, 1);
+        assert_eq!(last.contacts[0].name, "Early");
     }
 }

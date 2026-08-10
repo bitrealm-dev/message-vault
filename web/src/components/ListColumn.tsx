@@ -1,6 +1,7 @@
 import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { useRef, useState } from "react";
 import GlobalSearch from "./GlobalSearch";
+import ContactSearch from "./ContactSearch";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import { ListColumnResizeContext } from "./ListColumnResizeContext";
 
@@ -47,9 +48,12 @@ export default function ListColumn({
   children: ReactNode;
 }) {
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [contactsSearchOpen, setContactsSearchOpen] = useState(false);
   const [width, setWidth] = useState(() => loadWidth());
   const [dragging, setDragging] = useState(false);
   const [handleHover, setHandleHover] = useState(false);
+  const isContacts = searchMode === "contacts";
+
   const startXRef = useRef(0);
   const startWidthRef = useRef(DEFAULT_WIDTH);
   const widthRef = useRef(width);
@@ -119,41 +123,48 @@ export default function ListColumn({
       data-list-column
       style={{
         width: `${width}px`,
-        // Visible so the advanced search panel can extend over the main column.
-        zIndex: showAdvancedSearch ? 40 : 1,
+        // Visible so the advanced / contacts search panels can extend over the main column.
+        zIndex: showAdvancedSearch || contactsSearchOpen ? 40 : 1,
       }}
       className="relative flex h-screen shrink-0 flex-col overflow-visible border-r border-border bg-panel text-text"
     >
       <div className="relative shrink-0 border-b border-border p-3">
-        <GlobalSearch
-          value={searchQuery}
-          mode={searchMode === "contacts" ? "filter" : "search"}
-          onChange={onSearchChange}
-          onSubmit={(q) => onSearch(q)}
-        />
-        <button
-          type="button"
-          onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-          className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
-        >
-          {showAdvancedSearch
-            ? "Hide advanced search"
-            : searchMode === "contacts"
-              ? "Advanced filters"
-              : "Advanced search"}
-        </button>
-        {showAdvancedSearch && (
-          <div className="absolute left-0 top-full z-50 -mt-px w-[560px]">
-            <AdvancedSearchForm
-              mode={searchMode}
-              onApply={(q) => {
-                onSearchChange(q);
-                onSearch(q);
-                setShowAdvancedSearch(false);
-              }}
-              onClose={() => setShowAdvancedSearch(false)}
+        {isContacts ? (
+          <ContactSearch
+            value={searchQuery}
+            onChange={onSearchChange}
+            onSubmit={(q) => onSearch(q)}
+            onOpenChange={setContactsSearchOpen}
+          />
+        ) : (
+          <>
+            <GlobalSearch
+              value={searchQuery}
+              mode="search"
+              onChange={onSearchChange}
+              onSubmit={(q) => onSearch(q)}
             />
-          </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+              className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
+            >
+              {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
+            </button>
+            {showAdvancedSearch && (
+              <div className="absolute left-0 top-full z-[70] -mt-px w-[480px]">
+                <AdvancedSearchForm
+                  mode={searchMode}
+                  onApply={(q) => {
+                    onSearchChange(q);
+                    onSearch(q);
+                    setShowAdvancedSearch(false);
+                  }}
+                  onClose={() => setShowAdvancedSearch(false)}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -176,9 +187,10 @@ export default function ListColumn({
         onKeyDown={onResizeKeyDown}
         onMouseEnter={() => setHandleHover(true)}
         onMouseLeave={() => setHandleHover(false)}
-        className={`absolute right-[-3px] top-0 z-[60] h-full w-1.5 touch-none cursor-col-resize ${
-          dragging ? "bg-accent" : handleHover ? "bg-border" : "bg-transparent"
-        }`}
+        className={`absolute right-[-3px] top-0 h-full w-1.5 touch-none cursor-col-resize ${
+          // Stay under the advanced/contacts search panel when it overhangs the main column.
+          showAdvancedSearch || contactsSearchOpen ? "z-10" : "z-[60]"
+        } ${dragging ? "bg-accent" : handleHover ? "bg-border" : "bg-transparent"}`}
       />
     </div>
     </ListColumnResizeContext.Provider>
