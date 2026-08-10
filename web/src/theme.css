@@ -208,7 +208,7 @@ select option {
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
 select,
 textarea {
-  background-color: var(--elevated);
+  background-color: var(--bg);
   color: var(--text);
   border-color: var(--border);
 }
@@ -230,7 +230,7 @@ textarea {
 select {
   appearance: none;
   -webkit-appearance: none;
-  background-color: var(--elevated);
+  background-color: var(--bg);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.55rem center;

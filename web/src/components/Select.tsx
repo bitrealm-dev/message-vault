@@ -47,7 +47,7 @@ export default function Select<T extends object>({
   return (
     <RACSelect {...props} className={className}>
       {label && <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>}
-      <Button className={`flex w-full items-center justify-between gap-2 rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text outline-none focus:border-accent ${triggerClassName ?? ""}`}>
+      <Button className={`flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-bg px-3 py-2.5 text-[0.875rem] text-text outline-none focus:border-accent ${triggerClassName ?? ""}`}>
         <SelectValue className="truncate" />
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" className="ml-2 shrink-0 text-muted">
           <path d="M2.5 3.5 5 6l2.5-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

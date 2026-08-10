@@ -20,6 +20,7 @@ import {
   Popover,
 } from "react-aria-components";
 import type { AttachmentMediaMode } from "../../lib/types";
+import { textInputClassName } from "../../components/TextField";
 
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
   { id: "copy", label: "Copy" },
@@ -30,9 +31,7 @@ export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = 
 
 export const RESOLUTION_OPTIONS = ["720p", "1080p", "4k"];
 
-export const fieldStyle =
-  "box-border w-full rounded-md border border-border bg-bg px-[0.6rem] py-[0.4rem] text-[0.875rem] text-text";
-
+export const fieldStyle = textInputClassName;
 export const hintStyle = "mt-1 text-[0.75rem] text-muted";
 
 export const sectionGap = "mb-[1.1rem]";

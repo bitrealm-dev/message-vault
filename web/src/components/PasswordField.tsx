@@ -7,11 +7,11 @@ export default function PasswordField(
   const { showPassword, onToggle, ...rest } = props;
   return (
     <TextField {...rest}>
-      <div className="flex items-center rounded border border-border bg-elevated focus-within:border-accent">
-        <span className="pl-2 text-muted" aria-hidden="true">🔒</span>
+      <div className="flex items-center rounded-xl border border-border bg-bg focus-within:border-accent">
+        <span className="pl-3 text-muted" aria-hidden="true">🔒</span>
         <Input
           type={showPassword ? "text" : "password"}
-          className="flex-1 border-none bg-transparent px-2 py-2 text-[0.875rem] text-text outline-none"
+          className="flex-1 border-none bg-transparent px-3 py-2.5 text-[0.875rem] text-text outline-none"
         />
         <Button
           variant="ghost"

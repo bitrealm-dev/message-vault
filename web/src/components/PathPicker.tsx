@@ -26,7 +26,6 @@ export default function PathPicker({ value, onChange, directory, placeholder }: 
         onChange={onChange}
         placeholder={placeholder}
         className="flex-1"
-        inputClassName="!bg-bg"
       />
       <Button
         onClick={browse}

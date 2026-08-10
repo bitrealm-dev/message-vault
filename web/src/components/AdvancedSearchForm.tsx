@@ -15,7 +15,7 @@ const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
 
 /** Compact text input for the filter grid (8px vertical to keep rows dense). */
 const inputClass =
-  "box-border w-full rounded border border-border bg-bg px-2 py-1 text-[0.813rem] text-text";
+  "box-border w-full rounded-xl border border-border bg-bg px-2 py-1 text-[0.813rem] text-text outline-none focus:border-accent";
 
 /** Uppercase micro-label above each filter field. */
 const labelClass =

@@ -8,6 +8,10 @@ import {
 } from "react-aria-components";
 import type { InputHTMLAttributes, KeyboardEventHandler } from "react";
 
+/** Shared chrome for text inputs (settings, forms, PathPicker, etc.). */
+export const textInputClassName =
+  "box-border w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-[0.875rem] text-text outline-none focus:border-accent disabled:opacity-50";
+
 /**
  * Shared text input wrapping React Aria's TextField + Input.
  *
@@ -44,7 +48,7 @@ export default function TextField({
     <RACTextField {...props} className={className}>
       {label && <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>}
       <Input
-        className={`box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text outline-none focus:border-accent disabled:opacity-50 ${inputClassName ?? ""}`}
+        className={`${textInputClassName} ${inputClassName ?? ""}`}
       />
       {hint && <Text slot="description" className="mt-1 block text-[0.75rem] text-muted">{hint}</Text>}
       <FieldError className="mt-1 block text-[0.75rem] text-danger" />

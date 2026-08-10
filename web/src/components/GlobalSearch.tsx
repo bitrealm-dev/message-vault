@@ -140,7 +140,7 @@ export default function GlobalSearch({
       }}
       className="relative"
     >
-      <div className="flex items-center rounded border border-border bg-elevated focus-within:border-accent">
+      <div className="flex items-center rounded-xl border border-border bg-bg focus-within:border-accent">
         <Input
           type="search"
           onKeyDownCapture={() => {
@@ -151,7 +151,7 @@ export default function GlobalSearch({
               ? "Filter by name or handle…"
               : "Filter conversations — name, handle:, is:group, participants:=5"
           }
-          className="flex-1 border-none bg-transparent px-2 py-1.5 text-[0.875rem] text-text outline-none"
+          className="flex-1 border-none bg-transparent px-3 py-2.5 text-[0.875rem] text-text outline-none"
         />
       </div>
       <Popover className="z-[100] min-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 shadow-md outline-none">
