@@ -105,12 +105,6 @@ export function ProfileDangerZone({
 
         {dangerZoneOpen && (
           <div style={{ marginTop: "1rem", marginLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {demoLocked && (
-              <p style={{ margin: 0, fontSize: "0.813rem", color: "var(--muted)" }}>
-                These actions are unavailable on the demo account.
-              </p>
-            )}
-
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
               <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
                 Delete all messages and attachments. Your contacts and settings remain.

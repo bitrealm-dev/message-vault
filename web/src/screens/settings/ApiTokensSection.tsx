@@ -109,9 +109,8 @@ export function ApiTokensSection() {
     <div style={{ marginBottom: "1.5rem" }}>
       <h3 style={sectionTitle}>API tokens</h3>
       <p style={{ margin: "0 0 0.75rem", fontSize: "0.813rem", color: "var(--muted)" }}>
-        Long-lived secrets for CLI tools such as vault-push and vault-pull. Choose import,
-        export, or both when creating one. Signing in to the GUI uses a separate session
-        token that changes on each login and does not revoke these tokens.
+        API Tokens are authorization keys used to allow external vault tools to import and
+        export message data.
       </p>
 
       {loadError && (

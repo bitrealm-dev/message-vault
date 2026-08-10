@@ -70,18 +70,18 @@ export function AccountSettingsPanel() {
   return (
     <div>
       <h3 style={sectionTitle}>Username</h3>
-      <input
-        type="text"
-        value={profile.username}
-        readOnly
-        style={{
-          ...inputStyle,
-          marginBottom: "1.5rem",
-          backgroundColor: "var(--elevated)",
-          color: "var(--muted)",
-        }}
-      />
-
+      <div style={{ maxWidth: "360px", marginBottom: "1.5rem" }}>
+        <input
+          type="text"
+          value={profile.username}
+          readOnly
+          style={{
+            ...inputStyle,
+            backgroundColor: "var(--elevated)",
+            color: "var(--muted)",
+          }}
+        />
+      </div>
       <h3 style={sectionTitle}>Change Password</h3>
       <div style={{ marginBottom: "1.5rem", maxWidth: "360px" }}>
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
@@ -92,6 +92,7 @@ export function AccountSettingsPanel() {
           value={currentPw}
           onChange={(e) => setCurrentPw(e.target.value)}
           autoComplete="current-password"
+          disabled={isDemo}
           style={{ ...inputStyle, marginBottom: "0.5rem" }}
         />
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
@@ -102,6 +103,7 @@ export function AccountSettingsPanel() {
           value={newPw}
           onChange={(e) => setNewPw(e.target.value)}
           autoComplete="new-password"
+          disabled={isDemo}
           style={{ ...inputStyle, marginBottom: "0.5rem" }}
         />
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
@@ -112,12 +114,13 @@ export function AccountSettingsPanel() {
           value={confirmPw}
           onChange={(e) => setConfirmPw(e.target.value)}
           autoComplete="new-password"
+          disabled={isDemo}
           style={{ ...inputStyle, marginBottom: "0.5rem" }}
         />
         <Button
           variant="primary"
           onClick={handleChangePassword}
-          disabled={!currentPw || !newPw || !confirmPw}
+          disabled={isDemo || !currentPw || !newPw || !confirmPw}
           style={{ padding: "0.375rem 0.75rem" }}
         >
           Change password
