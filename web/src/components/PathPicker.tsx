@@ -30,7 +30,7 @@ export default function PathPicker({ value, onChange, directory, placeholder }: 
       />
       <Button
         onClick={browse}
-        style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+        className="!px-3 !py-1 !text-[0.813rem]"
       >
         Browse
       </Button>

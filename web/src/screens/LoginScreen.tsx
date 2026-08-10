@@ -165,7 +165,7 @@ export default function LoginScreen() {
         {authMode === null && (
           <>
             <label className={authLabel}>Server URL</label>
-            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
+            <div className="mb-[0.35rem] flex gap-2">
               <TextField
                 value={serverUrl}
                 onChange={setServerUrl}
@@ -181,7 +181,7 @@ export default function LoginScreen() {
                 variant="primary"
                 onClick={detectMode}
                 disabled={loading}
-                style={{ padding: "0.5rem 1rem" }}
+                className="!px-4 !py-2"
               >
                 {loading ? "Connecting…" : "Connect"}
               </Button>
@@ -191,30 +191,30 @@ export default function LoginScreen() {
                 Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
               </p>
             )}
-            {isTauri() && <div style={{ marginBottom: "1rem" }} />}
+            {isTauri() && <div className="mb-4" />}
 
             {isTauri() && (
               <>
-                <div style={{ ...orRowStyle, margin: "0.75rem 0 0.5rem" }}>
-                  <span style={orLineStyle} />
-                  <span style={orTextStyle}>OR</span>
-                  <span style={orLineStyle} />
+                <div className={`${orRowClass} mb-2 mt-3`}>
+                  <span className={orLineClass} />
+                  <span className={orTextClass}>OR</span>
+                  <span className={orLineClass} />
                 </div>
                 <p
                   className={`${mutedText} text-center mb-2`}
                 >
                   Use offline message tools.
                 </p>
-                <div style={{ display: "flex", gap: "0.75rem" }}>
+                <div className="flex gap-3">
                   <Button
                     onClick={() => setOfflineScreen("extract")}
-                    style={{ flex: 1, padding: "0.5rem" }}
+                    className="flex-1 !p-2"
                   >
                     Extract messages
                   </Button>
                   <Button
                     onClick={() => setOfflineScreen("format")}
-                    style={{ flex: 1, padding: "0.5rem" }}
+                    className="flex-1 !p-2"
                   >
                     Format conversion
                   </Button>
@@ -253,10 +253,10 @@ export default function LoginScreen() {
             </AuthSubmitButton>
 
             <>
-              <div style={orRowStyle}>
-                <span style={orLineStyle} />
-                <span style={orTextStyle}>OR</span>
-                <span style={orLineStyle} />
+              <div className={`${orRowClass} mb-3 mt-4`}>
+                <span className={orLineClass} />
+                <span className={orTextClass}>OR</span>
+                <span className={orLineClass} />
               </div>
               <button type="button" onClick={() => navigate("/register")} className={`${accentLink} block w-full text-center`}>
                 Create an account
@@ -294,13 +294,8 @@ export default function LoginScreen() {
 function ErrorFooter({ error }: { error: string }) {
   return (
     <div
-      style={{
-        marginTop: "1.25rem",
-        minHeight: "2.5rem",
-        fontSize: "0.813rem",
-        lineHeight: 1.35,
-        color: error ? "var(--danger)" : "transparent",
-      }}
+      className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
+      style={{ color: error ? "var(--danger)" : "transparent" }}
       aria-live="polite"
     >
       {error || " "}
@@ -308,21 +303,8 @@ function ErrorFooter({ error }: { error: string }) {
   );
 }
 
-const orRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "0.75rem",
-  margin: "1rem 0 0.75rem",
-};
+const orRowClass = "flex items-center gap-3";
 
-const orLineStyle: React.CSSProperties = {
-  flex: 1,
-  height: 1,
-  background: "var(--border)",
-};
+const orLineClass = "h-px flex-1 bg-border";
 
-const orTextStyle: React.CSSProperties = {
-  fontSize: "0.75rem",
-  color: "var(--muted)",
-  fontWeight: 500,
-};
+const orTextClass = "text-[0.75rem] font-medium text-muted";

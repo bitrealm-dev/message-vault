@@ -100,7 +100,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     out.push(
       <mark
         key={key++}
-        style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}
+        className="rounded-sm bg-search-mark px-px"
       >
         {rest.slice(idx, idx + t.length)}
       </mark>,
@@ -205,23 +205,15 @@ export default function ContactList({
 
   if (error && contacts.length === 0) {
     return (
-      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--danger)" }}>
+      <div className="p-4 text-[0.813rem] text-danger">
         Could not load contacts: {error}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "0.375rem 0.75rem",
-          fontSize: "0.688rem",
-          color: "var(--muted)",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
         {rangeLabel}
         {refreshing ? " · updating…" : filling ? " · loading more…" : null}
       </div>
@@ -240,7 +232,7 @@ export default function ContactList({
         }}
         empty={
           !loading ? (
-            <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+            <div className="p-4 text-[0.813rem] text-muted">
               {filterActive ? "No contacts match this filter" : "No contacts"}
             </div>
           ) : null
@@ -260,64 +252,29 @@ export default function ContactList({
               type="button"
               onClick={() => onSelect(c)}
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.625rem",
-                width: "100%",
                 height: filterActive ? "auto" : "100%",
                 minHeight: filterActive ? CONTACT_ROW_HEIGHT : undefined,
-                boxSizing: "border-box",
-                textAlign: "left",
-                border: "none",
-                background: "transparent",
-                padding: "0.5rem 0.75rem",
-                cursor: "pointer",
-                borderBottom: "1px solid var(--border)",
-                color: "var(--text)",
               }}
+              className="box-border flex w-full cursor-pointer items-center gap-2.5 border-b border-border border-none bg-transparent p-2 px-3 text-left text-text"
             >
-              <span
-                style={{
-                  width: 28,
-                  height: 28,
-                  flexShrink: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  alignSelf: "center",
-                }}
-              >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
                 <ContactInitialCircle
                   displayName={c.name}
                   preferredHandle={c.handles?.[0] ?? null}
                 />
               </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[0.875rem] font-medium">
                   {filterActive && nameMarkTerm
                     ? highlightText(c.name, nameMarkTerm)
                     : c.name}
                 </div>
                 {shownHandles.length > 0 && (
-                  <div style={{ marginTop: "0.125rem" }}>
+                  <div className="mt-0.5">
                     {shownHandles.map((h) => (
                       <div
                         key={h}
-                        style={{
-                          fontSize: "0.75rem",
-                          color: "var(--muted)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
+                        className="truncate text-[0.75rem] text-muted"
                       >
                         {highlightText(h, handleMarkTerm)}
                       </div>

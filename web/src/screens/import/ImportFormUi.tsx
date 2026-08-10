@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { parseDate } from "@internationalized/date";
 import {
   Button,
@@ -30,24 +30,12 @@ export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = 
 
 export const RESOLUTION_OPTIONS = ["720p", "1080p", "4k"];
 
-export const fieldStyle: CSSProperties = {
-  width: "100%",
-  padding: "0.4rem 0.6rem",
-  fontSize: "0.875rem",
-  borderRadius: "6px",
-  border: "1px solid var(--border)",
-  boxSizing: "border-box",
-  background: "var(--bg)",
-  color: "var(--text)",
-};
+export const fieldStyle =
+  "box-border w-full rounded-md border border-border bg-bg px-[0.6rem] py-[0.4rem] text-[0.875rem] text-text";
 
-export const hintStyle: CSSProperties = {
-  fontSize: "0.75rem",
-  color: "var(--muted)",
-  marginTop: "0.25rem",
-};
+export const hintStyle = "mt-1 text-[0.75rem] text-muted";
 
-export const sectionGap: CSSProperties = { marginBottom: "1.1rem" };
+export const sectionGap = "mb-[1.1rem]";
 
 function CalendarIcon() {
   return (
@@ -91,7 +79,7 @@ export function DateField({
   const calendarValue = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? parseDate(value) : null;
 
   return (
-    <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
+    <div className="min-w-[10rem] flex-[1_1_12rem]">
       <DatePicker
         value={calendarValue}
         onChange={(date) => onChange(date ? date.toString() : "")}
@@ -172,8 +160,8 @@ export function StackedField({
   trailing?: ReactNode;
 }) {
   return (
-    <div style={sectionGap}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem" }}>
+    <div className={sectionGap}>
+      <div className="flex items-baseline gap-3">
         <Label className="mb-1 block flex-1 text-[0.875rem] font-medium text-text">{label}</Label>
         {trailing}
       </div>

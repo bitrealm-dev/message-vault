@@ -29,24 +29,16 @@ export default function Format({
   const { running, log, start, cancel } = useTauriJob({ onError });
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
+    <div className="max-w-[700px] p-6">
       {onBack && (
         <button
           onClick={onBack}
-          style={{
-            marginBottom: "1rem",
-            border: "none",
-            background: "none",
-            color: "var(--accent)",
-            cursor: "pointer",
-            fontSize: "0.875rem",
-            padding: 0,
-          }}
+          className="mb-4 cursor-pointer border-none bg-none p-0 text-[0.875rem] text-accent"
         >
           ← Back to login
         </button>
       )}
-      <h2 style={{ margin: "0 0 1.5rem 0" }}>Format Conversion</h2>
+      <h2 className="m-0 mb-6">Format Conversion</h2>
 
       <FormRow label="Input directory">
         <PathPicker
@@ -76,7 +68,7 @@ export default function Format({
         </Select>
       </FormRow>
 
-      <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
+      <div className="mt-6 flex gap-3">
         <Button
           variant="primary"
           onClick={() =>
@@ -91,16 +83,16 @@ export default function Format({
             )
           }
           disabled={running || !inputDir || !outputDir}
-          style={{ padding: "0.5rem 1.5rem" }}
+          className="!px-6 !py-2"
         >
           {running ? "Converting…" : "Convert"}
         </Button>
-        <Button onClick={cancel} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
+        <Button onClick={cancel} disabled={!running} className="!px-6 !py-2">
           Cancel
         </Button>
       </div>
 
-      <div style={{ marginTop: "1.5rem" }}>
+      <div className="mt-6">
         <ProgressBar log={log} running={running} />
       </div>
     </div>

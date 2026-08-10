@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from "react";
+import { useState, useEffect } from "react";
 import { isTauri } from "../../lib/tauri-check";
 import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
@@ -22,14 +22,8 @@ type Status =
   | { type: "success"; message: string }
   | { type: "error"; message: string };
 
-const sectionHeading: CSSProperties = {
-  fontSize: "12px",
-  fontWeight: 600,
-  letterSpacing: "0.05em",
-  textTransform: "uppercase",
-  color: "var(--muted)",
-  margin: "0 0 0.5rem",
-};
+const sectionHeading =
+  "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted";
 
 function formatProbePaths(probe: FfmpegToolsProbe): string {
   const parts: string[] = [];
@@ -158,7 +152,7 @@ export function SystemSection() {
 
   if (!isTauri()) {
     return (
-      <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--muted)" }}>
+      <p className="m-0 text-[0.875rem] text-muted">
         System settings (working directory, ffmpeg tools, and remembered importer paths) are
         available in the desktop app.
       </p>
@@ -167,7 +161,7 @@ export function SystemSection() {
 
   return (
     <div>
-      <h3 style={sectionHeading}>Vault</h3>
+      <h3 className={sectionHeading}>Vault</h3>
       <FormRow label="Vault Working Directory">
         <PathPicker
           value={workingDir}
@@ -176,22 +170,13 @@ export function SystemSection() {
           placeholder={homeDir || "User home directory"}
         />
       </FormRow>
-      <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
+      <p className="mt-1 text-[0.75rem] text-muted">
         Import creates a timestamped staging folder under this directory (for example
         staging-iphone-ios-260809-143022), matching the Slint GUI. Defaults to your user home
         directory. Clear the field and save to restore that default.
       </p>
 
-      <label
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: "0.5rem",
-          marginTop: "1.25rem",
-          fontSize: "0.875rem",
-          cursor: "pointer",
-        }}
-      >
+      <label className="mt-5 flex cursor-pointer items-start gap-2 text-[0.875rem]">
         <input
           type="checkbox"
           checked={rememberPaths}
@@ -200,25 +185,18 @@ export function SystemSection() {
             setRememberPaths(on);
             setRememberImporterPaths(on);
           }}
-          style={{ marginTop: "0.15rem" }}
+          className="mt-[0.15rem]"
         />
         <span>
           Remember importer paths
-          <span
-            style={{
-              display: "block",
-              fontSize: "0.75rem",
-              color: "var(--muted)",
-              marginTop: "0.25rem",
-            }}
-          >
+          <span className="mt-1 block text-[0.75rem] text-muted">
             When enabled, Import restores the last backup path for each import source.
           </span>
         </span>
       </label>
 
-      <div style={{ marginTop: "2rem" }}>
-        <h3 style={sectionHeading}>Media</h3>
+      <div className="mt-8">
+        <h3 className={sectionHeading}>Media</h3>
         <FormRow label="ffmpeg tools folder">
           <PathPicker
             value={ffmpegPath}
@@ -227,29 +205,29 @@ export function SystemSection() {
             placeholder="Uses system PATH by default"
           />
         </FormRow>
-        <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
+        <p className="mt-1 text-[0.75rem] text-muted">
           Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
           <a
             href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
             target="_blank"
             rel="noopener"
-            style={{ color: "var(--accent)" }}
+            className="text-accent"
           >
             Install help
           </a>
         </p>
       </div>
 
-      <div style={{ marginTop: "1.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+      <div className="mt-6 flex items-center gap-3">
         <Button
           onClick={() => void handleSave()}
           disabled={saving}
-          style={{ padding: "0.5rem 1.5rem" }}
+          className="!px-6 !py-2"
         >
           {saving ? "Saving…" : "Save"}
         </Button>
         {status.type !== "idle" && (
-          <span style={{ fontSize: "0.875rem", color: statusColor(status) }}>{status.message}</span>
+          <span className="text-[0.875rem]" style={{ color: statusColor(status) }}>{status.message}</span>
         )}
       </div>
     </div>

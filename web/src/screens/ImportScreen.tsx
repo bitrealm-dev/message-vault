@@ -188,13 +188,13 @@ export default function ImportScreen() {
   };
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "640px" }}>
+    <div className="max-w-[640px] p-6">
       {phase === "form" && (
         <>
-          <h1 style={{ margin: "0 0 0.25rem 0", fontSize: "1.5rem", fontWeight: 700 }}>
+          <h1 className="m-0 mb-1 text-2xl font-bold">
             Import Messages
           </h1>
-          <p style={{ margin: "0 0 1.25rem 0", color: "var(--muted)", fontSize: "0.875rem" }}>
+          <p className="m-0 mb-5 text-[0.875rem] text-muted">
             Select your messages.
           </p>
 
@@ -203,7 +203,7 @@ export default function ImportScreen() {
             open={formatOpen}
             onToggle={() => setFormatOpen((o) => !o)}
           >
-            <div style={sectionGap}>
+            <div className={sectionGap}>
               <Select
                 selectedKey={source}
                 onSelectionChange={(k) => setSource(String(k))}
@@ -252,11 +252,11 @@ export default function ImportScreen() {
                       </ListBoxItem>
                     ))}
                   </Select>
-                  <p style={hintStyle}>{attachmentHelp[attachmentMedia]}</p>
+                  <p className={hintStyle}>{attachmentHelp[attachmentMedia]}</p>
                 </StackedField>
 
                 {showCompress && (
-                  <div style={{ marginLeft: "1rem", marginBottom: "1.1rem" }}>
+                  <div className="mb-[1.1rem] ml-4">
                     <StackedField label="Target resolution">
                       <Select
                         selectedKey={maxResolution}
@@ -270,7 +270,7 @@ export default function ImportScreen() {
                           </ListBoxItem>
                         ))}
                       </Select>
-                      <p style={hintStyle}>
+                      <p className={hintStyle}>
                         Maximum video resolution; videos are not upscaled.
                       </p>
                     </StackedField>
@@ -279,9 +279,9 @@ export default function ImportScreen() {
                         type="text"
                         value={maxFps}
                         onChange={(e) => setMaxFps(e.target.value)}
-                        style={fieldStyle}
+                        className={fieldStyle}
                       />
-                      <p style={hintStyle}>
+                      <p className={hintStyle}>
                         Maximum video frame rate; videos are not upscaled to this FPS.
                       </p>
                     </StackedField>
@@ -290,9 +290,9 @@ export default function ImportScreen() {
                         type="text"
                         value={minSizeMb}
                         onChange={(e) => setMinSizeMb(e.target.value)}
-                        style={fieldStyle}
+                        className={fieldStyle}
                       />
-                      <p style={hintStyle}>Only re-encode videos above this size.</p>
+                      <p className={hintStyle}>Only re-encode videos above this size.</p>
                     </StackedField>
                   </div>
                 )}
@@ -332,21 +332,14 @@ export default function ImportScreen() {
                   value={conversationFilter}
                   onChange={(e) => setConversationFilter(e.target.value)}
                   placeholder="Comma separate list of names and number"
-                  style={fieldStyle}
+                  className={fieldStyle}
                 />
-                <p style={hintStyle}>
+                <p className={hintStyle}>
                   Only conversations with the specified participants are imported, including
                   group conversations.
                 </p>
               </StackedField>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.75rem",
-                  marginBottom: "1.1rem",
-                  flexWrap: "wrap",
-                }}
-              >
+              <div className="mb-[1.1rem] flex flex-wrap gap-3">
                 <DateField label="Start Date" value={startDate} onChange={setStartDate} />
                 <DateField
                   label="End Date (exclusive)"
@@ -362,15 +355,7 @@ export default function ImportScreen() {
             open={processingOpen}
             onToggle={() => setProcessingOpen((o) => !o)}
           >
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                fontSize: "0.875rem",
-                marginBottom: "0.75rem",
-              }}
-            >
+            <label className="mb-3 flex items-center gap-2 text-[0.875rem]">
               <input
                 type="checkbox"
                 checked={continueOnError}
@@ -378,15 +363,7 @@ export default function ImportScreen() {
               />
               Continue importing after failed message conversion (default)
             </label>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                fontSize: "0.875rem",
-                marginBottom: "0.75rem",
-              }}
-            >
+            <label className="mb-3 flex items-center gap-2 text-[0.875rem]">
               <input
                 type="checkbox"
                 checked={force}
@@ -395,15 +372,7 @@ export default function ImportScreen() {
               Force reprocessing
             </label>
             {isIos ? (
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  fontSize: "0.875rem",
-                  marginBottom: "0.5rem",
-                }}
-              >
+              <label className="mb-2 flex items-center gap-2 text-[0.875rem]">
                 <input
                   type="checkbox"
                   checked={obfuscate}
@@ -414,12 +383,12 @@ export default function ImportScreen() {
             ) : null}
           </CollapsibleSection>
 
-          <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.5rem" }}>
+          <div className="mt-2 flex gap-3">
             <Button
               variant="primary"
               onClick={startImport}
               disabled={!backupPath || running}
-              style={{ padding: "0.55rem 1.5rem", borderRadius: "8px" }}
+              className="!rounded-lg !px-6 !py-[0.55rem]"
             >
               Import
             </Button>
@@ -429,11 +398,11 @@ export default function ImportScreen() {
 
       {(phase === "progress" || phase === "done") && (
         <>
-          <h1 style={{ margin: "0 0 1rem 0", fontSize: "1.5rem", fontWeight: 700 }}>
+          <h1 className="m-0 mb-4 text-2xl font-bold">
             Import Messages
           </h1>
           <StepProgress steps={steps} />
-          <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          <div className="mt-4 flex items-center gap-3">
             {running && (
               <Button onClick={() => invokeCancel()}>
                 Cancel
@@ -448,7 +417,7 @@ export default function ImportScreen() {
                   setLog([]);
                   setShowDetails(false);
                 }}
-                style={{ fontSize: "0.875rem", padding: "0.35rem 0.75rem" }}
+                className="!px-3 !py-[0.35rem] !text-[0.875rem]"
               >
                 ← Back
               </Button>
@@ -456,24 +425,13 @@ export default function ImportScreen() {
             <Button
               variant="ghost"
               onClick={() => setShowDetails(!showDetails)}
-              style={{ fontSize: "0.813rem", padding: "0.25rem 0.5rem" }}
+              className="!px-2 !py-1 !text-[0.813rem]"
             >
               {showDetails ? "Hide details" : "Show details"}
             </Button>
           </div>
           {showDetails && (
-            <pre
-              style={{
-                maxHeight: "300px",
-                overflow: "auto",
-                fontSize: "0.75rem",
-                background: "var(--hover)",
-                padding: "0.5rem",
-                borderRadius: "4px",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
+            <pre className="max-h-[300px] overflow-auto whitespace-pre-wrap break-words rounded bg-hover p-2 text-[0.75rem]">
               {log.length === 0
                 ? "No log entries"
                 : log.map((line, i) => <div key={i}>{line}</div>)}
@@ -484,25 +442,17 @@ export default function ImportScreen() {
 
       {phase === "done" && (
         <>
-          <div
-            style={{
-              marginTop: "1rem",
-              padding: "1rem",
-              background: "var(--ok-soft-bg)",
-              borderRadius: "6px",
-              fontSize: "0.875rem",
-            }}
-          >
+          <div className="mt-4 rounded-md bg-ok-soft-bg p-4 text-[0.875rem]">
             {summary}
           </div>
-          <div style={{ marginTop: "1rem" }}>
+          <div className="mt-4">
             <Button
               variant="primary"
               onClick={() => {
                 setPhase("form");
                 setSummary("");
               }}
-              style={{ padding: "0.5rem 1.5rem" }}
+              className="!px-6 !py-2"
             >
               Import another
             </Button>

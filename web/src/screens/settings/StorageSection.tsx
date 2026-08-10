@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from "react";
+import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 
@@ -30,41 +30,16 @@ function formatImportDate(iso: string | null | undefined): string {
 
 const ATTACHMENT_PAGE_SIZE = 20;
 
-const sectionTitle: CSSProperties = {
-  fontSize: "0.938rem",
-  fontWeight: 600,
-  color: "var(--text)",
-  margin: 0,
-};
+const sectionTitle = "m-0 text-[0.938rem] font-semibold text-text";
 
-const sectionHint: CSSProperties = {
-  margin: "0.25rem 0 0",
-  fontSize: "0.813rem",
-  color: "var(--muted)",
-};
+const sectionHint = "mt-1 text-[0.813rem] text-muted";
 
-const tableWrap: CSSProperties = {
-  overflowX: "auto",
-  border: "1px solid var(--border)",
-  borderRadius: "8px",
-};
+const tableWrap = "overflow-x-auto rounded-lg border border-border";
 
-const thStyle: CSSProperties = {
-  padding: "0.5rem 0.75rem",
-  fontWeight: 500,
-  color: "var(--muted)",
-  background: "var(--elevated)",
-  borderBottom: "1px solid var(--border)",
-  textAlign: "left",
-  fontSize: "0.813rem",
-};
+const thStyle =
+  "border-b border-border bg-elevated p-2 px-3 text-left text-[0.813rem] font-medium text-muted";
 
-const tdStyle: CSSProperties = {
-  padding: "0.5rem 0.75rem",
-  borderBottom: "1px solid var(--border)",
-  fontSize: "0.813rem",
-  color: "var(--text)",
-};
+const tdStyle = "border-b border-border p-2 px-3 text-[0.813rem] text-text";
 
 interface ImportRow {
   id: number;
@@ -118,7 +93,7 @@ export function StorageSection() {
   }, []);
 
   if (loading) {
-    return <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>Loading storage…</div>;
+    return <div className="text-[0.875rem] text-muted">Loading storage…</div>;
   }
 
   const pageCount = Math.max(1, Math.ceil(topAttachments.length / ATTACHMENT_PAGE_SIZE));
@@ -128,70 +103,53 @@ export function StorageSection() {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+    <div className="flex flex-col gap-8">
       {error && (
-        <div
-          style={{
-            fontSize: "0.813rem",
-            color: "var(--danger)",
-            background: "var(--danger-soft-bg)",
-            border: "1px solid var(--danger-soft-border)",
-            borderRadius: "6px",
-            padding: "0.5rem 0.75rem",
-          }}
-        >
+        <div className="rounded-md border border-danger-soft-border bg-danger-soft-bg p-2 px-3 text-[0.813rem] text-danger">
           {error}
         </div>
       )}
 
       <section>
-        <h3 style={sectionTitle}>Usage</h3>
-        <p style={sectionHint}>Attachment storage for this account (original file sizes).</p>
-        <div
-          style={{
-            marginTop: "0.75rem",
-            border: "1px solid var(--border)",
-            borderRadius: "8px",
-            padding: "0.75rem 1rem",
-            background: "var(--elevated)",
-          }}
-        >
-          <div style={{ fontSize: "1.375rem", fontWeight: 600, color: "var(--text)" }}>
+        <h3 className={sectionTitle}>Usage</h3>
+        <p className={sectionHint}>Attachment storage for this account (original file sizes).</p>
+        <div className="mt-3 rounded-lg border border-border bg-elevated p-3 px-4">
+          <div className="text-[1.375rem] font-semibold text-text">
             {formatBytes(totalBytes)}
           </div>
-          <div style={{ marginTop: "0.25rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+          <div className="mt-1 text-[0.813rem] text-muted">
             {attachmentCount.toLocaleString()} attachment{attachmentCount === 1 ? "" : "s"}
           </div>
         </div>
       </section>
 
       <section>
-        <h3 style={sectionTitle}>Import history</h3>
-        <p style={sectionHint}>Each vault push or CLI import recorded for this account.</p>
+        <h3 className={sectionTitle}>Import history</h3>
+        <p className={sectionHint}>Each vault push or CLI import recorded for this account.</p>
         {imports.length === 0 ? (
-          <p style={{ ...sectionHint, marginTop: "0.75rem" }}>No imports recorded yet.</p>
+          <p className={`${sectionHint} mt-3`}>No imports recorded yet.</p>
         ) : (
-          <div style={{ ...tableWrap, marginTop: "0.75rem" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div className={`${tableWrap} mt-3`}>
+            <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  <th style={thStyle}>Date</th>
-                  <th style={thStyle}>Import type</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Messages</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Attachments</th>
+                  <th className={thStyle}>Date</th>
+                  <th className={thStyle}>Import type</th>
+                  <th className={`${thStyle} text-right`}>Messages</th>
+                  <th className={`${thStyle} text-right`}>Attachments</th>
                 </tr>
               </thead>
               <tbody>
                 {imports.map((row) => (
                   <tr key={row.id}>
-                    <td style={tdStyle}>
+                    <td className={tdStyle}>
                       {formatImportDate(row.finished_at ?? row.started_at)}
                     </td>
-                    <td style={tdStyle}>{row.source}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    <td className={tdStyle}>{row.source}</td>
+                    <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.message_count.toLocaleString()}
                     </td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.attachment_count.toLocaleString()}
                     </td>
                   </tr>
@@ -203,8 +161,8 @@ export function StorageSection() {
       </section>
 
       <section>
-        <h3 style={sectionTitle}>Largest attachments</h3>
-        <p style={sectionHint}>
+        <h3 className={sectionTitle}>Largest attachments</h3>
+        <p className={sectionHint}>
           Top {topAttachments.length || 100} attachments by file size
           {topAttachments.length > ATTACHMENT_PAGE_SIZE
             ? ` · ${ATTACHMENT_PAGE_SIZE} per page`
@@ -212,36 +170,28 @@ export function StorageSection() {
           .
         </p>
         {topAttachments.length === 0 ? (
-          <p style={{ ...sectionHint, marginTop: "0.75rem" }}>No attachments with sizes yet.</p>
+          <p className={`${sectionHint} mt-3`}>No attachments with sizes yet.</p>
         ) : (
-          <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-            <div style={tableWrap}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div className="mt-3 flex flex-col gap-3">
+            <div className={tableWrap}>
+              <table className="w-full border-collapse">
                 <thead>
                   <tr>
-                    <th style={thStyle}>Name</th>
-                    <th style={thStyle}>Conversation</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>Size</th>
+                    <th className={thStyle}>Name</th>
+                    <th className={thStyle}>Conversation</th>
+                    <th className={`${thStyle} text-right`}>Size</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pageRows.map((row) => (
                     <tr key={row.id}>
-                      <td
-                        style={{
-                          ...tdStyle,
-                          maxWidth: "14rem",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                      <td className={`${tdStyle} max-w-[14rem] truncate`}>
                         {row.original_name || row.mime_type || `Attachment ${row.id}`}
                       </td>
-                      <td style={tdStyle}>
+                      <td className={tdStyle}>
                         {row.conversation_title || row.chat_identifier}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      <td className={`${tdStyle} text-right tabular-nums`}>
                         {formatBytes(row.size_bytes)}
                       </td>
                     </tr>
@@ -250,29 +200,22 @@ export function StorageSection() {
               </table>
             </div>
             {topAttachments.length > ATTACHMENT_PAGE_SIZE && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "0.75rem",
-                }}
-              >
-                <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[0.75rem] text-muted">
                   Page {page + 1} of {pageCount}
                 </span>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
+                <div className="flex gap-2">
                   <Button
                     disabled={page <= 0}
                     onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}
+                    className="!px-3 !py-1.5 !text-[0.813rem]"
                   >
                     Back
                   </Button>
                   <Button
                     disabled={page >= pageCount - 1}
                     onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                    style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}
+                    className="!px-3 !py-1.5 !text-[0.813rem]"
                   >
                     Next
                   </Button>

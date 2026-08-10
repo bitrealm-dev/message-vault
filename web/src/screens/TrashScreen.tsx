@@ -47,36 +47,36 @@ export default function TrashScreen() {
     }
   };
 
-  if (loading) return <div style={{ padding: "1.5rem", fontSize: "0.875rem", color: "var(--muted)" }}>Loading…</div>;
+  if (loading) return <div className="p-6 text-[0.875rem] text-muted">Loading…</div>;
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-        <h2 style={{ margin: 0 }}>Trash</h2>
+    <div className="max-w-[700px] p-6">
+      <div className="mb-6 flex items-center justify-between">
+        <h2 className="m-0">Trash</h2>
         {entries.length > 0 && (
           <Button variant="danger" disabled={deleting} onClick={() => setConfirmOpen(true)}
-            style={{ fontSize: "0.813rem", padding: "0.375rem 0.75rem" }}>
+            className="!px-3 !py-1.5 !text-[0.813rem]">
             Empty trash
           </Button>
         )}
       </div>
       {message && (
-        <div style={{ marginBottom: "1rem", padding: "0.5rem 0.75rem", background: "var(--ok-soft-bg)", borderRadius: "4px", fontSize: "0.813rem", color: "var(--ok-soft-text)" }}>
+        <div className="mb-4 rounded bg-ok-soft-bg px-3 py-2 text-[0.813rem] text-ok-soft-text">
           {message}
         </div>
       )}
       {entries.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>Trash is empty.</div>
+        <div className="text-[0.875rem] text-muted">Trash is empty.</div>
       ) : (
         entries.map((entry) => (
-          <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", borderBottom: "1px solid var(--border)" }}>
+          <div key={entry.id} className="flex items-center justify-between border-b border-border p-3">
             <div>
-              <div style={{ fontSize: "0.875rem", fontWeight: 500 }}>{entry.label}</div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+              <div className="text-[0.875rem] font-medium">{entry.label}</div>
+              <div className="text-[0.75rem] text-muted">
                 {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {new Date(entry.deleted_at).toLocaleDateString()}
               </div>
             </div>
-            <Button onClick={() => restore(entry.id)} style={{ fontSize: "0.813rem", padding: "0.25rem 0.75rem" }}>
+            <Button onClick={() => restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">
               Restore
             </Button>
           </div>

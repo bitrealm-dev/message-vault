@@ -96,13 +96,8 @@ export default function RegisterScreen() {
         </AuthSubmitButton>
 
         <div
-          style={{
-            marginTop: "1.25rem",
-            minHeight: "2.5rem",
-            fontSize: "0.813rem",
-            lineHeight: 1.35,
-            color: error ? "var(--danger)" : "transparent",
-          }}
+          className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
+          style={{ color: error ? "var(--danger)" : "transparent" }}
           aria-live="polite"
         >
           {error || " "}

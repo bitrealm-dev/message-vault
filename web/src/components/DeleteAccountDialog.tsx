@@ -71,7 +71,7 @@ export default function DeleteAccountDialog({
           variant="danger"
           disabled={deleting || !matches}
           onClick={onConfirm}
-          style={{ padding: "0.5rem 1rem", fontSize: "0.813rem" }}
+          className="!px-4 !py-2 !text-[0.813rem]"
         >
           {deleting ? "Deleting…" : "Permanently delete my account"}
         </Button>

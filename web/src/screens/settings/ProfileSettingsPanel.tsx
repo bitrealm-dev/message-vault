@@ -33,14 +33,14 @@ export function ProfileSettingsPanel() {
 
   if (loadError) {
     return (
-      <div style={{ color: "var(--danger)" }}>
+      <div className="text-danger">
         Could not load profile: {loadError}
       </div>
     );
   }
 
   if (!profile) {
-    return <div style={{ color: "var(--muted)" }}>Loading…</div>;
+    return <div className="text-muted">Loading…</div>;
   }
 
   const handleSaveName = async () => {
@@ -122,61 +122,49 @@ export function ProfileSettingsPanel() {
   return (
     <div>
       <h3 className={sectionTitleClass}>Display Name</h3>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
+      <div className="mb-[0.35rem] flex gap-2">
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className={inputClassName}
-          style={{ flex: 1 }}
+          className={`${inputClassName} flex-1`}
         />
         <Button
           variant="primary"
           onClick={handleSaveName}
-          style={{ padding: "0.25rem 1rem" }}
+          className="!px-4 !py-1"
         >
           {nameSaved ? "Saved" : "Save"}
         </Button>
       </div>
       {nameError && (
-        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "1.5rem" }}>
+        <div className="mb-6 text-[0.813rem] text-danger">
           {nameError}
         </div>
       )}
-      {!nameError && <div style={{ marginBottom: "1.5rem" }} />}
+      {!nameError && <div className="mb-6" />}
 
       <h3 className={sectionTitleClass}>My Handles</h3>
       {handles.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
+        <div className="mb-3 text-[0.875rem] text-muted">
           No phone or email handles on this account yet.
         </div>
       ) : (
-        <div style={{ marginBottom: "0.75rem" }}>
+        <div className="mb-3">
           {handles.map((h, i) => (
             <div
               key={`${h.service}-${h.handle}-${i}`}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.75rem",
-                padding: "0.375rem 0",
-                borderBottom: "1px solid var(--border)",
-                fontSize: "0.875rem",
-              }}
+              className="flex items-center gap-3 border-b border-border py-1.5 text-[0.875rem]"
             >
-              <span style={{ color: "var(--muted)", minWidth: "7rem", flexShrink: 0 }}>
+              <span className="min-w-[7rem] shrink-0 text-muted">
                 {h.service}
               </span>
-              <span style={{ flex: 1, minWidth: 0 }}>{h.handle}</span>
+              <span className="min-w-0 flex-1">{h.handle}</span>
               <Button
                 variant="ghost"
                 onClick={() => handleRemoveHandle(h.handle, h.service)}
                 disabled={handleBusy}
-                style={{
-                  fontSize: "0.813rem",
-                  padding: "0.2rem 0.5rem",
-                  color: "var(--danger)",
-                }}
+                className="!px-2 !py-[0.2rem] !text-[0.813rem] !text-danger"
               >
                 Remove
               </Button>
@@ -185,15 +173,7 @@ export function ProfileSettingsPanel() {
         </div>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-          marginBottom: "0.35rem",
-          alignItems: "center",
-        }}
-      >
+      <div className="mb-[0.35rem] flex flex-wrap items-center gap-2">
         <Select
           selectedKey={newHandleService}
           onSelectionChange={(k) => setNewHandleService(k as "phone" | "email" | "whatsapp")}
@@ -211,8 +191,7 @@ export function ProfileSettingsPanel() {
           placeholder={
             newHandleService === "email" ? "name@example.com" : "+1 555 555 0100"
           }
-          className={inputClassName}
-          style={{ flex: 1, minWidth: "12rem" }}
+          className={`${inputClassName} min-w-[12rem] flex-1`}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -224,13 +203,13 @@ export function ProfileSettingsPanel() {
           variant="primary"
           onClick={handleAddHandle}
           disabled={handleBusy || !newHandle.trim()}
-          style={{ padding: "0.35rem 0.85rem" }}
+          className="!px-[0.85rem] !py-[0.35rem]"
         >
           Add
         </Button>
       </div>
       {handleError && (
-        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "1.5rem" }}>
+        <div className="mb-6 text-[0.813rem] text-danger">
           {handleError}
         </div>
       )}

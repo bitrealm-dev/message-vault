@@ -205,62 +205,37 @@ export default function MessageView({
       ? "Messages 0 of 0"
       : `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
 
-  const chipStyle = (active: boolean) => ({
-    fontSize: "0.688rem",
-    border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-    background: active ? "var(--accent)" : "var(--panel)",
-    padding: "0.125rem 0.375rem",
-    borderRadius: "4px",
-    cursor: "pointer" as const,
-    color: active ? "var(--sent-text, #fff)" : "var(--accent)",
-    fontWeight: active ? 600 : 400,
-  });
+  const chipClass = (active: boolean) =>
+    `cursor-pointer rounded border px-1.5 py-0.5 text-[0.688rem] ${
+      active
+        ? "border-accent bg-accent font-semibold text-[var(--sent-text,#fff)]"
+        : "border-border bg-panel font-normal text-accent"
+    }`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex h-full flex-col">
       {/* Header */}
-      <div style={{
-        padding: "0.75rem 1.5rem", borderBottom: "1px solid var(--border)",
-        background: "var(--elevated)",
-      }}>
+      <div className="border-b border-border bg-elevated px-6 py-3">
         <button
           type="button"
           aria-expanded={participantsOpen}
           onClick={() => setParticipantsOpen((o) => !o)}
           disabled={displayParticipants.length === 0}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            width: "100%",
-            padding: 0,
-            margin: 0,
-            border: "none",
-            background: "transparent",
-            color: "var(--text)",
-            cursor: displayParticipants.length > 0 ? "pointer" : "default",
-            fontSize: "1rem",
-            fontWeight: 600,
-            textAlign: "left",
-          }}
+          className={`m-0 flex w-full items-center gap-2 border-none bg-transparent p-0 text-left text-[1rem] font-semibold text-text ${
+            displayParticipants.length > 0 ? "cursor-pointer" : "cursor-default"
+          }`}
         >
           {displayParticipants.length > 0 && (
             <span
               aria-hidden
-              style={{
-                display: "inline-block",
-                fontSize: "0.688rem",
-                color: "var(--muted)",
-                fontWeight: 600,
-                transform: participantsOpen ? "rotate(90deg)" : "none",
-                transition: "transform 0.15s ease",
-                flexShrink: 0,
-              }}
+              className={`inline-block shrink-0 text-[0.688rem] font-semibold text-muted transition-transform duration-150 ${
+                participantsOpen ? "rotate-90" : ""
+              }`}
             >
               ▶
             </span>
           )}
-          <span style={{ minWidth: 0 }}>
+          <span className="min-w-0">
             {conversation.label ||
               (conversation.is_group
                 ? `${conversation.participants.length} participants`
@@ -269,14 +244,7 @@ export default function MessageView({
         </button>
 
         {participantsOpen && displayParticipants.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              gap: "0.375rem",
-              flexWrap: "wrap",
-              marginTop: "0.5rem",
-            }}
-          >
+          <div className="mt-2 flex flex-wrap gap-1.5">
             {displayParticipants.map((p, i) =>
               p.contact_id ? (
                 <button
@@ -284,29 +252,14 @@ export default function MessageView({
                   type="button"
                   onClick={() => onOpenContact?.(p.contact_id!)}
                   title={`Open contact for ${p.label}`}
-                  style={{
-                    fontSize: "0.75rem",
-                    padding: "0.125rem 0.5rem",
-                    borderRadius: "999px",
-                    border: "1px solid var(--border)",
-                    background: "var(--panel)",
-                    color: "var(--accent)",
-                    cursor: "pointer",
-                  }}
+                  className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
                 >
                   {p.label}
                 </button>
               ) : (
                 <span
                   key={`${p.label}-${i}`}
-                  style={{
-                    fontSize: "0.75rem",
-                    padding: "0.125rem 0.5rem",
-                    borderRadius: "999px",
-                    border: "1px solid var(--border)",
-                    background: "var(--elevated)",
-                    color: "var(--muted)",
-                  }}
+                  className="rounded-full border border-border bg-elevated px-2 py-0.5 text-[0.75rem] text-muted"
                 >
                   {p.label}
                 </span>
@@ -318,14 +271,10 @@ export default function MessageView({
         <div
           role="separator"
           aria-hidden
-          style={{
-            height: 1,
-            background: "var(--border)",
-            margin: "0.75rem 0",
-          }}
+          className="my-3 h-px bg-border"
         />
 
-        <div style={{ display: "flex", gap: "1rem", fontSize: "0.75rem", color: "var(--muted)", flexWrap: "wrap" }}>
+        <div className="flex flex-wrap gap-4 text-[0.75rem] text-muted">
           <span>{conversation.service}</span>
           {conversation.date_range_start && conversation.date_range_end && (
             <span>
@@ -337,23 +286,19 @@ export default function MessageView({
           <button
             type="button"
             onClick={() => setShowSources(true)}
-            style={{
-              fontSize: "0.75rem", padding: "0.125rem 0.5rem", borderRadius: "999px",
-              border: "1px solid var(--border)", background: "var(--panel)",
-              color: "var(--accent)", cursor: "pointer",
-            }}
+            className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
           >
             Sources
           </button>
         </div>
 
         {years.length > 0 && (
-          <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap", marginTop: "0.375rem", alignItems: "center" }}>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={selectAllYears}
               title="Show all years (paged)"
-              style={chipStyle(activeYear === null)}
+              className={chipClass(activeYear === null)}
             >
               All
             </button>
@@ -367,7 +312,7 @@ export default function MessageView({
                     ? `Clear ${year} filter`
                     : `Load all messages from ${year}`
                 }
-                style={chipStyle(activeYear === year)}
+                className={chipClass(activeYear === year)}
               >
                 {year}
               </button>
@@ -377,10 +322,7 @@ export default function MessageView({
       </div>
 
       {/* Find bar */}
-      <div style={{
-        padding: "0.375rem 1.5rem", borderBottom: "1px solid var(--border)",
-        display: "flex", gap: "0.5rem", alignItems: "center",
-      }}>
+      <div className="flex items-center gap-2 border-b border-border px-6 py-1.5">
         <input
           type="text"
           value={findTerm}
@@ -393,24 +335,20 @@ export default function MessageView({
             }
           }}
           placeholder="Find in conversation…"
-          style={{
-            flex: 1, padding: "0.25rem 0.5rem", fontSize: "0.813rem",
-            border: "1px solid var(--border)", borderRadius: "4px",
-            background: "var(--bg)", color: "var(--text)",
-          }}
+          className="box-border flex-1 rounded border border-border bg-bg px-2 py-1 text-[0.813rem] text-text"
         />
         {matchIds.length > 0 && (
           <>
-            <span style={{ fontSize: "0.75rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
+            <span className="whitespace-nowrap text-[0.75rem] text-muted">
               {activeMatch + 1} of {matchIds.length}
               {yearMode ? " in this year" : " on this page"}
             </span>
             <Button onClick={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
-              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem" }}>
+              className="!px-1.5 !py-1 !text-[0.813rem]">
               ↑
             </Button>
             <Button onClick={() => setActiveMatch((a) => (a + 1) % matchIds.length)}
-              style={{ padding: "0.25rem 0.375rem", fontSize: "0.813rem" }}>
+              className="!px-1.5 !py-1 !text-[0.813rem]">
               ↓
             </Button>
           </>
@@ -418,9 +356,9 @@ export default function MessageView({
       </div>
 
       {/* Messages */}
-      <div ref={listRef} style={{ flex: 1, overflow: "auto" }}>
+      <div ref={listRef} className="flex-1 overflow-auto">
         {loading ? (
-          <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>Loading…</div>
+          <div className="p-4 text-[0.813rem] text-muted">Loading…</div>
         ) : (
           messages.map((m) => (
             <MessageBubble
@@ -435,16 +373,12 @@ export default function MessageView({
       </div>
 
       {/* Pagination / year summary */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        gap: "1rem", padding: "0.5rem", borderTop: "1px solid var(--border)",
-        fontSize: "0.813rem", color: "var(--muted)",
-      }}>
+      <div className="flex items-center justify-center gap-4 border-t border-border p-2 text-[0.813rem] text-muted">
         {!yearMode && (
           <Button
             onClick={() => void fetchConversationPage(Math.max(0, offset - PAGE_SIZE))}
             disabled={offset === 0 || loading}
-            style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+            className="!px-3 !py-1 !text-[0.813rem]"
           >
             Previous
           </Button>
@@ -454,7 +388,7 @@ export default function MessageView({
           <Button
             onClick={() => void fetchConversationPage(offset + PAGE_SIZE)}
             disabled={offset + PAGE_SIZE >= total || loading}
-            style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+            className="!px-3 !py-1 !text-[0.813rem]"
           >
             Next
           </Button>

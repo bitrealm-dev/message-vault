@@ -124,23 +124,15 @@ export default function ConversationList({
 
   if (error && conversations.length === 0) {
     return (
-      <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--danger)" }}>
+      <div className="p-4 text-[0.813rem] text-danger">
         Could not load conversations: {error}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <div
-        style={{
-          padding: "0.375rem 0.75rem",
-          fontSize: "0.688rem",
-          color: "var(--muted)",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
         {rangeLabel}
         {refreshing ? " · updating…" : filling ? " · loading more…" : null}
       </div>
@@ -154,7 +146,7 @@ export default function ConversationList({
         }}
         empty={
           !loading ? (
-            <div style={{ padding: "1rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+            <div className="p-4 text-[0.813rem] text-muted">
               No conversations
             </div>
           ) : null

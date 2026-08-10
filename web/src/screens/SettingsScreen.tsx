@@ -29,10 +29,10 @@ export default function SettingsScreen() {
   const [tab, setTab] = useState<SettingsTab>("account");
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "820px", color: "var(--text)" }}>
-      <header style={{ marginBottom: 0 }}>
-        <h2 style={{ margin: 0, color: "var(--text)" }}>Settings</h2>
-        <p style={{ margin: "0.35rem 0 0", fontSize: "0.875rem", color: "var(--muted)" }}>
+    <div className="max-w-[820px] p-6 text-text">
+      <header>
+        <h2 className="m-0 text-text">Settings</h2>
+        <p className="mt-[0.35rem] text-[0.875rem] text-muted">
           Manage your account, profile, storage, system, and appearance.
         </p>
       </header>

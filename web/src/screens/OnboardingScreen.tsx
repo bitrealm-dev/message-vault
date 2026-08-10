@@ -104,7 +104,7 @@ export default function OnboardingScreen() {
         {handles.map((h, i) => (
           <div
             key={i}
-            style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}
+            className="mb-2 flex gap-2"
           >
             <Select
               selectedKey={h.service}
@@ -131,13 +131,9 @@ export default function OnboardingScreen() {
               type="button"
               onClick={() => removeHandle(i)}
               disabled={handles.length === 1}
-              style={{
-                border: "none",
-                background: "none",
-                color: "var(--muted)",
-                cursor: handles.length === 1 ? "default" : "pointer",
-                fontSize: "1.25rem",
-              }}
+              className={`border-none bg-none text-[1.25rem] text-muted ${
+                handles.length === 1 ? "cursor-default" : "cursor-pointer"
+              }`}
               aria-label="Remove account"
             >
               ×
@@ -147,14 +143,7 @@ export default function OnboardingScreen() {
         <button
           type="button"
           onClick={addHandle}
-          style={{
-            fontSize: "0.813rem",
-            border: "none",
-            background: "none",
-            color: "var(--accent)",
-            cursor: "pointer",
-            padding: 0,
-          }}
+          className="cursor-pointer border-none bg-none p-0 text-[0.813rem] text-accent"
         >
           + Add another account
         </button>
@@ -168,13 +157,8 @@ export default function OnboardingScreen() {
         </button>
 
         <div
-          style={{
-            marginTop: "1.25rem",
-            minHeight: "2.5rem",
-            fontSize: "0.813rem",
-            lineHeight: 1.35,
-            color: error ? "var(--danger)" : "transparent",
-          }}
+          className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
+          style={{ color: error ? "var(--danger)" : "transparent" }}
           aria-live="polite"
         >
           {error || " "}

@@ -16,8 +16,7 @@ export default function PasswordField(
         <Button
           variant="ghost"
           onPress={onToggle}
-          className="border-none px-2 text-muted"
-          style={{ padding: "0.5rem" }}
+          className="border-none !p-2 text-muted"
           aria-label={showPassword ? "Hide password" : "Show password"}
         >
           {showPassword ? "👁" : "👁‍🗨"}

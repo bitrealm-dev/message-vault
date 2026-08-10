@@ -24,7 +24,7 @@ export default function ExportScreen() {
 
   if (!isTauri()) {
     return (
-      <div style={{ padding: "1.5rem", maxWidth: "700px", color: "var(--muted)" }}>
+      <div className="max-w-[700px] p-6 text-muted">
         Export requires the desktop app.
       </div>
     );
@@ -51,10 +51,10 @@ export default function ExportScreen() {
   };
 
   return (
-    <div style={{ padding: "1.5rem", maxWidth: "700px" }}>
-      <h2 style={{ margin: "0 0 1.5rem 0" }}>Export</h2>
+    <div className="max-w-[700px] p-6">
+      <h2 className="m-0 mb-6">Export</h2>
 
-      <p style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "1.5rem" }}>
+      <p className="mb-6 text-[0.875rem] text-muted">
         Export the entire vault as JSONL (plus attachments) into a folder.
       </p>
 
@@ -67,50 +67,32 @@ export default function ExportScreen() {
         />
       </FormRow>
 
-      <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
+      <div className="mt-6 flex gap-3">
         <Button
           variant="primary"
           onClick={startExport}
           disabled={running || !savePath}
-          style={{ padding: "0.5rem 1.5rem" }}
+          className="!px-6 !py-2"
         >
           {running ? "Exporting…" : "Export"}
         </Button>
-        <Button onClick={cancel} disabled={!running} style={{ padding: "0.5rem 1.5rem" }}>
+        <Button onClick={cancel} disabled={!running} className="!px-6 !py-2">
           Cancel
         </Button>
       </div>
 
       {error && (
-        <div
-          style={{
-            marginTop: "1rem",
-            padding: "0.75rem",
-            background: "var(--danger-soft-bg)",
-            border: "1px solid var(--danger-soft-border)",
-            borderRadius: "4px",
-            color: "var(--danger)",
-            fontSize: "0.813rem",
-          }}
-        >
+        <div className="mt-4 rounded border border-danger-soft-border bg-danger-soft-bg p-3 text-[0.813rem] text-danger">
           {error}
         </div>
       )}
 
-      <div style={{ marginTop: "1.5rem" }}>
+      <div className="mt-6">
         <ProgressBar log={log} running={running} />
       </div>
 
       {finished && (
-        <div
-          style={{
-            marginTop: "1rem",
-            padding: "1rem",
-            background: "var(--ok-soft-bg)",
-            borderRadius: "6px",
-            fontSize: "0.875rem",
-          }}
-        >
+        <div className="mt-4 rounded-md bg-ok-soft-bg p-4 text-[0.875rem]">
           Export complete. Files saved to {savePath}.
         </div>
       )}

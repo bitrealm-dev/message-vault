@@ -55,88 +55,54 @@ export function ProfileDangerZone({
 
   return (
     <>
-      <section style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid var(--border)" }}>
+      <section className="mt-8 border-t border-border pt-6">
         <button
           type="button"
           aria-expanded={dangerZoneOpen}
           onClick={() => setDangerZoneOpen((open) => !open)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            width: "100%",
-            padding: 0,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            textAlign: "left",
-          }}
+          className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left"
         >
           <span
-            style={{
-              display: "inline-block",
-              transform: dangerZoneOpen ? "rotate(90deg)" : "none",
-              transition: "transform 0.15s ease",
-              color: "var(--danger)",
-              fontSize: "0.75rem",
-            }}
+            className={`inline-block text-[0.75rem] text-danger transition-transform duration-150 ${
+              dangerZoneOpen ? "rotate-90" : ""
+            }`}
           >
             ▶
           </span>
-          <span
-            style={{
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              color: "var(--danger)",
-            }}
-          >
+          <span className="text-[0.75rem] font-semibold uppercase tracking-[0.06em] text-danger">
             Danger zone
           </span>
         </button>
-        <p style={{ margin: "0.35rem 0 0 1.25rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+        <p className="ml-5 mt-[0.35rem] text-[0.813rem] text-muted">
           Delete messages or permanently remove your account.
         </p>
 
         {dangerZoneOpen && (
-          <div style={{ marginTop: "1rem", marginLeft: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
+          <div className="ml-5 mt-4 flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4">
+              <p className="m-0 flex-1 text-[0.813rem] text-muted">
                 Delete all messages and attachments. Your contacts and settings remain.
               </p>
               <Button
                 variant="danger"
                 disabled={busy || demoLocked}
                 onClick={() => setConfirmDeleteMessagesOpen(true)}
-                className={dangerButtonClass}
-                style={{
-                  width: "10rem",
-                  flexShrink: 0,
-                  padding: "0.5rem 0.75rem",
-                  fontSize: "0.813rem",
-                }}
+                className={`${dangerButtonClass} !w-40 shrink-0 !px-3 !py-2 !text-[0.813rem]`}
                 title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
                 {deletingMessages ? "Deleting…" : "Delete all messages"}
               </Button>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-              <p style={{ margin: 0, flex: 1, fontSize: "0.813rem", color: "var(--muted)" }}>
+            <div className="flex items-center justify-between gap-4">
+              <p className="m-0 flex-1 text-[0.813rem] text-muted">
                 Delete this account and everything in it.
               </p>
               <Button
                 variant="danger"
                 disabled={busy || demoLocked}
                 onClick={() => setDeleteDialogOpen(true)}
-                className={dangerButtonClass}
-                style={{
-                  width: "10rem",
-                  flexShrink: 0,
-                  padding: "0.5rem 0.75rem",
-                  fontSize: "0.813rem",
-                }}
+                className={`${dangerButtonClass} !w-40 shrink-0 !px-3 !py-2 !text-[0.813rem]`}
                 title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
                 Delete account
@@ -144,7 +110,7 @@ export function ProfileDangerZone({
             </div>
 
             {dangerError && (
-              <div style={{ fontSize: "0.813rem", color: "var(--danger)" }} role="alert">
+              <div className="text-[0.813rem] text-danger" role="alert">
                 {dangerError}
               </div>
             )}

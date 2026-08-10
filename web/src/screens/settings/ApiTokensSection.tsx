@@ -107,36 +107,27 @@ export function ApiTokensSection() {
   };
 
   return (
-    <div style={{ marginBottom: "1.5rem" }}>
+    <div className="mb-6">
       <h3 className={sectionTitleClass}>API tokens</h3>
-      <p style={{ margin: "0 0 0.75rem", fontSize: "0.813rem", color: "var(--muted)" }}>
+      <p className="mb-3 text-[0.813rem] text-muted">
         API Tokens are authorization keys used to allow external vault tools to import and
         export message data.
       </p>
 
       {loadError && (
-        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "0.75rem" }}>
+        <div className="mb-3 text-[0.813rem] text-danger">
           {loadError}
         </div>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginBottom: "0.75rem",
-        }}
-      >
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Label (e.g. laptop CLI)"
           disabled={busy}
-          className={inputClassName}
-          style={{ flex: 1, minWidth: "12rem" }}
+          className={`${inputClassName} min-w-[12rem] flex-1`}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -159,19 +150,19 @@ export function ApiTokensSection() {
           variant="primary"
           disabled={busy || !label.trim()}
           onClick={() => void create()}
-          style={{ padding: "0.35rem 0.85rem" }}
+          className="!px-[0.85rem] !py-[0.35rem]"
         >
           Create
         </Button>
       </div>
       {actionError && (
-        <div style={{ fontSize: "0.813rem", color: "var(--danger)", marginBottom: "0.75rem" }} role="alert">
+        <div className="mb-3 text-[0.813rem] text-danger" role="alert">
           {actionError}
         </div>
       )}
 
       {items.length === 0 ? (
-        <div style={{ fontSize: "0.875rem", color: "var(--muted)" }}>
+        <div className="text-[0.875rem] text-muted">
           No API tokens yet.
         </div>
       ) : (
@@ -179,42 +170,21 @@ export function ApiTokensSection() {
           {items.map((item) => (
             <div
               key={item.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.75rem",
-                padding: "0.375rem 0",
-                borderBottom: "1px solid var(--border)",
-                fontSize: "0.875rem",
-              }}
+              className="flex items-center gap-3 border-b border-border py-1.5 text-[0.875rem]"
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500 }}>{item.label}</div>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{item.label}</div>
                 <div
-                  style={{
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                    fontSize: "0.75rem",
-                    color: "var(--muted)",
-                    marginTop: "0.125rem",
-                  }}
+                  className="mt-0.5 font-mono text-[0.75rem] text-muted"
                   title="Masked API token"
                 >
                   {item.token_hint || "mv-api-**********"}
                 </div>
               </div>
-              <span style={{ color: "var(--muted)", fontSize: "0.75rem", flexShrink: 0 }}>
+              <span className="shrink-0 text-[0.75rem] text-muted">
                 {scopesLabel(item.scopes)}
               </span>
-              <div
-                style={{
-                  color: "var(--muted)",
-                  fontSize: "0.75rem",
-                  flexShrink: 0,
-                  textAlign: "right",
-                  lineHeight: 1.35,
-                }}
-              >
+              <div className="shrink-0 text-right text-[0.75rem] leading-[1.35] text-muted">
                 <div>Created {formatTimestamp(item.created_at)}</div>
                 <div>Last accessed {formatTimestamp(item.last_accessed_at)}</div>
               </div>
@@ -222,11 +192,7 @@ export function ApiTokensSection() {
                 variant="ghost"
                 disabled={busy}
                 onClick={() => setRevokeTarget(item)}
-                style={{
-                  fontSize: "0.813rem",
-                  padding: "0.2rem 0.5rem",
-                  color: "var(--danger)",
-                }}
+                className="!px-2 !py-[0.2rem] !text-[0.813rem] !text-danger"
               >
                 Revoke
               </Button>
