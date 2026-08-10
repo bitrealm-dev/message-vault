@@ -8,7 +8,7 @@ import {
 } from "react-aria-components";
 import { formatVisibleRange } from "../lib/usePagedList";
 import { isTauri } from "../lib/tauri-check";
-import { listRowDividers } from "../lib/tw";
+import { listRowDividersThin } from "../lib/tw";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
 const NEAR_END_THRESHOLD = 10;
@@ -38,10 +38,13 @@ type InfiniteOffsetListProps<T> = {
   errorPrefix?: string;
 };
 
-function rowClass(selected: boolean): string {
-  return `box-border flex w-full cursor-pointer items-center gap-2.5 border-none p-2 px-3 text-left text-text outline-none ${listRowDividers} ${
-    selected ? "bg-hover" : "bg-transparent"
-  }`;
+function rowClass(selected: boolean, hovered = false): string {
+  const fill = selected
+    ? "bg-hover-strong"
+    : hovered
+      ? "bg-hover"
+      : "bg-transparent hover:bg-hover";
+  return `box-border flex w-full cursor-pointer items-center gap-2.5 border-none p-2 px-3 text-left text-text outline-none ${listRowDividersThin} ${fill}`;
 }
 
 function rangeFromScroll(
@@ -137,6 +140,7 @@ function RacVirtualList<T extends object>({
         aria-label={ariaLabel}
         items={items}
         selectionMode="single"
+        selectionBehavior="replace"
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
         onSelectionChange={onSelectionChange}
         onScroll={onScroll}
@@ -145,12 +149,13 @@ function RacVirtualList<T extends object>({
       >
         {(item) => {
           const id = getId(item);
-          const selected = id === selectedId;
           return (
             <ListBoxItem
               id={id}
               textValue={getTextValue?.(item) ?? id}
-              className={rowClass(selected)}
+              className={({ isSelected, isHovered }) =>
+                rowClass(isSelected, isHovered)
+              }
               style={
                 dynamicSize
                   ? { minHeight: estimateSize }
