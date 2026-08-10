@@ -36,24 +36,14 @@ export default function ImessageBubble({
         <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
         {hasReactions ? (
           <div
-            style={{
-              display: "flex",
-              gap: "0.25rem",
-              flexWrap: "wrap",
-              marginTop: hasAttachments ? "0.25rem" : 0,
-            }}
+            className={`flex flex-wrap gap-1 ${
+              hasAttachments ? "mt-1" : "mt-0"
+            }`}
           >
             {message.reactions!.map((r, i) => (
               <span
                 key={i}
-                style={{
-                  fontSize: "0.75rem",
-                  background: "var(--elevated)",
-                  border: "1px solid var(--border)",
-                  padding: "0.1rem 0.35rem",
-                  borderRadius: "999px",
-                  color: "var(--text)",
-                }}
+                className="rounded-full border border-border bg-elevated px-[0.35rem] py-[0.1rem] text-[0.75rem] text-text"
               >
                 {r.emoji} {r.count}
               </span>
@@ -71,15 +61,14 @@ export default function ImessageBubble({
       palette="imessage"
       showSender={!mine && group}
       senderLabel={senderName(message)}
-      senderColor="var(--imessage-sent)"
       timeLabel={time}
       meta={
         <>
           {message.effect ? (
-            <span style={{ color: "#8b5cf6", fontStyle: "italic" }}>{message.effect}</span>
+            <span className="italic text-[#8b5cf6]">{message.effect}</span>
           ) : null}
           {message.edit_history && message.edit_history.length > 0 ? (
-            <span style={{ fontStyle: "italic" }}>Edited</span>
+            <span className="italic">Edited</span>
           ) : null}
         </>
       }

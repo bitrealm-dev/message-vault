@@ -16,7 +16,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark key={key++} style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}>
+      <mark key={key++} className="rounded-sm bg-search-mark px-px">
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -52,43 +52,48 @@ export default function WhatsAppBubble({
   const mine = message.is_from_me;
 
   return (
-    <div id={`msg-${message.id}`} style={{
-      padding: "0.5rem 1.5rem", borderBottom: "1px solid var(--border)",
-      background: isActive ? "var(--search-active)" : "transparent",
-    }}>
-      <div style={{
-        display: "flex", gap: "0.5rem", marginBottom: "0.25rem",
-        justifyContent: mine ? "flex-end" : "flex-start",
-      }}>
-        <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#075e54" }}>
+    <div
+      id={`msg-${message.id}`}
+      className={`border-b border-border px-6 py-2 ${
+        isActive ? "bg-search-active" : "bg-transparent"
+      }`}
+    >
+      <div
+        className={`mb-1 flex gap-2 ${
+          mine ? "justify-end" : "justify-start"
+        }`}
+      >
+        <span className="text-[0.75rem] font-semibold text-[#075e54]">
           {senderName(message)}
         </span>
-        <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{time}</span>
+        <span className="text-[0.75rem] text-muted">{time}</span>
       </div>
 
       {message.reply_to_message && (
-        <div style={{
-          fontSize: "0.75rem", color: "var(--muted)", background: "var(--hover)",
-          padding: "0.25rem 0.5rem", borderRadius: "4px", marginBottom: "0.25rem",
-          borderLeft: "3px solid #25d366", textAlign: mine ? "right" : "left",
-        }}>
-          <span style={{ fontWeight: 600 }}>{message.reply_to_message.sender_name}</span>:{" "}
+        <div
+          className={`mb-1 rounded border-l-[3px] border-l-[#25d366] bg-hover px-2 py-1 text-[0.75rem] text-muted ${
+            mine ? "text-right" : "text-left"
+          }`}
+        >
+          <span className="font-semibold">{message.reply_to_message.sender_name}</span>:{" "}
           {message.reply_to_message.body_preview}
         </div>
       )}
 
       {message.deleted_indicator ? (
-        <div style={{
-          fontSize: "0.875rem", color: "var(--muted)", fontStyle: "italic",
-          textAlign: mine ? "right" : "left",
-        }}>
+        <div
+          className={`text-[0.875rem] italic text-muted ${
+            mine ? "text-right" : "text-left"
+          }`}
+        >
           This message was deleted
         </div>
       ) : (
-        <div style={{
-          fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5,
-          whiteSpace: "pre-wrap", textAlign: mine ? "right" : "left",
-        }}>
+        <div
+          className={`whitespace-pre-wrap text-[0.875rem] leading-[1.5] text-text ${
+            mine ? "text-right" : "text-left"
+          }`}
+        >
           {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
         </div>
       )}

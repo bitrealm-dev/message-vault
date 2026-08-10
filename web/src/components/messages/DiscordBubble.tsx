@@ -16,7 +16,7 @@ function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark key={key++} style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}>
+      <mark key={key++} className="rounded-sm bg-search-mark px-px">
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -52,55 +52,59 @@ export default function DiscordBubble({
   const mine = message.is_from_me;
 
   return (
-    <div id={`msg-${message.id}`} style={{
-      padding: "0.5rem 1.5rem", borderBottom: "1px solid var(--border)",
-      background: isActive ? "var(--search-active)" : "transparent",
-    }}>
-      <div style={{
-        display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.25rem",
-        justifyContent: mine ? "flex-end" : "flex-start",
-      }}>
-        <span style={{
-          fontSize: "0.75rem", fontWeight: 600,
-          color: message.role_color || "#5865f2",
-        }}>
+    <div
+      id={`msg-${message.id}`}
+      className={`border-b border-border px-6 py-2 ${
+        isActive ? "bg-search-active" : "bg-transparent"
+      }`}
+    >
+      <div
+        className={`mb-1 flex items-center gap-2 ${
+          mine ? "justify-end" : "justify-start"
+        }`}
+      >
+        <span
+          className="text-[0.75rem] font-semibold"
+          style={{ color: message.role_color || "#5865f2" }}
+        >
           {senderName(message)}
         </span>
-        <span style={{ fontSize: "0.688rem", color: "var(--muted)" }}>{time}</span>
+        <span className="text-[0.688rem] text-muted">{time}</span>
       </div>
 
-      <div style={{
-        fontSize: "0.875rem", color: "var(--text)", lineHeight: 1.5,
-        whiteSpace: "pre-wrap", textAlign: mine ? "right" : "left",
-      }}>
+      <div
+        className={`whitespace-pre-wrap text-[0.875rem] leading-[1.5] text-text ${
+          mine ? "text-right" : "text-left"
+        }`}
+      >
         {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
       </div>
 
       <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
 
       {message.embeds && message.embeds.length > 0 && message.embeds.map((embed, i) => (
-        <div key={i} style={{
-          marginTop: "0.5rem", borderLeft: "4px solid #5865f2",
-          background: "var(--hover)", padding: "0.5rem 0.75rem", borderRadius: "0 4px 4px 0",
-        }}>
+        <div
+          key={i}
+          className="mt-2 rounded-r-[4px] border-l-4 border-l-[#5865f2] bg-hover px-3 py-2"
+        >
           {embed.title && (
-            <div style={{ fontSize: "0.813rem", fontWeight: 600, marginBottom: "0.125rem" }}>
-              {embed.url ? <a href={embed.url} style={{ color: "var(--accent)" }}>{embed.title}</a> : embed.title}
+            <div className="mb-0.5 text-[0.813rem] font-semibold">
+              {embed.url ? <a href={embed.url} className="text-accent">{embed.title}</a> : embed.title}
             </div>
           )}
           {embed.description && (
-            <div style={{ fontSize: "0.813rem", color: "var(--muted)" }}>{embed.description}</div>
+            <div className="text-[0.813rem] text-muted">{embed.description}</div>
           )}
         </div>
       ))}
 
       {message.reactions && message.reactions.length > 0 && (
-        <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
+        <div className="mt-1 flex gap-1.5">
           {message.reactions.map((r, i) => (
-            <span key={i} style={{
-              fontSize: "0.75rem", background: "var(--border)",
-              padding: "0.125rem 0.375rem", borderRadius: "4px",
-            }}>
+            <span
+              key={i}
+              className="rounded bg-border px-1 py-0.5 text-[0.75rem]"
+            >
               {r.emoji} {r.count}
             </span>
           ))}

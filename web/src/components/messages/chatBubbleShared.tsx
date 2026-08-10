@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Message } from "../../lib/types";
 
 export type BubblePalette = "imessage" | "sms";
@@ -17,10 +17,7 @@ export function highlightText(text: string, term: string): ReactNode[] {
     }
     if (idx > 0) out.push(rest.slice(0, idx));
     out.push(
-      <mark
-        key={key++}
-        style={{ background: "var(--search-mark)", borderRadius: "2px", padding: "0 1px" }}
-      >
+      <mark key={key++} className="rounded-sm bg-search-mark px-px">
         {rest.slice(idx, idx + t.length)}
       </mark>,
     );
@@ -46,17 +43,21 @@ export function isGroupConversation(m: Message): boolean {
   );
 }
 
-function bubbleColors(palette: BubblePalette, mine: boolean): {
-  background: string;
-  color: string;
-} {
+/** Bubble fill/text color per palette (theme vars switch with data-theme). */
+function bubbleColorClasses(palette: BubblePalette, mine: boolean): string {
   if (mine) {
-    if (palette === "imessage") {
-      return { background: "var(--imessage-sent)", color: "var(--imessage-sent-text)" };
-    }
-    return { background: "var(--sms-sent)", color: "var(--sms-sent-text)" };
+    return palette === "imessage"
+      ? "bg-[var(--imessage-sent)] text-[var(--imessage-sent-text)]"
+      : "bg-[var(--sms-sent)] text-[var(--sms-sent-text)]";
   }
-  return { background: "var(--bubble-received)", color: "var(--bubble-received-text)" };
+  return "bg-[var(--bubble-received)] text-[var(--bubble-received-text)]";
+}
+
+/** Sender-label color for the palette (same sent color as the bubble). */
+function senderColorClass(palette: BubblePalette): string {
+  return palette === "imessage"
+    ? "text-[var(--imessage-sent)]"
+    : "text-[var(--sms-sent)]";
 }
 
 /** Chat-row chrome: aligned bubble, optional sender label, timestamp under bubble. */
@@ -67,7 +68,6 @@ export function ChatBubbleRow({
   palette,
   showSender,
   senderLabel,
-  senderColor,
   timeLabel,
   meta,
   children,
@@ -79,46 +79,26 @@ export function ChatBubbleRow({
   palette: BubblePalette;
   showSender?: boolean;
   senderLabel?: string;
-  senderColor?: string;
   timeLabel: string;
   meta?: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
 }) {
-  const colors = bubbleColors(palette, mine);
-  const radius: CSSProperties = mine
-    ? {
-        borderRadius: "18px",
-        borderBottomRightRadius: "4px",
-      }
-    : {
-        borderRadius: "18px",
-        borderBottomLeftRadius: "4px",
-      };
+  const radius = mine
+    ? "rounded-[18px] rounded-br-[4px]"
+    : "rounded-[18px] rounded-bl-[4px]";
   const hasBubble = children != null && children !== false && children !== "";
 
   return (
     <div
       id={`msg-${messageId}`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: mine ? "flex-end" : "flex-start",
-        padding: "0.2rem 1rem",
-        marginBottom: mine ? "0.15rem" : "0.4rem",
-        background: isActive ? "var(--search-active)" : "transparent",
-      }}
+      className={`flex flex-col px-4 py-[0.2rem] ${
+        mine ? "mb-[0.15rem] items-end" : "mb-[0.4rem] items-start"
+      } ${isActive ? "bg-search-active" : "bg-transparent"}`}
     >
       {showSender && senderLabel ? (
         <div
-          style={{
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            color: senderColor || "var(--muted)",
-            marginBottom: "0.15rem",
-            padding: "0 0.35rem",
-            maxWidth: "min(78%, 34rem)",
-          }}
+          className={`mb-[0.15rem] max-w-[min(78%,34rem)] px-[0.35rem] text-[0.75rem] font-semibold ${senderColorClass(palette)}`}
         >
           {senderLabel}
         </div>
@@ -126,18 +106,9 @@ export function ChatBubbleRow({
 
       {hasBubble ? (
         <div
-          style={{
-            ...radius,
-            background: colors.background,
-            color: colors.color,
-            padding: "0.45rem 0.7rem",
-            maxWidth: "min(78%, 34rem)",
-            fontSize: "0.9375rem",
-            lineHeight: 1.35,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            boxShadow: mine ? "none" : "0 0.5px 0 rgb(0 0 0 / 0.06)",
-          }}
+          className={`${radius} ${bubbleColorClasses(palette, mine)} max-w-[min(78%,34rem)] whitespace-pre-wrap break-words px-[0.7rem] py-[0.45rem] text-[0.9375rem] leading-[1.35] ${
+            mine ? "" : "shadow-[0_0.5px_0_rgb(0_0_0/0.06)]"
+          }`}
         >
           {children}
         </div>
@@ -145,27 +116,15 @@ export function ChatBubbleRow({
 
       {footer ? (
         <div
-          style={{
-            marginTop: hasBubble ? "0.2rem" : 0,
-            maxWidth: "min(78%, 34rem)",
-            alignSelf: mine ? "flex-end" : "flex-start",
-          }}
+          className={`max-w-[min(78%,34rem)] ${
+            hasBubble ? "mt-[0.2rem]" : "mt-0"
+          } ${mine ? "self-end" : "self-start"}`}
         >
           {footer}
         </div>
       ) : null}
 
-      <div
-        style={{
-          display: "flex",
-          gap: "0.4rem",
-          alignItems: "center",
-          marginTop: "0.15rem",
-          padding: "0 0.35rem",
-          fontSize: "0.688rem",
-          color: "var(--muted)",
-        }}
-      >
+      <div className="mt-[0.15rem] flex items-center gap-[0.4rem] px-[0.35rem] text-[0.688rem] text-muted">
         <span>{timeLabel}</span>
         {meta}
       </div>

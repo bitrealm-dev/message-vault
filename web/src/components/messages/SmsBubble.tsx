@@ -40,11 +40,10 @@ export default function SmsBubble({
       palette="sms"
       showSender={!mine && group}
       senderLabel={senderName(message)}
-      senderColor="var(--sms-sent)"
       timeLabel={time}
       meta={
         service ? (
-          <span style={{ textTransform: "uppercase", letterSpacing: "0.04em" }}>{service}</span>
+          <span className="uppercase tracking-[0.04em]">{service}</span>
         ) : null
       }
       footer={
