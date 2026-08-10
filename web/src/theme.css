@@ -1,3 +1,7 @@
+@layer theme, base, utilities;
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+
 /*
   Four-seed themes: JS sets --header + --accent (and data-theme).
   Surfaces derive via color-mix.
@@ -99,6 +103,51 @@
   --bubble-received: #e9e9eb;
   --bubble-received-text: #000000;
 }
+
+/*
+  Tailwind v4 token map: utilities (bg-panel, text-muted, ...) resolve to the
+  dynamic theme variables above, so data-theme switching keeps working.
+*/
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-sidebar: var(--sidebar);
+  --color-elevated: var(--elevated);
+  --color-popover: var(--popover);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-sent: var(--sent);
+  --color-sent-text: var(--sent-text);
+  --color-received: var(--received);
+  --color-received-text: var(--received-text);
+  --color-hover: var(--hover);
+  --color-hover-strong: var(--hover-strong);
+  --color-scrim: var(--scrim);
+  --color-danger: var(--danger);
+  --color-danger-soft-bg: var(--danger-soft-bg);
+  --color-danger-soft-border: var(--danger-soft-border);
+  --color-ok: var(--ok);
+  --color-ok-soft-bg: var(--ok-soft-bg);
+  --color-ok-soft-border: var(--ok-soft-border);
+  --color-ok-soft-text: var(--ok-soft-text);
+  --color-warn-soft-bg: var(--warn-soft-bg);
+  --color-warn-soft-border: var(--warn-soft-border);
+  --color-warn-soft-text: var(--warn-soft-text);
+  --color-info-soft-bg: var(--info-soft-bg);
+  --color-search-mark: var(--search-mark);
+  --color-search-active: var(--search-active);
+  --color-imessage-sent: var(--imessage-sent);
+  --color-imessage-sent-text: var(--imessage-sent-text);
+  --color-sms-sent: var(--sms-sent);
+  --color-sms-sent-text: var(--sms-sent-text);
+  --color-bubble-received: var(--bubble-received);
+  --color-bubble-received-text: var(--bubble-received-text);
+  --font-sans: system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
 
 html,
 body {
@@ -295,4 +344,23 @@ button.btn-link {
 button.contact-drawer-browse-link:hover,
 button.contact-drawer-browse-link:focus-visible {
   text-decoration: underline;
+}
+
+/* Consistent focus ring for all interactive elements */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Used by ProgressBar (moved out of ProgressBar.tsx later) */
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* Inputs inherit the body font (needed for portaled React Aria inputs) */
+input, select, textarea {
+  font-family: inherit;
+}
+
 }

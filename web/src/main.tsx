@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { HashRouter } from "react-router-dom";
+import { I18nProvider } from "react-aria-components";
 import App from "./App";
 import { initFfmpegToolsFromStorage } from "./lib/ffmpeg-tools";
 import "./theme.css";
@@ -9,8 +10,10 @@ initFfmpegToolsFromStorage();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    <I18nProvider locale="en-US">
+      <HashRouter>
+        <App />
+      </HashRouter>
+    </I18nProvider>
   </React.StrictMode>,
 );
