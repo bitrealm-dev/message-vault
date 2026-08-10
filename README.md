@@ -58,7 +58,7 @@ sudo apt install \
   build-essential pkg-config curl git libfontconfig1-dev \
   libxkbcommon-x11-0 libxkbcommon0 \
   libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev
+  libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev 
 ```
 
 Install Rust inside WSL rather than using a Windows Rust installation:
