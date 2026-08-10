@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
@@ -17,7 +17,7 @@ function NavIcon({ children }: { children: ReactNode }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
-      style={{ flexShrink: 0 }}
+      className="shrink-0"
     >
       {children}
     </svg>
@@ -79,6 +79,16 @@ function ExportIcon() {
   );
 }
 
+/** Sidebar header for each nav group (padding 0.25rem 0.75rem 0.375rem). */
+const sectionHeaderClass = "px-3 pt-1 pb-1.5 text-[0.875rem] font-bold text-text";
+
+/** Nav button: active section gets a hover-tinted background and semibold text. */
+function linkClass(active: boolean): string {
+  return `box-border flex w-full cursor-pointer items-center gap-2 rounded border-none bg-transparent px-3 py-1.5 text-left text-[0.875rem] text-text ${
+    active ? "bg-hover font-semibold" : "font-normal"
+  }`;
+}
+
 export default function LeftPanel({
   onSearchChange,
   onSearch,
@@ -95,61 +105,26 @@ export default function LeftPanel({
     return location.pathname.startsWith(path);
   }
 
-  const linkStyle = (active: boolean): CSSProperties => ({
-    padding: "0.375rem 0.75rem",
-    fontSize: "0.875rem",
-    cursor: "pointer",
-    borderRadius: "4px",
-    background: active ? "var(--hover)" : "transparent",
-    fontWeight: active ? 600 : 400,
-    border: "none",
-    textAlign: "left",
-    width: "100%",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    color: "var(--text)",
-  });
-
-  const signOutStyle: CSSProperties = {
-    ...linkStyle(false),
-    background: "transparent",
-    fontWeight: 400,
-    color: "var(--danger)",
-    marginTop: "0.25rem",
-  };
+  const signOutClass = `${linkClass(false)} mt-1 font-normal text-danger`;
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
 
   return (
-    <div style={{
-      width: "220px", flexShrink: 0, borderRight: "1px solid var(--border)",
-      background: "var(--panel)", display: "flex", flexDirection: "column",
-      height: "100vh", overflow: "auto", color: "var(--text)",
-    }}>
+    <div className="flex h-screen w-[220px] shrink-0 flex-col overflow-auto border-r border-border bg-panel text-text">
       {/* Browse */}
-      <div style={{ padding: "0.5rem 0.75rem" }}>
-        <div
-          style={{
-            padding: "0.25rem 0.75rem 0.375rem",
-            fontSize: "0.875rem",
-            fontWeight: 700,
-            color: "var(--text)",
-          }}
-        >
-          Message Vault
-        </div>
-        <div style={{ paddingLeft: "0.75rem" }}>
-          <button style={linkStyle(isActive("/"))} onClick={() => navigate("/")}>
+      <div className="px-3 py-2">
+        <div className={sectionHeaderClass}>Message Vault</div>
+        <div className="pl-3">
+          <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
             <ConversationsIcon />
             Conversations
           </button>
-          <button style={linkStyle(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
+          <button className={linkClass(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
             <ContactsIcon />
             Contacts
           </button>
-          <button style={linkStyle(isActive("/trash"))} onClick={() => navigate("/trash")}>
+          <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
             <TrashIcon />
             Trash
           </button>
@@ -158,23 +133,14 @@ export default function LeftPanel({
 
       {/* Import/Export — Tauri only */}
       {isTauri() && (
-        <div style={{ padding: "0.5rem 0.75rem", borderTop: "1px solid var(--border)" }}>
-          <div
-            style={{
-              padding: "0.25rem 0.75rem 0.375rem",
-              fontSize: "0.875rem",
-              fontWeight: 700,
-              color: "var(--text)",
-            }}
-          >
-            Messages
-          </div>
-          <div style={{ paddingLeft: "0.75rem" }}>
-            <button style={linkStyle(isActive("/import"))} onClick={() => navigate("/import")}>
+        <div className="border-t border-border px-3 py-2">
+          <div className={sectionHeaderClass}>Messages</div>
+          <div className="pl-3">
+            <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
               <ImportIcon />
               Import
             </button>
-            <button style={linkStyle(isActive("/export"))} onClick={() => navigate("/export")}>
+            <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
               <ExportIcon />
               Export
             </button>
@@ -182,37 +148,32 @@ export default function LeftPanel({
         </div>
       )}
 
-      <div style={{ borderTop: "1px solid var(--border)", margin: "0 0.75rem" }} />
+      <div className="mx-3 border-t border-border" />
 
       {/* Saved groups */}
-      <div style={{ padding: "0.75rem", flex: 1, minHeight: 0, overflow: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-          <span style={{ fontSize: "0.688rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
             Saved Groups
           </span>
           <button
             onClick={() => setShowGroupForm(true)}
-            style={{ fontSize: "0.688rem", border: "none", background: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+            className="cursor-pointer border-none bg-none p-0 text-[0.688rem] text-accent"
           >
             + New
           </button>
         </div>
         {groups.length === 0 ? (
-          <div style={{ fontSize: "0.813rem", color: "var(--muted)", padding: "0.25rem 0" }}>No saved groups</div>
+          <div className="py-1 text-[0.813rem] text-muted">No saved groups</div>
         ) : (
           groups.map((g) => (
-            <div key={g.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div key={g.id} className="flex items-center justify-between">
               <button
                 onClick={() => {
                   onSearchChange(g.query);
                   onSearch(g.query);
                 }}
-                style={{
-                  display: "block", flex: 1, textAlign: "left", border: "none",
-                  background: "transparent", padding: "0.25rem 0", fontSize: "0.813rem",
-                  cursor: "pointer", color: "var(--text)", overflow: "hidden",
-                  textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}
+                className="block flex-1 cursor-pointer truncate border-none bg-transparent py-1 text-left text-[0.813rem] text-text"
               >
                 {g.name}
               </button>
@@ -222,7 +183,7 @@ export default function LeftPanel({
                   setGroups(listGroups());
                 }}
                 title="Delete saved group"
-                style={{ border: "none", background: "none", color: "var(--muted)", cursor: "pointer", fontSize: "0.75rem", padding: "0 0.25rem", flexShrink: 0 }}
+                className="shrink-0 cursor-pointer border-none bg-none px-1 text-[0.75rem] text-muted"
               >
                 ×
               </button>
@@ -232,11 +193,11 @@ export default function LeftPanel({
       </div>
 
       {/* Settings */}
-      <div style={{ padding: "0.5rem 0.75rem", borderTop: "1px solid var(--border)" }}>
-        <button style={linkStyle(isActive("/settings"))} onClick={() => navigate("/settings")}>
+      <div className="border-t border-border px-3 py-2">
+        <button className={linkClass(isActive("/settings"))} onClick={() => navigate("/settings")}>
           Settings
         </button>
-        <button onClick={logout} style={signOutStyle}>
+        <button onClick={logout} className={signOutClass}>
           Sign out
         </button>
       </div>

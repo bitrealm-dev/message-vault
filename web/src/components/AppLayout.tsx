@@ -40,14 +40,11 @@ function modeFromPathname(pathname: string): ColumnMode {
   return "conversations";
 }
 
-const emptyMainStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  height: "100%",
-  color: "var(--muted)",
-  fontSize: "0.875rem",
-} as const;
+/** Scrollable content column that hosts the routed screen. */
+const mainPane = "min-w-0 flex-1 overflow-auto bg-bg text-text";
+
+/** Centered placeholder when a column has nothing selected yet. */
+const emptyMain = "flex h-full items-center justify-center text-[0.875rem] text-muted";
 
 export default function AppLayout() {
   const location = useLocation();
@@ -118,7 +115,7 @@ export default function AppLayout() {
   const openContactId = locationState?.openContactId ?? null;
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui", background: "var(--bg)", color: "var(--text)" }}>
+    <div className="flex h-screen bg-bg font-sans text-text">
       <LeftPanel
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
@@ -139,8 +136,8 @@ export default function AppLayout() {
               query={conversationFilter || conversationSearch}
             />
           </ListColumn>
-          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
-            <div style={emptyMainStyle}>Select a conversation to view messages</div>
+          <main className={mainPane}>
+            <div className={emptyMain}>Select a conversation to view messages</div>
           </main>
         </>
       )}
@@ -161,8 +158,8 @@ export default function AppLayout() {
               }
             />
           </ListColumn>
-          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
-            <div style={emptyMainStyle}>Select a contact to view details</div>
+          <main className={mainPane}>
+            <div className={emptyMain}>Select a contact to view details</div>
           </main>
         </>
       )}
@@ -182,7 +179,7 @@ export default function AppLayout() {
               query="is:trash"
             />
           </ListColumn>
-          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+          <main className={mainPane}>
             <Outlet />
           </main>
         </>
@@ -190,14 +187,14 @@ export default function AppLayout() {
 
       {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
       {isMessageRoute && (
-        <div style={{ display: "flex", flex: 1, minWidth: 0 }}>
+        <div className="flex min-w-0 flex-1">
           <Outlet />
         </div>
       )}
 
       {/* Full-screen views: no ListColumn, just main */}
       {isFullScreen && (
-        <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+        <main className={mainPane}>
           <Outlet />
         </main>
       )}

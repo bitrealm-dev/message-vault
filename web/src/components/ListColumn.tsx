@@ -119,27 +119,12 @@ export default function ListColumn({
       data-list-column
       style={{
         width: `${width}px`,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--panel)",
-        color: "var(--text)",
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
         // Visible so the advanced search panel can extend over the main column.
-        overflow: "visible",
-        position: "relative",
         zIndex: showAdvancedSearch ? 40 : 1,
       }}
+      className="relative flex h-screen shrink-0 flex-col overflow-visible border-r border-border bg-panel text-text"
     >
-      <div
-        style={{
-          padding: "0.75rem",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-          position: "relative",
-        }}
-      >
+      <div className="relative shrink-0 border-b border-border p-3">
         <GlobalSearch
           value={searchQuery}
           mode={searchMode === "contacts" ? "filter" : "search"}
@@ -149,14 +134,7 @@ export default function ListColumn({
         <button
           type="button"
           onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-          style={{
-            fontSize: "0.688rem",
-            border: "none",
-            background: "none",
-            color: "var(--muted)",
-            cursor: "pointer",
-            padding: "0.25rem 0 0",
-          }}
+          className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
         >
           {showAdvancedSearch
             ? "Hide advanced search"
@@ -165,16 +143,7 @@ export default function ListColumn({
               : "Advanced search"}
         </button>
         {showAdvancedSearch && (
-          <div
-            style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              width: "560px",
-              marginTop: "-1px",
-              zIndex: 50,
-            }}
-          >
+          <div className="absolute left-0 top-full z-50 -mt-px w-[560px]">
             <AdvancedSearchForm
               mode={searchMode}
               onApply={(q) => {
@@ -188,7 +157,7 @@ export default function ListColumn({
         )}
       </div>
 
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {children}
       </div>
 
@@ -207,21 +176,9 @@ export default function ListColumn({
         onKeyDown={onResizeKeyDown}
         onMouseEnter={() => setHandleHover(true)}
         onMouseLeave={() => setHandleHover(false)}
-        style={{
-          position: "absolute",
-          top: 0,
-          right: -3,
-          width: 6,
-          height: "100%",
-          cursor: "col-resize",
-          zIndex: 60,
-          touchAction: "none",
-          background: dragging
-            ? "var(--accent)"
-            : handleHover
-              ? "var(--border)"
-              : "transparent",
-        }}
+        className={`absolute right-[-3px] top-0 z-[60] h-full w-1.5 touch-none cursor-col-resize ${
+          dragging ? "bg-accent" : handleHover ? "bg-border" : "bg-transparent"
+        }`}
       />
     </div>
     </ListColumnResizeContext.Provider>

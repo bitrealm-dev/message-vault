@@ -52,7 +52,7 @@ export default function MessageRoute() {
           query={query}
         />
       </ListColumn>
-      <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+      <main className="min-w-0 flex-1 overflow-auto bg-bg text-text">
         {conversation ? (
           <MessageView
             conversation={conversation}
@@ -63,14 +63,7 @@ export default function MessageRoute() {
             }}
           />
         ) : (
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100%",
-            color: "var(--muted)",
-            fontSize: "0.875rem",
-          }}>
+          <div className="flex h-full items-center justify-center text-[0.875rem] text-muted">
             Select a conversation to view messages
           </div>
         )}

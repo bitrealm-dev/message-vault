@@ -213,14 +213,14 @@ export default function VirtualList({
 
   if (count === 0 && empty) {
     return (
-      <div ref={parentRef} style={{ overflow: "auto", flex: 1, minHeight: 0, ...style }}>
+      <div ref={parentRef} className="min-h-0 flex-1 overflow-auto" style={style}>
         {empty}
       </div>
     );
   }
 
   return (
-    <div ref={parentRef} style={{ overflow: "auto", flex: 1, minHeight: 0, ...style }}>
+    <div ref={parentRef} className="min-h-0 flex-1 overflow-auto" style={style}>
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
