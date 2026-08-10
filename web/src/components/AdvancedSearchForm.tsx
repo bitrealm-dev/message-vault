@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { CSSProperties } from "react";
 import Button from "./Button";
 import Select, { ListBoxItem, selectItemClassName } from "./Select";
 
@@ -13,6 +12,14 @@ type CountFilterInput = {
 };
 
 const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
+
+/** Compact text input for the filter grid (8px vertical to keep rows dense). */
+const inputClass =
+  "box-border w-full rounded border border-border bg-bg px-2 py-1 text-[0.813rem] text-text";
+
+/** Uppercase micro-label above each filter field. */
+const labelClass =
+  "mb-1 block text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted";
 
 function composeCountComparison(input: CountFilterInput): string | null {
   if (input.comparator === "any") return null;
@@ -39,17 +46,6 @@ export default function AdvancedSearchForm({
   const [msgCount, setMsgCount] = useState<CountFilterInput>(EMPTY_COUNT);
   const [groupCount, setGroupCount] = useState<CountFilterInput>(EMPTY_COUNT);
 
-  const inputStyle: CSSProperties = {
-    width: "100%", padding: "0.25rem 0.5rem", fontSize: "0.813rem",
-    border: "1px solid var(--border)", borderRadius: "4px", boxSizing: "border-box",
-    background: "var(--bg)", color: "var(--text)",
-  };
-  const labelStyle: CSSProperties = {
-    fontSize: "0.688rem", fontWeight: 600, color: "var(--muted)",
-    textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem",
-    display: "block",
-  };
-
   const buildQuery = (): string => {
     const parts: string[] = [];
     const push = (s: string) => { if (s.trim()) parts.push(s.trim()); };
@@ -75,40 +71,37 @@ export default function AdvancedSearchForm({
   };
 
   return (
-    <div style={{
-      background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "6px",
-      boxShadow: "0 4px 12px rgba(0,0,0,0.1)", padding: "0.75rem", zIndex: 60,
-    }}>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", alignItems: "center" }}>
-        <span style={{ fontSize: "0.813rem", fontWeight: 600, color: "var(--text)" }}>
+    <div className="z-[60] rounded-md border border-border bg-panel p-3 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-[0.813rem] font-semibold text-text">
           {mode === "messages" ? "Conversation filters" : "Contact filters"}
         </span>
-        <span style={{ flex: 1 }} />
-        <button type="button" onClick={onClose} style={{ border: "none", background: "none", fontSize: "1rem", cursor: "pointer", color: "var(--muted)" }}>×</button>
+        <span className="flex-1" />
+        <button type="button" onClick={onClose} className="cursor-pointer border-none bg-none text-[1rem] text-muted">×</button>
       </div>
 
       {mode === "messages" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label style={labelStyle}>Name or title</label>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className={labelClass}>Name or title</label>
             <input
-              style={inputStyle}
+              className={inputClass}
               value={nameOrHandle}
               onChange={(e) => setNameOrHandle(e.target.value)}
               placeholder="Gregory Coleman"
             />
           </div>
           <div>
-            <label style={labelStyle}>Handle</label>
+            <label className={labelClass}>Handle</label>
             <input
-              style={inputStyle}
+              className={inputClass}
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
               placeholder="+15555550100"
             />
           </div>
           <div>
-            <label style={labelStyle}>Conversation type</label>
+            <label className={labelClass}>Conversation type</label>
             <Select
               selectedKey={msgType}
               onSelectionChange={(k) => setMsgType(k as "all" | "direct" | "group")}
@@ -124,35 +117,29 @@ export default function AdvancedSearchForm({
             label="Group participants"
             value={participants}
             onChange={setParticipants}
-            inputStyle={inputStyle}
-            labelStyle={labelStyle}
           />
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-          <div><label style={labelStyle}>Handle</label><input style={inputStyle} value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="bob#1234" /></div>
-          <div><label style={labelStyle}>First message date from</label><input type="date" style={inputStyle} value={firstMsgDate} onChange={(e) => setFirstMsgDate(e.target.value)} /></div>
-          <div><label style={labelStyle}>Last message date to</label><input type="date" style={inputStyle} value={lastMsgDate} onChange={(e) => setLastMsgDate(e.target.value)} /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={labelClass}>Handle</label><input className={inputClass} value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="bob#1234" /></div>
+          <div><label className={labelClass}>First message date from</label><input type="date" className={inputClass} value={firstMsgDate} onChange={(e) => setFirstMsgDate(e.target.value)} /></div>
+          <div><label className={labelClass}>Last message date to</label><input type="date" className={inputClass} value={lastMsgDate} onChange={(e) => setLastMsgDate(e.target.value)} /></div>
           <CountField
             label="Direct message count"
             value={msgCount}
             onChange={setMsgCount}
-            inputStyle={inputStyle}
-            labelStyle={labelStyle}
           />
           <CountField
             label="Group message count"
             value={groupCount}
             onChange={setGroupCount}
-            inputStyle={inputStyle}
-            labelStyle={labelStyle}
           />
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.75rem" }}>
-        <Button onClick={onClose} style={{ padding: "0.375rem 0.75rem", fontSize: "0.813rem" }}>Cancel</Button>
-        <Button variant="primary" onClick={() => onApply(buildQuery())} style={{ padding: "0.375rem 1rem", fontSize: "0.813rem" }}>Apply</Button>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">Cancel</Button>
+        <Button variant="primary" onClick={() => onApply(buildQuery())} className="!py-1.5 !text-[0.813rem]">Apply</Button>
       </div>
     </div>
   );
@@ -162,19 +149,15 @@ function CountField({
   label,
   value,
   onChange,
-  inputStyle,
-  labelStyle,
 }: {
   label: string;
   value: CountFilterInput;
   onChange: (next: CountFilterInput) => void;
-  inputStyle: CSSProperties;
-  labelStyle: CSSProperties;
 }) {
   return (
     <div>
-      <label style={labelStyle}>{label}</label>
-      <div style={{ display: "grid", gridTemplateColumns: "7rem minmax(0, 1fr)", gap: "0.375rem" }}>
+      <label className={labelClass}>{label}</label>
+      <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5">
         <Select
           selectedKey={value.comparator}
           aria-label={`${label} comparison`}
@@ -196,10 +179,7 @@ function CountField({
           type="number"
           min={0}
           step={1}
-          style={{
-            ...inputStyle,
-            opacity: value.comparator === "any" ? 0.4 : 1,
-          }}
+          className={`${inputClass} ${value.comparator === "any" ? "opacity-40" : ""}`}
           value={value.comparator === "any" ? "" : value.value}
           disabled={value.comparator === "any"}
           aria-label={`${label} value`}

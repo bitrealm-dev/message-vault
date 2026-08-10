@@ -34,29 +34,22 @@ export function ContactDrawerHandles({
 
   return (
     <>
-      <h3 style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>Handles</h3>
+      <h3 className="mb-2 text-[0.75rem] uppercase text-muted">Handles</h3>
       {handleRows.length === 0 ? (
-        <div style={{ fontSize: "0.813rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+        <div className="mb-2 text-[0.813rem] text-muted">
           {loading ? "Loading…" : "No handles"}
         </div>
       ) : (
-        <div style={{ marginBottom: "0.75rem" }}>
+        <div className="mb-3">
           {handleRows.map((h, i) => (
             <div
               key={`${h.handle}-${i}`}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.75rem",
-                padding: "0.375rem 0",
-                borderBottom: "1px solid var(--border)",
-                fontSize: "0.875rem",
-              }}
+              className="flex items-center gap-3 border-b border-border py-1.5 text-[0.875rem]"
             >
-              <span style={{ color: "var(--muted)", minWidth: "5.5rem", flexShrink: 0 }}>
+              <span className="min-w-[5.5rem] shrink-0 text-muted">
                 {inferService(h.handle, h.service)}
               </span>
-              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span className="min-w-0 flex-1 truncate">
                 {h.handle}
               </span>
             </div>
@@ -64,15 +57,7 @@ export function ContactDrawerHandles({
         </div>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-          marginBottom: "0.35rem",
-          alignItems: "center",
-        }}
-      >
+      <div className="mb-[0.35rem] flex flex-wrap items-center gap-2">
         <Select
           selectedKey={newService}
           onSelectionChange={(k) => setNewService(String(k))}
@@ -95,22 +80,13 @@ export function ContactDrawerHandles({
             }
           }}
           placeholder="user#1234, @handle…"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            padding: "0.375rem 0.5rem",
-            fontSize: "0.813rem",
-            border: "1px solid var(--border)",
-            borderRadius: "4px",
-            backgroundColor: "var(--elevated)",
-            color: "var(--text)",
-          }}
+          className="min-w-0 flex-1 rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text"
         />
         <Button
           variant="primary"
           onClick={addHandle}
           disabled={!newHandle.trim() || loading}
-          style={{ fontSize: "0.813rem", padding: "0.25rem 0.75rem" }}
+          className="!px-3 !py-1 !text-[0.813rem]"
         >
           Add
         </Button>

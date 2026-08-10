@@ -47,10 +47,10 @@ function GroupIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      style={{ display: "inline-block", verticalAlign: "-1px", flexShrink: 0 }}
+      className="inline-block shrink-0 align-[-1px]"
     >
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
+      <circle cx="7" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
@@ -61,28 +61,16 @@ function participantLabel(p: { name: string | null; handle: string }): string {
   return p.name || p.handle;
 }
 
-const NAME_LINE_HEIGHT = 1.35;
-
 /** Comma-separated names; each name stays whole; at most two lines then ellipsis. */
 function GroupNames({ conv }: { conv: Conversation }) {
   return (
-    <span
-      style={{
-        display: "-webkit-box",
-        WebkitBoxOrient: "vertical",
-        WebkitLineClamp: 2,
-        overflow: "hidden",
-        lineHeight: NAME_LINE_HEIGHT,
-        wordBreak: "normal",
-        overflowWrap: "break-word",
-      }}
-    >
+    <span className="line-clamp-2 break-words leading-[1.35]">
       {conv.participants.map((p, i) => {
         const label = participantLabel(p);
         return (
           <span key={`${p.handle}-${i}`}>
             {i > 0 ? ", " : null}
-            <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+            <span className="whitespace-nowrap">{label}</span>
           </span>
         );
       })}
@@ -107,17 +95,7 @@ function GroupService({ conv }: { conv: Conversation }) {
 function GroupParticipantCount({ count }: { count: number }) {
   return (
     <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.25rem",
-        flexShrink: 0,
-        fontSize: "0.75rem",
-        fontWeight: 500,
-        color: "var(--muted)",
-        lineHeight: NAME_LINE_HEIGHT,
-        marginTop: "0.1rem",
-      }}
+      className="mt-[0.1rem] inline-flex shrink-0 items-center gap-1 text-[0.75rem] font-medium leading-[1.35] text-muted"
       title={`${count} participants`}
     >
       <span>{count}</span>
@@ -162,19 +140,9 @@ export default function ConversationRow({
   return (
     <button
       onClick={onClick}
-      style={{
-        display: "flex",
-        width: "100%",
-        boxSizing: "border-box",
-        textAlign: "left",
-        border: "none",
-        background: isSelected ? "var(--hover)" : "transparent",
-        padding: "0.7rem 0.85rem",
-        cursor: "pointer",
-        borderBottom: "1px solid var(--border)",
-        gap: "0.5rem",
-        alignItems: "flex-start",
-      }}
+      className={`box-border flex w-full cursor-pointer items-start gap-2 border-b border-border border-none px-[0.85rem] py-[0.7rem] text-left ${
+        isSelected ? "bg-hover" : "bg-transparent"
+      }`}
     >
       {onCheckChange && (
         <input
@@ -185,42 +153,15 @@ export default function ConversationRow({
             onCheckChange(conversation.id);
           }}
           onClick={(e) => e.stopPropagation()}
-          style={{ marginTop: "2px", flexShrink: 0 }}
+          className="mt-0.5 shrink-0"
         />
       )}
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-          gap: "0.3rem",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: "0.5rem",
-            minWidth: 0,
-          }}
-        >
+      <div className="flex min-w-0 flex-1 flex-col gap-[0.3rem]">
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <span
-            style={{
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              color: "var(--text)",
-              minWidth: 0,
-              flex: 1,
-              ...(wraps
-                ? { overflow: "hidden" }
-                : {
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }),
-            }}
+            className={`min-w-0 flex-1 text-[0.875rem] font-medium leading-[1.35] text-text ${
+              wraps ? "overflow-hidden" : "truncate"
+            }`}
           >
             {titleContent(conversation)}
           </span>
@@ -229,21 +170,12 @@ export default function ConversationRow({
           ) : null}
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: "0.5rem",
-            fontSize: "0.75rem",
-            color: "var(--muted)",
-          }}
-        >
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+        <div className="flex items-baseline justify-between gap-2 text-[0.75rem] text-muted">
+          <span className="min-w-0 truncate">
             {bottomLeft}
           </span>
           {dateSpan ? (
-            <span style={{ flexShrink: 0, textAlign: "right" }}>{dateSpan}</span>
+            <span className="shrink-0 text-right">{dateSpan}</span>
           ) : null}
         </div>
       </div>

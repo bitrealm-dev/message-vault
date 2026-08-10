@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, type CSSProperties } from "react";
+import { useState, useEffect, useLayoutEffect } from "react";
 import { ModalOverlay, Modal, Dialog } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import {
@@ -173,20 +173,9 @@ export default function ContactDrawer({
     });
   };
 
-  const browseLinkStyle: CSSProperties = {
-    background: "none",
-    border: "none",
-    padding: 0,
-    margin: 0,
-    font: "inherit",
-    fontWeight: 600,
-    color: "var(--accent)",
-    cursor: onBrowseConversations ? "pointer" : "default",
-    textAlign: "left",
-    display: "block",
-    marginBottom: "0.25rem",
-    textDecoration: "none",
-  };
+  const browseLinkClass = `block border-none bg-transparent p-0 font-[inherit] font-semibold text-accent text-left no-underline ${
+    onBrowseConversations ? "cursor-pointer" : "cursor-default"
+  }`;
 
   return (
     <ModalOverlay
@@ -208,7 +197,7 @@ export default function ContactDrawer({
         style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
       >
         <Dialog aria-label={displayName} className="outline-none">
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem", gap: "0.5rem" }}>
+          <div className="mb-4 flex justify-between gap-2">
           {editingName && detailMatches ? (
             <input
               type="text"
@@ -233,35 +222,23 @@ export default function ContactDrawer({
                 setEditingName(false);
               }}
               autoFocus
-              style={{
-                fontSize: "1.125rem",
-                fontWeight: 600,
-                padding: "0.25rem",
-                width: "100%",
-                backgroundColor: "var(--elevated)",
-                color: "var(--text)",
-                border: "1px solid var(--border)",
-                borderRadius: "4px",
-              }}
+              className="box-border w-full rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
             />
           ) : (
             <h2
               onClick={() => {
                 if (detailMatches) setEditingName(true);
               }}
-              style={{
-                margin: 0,
-                fontSize: "1.125rem",
-                cursor: detailMatches ? "pointer" : "default",
-                minWidth: 0,
-              }}
+              className={`m-0 min-w-0 text-[1.125rem] ${
+                detailMatches ? "cursor-pointer" : "cursor-default"
+              }`}
               title={detailMatches ? "Click to edit" : undefined}
             >
               {displayName}
               {detailMatches ? " ✎" : null}
             </h2>
           )}
-          <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)", flexShrink: 0 }}>×</button>
+          <button onClick={onClose} className="shrink-0 cursor-pointer border-none bg-none text-[1.25rem] text-muted">×</button>
           </div>
 
           <ContactDrawerHandles
@@ -271,51 +248,41 @@ export default function ContactDrawer({
           onHandlesChanged={loadDetail}
         />
 
-        <div style={{ marginTop: "1.25rem", fontSize: "0.875rem" }}>
-          <h3
-            style={{
-              fontSize: "0.75rem",
-              color: "var(--muted)",
-              textTransform: "uppercase",
-              marginBottom: "0.35rem",
-            }}
-          >
+        <div className="mt-5 text-[0.875rem]">
+          <h3 className="mb-[0.35rem] text-[0.75rem] uppercase text-muted">
             Messages
           </h3>
           {detailMatches ? (
             <>
               {years ? (
-                <div style={{ color: "var(--muted)", marginBottom: "0.5rem" }}>
+                <div className="mb-2 text-muted">
                   {years}
                 </div>
               ) : null}
               <button
                 type="button"
-                className="contact-drawer-browse-link"
+                className={`contact-drawer-browse-link mb-1 ${browseLinkClass}`}
                 onClick={() => browse("direct")}
-                style={browseLinkStyle}
               >
                 {directCount} direct conversation{directCount === 1 ? "" : "s"}
               </button>
               <button
                 type="button"
-                className="contact-drawer-browse-link"
+                className={`contact-drawer-browse-link mb-1 ${browseLinkClass}`}
                 onClick={() => browse("group")}
-                style={browseLinkStyle}
               >
                 {groupCount} group conversation{groupCount === 1 ? "" : "s"}
               </button>
               <button
                 type="button"
-                className="contact-drawer-browse-link"
+                className={`contact-drawer-browse-link ${browseLinkClass}`}
                 onClick={() => browse("all")}
-                style={{ ...browseLinkStyle, marginBottom: 0 }}
               >
                 {totalMessages} total message{totalMessages === 1 ? "" : "s"}
               </button>
             </>
           ) : (
-            <div style={{ color: "var(--muted)" }}>Loading details…</div>
+            <div className="text-muted">Loading details…</div>
           )}
         </div>
         </Dialog>

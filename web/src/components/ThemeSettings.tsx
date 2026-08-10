@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import {
   Checkbox,
   Radio,
@@ -24,20 +24,10 @@ const MODE_OPTIONS = [
   { value: "dark" as const, label: "Dark" },
 ];
 
-const sectionTitle: CSSProperties = {
-  margin: 0,
-  fontSize: "12px",
-  fontWeight: 600,
-  letterSpacing: "0.05em",
-  textTransform: "uppercase",
-  color: "var(--muted)",
-};
+const sectionTitleClass =
+  "m-0 text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted";
 
-const mutedText: CSSProperties = {
-  margin: "0.25rem 0 0",
-  fontSize: "13px",
-  color: "var(--muted)",
-};
+const mutedTextClass = "mt-1 text-[0.813rem] text-muted";
 
 /** Check glyph shared by the mode radio dots and the system-mode checkbox. */
 function CheckIcon({ className }: { className?: string }) {
@@ -84,9 +74,9 @@ export default function ThemeSettings() {
   const matchSystem = mode === "system";
 
   return (
-    <section style={{ maxWidth: "36rem" }}>
-      <h2 style={sectionTitle}>Theme</h2>
-      <p style={mutedText}>
+    <section className="max-w-[36rem]">
+      <h2 className={sectionTitleClass}>Theme</h2>
+      <p className={mutedTextClass}>
         Choose colors for light and dark mode. Changes save automatically.
       </p>
 
@@ -176,8 +166,8 @@ export default function ThemeSettings() {
         )}
       </Checkbox>
 
-      <div style={{ marginTop: "1.5rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-        <div style={{ ...sectionTitle, fontSize: "12px" }}>Colors</div>
+      <div className="mt-6 flex flex-col gap-3">
+        <div className={sectionTitleClass}>Colors</div>
         {SEED_FIELDS.map((field) => (
           <ColorRow
             key={field.key}
@@ -188,10 +178,10 @@ export default function ThemeSettings() {
         ))}
       </div>
 
-      <div style={{ marginTop: "1.5rem" }}>
-        <div style={sectionTitle}>Share theme</div>
-        <p style={mutedText}>Copy or paste the four color codes below.</p>
-        <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
+      <div className="mt-6">
+        <div className={sectionTitleClass}>Share theme</div>
+        <p className={mutedTextClass}>Copy or paste the four color codes below.</p>
+        <div className="mt-2 flex gap-2">
           <input
             type="text"
             value={shareDraft}
@@ -207,18 +197,9 @@ export default function ThemeSettings() {
               if (!ok) setShareDraft(shareString);
             }}
             aria-invalid={shareError}
-            style={{
-              minWidth: 0,
-              flex: 1,
-              borderRadius: "0.375rem",
-              border: `1px solid ${shareError ? "var(--danger)" : "var(--border)"}`,
-              background: "var(--bg)",
-              padding: "0.375rem 0.625rem",
-              fontFamily: "ui-monospace, monospace",
-              fontSize: "12px",
-              color: "var(--text)",
-              outline: "none",
-            }}
+            className={`min-w-0 flex-1 rounded-md border bg-bg px-2.5 py-1.5 font-mono text-[0.75rem] text-text outline-none ${
+              shareError ? "border-danger" : "border-border"
+            }`}
           />
           <button
             type="button"
@@ -231,32 +212,20 @@ export default function ThemeSettings() {
                 /* ignore */
               }
             }}
-            style={{
-              flexShrink: 0,
-              borderRadius: "0.375rem",
-              border: "1px solid var(--border)",
-              background: "var(--panel)",
-              padding: "0.375rem 0.75rem",
-              fontSize: "13px",
-              color: "var(--text)",
-              cursor: "pointer",
-            }}
+            className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-3 py-1.5 text-[0.813rem] text-text"
           >
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
         {shareError ? (
-          <p
-            style={{ margin: "0.25rem 0 0", fontSize: "12px", color: "var(--danger)" }}
-            role="alert"
-          >
+          <p className="mt-1 text-[0.75rem] text-danger" role="alert">
             Enter four valid color codes.
           </p>
         ) : null}
       </div>
 
-      <div style={{ marginTop: "1.5rem" }}>
-        <div style={sectionTitle}>Tried and true</div>
+      <div className="mt-6">
+        <div className={sectionTitleClass}>Tried and true</div>
         <div className="mt-3 flex flex-wrap gap-3">
           {presets.map((preset) => {
             const active =

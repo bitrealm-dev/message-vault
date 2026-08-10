@@ -18,14 +18,9 @@ export function ColorRow({
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+    <div className="flex items-center gap-3">
       <label
-        style={{
-          width: "7rem",
-          flexShrink: 0,
-          fontSize: "13px",
-          color: "var(--muted)",
-        }}
+        className="w-[7rem] shrink-0 text-[0.813rem] text-muted"
       >
         {label}
       </label>
@@ -34,15 +29,7 @@ export function ColorRow({
         value={normalizeHex(value) ?? "#000000"}
         onChange={(e) => onChange(e.target.value)}
         aria-label={label}
-        style={{
-          height: "2.25rem",
-          width: "3rem",
-          cursor: "pointer",
-          borderRadius: "0.375rem",
-          border: "1px solid var(--border)",
-          background: "var(--panel)",
-          padding: "2px",
-        }}
+        className="h-9 w-12 cursor-pointer rounded-md border border-border bg-panel p-0.5"
       />
       <input
         type="text"
@@ -59,18 +46,7 @@ export function ColorRow({
             (e.target as HTMLInputElement).blur();
           }
         }}
-        style={{
-          minWidth: 0,
-          flex: 1,
-          borderRadius: "0.375rem",
-          border: "1px solid var(--border)",
-          background: "var(--bg)",
-          padding: "0.375rem 0.625rem",
-          fontFamily: "ui-monospace, monospace",
-          fontSize: "13px",
-          color: "var(--text)",
-          outline: "none",
-        }}
+        className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2.5 py-1.5 font-mono text-[0.813rem] text-text outline-none"
       />
     </div>
   );
