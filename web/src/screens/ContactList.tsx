@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
-import VirtualList, { type VisibleRange } from "../components/VirtualList";
-import { listRowDividers } from "../lib/tw";
+import InfiniteOffsetList from "../components/InfiniteOffsetList";
+import { useInfiniteOffsetList } from "../lib/useInfiniteOffsetList";
 import {
-  formatVisibleRange,
   PAGE_SIZE_CONTACTS_FIRST,
   PAGE_SIZE_FIRST,
-  usePagedList,
   type PagedFetchPage,
 } from "../lib/usePagedList";
 
@@ -131,7 +129,6 @@ export default function ContactList({
   onSelect: (contact: Contact) => void;
 }) {
   const [serverQ, setServerQ] = useState("");
-  const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
   const catalogCompleteRef = useRef(false);
 
   const fetchPage = useCallback<PagedFetchPage<Contact>>(
@@ -161,8 +158,8 @@ export default function ContactList({
     filling,
     error,
     hasMore,
-    loadMore,
-  } = usePagedList(serverQ, fetchPage, {
+    requestMore,
+  } = useInfiniteOffsetList(serverQ, fetchPage, {
     firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
   });
 
@@ -194,103 +191,74 @@ export default function ContactList({
     ? contacts.filter((c) => contactMatchesFilter(c, filter))
     : contacts;
 
-  const rangeLabel =
-    loading && contacts.length === 0
-      ? "Loading…"
-      : formatVisibleRange(
-          visibleRange.start,
-          visibleRange.end,
-          filterActive && (catalogCompleteRef.current || !serverQ.trim())
-            ? displayContacts.length
-            : total,
-          displayContacts.length,
-        );
-
-  if (error && contacts.length === 0) {
-    return (
-      <div className="p-4 text-[0.813rem] text-danger">
-        Could not load contacts: {error}
-      </div>
-    );
-  }
+  const rangeTotal =
+    filterActive && (catalogCompleteRef.current || !serverQ.trim())
+      ? displayContacts.length
+      : total;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
-        {rangeLabel}
-        {refreshing ? " · updating…" : filling ? " · loading more…" : null}
-      </div>
-      <VirtualList
-        count={displayContacts.length}
-        estimateSize={CONTACT_ROW_HEIGHT}
-        // Expanded filter subtitles need dynamic measure; plain rows stay fixed.
-        dynamicSize={filterActive}
-        onVisibleRangeChange={setVisibleRange}
-        onNearEnd={() => {
-          if (hasMore && !filterActive) loadMore();
-          // When filtering a partial catalog, also load more so matches can appear.
-          if (hasMore && filterActive && !catalogCompleteRef.current && !serverQ.trim()) {
-            loadMore();
-          }
-        }}
-        empty={
-          !loading ? (
-            <div className="p-4 text-[0.813rem] text-muted">
-              {filterActive ? "No contacts match this filter" : "No contacts"}
-            </div>
-          ) : null
-        }
-        renderItem={(index) => {
-          const c = displayContacts[index];
-          if (!c) return null;
-          // If the preferred name is itself a handle, don't repeat it under the name.
-          const nameKey = c.name.trim().toLowerCase();
-          const shownHandles = filterActive
-            ? matchingHandles(c.handles, filter).filter(
-                (h) => h.trim().toLowerCase() !== nameKey,
-              )
-            : [];
-          return (
-            <button
-              type="button"
-              onClick={() => onSelect(c)}
-              style={{
-                height: filterActive ? "auto" : "100%",
-                minHeight: filterActive ? CONTACT_ROW_HEIGHT : undefined,
-              }}
-              className={`box-border flex w-full cursor-pointer items-center gap-2.5 border-none p-2 px-3 text-left text-text ${listRowDividers} ${
-                c.id === selectedId ? "bg-hover" : "bg-transparent"
-              }`}
-            >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
-                <ContactInitialCircle
-                  displayName={c.name}
-                  preferredHandle={c.handles?.[0] ?? null}
-                />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[0.875rem] font-medium">
-                  {filterActive && nameMarkTerm
-                    ? highlightText(c.name, nameMarkTerm)
-                    : c.name}
-                </div>
-                {shownHandles.length > 0 && (
-                  <div className="mt-0.5">
-                    {shownHandles.map((h) => (
-                      <div
-                        key={h}
-                        className="truncate text-[0.75rem] text-muted"
-                      >
-                        {highlightText(h, handleMarkTerm)}
-                      </div>
-                    ))}
-                  </div>
-                )}
+    <InfiniteOffsetList
+      items={displayContacts}
+      total={total}
+      rangeTotal={rangeTotal}
+      loading={loading}
+      refreshing={refreshing}
+      filling={filling}
+      error={error}
+      hasMore={hasMore}
+      requestMore={requestMore}
+      estimateSize={CONTACT_ROW_HEIGHT}
+      dynamicSize={filterActive}
+      selectedId={selectedId}
+      onSelect={onSelect}
+      getId={(c) => c.id}
+      getTextValue={(c) => c.name}
+      ariaLabel="Contacts"
+      errorPrefix="Could not load contacts"
+      empty={
+        !loading ? (
+          <div className="p-4 text-[0.813rem] text-muted">
+            {filterActive ? "No contacts match this filter" : "No contacts"}
+          </div>
+        ) : null
+      }
+      renderRow={(c) => {
+        const nameKey = c.name.trim().toLowerCase();
+        const shownHandles = filterActive
+          ? matchingHandles(c.handles, filter).filter(
+              (h) => h.trim().toLowerCase() !== nameKey,
+            )
+          : [];
+        return (
+          <>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
+              <ContactInitialCircle
+                displayName={c.name}
+                preferredHandle={c.handles?.[0] ?? null}
+              />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[0.875rem] font-medium">
+                {filterActive && nameMarkTerm
+                  ? highlightText(c.name, nameMarkTerm)
+                  : c.name}
               </div>
-            </button>
-          );
-        }}
-      />
-    </div>
+              {shownHandles.length > 0 && (
+                <div className="mt-0.5">
+                  {shownHandles.map((h) => (
+                    <div
+                      key={h}
+                      className="truncate text-[0.75rem] text-muted"
+                    >
+                      {highlightText(h, handleMarkTerm)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        );
+      }}
+    />
   );
 }
