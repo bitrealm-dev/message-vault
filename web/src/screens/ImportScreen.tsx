@@ -103,7 +103,7 @@ export default function ImportScreen() {
     ]);
 
     try {
-      const outputDir = resolveImportStagingDir(backupPath, source);
+      const outputDir = await resolveImportStagingDir(backupPath, source);
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
 

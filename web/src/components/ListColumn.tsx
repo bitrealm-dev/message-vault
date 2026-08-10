@@ -116,6 +116,7 @@ export default function ListColumn({
   return (
     <ListColumnResizeContext.Provider value={dragging}>
     <div
+      data-list-column
       style={{
         width: `${width}px`,
         flexShrink: 0,

@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from "react";
+import { useState, useEffect, useLayoutEffect, type CSSProperties } from "react";
 import { apiClient } from "../lib/api";
 import {
   fetchContactDetail,
@@ -16,6 +16,56 @@ import {
 export type { ContactPreview, ContactBrowseKind };
 
 type ContactDetail = CachedContactDetail;
+
+const DRAWER_WIDTH = 320;
+
+/** Dock the drawer to the right edge of the list/contact column when present. */
+function useDrawerLeft(open: boolean): number | null {
+  const [left, setLeft] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setLeft(null);
+      return;
+    }
+
+    let frame = 0;
+    let observer: ResizeObserver | null = null;
+
+    const measure = () => {
+      const col = document.querySelector<HTMLElement>("[data-list-column]");
+      if (col) {
+        setLeft(Math.round(col.getBoundingClientRect().right));
+        return col;
+      }
+      setLeft(null);
+      return null;
+    };
+
+    const col = measure();
+    if (col) {
+      observer = new ResizeObserver(() => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(measure);
+      });
+      observer.observe(col);
+    }
+
+    const onResize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", onResize);
+      observer?.disconnect();
+    };
+  }, [open]);
+
+  return left;
+}
 
 export default function ContactDrawer({
   contactId,
@@ -35,6 +85,7 @@ export default function ContactDrawer({
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const drawerLeft = useDrawerLeft(!!contactId);
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -158,11 +209,22 @@ export default function ContactDrawer({
       <div onClick={onClose} style={{
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", zIndex: 40,
       }} />
-      <div style={{
-        position: "fixed", right: 0, top: 0, bottom: 0, width: "320px",
-        background: "var(--panel)", boxShadow: "-2px 0 8px rgba(0,0,0,0.1)", zIndex: 50,
-        overflow: "auto", padding: "1.5rem",
-      }}>
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          bottom: 0,
+          left: drawerLeft != null ? drawerLeft : undefined,
+          right: drawerLeft == null ? 0 : undefined,
+          width: `${DRAWER_WIDTH}px`,
+          background: "var(--panel)",
+          boxShadow: "2px 0 12px rgba(0,0,0,0.18)",
+          zIndex: 50,
+          overflow: "auto",
+          padding: "1.5rem",
+          borderRight: "1px solid var(--border)",
+        }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem", gap: "0.5rem" }}>
           {editingName && detailMatches ? (
             <input

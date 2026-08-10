@@ -10,6 +10,32 @@ export type AttachmentClickHandler = (
   source: string,
 ) => void;
 
+function normalizeToken(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+/** Pick bubble style from conversation service and import source. */
+function resolveBubbleKind(message: Message): "imessage" | "discord" | "whatsapp" | "instagram" | "sms" {
+  const service = normalizeToken(message.conversation.service);
+  const source = normalizeToken(message.source);
+
+  if (
+    service === "imessage" ||
+    service === "ios" ||
+    service.includes("imessage") ||
+    source === "imessage" ||
+    source.startsWith("imessage") ||
+    source.includes("iphone") ||
+    source.includes("macos")
+  ) {
+    return "imessage";
+  }
+  if (service === "discord" || source.includes("discord")) return "discord";
+  if (service === "whatsapp" || source.includes("whatsapp")) return "whatsapp";
+  if (service === "instagram" || source.includes("instagram")) return "instagram";
+  return "sms";
+}
+
 export default function MessageBubble({
   message,
   highlight,
@@ -23,9 +49,8 @@ export default function MessageBubble({
 }) {
   const props = { message, highlight, isActive, onAttachmentClick };
 
-  switch (message.conversation.service?.toLowerCase()) {
+  switch (resolveBubbleKind(message)) {
     case "imessage":
-    case "ios":
       return <ImessageBubble {...props} />;
     case "discord":
       return <DiscordBubble {...props} />;

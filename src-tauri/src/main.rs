@@ -18,6 +18,7 @@ fn main() {
             commands::format::format,
             commands::ffmpeg::probe_ffmpeg_tools,
             commands::ffmpeg::set_ffmpeg_tools_dir,
+            commands::paths::home_dir,
             commands::push::push,
             commands::pull::pull,
         ])

@@ -16,6 +16,14 @@
   --scrollbar-thumb: var(--muted);
   --scrollbar-thumb-hover: var(--text);
   --checkbox-border: var(--muted);
+
+  /* Platform chat bubbles (light defaults; themes override) */
+  --imessage-sent: #007aff;
+  --imessage-sent-text: #ffffff;
+  --sms-sent: #34c759;
+  --sms-sent-text: #ffffff;
+  --bubble-received: #e9e9eb;
+  --bubble-received-text: #000000;
 }
 
 /* Dark: header is chrome; deepen for canvas, lift for elevated */
@@ -47,6 +55,12 @@
   --info-soft-bg: color-mix(in srgb, var(--accent) 16%, var(--panel));
   --search-mark: color-mix(in srgb, #fbbf24 45%, var(--elevated));
   --search-active: color-mix(in srgb, #fbbf24 28%, var(--panel));
+  --imessage-sent: #0a84ff;
+  --imessage-sent-text: #ffffff;
+  --sms-sent: #30d158;
+  --sms-sent-text: #ffffff;
+  --bubble-received: #3a3a3c;
+  --bubble-received-text: #ffffff;
 }
 
 /* Light: header is chrome; open up toward white for panels */
@@ -78,6 +92,12 @@
   --info-soft-bg: #eff6ff;
   --search-mark: #fde68a;
   --search-active: #fef9c3;
+  --imessage-sent: #007aff;
+  --imessage-sent-text: #ffffff;
+  --sms-sent: #34c759;
+  --sms-sent-text: #ffffff;
+  --bubble-received: #e9e9eb;
+  --bubble-received-text: #000000;
 }
 
 html,

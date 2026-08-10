@@ -2466,6 +2466,7 @@ name = "message-vault-io-tauri"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "go-sms-pro-exporter",
  "imazing-exporter",
  "imessage-ir-exporter",

@@ -100,6 +100,15 @@ export async function setFfmpegToolsDir(dir: string | null): Promise<FfmpegTools
   return invoke("set_ffmpeg_tools_dir", { dir });
 }
 
+export interface HomeDirInfo {
+  path: string;
+  os: string;
+}
+
+export async function invokeHomeDir(): Promise<HomeDirInfo> {
+  return invoke("home_dir");
+}
+
 /**
  * Subscribes to the three extraction events emitted by the Rust backend:
  * `extract:log` (String log line), `extract:finished` (String summary),

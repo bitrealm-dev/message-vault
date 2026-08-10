@@ -4,6 +4,7 @@ import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
 import {
   getVaultWorkingDir,
   setVaultWorkingDir,
+  getHomeDir,
   getRememberImporterPaths,
   setRememberImporterPaths,
 } from "../../lib/system-settings";
@@ -47,115 +48,118 @@ function formatFolderSuccess(probe: FfmpegToolsProbe): string {
   return paths || "ffmpeg tools folder saved.";
 }
 
+function statusColor(status: Status): string {
+  if (status.type === "error") return "var(--danger, #dc2626)";
+  if (status.type === "success") return "var(--accent)";
+  return "var(--muted)";
+}
+
 export function SystemSection() {
   const [ffmpegPath, setFfmpegPath] = useState("");
-  const [ffmpegStatus, setFfmpegStatus] = useState<Status>({ type: "idle" });
-  const [ffmpegChecking, setFfmpegChecking] = useState(false);
-
   const [workingDir, setWorkingDir] = useState("");
-  const [workingStatus, setWorkingStatus] = useState<Status>({ type: "idle" });
-
+  const [homeDir, setHomeDir] = useState("");
   const [rememberPaths, setRememberPaths] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<Status>({ type: "idle" });
 
   useEffect(() => {
-    setWorkingDir(getVaultWorkingDir());
-    setRememberPaths(getRememberImporterPaths());
-
     if (!isTauri()) return;
 
-    const stored = localStorage.getItem(FFMPEG_TOOLS_STORAGE_KEY) || "";
-    setFfmpegPath(stored);
+    setRememberPaths(getRememberImporterPaths());
+    const storedFfmpeg = localStorage.getItem(FFMPEG_TOOLS_STORAGE_KEY) || "";
+    setFfmpegPath(storedFfmpeg);
 
     void (async () => {
-      setFfmpegChecking(true);
+      const home = await getHomeDir();
+      setHomeDir(home);
+      const storedWorking = getVaultWorkingDir();
+      setWorkingDir(storedWorking || home);
+
       try {
-        const result = stored.trim()
-          ? await probeFfmpegTools(stored.trim())
+        const result = storedFfmpeg.trim()
+          ? await probeFfmpegTools(storedFfmpeg.trim())
           : await probeFfmpegTools(null);
         if (result.ok) {
-          setFfmpegStatus({
+          setStatus({
             type: "success",
-            message: stored.trim()
+            message: storedFfmpeg.trim()
               ? formatFolderSuccess(result)
               : formatDefaultDiscovery(result),
           });
         } else if (result.error) {
-          setFfmpegStatus({ type: "error", message: result.error });
+          setStatus({ type: "error", message: result.error });
         }
       } catch (err) {
-        setFfmpegStatus({
+        setStatus({
           type: "error",
           message: err instanceof Error ? err.message : String(err),
         });
-      } finally {
-        setFfmpegChecking(false);
       }
     })();
   }, []);
 
-  const handleSaveFfmpeg = async () => {
-    const path = ffmpegPath.trim();
-    setFfmpegChecking(true);
-    setFfmpegStatus({ type: "idle" });
+  const handleSave = async () => {
+    setSaving(true);
+    setStatus({ type: "idle" });
 
     try {
-      if (!path) {
+      const home = homeDir || (await getHomeDir());
+      const workingTrimmed = workingDir.trim();
+      // Empty or equal to home → restore default (no localStorage override).
+      if (!workingTrimmed || (home && workingTrimmed === home)) {
+        setVaultWorkingDir("");
+        setWorkingDir(home);
+      } else {
+        setVaultWorkingDir(workingTrimmed);
+      }
+
+      const ffmpegTrimmed = ffmpegPath.trim();
+      if (!ffmpegTrimmed) {
         localStorage.removeItem(FFMPEG_TOOLS_STORAGE_KEY);
         const result = await setFfmpegToolsDir(null);
-        if (result.ok) {
-          setFfmpegStatus({ type: "success", message: formatDefaultDiscovery(result) });
-        } else {
-          setFfmpegStatus({
+        if (!result.ok) {
+          setStatus({
             type: "error",
             message: result.error ?? "ffmpeg and ffprobe not found on PATH",
           });
+          return;
         }
+        setStatus({
+          type: "success",
+          message: `Settings saved. ${formatDefaultDiscovery(result)}`,
+        });
         return;
       }
 
-      const probe = await probeFfmpegTools(path);
+      const probe = await probeFfmpegTools(ffmpegTrimmed);
       if (!probe.ok) {
-        setFfmpegStatus({
+        setStatus({
           type: "error",
           message: probe.error ?? "ffmpeg and ffprobe not found in folder",
         });
         return;
       }
 
-      const result = await setFfmpegToolsDir(path);
-      localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, path);
-      setFfmpegStatus({ type: "success", message: formatFolderSuccess(result) });
+      const result = await setFfmpegToolsDir(ffmpegTrimmed);
+      localStorage.setItem(FFMPEG_TOOLS_STORAGE_KEY, ffmpegTrimmed);
+      setStatus({
+        type: "success",
+        message: `Settings saved. ${formatFolderSuccess(result)}`,
+      });
     } catch (err) {
-      setFfmpegStatus({
+      setStatus({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
-      setFfmpegChecking(false);
+      setSaving(false);
     }
   };
-
-  const handleSaveWorkingDir = () => {
-    setVaultWorkingDir(workingDir);
-    setWorkingStatus({
-      type: "success",
-      message: workingDir.trim()
-        ? "Working directory saved."
-        : "Working directory cleared. Import will write extract-output beside the backup path when no working directory is set.",
-    });
-  };
-
-  const statusColor = (status: Status) =>
-    status.type === "error"
-      ? "var(--danger, #dc2626)"
-      : status.type === "success"
-        ? "var(--accent)"
-        : "var(--muted)";
 
   if (!isTauri()) {
     return (
       <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--muted)" }}>
-        System settings (ffmpeg tools, working directory, and remembered importer paths) are
+        System settings (working directory, ffmpeg tools, and remembered importer paths) are
         available in the desktop app.
       </p>
     );
@@ -163,101 +167,90 @@ export function SystemSection() {
 
   return (
     <div>
-      <h3 style={sectionHeading}>Media</h3>
-      <FormRow label="ffmpeg tools folder">
+      <h3 style={sectionHeading}>Vault</h3>
+      <FormRow label="Vault Working Directory">
         <PathPicker
-          value={ffmpegPath}
-          onChange={setFfmpegPath}
+          value={workingDir}
+          onChange={setWorkingDir}
           directory
-          placeholder="Uses system PATH by default"
+          placeholder={homeDir || "User home directory"}
         />
       </FormRow>
       <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
-        Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
-        <a
-          href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
-          target="_blank"
-          rel="noopener"
-          style={{ color: "var(--accent)" }}
-        >
-          Install help
-        </a>
+        Import creates a timestamped staging folder under this directory (for example
+        staging-iphone-ios-260809-143022), matching the Slint GUI. Defaults to your user home
+        directory. Clear the field and save to restore that default.
       </p>
-      <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <Button
-          onClick={() => void handleSaveFfmpeg()}
-          disabled={ffmpegChecking}
-          style={{ padding: "0.5rem 1.5rem" }}
-        >
-          {ffmpegChecking ? "Checking…" : "Save"}
-        </Button>
-        {ffmpegStatus.type !== "idle" && (
-          <span style={{ fontSize: "0.875rem", color: statusColor(ffmpegStatus) }}>
-            {ffmpegStatus.message}
+
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "0.5rem",
+          marginTop: "1.25rem",
+          fontSize: "0.875rem",
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={rememberPaths}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setRememberPaths(on);
+            setRememberImporterPaths(on);
+          }}
+          style={{ marginTop: "0.15rem" }}
+        />
+        <span>
+          Remember importer paths
+          <span
+            style={{
+              display: "block",
+              fontSize: "0.75rem",
+              color: "var(--muted)",
+              marginTop: "0.25rem",
+            }}
+          >
+            When enabled, Import restores the last backup path for each import source.
           </span>
-        )}
-      </div>
+        </span>
+      </label>
 
       <div style={{ marginTop: "2rem" }}>
-        <h3 style={sectionHeading}>Vault</h3>
-        <FormRow label="Vault Working Directory">
+        <h3 style={sectionHeading}>Media</h3>
+        <FormRow label="ffmpeg tools folder">
           <PathPicker
-            value={workingDir}
-            onChange={setWorkingDir}
+            value={ffmpegPath}
+            onChange={setFfmpegPath}
             directory
-            placeholder="Optional — parent folder for import staging"
+            placeholder="Uses system PATH by default"
           />
         </FormRow>
         <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.25rem" }}>
-          Import creates a timestamped staging folder under this directory (for example
-          staging-iphone-ios-260809-143022), matching the Slint GUI. Leave blank to write
-          extract-output beside the selected backup path.
+          Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
+          <a
+            href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
+            target="_blank"
+            rel="noopener"
+            style={{ color: "var(--accent)" }}
+          >
+            Install help
+          </a>
         </p>
-        <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <Button onClick={handleSaveWorkingDir} style={{ padding: "0.5rem 1.5rem" }}>
-            Save
-          </Button>
-          {workingStatus.type !== "idle" && (
-            <span style={{ fontSize: "0.875rem", color: statusColor(workingStatus) }}>
-              {workingStatus.message}
-            </span>
-          )}
-        </div>
+      </div>
 
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: "0.5rem",
-            marginTop: "1.5rem",
-            fontSize: "0.875rem",
-            cursor: "pointer",
-          }}
+      <div style={{ marginTop: "1.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <Button
+          onClick={() => void handleSave()}
+          disabled={saving}
+          style={{ padding: "0.5rem 1.5rem" }}
         >
-          <input
-            type="checkbox"
-            checked={rememberPaths}
-            onChange={(e) => {
-              const on = e.target.checked;
-              setRememberPaths(on);
-              setRememberImporterPaths(on);
-            }}
-            style={{ marginTop: "0.15rem" }}
-          />
-          <span>
-            Remember importer paths
-            <span
-              style={{
-                display: "block",
-                fontSize: "0.75rem",
-                color: "var(--muted)",
-                marginTop: "0.25rem",
-              }}
-            >
-              When enabled, Import restores the last backup path for each import source.
-            </span>
-          </span>
-        </label>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {status.type !== "idle" && (
+          <span style={{ fontSize: "0.875rem", color: statusColor(status) }}>{status.message}</span>
+        )}
       </div>
     </div>
   );

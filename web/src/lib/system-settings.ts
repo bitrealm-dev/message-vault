@@ -1,8 +1,14 @@
 /** localStorage keys for Settings → System (Tauri desktop). */
 
+import { invokeHomeDir } from "./tauri";
+import { isTauri } from "./tauri-check";
+
 export const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
 export const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
 export const IMPORTER_PATHS_KEY = "mv-importer-paths";
+
+let cachedHomeDir: string | null = null;
+let homeDirPromise: Promise<string> | null = null;
 
 export function getVaultWorkingDir(): string {
   try {
@@ -20,6 +26,34 @@ export function setVaultWorkingDir(dir: string): void {
   } catch {
     // ignore quota / private mode
   }
+}
+
+/** OS home directory (cached). Empty string when not in Tauri or lookup fails. */
+export async function getHomeDir(): Promise<string> {
+  if (cachedHomeDir != null) return cachedHomeDir;
+  if (!isTauri()) {
+    cachedHomeDir = "";
+    return cachedHomeDir;
+  }
+  if (!homeDirPromise) {
+    homeDirPromise = invokeHomeDir()
+      .then((info) => {
+        cachedHomeDir = info.path.trim();
+        return cachedHomeDir;
+      })
+      .catch(() => {
+        cachedHomeDir = "";
+        return cachedHomeDir;
+      });
+  }
+  return homeDirPromise;
+}
+
+/** Stored working dir, or OS home when unset. */
+export async function getEffectiveVaultWorkingDir(): Promise<string> {
+  const stored = getVaultWorkingDir();
+  if (stored) return stored;
+  return getHomeDir();
 }
 
 export function getRememberImporterPaths(): boolean {
@@ -104,13 +138,17 @@ export function stagingDirName(sourceId: string, now: Date = new Date()): string
 }
 
 /**
- * When Vault Working Directory is set: `{workingDir}/staging-<importer>-YYMMDD-HHMMSS`
- * (Slint import staging rules). Otherwise: `{backupPath}/../extract-output`.
+ * `{effectiveWorkingDir}/staging-<importer>-YYMMDD-HHMMSS`
+ * Effective dir is the saved Vault Working Directory, or the OS home when unset.
  */
-export function resolveImportStagingDir(backupPath: string, sourceId: string): string {
-  const working = getVaultWorkingDir();
-  if (working) {
-    return working.replace(/[/\\]+$/, "") + "/" + stagingDirName(sourceId);
+export async function resolveImportStagingDir(
+  _backupPath: string,
+  sourceId: string,
+): Promise<string> {
+  const working = (await getEffectiveVaultWorkingDir()).replace(/[/\\]+$/, "");
+  if (!working) {
+    // Non-Tauri / home lookup failed — last-resort relative staging name.
+    return stagingDirName(sourceId);
   }
-  return `${backupPath}/../extract-output`;
+  return `${working}/${stagingDirName(sourceId)}`;
 }

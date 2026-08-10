@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Conversation } from "../lib/types";
 import { useListColumnResizing } from "./ListColumnResizeContext";
 
@@ -61,16 +61,6 @@ function participantLabel(p: { name: string | null; handle: string }): string {
   return p.name || p.handle;
 }
 
-/** Plain-text title used for rename baseline. */
-function displayNameText(conv: Conversation): string {
-  if (conv.label) return conv.label;
-  if (!conv.is_group) {
-    const p = conv.participants[0];
-    return p?.name || p?.handle || "(unknown)";
-  }
-  return conv.participants.map(participantLabel).join(", ");
-}
-
 const NAME_LINE_HEIGHT = 1.35;
 
 /** Comma-separated names; each name stays whole; at most two lines then ellipsis. */
@@ -109,31 +99,29 @@ function titleContent(conv: Conversation): ReactNode {
   return <GroupNames conv={conv} />;
 }
 
-function Dot() {
-  return (
-    <span aria-hidden="true" style={{ opacity: 0.55, margin: "0 0.15rem" }}>
-      ·
-    </span>
-  );
+/** Bottom-left for groups: service only (count sits upper-right). */
+function GroupService({ conv }: { conv: Conversation }) {
+  return formatServiceLabel(conv.service);
 }
 
-/** Bottom-left for groups: service · icon + count. */
-function GroupMeta({ conv }: { conv: Conversation }) {
-  const serviceLabel = formatServiceLabel(conv.service);
+function GroupParticipantCount({ count }: { count: number }) {
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "0.35rem",
-        minWidth: 0,
-        flexWrap: "wrap",
+        gap: "0.25rem",
+        flexShrink: 0,
+        fontSize: "0.75rem",
+        fontWeight: 500,
+        color: "var(--muted)",
+        lineHeight: NAME_LINE_HEIGHT,
+        marginTop: "0.1rem",
       }}
+      title={`${count} participants`}
     >
-      {serviceLabel ? <span>{serviceLabel}</span> : null}
-      {serviceLabel ? <Dot /> : null}
+      <span>{count}</span>
       <GroupIcon />
-      <span>{conv.participants.length}</span>
     </span>
   );
 }
@@ -158,36 +146,6 @@ export default function ConversationRow({
   checked?: boolean;
   onCheckChange?: (id: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [labelValue, setLabelValue] = useState(conversation.label || "");
-  const editBaselineRef = useRef(conversation.label || "");
-  const cancelEditRef = useRef(false);
-
-  const startEditing = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const baseline = conversation.label || displayNameText(conversation);
-    editBaselineRef.current = baseline;
-    cancelEditRef.current = false;
-    setLabelValue(baseline);
-    setEditing(true);
-  };
-
-  const handleSaveLabel = () => {
-    if (cancelEditRef.current) {
-      cancelEditRef.current = false;
-      setEditing(false);
-      return;
-    }
-    const next = labelValue.trim();
-    if (next === editBaselineRef.current.trim()) {
-      setEditing(false);
-      return;
-    }
-    // Store locally — the API endpoint for persisting labels is follow-up (Tier 4)
-    conversation.label = next || null;
-    setEditing(false);
-  };
-
   const columnResizing = useListColumnResizing();
   const isGroup = conversation.is_group;
   const wraps = isGroup && !conversation.label && !columnResizing;
@@ -196,7 +154,7 @@ export default function ConversationRow({
     conversation.last_message_at || conversation.date_range_end,
   );
   const bottomLeft = isGroup ? (
-    <GroupMeta conv={conversation} />
+    <GroupService conv={conversation} />
   ) : (
     directService(conversation)
   );
@@ -211,7 +169,7 @@ export default function ConversationRow({
         textAlign: "left",
         border: "none",
         background: isSelected ? "var(--hover)" : "transparent",
-        padding: "0.5rem 0.75rem",
+        padding: "0.7rem 0.85rem",
         cursor: "pointer",
         borderBottom: "1px solid var(--border)",
         gap: "0.5rem",
@@ -236,45 +194,25 @@ export default function ConversationRow({
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
-          gap: "2px",
+          gap: "0.3rem",
         }}
       >
-        {editing ? (
-          <input
-            type="text"
-            value={labelValue}
-            onChange={(e) => setLabelValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveLabel();
-              if (e.key === "Escape") {
-                cancelEditRef.current = true;
-                handleSaveLabel();
-              }
-            }}
-            onBlur={handleSaveLabel}
-            onClick={(e) => e.stopPropagation()}
-            autoFocus
-            style={{
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              width: "100%",
-              padding: "0.125rem 0.25rem",
-              background: "var(--bg)",
-              color: "var(--text)",
-              border: "1px solid var(--border)",
-              borderRadius: "4px",
-            }}
-          />
-        ) : (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: "0.5rem",
+            minWidth: 0,
+          }}
+        >
           <span
-            onClick={startEditing}
-            title="Click to rename"
             style={{
-              cursor: "pointer",
               fontSize: "0.875rem",
               fontWeight: 500,
               color: "var(--text)",
               minWidth: 0,
+              flex: 1,
               ...(wraps
                 ? { overflow: "hidden" }
                 : {
@@ -285,19 +223,11 @@ export default function ConversationRow({
             }}
           >
             {titleContent(conversation)}
-            {conversation.label ? (
-              <span
-                style={{
-                  fontSize: "0.688rem",
-                  color: "var(--muted)",
-                  marginLeft: "0.25rem",
-                }}
-              >
-                (renamed)
-              </span>
-            ) : null}
           </span>
-        )}
+          {isGroup ? (
+            <GroupParticipantCount count={conversation.participants.length} />
+          ) : null}
+        </div>
 
         <div
           style={{
