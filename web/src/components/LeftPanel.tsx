@@ -51,6 +51,16 @@ export default function LeftPanel({
     }}>
       {/* Browse */}
       <div style={{ padding: "0.5rem 0.75rem" }}>
+        <div
+          style={{
+            padding: "0.25rem 0.75rem 0.375rem",
+            fontSize: "0.875rem",
+            fontWeight: 700,
+            color: "var(--text)",
+          }}
+        >
+          Messages
+        </div>
         <button style={linkStyle("conversations")} onClick={() => onNavigate("conversations")}>
           Conversations
         </button>

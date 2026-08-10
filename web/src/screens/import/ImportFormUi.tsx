@@ -1,9 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { AttachmentMediaMode } from "../../lib/types";
 
-export const IPHONE_HELP_URL =
-  "https://bitrealm-dev.github.io/prepare-your-backups/iphone-ipad/";
-
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
   { id: "copy", label: "Copy" },
   { id: "convert", label: "Convert" },
@@ -40,16 +37,21 @@ export const hintStyle: CSSProperties = {
 export const sectionGap: CSSProperties = { marginBottom: "1.1rem" };
 
 export const collapsibleHeaderStyle: CSSProperties = {
-  display: "block",
+  display: "flex",
+  alignItems: "center",
+  gap: "0.5rem",
   width: "100%",
-  textAlign: "left",
-  padding: "0.5rem 0.75rem",
-  borderRadius: "8px",
-  border: "1px solid var(--border)",
-  background: "var(--elevated)",
-  fontSize: "0.875rem",
-  fontWeight: 500,
+  padding: "0.35rem 0 0.5rem",
+  margin: 0,
+  border: "none",
+  borderBottom: "1px solid var(--border)",
+  borderRadius: 0,
+  background: "transparent",
+  fontSize: "0.9375rem",
+  fontWeight: 600,
+  color: "var(--text)",
   cursor: "pointer",
+  textAlign: "left",
 };
 
 export function StackedField({
@@ -86,9 +88,24 @@ export function CollapsibleSection({
   return (
     <div style={{ marginBottom: open ? "0.75rem" : "1.25rem" }}>
       <button type="button" onClick={onToggle} style={collapsibleHeaderStyle} aria-expanded={open}>
-        {open ? "v" : ">"} {title}
+        <span
+          style={{
+            display: "inline-block",
+            transform: open ? "rotate(90deg)" : "none",
+            transition: "transform 0.15s ease",
+            fontSize: "0.75rem",
+            color: "var(--muted)",
+            lineHeight: 1,
+          }}
+          aria-hidden
+        >
+          ▶
+        </span>
+        <span>{title}</span>
       </button>
-      {open ? <div style={{ marginTop: "0.75rem", marginLeft: "0.75rem" }}>{children}</div> : null}
+      {open ? (
+        <div style={{ marginTop: "0.75rem", marginLeft: "0.75rem" }}>{children}</div>
+      ) : null}
     </div>
   );
 }

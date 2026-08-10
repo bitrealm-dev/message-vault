@@ -12,7 +12,6 @@ import Button from "../components/Button";
 import {
   ATTACHMENT_OPTIONS,
   RESOLUTION_OPTIONS,
-  IPHONE_HELP_URL,
   fieldStyle,
   hintStyle,
   sectionGap,
@@ -37,6 +36,7 @@ export default function ImportScreen() {
   const [minSizeMb, setMinSizeMb] = useState("20");
   const [contactNameMode, setContactNameMode] = useState<ContactNameMode>("fill_missing");
   const [formatOpen, setFormatOpen] = useState(true);
+  const [optionsOpen, setOptionsOpen] = useState(true);
   const [filteringOpen, setFilteringOpen] = useState(false);
   const [conversationFilter, setConversationFilter] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -166,25 +166,6 @@ export default function ImportScreen() {
             onToggle={() => setFormatOpen((o) => !o)}
           >
             <div style={sectionGap}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  justifyContent: "flex-end",
-                  marginBottom: "0.35rem",
-                }}
-              >
-                {isIos ? (
-                  <a
-                    href={IPHONE_HELP_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ fontSize: "0.8125rem", color: "var(--accent)" }}
-                  >
-                    Need help?
-                  </a>
-                ) : null}
-              </div>
               <select
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
@@ -226,76 +207,74 @@ export default function ImportScreen() {
 
           {isIos && (
             <>
-              <StackedField label="Message Attachments">
-                <select
-                  value={attachmentMedia}
-                  onChange={(e) => setAttachmentMedia(e.target.value as AttachmentMediaMode)}
-                  style={fieldStyle}
-                >
-                  {ATTACHMENT_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
+              <CollapsibleSection
+                title="Import Options"
+                open={optionsOpen}
+                onToggle={() => setOptionsOpen((o) => !o)}
+              >
+                <StackedField label="Message Attachments">
+                  <select
+                    value={attachmentMedia}
+                    onChange={(e) => setAttachmentMedia(e.target.value as AttachmentMediaMode)}
+                    style={fieldStyle}
+                  >
+                    {ATTACHMENT_OPTIONS.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </StackedField>
+
+                {showCompress && (
+                  <div style={{ marginLeft: "1rem", marginBottom: "1.1rem" }}>
+                    <StackedField label="Target resolution">
+                      <select
+                        value={maxResolution}
+                        onChange={(e) => setMaxResolution(e.target.value)}
+                        style={fieldStyle}
+                      >
+                        {RESOLUTION_OPTIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r.replace("p", "")}
+                          </option>
+                        ))}
+                      </select>
+                    </StackedField>
+                    <StackedField label="Max FPS">
+                      <input
+                        type="text"
+                        value={maxFps}
+                        onChange={(e) => setMaxFps(e.target.value)}
+                        style={fieldStyle}
+                      />
+                    </StackedField>
+                    <StackedField label="Minimum file size (MB)">
+                      <input
+                        type="text"
+                        value={minSizeMb}
+                        onChange={(e) => setMinSizeMb(e.target.value)}
+                        style={fieldStyle}
+                      />
+                    </StackedField>
+                  </div>
+                )}
+
+                <StackedField label="Contacts">
+                  <select
+                    value={contactNameMode}
+                    onChange={(e) => setContactNameMode(e.target.value as ContactNameMode)}
+                    style={fieldStyle}
+                  >
+                    <option value="fill_missing">
+                      Fill in missing names using vault contacts
                     </option>
-                  ))}
-                </select>
-              </StackedField>
-
-              {showCompress && (
-                <div style={{ marginLeft: "1rem", marginBottom: "1.1rem" }}>
-                  <StackedField label="Target resolution">
-                    <select
-                      value={maxResolution}
-                      onChange={(e) => setMaxResolution(e.target.value)}
-                      style={fieldStyle}
-                    >
-                      {RESOLUTION_OPTIONS.map((r) => (
-                        <option key={r} value={r}>
-                          {r.replace("p", "")}
-                        </option>
-                      ))}
-                    </select>
-                  </StackedField>
-                  <StackedField label="Max FPS">
-                    <input
-                      type="text"
-                      value={maxFps}
-                      onChange={(e) => setMaxFps(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </StackedField>
-                  <StackedField label="Minimum file size (MB)">
-                    <input
-                      type="text"
-                      value={minSizeMb}
-                      onChange={(e) => setMinSizeMb(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </StackedField>
-                </div>
-              )}
-
-              <StackedField label="Contacts">
-                <select
-                  value={contactNameMode}
-                  onChange={(e) => setContactNameMode(e.target.value as ContactNameMode)}
-                  style={fieldStyle}
-                >
-                  <option value="fill_missing">
-                    Fill in missing names using vault contacts
-                  </option>
-                  <option value="overwrite">
-                    Overwrite all import names with vault contacts
-                  </option>
-                </select>
-              </StackedField>
-
-              <hr
-                style={{
-                  border: "none",
-                  borderTop: "1px solid var(--border)",
-                  margin: "1.25rem 0",
-                }}
-              />
+                    <option value="overwrite">
+                      Overwrite all import names with vault contacts
+                    </option>
+                  </select>
+                </StackedField>
+              </CollapsibleSection>
 
               <CollapsibleSection
                 title="Message Filtering"
@@ -315,22 +294,37 @@ export default function ImportScreen() {
                     group conversations.
                   </p>
                 </StackedField>
-                <StackedField label="Start Date">
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    style={{ ...fieldStyle, maxWidth: "14rem" }}
-                  />
-                </StackedField>
-                <StackedField label="End Date (exclusive)">
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    style={{ ...fieldStyle, maxWidth: "14rem" }}
-                  />
-                </StackedField>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "0.75rem",
+                    marginBottom: "1.1rem",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
+                    <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 500, marginBottom: "0.35rem" }}>
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      style={fieldStyle}
+                    />
+                  </div>
+                  <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
+                    <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 500, marginBottom: "0.35rem" }}>
+                      End Date (exclusive)
+                    </label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      style={fieldStyle}
+                    />
+                  </div>
+                </div>
                 <label
                   style={{
                     display: "flex",
