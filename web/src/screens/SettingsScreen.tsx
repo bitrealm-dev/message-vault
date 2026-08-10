@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Tabs, TabList, Tab, TabPanel } from "react-aria-components";
+import {
+  Tabs,
+  TabList,
+  Tab,
+  TabPanel,
+  SelectionIndicator,
+} from "react-aria-components";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
 import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
@@ -16,11 +22,8 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: "appearance", label: "Appearance" },
 ];
 
-// Keeps the original look: text-colored when active, muted otherwise, with the
-// active underline rendered as an absolutely-positioned bar sitting on the
-// TabList's bottom border.
 function tabClassName({ isSelected }: { isSelected: boolean }) {
-  return `relative -mb-px cursor-pointer border-none bg-transparent px-3 py-2 text-[0.813rem] font-medium outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+  return `relative -mb-px cursor-pointer border-none bg-transparent px-3 py-2 text-[0.813rem] font-medium outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-accent ${
     isSelected ? "text-text" : "text-muted hover:text-text"
   }`;
 }
@@ -40,21 +43,14 @@ export default function SettingsScreen() {
       <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(key as SettingsTab)}>
         <TabList
           aria-label="Settings sections"
-          className="mt-5 flex gap-1 border-b border-border"
+          className="relative mt-5 flex gap-1 border-b border-border"
         >
           {TABS.map((t) => (
             <Tab key={t.id} id={t.id} className={tabClassName}>
-              {({ isSelected }) => (
-                <>
-                  {t.label}
-                  {isSelected && (
-                    <span
-                      aria-hidden
-                      className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-accent"
-                    />
-                  )}
-                </>
-              )}
+              {t.label}
+              <SelectionIndicator
+                className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-accent transition-[translate,width] duration-200 motion-reduce:transition-none"
+              />
             </Tab>
           ))}
         </TabList>
