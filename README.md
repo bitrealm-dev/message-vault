@@ -55,10 +55,11 @@ Inside Ubuntu, install the compiler and GUI libraries:
 ```bash
 sudo apt update
 sudo apt install \
-  build-essential pkg-config curl git libfontconfig1-dev \
-  libxkbcommon-x11-0 libxkbcommon0 \
-  libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libdbus-1-dev 
+  build-essential pkg-config curl \
+  libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libappindicator3-dev librsvg2-dev patchelf \
+  libssl-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+  ffmpeg
 ```
 
 Install Rust inside WSL rather than using a Windows Rust installation:
