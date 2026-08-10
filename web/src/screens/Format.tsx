@@ -5,6 +5,7 @@ import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import Button from "../components/Button";
+import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 
 const FORMATS = [
   { id: "json", label: "JSON" },
@@ -61,25 +62,18 @@ export default function Format({
       </FormRow>
 
       <FormRow label="Output format">
-        <select
-          value={outputFormat}
-          onChange={(e) => setOutputFormat(e.target.value)}
-          style={{
-            padding: "0.25rem 0.5rem",
-            fontSize: "0.875rem",
-            width: "100%",
-            background: "var(--bg)",
-            color: "var(--text)",
-            border: "1px solid var(--border)",
-            borderRadius: "4px",
-          }}
+        <Select
+          selectedKey={outputFormat}
+          onSelectionChange={(k) => setOutputFormat(String(k))}
+          aria-label="Output format"
+          triggerClassName="!bg-bg"
         >
           {FORMATS.map((f) => (
-            <option key={f.id} value={f.id}>
+            <ListBoxItem key={f.id} id={f.id} className={selectItemClassName}>
               {f.label}
-            </option>
+            </ListBoxItem>
           ))}
-        </select>
+        </Select>
       </FormRow>
 
       <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>

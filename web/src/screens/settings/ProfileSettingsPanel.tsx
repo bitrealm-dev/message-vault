@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
+import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import {
   type AccountProfile,
-  inputStyle,
-  sectionTitle,
+  inputClassName,
+  sectionTitleClass,
 } from "./profileStyles";
 
 /** Profile settings: display name and phone/email/WhatsApp handles. */
@@ -120,13 +121,14 @@ export function ProfileSettingsPanel() {
 
   return (
     <div>
-      <h3 style={sectionTitle}>Display Name</h3>
+      <h3 className={sectionTitleClass}>Display Name</h3>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          style={{ ...inputStyle, flex: 1 }}
+          className={inputClassName}
+          style={{ flex: 1 }}
         />
         <Button
           variant="primary"
@@ -143,7 +145,7 @@ export function ProfileSettingsPanel() {
       )}
       {!nameError && <div style={{ marginBottom: "1.5rem" }} />}
 
-      <h3 style={sectionTitle}>My Handles</h3>
+      <h3 className={sectionTitleClass}>My Handles</h3>
       {handles.length === 0 ? (
         <div style={{ fontSize: "0.875rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
           No phone or email handles on this account yet.
@@ -192,15 +194,16 @@ export function ProfileSettingsPanel() {
           alignItems: "center",
         }}
       >
-        <select
-          value={newHandleService}
-          onChange={(e) => setNewHandleService(e.target.value as "phone" | "email" | "whatsapp")}
-          style={{ ...inputStyle, width: "auto", minWidth: "7rem" }}
+        <Select
+          selectedKey={newHandleService}
+          onSelectionChange={(k) => setNewHandleService(k as "phone" | "email" | "whatsapp")}
+          aria-label="Handle service"
+          className="shrink-0 min-w-[7rem]"
         >
-          <option value="phone">Phone</option>
-          <option value="email">Email</option>
-          <option value="whatsapp">WhatsApp</option>
-        </select>
+          <ListBoxItem id="phone" className={selectItemClassName}>Phone</ListBoxItem>
+          <ListBoxItem id="email" className={selectItemClassName}>Email</ListBoxItem>
+          <ListBoxItem id="whatsapp" className={selectItemClassName}>WhatsApp</ListBoxItem>
+        </Select>
         <input
           type="text"
           value={newHandle}
@@ -208,7 +211,8 @@ export function ProfileSettingsPanel() {
           placeholder={
             newHandleService === "email" ? "name@example.com" : "+1 555 555 0100"
           }
-          style={{ ...inputStyle, flex: 1, minWidth: "12rem" }}
+          className={inputClassName}
+          style={{ flex: 1, minWidth: "12rem" }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

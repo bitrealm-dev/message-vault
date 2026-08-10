@@ -6,6 +6,7 @@ import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
 import Button from "../components/Button";
+import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 
 export default function Extract({
   onError,
@@ -40,25 +41,18 @@ export default function Extract({
       <h2 style={{ margin: "0 0 1.5rem 0" }}>Extract Messages</h2>
 
       <FormRow label="Source">
-        <select
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          style={{
-            padding: "0.25rem 0.5rem",
-            fontSize: "0.875rem",
-            width: "100%",
-            background: "var(--bg)",
-            color: "var(--text)",
-            border: "1px solid var(--border)",
-            borderRadius: "4px",
-          }}
+        <Select
+          selectedKey={source}
+          onSelectionChange={(k) => setSource(String(k))}
+          aria-label="Source"
+          triggerClassName="!bg-bg"
         >
           {EXPORT_SOURCES.map((s) => (
-            <option key={s.id} value={s.id}>
+            <ListBoxItem key={s.id} id={s.id} className={selectItemClassName}>
               {s.label}
-            </option>
+            </ListBoxItem>
           ))}
-        </select>
+        </Select>
       </FormRow>
 
       <FormRow label="Backup path">

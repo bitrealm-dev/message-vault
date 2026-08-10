@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
+import TextField from "../components/TextField";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import AuthBackButton from "../components/AuthBackButton";
 import {
   authCard,
-  authInput,
   authLabel,
   authTitle,
   pageCenter,
@@ -19,6 +19,8 @@ export default function RegisterScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -57,34 +59,36 @@ export default function RegisterScreen() {
   };
 
   return (
-    <div style={pageCenter}>
-      <div style={authCard}>
-        <h1 style={authTitle}>Create Account</h1>
+    <div className={pageCenter}>
+      <div className={authCard}>
+        <h1 className={authTitle}>Create Account</h1>
 
-        <label style={authLabel}>Username</label>
-        <input
-          type="text"
+        <label className={authLabel}>Username</label>
+        <TextField
           value={username}
-          onChange={(e) => setUsername(e.target.value)}
+          onChange={setUsername}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
           autoComplete="username"
-          style={authInput}
         />
 
-        <label style={{ ...authLabel, marginTop: "0.75rem" }}>Password</label>
+        <label className={`${authLabel} mt-3`}>Password</label>
         <PasswordField
           value={password}
           onChange={setPassword}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
           autoComplete="new-password"
+          showPassword={showPassword}
+          onToggle={() => setShowPassword((v) => !v)}
         />
 
-        <label style={{ ...authLabel, marginTop: "0.75rem" }}>Confirm Password</label>
+        <label className={`${authLabel} mt-3`}>Confirm Password</label>
         <PasswordField
           value={confirmPassword}
           onChange={setConfirmPassword}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
           autoComplete="new-password"
+          showPassword={showConfirm}
+          onToggle={() => setShowConfirm((v) => !v)}
         />
 
         <AuthSubmitButton onClick={handleRegister} disabled={loading}>
@@ -101,7 +105,7 @@ export default function RegisterScreen() {
           }}
           aria-live="polite"
         >
-          {error || "\u00a0"}
+          {error || " "}
         </div>
 
         <AuthBackButton label="Back to login" onClick={() => navigate("/login")} />

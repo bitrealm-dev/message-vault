@@ -3,7 +3,8 @@ import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import ApiTokenRevealDialog from "../../components/ApiTokenRevealDialog";
 import ConfirmDialog from "../../components/ConfirmDialog";
-import { inputStyle, sectionTitle } from "./profileStyles";
+import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
+import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 type ApiTokenScopes = "import" | "export" | "both";
 
@@ -107,7 +108,7 @@ export function ApiTokensSection() {
 
   return (
     <div style={{ marginBottom: "1.5rem" }}>
-      <h3 style={sectionTitle}>API tokens</h3>
+      <h3 className={sectionTitleClass}>API tokens</h3>
       <p style={{ margin: "0 0 0.75rem", fontSize: "0.813rem", color: "var(--muted)" }}>
         API Tokens are authorization keys used to allow external vault tools to import and
         export message data.
@@ -134,7 +135,8 @@ export function ApiTokensSection() {
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Label (e.g. laptop CLI)"
           disabled={busy}
-          style={{ ...inputStyle, flex: 1, minWidth: "12rem" }}
+          className={inputClassName}
+          style={{ flex: 1, minWidth: "12rem" }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -142,17 +144,17 @@ export function ApiTokensSection() {
             }
           }}
         />
-        <select
-          value={scopes}
-          onChange={(e) => setScopes(e.target.value as ApiTokenScopes)}
-          disabled={busy}
+        <Select
+          selectedKey={scopes}
+          onSelectionChange={(k) => setScopes(k as ApiTokenScopes)}
+          isDisabled={busy}
           aria-label="API token access"
-          style={{ ...inputStyle, width: "auto", minWidth: "9.5rem" }}
+          className="shrink-0 min-w-[9.5rem]"
         >
-          <option value="both">Import + export</option>
-          <option value="import">Import only</option>
-          <option value="export">Export only</option>
-        </select>
+          <ListBoxItem id="both" className={selectItemClassName}>Import + export</ListBoxItem>
+          <ListBoxItem id="import" className={selectItemClassName}>Import only</ListBoxItem>
+          <ListBoxItem id="export" className={selectItemClassName}>Export only</ListBoxItem>
+        </Select>
         <Button
           variant="primary"
           disabled={busy || !label.trim()}

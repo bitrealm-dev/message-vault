@@ -15,6 +15,7 @@ import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
 import Button from "../components/Button";
+import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import {
   ATTACHMENT_OPTIONS,
   RESOLUTION_OPTIONS,
@@ -41,6 +42,7 @@ export default function ImportScreen() {
     getRememberImporterPaths() ? getImporterPath(DEFAULT_SOURCE) : "",
   );
   const [backupPassword, setBackupPassword] = useState("");
+  const [showBackupPassword, setShowBackupPassword] = useState(false);
   const [attachmentMedia, setAttachmentMedia] = useState<AttachmentMediaMode>("copy");
   const [maxResolution, setMaxResolution] = useState("720p");
   const [maxFps, setMaxFps] = useState("30");
@@ -202,17 +204,18 @@ export default function ImportScreen() {
             onToggle={() => setFormatOpen((o) => !o)}
           >
             <div style={sectionGap}>
-              <select
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                style={fieldStyle}
+              <Select
+                selectedKey={source}
+                onSelectionChange={(k) => setSource(String(k))}
+                aria-label="Import source"
+                triggerClassName="!bg-bg"
               >
                 {EXPORT_SOURCES.map((s) => (
-                  <option key={s.id} value={s.id}>
+                  <ListBoxItem key={s.id} id={s.id} className={selectItemClassName}>
                     {s.label}
-                  </option>
+                  </ListBoxItem>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {isIos ? (
@@ -231,38 +234,42 @@ export default function ImportScreen() {
                     value={backupPassword}
                     onChange={setBackupPassword}
                     autoComplete="off"
+                    showPassword={showBackupPassword}
+                    onToggle={() => setShowBackupPassword((v) => !v)}
                   />
                 </StackedField>
 
                 <StackedField label="Attachments">
-                  <select
-                    value={attachmentMedia}
-                    onChange={(e) => setAttachmentMedia(e.target.value as AttachmentMediaMode)}
-                    style={fieldStyle}
+                  <Select
+                    selectedKey={attachmentMedia}
+                    onSelectionChange={(k) => setAttachmentMedia(k as AttachmentMediaMode)}
+                    aria-label="Attachments"
+                    triggerClassName="!bg-bg"
                   >
                     {ATTACHMENT_OPTIONS.map((o) => (
-                      <option key={o.id} value={o.id}>
+                      <ListBoxItem key={o.id} id={o.id} className={selectItemClassName}>
                         {o.label}
-                      </option>
+                      </ListBoxItem>
                     ))}
-                  </select>
+                  </Select>
                   <p style={hintStyle}>{attachmentHelp[attachmentMedia]}</p>
                 </StackedField>
 
                 {showCompress && (
                   <div style={{ marginLeft: "1rem", marginBottom: "1.1rem" }}>
                     <StackedField label="Target resolution">
-                      <select
-                        value={maxResolution}
-                        onChange={(e) => setMaxResolution(e.target.value)}
-                        style={fieldStyle}
+                      <Select
+                        selectedKey={maxResolution}
+                        onSelectionChange={(k) => setMaxResolution(String(k))}
+                        aria-label="Target resolution"
+                        triggerClassName="!bg-bg"
                       >
                         {RESOLUTION_OPTIONS.map((r) => (
-                          <option key={r} value={r}>
+                          <ListBoxItem key={r} id={r} className={selectItemClassName}>
                             {r.replace("p", "")}
-                          </option>
+                          </ListBoxItem>
                         ))}
-                      </select>
+                      </Select>
                       <p style={hintStyle}>
                         Maximum video resolution; videos are not upscaled.
                       </p>
@@ -291,18 +298,19 @@ export default function ImportScreen() {
                 )}
 
                 <StackedField label="Contacts">
-                  <select
-                    value={contactNameMode}
-                    onChange={(e) => setContactNameMode(e.target.value as ContactNameMode)}
-                    style={fieldStyle}
+                  <Select
+                    selectedKey={contactNameMode}
+                    onSelectionChange={(k) => setContactNameMode(k as ContactNameMode)}
+                    aria-label="Contacts"
+                    triggerClassName="!bg-bg"
                   >
-                    <option value="fill_missing">
+                    <ListBoxItem id="fill_missing" className={selectItemClassName}>
                       Fill in missing names using vault contacts
-                    </option>
-                    <option value="overwrite">
+                    </ListBoxItem>
+                    <ListBoxItem id="overwrite" className={selectItemClassName}>
                       Overwrite all import names with vault contacts
-                    </option>
-                  </select>
+                    </ListBoxItem>
+                  </Select>
                 </StackedField>
               </>
             ) : (

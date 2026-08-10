@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
+import TextField from "../components/TextField";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import AuthBackButton from "../components/AuthBackButton";
@@ -10,7 +11,6 @@ import Button from "../components/Button";
 import {
   accentLink,
   authCard,
-  authInput,
   authLabel,
   authTitle,
   mutedText,
@@ -40,6 +40,7 @@ export default function LoginScreen() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
   const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
@@ -155,27 +156,26 @@ export default function LoginScreen() {
   }
 
   return (
-    <div style={pageCenter}>
-      <div style={authCard}>
-        <h1 style={authTitle}>
+    <div className={pageCenter}>
+      <div className={authCard}>
+        <h1 className={authTitle}>
           {authMode === null ? "Message Vault" : "Sign In"}
         </h1>
 
         {authMode === null && (
           <>
-            <label style={authLabel}>Server URL</label>
+            <label className={authLabel}>Server URL</label>
             <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
-              <input
-                type="text"
+              <TextField
                 value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
+                onChange={setServerUrl}
                 onKeyDown={(e) => e.key === "Enter" && detectMode()}
                 placeholder={
                   isTauri()
                     ? "https://vault.example.com"
                     : "Leave blank for this origin"
                 }
-                style={{ ...authInput, flex: 1, width: "auto" }}
+                className="flex-1"
               />
               <Button
                 variant="primary"
@@ -187,7 +187,7 @@ export default function LoginScreen() {
               </Button>
             </div>
             {!isTauri() && (
-              <p style={{ ...mutedText, fontSize: "0.75rem", marginBottom: "1rem" }}>
+              <p className="text-[0.75rem] text-muted mb-4">
                 Leave blank to use this origin (Vite `/v1` proxy or vault-hosted UI).
               </p>
             )}
@@ -201,12 +201,7 @@ export default function LoginScreen() {
                   <span style={orLineStyle} />
                 </div>
                 <p
-                  style={{
-                    ...mutedText,
-                    fontSize: "0.813rem",
-                    textAlign: "center",
-                    margin: "0 0 0.5rem",
-                  }}
+                  className={`${mutedText} text-center mb-2`}
                 >
                   Use offline message tools.
                 </p>
@@ -233,21 +228,21 @@ export default function LoginScreen() {
 
         {authMode === "local" && (
           <>
-            <label style={authLabel}>Username</label>
-            <input
-              type="text"
+            <label className={authLabel}>Username</label>
+            <TextField
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={setUsername}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
-              style={authInput}
               autoComplete="username"
             />
 
-            <label style={{ ...authLabel, marginTop: "0.75rem" }}>Password</label>
+            <label className={`${authLabel} mt-3`}>Password</label>
             <PasswordField
               value={password}
               onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
+              showPassword={showPassword}
+              onToggle={() => setShowPassword((v) => !v)}
             />
 
             <AuthSubmitButton
@@ -263,7 +258,7 @@ export default function LoginScreen() {
                 <span style={orTextStyle}>OR</span>
                 <span style={orLineStyle} />
               </div>
-              <button type="button" onClick={() => navigate("/register")} style={accentLink}>
+              <button type="button" onClick={() => navigate("/register")} className={`${accentLink} block w-full text-center`}>
                 Create an account
               </button>
             </>
@@ -278,14 +273,7 @@ export default function LoginScreen() {
               {hankoApiUrl ? (
                 <hanko-auth />
               ) : (
-                <div
-                  style={{
-                    ...mutedText,
-                    textAlign: "center",
-                    padding: "1rem",
-                    fontSize: "0.875rem",
-                  }}
-                >
+                <div className="text-[0.875rem] text-muted text-center p-4">
                   Hanko API URL not configured on server.
                 </div>
               )}
@@ -315,7 +303,7 @@ function ErrorFooter({ error }: { error: string }) {
       }}
       aria-live="polite"
     >
-      {error || "\u00a0"}
+      {error || " "}
     </div>
   );
 }

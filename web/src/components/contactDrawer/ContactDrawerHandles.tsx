@@ -2,6 +2,7 @@ import { useState } from "react";
 import { apiClient } from "../../lib/api";
 import type { CachedContactDetail } from "../../lib/contactDetailCache";
 import Button from "../Button";
+import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import { inferService, SERVICES } from "./contactDrawerTypes";
 
 export function ContactDrawerHandles({
@@ -72,21 +73,17 @@ export function ContactDrawerHandles({
           alignItems: "center",
         }}
       >
-        <select
-          value={newService}
-          onChange={(e) => setNewService(e.target.value)}
-          style={{
-            padding: "0.375rem 0.5rem",
-            fontSize: "0.813rem",
-            border: "1px solid var(--border)",
-            borderRadius: "4px",
-            width: "110px",
-            backgroundColor: "var(--elevated)",
-            color: "var(--text)",
-          }}
+        <Select
+          selectedKey={newService}
+          onSelectionChange={(k) => setNewService(String(k))}
+          aria-label="Handle service"
+          triggerClassName="!text-[0.813rem]"
+          className="w-[110px] shrink-0"
         >
-          {SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+          {SERVICES.map((s) => (
+            <ListBoxItem key={s} id={s} className={selectItemClassName}>{s}</ListBoxItem>
+          ))}
+        </Select>
         <input
           type="text"
           value={newHandle}

@@ -5,8 +5,8 @@ import { ProfileDangerZone } from "./ProfileDangerZone";
 import { ApiTokensSection } from "./ApiTokensSection";
 import {
   type AccountProfile,
-  inputStyle,
-  sectionTitle,
+  inputClassName,
+  sectionTitleClass,
 } from "./profileStyles";
 
 /** Account settings: username, password, API tokens, danger zone. */
@@ -69,20 +69,20 @@ export function AccountSettingsPanel() {
 
   return (
     <div>
-      <h3 style={sectionTitle}>Username</h3>
+      <h3 className={sectionTitleClass}>Username</h3>
       <div style={{ maxWidth: "360px", marginBottom: "1.5rem" }}>
         <input
           type="text"
           value={profile.username}
           readOnly
+          className={inputClassName}
           style={{
-            ...inputStyle,
             backgroundColor: "var(--elevated)",
             color: "var(--muted)",
           }}
         />
       </div>
-      <h3 style={sectionTitle}>Change Password</h3>
+      <h3 className={sectionTitleClass}>Change Password</h3>
       <div style={{ marginBottom: "1.5rem", maxWidth: "360px" }}>
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
           Current password
@@ -93,7 +93,8 @@ export function AccountSettingsPanel() {
           onChange={(e) => setCurrentPw(e.target.value)}
           autoComplete="current-password"
           disabled={isDemo}
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+          className={inputClassName}
+          style={{ marginBottom: "0.5rem" }}
         />
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
           New password
@@ -104,7 +105,8 @@ export function AccountSettingsPanel() {
           onChange={(e) => setNewPw(e.target.value)}
           autoComplete="new-password"
           disabled={isDemo}
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+          className={inputClassName}
+          style={{ marginBottom: "0.5rem" }}
         />
         <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
           Confirm new password
@@ -115,7 +117,8 @@ export function AccountSettingsPanel() {
           onChange={(e) => setConfirmPw(e.target.value)}
           autoComplete="new-password"
           disabled={isDemo}
-          style={{ ...inputStyle, marginBottom: "0.5rem" }}
+          className={inputClassName}
+          style={{ marginBottom: "0.5rem" }}
         />
         <Button
           variant="primary"

@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import Button from "./Button";
+import TextField from "./TextField";
 
 interface PathPickerProps {
   value: string;
@@ -19,23 +20,18 @@ export default function PathPicker({ value, onChange, directory, placeholder }: 
   };
 
   return (
-    <div style={{ display: "flex", gap: "0.5rem", flex: 1 }}>
-      <input
-        type="text"
+    <div className="flex flex-1 gap-2">
+      <TextField
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={onChange}
         placeholder={placeholder}
-        style={{
-          flex: 1,
-          padding: "0.25rem 0.5rem",
-          fontSize: "0.875rem",
-          background: "var(--bg)",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          borderRadius: "4px",
-        }}
+        className="flex-1"
+        inputClassName="!bg-bg"
       />
-      <Button onClick={browse} style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}>
+      <Button
+        onClick={browse}
+        style={{ padding: "0.25rem 0.75rem", fontSize: "0.813rem" }}
+      >
         Browse
       </Button>
     </div>

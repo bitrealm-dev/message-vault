@@ -7,10 +7,11 @@ import {
   authInput,
   authLabel,
   authTitle,
-  mutedText,
   pageCenter,
 } from "../lib/uiStyles";
 import AuthSubmitButton from "../components/AuthSubmitButton";
+import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
+import TextField from "../components/TextField";
 
 interface HandleInput {
   handle: string;
@@ -77,26 +78,26 @@ export default function OnboardingScreen() {
     displayName.trim() && handles.some((h) => h.handle.trim());
 
   return (
-    <div style={pageCenter}>
-      <div style={authCard}>
-        <h1 style={{ ...authTitle, marginBottom: "0.5rem" }}>Profile Setup</h1>
-        <p style={greetingStyle}>Welcome to the Message Vault!</p>
-        <p style={bodyStyle}>
+    <div className={pageCenter}>
+      <div className={authCard}>
+        <h1 className={`${authTitle} mb-2`}>Profile Setup</h1>
+        <p className={greetingStyle}>Welcome to the Message Vault!</p>
+        <p className={bodyStyle}>
           Set up your profile so we can match imported message data to you.
         </p>
 
-        <label style={authLabel}>Display Name</label>
+        <label className={authLabel}>Display Name</label>
         <input
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="Your name"
-          style={authInput}
+          className={authInput}
           autoFocus
         />
 
-        <label style={{ ...authLabel, marginTop: "1rem" }}>Source Accounts</label>
-        <p style={helpStyle}>
+        <label className={`${authLabel} mt-4`}>Source Accounts</label>
+        <p className={helpStyle}>
           Add the accounts or phone numbers you import data from.
         </p>
 
@@ -105,36 +106,26 @@ export default function OnboardingScreen() {
             key={i}
             style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}
           >
-            <select
-              value={h.service}
-              onChange={(e) => updateHandle(i, "service", e.target.value)}
-              style={{
-                ...authInput,
-                width: "140px",
-                padding: "0.375rem 0.5rem",
-              }}
+            <Select
+              selectedKey={h.service}
+              onSelectionChange={(k) => updateHandle(i, "service", String(k))}
+              className="w-[140px] shrink-0"
             >
               {SERVICES.map((s) => (
-                <option key={s.value} value={s.value}>
+                <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
                   {s.label}
-                </option>
+                </ListBoxItem>
               ))}
-            </select>
-            <input
-              type="text"
+            </Select>
+            <TextField
               value={h.handle}
-              onChange={(e) => updateHandle(i, "handle", e.target.value)}
+              onChange={(v) => updateHandle(i, "handle", v)}
               placeholder={
                 h.service === "email"
                   ? "you@example.com"
                   : "+1 555-123-4567"
               }
-              style={{
-                ...authInput,
-                flex: 1,
-                width: "auto",
-                padding: "0.375rem 0.5rem",
-              }}
+              className="flex-1 min-w-0"
             />
             <button
               type="button"
@@ -172,7 +163,7 @@ export default function OnboardingScreen() {
           {loading ? "Saving…" : "Continue to Vault"}
         </AuthSubmitButton>
 
-        <button type="button" onClick={logout} style={{ ...accentLink, marginTop: "0.75rem" }}>
+        <button type="button" onClick={logout} className={`${accentLink} mt-3 block w-full text-center`}>
           ← Back to login
         </button>
 
@@ -186,30 +177,15 @@ export default function OnboardingScreen() {
           }}
           aria-live="polite"
         >
-          {error || "\u00a0"}
+          {error || " "}
         </div>
       </div>
     </div>
   );
 }
 
-const greetingStyle: React.CSSProperties = {
-  textAlign: "center",
-  color: "var(--text)",
-  fontSize: "0.9375rem",
-  margin: "0 0 0.5rem",
-  fontWeight: 500,
-};
+const greetingStyle = "text-center text-[0.9375rem] font-medium text-text mb-2";
 
-const bodyStyle: React.CSSProperties = {
-  ...mutedText,
-  textAlign: "center",
-  fontSize: "0.875rem",
-  margin: "0 0 1.5rem",
-};
+const bodyStyle = "text-center text-[0.875rem] text-muted mb-6";
 
-const helpStyle: React.CSSProperties = {
-  ...mutedText,
-  fontSize: "0.75rem",
-  marginBottom: "0.5rem",
-};
+const helpStyle = "text-[0.75rem] text-muted mb-2";

@@ -4,7 +4,7 @@ import { apiClient } from "../../lib/api";
 import DeleteAccountDialog from "../../components/DeleteAccountDialog";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import Button from "../../components/Button";
-import { dangerButtonStyle } from "./profileStyles";
+import { dangerButtonClass } from "./profileStyles";
 
 export function ProfileDangerZone({
   isDemo,
@@ -109,7 +109,13 @@ export function ProfileDangerZone({
                 variant="danger"
                 disabled={busy || demoLocked}
                 onClick={() => setConfirmDeleteMessagesOpen(true)}
-                style={dangerButtonStyle}
+                className={dangerButtonClass}
+                style={{
+                  width: "10rem",
+                  flexShrink: 0,
+                  padding: "0.5rem 0.75rem",
+                  fontSize: "0.813rem",
+                }}
                 title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
                 {deletingMessages ? "Deleting…" : "Delete all messages"}
@@ -124,7 +130,13 @@ export function ProfileDangerZone({
                 variant="danger"
                 disabled={busy || demoLocked}
                 onClick={() => setDeleteDialogOpen(true)}
-                style={dangerButtonStyle}
+                className={dangerButtonClass}
+                style={{
+                  width: "10rem",
+                  flexShrink: 0,
+                  padding: "0.5rem 0.75rem",
+                  fontSize: "0.813rem",
+                }}
                 title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
                 Delete account

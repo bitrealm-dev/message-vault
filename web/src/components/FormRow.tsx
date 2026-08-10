@@ -1,15 +1,8 @@
-interface FormRowProps {
-  label: string;
-  children: React.ReactNode;
-}
-
-export default function FormRow({ label, children }: FormRowProps) {
+export default function FormRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: "0.75rem", gap: "0.75rem" }}>
-      <label style={{ width: "140px", flexShrink: 0, fontWeight: 500, fontSize: "0.875rem" }}>
-        {label}
-      </label>
-      <div style={{ flex: 1 }}>{children}</div>
+    <div className="mb-3 flex items-center gap-3">
+      <label className="w-[140px] shrink-0 text-[0.875rem] font-medium text-text">{label}</label>
+      <div className="flex-1">{children}</div>
     </div>
   );
 }

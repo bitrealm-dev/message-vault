@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import Button from "./Button";
+import Select, { ListBoxItem, selectItemClassName } from "./Select";
 
 export type AdvancedSearchMode = "messages" | "contacts";
 
@@ -108,15 +109,16 @@ export default function AdvancedSearchForm({
           </div>
           <div>
             <label style={labelStyle}>Conversation type</label>
-            <select
-              style={inputStyle}
-              value={msgType}
-              onChange={(e) => setMsgType(e.target.value as "all" | "direct" | "group")}
+            <Select
+              selectedKey={msgType}
+              onSelectionChange={(k) => setMsgType(k as "all" | "direct" | "group")}
+              aria-label="Conversation type"
+              triggerClassName="!bg-bg"
             >
-              <option value="all">All</option>
-              <option value="direct">Direct</option>
-              <option value="group">Group</option>
-            </select>
+              <ListBoxItem id="all" className={selectItemClassName}>All</ListBoxItem>
+              <ListBoxItem id="direct" className={selectItemClassName}>Direct</ListBoxItem>
+              <ListBoxItem id="group" className={selectItemClassName}>Group</ListBoxItem>
+            </Select>
           </div>
           <CountField
             label="Group participants"
@@ -173,23 +175,23 @@ function CountField({
     <div>
       <label style={labelStyle}>{label}</label>
       <div style={{ display: "grid", gridTemplateColumns: "7rem minmax(0, 1fr)", gap: "0.375rem" }}>
-        <select
-          style={inputStyle}
-          value={value.comparator}
+        <Select
+          selectedKey={value.comparator}
           aria-label={`${label} comparison`}
-          onChange={(e) => {
-            const comparator = e.target.value as CountComparator | "any";
+          triggerClassName="!bg-bg"
+          onSelectionChange={(k) => {
+            const comparator = k as CountComparator | "any";
             onChange({
               comparator,
               value: comparator === "any" ? "" : value.value,
             });
           }}
         >
-          <option value="any">Any</option>
-          <option value="=">Equal to</option>
-          <option value=">">More than</option>
-          <option value="<">Less than</option>
-        </select>
+          <ListBoxItem id="any" className={selectItemClassName}>Any</ListBoxItem>
+          <ListBoxItem id="=" className={selectItemClassName}>Equal to</ListBoxItem>
+          <ListBoxItem id=">" className={selectItemClassName}>More than</ListBoxItem>
+          <ListBoxItem id="<" className={selectItemClassName}>Less than</ListBoxItem>
+        </Select>
         <input
           type="number"
           min={0}
