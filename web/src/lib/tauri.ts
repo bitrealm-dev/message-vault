@@ -44,6 +44,7 @@ export interface PushConfig {
   input_dir: string;
   mode: string;
   force: boolean;
+  continue_on_error: boolean;
   skip_attachments: boolean;
   trust_export: boolean;
   contact_name_mode?: string;
@@ -57,6 +58,7 @@ export async function invokePush(config: PushConfig): Promise<void> {
     inputDir: config.input_dir,
     mode: config.mode,
     force: config.force,
+    continueOnError: config.continue_on_error,
     skipAttachments: config.skip_attachments,
     trustExport: config.trust_export,
     contactNameMode: config.contact_name_mode ?? "fill_missing",
@@ -118,4 +120,36 @@ export function onExtractEvents(callbacks: {
       unlisteners.forEach((u) => u());
     };
   });
+}
+
+/**
+ * Run a Tauri job that streams `extract:*` events. Subscribes before invoke,
+ * resolves on `extract:finished`, rejects on `extract:error` or invoke failure.
+ * Extract/push commands return as soon as the background thread starts, so
+ * callers must use this (not bare `await invoke…`) to wait for completion.
+ */
+export async function awaitTauriJob(
+  invokeFn: () => Promise<void>,
+  onLog?: (line: string) => void,
+): Promise<string> {
+  let unlisten: UnlistenFn | undefined;
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      void (async () => {
+        try {
+          unlisten = await onExtractEvents({
+            onLog: (line) => onLog?.(line),
+            onFinished: resolve,
+            onError: (err) =>
+              reject(new Error(err.user_message ?? err.detail)),
+          });
+          await invokeFn();
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      })();
+    });
+  } finally {
+    unlisten?.();
+  }
 }

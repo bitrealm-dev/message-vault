@@ -32,9 +32,9 @@ export component BackupAccountPage inherits AnchoredScrollPage {
         message: "Include the port when needed (local serve is usually http://127.0.0.1:8080).";
     }
     LabeledLineEdit {
-        label: "API Key";
+        label: "API token";
         password: true;
-        placeholder: "Generated in Vault Settings";
+        placeholder: "mv-api-… from Vault Settings → Account";
         value <=> BackupAccountAdapter.key;
     }
     LabeledPathField {

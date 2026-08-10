@@ -32,8 +32,8 @@ use crate::state::{self, AppState};
 use crate::sync;
 
 /// When true, Run actions log a stub message instead of calling exporters / vault CLIs.
-/// Flip to false to re-enable real job dispatch.
-const STUB_JOBS: bool = true;
+/// Keep false so Verify / Import / Export call the real vault libraries.
+const STUB_JOBS: bool = false;
 
 /// Optional action after a job finishes successfully.
 #[derive(Clone)]
@@ -372,7 +372,7 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
             errors.push("Enter the URL for your Message Vault.".into());
         }
         if key.is_empty() {
-            errors.push("Enter your Message Vault API key.".into());
+            errors.push("Enter your Message Vault API token.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -385,7 +385,7 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
                 &ui,
                 &mut st,
                 vec![
-                    "Could not save your Vault URL and API key. Check that the app can write to its settings folder.".into(),
+                    "Could not save your Vault URL and API token. Check that the app can write to its settings folder.".into(),
                 ],
             );
             return;
@@ -440,7 +440,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             errors.push("Enter the URL for your Message Vault.".into());
         }
         if key.is_empty() {
-            errors.push("Enter your Message Vault API key.".into());
+            errors.push("Enter your Message Vault API token.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -453,7 +453,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
                 &ui,
                 &mut st,
                 vec![
-                    "Could not save your Vault URL and API key. Check that the app can write to its settings folder.".into(),
+                    "Could not save your Vault URL and API token. Check that the app can write to its settings folder.".into(),
                 ],
             );
             return;
@@ -511,7 +511,7 @@ pub(crate) fn start_vault_export_query(
             errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
         }
         if key.is_empty() {
-            errors.push("Vault key is required. Open Credentials or Vault Import and set it.".into());
+            errors.push("API token is required. Open Credentials or Vault Import and set it.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -628,7 +628,7 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
             errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
         }
         if key.is_empty() {
-            errors.push("Vault key is required. Open Credentials or Vault Import and set it.".into());
+            errors.push("API token is required. Open Credentials or Vault Import and set it.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -749,7 +749,7 @@ pub(crate) fn start_account_backup(
             errors.push("Vault URL is required.".into());
         }
         if key.is_empty() {
-            errors.push("API Key is required.".into());
+            errors.push("API token is required.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -894,7 +894,7 @@ pub(crate) fn start_vault_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
             errors.push("Vault URL is required.".into());
         }
         if key.is_empty() {
-            errors.push("Vault key is required.".into());
+            errors.push("API token is required.".into());
         }
         if input.is_empty() {
             errors.push("Input directory is required.".into());
@@ -959,7 +959,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             errors.push("Vault URL is required. Go back and verify credentials.".into());
         }
         if key.is_empty() {
-            errors.push("API Key is required. Go back and verify credentials.".into());
+            errors.push("API token is required. Go back and verify credentials.".into());
         }
         if is_archive {
             if archive.is_empty() {

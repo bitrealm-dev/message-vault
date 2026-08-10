@@ -22,7 +22,7 @@ export global VaultAdapter {
 
 export component VaultPage inherits AnchoredScrollPage {
     PageSummary {
-        message: "Import a JSONL archive into Message Vault using an Import API token.";
+        message: "Import a JSONL archive into Message Vault using an API token from Settings → Account.";
     }
 
     LabeledLineEdit {
@@ -35,9 +35,9 @@ export component VaultPage inherits AnchoredScrollPage {
         message: "Include the port when needed (local serve is usually http://127.0.0.1:8080). Hosted TLS can omit it (https://app.bitrealm.dev).";
     }
     LabeledLineEdit {
-        label: "Vault key";
+        label: "API token";
         required: true;
-        placeholder: "Import API token from Vault Settings";
+        placeholder: "mv-api-… from Vault Settings → Account";
         password: true;
         value <=> VaultAdapter.key;
     }

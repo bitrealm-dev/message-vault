@@ -4,9 +4,10 @@ Desktop GUI built with [Slint](https://slint.dev). Same exporter libraries and
 `export.ini` as the rest of the workspace.
 
 Restored on branch `restore-slint-gui` from the last pre-Tauri tree. Home →
-**Extract Messages** opens the full exporter form (all seven sources). Job
-dispatch is stubbed by default (`STUB_JOBS` in `src/start.rs`) so Run logs a
-placeholder instead of calling exporters or vault clients.
+**Extract Messages** opens the full exporter form (all seven sources). Vault
+Import / Export authenticate with a named API token (`mv-api-…` from the vault
+web UI under Settings → Account) via `GET /v1/auth/check`, then call
+`vault-push` / `vault-pull` as libraries.
 
 ## Run in development
 

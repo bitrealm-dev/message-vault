@@ -226,6 +226,16 @@ textarea::placeholder {
   opacity: 0.85;
 }
 
+/* Hide native calendar affordance; Import DateField uses an explicit button. */
+input.mv-date-field::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  width: 2.25rem;
+  height: 100%;
+  cursor: pointer;
+}
+
 /* Prefer <Button> (all:unset) for solid CTAs — WebKit/Tauri often ignores
    native button backgrounds while still applying text color. */
 button {

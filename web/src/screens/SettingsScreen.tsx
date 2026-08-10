@@ -2,14 +2,16 @@ import { useState } from "react";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
 import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
+import { SystemSection } from "./settings/SystemSection";
 import { AppearanceSection } from "./settings/AppearanceSection";
 
-type SettingsTab = "account" | "profile" | "storage" | "appearance";
+type SettingsTab = "account" | "profile" | "storage" | "system" | "appearance";
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "account", label: "Account" },
   { id: "profile", label: "Profile" },
   { id: "storage", label: "Storage" },
+  { id: "system", label: "System" },
   { id: "appearance", label: "Appearance" },
 ];
 
@@ -21,7 +23,7 @@ export default function SettingsScreen() {
       <header style={{ marginBottom: "1.5rem" }}>
         <h2 style={{ margin: 0, color: "var(--text)" }}>Settings</h2>
         <p style={{ margin: "0.35rem 0 0", fontSize: "0.875rem", color: "var(--muted)" }}>
-          Manage your account, profile, storage, and appearance.
+          Manage your account, profile, storage, system, and appearance.
         </p>
         <nav
           aria-label="Settings sections"
@@ -75,6 +77,7 @@ export default function SettingsScreen() {
       {tab === "account" && <AccountSettingsPanel />}
       {tab === "profile" && <ProfileSettingsPanel />}
       {tab === "storage" && <StorageSection />}
+      {tab === "system" && <SystemSection />}
       {tab === "appearance" && <AppearanceSection />}
     </div>
   );

@@ -133,8 +133,8 @@ cargo run -p message-vault-io-gui
 3. **Format:** format a prior Message Vault output (`message-reexporter`) —
    input dir, output dir, output format, attachments, obfuscate. Input format is
    auto-detected.
-4. **Vault:** import a JSONL export folder into Message Vault — URL, vault key
-   (Import API token), input dir, continue-on-error / force.
+4. **Vault:** import a JSONL export folder into Message Vault — URL, API token
+   (`mv-api-…` from Settings → Account), input dir, continue-on-error / force.
 5. **Contacts:** contacts file, USA numbers checkbox, Check / Update / Cancel
 6. Shared run log (Log tab)
 
@@ -206,7 +206,7 @@ Top tab. Two-step workflow after Extract Messages: push message-ir v3 JSONL +
 | Control | Type | Required | Notes |
 |---------|------|:--------:|-------|
 | Vault URL | text | yes | Full origin including port when needed, e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`. |
-| Vault key | text | yes | Import API token from Vault Settings; saved to `export.ini` as `[vault] key` (plain text). On Linux/macOS the file is written mode `0600` (owner read/write only). |
+| Vault key (`[vault] key`) | text | yes | Named API token (`mv-api-…`) from Vault Settings → Account; saved to `export.ini` as `[vault] key` (plain text). On Linux/macOS the file is written mode `0600` (owner read/write only). |
 | Input directory | folder | yes | JSONL export folder (prefills from last Extract Messages output when empty) |
 | Continue on error | checkbox | no | Default on |
 | Force reprocessing | checkbox | no | Ignore `.vault-import-state.jsonl` for this run (see below) |

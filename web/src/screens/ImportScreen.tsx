@@ -1,9 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
-import { invokeExtract, invokeCancel } from "../lib/tauri";
+import { invokeExtract, invokeCancel, invokePush, awaitTauriJob } from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import { EXPORT_SOURCES } from "../lib/exportSources";
+import {
+  getRememberImporterPaths,
+  getImporterPath,
+  setImporterPath,
+  resolveImportStagingDir,
+} from "../lib/system-settings";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
@@ -17,6 +23,7 @@ import {
   sectionGap,
   StackedField,
   CollapsibleSection,
+  DateField,
 } from "./import/ImportFormUi";
 
 interface ImportStep {
@@ -25,10 +32,14 @@ interface ImportStep {
   detail?: string;
 }
 
+const DEFAULT_SOURCE = "imessage-ios";
+
 export default function ImportScreen() {
   const { token } = useAuth();
-  const [source, setSource] = useState("imessage-ios");
-  const [backupPath, setBackupPath] = useState("");
+  const [source, setSource] = useState(DEFAULT_SOURCE);
+  const [backupPath, setBackupPath] = useState(() =>
+    getRememberImporterPaths() ? getImporterPath(DEFAULT_SOURCE) : "",
+  );
   const [backupPassword, setBackupPassword] = useState("");
   const [attachmentMedia, setAttachmentMedia] = useState<AttachmentMediaMode>("copy");
   const [maxResolution, setMaxResolution] = useState("720p");
@@ -36,11 +47,13 @@ export default function ImportScreen() {
   const [minSizeMb, setMinSizeMb] = useState("20");
   const [contactNameMode, setContactNameMode] = useState<ContactNameMode>("fill_missing");
   const [formatOpen, setFormatOpen] = useState(true);
-  const [optionsOpen, setOptionsOpen] = useState(true);
   const [filteringOpen, setFilteringOpen] = useState(false);
+  const [processingOpen, setProcessingOpen] = useState(false);
   const [conversationFilter, setConversationFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [continueOnError, setContinueOnError] = useState(true);
+  const [force, setForce] = useState(false);
   const [obfuscate, setObfuscate] = useState(false);
 
   const [running, setRunning] = useState(false);
@@ -54,14 +67,35 @@ export default function ImportScreen() {
   const [summary, setSummary] = useState("");
   const [phase, setPhase] = useState<"form" | "progress" | "done">("form");
 
+  useEffect(() => {
+    if (!getRememberImporterPaths()) return;
+    setBackupPath(getImporterPath(source));
+  }, [source]);
+
+  const updateBackupPath = (path: string) => {
+    setBackupPath(path);
+    if (getRememberImporterPaths()) setImporterPath(source, path);
+  };
+
   const isIos = source === "imessage-ios";
   const showCompress = isIos && attachmentMedia === "compress";
+  const attachmentHelp: Record<AttachmentMediaMode, string> = {
+    copy: "Copy all files as is",
+    convert: "Convert all files to common formats (.jpg, .mp4, .mp3) at high quality",
+    compress: "Re-encodes for smaller file size at the expense of some quality",
+    skip: "Do not copy files",
+  };
+
+  const appendLog = (line: string) => {
+    setLog((prev) => [...prev, line]);
+  };
 
   const startImport = async () => {
     if (!isTauri()) return;
     setRunning(true);
     setPhase("progress");
     setLog([]);
+    setShowDetails(true);
     setSteps([
       { label: "Parse backup", status: "active", detail: "Parsing backup…" },
       { label: "Convert attachments", status: "pending" },
@@ -69,76 +103,78 @@ export default function ImportScreen() {
     ]);
 
     try {
-      const outputDir = `${backupPath}/../extract-output`;
-      await invokeExtract({
-        source,
-        path: backupPath,
-        output_dir: outputDir,
-        ...(isIos
-          ? {
-              backup_password: backupPassword || undefined,
-              attachment_media: attachmentMedia,
-              media_max_resolution: maxResolution,
-              media_max_fps: maxFps,
-              media_min_size: `${minSizeMb.trim() || "20"}M`,
-              conversation_filter: conversationFilter || undefined,
-              start_date: startDate || undefined,
-              end_date: endDate || undefined,
-              obfuscate,
-            }
-          : {}),
-      });
+      const outputDir = resolveImportStagingDir(backupPath, source);
+      const baseUrl = getBaseUrl();
+      if (!token) throw new Error("Not authenticated");
+
+      // extract/push return when the background thread starts — wait for events.
+      const extractSummary = await awaitTauriJob(
+        () =>
+          invokeExtract({
+            source,
+            path: backupPath,
+            output_dir: outputDir,
+            ...(isIos
+              ? {
+                  backup_password: backupPassword || undefined,
+                  attachment_media: attachmentMedia,
+                  media_max_resolution: maxResolution,
+                  media_max_fps: maxFps,
+                  media_min_size: `${minSizeMb.trim() || "20"}M`,
+                  conversation_filter: conversationFilter || undefined,
+                  start_date: startDate || undefined,
+                  end_date: endDate || undefined,
+                  obfuscate,
+                }
+              : {}),
+          }),
+        appendLog,
+      );
+      appendLog(extractSummary);
 
       setSteps((s) =>
         s.map((step, i) =>
           i === 0
             ? { ...step, status: "done", detail: "Extraction complete" }
             : i === 1
-              ? { ...step, status: "active", detail: "Processing attachments…" }
-              : step
-        )
+              ? { ...step, status: "done", detail: "Attachments processed" }
+              : { ...step, status: "active", detail: "Uploading to vault…" },
+        ),
       );
-      setSteps((s) =>
-        s.map((step, i) =>
-          i === 1
-            ? { ...step, status: "done", detail: "Attachments processed" }
-            : i === 2
-              ? { ...step, status: "active", detail: "Uploading to vault…" }
-              : step
-        )
-      );
-
-      const baseUrl = getBaseUrl();
-      if (!token) throw new Error("Not authenticated");
 
       const importSession = await apiClient.post<{ id: string }>("/v1/imports", {
         source,
         tool: "message-vault-io",
-        mode: "push",
+        mode: "append",
       });
 
-      const { invokePush } = await import("../lib/tauri");
-      await invokePush({
-        base_url: baseUrl,
-        username: "",
-        key: token,
-        input_dir: outputDir,
-        mode: "import",
-        force: false,
-        skip_attachments: false,
-        trust_export: false,
-        contact_name_mode: contactNameMode,
-      });
+      const pushSummary = await awaitTauriJob(
+        () =>
+          invokePush({
+            base_url: baseUrl,
+            username: "",
+            key: token,
+            input_dir: outputDir,
+            mode: "append",
+            force,
+            continue_on_error: continueOnError,
+            skip_attachments: false,
+            trust_export: false,
+            contact_name_mode: contactNameMode,
+          }),
+        appendLog,
+      );
+      appendLog(pushSummary);
 
       await apiClient.post(`/v1/imports/${importSession.id}/complete`, {});
 
       setSteps((s) =>
         s.map((step, i) =>
-          i === 2 ? { ...step, status: "done", detail: "Upload complete" } : step
-        )
+          i === 2 ? { ...step, status: "done", detail: "Upload complete" } : step,
+        ),
       );
       setPhase("done");
-      setSummary("Import complete. Messages uploaded to vault.");
+      setSummary(pushSummary || "Import complete. Messages uploaded to vault.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setSteps((s) => s.map((step) => ({ ...step, status: "error" as const })));
@@ -161,7 +197,7 @@ export default function ImportScreen() {
           </p>
 
           <CollapsibleSection
-            title="Import Format"
+            title="Import Messages"
             open={formatOpen}
             onToggle={() => setFormatOpen((o) => !o)}
           >
@@ -184,7 +220,7 @@ export default function ImportScreen() {
                 <StackedField label="iPhone Backup Directory">
                   <PathPicker
                     value={backupPath}
-                    onChange={setBackupPath}
+                    onChange={updateBackupPath}
                     directory
                     placeholder="Path to the root of a device backup"
                   />
@@ -197,22 +233,8 @@ export default function ImportScreen() {
                     autoComplete="off"
                   />
                 </StackedField>
-              </>
-            ) : (
-              <StackedField label="Backup path">
-                <PathPicker value={backupPath} onChange={setBackupPath} directory />
-              </StackedField>
-            )}
-          </CollapsibleSection>
 
-          {isIos && (
-            <>
-              <CollapsibleSection
-                title="Import Options"
-                open={optionsOpen}
-                onToggle={() => setOptionsOpen((o) => !o)}
-              >
-                <StackedField label="Message Attachments">
+                <StackedField label="Attachments">
                   <select
                     value={attachmentMedia}
                     onChange={(e) => setAttachmentMedia(e.target.value as AttachmentMediaMode)}
@@ -224,6 +246,7 @@ export default function ImportScreen() {
                       </option>
                     ))}
                   </select>
+                  <p style={hintStyle}>{attachmentHelp[attachmentMedia]}</p>
                 </StackedField>
 
                 {showCompress && (
@@ -240,6 +263,9 @@ export default function ImportScreen() {
                           </option>
                         ))}
                       </select>
+                      <p style={hintStyle}>
+                        Maximum video resolution; videos are not upscaled.
+                      </p>
                     </StackedField>
                     <StackedField label="Max FPS">
                       <input
@@ -248,14 +274,18 @@ export default function ImportScreen() {
                         onChange={(e) => setMaxFps(e.target.value)}
                         style={fieldStyle}
                       />
+                      <p style={hintStyle}>
+                        Maximum video frame rate; videos are not upscaled to this FPS.
+                      </p>
                     </StackedField>
-                    <StackedField label="Minimum file size (MB)">
+                    <StackedField label="Minimum Video File Size (Megabytes)">
                       <input
                         type="text"
                         value={minSizeMb}
                         onChange={(e) => setMinSizeMb(e.target.value)}
                         style={fieldStyle}
                       />
+                      <p style={hintStyle}>Only re-encode videos above this size.</p>
                     </StackedField>
                   </div>
                 )}
@@ -274,76 +304,107 @@ export default function ImportScreen() {
                     </option>
                   </select>
                 </StackedField>
-              </CollapsibleSection>
+              </>
+            ) : (
+              <StackedField label="Backup path">
+                <PathPicker value={backupPath} onChange={updateBackupPath} directory />
+              </StackedField>
+            )}
+          </CollapsibleSection>
 
-              <CollapsibleSection
-                title="Message Filtering"
-                open={filteringOpen}
-                onToggle={() => setFilteringOpen((o) => !o)}
+          {isIos && (
+            <CollapsibleSection
+              title="Message Filtering"
+              open={filteringOpen}
+              onToggle={() => setFilteringOpen((o) => !o)}
+            >
+              <StackedField label="Participant Filtering">
+                <input
+                  type="text"
+                  value={conversationFilter}
+                  onChange={(e) => setConversationFilter(e.target.value)}
+                  placeholder="Comma separate list of names and number"
+                  style={fieldStyle}
+                />
+                <p style={hintStyle}>
+                  Only conversations with the specified participants are imported, including
+                  group conversations.
+                </p>
+              </StackedField>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0.75rem",
+                  marginBottom: "1.1rem",
+                  flexWrap: "wrap",
+                }}
               >
-                <StackedField label="Participant Filtering">
-                  <input
-                    type="text"
-                    value={conversationFilter}
-                    onChange={(e) => setConversationFilter(e.target.value)}
-                    placeholder="Comma separate list of names and number"
-                    style={fieldStyle}
-                  />
-                  <p style={hintStyle}>
-                    Only conversations with the specified participants are exported, including
-                    group conversations.
-                  </p>
-                </StackedField>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "0.75rem",
-                    marginBottom: "1.1rem",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
-                    <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 500, marginBottom: "0.35rem" }}>
-                      Start Date
-                    </label>
-                    <input
-                      type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </div>
-                  <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
-                    <label style={{ display: "block", fontSize: "0.875rem", fontWeight: 500, marginBottom: "0.35rem" }}>
-                      End Date (exclusive)
-                    </label>
-                    <input
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      style={fieldStyle}
-                    />
-                  </div>
-                </div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    fontSize: "0.875rem",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={obfuscate}
-                    onChange={(e) => setObfuscate(e.target.checked)}
-                  />
-                  Obfuscate - All message data is anonymized.
-                </label>
-              </CollapsibleSection>
-            </>
+                <DateField label="Start Date" value={startDate} onChange={setStartDate} />
+                <DateField
+                  label="End Date (exclusive)"
+                  value={endDate}
+                  onChange={setEndDate}
+                />
+              </div>
+            </CollapsibleSection>
           )}
+
+          <CollapsibleSection
+            title="Processing Options (Advanced)"
+            open={processingOpen}
+            onToggle={() => setProcessingOpen((o) => !o)}
+          >
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                fontSize: "0.875rem",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={continueOnError}
+                onChange={(e) => setContinueOnError(e.target.checked)}
+              />
+              Continue importing after failed message conversion (default)
+            </label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                fontSize: "0.875rem",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+              />
+              Force reprocessing
+            </label>
+            {isIos ? (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  fontSize: "0.875rem",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={obfuscate}
+                  onChange={(e) => setObfuscate(e.target.checked)}
+                />
+                Obfuscate - All message data is anonymized.
+              </label>
+            ) : null}
+          </CollapsibleSection>
 
           <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.5rem" }}>
             <Button
@@ -364,10 +425,24 @@ export default function ImportScreen() {
             Import Messages
           </h1>
           <StepProgress steps={steps} />
-          <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem" }}>
+          <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem", alignItems: "center" }}>
             {running && (
               <Button onClick={() => invokeCancel()}>
                 Cancel
+              </Button>
+            )}
+            {!running && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setPhase("form");
+                  setSummary("");
+                  setLog([]);
+                  setShowDetails(false);
+                }}
+                style={{ fontSize: "0.875rem", padding: "0.35rem 0.75rem" }}
+              >
+                ← Back
               </Button>
             )}
             <Button
