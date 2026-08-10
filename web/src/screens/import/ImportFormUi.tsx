@@ -1,4 +1,24 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { parseDate } from "@internationalized/date";
+import {
+  Button,
+  Calendar,
+  CalendarCell,
+  CalendarGrid,
+  CalendarGridBody,
+  CalendarGridHeader,
+  CalendarHeaderCell,
+  CalendarHeading,
+  DateInput,
+  DatePicker,
+  DateSegment,
+  Dialog,
+  Disclosure,
+  DisclosurePanel,
+  Group,
+  Label,
+  Popover,
+} from "react-aria-components";
 import type { AttachmentMediaMode } from "../../lib/types";
 
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [
@@ -21,13 +41,6 @@ export const fieldStyle: CSSProperties = {
   color: "var(--text)",
 };
 
-export const labelStyle: CSSProperties = {
-  display: "block",
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  marginBottom: "0.35rem",
-};
-
 export const hintStyle: CSSProperties = {
   fontSize: "0.75rem",
   color: "var(--muted)",
@@ -35,24 +48,6 @@ export const hintStyle: CSSProperties = {
 };
 
 export const sectionGap: CSSProperties = { marginBottom: "1.1rem" };
-
-export const collapsibleHeaderStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "0.5rem",
-  width: "100%",
-  padding: "0.35rem 0 0.5rem",
-  margin: 0,
-  border: "none",
-  borderBottom: "1px solid var(--border)",
-  borderRadius: 0,
-  background: "transparent",
-  fontSize: "0.9375rem",
-  fontWeight: 600,
-  color: "var(--text)",
-  cursor: "pointer",
-  textAlign: "left",
-};
 
 function CalendarIcon() {
   return (
@@ -75,43 +70,12 @@ function CalendarIcon() {
   );
 }
 
-/** Format typed digits as mm/dd/yyyy with slashes kept. */
-export function formatMmDdYyyyInput(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-}
-
-/** `YYYY-MM-DD` → `mm/dd/yyyy`. */
-export function isoToDisplay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
-  if (!m) return "";
-  return `${m[2]}/${m[3]}/${m[1]}`;
-}
-
-/** `mm/dd/yyyy` → `YYYY-MM-DD`, or null if incomplete/invalid. */
-export function displayToIso(display: string): string | null {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(display.trim());
-  if (!m) return null;
-  const month = Number(m[1]);
-  const day = Number(m[2]);
-  const year = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1000) return null;
-  const dt = new Date(year, month - 1, day);
-  if (
-    dt.getFullYear() !== year ||
-    dt.getMonth() !== month - 1 ||
-    dt.getDate() !== day
-  ) {
-    return null;
-  }
-  return `${String(year).padStart(4, "0")}-${m[1]}-${m[2]}`;
-}
-
 /**
- * Text field for typing mm/dd/yyyy (slashes auto-inserted) plus a calendar
- * button that opens a native date picker. Parent value is ISO YYYY-MM-DD or "".
+ * Date field backed by React Aria's DatePicker + Calendar. Parent value is an
+ * ISO YYYY-MM-DD string (or "" for no date); typed and picked dates convert
+ * via @internationalized/date. Typing a date works segment-by-segment
+ * (slashes are handled by the segments), and the calendar icon opens a
+ * popover calendar.
  */
 export function DateField({
   label,
@@ -122,106 +86,78 @@ export function DateField({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const pickerRef = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState(() => (value ? isoToDisplay(value) : ""));
-
-  useEffect(() => {
-    const next = value ? isoToDisplay(value) : "";
-    setText((prev) => {
-      const prevIso = displayToIso(prev);
-      if (value && prevIso === value) return prev;
-      if (!value && prev === "") return prev;
-      if (!value && displayToIso(prev) === null && prev !== "") return prev;
-      return next;
-    });
-  }, [value]);
-
-  const commitText = (next: string) => {
-    setText(next);
-    if (next === "") {
-      onChange("");
-      return;
-    }
-    const iso = displayToIso(next);
-    if (iso) onChange(iso);
-    else if (value) onChange("");
-  };
-
-  const openPicker = () => {
-    const el = pickerRef.current;
-    if (!el) return;
-    try {
-      el.showPicker();
-    } catch {
-      el.focus();
-      el.click();
-    }
-  };
+  // parseDate throws on malformed input; parent state is only ever "" or a
+  // valid ISO date written by this component, so guard anyway.
+  const calendarValue = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? parseDate(value) : null;
 
   return (
     <div style={{ flex: "1 1 12rem", minWidth: "10rem" }}>
-      <label style={{ ...labelStyle, marginBottom: "0.35rem" }}>{label}</label>
-      <div style={{ position: "relative" }}>
-        <input
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="mm/dd/yyyy"
-          value={text}
-          onChange={(e) => commitText(formatMmDdYyyyInput(e.target.value))}
-          style={{
-            ...fieldStyle,
-            paddingRight: "2.25rem",
-          }}
-        />
-        <input
-          ref={pickerRef}
-          type="date"
-          value={value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ""}
-          onChange={(e) => {
-            const iso = e.target.value;
-            onChange(iso);
-            setText(iso ? isoToDisplay(iso) : "");
-          }}
-          className="mv-date-field"
-          tabIndex={-1}
-          aria-hidden
-          style={{
-            position: "absolute",
-            width: 1,
-            height: 1,
-            opacity: 0,
-            pointerEvents: "none",
-            overflow: "hidden",
-            clip: "rect(0 0 0 0)",
-          }}
-        />
-        <button
-          type="button"
-          onClick={openPicker}
-          title="Pick a date"
-          aria-label={`Pick ${label}`}
-          style={{
-            position: "absolute",
-            right: "0.25rem",
-            top: "50%",
-            transform: "translateY(-50%)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "1.75rem",
-            height: "1.75rem",
-            padding: 0,
-            border: "none",
-            borderRadius: "4px",
-            background: "transparent",
-            color: "var(--muted)",
-            cursor: "pointer",
-          }}
-        >
-          <CalendarIcon />
-        </button>
-      </div>
+      <DatePicker
+        value={calendarValue}
+        onChange={(date) => onChange(date ? date.toString() : "")}
+      >
+        <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>
+        <Group className="flex items-center rounded border border-border bg-elevated px-2 py-1.5 focus-within:border-accent">
+          <DateInput className="flex flex-1 outline-none">
+            {(segment) => (
+              <DateSegment
+                segment={segment}
+                className="rounded-sm px-0.5 text-[0.875rem] text-text outline-none data-[placeholder]:text-muted focus:bg-accent focus:text-sent-text"
+              />
+            )}
+          </DateInput>
+          <Button
+            aria-label={`Pick ${label}`}
+            className="ml-1 flex shrink-0 items-center justify-center rounded border-0 bg-transparent p-0.5 text-muted outline-none hover:text-accent"
+          >
+            <CalendarIcon />
+          </Button>
+        </Group>
+        <Popover className="z-[100] rounded-md border border-border bg-popover p-2 shadow-md outline-none">
+          <Dialog className="outline-none">
+            <Calendar className="outline-none">
+              <div className="flex items-center justify-between pb-2">
+                <Button
+                  slot="previous"
+                  className="flex h-6 w-6 items-center justify-center rounded border-0 bg-transparent text-muted outline-none hover:text-accent"
+                >
+                  ‹
+                </Button>
+                <CalendarHeading className="text-[0.875rem] font-medium text-text" />
+                <Button
+                  slot="next"
+                  className="flex h-6 w-6 items-center justify-center rounded border-0 bg-transparent text-muted outline-none hover:text-accent"
+                >
+                  ›
+                </Button>
+              </div>
+              <CalendarGrid className="border-separate border-spacing-1">
+                <CalendarGridHeader>
+                  {(day) => (
+                    <CalendarHeaderCell className="px-1 pb-1 text-center text-[0.75rem] text-muted">
+                      {day}
+                    </CalendarHeaderCell>
+                  )}
+                </CalendarGridHeader>
+                <CalendarGridBody>
+                  {(date) => (
+                    <CalendarCell
+                      date={date}
+                      className={({ isHovered, isPressed, isSelected, isFocused, isDisabled, isOutsideMonth }) =>
+                        "flex h-8 w-8 items-center justify-center rounded text-[0.875rem] outline-none " +
+                        (isOutsideMonth || isDisabled ? "text-muted opacity-50" : "text-text") +
+                        (isHovered || isPressed ? " bg-hover" : "") +
+                        (isSelected ? " bg-accent text-sent-text" : "") +
+                        (isFocused ? " ring-1 ring-accent ring-inset" : "")
+                      }
+                    />
+                  )}
+                </CalendarGridBody>
+              </CalendarGrid>
+            </Calendar>
+          </Dialog>
+        </Popover>
+      </DatePicker>
     </div>
   );
 }
@@ -238,7 +174,7 @@ export function StackedField({
   return (
     <div style={sectionGap}>
       <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem" }}>
-        <label style={{ ...labelStyle, flex: 1, marginBottom: "0.35rem" }}>{label}</label>
+        <Label className="mb-1 block flex-1 text-[0.875rem] font-medium text-text">{label}</Label>
         {trailing}
       </div>
       {children}
@@ -258,26 +194,28 @@ export function CollapsibleSection({
   children: ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: open ? "0.75rem" : "1.25rem" }}>
-      <button type="button" onClick={onToggle} style={collapsibleHeaderStyle} aria-expanded={open}>
-        <span
-          style={{
-            display: "inline-block",
-            transform: open ? "rotate(90deg)" : "none",
-            transition: "transform 0.15s ease",
-            fontSize: "0.75rem",
-            color: "var(--muted)",
-            lineHeight: 1,
-          }}
-          aria-hidden
-        >
-          ▶
-        </span>
-        <span>{title}</span>
-      </button>
-      {open ? (
-        <div style={{ marginTop: "0.75rem", marginLeft: "0.75rem" }}>{children}</div>
-      ) : null}
-    </div>
+    <Disclosure
+      isExpanded={open}
+      onExpandedChange={onToggle}
+      className={`block ${open ? "mb-3" : "mb-5"}`}
+    >
+      {({ isExpanded }) => (
+        <>
+          <Button
+            slot="trigger"
+            className="flex w-full cursor-pointer items-center gap-2 rounded-none border-0 border-b border-border bg-transparent p-0 pb-2 pt-1 text-left text-[0.9375rem] font-semibold text-text outline-none hover:text-accent"
+          >
+            <span
+              aria-hidden
+              className={`inline-block text-[0.75rem] leading-none text-muted transition-transform duration-150 ${isExpanded ? "rotate-90" : ""}`}
+            >
+              ▶
+            </span>
+            <span>{title}</span>
+          </Button>
+          <DisclosurePanel className="mt-3 ml-3 outline-none">{children}</DisclosurePanel>
+        </>
+      )}
+    </Disclosure>
   );
 }
