@@ -1,3 +1,4 @@
+import { type ReactNode } from "react";
 import { parseDate } from "@internationalized/date";
 import {
   Button,
@@ -52,17 +53,22 @@ export default function DateField({
   labelClassName = "mb-1 block text-[0.875rem] font-medium text-text",
   groupClassName = "flex items-center rounded border border-border bg-elevated px-2 py-1.5 focus-within:border-accent",
   className,
+  pickAriaLabel,
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   onChange: (value: string) => void;
   labelClassName?: string;
   groupClassName?: string;
   className?: string;
+  /** Accessible name for the calendar button when `label` is not a plain string. */
+  pickAriaLabel?: string;
 }) {
   // parseDate throws on malformed input; parent state is only ever "" or a
   // valid ISO date written by this component, so guard anyway.
   const calendarValue = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? parseDate(value) : null;
+  const pickLabel =
+    pickAriaLabel ?? (typeof label === "string" ? label : "date");
 
   return (
     <div className={className ?? "min-w-[10rem] flex-[1_1_12rem]"}>
@@ -84,7 +90,7 @@ export default function DateField({
             )}
           </DateInput>
           <Button
-            aria-label={`Pick ${label}`}
+            aria-label={`Pick ${pickLabel}`}
             className="ml-1 flex shrink-0 items-center justify-center rounded border-0 bg-transparent p-0.5 text-muted outline-none hover:text-accent"
           >
             <CalendarIcon />

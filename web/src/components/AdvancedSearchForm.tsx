@@ -46,6 +46,14 @@ const dateGroupClass =
 /** Select triggers in this panel — slightly squarer than the shared Select default. */
 const selectTriggerClass = "!rounded-md !bg-bg";
 
+/** Menu rows sized to match the compact field text (0.813rem), not the shared 0.875rem Select. */
+function compactSelectItemClassName(state: {
+  isFocused: boolean;
+  isSelected: boolean;
+}): string {
+  return selectItemClassName(state).replace("text-[0.875rem]", "text-[0.813rem]");
+}
+
 function composeCountComparison(input: CountFilterInput): string | null {
   if (input.comparator === "any") return null;
   const value = input.value.trim();
@@ -174,9 +182,9 @@ export default function AdvancedSearchForm({
               aria-label="Conversation type"
               triggerClassName={selectTriggerClass}
             >
-              <SelectListBoxItem id="all" className={selectItemClassName}>All</SelectListBoxItem>
-              <SelectListBoxItem id="direct" className={selectItemClassName}>Direct</SelectListBoxItem>
-              <SelectListBoxItem id="group" className={selectItemClassName}>Group</SelectListBoxItem>
+              <SelectListBoxItem id="all" className={compactSelectItemClassName}>All</SelectListBoxItem>
+              <SelectListBoxItem id="direct" className={compactSelectItemClassName}>Direct</SelectListBoxItem>
+              <SelectListBoxItem id="group" className={compactSelectItemClassName}>Group</SelectListBoxItem>
             </Select>
           </div>
           <CountField
@@ -227,7 +235,13 @@ export default function AdvancedSearchForm({
             />
           </div>
           <DateField
-            label="First message"
+            label={
+              <>
+                First message{" "}
+                <span className="normal-case tracking-normal font-medium">(On or After)</span>
+              </>
+            }
+            pickAriaLabel="First message"
             value={firstMsgDate}
             onChange={setFirstMsgDate}
             labelClassName={labelClass}
@@ -235,7 +249,13 @@ export default function AdvancedSearchForm({
             className="min-w-0 w-full overflow-hidden"
           />
           <DateField
-            label="Last message"
+            label={
+              <>
+                Last message{" "}
+                <span className="normal-case tracking-normal font-medium">(Before)</span>
+              </>
+            }
+            pickAriaLabel="Last message"
             value={lastMsgDate}
             onChange={setLastMsgDate}
             labelClassName={labelClass}
@@ -251,9 +271,9 @@ export default function AdvancedSearchForm({
               className="w-full min-w-0"
               triggerClassName={`!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`}
             >
-              <SelectListBoxItem id="any" className={selectItemClassName}>Any</SelectListBoxItem>
-              <SelectListBoxItem id="messages" className={selectItemClassName}>Has messages</SelectListBoxItem>
-              <SelectListBoxItem id="no-messages" className={selectItemClassName}>Never messaged</SelectListBoxItem>
+              <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
+              <SelectListBoxItem id="messages" className={compactSelectItemClassName}>Has messages</SelectListBoxItem>
+              <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>Never messaged</SelectListBoxItem>
             </Select>
           </div>
           <div className="min-w-0">
@@ -327,7 +347,7 @@ function ServiceMultiSelect({
               key={item.id}
               id={item.id}
               textValue={item.name}
-              className={selectItemClassName}
+              className={compactSelectItemClassName}
             >
               {({ isSelected }) => (
                 <div className="flex items-center gap-2">
@@ -377,10 +397,10 @@ function CountField({
             });
           }}
         >
-          <SelectListBoxItem id="any" className={selectItemClassName}>Any</SelectListBoxItem>
-          <SelectListBoxItem id="=" className={selectItemClassName}>Equal to</SelectListBoxItem>
-          <SelectListBoxItem id=">" className={selectItemClassName}>More than</SelectListBoxItem>
-          <SelectListBoxItem id="<" className={selectItemClassName}>Less than</SelectListBoxItem>
+          <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
+          <SelectListBoxItem id="=" className={compactSelectItemClassName}>Equal to</SelectListBoxItem>
+          <SelectListBoxItem id=">" className={compactSelectItemClassName}>More than</SelectListBoxItem>
+          <SelectListBoxItem id="<" className={compactSelectItemClassName}>Less than</SelectListBoxItem>
         </Select>
         <input
           type="number"
