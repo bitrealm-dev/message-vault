@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, type CSSProperties } from "react";
+import { ModalOverlay, Modal, Dialog } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import {
   fetchContactDetail,
@@ -16,8 +17,6 @@ import {
 export type { ContactPreview, ContactBrowseKind };
 
 type ContactDetail = CachedContactDetail;
-
-const DRAWER_WIDTH = 320;
 
 /** Dock the drawer to the right edge of the list/contact column when present. */
 function useDrawerLeft(open: boolean): number | null {
@@ -148,21 +147,6 @@ export default function ContactDrawer({
     setEditingName(false);
   }, [displayName, contactId]);
 
-  useEffect(() => {
-    if (!contactId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (editingName) {
-        setEditingName(false);
-        setNameValue(displayName === "Loading…" ? "" : displayName);
-        return;
-      }
-      onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [contactId, editingName, displayName, onClose]);
-
   if (!contactId) return null;
 
   const handleRows: ContactDetail["handles"] = detailMatches
@@ -205,27 +189,26 @@ export default function ContactDrawer({
   };
 
   return (
-    <>
-      <div onClick={onClose} style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", zIndex: 40,
-      }} />
-      <div
-        style={{
-          position: "fixed",
-          top: 0,
-          bottom: 0,
-          left: drawerLeft != null ? drawerLeft : undefined,
-          right: drawerLeft == null ? 0 : undefined,
-          width: `${DRAWER_WIDTH}px`,
-          background: "var(--panel)",
-          boxShadow: "2px 0 12px rgba(0,0,0,0.18)",
-          zIndex: 50,
-          overflow: "auto",
-          padding: "1.5rem",
-          borderRight: "1px solid var(--border)",
-        }}
+    <ModalOverlay
+      isOpen={!!contactId}
+      isDismissable
+      onOpenChange={(o) => {
+        if (o) return;
+        if (editingName) {
+          setEditingName(false);
+          setNameValue(displayName === "Loading…" ? "" : displayName);
+          return;
+        }
+        onClose();
+      }}
+      className="fixed inset-0 z-40 bg-[rgba(0,0,0,0.2)]"
+    >
+      <Modal
+        className="fixed top-0 bottom-0 z-50 w-[320px] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
+        style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem", gap: "0.5rem" }}>
+        <Dialog aria-label={displayName} className="outline-none">
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem", gap: "0.5rem" }}>
           {editingName && detailMatches ? (
             <input
               type="text"
@@ -279,9 +262,9 @@ export default function ContactDrawer({
             </h2>
           )}
           <button onClick={onClose} style={{ border: "none", background: "none", fontSize: "1.25rem", cursor: "pointer", color: "var(--muted)", flexShrink: 0 }}>×</button>
-        </div>
+          </div>
 
-        <ContactDrawerHandles
+          <ContactDrawerHandles
           contactId={contactId}
           handleRows={handleRows}
           loading={loading}
@@ -335,7 +318,8 @@ export default function ContactDrawer({
             <div style={{ color: "var(--muted)" }}>Loading details…</div>
           )}
         </div>
-      </div>
-    </>
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
   );
 }
