@@ -1,54 +1,30 @@
+import { ProgressBar as RACProgressBar } from "react-aria-components";
+
 interface ProgressBarProps {
   log: string[];
   running: boolean;
 }
 
-const INDETERMINATE_KEYFRAMES = `
-@keyframes indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-`;
-
+/**
+ * Job progress indicator: an indeterminate React Aria progress bar while
+ * `running` (indeterminate so screen readers announce it as one), plus the
+ * job's log lines below. The `indeterminate` keyframes live in theme.css
+ * `@layer base`.
+ */
 export default function ProgressBar({ log, running }: ProgressBarProps) {
   return (
     <div>
-      <style>{INDETERMINATE_KEYFRAMES}</style>
       {running && (
-        <div style={{ marginBottom: "0.5rem" }}>
-          <div
-            style={{
-              height: "8px",
-              background: "var(--border)",
-              borderRadius: "4px",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: "100%",
-                background: "var(--accent)",
-                animation: "indeterminate 1.5s ease-in-out infinite",
-              }}
-            />
-          </div>
+        <div className="mb-2">
+          <RACProgressBar isIndeterminate className="w-full">
+            <div className="h-2 w-full overflow-hidden rounded bg-border">
+              <div className="h-full w-full rounded bg-accent animate-[indeterminate_1.5s_ease-in-out_infinite]" />
+            </div>
+          </RACProgressBar>
         </div>
       )}
       {log.length > 0 && (
-        <pre
-          style={{
-            maxHeight: "300px",
-            overflow: "auto",
-            fontSize: "0.75rem",
-            background: "var(--hover)",
-            padding: "0.5rem",
-            borderRadius: "4px",
-            margin: 0,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
+        <pre className="m-0 max-h-[300px] overflow-auto whitespace-pre-wrap break-words rounded bg-hover p-2 text-[0.75rem]">
           {log.map((line, i) => (
             <div key={i}>{line}</div>
           ))}

@@ -4,34 +4,41 @@ interface Step {
   detail?: string;
 }
 
+/**
+ * Ordered list of import steps. Each step is an <li>; the active step carries
+ * aria-current="step" so assistive tech announces where the job is.
+ */
 export default function StepProgress({ steps }: { steps: Step[] }) {
   return (
-    <div style={{ marginTop: "1.5rem" }}>
+    <ol className="mt-6">
       {steps.map((step, i) => (
-        <div key={i} style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", alignItems: "flex-start" }}>
-          <div style={{
-            width: "24px", height: "24px", borderRadius: "50%", flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "0.75rem", fontWeight: 600,
-            background:
-              step.status === "done" ? "var(--ok)" :
-              step.status === "active" ? "var(--accent)" :
-              step.status === "error" ? "var(--danger)" : "var(--border)",
-            color: step.status === "pending" ? "var(--muted)" : "var(--sent-text)",
-          }}>
+        <li
+          key={i}
+          aria-current={step.status === "active" ? "step" : undefined}
+          className="mb-3 flex items-start gap-3"
+        >
+          <span
+            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.75rem] font-semibold ${
+              step.status === "done" ? "bg-ok text-sent-text" :
+              step.status === "active" ? "bg-accent text-sent-text" :
+              step.status === "error" ? "bg-danger text-sent-text" : "bg-border text-muted"
+            }`}
+          >
             {step.status === "done" ? "✓" : step.status === "error" ? "!" : i + 1}
-          </div>
+          </span>
           <div>
-            <div style={{
-              fontSize: "0.875rem", fontWeight: step.status === "active" ? 600 : 400,
-              color: step.status === "active" ? "var(--text)" : step.status === "pending" ? "var(--muted)" : "var(--text)",
-            }}>
+            <div
+              className={`text-[0.875rem] ${
+                step.status === "active" ? "font-semibold text-text" :
+                step.status === "pending" ? "text-muted" : "text-text"
+              }`}
+            >
               {step.label}
             </div>
-            {step.detail && <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "2px" }}>{step.detail}</div>}
+            {step.detail && <div className="mt-0.5 text-[0.75rem] text-muted">{step.detail}</div>}
           </div>
-        </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
