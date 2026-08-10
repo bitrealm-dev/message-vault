@@ -1,58 +1,59 @@
 # Advanced search: Service menu dismisses panel
 
 **Date:** 2026-08-10  
-**Status:** Approved for planning  
-**Scope:** Contacts Advanced Search outside-click dismiss vs React Aria Select/Popover (Service multi-select and sibling menus)
+**Status:** Implemented  
+**Scope:** Contacts Advanced Search outside-click dismiss vs React Aria Select/Popover (Service multi-select)
 
 ## Problem
 
-With Advanced Search open on contacts, opening the **Service** multi-select and then clicking back on the Advanced Search panel (to press **Search** or edit another field) closes the entire Advanced Search form.
+With Advanced Search open on contacts, opening the **Service** multi-select and then clicking back on the Advanced Search panel (to press **Search** or edit another field) either:
 
-Selecting options inside the Service menu works. The failure is “click the form again while the menu is open.”
+1. Closed the entire Advanced Search form (modal underlay path), or
+2. Left the Service list open (plain `isNonModal` path).
+
+Selecting options inside the Service menu worked. The failure was “click the form again while the menu is open.”
 
 ## Cause
 
 Contact search dismisses Advanced Search on `mousedown` outside `rootRef`, while ignoring portaled overlays (`data-mv-overlay`, listbox/option/dialog).
 
-React Aria’s Select `Popover` is modal by default and places a **transparent underlay** over the page (including over Advanced Search). That underlay lives outside `rootRef` and is not matched by the current overlay selector. The click is treated as “outside,” so Advanced Search closes before the user can use **Search** or other fields.
+React Aria’s Select `Popover` is modal by default and places a **transparent underlay** over the page (including over Advanced Search). That underlay lives outside `rootRef`. Ignoring underlay clicks kept Advanced Search open but blocked click-through to Search and other fields. Setting only `isNonModal` removed the underlay and also disabled React Aria’s outside-click dismiss (`isDismissable: !isNonModal`), so the Service list stayed open.
 
 ## Goals
 
-- Clicking Advanced Search while a filter menu is open keeps Advanced Search open and dismisses only the menu (so **Search** / other fields remain usable).
+- Clicking Advanced Search while the Service menu is open keeps Advanced Search open, dismisses the Service list, and activates the clicked control in the same click.
 - Clicking truly outside Advanced Search still closes the panel.
 - Service multi-select still allows picking multiple services without the menu closing on each selection (`shouldCloseOnSelect={false}`).
 
 ## Non-goals
 
 - Redesigning Advanced Search layout or Service UX beyond dismiss behavior.
-- Changing conversation-list advanced search layout (shared Select/DateField popovers may get the same `isNonModal` fix as a side effect).
+- Changing shared Activity / DateField popovers (they stay modal; underlay ignore in `isPortaledOverlayTarget` still applies where used).
 
 ## Approach
 
-**Primary:** Mark filter popovers as non-modal (`isNonModal`) so React Aria does not install a blocking underlay over the form.
+**Primary:** Make only the Service multi-select a controlled, non-modal popover with an explicit document `mousedown` listener that closes the list without stopping the event. That restores one-click click-through to form controls and avoids the modal underlay race with Advanced Search dismiss.
 
-**Secondary:** Extend `isPortaledOverlayTarget` so any remaining React Aria top-layer / underlay nodes are treated like overlays and do not dismiss Advanced Search.
+**Not used alone:** Modal underlay + underlay ignore (blocks first click). Plain `isNonModal` without a controlled outside-click listener (list never closes).
 
 ## Design
 
-### Popovers
+### Service multi-select
 
-Set `isNonModal` on:
+In `ServiceMultiSelect` (`AdvancedSearchForm.tsx`):
 
-- Service multi-select `Popover` in `AdvancedSearchForm`
-- Shared `Select` `Popover` in `Select.tsx` (Activity and other compact selects)
-- Shared `DateField` calendar `Popover` in `DateField.tsx`
+- Controlled `isOpen` / `onOpenChange` on `RACSelect`.
+- Service `Popover` sets `isNonModal` (no underlay).
+- Refs on the select root and popover; while open, a document `mousedown` listener closes the list when the target is outside both. The listener does not call `stopPropagation` or `preventDefault`, so the same click can focus another field, press Search, or dismiss Advanced Search.
+- Keep `shouldCloseOnSelect={false}`, `data-mv-overlay`, Escape / keyboard via React Aria `onOpenChange`.
 
-Keep existing `data-mv-overlay` on those popovers.
+### Shared Select / DateField
+
+Leave modal. No change required for this bug.
 
 ### Outside-click helper
 
-In `web/src/lib/portaledOverlay.ts`, treat as overlay targets:
-
-- Existing: `[data-mv-overlay]`, `[role='listbox']`, `[role='option']`, `[role='dialog']`
-- Added: React Aria top-layer / underlay selectors used by the installed `react-aria-components` version (confirm in DOM while a Select is open; e.g. `[data-react-aria-top-layer]` and/or underlay/modal-overlay class names present in this app)
-
-`ContactSearch` and `ListColumn` keep using `isPortaledOverlayTarget` unchanged at the call site.
+`isPortaledOverlayTarget` treats only `[data-mv-overlay]` and `[data-testid='underlay']` as overlay targets. Broad `[role='listbox']` / `[role='option']` matching is not used, because contact and conversation lists also use those roles and would prevent dismissing the search popdown when clicking a row.
 
 ### Expected interaction
 
@@ -61,27 +62,29 @@ sequenceDiagram
   participant User
   participant Adv as AdvancedSearch
   participant Menu as ServicePopover
-  participant Dismiss as OutsideClick
 
   User->>Menu: open Service
+  User->>Menu: select multiple options
+  Note over Menu: shouldCloseOnSelect false
   User->>Adv: click Search or another field
-  Note over Menu: isNonModal: no blocking underlay
+  Note over Menu: non-modal plus controlled mousedown
   Menu-->>Menu: closes
   Adv-->>Adv: stays open
-  User->>Adv: Search applies query
+  Note over Adv: same click activates control
 
   User->>Menu: open Service
-  User->>Dismiss: click outside Advanced Search
-  Dismiss->>Adv: close panel
+  User->>Adv: click outside Advanced Search
+  Menu-->>Menu: closes
+  Adv-->>Adv: closes
 ```
 
 ## Testing
 
-- Manual: open Advanced Search → open Service → click **Search** or Name/Handle → panel stays open; Service menu closes; Search works.
+- Manual: open Advanced Search → open Service → select multiple services → click **Search** or Name/Handle once → panel stays open; Service menu closes; control activates.
 - Manual: open Service → click outside the list column / Advanced Search → panel closes.
-- Manual: Activity and date pickers: same “click back on form” does not close Advanced Search.
-- Unit (optional): `isPortaledOverlayTarget` returns true for a fixture element matching the underlay/top-layer selector.
+- Manual: Escape closes only the Service list.
+- Manual: Activity and date pickers: click back on form does not close Advanced Search (existing modal + overlay helper path).
 
 ## Follow-ups
 
-- None required for this bug. If single-select menus should stay modal for a11y elsewhere, split a `isNonModal` prop on shared `Select` instead of always-on.
+- None required for this bug. If Activity/Date need the same one-click click-through, apply the same controlled non-modal pattern selectively.

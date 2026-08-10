@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Button as AriaButton,
   Label,
@@ -280,6 +280,7 @@ export default function AdvancedSearchForm({
               placeholder="+15555550100"
             />
           </div>
+          <ServiceMultiSelect value={services} onChange={setServices} />
           <DateBoundField
             label="First message"
             value={firstMsgBound}
@@ -304,7 +305,6 @@ export default function AdvancedSearchForm({
               <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>Never messaged</SelectListBoxItem>
             </Select>
           </div>
-          <ServiceMultiSelect value={services} onChange={setServices} />
         </div>
       )}
 
@@ -429,7 +429,14 @@ function DateBoundField({
   );
 }
 
-/** Multi-select without search — click the whole field to open. */
+/**
+ * Multi-select without search — click the whole field to open.
+ *
+ * Uses a non-modal popover (no full-screen underlay) plus a controlled open
+ * state and document mousedown listener. That lets one click close the list
+ * and activate the clicked form control, without the modal underlay racing
+ * Advanced Search's own outside-click dismiss handler.
+ */
 function ServiceMultiSelect({
   value,
   onChange,
@@ -437,14 +444,36 @@ function ServiceMultiSelect({
   value: Key[];
   onChange: (keys: Key[]) => void;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLElement>(null);
+
   const selectedLabels = SERVICE_ITEMS.filter((item) => value.includes(item.id))
     .map((item) => item.name)
     .join(", ");
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (selectRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      // Close only the Service list; do not stopPropagation so the same click
+      // can activate Search, another field, or dismiss Advanced Search.
+      setIsOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [isOpen]);
+
   return (
     <RACSelect<object, "multiple">
+      ref={selectRef}
       selectionMode="multiple"
       shouldCloseOnSelect={false}
+      isOpen={isOpen}
+      onOpenChange={setIsOpen}
       value={value}
       onChange={onChange}
       placeholder="Any"
@@ -467,7 +496,9 @@ function ServiceMultiSelect({
         </svg>
       </AriaButton>
       <Popover
+        ref={popoverRef}
         data-mv-overlay=""
+        isNonModal
         className={`z-[100] min-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
       >
         <ListBox className="outline-none">
