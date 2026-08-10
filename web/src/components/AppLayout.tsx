@@ -1,21 +1,14 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
+import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
-import ConversationList, {
-  type ConversationAutoSelect,
-} from "../screens/ConversationList";
-import ContactList from "../screens/ContactList";
+import ConversationList from "../screens/ConversationList";
 import ContactDrawer, {
   type ContactBrowseKind,
   type ContactPreview,
 } from "./ContactDrawer";
-import ImportScreen from "../screens/ImportScreen";
-import ExportScreen from "../screens/ExportScreen";
-import TrashScreen from "../screens/TrashScreen";
-import SettingsScreen from "../screens/SettingsScreen";
-import MessageView from "../screens/MessageView";
+import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
-import type { ActiveView } from "../lib/views";
 
 function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string {
   if (kind === "direct") return `contact:${contactId} is:direct`;
@@ -23,7 +16,6 @@ function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string 
   return `contact:${contactId}`;
 }
 
-/** Human-readable search-box text (handle + optional type), not contact ids. */
 function visibleBrowseQuery(
   kind: ContactBrowseKind,
   handles: string[],
@@ -36,6 +28,18 @@ function visibleBrowseQuery(
   return `contact:${contactId}${typeSuffix}`;
 }
 
+type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" | "settings";
+
+function modeFromPathname(pathname: string): ColumnMode {
+  if (pathname.startsWith("/messages/")) return "conversations";
+  if (pathname === "/contacts") return "contacts";
+  if (pathname === "/trash") return "trash";
+  if (pathname === "/import") return "import";
+  if (pathname === "/export") return "export";
+  if (pathname === "/settings") return "settings";
+  return "conversations";
+}
+
 const emptyMainStyle = {
   display: "flex",
   alignItems: "center",
@@ -46,45 +50,49 @@ const emptyMainStyle = {
 } as const;
 
 export default function AppLayout() {
-  const [activeView, setActiveView] = useState<ActiveView>("conversations");
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
-  /** Conversation list / message search box text. Independent of contact search. */
-  const [conversationSearch, setConversationSearch] = useState("");
-  /** Contact list search box text. Independent of conversation search. */
-  const [contactSearch, setContactSearch] = useState("");
-  /**
-   * Hidden API filter for conversation list (e.g. `contact:4 is:direct`).
-   * Kept separate so contact ids never appear in the search field.
-   */
-  const [conversationFilter, setConversationFilter] = useState("");
-  const [autoSelect, setAutoSelect] = useState<ConversationAutoSelect | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const contactsMode = activeView === "contacts";
+  const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
+
+  const pathname = location.pathname;
+  const mode = modeFromPathname(pathname);
+  const isMessageRoute = pathname.startsWith("/messages/");
+  const contactsMode = mode === "contacts";
+
+  const conversationSearch = searchParams.get("q") || "";
+  const conversationFilter = searchParams.get("f") || "";
+  const contactSearch = searchParams.get("cq") || "";
+
   const searchQuery = contactsMode ? contactSearch : conversationSearch;
 
+  function updateSearchParams(updates: Record<string, string>) {
+    const next = new URLSearchParams(searchParams);
+    for (const [k, v] of Object.entries(updates)) {
+      if (v) next.set(k, v); else next.delete(k);
+    }
+    setSearchParams(next, { replace: true });
+  }
+
   const handleSearch = (q: string) => {
-    const isContactSearch =
-      /\bsearch:contacts\b/i.test(q) || activeView === "contacts";
-    if (isContactSearch) {
-      setContactSearch(q);
-      setActiveView("contacts");
+    if (/\bsearch:contacts\b/i.test(q) || contactsMode) {
+      navigate(`/contacts?cq=${encodeURIComponent(q)}`);
     } else {
-      setConversationFilter("");
-      setConversationSearch(q);
-      setActiveView("conversations");
-      setAutoSelect(null);
+      navigate(`/?q=${encodeURIComponent(q)}`);
     }
   };
 
   const handleSearchChange = (q: string) => {
     if (contactsMode) {
-      setContactSearch(q);
+      updateSearchParams({ cq: q });
       return;
     }
-    setConversationFilter("");
-    setConversationSearch(q);
-    setAutoSelect(null);
+    updateSearchParams({ q: q, f: "" });
+  };
+
+  const handleConversationSelect = (c: Conversation) => {
+    navigate(`/messages/${c.id}`, { state: { conversation: c } });
   };
 
   const handleBrowseContactConversations = ({
@@ -98,103 +106,104 @@ export default function AppLayout() {
   }) => {
     const visible = visibleBrowseQuery(kind, handles, contactId);
     const apiQuery = contactBrowseQuery(contactId, kind);
-
     setSelectedContact(null);
-    setActiveView("conversations");
-    setConversationSearch(visible);
-    setConversationFilter(apiQuery);
-    setSelectedConversation(null);
-    setAutoSelect(kind === "direct" ? "first" : "sole");
+    navigate(`/?q=${encodeURIComponent(visible)}&f=${encodeURIComponent(apiQuery)}`);
   };
 
-  const conversationListQuery =
-    activeView === "trash"
-      ? "is:trash"
-      : conversationFilter || conversationSearch;
+  const isFullScreen = mode === "import" || mode === "export" || mode === "settings";
+  const isTrash = mode === "trash";
 
-  const showListColumn =
-    activeView === "conversations" ||
-    activeView === "contacts" ||
-    activeView === "trash";
-
-  const listContent =
-    activeView === "conversations" || activeView === "trash" ? (
-      <ConversationList
-        selectedId={selectedConversation?.id || null}
-        onSelect={(c) => {
-          setSelectedConversation(c);
-          setActiveView("conversations");
-          setAutoSelect(null);
-        }}
-        query={conversationListQuery}
-        autoSelect={autoSelect}
-        onAutoSelectDone={() => setAutoSelect(null)}
-      />
-    ) : activeView === "contacts" ? (
-      <ContactList
-        filter={contactSearch}
-        onSelect={(c) =>
-          setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
-        }
-      />
-    ) : null;
-
-  let mainContent: ReactNode;
-  switch (activeView) {
-    case "conversations":
-      mainContent = selectedConversation ? (
-        <MessageView
-          conversation={selectedConversation}
-          onOpenContact={(contactId: string) =>
-            setSelectedContact({ id: contactId, name: "Loading…", handles: [] })
-          }
-        />
-      ) : (
-        <div style={emptyMainStyle}>Select a conversation to view messages</div>
-      );
-      break;
-    case "contacts":
-      mainContent = (
-        <div style={emptyMainStyle}>Select a contact to view details</div>
-      );
-      break;
-    case "trash":
-      mainContent = <TrashScreen />;
-      break;
-    case "import":
-      mainContent = <ImportScreen />;
-      break;
-    case "export":
-      mainContent = <ExportScreen />;
-      break;
-    case "settings":
-      mainContent = <SettingsScreen />;
-      break;
-  }
+  // Contact drawer: read openContactId from location state (set by MessageRoute)
+  const locationState = location.state as { openContactId?: string } | null;
+  const openContactId = locationState?.openContactId ?? null;
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui", background: "var(--bg)", color: "var(--text)" }}>
       <LeftPanel
-        activeView={activeView}
-        onNavigate={setActiveView}
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
       />
-      {showListColumn && (
-        <ListColumn
-          searchQuery={searchQuery}
-          searchMode={contactsMode ? "contacts" : "messages"}
-          onSearchChange={handleSearchChange}
-          onSearch={handleSearch}
-        >
-          {listContent}
-        </ListColumn>
+
+      {/* Conversations: render list component directly with props */}
+      {mode === "conversations" && !isMessageRoute && (
+        <>
+          <ListColumn
+            searchQuery={searchQuery}
+            searchMode="messages"
+            onSearchChange={handleSearchChange}
+            onSearch={handleSearch}
+          >
+            <ConversationList
+              selectedId={null}
+              onSelect={handleConversationSelect}
+              query={conversationFilter || conversationSearch}
+            />
+          </ListColumn>
+          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+            <div style={emptyMainStyle}>Select a conversation to view messages</div>
+          </main>
+        </>
       )}
-      <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
-        {mainContent}
-      </main>
+
+      {/* Contacts: render list component directly with props */}
+      {mode === "contacts" && (
+        <>
+          <ListColumn
+            searchQuery={contactSearch}
+            searchMode="contacts"
+            onSearchChange={handleSearchChange}
+            onSearch={handleSearch}
+          >
+            <ContactList
+              filter={contactSearch}
+              onSelect={(c) =>
+                setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
+              }
+            />
+          </ListColumn>
+          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+            <div style={emptyMainStyle}>Select a contact to view details</div>
+          </main>
+        </>
+      )}
+
+      {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
+      {isTrash && (
+        <>
+          <ListColumn
+            searchQuery=""
+            searchMode="messages"
+            onSearchChange={handleSearchChange}
+            onSearch={handleSearch}
+          >
+            <ConversationList
+              selectedId={null}
+              onSelect={() => {}}
+              query="is:trash"
+            />
+          </ListColumn>
+          <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+            <Outlet />
+          </main>
+        </>
+      )}
+
+      {/* Message route: single <Outlet /> — MessageRoute renders both ListColumn + main */}
+      {isMessageRoute && (
+        <div style={{ display: "flex", flex: 1, minWidth: 0 }}>
+          <Outlet />
+        </div>
+      )}
+
+      {/* Full-screen views: no ListColumn, just main */}
+      {isFullScreen && (
+        <main style={{ flex: 1, overflow: "auto", background: "var(--bg)", color: "var(--text)", minWidth: 0 }}>
+          <Outlet />
+        </main>
+      )}
+
       <ContactDrawer
-        contactId={selectedContact?.id ?? null}
+        contactId={selectedContact?.id ?? openContactId ?? null}
         preview={selectedContact}
         onClose={() => setSelectedContact(null)}
         onBrowseConversations={handleBrowseContactConversations}

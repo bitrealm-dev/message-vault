@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import PasswordField from "../components/PasswordField";
@@ -12,14 +13,9 @@ import {
   pageCenter,
 } from "../lib/uiStyles";
 
-export default function RegisterScreen({
-  serverUrl,
-  onBack,
-}: {
-  serverUrl: string;
-  onBack: () => void;
-}) {
-  const { login } = useAuth();
+export default function RegisterScreen() {
+  const navigate = useNavigate();
+  const { login, serverUrl } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -108,7 +104,7 @@ export default function RegisterScreen({
           {error || "\u00a0"}
         </div>
 
-        <AuthBackButton label="Back to login" onClick={onBack} />
+        <AuthBackButton label="Back to login" onClick={() => navigate("/login")} />
       </div>
     </div>
   );

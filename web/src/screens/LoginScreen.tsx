@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
@@ -25,11 +26,8 @@ interface AuthModeResponse {
   hanko_api_url?: string | null;
 }
 
-export default function LoginScreen({
-  onRegister,
-}: {
-  onRegister?: () => void;
-}) {
+export default function LoginScreen() {
+  const navigate = useNavigate();
   const { login, setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
   const [serverUrl, setServerUrl] = useState(() => {
     if (typeof savedUrl === "string" && savedUrl.length > 0) return savedUrl;
@@ -259,18 +257,16 @@ export default function LoginScreen({
               {loading ? "Signing in…" : "Sign in"}
             </AuthSubmitButton>
 
-            {onRegister && (
-              <>
-                <div style={orRowStyle}>
-                  <span style={orLineStyle} />
-                  <span style={orTextStyle}>OR</span>
-                  <span style={orLineStyle} />
-                </div>
-                <button type="button" onClick={onRegister} style={accentLink}>
-                  Create an account
-                </button>
-              </>
-            )}
+            <>
+              <div style={orRowStyle}>
+                <span style={orLineStyle} />
+                <span style={orTextStyle}>OR</span>
+                <span style={orLineStyle} />
+              </div>
+              <button type="button" onClick={() => navigate("/register")} style={accentLink}>
+                Create an account
+              </button>
+            </>
 
             <ErrorFooter error={error} />
           </>

@@ -1,8 +1,8 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
 import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
-import type { ActiveView } from "../lib/views";
 import SavedGroupForm from "./SavedGroupForm";
 
 function NavIcon({ children }: { children: ReactNode }) {
@@ -80,25 +80,28 @@ function ExportIcon() {
 }
 
 export default function LeftPanel({
-  activeView,
-  onNavigate,
   onSearchChange,
   onSearch,
 }: {
-  activeView: ActiveView;
-  onNavigate: (view: ActiveView) => void;
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
 }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { logout } = useAuth();
 
-  const linkStyle = (view: ActiveView): CSSProperties => ({
+  function isActive(path: string): boolean {
+    if (path === "/") return location.pathname === "/" || location.pathname.startsWith("/messages/");
+    return location.pathname.startsWith(path);
+  }
+
+  const linkStyle = (active: boolean): CSSProperties => ({
     padding: "0.375rem 0.75rem",
     fontSize: "0.875rem",
     cursor: "pointer",
     borderRadius: "4px",
-    background: activeView === view ? "var(--hover)" : "transparent",
-    fontWeight: activeView === view ? 600 : 400,
+    background: active ? "var(--hover)" : "transparent",
+    fontWeight: active ? 600 : 400,
     border: "none",
     textAlign: "left",
     width: "100%",
@@ -109,7 +112,7 @@ export default function LeftPanel({
   });
 
   const signOutStyle: CSSProperties = {
-    ...linkStyle("settings"),
+    ...linkStyle(false),
     background: "transparent",
     fontWeight: 400,
     color: "var(--danger)",
@@ -138,15 +141,15 @@ export default function LeftPanel({
           Message Vault
         </div>
         <div style={{ paddingLeft: "0.75rem" }}>
-          <button style={linkStyle("conversations")} onClick={() => onNavigate("conversations")}>
+          <button style={linkStyle(isActive("/"))} onClick={() => navigate("/")}>
             <ConversationsIcon />
             Conversations
           </button>
-          <button style={linkStyle("contacts")} onClick={() => onNavigate("contacts")}>
+          <button style={linkStyle(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
             <ContactsIcon />
             Contacts
           </button>
-          <button style={linkStyle("trash")} onClick={() => onNavigate("trash")}>
+          <button style={linkStyle(isActive("/trash"))} onClick={() => navigate("/trash")}>
             <TrashIcon />
             Trash
           </button>
@@ -167,11 +170,11 @@ export default function LeftPanel({
             Messages
           </div>
           <div style={{ paddingLeft: "0.75rem" }}>
-            <button style={linkStyle("import")} onClick={() => onNavigate("import")}>
+            <button style={linkStyle(isActive("/import"))} onClick={() => navigate("/import")}>
               <ImportIcon />
               Import
             </button>
-            <button style={linkStyle("export")} onClick={() => onNavigate("export")}>
+            <button style={linkStyle(isActive("/export"))} onClick={() => navigate("/export")}>
               <ExportIcon />
               Export
             </button>
@@ -230,7 +233,7 @@ export default function LeftPanel({
 
       {/* Settings */}
       <div style={{ padding: "0.5rem 0.75rem", borderTop: "1px solid var(--border)" }}>
-        <button style={linkStyle("settings")} onClick={() => onNavigate("settings")}>
+        <button style={linkStyle(isActive("/settings"))} onClick={() => navigate("/settings")}>
           Settings
         </button>
         <button onClick={logout} style={signOutStyle}>
