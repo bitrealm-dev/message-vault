@@ -88,24 +88,24 @@ Format tab keeps its own output format under `[format]`. Older files with
 Matches the vault server Fastmail-style search seeds. Rust derives surfaces (no CSS
 `color-mix`); Slint reads them from `global Theme` in `ui/theme.slint`.
 
-| Seed (preset) | Default Graphite Blue |
-|---------------|------------------------|
-| lightHeader | `#e6e9ee` |
-| lightAccent | `#2b7fff` |
-| darkHeader | `#222426` |
-| darkAccent | `#5ea1ff` |
+| Seed (preset) | Default Ocean Depths |
+|---------------|----------------------|
+| lightHeader | `#f1faee` |
+| lightAccent | `#2d8b8b` |
+| darkHeader | `#1a2332` |
+| darkAccent | `#a8dadc` |
 
 **Mode:** `light` | `dark` | `system` (default `dark`). System uses the
 `dark-light` crate (OS color scheme; unspecified → dark).
 
-**Presets:** Graphite Blue, Slate Sky, Forest, Dusk, Rose, Amber, Ocean, Mono.
+**Presets:** Ocean Depths, Graphite Blue, Light, Dark, Sunset Boulevard, Forest Canopy, Modern Minimalist, Golden Hour, Arctic Frost, Desert Rose, Tech Innovation, Botanical Garden, Midnight Galaxy.
 
 **INI** (`[appearance]`):
 
 ```ini
 [appearance]
 mode = dark
-preset = graphite-blue
+preset = ocean-depths
 ```
 
 Home screen has Theme / Colors combos. Custom chrome uses `Theme.*` tokens

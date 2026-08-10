@@ -7,8 +7,8 @@
 
 :root {
   /* Fallback seeds (dark graphite blue) until boot script runs */
-  --header: #222426;
-  --accent: #5ea1ff;
+  --header: #1a2332;
+  --accent: #a8dadc;
 
   --sidebar: var(--header);
   --sent: var(--accent);

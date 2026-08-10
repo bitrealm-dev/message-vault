@@ -68,7 +68,7 @@ impl Default for VaultSection {
 pub struct AppearanceSection {
     /// `light` | `dark` | `system` (default `dark`).
     pub mode: String,
-    /// Preset id, e.g. `graphite-blue` (default).
+    /// Preset id, e.g. `ocean-depths` (default).
     pub preset: String,
 }
 
@@ -76,7 +76,7 @@ impl Default for AppearanceSection {
     fn default() -> Self {
         Self {
             mode: "dark".into(),
-            preset: "graphite-blue".into(),
+            preset: "ocean-depths".into(),
         }
     }
 }

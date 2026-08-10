@@ -26,84 +26,137 @@ export const THEME_STORAGE_KEY = THEME_MODE_KEY;
 
 export const DEFAULT_MODE: ThemeMode = "dark";
 
-/** Graphite + blue — matches the previous fixed palettes. */
+/** Ocean Depths — theme-factory default. */
 export const DEFAULT_SEEDS: ThemeSeeds = {
-  lightHeader: "#e6e9ee",
-  lightAccent: "#2b7fff",
-  darkHeader: "#222426",
-  darkAccent: "#5ea1ff",
+  lightHeader: "#f1faee",
+  lightAccent: "#2d8b8b",
+  darkHeader: "#1a2332",
+  darkAccent: "#a8dadc",
 };
 
 export const THEME_PRESETS: ThemePreset[] = [
-  { id: "graphite-blue", label: "Graphite Blue", seeds: DEFAULT_SEEDS },
+  { id: "ocean-depths", label: "Ocean Depths", seeds: DEFAULT_SEEDS },
   {
-    id: "slate-sky",
-    label: "Slate Sky",
+    id: "graphite-blue",
+    label: "Graphite Blue",
     seeds: {
-      lightHeader: "#dce3ec",
-      lightAccent: "#0ea5e9",
-      darkHeader: "#1e293b",
-      darkAccent: "#38bdf8",
+      lightHeader: "#e6e9ee",
+      lightAccent: "#2b7fff",
+      darkHeader: "#222426",
+      darkAccent: "#5ea1ff",
     },
   },
   {
-    id: "forest",
-    label: "Forest",
+    id: "light",
+    label: "Light",
     seeds: {
-      lightHeader: "#e2ebe4",
-      lightAccent: "#15803d",
-      darkHeader: "#1a2420",
-      darkAccent: "#4ade80",
+      lightHeader: "#f0f2f5",
+      lightAccent: "#2563eb",
+      darkHeader: "#2c3036",
+      darkAccent: "#6ba3ff",
     },
   },
   {
-    id: "dusk",
-    label: "Dusk",
+    id: "dark",
+    label: "Dark",
     seeds: {
-      lightHeader: "#e8e4f0",
-      lightAccent: "#7c3aed",
-      darkHeader: "#1f1a2e",
-      darkAccent: "#a78bfa",
+      lightHeader: "#e8eaed",
+      lightAccent: "#3b82f6",
+      darkHeader: "#141618",
+      darkAccent: "#5ea1ff",
     },
   },
   {
-    id: "rose",
-    label: "Rose",
+    id: "sunset-boulevard",
+    label: "Sunset Boulevard",
     seeds: {
-      lightHeader: "#f0e6ea",
-      lightAccent: "#be185d",
-      darkHeader: "#2a1a22",
-      darkAccent: "#f472b6",
+      lightHeader: "#e9c46a",
+      lightAccent: "#e76f51",
+      darkHeader: "#264653",
+      darkAccent: "#f4a261",
     },
   },
   {
-    id: "amber",
-    label: "Amber",
+    id: "forest-canopy",
+    label: "Forest Canopy",
     seeds: {
-      lightHeader: "#f3ebe0",
-      lightAccent: "#d97706",
-      darkHeader: "#261e14",
-      darkAccent: "#fbbf24",
+      lightHeader: "#faf9f6",
+      lightAccent: "#7d8471",
+      darkHeader: "#2d4a2b",
+      darkAccent: "#a4ac86",
     },
   },
   {
-    id: "ocean",
-    label: "Ocean",
+    id: "modern-minimalist",
+    label: "Modern Minimalist",
     seeds: {
-      lightHeader: "#dde8ec",
-      lightAccent: "#0f766e",
-      darkHeader: "#152528",
-      darkAccent: "#2dd4bf",
+      lightHeader: "#d3d3d3",
+      lightAccent: "#708090",
+      darkHeader: "#36454f",
+      // Light Gray darkened so white sent-text stays readable
+      darkAccent: "#9aa8b5",
     },
   },
   {
-    id: "mono",
-    label: "Mono",
+    id: "golden-hour",
+    label: "Golden Hour",
     seeds: {
-      lightHeader: "#e8e8e8",
-      lightAccent: "#404040",
-      darkHeader: "#2a2a2a",
-      darkAccent: "#d4d4d4",
+      lightHeader: "#d4b896",
+      lightAccent: "#c1666b",
+      darkHeader: "#4a403a",
+      darkAccent: "#f4a900",
+    },
+  },
+  {
+    id: "arctic-frost",
+    label: "Arctic Frost",
+    seeds: {
+      lightHeader: "#fafafa",
+      lightAccent: "#4a6fa5",
+      darkHeader: "#4a6fa5",
+      // Ice Blue darkened toward Steel Blue for sent-text contrast
+      darkAccent: "#5a7fb5",
+    },
+  },
+  {
+    id: "desert-rose",
+    label: "Desert Rose",
+    seeds: {
+      lightHeader: "#e8d5c4",
+      lightAccent: "#b87d6d",
+      darkHeader: "#5d2e46",
+      darkAccent: "#d4a5a5",
+    },
+  },
+  {
+    id: "tech-innovation",
+    label: "Tech Innovation",
+    seeds: {
+      lightHeader: "#ffffff",
+      lightAccent: "#0066ff",
+      darkHeader: "#1e1e1e",
+      // Neon Cyan mixed toward Electric Blue for sent-text contrast
+      darkAccent: "#0088bb",
+    },
+  },
+  {
+    id: "botanical-garden",
+    label: "Botanical Garden",
+    seeds: {
+      lightHeader: "#f5f3ed",
+      lightAccent: "#b7472a",
+      darkHeader: "#4a7c59",
+      darkAccent: "#f9a620",
+    },
+  },
+  {
+    id: "midnight-galaxy",
+    label: "Midnight Galaxy",
+    seeds: {
+      lightHeader: "#e6e6fa",
+      lightAccent: "#4a4e8f",
+      darkHeader: "#2b1e3e",
+      darkAccent: "#a490c2",
     },
   },
 ];

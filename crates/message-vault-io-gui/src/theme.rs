@@ -113,90 +113,143 @@ impl Rgb {
     }
 }
 
-/// Graphite + blue — matches message-vault-rs defaults.
+/// Ocean Depths — theme-factory default.
 pub const DEFAULT_SEEDS: ThemeSeeds = ThemeSeeds {
-    light_header: Rgb::from_hex(0xe6e9ee),
-    light_accent: Rgb::from_hex(0x2b7fff),
-    dark_header: Rgb::from_hex(0x222426),
-    dark_accent: Rgb::from_hex(0x5ea1ff),
+    light_header: Rgb::from_hex(0xf1faee),
+    light_accent: Rgb::from_hex(0x2d8b8b),
+    dark_header: Rgb::from_hex(0x1a2332),
+    dark_accent: Rgb::from_hex(0xa8dadc),
 };
 
 pub const DEFAULT_MODE: ThemeMode = ThemeMode::Dark;
 
 pub const THEME_PRESETS: &[ThemePreset] = &[
     ThemePreset {
-        id: "graphite-blue",
-        label: "Graphite Blue",
+        id: "ocean-depths",
+        label: "Ocean Depths",
         seeds: DEFAULT_SEEDS,
     },
     ThemePreset {
-        id: "slate-sky",
-        label: "Slate Sky",
+        id: "graphite-blue",
+        label: "Graphite Blue",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xdce3ec),
-            light_accent: Rgb::from_hex(0x0ea5e9),
-            dark_header: Rgb::from_hex(0x1e293b),
-            dark_accent: Rgb::from_hex(0x38bdf8),
+            light_header: Rgb::from_hex(0xe6e9ee),
+            light_accent: Rgb::from_hex(0x2b7fff),
+            dark_header: Rgb::from_hex(0x222426),
+            dark_accent: Rgb::from_hex(0x5ea1ff),
         },
     },
     ThemePreset {
-        id: "forest",
-        label: "Forest",
+        id: "light",
+        label: "Light",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xe2ebe4),
-            light_accent: Rgb::from_hex(0x15803d),
-            dark_header: Rgb::from_hex(0x1a2420),
-            dark_accent: Rgb::from_hex(0x4ade80),
+            light_header: Rgb::from_hex(0xf0f2f5),
+            light_accent: Rgb::from_hex(0x2563eb),
+            dark_header: Rgb::from_hex(0x2c3036),
+            dark_accent: Rgb::from_hex(0x6ba3ff),
         },
     },
     ThemePreset {
-        id: "dusk",
-        label: "Dusk",
+        id: "dark",
+        label: "Dark",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xe8e4f0),
-            light_accent: Rgb::from_hex(0x7c3aed),
-            dark_header: Rgb::from_hex(0x1f1a2e),
-            dark_accent: Rgb::from_hex(0xa78bfa),
+            light_header: Rgb::from_hex(0xe8eaed),
+            light_accent: Rgb::from_hex(0x3b82f6),
+            dark_header: Rgb::from_hex(0x141618),
+            dark_accent: Rgb::from_hex(0x5ea1ff),
         },
     },
     ThemePreset {
-        id: "rose",
-        label: "Rose",
+        id: "sunset-boulevard",
+        label: "Sunset Boulevard",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xf0e6ea),
-            light_accent: Rgb::from_hex(0xbe185d),
-            dark_header: Rgb::from_hex(0x2a1a22),
-            dark_accent: Rgb::from_hex(0xf472b6),
+            light_header: Rgb::from_hex(0xe9c46a),
+            light_accent: Rgb::from_hex(0xe76f51),
+            dark_header: Rgb::from_hex(0x264653),
+            dark_accent: Rgb::from_hex(0xf4a261),
         },
     },
     ThemePreset {
-        id: "amber",
-        label: "Amber",
+        id: "forest-canopy",
+        label: "Forest Canopy",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xf3ebe0),
-            light_accent: Rgb::from_hex(0xd97706),
-            dark_header: Rgb::from_hex(0x261e14),
-            dark_accent: Rgb::from_hex(0xfbbf24),
+            light_header: Rgb::from_hex(0xfaf9f6),
+            light_accent: Rgb::from_hex(0x7d8471),
+            dark_header: Rgb::from_hex(0x2d4a2b),
+            dark_accent: Rgb::from_hex(0xa4ac86),
         },
     },
     ThemePreset {
-        id: "ocean",
-        label: "Ocean",
+        id: "modern-minimalist",
+        label: "Modern Minimalist",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xdde8ec),
-            light_accent: Rgb::from_hex(0x0f766e),
-            dark_header: Rgb::from_hex(0x152528),
-            dark_accent: Rgb::from_hex(0x2dd4bf),
+            light_header: Rgb::from_hex(0xd3d3d3),
+            light_accent: Rgb::from_hex(0x708090),
+            dark_header: Rgb::from_hex(0x36454f),
+            // Light Gray darkened so white sent-text stays readable
+            dark_accent: Rgb::from_hex(0x9aa8b5),
         },
     },
     ThemePreset {
-        id: "mono",
-        label: "Mono",
+        id: "golden-hour",
+        label: "Golden Hour",
         seeds: ThemeSeeds {
-            light_header: Rgb::from_hex(0xe8e8e8),
-            light_accent: Rgb::from_hex(0x404040),
-            dark_header: Rgb::from_hex(0x2a2a2a),
-            dark_accent: Rgb::from_hex(0xd4d4d4),
+            light_header: Rgb::from_hex(0xd4b896),
+            light_accent: Rgb::from_hex(0xc1666b),
+            dark_header: Rgb::from_hex(0x4a403a),
+            dark_accent: Rgb::from_hex(0xf4a900),
+        },
+    },
+    ThemePreset {
+        id: "arctic-frost",
+        label: "Arctic Frost",
+        seeds: ThemeSeeds {
+            light_header: Rgb::from_hex(0xfafafa),
+            light_accent: Rgb::from_hex(0x4a6fa5),
+            dark_header: Rgb::from_hex(0x4a6fa5),
+            // Ice Blue darkened toward Steel Blue for sent-text contrast
+            dark_accent: Rgb::from_hex(0x5a7fb5),
+        },
+    },
+    ThemePreset {
+        id: "desert-rose",
+        label: "Desert Rose",
+        seeds: ThemeSeeds {
+            light_header: Rgb::from_hex(0xe8d5c4),
+            light_accent: Rgb::from_hex(0xb87d6d),
+            dark_header: Rgb::from_hex(0x5d2e46),
+            dark_accent: Rgb::from_hex(0xd4a5a5),
+        },
+    },
+    ThemePreset {
+        id: "tech-innovation",
+        label: "Tech Innovation",
+        seeds: ThemeSeeds {
+            light_header: Rgb::from_hex(0xffffff),
+            light_accent: Rgb::from_hex(0x0066ff),
+            dark_header: Rgb::from_hex(0x1e1e1e),
+            // Neon Cyan mixed toward Electric Blue for sent-text contrast
+            dark_accent: Rgb::from_hex(0x0088bb),
+        },
+    },
+    ThemePreset {
+        id: "botanical-garden",
+        label: "Botanical Garden",
+        seeds: ThemeSeeds {
+            light_header: Rgb::from_hex(0xf5f3ed),
+            light_accent: Rgb::from_hex(0xb7472a),
+            dark_header: Rgb::from_hex(0x4a7c59),
+            dark_accent: Rgb::from_hex(0xf9a620),
+        },
+    },
+    ThemePreset {
+        id: "midnight-galaxy",
+        label: "Midnight Galaxy",
+        seeds: ThemeSeeds {
+            light_header: Rgb::from_hex(0xe6e6fa),
+            light_accent: Rgb::from_hex(0x4a4e8f),
+            dark_header: Rgb::from_hex(0x2b1e3e),
+            dark_accent: Rgb::from_hex(0xa490c2),
         },
     },
 ];
@@ -457,7 +510,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn graphite_dark_bg_is_darker_than_header() {
+    fn ocean_depths_dark_bg_is_darker_than_header() {
         let p = derive_palette(DEFAULT_SEEDS, ResolvedTheme::Dark);
         let header_luma = p.header.r as u16 + p.header.g as u16 + p.header.b as u16;
         let bg_luma = p.bg.r as u16 + p.bg.g as u16 + p.bg.b as u16;
@@ -484,7 +537,7 @@ mod tests {
 
     #[test]
     fn preset_lookup_falls_back() {
-        assert_eq!(preset_by_id("missing").id, "graphite-blue");
-        assert_eq!(preset_by_id("ocean").id, "ocean");
+        assert_eq!(preset_by_id("missing").id, "ocean-depths");
+        assert_eq!(preset_by_id("midnight-galaxy").id, "midnight-galaxy");
     }
 }

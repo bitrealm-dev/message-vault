@@ -17,7 +17,7 @@ Themes are four hex seeds (Fastmail-style):
 
 Mode is `light` | `dark` | `system`. Only the active header+accent pair is applied as `--header` and `--accent` on `<html>` (`data-theme` is the resolved light/dark). Everything else is **derived** with `color-mix` in CSS.
 
-**Default (Graphite Blue):** `#e6e9ee,#2b7fff,#222426,#5ea1ff`
+**Default (Ocean Depths):** `#f1faee,#2d8b8b,#1a2332,#a8dadc`
 
 **Share string:** same comma-separated form — copy/paste under Settings → Appearance. Stored in `localStorage` as `mv-theme` (mode) and `mv-theme-seeds` (share string or JSON).
 
