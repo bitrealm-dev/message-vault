@@ -19,7 +19,6 @@
   --scrollbar-track: var(--panel);
   --scrollbar-thumb: var(--muted);
   --scrollbar-thumb-hover: var(--text);
-  --checkbox-border: var(--muted);
 
   /* Platform chat bubbles (light defaults; themes override) */
   --imessage-sent: #007aff;
@@ -44,7 +43,6 @@
   --hover: rgb(255 255 255 / 0.12);
   --hover-strong: rgb(255 255 255 / 0.2);
   --scrim: rgb(0 0 0 / 0.55);
-  --checkbox-bg: color-mix(in srgb, white 72%, var(--header));
   --checkbox-check: color-mix(in srgb, black 85%, var(--header));
   --danger: #f87171;
   --danger-soft-bg: color-mix(in srgb, var(--danger) 18%, var(--panel));
@@ -81,7 +79,6 @@
   --hover: rgb(0 0 0 / 0.06);
   --hover-strong: rgb(0 0 0 / 0.1);
   --scrim: rgb(0 0 0 / 0.4);
-  --checkbox-bg: #ffffff;
   --checkbox-check: #ffffff;
   --danger: #dc2626;
   --danger-soft-bg: color-mix(in srgb, var(--danger) 12%, white);
@@ -203,50 +200,6 @@ select option {
 
 *::-webkit-scrollbar-corner {
   background: var(--scrollbar-track);
-}
-
-.checkbox-list {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 0.875rem;
-  height: 0.875rem;
-  margin: 0;
-  flex-shrink: 0;
-  border-radius: 3px;
-  border: 1px solid var(--checkbox-border);
-  background-color: var(--checkbox-bg);
-  cursor: pointer;
-}
-
-.checkbox-list:checked {
-  border-color: var(--accent);
-  background-color: var(--accent);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
-  background-size: 100% 100%;
-  background-position: center;
-  background-repeat: no-repeat;
-}
-
-[data-theme="light"] .checkbox-list:checked {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
-}
-
-.checkbox-list:indeterminate {
-  border-color: var(--accent);
-  background-color: var(--accent);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23121416' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
-  background-size: 100% 100%;
-  background-position: center;
-  background-repeat: no-repeat;
-}
-
-[data-theme="light"] .checkbox-list:indeterminate {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M3.5 8h9'/%3E%3C/svg%3E");
-}
-
-.checkbox-list:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 /* Default form controls inherit theme (screens can still override).

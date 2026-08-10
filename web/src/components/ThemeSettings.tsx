@@ -1,5 +1,11 @@
 import { useState, type CSSProperties } from "react";
-import { type ThemeSeeds } from "../lib/theme";
+import {
+  Checkbox,
+  Radio,
+  RadioGroup,
+  ToggleButton,
+} from "react-aria-components";
+import { type ThemeMode, type ThemeSeeds } from "../lib/theme";
 import { useTheme } from "../lib/ThemeProvider";
 import { ColorRow, formatCompare } from "./theme/ThemeColorRow";
 
@@ -11,6 +17,11 @@ const SEED_FIELDS: {
   { key: "lightAccent", label: "Light accent" },
   { key: "darkHeader", label: "Dark header" },
   { key: "darkAccent", label: "Dark accent" },
+];
+
+const MODE_OPTIONS = [
+  { value: "light" as const, label: "Light" },
+  { value: "dark" as const, label: "Dark" },
 ];
 
 const sectionTitle: CSSProperties = {
@@ -27,6 +38,24 @@ const mutedText: CSSProperties = {
   fontSize: "13px",
   color: "var(--muted)",
 };
+
+/** Check glyph shared by the mode radio dots and the system-mode checkbox. */
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={className}
+    >
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+    </svg>
+  );
+}
 
 export default function ThemeSettings() {
   const {
@@ -61,152 +90,91 @@ export default function ThemeSettings() {
         Choose colors for light and dark mode. Changes save automatically.
       </p>
 
-      <div
-        role="radiogroup"
+      <RadioGroup
+        // Track the resolved mode so one card is always selected — a group
+        // value matching no radio ("system") would drop every radio's
+        // tabindex and make the picker unreachable by keyboard.
+        value={resolvedMode}
+        onChange={(value) => setMode(value as ThemeMode)}
         aria-label="Color mode"
-        style={{
-          marginTop: "1rem",
-          display: "grid",
-          gap: "0.5rem",
-          gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))",
-        }}
+        className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2"
       >
-        {(
-          [
-            { value: "light" as const, label: "Light" },
-            { value: "dark" as const, label: "Dark" },
-          ] as const
-        ).map((opt) => {
-          const active = resolvedMode === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => setMode(opt.value)}
-              style={{
-                overflow: "hidden",
-                borderRadius: "0.5rem",
-                border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                textAlign: "left",
-                padding: 0,
-                cursor: "pointer",
-                background: "transparent",
-                color: "inherit",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  height: "5rem",
-                  alignItems: "flex-end",
-                  gap: "0.25rem",
-                  padding: "0 0.75rem 0.5rem",
-                  background:
-                    opt.value === "light"
-                      ? seeds.lightHeader
-                      : seeds.darkHeader,
-                }}
-              >
-                <span
+        {MODE_OPTIONS.map((opt) => (
+          <Radio
+            key={opt.value}
+            value={opt.value}
+            className={({ isSelected }) =>
+              `cursor-pointer overflow-hidden rounded-lg border text-left outline-none
+               data-focus-visible:ring-2 data-focus-visible:ring-accent
+               ${isSelected ? "border-accent" : "border-border"}`
+            }
+          >
+            {({ isSelected }) => (
+              <>
+                <div
+                  className="flex h-20 items-end gap-1 px-3 pb-2"
                   style={{
-                    height: "1.5rem",
-                    flex: 1,
-                    borderRadius: "2px",
                     background:
                       opt.value === "light"
-                        ? seeds.lightAccent
-                        : seeds.darkAccent,
-                  }}
-                />
-                <span
-                  style={{
-                    height: "1.5rem",
-                    width: "2.5rem",
-                    borderRadius: "2px",
-                    opacity: 0.8,
-                    background:
-                      opt.value === "light" ? "#ffffff" : "#121416",
-                  }}
-                />
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  background: "var(--panel)",
-                  padding: "0.5rem 0.75rem",
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    display: "flex",
-                    height: "1.25rem",
-                    width: "1.25rem",
-                    flexShrink: 0,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "999px",
-                    border: `2px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                    background: active ? "var(--accent)" : "var(--panel)",
-                    color: "var(--sent-text)",
+                        ? seeds.lightHeader
+                        : seeds.darkHeader,
                   }}
                 >
-                  {active ? (
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-                    </svg>
-                  ) : null}
-                </span>
-                <div
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    color: "var(--text)",
-                  }}
-                >
-                  {opt.label}
+                  <span
+                    className="h-6 flex-1 rounded-[2px]"
+                    style={{
+                      background:
+                        opt.value === "light"
+                          ? seeds.lightAccent
+                          : seeds.darkAccent,
+                    }}
+                  />
+                  <span className="h-6 w-10 rounded-[2px] bg-text opacity-80" />
                 </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                <div className="flex items-center gap-2 bg-panel px-3 py-2">
+                  <span
+                    aria-hidden
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                      isSelected
+                        ? "border-accent bg-accent text-sent-text"
+                        : "border-border bg-panel"
+                    }`}
+                  >
+                    {isSelected ? <CheckIcon className="h-3 w-3" /> : null}
+                  </span>
+                  <span className="text-[0.875rem] font-medium text-text">
+                    {opt.label}
+                  </span>
+                </div>
+              </>
+            )}
+          </Radio>
+        ))}
+      </RadioGroup>
 
-      <label
-        style={{
-          marginTop: "1rem",
-          display: "flex",
-          cursor: "pointer",
-          alignItems: "center",
-          gap: "0.625rem",
-          fontSize: "14px",
-          color: "var(--text)",
+      <Checkbox
+        isSelected={matchSystem}
+        onChange={(checked) => {
+          if (checked) setMode("system");
+          else setMode(resolvedMode);
         }}
+        className="mt-4 flex cursor-pointer items-center gap-2.5 text-[0.875rem] text-text outline-none data-focus-visible:ring-2 data-focus-visible:ring-accent"
       >
-        <input
-          type="checkbox"
-          className="checkbox-list"
-          checked={matchSystem}
-          onChange={(e) => {
-            if (e.target.checked) setMode("system");
-            else setMode(resolvedMode);
-          }}
-        />
-        Match your device theme
-      </label>
+        {({ isSelected }) => (
+          <>
+            <span
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                isSelected
+                  ? "border-accent bg-accent text-[color:var(--checkbox-check)]"
+                  : "border-border bg-elevated"
+              }`}
+            >
+              {isSelected ? <CheckIcon className="h-3.5 w-3.5" /> : null}
+            </span>
+            Match your device theme
+          </>
+        )}
+      </Checkbox>
 
       <div style={{ marginTop: "1.5rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
         <div style={{ ...sectionTitle, fontSize: "12px" }}>Colors</div>
@@ -289,33 +257,27 @@ export default function ThemeSettings() {
 
       <div style={{ marginTop: "1.5rem" }}>
         <div style={sectionTitle}>Tried and true</div>
-        <div
-          style={{
-            marginTop: "0.75rem",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "0.75rem",
-          }}
-        >
+        <div className="mt-3 flex flex-wrap gap-3">
           {presets.map((preset) => {
             const active =
               formatCompare(seeds) === formatCompare(preset.seeds);
             return (
-              <button
+              <ToggleButton
                 key={preset.id}
-                type="button"
-                title={preset.label}
+                isSelected={active}
+                onChange={() => applyPreset(preset)}
                 aria-label={preset.label}
-                aria-pressed={active}
-                onClick={() => applyPreset(preset)}
+                ref={(el) => {
+                  // React Aria's filterDOMProps drops `title`; set it
+                  // directly so hover tooltips keep working.
+                  if (el && el.title !== preset.label) el.title = preset.label;
+                }}
+                className={({ isSelected }) =>
+                  `relative h-10 w-10 cursor-pointer rounded-full border-2 outline-none
+                   focus-visible:ring-2 focus-visible:ring-accent
+                   ${isSelected ? "border-accent" : "border-transparent"}`
+                }
                 style={{
-                  position: "relative",
-                  height: "2.5rem",
-                  width: "2.5rem",
-                  borderRadius: "999px",
-                  border: `2px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  padding: 0,
                   background: `conic-gradient(
                     ${preset.seeds.lightHeader} 0deg 90deg,
                     ${preset.seeds.lightAccent} 90deg 180deg,
