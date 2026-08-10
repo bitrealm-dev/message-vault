@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../lib/api";
 import Button from "../components/Button";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 interface TrashEntry {
   id: string;
@@ -14,6 +15,8 @@ export default function TrashScreen() {
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchTrash = () => {
     setLoading(true);
@@ -33,10 +36,15 @@ export default function TrashScreen() {
   };
 
   const emptyTrash = async () => {
-    if (!confirm("Permanently delete all trashed messages?")) return;
-    await apiClient.post("/v1/trash/empty");
-    setMessage("Trash emptied.");
-    fetchTrash();
+    setDeleting(true);
+    try {
+      await apiClient.post("/v1/trash/empty");
+      setMessage("Trash emptied.");
+      fetchTrash();
+    } finally {
+      setDeleting(false);
+      setConfirmOpen(false);
+    }
   };
 
   if (loading) return <div style={{ padding: "1.5rem", fontSize: "0.875rem", color: "var(--muted)" }}>Loading…</div>;
@@ -46,7 +54,7 @@ export default function TrashScreen() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <h2 style={{ margin: 0 }}>Trash</h2>
         {entries.length > 0 && (
-          <Button variant="danger" onClick={emptyTrash}
+          <Button variant="danger" disabled={deleting} onClick={() => setConfirmOpen(true)}
             style={{ fontSize: "0.813rem", padding: "0.375rem 0.75rem" }}>
             Empty trash
           </Button>
@@ -74,6 +82,17 @@ export default function TrashScreen() {
           </div>
         ))
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Empty trash?"
+        body="Permanently delete all trashed messages? This cannot be undone."
+        confirmLabel="Empty trash"
+        danger
+        busy={deleting}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => void emptyTrash()}
+      />
     </div>
   );
 }

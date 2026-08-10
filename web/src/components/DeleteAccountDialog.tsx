@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ModalShell from "./ModalShell";
 import Button from "./Button";
 
 export default function DeleteAccountDialog({
@@ -20,113 +21,61 @@ export default function DeleteAccountDialog({
     if (open) setTypedUsername("");
   }, [open]);
 
-  if (!open) return null;
-
   const expected = username.trim();
   const matches = expected.length > 0 && typedUsername === expected;
 
   return (
-    <div
-      role="presentation"
-      onClick={() => {
-        if (!deleting) onClose();
+    <ModalShell
+      open={open}
+      onOpenChange={(o) => {
+        if (!o && !deleting) onClose();
       }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.45)",
-        padding: "1rem",
-      }}
+      dismissable={!deleting}
+      label="Delete your account?"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="mv-delete-account-dialog-title"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: "relative",
-          width: "100%",
-          maxWidth: "28rem",
-          borderRadius: "8px",
-          border: "1px solid var(--border)",
-          background: "var(--panel)",
-          padding: "1.25rem",
-          boxShadow: "0 16px 48px rgba(0,0,0,0.25)",
-        }}
+      <button
+        type="button"
+        aria-label="Close"
+        disabled={deleting}
+        onClick={onClose}
+        className="absolute top-3 right-3 cursor-pointer border-none bg-transparent text-[1.25rem] leading-none text-muted disabled:cursor-not-allowed"
       >
-        <button
-          type="button"
-          aria-label="Close"
+        ×
+      </button>
+
+      <h2 className="mb-2 pr-6 text-[1rem] font-semibold text-text">Delete your account?</h2>
+
+      <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">
+        This cannot be undone. Your messages, contacts, group chats, profile,
+        and attachments will be permanently deleted.
+      </p>
+
+      <label className="mt-5 block">
+        <span className="text-[0.875rem] text-text">
+          Type your user ID{" "}
+          {expected ? <strong>{expected}</strong> : null} to confirm.
+        </span>
+        <input
+          type="text"
+          value={typedUsername}
+          onChange={(e) => setTypedUsername(e.target.value)}
           disabled={deleting}
-          onClick={onClose}
-          style={{
-            position: "absolute",
-            top: "0.75rem",
-            right: "0.75rem",
-            border: "none",
-            background: "transparent",
-            color: "var(--muted)",
-            cursor: deleting ? "not-allowed" : "pointer",
-            fontSize: "1.25rem",
-            lineHeight: 1,
-          }}
+          autoComplete="off"
+          spellCheck={false}
+          className="mt-2 box-border w-full rounded border border-border bg-elevated px-3 py-2 text-[0.875rem] text-text"
+        />
+      </label>
+
+      <div className="mt-5 flex justify-end">
+        <Button
+          variant="danger"
+          disabled={deleting || !matches}
+          onClick={onConfirm}
+          style={{ padding: "0.5rem 1rem", fontSize: "0.813rem" }}
         >
-          ×
-        </button>
-
-        <h2
-          id="mv-delete-account-dialog-title"
-          style={{ margin: "0 1.5rem 0 0", fontSize: "1rem", fontWeight: 600 }}
-        >
-          Delete your account?
-        </h2>
-
-        <p style={{ margin: "0.75rem 0 0", fontSize: "0.875rem", color: "var(--muted)", lineHeight: 1.5 }}>
-          This cannot be undone. Your messages, contacts, group chats, profile,
-          and attachments will be permanently deleted.
-        </p>
-
-        <label style={{ display: "block", marginTop: "1.25rem" }}>
-          <span style={{ fontSize: "0.875rem", color: "var(--text)" }}>
-            Type your user ID{" "}
-            {expected ? <strong>{expected}</strong> : null} to confirm.
-          </span>
-          <input
-            type="text"
-            value={typedUsername}
-            onChange={(e) => setTypedUsername(e.target.value)}
-            disabled={deleting}
-            autoComplete="off"
-            spellCheck={false}
-            style={{
-              marginTop: "0.5rem",
-              width: "100%",
-              boxSizing: "border-box",
-              padding: "0.5rem 0.75rem",
-              fontSize: "0.875rem",
-              border: "1px solid var(--border)",
-              borderRadius: "4px",
-              background: "var(--bg)",
-              color: "var(--text)",
-            }}
-          />
-        </label>
-
-        <div style={{ marginTop: "1.25rem", display: "flex", justifyContent: "flex-end" }}>
-          <Button
-            variant="danger"
-            disabled={deleting || !matches}
-            onClick={onConfirm}
-            style={{ padding: "0.5rem 1rem", fontSize: "0.813rem" }}
-          >
-            {deleting ? "Deleting…" : "Permanently delete my account"}
-          </Button>
-        </div>
+          {deleting ? "Deleting…" : "Permanently delete my account"}
+        </Button>
       </div>
-    </div>
+    </ModalShell>
   );
 }

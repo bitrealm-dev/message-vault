@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import ApiTokenRevealDialog from "../../components/ApiTokenRevealDialog";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { inputStyle, sectionTitle } from "./profileStyles";
 
 type ApiTokenScopes = "import" | "export" | "both";
@@ -50,6 +51,7 @@ export function ApiTokensSection() {
   const [scopes, setScopes] = useState<ApiTokenScopes>("both");
   const [actionError, setActionError] = useState("");
   const [reveal, setReveal] = useState<{ label: string; token: string } | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<ApiTokenItem | null>(null);
 
   const reload = useCallback(async () => {
     setLoadError("");
@@ -90,9 +92,6 @@ export function ApiTokensSection() {
   };
 
   const revoke = async (item: ApiTokenItem) => {
-    if (!confirm(`Revoke API token “${item.label}”? CLI tools using it will stop working.`)) {
-      return;
-    }
     setBusy(true);
     setActionError("");
     try {
@@ -102,6 +101,7 @@ export function ApiTokensSection() {
       setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setRevokeTarget(null);
     }
   };
 
@@ -219,7 +219,7 @@ export function ApiTokensSection() {
               <Button
                 variant="ghost"
                 disabled={busy}
-                onClick={() => void revoke(item)}
+                onClick={() => setRevokeTarget(item)}
                 style={{
                   fontSize: "0.813rem",
                   padding: "0.2rem 0.5rem",
@@ -238,6 +238,17 @@ export function ApiTokensSection() {
         label={reveal?.label ?? ""}
         token={reveal?.token ?? ""}
         onClose={() => setReveal(null)}
+      />
+
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        title="Revoke API token?"
+        body={revokeTarget ? `Revoke API token “${revokeTarget.label}”? CLI tools using it will stop working.` : ""}
+        confirmLabel="Revoke token"
+        danger
+        busy={busy}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={() => revokeTarget && void revoke(revokeTarget)}
       />
     </div>
   );

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ModalShell from "./ModalShell";
 import Button from "./Button";
 
 interface SavedGroupFormProps {
@@ -8,6 +9,7 @@ interface SavedGroupFormProps {
 }
 
 export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroupFormProps) {
+  const [open, setOpen] = useState(true);
   const [name, setName] = useState(initial?.name || "");
   const [query, setQuery] = useState(initial?.query || "");
 
@@ -17,69 +19,56 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
   };
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, display: "flex", alignItems: "center",
-      justifyContent: "center", zIndex: 100,
-    }}>
-      <div onClick={onCancel} style={{
-        position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)",
-      }} />
-      <div style={{
-        position: "relative", background: "var(--panel)", borderRadius: "8px",
-        padding: "1.5rem", width: "100%", maxWidth: "400px",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-      }}>
-        <h3 style={{ margin: "0 0 1rem", fontSize: "1rem" }}>
-          {initial ? "Edit saved group" : "New saved group"}
-        </h3>
+    <ModalShell
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onCancel();
+      }}
+      label={initial ? "Edit saved group" : "New saved group"}
+      maxWidth="25rem"
+    >
+      <h3 className="mb-4 text-[1rem] text-text">
+        {initial ? "Edit saved group" : "New saved group"}
+      </h3>
 
-        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
-          Name
-        </label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSave()}
-          placeholder="e.g. Work team"
-          style={{
-            width: "100%", padding: "0.375rem 0.5rem", fontSize: "0.875rem",
-            border: "1px solid var(--border)", borderRadius: "4px", marginBottom: "0.75rem",
-            boxSizing: "border-box", background: "var(--bg)", color: "var(--text)",
-          }}
-          autoFocus
-        />
+      <label className="mb-1 block text-[0.813rem] font-medium text-text">
+        Name
+      </label>
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && handleSave()}
+        placeholder="e.g. Work team"
+        className="mb-3 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
+        autoFocus
+      />
 
-        <label style={{ fontSize: "0.813rem", fontWeight: 500, display: "block", marginBottom: "0.25rem" }}>
-          Query
-        </label>
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSave()}
-          placeholder="e.g. from:bob service:discord"
-          style={{
-            width: "100%", padding: "0.375rem 0.5rem", fontSize: "0.875rem",
-            border: "1px solid var(--border)", borderRadius: "4px", marginBottom: "1rem",
-            boxSizing: "border-box", background: "var(--bg)", color: "var(--text)",
-          }}
-        />
+      <label className="mb-1 block text-[0.813rem] font-medium text-text">
+        Query
+      </label>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && handleSave()}
+        placeholder="e.g. from:bob service:discord"
+        className="mb-4 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
+      />
 
-        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-          <Button onClick={onCancel} style={{ padding: "0.375rem 0.75rem" }}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            disabled={!name.trim() || !query.trim()}
-            style={{ padding: "0.375rem 1rem" }}
-          >
-            Save
-          </Button>
-        </div>
+      <div className="flex justify-end gap-2">
+        <Button onClick={onCancel} style={{ padding: "0.375rem 0.75rem" }}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          disabled={!name.trim() || !query.trim()}
+          style={{ padding: "0.375rem 1rem" }}
+        >
+          Save
+        </Button>
       </div>
-    </div>
+    </ModalShell>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { apiClient } from "../../lib/api";
 import DeleteAccountDialog from "../../components/DeleteAccountDialog";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import Button from "../../components/Button";
 import { dangerButtonStyle } from "./profileStyles";
 
@@ -14,6 +15,7 @@ export function ProfileDangerZone({
 }) {
   const { logout } = useAuth();
   const [dangerZoneOpen, setDangerZoneOpen] = useState(false);
+  const [confirmDeleteMessagesOpen, setConfirmDeleteMessagesOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deletingMessages, setDeletingMessages] = useState(false);
@@ -24,13 +26,6 @@ export function ProfileDangerZone({
 
   const deleteAllMessages = async () => {
     if (demoLocked) return;
-    if (
-      !confirm(
-        "Delete all messages and attachments? Your contacts and settings will remain.",
-      )
-    ) {
-      return;
-    }
     setDeletingMessages(true);
     setDangerError("");
     try {
@@ -39,6 +34,7 @@ export function ProfileDangerZone({
       setDangerError(e instanceof Error ? e.message : String(e));
     } finally {
       setDeletingMessages(false);
+      setConfirmDeleteMessagesOpen(false);
     }
   };
 
@@ -112,7 +108,7 @@ export function ProfileDangerZone({
               <Button
                 variant="danger"
                 disabled={busy || demoLocked}
-                onClick={() => void deleteAllMessages()}
+                onClick={() => setConfirmDeleteMessagesOpen(true)}
                 style={dangerButtonStyle}
                 title={demoLocked ? "Unavailable on the demo account" : undefined}
               >
@@ -152,6 +148,17 @@ export function ProfileDangerZone({
           if (!deleting) setDeleteDialogOpen(false);
         }}
         onConfirm={() => void performDeleteAccount()}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteMessagesOpen}
+        title="Delete all messages?"
+        body="Delete all messages and attachments? Your contacts and settings will remain."
+        confirmLabel="Delete all messages"
+        danger
+        busy={deletingMessages}
+        onClose={() => setConfirmDeleteMessagesOpen(false)}
+        onConfirm={() => void deleteAllMessages()}
       />
     </>
   );
