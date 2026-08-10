@@ -258,7 +258,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .route(
             "/v1/account/api-tokens/{id}",
-            delete(crate::api_tokens_api::delete_api_token_handler),
+            delete(crate::api_tokens_api::delete_api_token_handler)
+                .patch(crate::api_tokens_api::rename_api_token_handler),
         )
         .route(
             "/v1/export/messages/count",

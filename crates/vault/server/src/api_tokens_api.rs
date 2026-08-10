@@ -15,7 +15,7 @@ pub struct ApiTokenItem {
     pub id: String,
     pub label: String,
     pub scopes: String,
-    /// Masked secret for Settings (e.g. `mv-api-Sd1**********mE`).
+    /// Masked secret for Settings (e.g. `mv-api-Sd..mE`).
     pub token_hint: String,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +54,18 @@ pub struct CreateApiTokenResponse {
 #[derive(Debug, Serialize)]
 pub struct DeleteApiTokenResponse {
     pub ok: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameApiTokenRequest {
+    pub label: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenameApiTokenResponse {
+    pub ok: bool,
+    pub id: String,
+    pub label: String,
 }
 
 /// `GET /v1/account/api-tokens`
@@ -160,4 +172,47 @@ pub async fn delete_api_token_handler(
         return Err(ApiError::NotFound("API token not found".into()));
     }
     Ok(Json(DeleteApiTokenResponse { ok: true }))
+}
+
+/// `PATCH /v1/account/api-tokens/{id}`
+pub async fn rename_api_token_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(req): Json<RenameApiTokenRequest>,
+) -> Result<Json<RenameApiTokenResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let account_id = auth.account_id;
+    let label = req.label;
+    let db = state.cfg.paths.db.clone();
+    let id_for_resp = id.clone();
+
+    let updated = tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, String)> {
+        let conn = Connection::open(&db)?;
+        schema::configure_connection(&conn)?;
+        schema::ensure_accounts_schema(&conn)?;
+        let trimmed = label.trim().to_string();
+        let ok = api_tokens::update_api_token_label(&conn, &account_id, &id, &trimmed)?;
+        Ok((ok, trimmed))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("rename API token task: {e}")))?
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("label is required") || msg.contains("at most 120") {
+            ApiError::BadRequest(msg)
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
+
+    if !updated.0 {
+        return Err(ApiError::NotFound("API token not found".into()));
+    }
+    Ok(Json(RenameApiTokenResponse {
+        ok: true,
+        id: id_for_resp,
+        label: updated.1,
+    }))
 }

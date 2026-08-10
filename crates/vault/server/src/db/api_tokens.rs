@@ -49,7 +49,7 @@ pub struct ApiTokenRow {
     pub id: String,
     pub label: String,
     pub scopes: ApiTokenScopes,
-    /// Masked secret for Settings, e.g. `mv-api-Sd1**********mE`.
+    /// Masked secret for Settings, e.g. `mv-api-Sd..mE`.
     pub token_hint: String,
     pub created_at: String,
     /// Unix-seconds string when the token was last used; `None` if never.
@@ -58,25 +58,25 @@ pub struct ApiTokenRow {
 
 const API_TOKEN_PREFIX: &str = "mv-api-";
 const LEGACY_APP_PASSWORD_PREFIX: &str = "mv-app-";
-const HINT_HEAD: usize = 3;
+const HINT_HEAD: usize = 2;
 const HINT_TAIL: usize = 2;
-const HINT_STARS: &str = "**********";
 
 /// Mask a plaintext API token for list display (keeps `mv-api-` or legacy `mv-app-` + ends).
+/// Format: `mv-api-xx..yy`.
 pub fn mask_api_token(token: &str) -> String {
     let (prefix, secret) = if let Some(s) = token.strip_prefix(API_TOKEN_PREFIX) {
         (API_TOKEN_PREFIX, s)
     } else if let Some(s) = token.strip_prefix(LEGACY_APP_PASSWORD_PREFIX) {
         (LEGACY_APP_PASSWORD_PREFIX, s)
     } else {
-        return format!("{API_TOKEN_PREFIX}{HINT_STARS}");
+        return format!("{API_TOKEN_PREFIX}..");
     };
     if secret.len() < HINT_HEAD + HINT_TAIL {
-        return format!("{prefix}{HINT_STARS}");
+        return format!("{prefix}..");
     }
     let head = &secret[..HINT_HEAD];
     let tail = &secret[secret.len() - HINT_TAIL..];
-    format!("{prefix}{head}{HINT_STARS}{tail}")
+    format!("{prefix}{head}..{tail}")
 }
 
 /// Account + scopes for a presented API token Bearer value.
@@ -215,6 +215,29 @@ pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result
     Ok(n > 0)
 }
 
+/// Rename an API token label if it belongs to the account.
+pub fn update_api_token_label(
+    conn: &Connection,
+    account_id: &str,
+    id: &str,
+    label: &str,
+) -> Result<bool> {
+    let label = label.trim();
+    if label.is_empty() {
+        bail!("label is required");
+    }
+    if label.len() > 120 {
+        bail!("label must be at most 120 characters");
+    }
+    let n = conn
+        .execute(
+            "UPDATE account_api_tokens SET label = ?1 WHERE id = ?2 AND account_id = ?3",
+            params![label, id, account_id],
+        )
+        .with_context(|| format!("rename API token {id} for {account_id}"))?;
+    Ok(n > 0)
+}
+
 fn now_secs() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -284,11 +307,11 @@ mod tests {
         assert_eq!(scopes, ApiTokenScopes::Export);
         assert_eq!(
             mask_api_token("mv-api-Sd1abcdefghijklmnopqrsmtuvwxyZmE"),
-            "mv-api-Sd1**********mE"
+            "mv-api-Sd..mE"
         );
         assert_eq!(
             mask_api_token("mv-app-Sd1abcdefghijklmnopqrsmtuvwxyZmE"),
-            "mv-app-Sd1**********mE"
+            "mv-app-Sd..mE"
         );
 
         let listed = list_api_tokens(&conn, &account_id).unwrap();
@@ -321,5 +344,24 @@ mod tests {
     fn empty_label_rejected() {
         let (conn, account_id) = setup();
         assert!(create_api_token(&conn, &account_id, "  ", ApiTokenScopes::Both).is_err());
+    }
+
+    #[test]
+    fn rename_label() {
+        let (conn, account_id) = setup();
+        let (id, _, _, _, _) =
+            create_api_token(&conn, &account_id, "old name", ApiTokenScopes::Both).unwrap();
+        assert!(update_api_token_label(&conn, &account_id, &id, " new name ").unwrap());
+        let listed = list_api_tokens(&conn, &account_id).unwrap();
+        assert_eq!(listed[0].label, "new name");
+        assert!(update_api_token_label(&conn, &account_id, &id, "  ").is_err());
+        assert!(!update_api_token_label(
+            &conn,
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            &id,
+            "stolen"
+        )
+        .unwrap());
+        assert_eq!(list_api_tokens(&conn, &account_id).unwrap()[0].label, "new name");
     }
 }

@@ -351,7 +351,7 @@ fn ensure_named_api_token_hint_column(conn: &Connection) -> Result<()> {
     }
     if !column_exists(conn, "account_api_tokens", "token_hint")? {
         conn.execute_batch(
-            "ALTER TABLE account_api_tokens ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'mv-api-**********';",
+            "ALTER TABLE account_api_tokens ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'mv-api-..';",
         )?;
     }
     Ok(())

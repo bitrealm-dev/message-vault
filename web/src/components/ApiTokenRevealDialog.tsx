@@ -2,6 +2,25 @@ import { useEffect, useState } from "react";
 import ModalShell from "./ModalShell";
 import Button from "./Button";
 
+function CopyIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
 export default function ApiTokenRevealDialog({
   open,
   label,
@@ -34,7 +53,8 @@ export default function ApiTokenRevealDialog({
       onOpenChange={(o) => {
         if (!o) onClose();
       }}
-      label="API token created"
+      label="API key created"
+      maxWidth="32rem"
     >
       <button
         type="button"
@@ -45,20 +65,42 @@ export default function ApiTokenRevealDialog({
         ×
       </button>
 
-      <h3 className="mb-2 pr-6 text-[1.05rem] text-text">API token created</h3>
-      <p className="mb-3 text-[0.813rem] text-muted">
-        Copy this secret for <strong className="text-text">{label}</strong> now.
-        It will not be shown again.
+      <h3 className="mb-3 pr-6 text-center text-[1.125rem] font-medium text-text">
+        API key created
+      </h3>
+      <p className="mb-4 text-center text-[0.875rem] leading-relaxed text-muted">
+        Your new API key <strong className="font-medium text-text">{label}</strong> has
+        been created. Copy this key now as it won&apos;t be shown again.
       </p>
-      <div className="mb-3 rounded border border-border bg-elevated px-2.5 py-2 font-mono text-[0.75rem] break-all text-text">
-        {token}
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Done
-        </Button>
-        <Button variant="primary" onClick={() => void copy()}>
+
+      <div className="mb-3 flex items-stretch gap-2">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-bg px-3 py-2.5 font-mono text-[0.813rem] text-text">
+          <span className="block truncate" title={token}>
+            {token}
+          </span>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => void copy()}
+          className="!inline-flex !shrink-0 !items-center !gap-1.5 !rounded-xl !px-3 !py-2 !text-[0.813rem]"
+        >
+          <CopyIcon />
           {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+
+      <p className="mb-5 text-[0.75rem] leading-relaxed text-muted">
+        For security reasons, this key is only displayed once and cannot be retrieved
+        later. If you lose it, you&apos;ll need to create a new one.
+      </p>
+
+      <div className="flex justify-end">
+        <Button
+          variant="secondary"
+          onClick={onClose}
+          className="!rounded-xl !px-4 !py-2 !text-[0.875rem]"
+        >
+          Done
         </Button>
       </div>
     </ModalShell>

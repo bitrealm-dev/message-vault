@@ -78,42 +78,55 @@ export function ProfileDangerZone({
         </p>
 
         {dangerZoneOpen && (
-          <div className="ml-5 mt-4 flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-4">
-              <p className="m-0 flex-1 text-[0.813rem] text-muted">
-                Delete all messages and attachments. Your contacts and settings remain.
-              </p>
-              <Button
-                variant="danger"
-                disabled={busy || demoLocked}
-                onClick={() => setConfirmDeleteMessagesOpen(true)}
-                className={`${dangerButtonClass} !w-40 shrink-0 !px-3 !py-2 !text-[0.813rem]`}
-                title={demoLocked ? "Unavailable on the demo account" : undefined}
-              >
-                {deletingMessages ? "Deleting…" : "Delete all messages"}
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-between gap-4">
-              <p className="m-0 flex-1 text-[0.813rem] text-muted">
-                Delete this account and everything in it.
-              </p>
-              <Button
-                variant="danger"
-                disabled={busy || demoLocked}
-                onClick={() => setDeleteDialogOpen(true)}
-                className={`${dangerButtonClass} !w-40 shrink-0 !px-3 !py-2 !text-[0.813rem]`}
-                title={demoLocked ? "Unavailable on the demo account" : undefined}
-              >
-                Delete account
-              </Button>
-            </div>
-
-            {dangerError && (
-              <div className="text-[0.813rem] text-danger" role="alert">
-                {dangerError}
+          <div className="ml-5 mt-4 rounded-xl border-solid border-danger p-5 [border-width:0.75px]">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-5">
+              <div className="min-w-0">
+                <p className="m-0 text-[0.813rem] font-bold text-text">
+                  Delete all messages and attachments
+                </p>
+                <p className="m-0 mt-0.5 text-[0.813rem] text-muted">
+                  Your contacts and settings remain
+                </p>
               </div>
-            )}
+              <div className="justify-self-end p-px">
+                <Button
+                  variant="danger"
+                  disabled={busy || demoLocked}
+                  onClick={() => setConfirmDeleteMessagesOpen(true)}
+                  className={`${dangerButtonClass} !box-border !w-auto !min-w-[10.5rem] !whitespace-nowrap !border-transparent !px-3 !py-2 !text-[0.813rem] !shadow-[inset_0_0_0_1px_var(--danger-soft-border)]`}
+                  title={demoLocked ? "Unavailable on the demo account" : undefined}
+                >
+                  {deletingMessages ? "Deleting…" : "Delete all messages"}
+                </Button>
+              </div>
+
+              <div className="min-w-0">
+                <p className="m-0 text-[0.813rem] font-bold text-text">
+                  Delete your account
+                </p>
+                <p className="m-0 mt-0.5 text-[0.813rem] text-muted">
+                  Permanently delete all contacts, messages, and attachments. This
+                  can&apos;t be undone.
+                </p>
+              </div>
+              <div className="justify-self-end p-px">
+                <Button
+                  variant="danger"
+                  disabled={busy || demoLocked}
+                  onClick={() => setDeleteDialogOpen(true)}
+                  className={`${dangerButtonClass} !box-border !w-auto !min-w-[10.5rem] !whitespace-nowrap !border-transparent !px-3 !py-2 !text-[0.813rem] !shadow-[inset_0_0_0_1px_var(--danger-soft-border)]`}
+                  title={demoLocked ? "Unavailable on the demo account" : undefined}
+                >
+                  Delete account
+                </Button>
+              </div>
+
+              {dangerError && (
+                <div className="col-span-2 text-[0.813rem] text-danger" role="alert">
+                  {dangerError}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

@@ -39,8 +39,8 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     label TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     scopes TEXT NOT NULL DEFAULT 'both',
-    -- Masked form for Settings (e.g. mv-api-Sd1**********mE). Not enough to recover the secret.
-    token_hint TEXT NOT NULL DEFAULT 'mv-api-**********',
+    -- Masked form for Settings (e.g. mv-api-Sd..mE). Not enough to recover the secret.
+    token_hint TEXT NOT NULL DEFAULT 'mv-api-..',
     created_at TEXT NOT NULL,
     -- Unix-seconds string; NULL until first successful Bearer use.
     last_accessed_at TEXT
