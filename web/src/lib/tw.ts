@@ -12,3 +12,7 @@ export const pill =
 export const closeButton =
   "cursor-pointer border-none bg-transparent p-1 text-[1.25rem] leading-none text-muted hover:text-text";
 export const divider = "my-6 border-t border-border";
+
+/** Inset (~95% width) hairlines above and below a list row; adjacent rows share one line. */
+export const listRowDividers =
+  "relative before:pointer-events-none before:absolute before:inset-x-[2.5%] before:top-0 before:h-px before:bg-border after:pointer-events-none after:absolute after:inset-x-[2.5%] after:bottom-0 after:h-px after:bg-border";

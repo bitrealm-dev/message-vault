@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
+import { listRowDividers } from "../lib/tw";
 import {
   formatVisibleRange,
   PAGE_SIZE_CONTACTS_FIRST,
@@ -122,9 +123,11 @@ function normalizeContacts(
 
 export default function ContactList({
   filter = "",
+  selectedId = null,
   onSelect,
 }: {
   filter?: string;
+  selectedId?: string | null;
   onSelect: (contact: Contact) => void;
 }) {
   const [serverQ, setServerQ] = useState("");
@@ -255,7 +258,9 @@ export default function ContactList({
                 height: filterActive ? "auto" : "100%",
                 minHeight: filterActive ? CONTACT_ROW_HEIGHT : undefined,
               }}
-              className="box-border flex w-full cursor-pointer items-center gap-2.5 border-b border-border border-none bg-transparent p-2 px-3 text-left text-text"
+              className={`box-border flex w-full cursor-pointer items-center gap-2.5 border-none p-2 px-3 text-left text-text ${listRowDividers} ${
+                c.id === selectedId ? "bg-hover" : "bg-transparent"
+              }`}
             >
               <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
                 <ContactInitialCircle

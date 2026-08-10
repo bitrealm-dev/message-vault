@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect } from "react";
-import { ModalOverlay, Modal, Dialog } from "react-aria-components";
+import { ModalOverlay, Modal, Dialog, Button } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import {
   fetchContactDetail,
@@ -182,13 +182,7 @@ export default function ContactDrawer({
       isOpen={!!contactId}
       isDismissable
       onOpenChange={(o) => {
-        if (o) return;
-        if (editingName) {
-          setEditingName(false);
-          setNameValue(displayName === "Loading…" ? "" : displayName);
-          return;
-        }
-        onClose();
+        if (!o) onClose();
       }}
       className="fixed inset-0 z-40 bg-[rgba(0,0,0,0.2)]"
     >
@@ -238,7 +232,13 @@ export default function ContactDrawer({
               {detailMatches ? " ✎" : null}
             </h2>
           )}
-          <button onClick={onClose} className="shrink-0 cursor-pointer border-none bg-none text-[1.25rem] text-muted">×</button>
+          <Button
+            slot="close"
+            aria-label="Close"
+            className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none data-hovered:text-text"
+          >
+            ×
+          </Button>
           </div>
 
           <ContactDrawerHandles

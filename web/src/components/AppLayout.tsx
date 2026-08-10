@@ -92,6 +92,20 @@ export default function AppLayout() {
     navigate(`/messages/${c.id}`, { state: { conversation: c } });
   };
 
+  const closeContactDrawer = () => {
+    setSelectedContact(null);
+    const state = location.state as {
+      conversation?: Conversation;
+      openContactId?: string;
+    } | null;
+    if (!state?.openContactId) return;
+    const { openContactId: _closed, ...rest } = state;
+    navigate(`${location.pathname}${location.search}`, {
+      replace: true,
+      state: Object.keys(rest).length > 0 ? rest : null,
+    });
+  };
+
   const handleBrowseContactConversations = ({
     contactId,
     kind,
@@ -153,6 +167,7 @@ export default function AppLayout() {
           >
             <ContactList
               filter={contactSearch}
+              selectedId={selectedContact?.id ?? null}
               onSelect={(c) =>
                 setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
               }
@@ -202,7 +217,7 @@ export default function AppLayout() {
       <ContactDrawer
         contactId={selectedContact?.id ?? openContactId ?? null}
         preview={selectedContact}
-        onClose={() => setSelectedContact(null)}
+        onClose={closeContactDrawer}
         onBrowseConversations={handleBrowseContactConversations}
       />
     </div>

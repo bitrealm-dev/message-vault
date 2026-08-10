@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Conversation } from "../lib/types";
+import { listRowDividers } from "../lib/tw";
 import { useListColumnResizing } from "./ListColumnResizeContext";
 
 /** Calendar date: year, month, and day (e.g. "Sep 9, 2024"). */
@@ -140,7 +141,7 @@ export default function ConversationRow({
   return (
     <button
       onClick={onClick}
-      className={`box-border flex w-full cursor-pointer items-start gap-2 border-b border-border border-none px-[0.85rem] py-[0.7rem] text-left ${
+      className={`box-border flex w-full cursor-pointer items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
         isSelected ? "bg-hover" : "bg-transparent"
       }`}
     >
