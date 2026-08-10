@@ -168,11 +168,7 @@ export default function OnboardingScreen() {
           + Add another account
         </button>
 
-        <AuthSubmitButton
-          onClick={handleSubmit}
-          disabled={!canSubmit || loading}
-          style={!canSubmit && !loading ? { filter: "brightness(0.72)" } : undefined}
-        >
+        <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || loading}>
           {loading ? "Saving…" : "Continue to Vault"}
         </AuthSubmitButton>
 

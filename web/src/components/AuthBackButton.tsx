@@ -1,53 +1,12 @@
-import type { CSSProperties } from "react";
+import Button from "./Button";
 
-/** In-card lower-left back control for auth screens (icon + plain label). */
-export default function AuthBackButton({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
+export default function AuthBackButton({ onClick, label }: { onClick: () => void; label: string }) {
   return (
-    <button type="button" onClick={onClick} style={buttonStyle}>
-      <BackArrowIcon />
-      <span>{label}</span>
-    </button>
+    <Button variant="ghost" onPress={onClick} className="-ml-2 gap-1.5">
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+        <path d="M6.5 1.5 3 5l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {label}
+    </Button>
   );
 }
-
-function BackArrowIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M19 12H5" />
-      <path d="M12 19l-7-7 7-7" />
-    </svg>
-  );
-}
-
-const buttonStyle: CSSProperties = {
-  all: "unset",
-  boxSizing: "border-box",
-  display: "inline-flex",
-  alignItems: "center",
-  alignSelf: "flex-start",
-  gap: "0.4rem",
-  marginTop: "auto",
-  paddingTop: "1.25rem",
-  fontFamily: "inherit",
-  fontSize: "0.875rem",
-  fontWeight: 500,
-  color: "var(--muted)",
-  cursor: "pointer",
-  textDecoration: "none",
-};
