@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { contactAvatarColor, contactInitials } from "../lib/contactInitials";
 
 /** Colored circle with contact initials (matches web-next BrowseContactRow). */
@@ -17,24 +16,17 @@ export default function ContactInitialCircle({
     preferredHandle: preferredHandle ?? null,
   };
 
-  const style: CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: size,
-    height: size,
-    flexShrink: 0,
-    borderRadius: "999px",
-    backgroundColor: contactAvatarColor(avatarInput),
-    color: "#ffffff",
-    fontSize: size <= 28 ? "11px" : "13px",
-    fontWeight: 600,
-    lineHeight: 1,
-    userSelect: "none",
-  };
-
   return (
-    <span aria-hidden style={style}>
+    <span
+      aria-hidden
+      className="inline-flex shrink-0 select-none items-center justify-center rounded-full font-semibold leading-none text-white"
+      style={{
+        width: size,
+        height: size,
+        backgroundColor: contactAvatarColor(avatarInput),
+        fontSize: size <= 28 ? "11px" : "13px",
+      }}
+    >
       {contactInitials(avatarInput)}
     </span>
   );

@@ -12,30 +12,25 @@ export default function VideoPlayer({
   if (!attachment.sha256) return null;
   if (error) {
     return (
-      <div style={{ marginTop: "0.375rem", fontSize: "0.75rem", color: "var(--muted)" }}>
+      <div className="mt-1.5 text-[0.75rem] text-muted">
         Video failed to load
       </div>
     );
   }
   if (loading || !url) {
     return (
-      <div style={{
-        marginTop: "0.375rem", maxWidth: "400px", height: "160px",
-        background: "var(--elevated)", borderRadius: "6px",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: "0.75rem", color: "var(--muted)",
-      }}>
+      <div className="mt-1.5 flex h-[160px] max-w-[400px] items-center justify-center rounded-md bg-elevated text-[0.75rem] text-muted">
         Loading video…
       </div>
     );
   }
 
   return (
-    <div style={{ marginTop: "0.375rem", maxWidth: "400px" }}>
+    <div className="mt-1.5 max-w-[400px]">
       <video
         controls
         preload="metadata"
-        style={{ width: "100%", borderRadius: "6px" }}
+        className="w-full rounded-md"
       >
         <source src={url} type={attachment.mime_type || undefined} />
       </video>

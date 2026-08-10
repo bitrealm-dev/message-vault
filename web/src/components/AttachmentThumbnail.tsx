@@ -21,24 +21,16 @@ export default function AttachmentThumbnail({
   // No renderable asset (missing digest) or an unknown file type — show a file chip
   if (!attachment.sha256 || (!isImage && !isVideo)) {
     return (
-      <div style={{
-        display: "flex", alignItems: "center", gap: "0.5rem",
-        padding: "0.5rem", background: "var(--elevated)", borderRadius: "4px",
-        marginTop: "0.375rem", fontSize: "0.813rem",
-      }}>
+      <div className="mt-1.5 flex items-center gap-2 rounded bg-elevated px-2 py-2 text-[0.813rem]">
         <span>📎</span>
-        <span style={{ color: "var(--text)" }}>{attachment.original_name || "attachment"}</span>
+        <span className="text-text">{attachment.original_name || "attachment"}</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div style={{
-        display: "flex", alignItems: "center", gap: "0.5rem",
-        padding: "0.5rem", background: "var(--elevated)", borderRadius: "4px",
-        marginTop: "0.375rem", fontSize: "0.813rem", color: "var(--muted)",
-      }}>
+      <div className="mt-1.5 flex items-center gap-2 rounded bg-elevated px-2 py-2 text-[0.813rem] text-muted">
         <span>📎</span>
         <span>{attachment.original_name || "attachment"} (failed to load)</span>
       </div>
@@ -47,12 +39,7 @@ export default function AttachmentThumbnail({
 
   if (loading || !url) {
     return (
-      <div style={{
-        marginTop: "0.375rem", maxWidth: "300px", height: "120px",
-        background: "var(--elevated)", borderRadius: "6px",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: "0.75rem", color: "var(--muted)",
-      }}>
+      <div className="mt-1.5 flex h-[120px] max-w-[300px] items-center justify-center rounded-md bg-elevated text-[0.75rem] text-muted">
         Loading…
       </div>
     );
@@ -61,33 +48,26 @@ export default function AttachmentThumbnail({
   return (
     <div
       onClick={onClick}
-      style={{
-        marginTop: "0.375rem", cursor: "pointer",
-        maxWidth: "300px", borderRadius: "6px", overflow: "hidden",
-        border: "1px solid var(--border)",
-      }}
+      className="mt-1.5 max-w-[300px] cursor-pointer overflow-hidden rounded-md border border-border"
     >
       {isImage && (
         <img
           src={url}
           alt={attachment.original_name || "attachment"}
           loading="lazy"
-          style={{ width: "100%", height: "auto", display: "block" }}
+          className="block h-auto w-full"
         />
       )}
       {isVideo && (
-        <div style={{ position: "relative" }}>
+        <div className="relative">
           <img
             src={url}
             alt={attachment.original_name || "attachment"}
             loading="lazy"
-            style={{ width: "100%", height: "auto", display: "block", opacity: 0.7 }}
+            className="block h-auto w-full opacity-70"
           />
-          <div style={{
-            position: "absolute", inset: 0, display: "flex",
-            alignItems: "center", justifyContent: "center",
-          }}>
-            <span style={{ fontSize: "2rem" }}>▶️</span>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[2rem]">▶️</span>
           </div>
         </div>
       )}
