@@ -7,6 +7,7 @@ import LoginScreen from "./screens/LoginScreen";
 import RegisterScreen from "./screens/RegisterScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import TrashScreen from "./screens/TrashScreen";
+import MessageRoute from "./components/MessageRoute";
 import ImportScreen from "./screens/ImportScreen";
 import ExportScreen from "./screens/ExportScreen";
 import SettingsScreen from "./screens/SettingsScreen";
@@ -57,7 +58,7 @@ function AppRoutes() {
           <Route path="import" element={<ImportScreen />} />
           <Route path="export" element={<ExportScreen />} />
           <Route path="settings" element={<SettingsScreen />} />
-          {/* /messages/:id route added in Task 9 when MessageRoute.tsx is created */}
+          <Route path="messages/:conversationId" element={<MessageRoute />} />
         </Route>
       </Route>
 

@@ -1,5 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "../lib/auth";
 
 /**
  * Layout route: renders child routes via <Outlet /> if the user
