@@ -1,9 +1,10 @@
 import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import GlobalSearch from "./GlobalSearch";
 import ContactSearch from "./ContactSearch";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import { ListColumnResizeContext } from "./ListColumnResizeContext";
+import { isPortaledOverlayTarget } from "../lib/portaledOverlay";
 
 const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
@@ -53,6 +54,19 @@ export default function ListColumn({
   const [dragging, setDragging] = useState(false);
   const [handleHover, setHandleHover] = useState(false);
   const isContacts = searchMode === "contacts";
+  const conversationsAdvancedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showAdvancedSearch || isContacts) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const root = conversationsAdvancedRef.current;
+      if (!root || !(e.target instanceof Node)) return;
+      if (root.contains(e.target) || isPortaledOverlayTarget(e.target)) return;
+      setShowAdvancedSearch(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [showAdvancedSearch, isContacts]);
 
   const startXRef = useRef(0);
   const startWidthRef = useRef(DEFAULT_WIDTH);
@@ -137,34 +151,34 @@ export default function ListColumn({
             onOpenChange={setContactsSearchOpen}
           />
         ) : (
-          <>
-            <GlobalSearch
-              value={searchQuery}
-              mode="search"
-              onChange={onSearchChange}
-              onSubmit={(q) => onSearch(q)}
-            />
-            <button
-              type="button"
-              onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-              className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
-            >
-              {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
-            </button>
-            {showAdvancedSearch && (
-              <div className="absolute left-0 top-full z-[70] -mt-px w-[480px]">
-                <AdvancedSearchForm
-                  mode={searchMode}
-                  onApply={(q) => {
-                    onSearchChange(q);
-                    onSearch(q);
-                    setShowAdvancedSearch(false);
-                  }}
-                  onClose={() => setShowAdvancedSearch(false)}
-                />
-              </div>
-            )}
-          </>
+            <div ref={conversationsAdvancedRef} className="relative">
+              <GlobalSearch
+                value={searchQuery}
+                mode="search"
+                onChange={onSearchChange}
+                onSubmit={(q) => onSearch(q)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+                className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
+              >
+                {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
+              </button>
+              {showAdvancedSearch ? (
+                <div className="absolute left-0 top-full z-[70] -mt-px w-full min-w-[300px]">
+                  <AdvancedSearchForm
+                    mode={searchMode}
+                    onApply={(q) => {
+                      onSearchChange(q);
+                      onSearch(q);
+                      setShowAdvancedSearch(false);
+                    }}
+                    onClose={() => setShowAdvancedSearch(false)}
+                  />
+                </div>
+              ) : null}
+            </div>
         )}
       </div>
 

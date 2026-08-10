@@ -66,13 +66,15 @@ Choosing a recent row fills the input, applies the filter, bumps that query to t
 
 - Opened from the popdown item (not from a permanent under-field link).
 - Contacts fields: name, handle, no-name, first/last message date bounds, activity, service.
-- **First message** / **Last message** each use an operator Select (**On or after**, **Before**, **Between**) plus date field(s):
+- **First message** / **Last message** each use an operator Select (**Any Date**, **On or after**, **Before**, **Between**) plus date field(s):
+  - Any Date → no date field; no tokens.
   - On or after / Before → one date under the Select.
   - Between → two dates in a row under the Select (start then end).
 - Date semantics (calendar day on MIN/MAX message timestamp):
   - **On or after** → `>=` that day.
   - **Before** → strictly `<` that day.
   - **Between** → half-open: `>= start` and `< end` (same operators composed).
+- Default operator: **Any Date**.
 - Query tokens (new UI always emits prefixes; bare dates remain back-compat on the server):
   - `first-contact:>=YYYY-MM-DD`, `first-contact:<YYYY-MM-DD` (and same for `last-contact:`).
   - Between emits both tokens. Bare `first-contact:DATE` = on or after; bare `last-contact:DATE` = on or before.

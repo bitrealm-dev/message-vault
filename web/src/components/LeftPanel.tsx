@@ -82,10 +82,10 @@ function ExportIcon() {
 /** Sidebar header for each nav group (padding 0.25rem 0.75rem 0.375rem). */
 const sectionHeaderClass = "px-3 pt-1 pb-1.5 text-[0.875rem] font-bold text-text";
 
-/** Nav button: active section gets a hover-tinted background and semibold text. */
+/** Nav button: selected and hovered rows share the list hover tint. */
 function linkClass(active: boolean): string {
-  return `box-border flex w-full cursor-pointer items-center gap-2 rounded border-none bg-transparent px-3 py-1.5 text-left text-[0.875rem] text-text ${
-    active ? "bg-hover font-semibold" : "font-normal"
+  return `box-border flex w-full cursor-pointer items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+    active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }
 

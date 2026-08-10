@@ -5,6 +5,7 @@ import {
   loadContactRecentSearches,
   pushContactRecentSearch,
 } from "../lib/contactRecentSearches";
+import { isPortaledOverlayTarget } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
 
 function MagnifyingGlassIcon() {
@@ -90,22 +91,11 @@ export default function ContactSearch({
   useEffect(() => {
     if (!popdownOpen && !showAdvanced) return;
     const onPointerDown = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (!el) return;
-      const target = e.target;
-      if (!(target instanceof Node)) return;
-      if (el.contains(target)) return;
-      if (
-        target instanceof Element &&
-        target.closest("[data-mv-overlay], [role='listbox'], [role='dialog']")
-      ) {
-        return;
-      }
-      // Advanced Search stays open on outside clicks (needed so dismissing a
-      // portaled service/date menu does not tear down the whole panel). Close
-      // via Escape, Cancel, ×, or Search. Recent-searches popdown still dismisses.
-      if (showAdvanced) return;
+      const root = rootRef.current;
+      if (!root || !(e.target instanceof Node)) return;
+      if (root.contains(e.target) || isPortaledOverlayTarget(e.target)) return;
       setPopdownOpen(false);
+      setShowAdvanced(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -239,7 +229,7 @@ export default function ContactSearch({
       ) : null}
 
       {showAdvanced ? (
-        <div className="absolute left-0 top-full z-[70] mt-2 w-[480px]">
+        <div className="absolute left-0 top-full z-[70] mt-2 w-full min-w-[300px]">
           <AdvancedSearchForm
             mode="contacts"
             withTail

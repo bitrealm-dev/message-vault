@@ -25,7 +25,7 @@ type CountFilterInput = {
 type ActivityFilter = "any" | "messages" | "no-messages";
 
 /** Operator for first-/last-message calendar bounds. */
-type DateBoundOp = "after" | "before" | "between";
+type DateBoundOp = "any" | "after" | "before" | "between";
 
 type DateBoundFilter = {
   op: DateBoundOp;
@@ -36,7 +36,7 @@ type DateBoundFilter = {
 };
 
 const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
-const EMPTY_DATE_BOUND: DateBoundFilter = { op: "after", start: "", end: "" };
+const EMPTY_DATE_BOUND: DateBoundFilter = { op: "any", start: "", end: "" };
 
 const SERVICE_ITEMS = [
   { id: "imessage", name: "iMessage" },
@@ -58,6 +58,13 @@ const dateGroupClass =
 /** Select triggers in this panel — slightly squarer than the shared Select default. */
 const selectTriggerClass = "!rounded-md !bg-bg";
 
+/** Compact Select trigger matching filter field padding/size. */
+const compactFieldTriggerClass =
+  `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
+
+/** Single-column stack used for every contacts filter block. */
+const contactStackClass = "flex min-w-0 flex-col gap-3";
+
 /** Menu rows sized to match the compact field text (0.813rem), not the shared 0.875rem Select. */
 function compactSelectItemClassName(state: {
   isFocused: boolean;
@@ -74,6 +81,7 @@ function composeCountComparison(input: CountFilterInput): string | null {
 }
 
 function dateBoundHasValue(bound: DateBoundFilter): boolean {
+  if (bound.op === "any") return false;
   return Boolean(bound.start || (bound.op === "between" && bound.end));
 }
 
@@ -83,16 +91,20 @@ function pushDateBoundTokens(
   prefix: "first-contact" | "last-contact",
   bound: DateBoundFilter,
 ): void {
-  if (bound.op === "after") {
-    if (bound.start) push(`${prefix}:>=${bound.start}`);
-    return;
+  switch (bound.op) {
+    case "any":
+      return;
+    case "after":
+      if (bound.start) push(`${prefix}:>=${bound.start}`);
+      return;
+    case "before":
+      if (bound.start) push(`${prefix}:<${bound.start}`);
+      return;
+    case "between":
+      if (bound.start) push(`${prefix}:>=${bound.start}`);
+      if (bound.end) push(`${prefix}:<${bound.end}`);
+      return;
   }
-  if (bound.op === "before") {
-    if (bound.start) push(`${prefix}:<${bound.start}`);
-    return;
-  }
-  if (bound.start) push(`${prefix}:>=${bound.start}`);
-  if (bound.end) push(`${prefix}:<${bound.end}`);
 }
 
 export default function AdvancedSearchForm({
@@ -228,7 +240,7 @@ export default function AdvancedSearchForm({
           />
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+        <div className={contactStackClass}>
           <div className="min-w-0">
             <label className={labelClass}>Name</label>
             <input
@@ -285,20 +297,18 @@ export default function AdvancedSearchForm({
               onSelectionChange={(k) => setActivity(k as ActivityFilter)}
               aria-label="Activity"
               className="w-full min-w-0"
-              triggerClassName={`!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`}
+              triggerClassName={compactFieldTriggerClass}
             >
               <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
               <SelectListBoxItem id="messages" className={compactSelectItemClassName}>Has messages</SelectListBoxItem>
               <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>Never messaged</SelectListBoxItem>
             </Select>
           </div>
-          <div className="min-w-0">
-            <ServiceMultiSelect value={services} onChange={setServices} />
-          </div>
+          <ServiceMultiSelect value={services} onChange={setServices} />
         </div>
       )}
 
-      <div className="mt-3 flex justify-start gap-2">
+      <div className="mt-5 flex justify-start gap-2">
         <Button
           variant="primary"
           disabled={!canSubmit}
@@ -313,7 +323,32 @@ export default function AdvancedSearchForm({
   );
 }
 
-/** Operator Select + one date (or two for Between) under First/Last message. */
+/** Compact DateField used under First/Last message operators (label is sr-only). */
+function BoundDateInput({
+  label,
+  pickAriaLabel,
+  value,
+  onChange,
+}: {
+  label: string;
+  pickAriaLabel: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <DateField
+      label={label}
+      pickAriaLabel={pickAriaLabel}
+      value={value}
+      onChange={onChange}
+      labelClassName="sr-only"
+      groupClassName={dateGroupClass}
+      className="min-w-0 w-full overflow-hidden"
+    />
+  );
+}
+
+/** Operator Select + date field(s) when not Any Date. */
 function DateBoundField({
   label,
   value,
@@ -323,26 +358,62 @@ function DateBoundField({
   value: DateBoundFilter;
   onChange: (next: DateBoundFilter) => void;
 }) {
-  const compactTrigger = `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
-  const hiddenLabel = "sr-only";
+  function setOp(op: DateBoundOp): void {
+    if (op === "any") {
+      onChange({ op: "any", start: "", end: "" });
+      return;
+    }
+    onChange({
+      op,
+      start: value.start,
+      end: op === "between" ? value.end : "",
+    });
+  }
+
+  let dateControls = null;
+  if (value.op === "between") {
+    dateControls = (
+      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+        <BoundDateInput
+          label="Start"
+          pickAriaLabel={`${label} start`}
+          value={value.start}
+          onChange={(start) => onChange({ ...value, start })}
+        />
+        <BoundDateInput
+          label="End"
+          pickAriaLabel={`${label} end`}
+          value={value.end}
+          onChange={(end) => onChange({ ...value, end })}
+        />
+      </div>
+    );
+  } else if (value.op === "after" || value.op === "before") {
+    dateControls = (
+      <div className="mt-1.5">
+        <BoundDateInput
+          label="Date"
+          pickAriaLabel={label}
+          value={value.start}
+          onChange={(start) => onChange({ ...value, start })}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0">
       <label className={labelClass}>{label}</label>
       <Select
         selectedKey={value.op}
-        onSelectionChange={(k) => {
-          const op = k as DateBoundOp;
-          onChange({
-            op,
-            start: value.start,
-            end: op === "between" ? value.end : "",
-          });
-        }}
+        onSelectionChange={(k) => setOp(k as DateBoundOp)}
         aria-label={`${label} comparison`}
         className="w-full min-w-0"
-        triggerClassName={compactTrigger}
+        triggerClassName={compactFieldTriggerClass}
       >
+        <SelectListBoxItem id="any" className={compactSelectItemClassName}>
+          Any Date
+        </SelectListBoxItem>
         <SelectListBoxItem id="after" className={compactSelectItemClassName}>
           On or after
         </SelectListBoxItem>
@@ -353,41 +424,7 @@ function DateBoundField({
           Between
         </SelectListBoxItem>
       </Select>
-
-      {value.op === "between" ? (
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <DateField
-            label="Start"
-            pickAriaLabel={`${label} start`}
-            value={value.start}
-            onChange={(start) => onChange({ ...value, start })}
-            labelClassName={hiddenLabel}
-            groupClassName={dateGroupClass}
-            className="min-w-0 w-full overflow-hidden"
-          />
-          <DateField
-            label="End"
-            pickAriaLabel={`${label} end`}
-            value={value.end}
-            onChange={(end) => onChange({ ...value, end })}
-            labelClassName={hiddenLabel}
-            groupClassName={dateGroupClass}
-            className="min-w-0 w-full overflow-hidden"
-          />
-        </div>
-      ) : (
-        <div className="mt-1.5">
-          <DateField
-            label="Date"
-            pickAriaLabel={label}
-            value={value.start}
-            onChange={(start) => onChange({ ...value, start })}
-            labelClassName={hiddenLabel}
-            groupClassName={dateGroupClass}
-            className="min-w-0 w-full overflow-hidden"
-          />
-        </div>
-      )}
+      {dateControls}
     </div>
   );
 }
@@ -429,9 +466,6 @@ function ServiceMultiSelect({
           />
         </svg>
       </AriaButton>
-      {selectedLabels ? (
-        <div className="mt-1 text-[0.75rem] leading-snug text-muted">{selectedLabels}</div>
-      ) : null}
       <Popover
         data-mv-overlay=""
         className={`z-[100] min-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
@@ -463,6 +497,9 @@ function ServiceMultiSelect({
           ))}
         </ListBox>
       </Popover>
+      {selectedLabels ? (
+        <div className="mt-1 text-[0.75rem] leading-snug text-muted">{selectedLabels}</div>
+      ) : null}
     </RACSelect>
   );
 }
