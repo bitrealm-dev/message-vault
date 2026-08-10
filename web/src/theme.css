@@ -264,26 +264,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button.btn-primary {
-  background-color: var(--accent) !important;
-  background-image: linear-gradient(var(--accent), var(--accent)) !important;
-  border-color: var(--accent) !important;
-  color: #ffffff !important;
-}
-
-button.btn-ghost {
-  background-color: transparent;
-  border-color: transparent;
-  color: var(--text);
-}
-
-button.btn-link {
-  background-color: transparent;
-  border-color: transparent;
-  color: var(--accent);
-  text-decoration: underline;
-}
-
 button.contact-drawer-browse-link:hover,
 button.contact-drawer-browse-link:focus-visible {
   text-decoration: underline;

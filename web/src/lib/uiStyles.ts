@@ -9,4 +9,3 @@ export const mutedText = "text-[0.813rem] text-muted";
 export const dangerText = "text-[0.75rem] text-danger";
 export const accentLink = "text-[0.813rem] text-accent cursor-pointer bg-transparent border-none p-0 hover:underline";
 export const divider = "border-none border-t border-border my-4";
-// primaryButton and secondaryButton were removed (dead — verified unused).
