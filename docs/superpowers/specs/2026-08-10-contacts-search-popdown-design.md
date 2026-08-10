@@ -65,8 +65,18 @@ Choosing a recent row fills the input, applies the filter, bumps that query to t
 ### Advanced search
 
 - Opened from the popdown item (not from a permanent under-field link).
-- Contacts fields remain: handle, first/last contact dates, message-count / group-count (existing form).
-- **Apply** sets the composed query on the field, runs the filter, saves to recent, closes the form and popdown.
+- Contacts fields: name, handle, no-name, first/last message date bounds, activity, service.
+- **First message** / **Last message** each use an operator Select (**On or after**, **Before**, **Between**) plus date field(s):
+  - On or after / Before → one date under the Select.
+  - Between → two dates in a row under the Select (start then end).
+- Date semantics (calendar day on MIN/MAX message timestamp):
+  - **On or after** → `>=` that day.
+  - **Before** → strictly `<` that day.
+  - **Between** → half-open: `>= start` and `< end` (same operators composed).
+- Query tokens (new UI always emits prefixes; bare dates remain back-compat on the server):
+  - `first-contact:>=YYYY-MM-DD`, `first-contact:<YYYY-MM-DD` (and same for `last-contact:`).
+  - Between emits both tokens. Bare `first-contact:DATE` = on or after; bare `last-contact:DATE` = on or before.
+- **Search** sets the composed query on the field, runs the filter, saves to recent, closes the form and popdown.
 - **Cancel** / close dismisses the form without changing recent.
 
 ## Data: recent searches

@@ -98,14 +98,31 @@ fn contact_has_messages_sql() -> String {
     )
 }
 
+/// Comparison for a first-/last-contact date bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DateBoundOp {
+    /// Calendar day on or after (`>=` or bare `first-contact:`).
+    OnOrAfter,
+    /// Strictly before that calendar day (`<`).
+    Before,
+    /// Calendar day on or before (bare `last-contact:` back-compat).
+    OnOrBefore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DateBound {
+    op: DateBoundOp,
+    ymd: String,
+}
+
 #[derive(Debug, Default)]
 struct ContactListFilters {
     handle: Option<String>,
     text: String,
-    /// Earliest message on or after this YYYY-MM-DD.
-    first_contact: Option<String>,
-    /// Latest message on or before this YYYY-MM-DD.
-    last_contact: Option<String>,
+    /// Bounds on earliest message day (AND’d).
+    first_contact: Vec<DateBound>,
+    /// Bounds on latest message day (AND’d).
+    last_contact: Vec<DateBound>,
     /// `Some(true)` = has messages; `Some(false)` = never messaged.
     has_messages: Option<bool>,
     no_name: bool,
@@ -122,6 +139,29 @@ fn normalize_ymd(raw: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse `>=YYYY-MM-DD`, `<YYYY-MM-DD`, or bare `YYYY-MM-DD`.
+/// Bare dates use `bare` (OnOrAfter for first-contact, OnOrBefore for last-contact).
+fn parse_date_bound_value(raw: &str, bare: DateBoundOp) -> Option<DateBound> {
+    let t = raw.trim();
+    if let Some(rest) = t.strip_prefix(">=") {
+        return normalize_ymd(rest).map(|ymd| DateBound {
+            op: DateBoundOp::OnOrAfter,
+            ymd,
+        });
+    }
+    // Prefer `<` over bare; do not treat `<=` as Before.
+    if let Some(rest) = t.strip_prefix('<') {
+        if rest.starts_with('=') {
+            return None;
+        }
+        return normalize_ymd(rest).map(|ymd| DateBound {
+            op: DateBoundOp::Before,
+            ymd,
+        });
+    }
+    normalize_ymd(t).map(|ymd| DateBound { op: bare, ymd })
 }
 
 fn expand_service_token(value: &str) -> Vec<String> {
@@ -148,14 +188,14 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
             continue;
         }
         if let Some(rest) = lower.strip_prefix("first-contact:") {
-            if let Some(d) = normalize_ymd(rest) {
-                out.first_contact = Some(d);
+            if let Some(b) = parse_date_bound_value(rest, DateBoundOp::OnOrAfter) {
+                out.first_contact.push(b);
             }
             continue;
         }
         if let Some(rest) = lower.strip_prefix("last-contact:") {
-            if let Some(d) = normalize_ymd(rest) {
-                out.last_contact = Some(d);
+            if let Some(b) = parse_date_bound_value(rest, DateBoundOp::OnOrBefore) {
+                out.last_contact.push(b);
             }
             continue;
         }
@@ -196,8 +236,9 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
 ///
 /// `q` matches preferred name or any linked handle (raw/normalized), case-insensitive.
 /// `handle:<raw>` restricts to contacts that have that handle substring.
-/// Advanced tokens: `first-contact:`, `last-contact:`, `has:messages`, `has:no-messages`,
-/// `has:no-name`, `service:` (OR across repeated service tokens).
+/// Advanced tokens: `first-contact:` / `last-contact:` (optional `>=` / `<` prefix;
+/// bare first = on or after, bare last = on or before; repeated tokens AND),
+/// `has:messages`, `has:no-messages`, `has:no-name`, `service:` (OR across services).
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
@@ -293,32 +334,42 @@ pub fn list_contacts(
         }
     }
 
-    if let Some(ref first) = filters.first_contact {
-        // Earliest message timestamp must be on or after the given day.
-        where_parts.push(format!(
-            "(
-               SELECT MIN(m.timestamp)
-               FROM conversations c
-               JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-               WHERE c.account_id = ct.account_id
-                 AND {involves}
-             ) >= ?"
-        ));
-        params.push(first.clone().into());
+    let first_agg = format!(
+        "date((
+           SELECT MIN(m.timestamp)
+           FROM conversations c
+           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+           WHERE c.account_id = ct.account_id
+             AND {involves}
+         ))"
+    );
+    for bound in &filters.first_contact {
+        let cmp = match bound.op {
+            DateBoundOp::OnOrAfter => ">=",
+            DateBoundOp::Before => "<",
+            DateBoundOp::OnOrBefore => "<=",
+        };
+        where_parts.push(format!("{first_agg} {cmp} date(?)"));
+        params.push(bound.ymd.clone().into());
     }
 
-    if let Some(ref last) = filters.last_contact {
-        // Latest message calendar day must be on or before the given day.
-        where_parts.push(format!(
-            "date((
-               SELECT MAX(m.timestamp)
-               FROM conversations c
-               JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-               WHERE c.account_id = ct.account_id
-                 AND {involves}
-             )) <= date(?)"
-        ));
-        params.push(last.clone().into());
+    let last_agg = format!(
+        "date((
+           SELECT MAX(m.timestamp)
+           FROM conversations c
+           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+           WHERE c.account_id = ct.account_id
+             AND {involves}
+         ))"
+    );
+    for bound in &filters.last_contact {
+        let cmp = match bound.op {
+            DateBoundOp::OnOrAfter => ">=",
+            DateBoundOp::Before => "<",
+            DateBoundOp::OnOrBefore => "<=",
+        };
+        where_parts.push(format!("{last_agg} {cmp} date(?)"));
+        params.push(bound.ymd.clone().into());
     }
 
     let where_sql = where_parts.join(" AND ");
@@ -975,6 +1026,7 @@ mod tests {
             &["2024-06-01T12:00:00Z", "2024-08-01T12:00:00Z"],
         );
 
+        // Bare first-contact = on or after (back-compat).
         let first = list_contacts(
             &conn,
             &account,
@@ -986,6 +1038,19 @@ mod tests {
         assert_eq!(first.total, 1);
         assert_eq!(first.contacts[0].name, "Late");
 
+        // Prefixed >= matches bare first semantics.
+        let first_ge = list_contacts(
+            &conn,
+            &account,
+            "first-contact:>=2024-01-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(first_ge.total, 1);
+        assert_eq!(first_ge.contacts[0].name, "Late");
+
+        // Bare last-contact = on or before (back-compat).
         let last = list_contacts(
             &conn,
             &account,
@@ -996,5 +1061,79 @@ mod tests {
         .unwrap();
         assert_eq!(last.total, 1);
         assert_eq!(last.contacts[0].name, "Early");
+
+        // Before: earliest message strictly before 2024-01-01 → Early only.
+        let first_before = list_contacts(
+            &conn,
+            &account,
+            "first-contact:<2024-01-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(first_before.total, 1);
+        assert_eq!(first_before.contacts[0].name, "Early");
+
+        // Between on first message: >=2024-01-01 and <2025-01-01 → Late.
+        let between = list_contacts(
+            &conn,
+            &account,
+            "first-contact:>=2024-01-01 first-contact:<2025-01-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(between.total, 1);
+        assert_eq!(between.contacts[0].name, "Late");
+
+        // Last message on or after mid-2024 → Late (MAX 2024-08-01).
+        let last_ge = list_contacts(
+            &conn,
+            &account,
+            "last-contact:>=2024-07-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(last_ge.total, 1);
+        assert_eq!(last_ge.contacts[0].name, "Late");
+
+        // Last message before 2024-01-01 → Early.
+        let last_before = list_contacts(
+            &conn,
+            &account,
+            "last-contact:<2024-01-01 search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(last_before.total, 1);
+        assert_eq!(last_before.contacts[0].name, "Early");
+    }
+
+    #[test]
+    fn parse_date_bound_value_prefixes() {
+        assert_eq!(
+            parse_date_bound_value(">=2024-01-15", DateBoundOp::OnOrAfter),
+            Some(DateBound {
+                op: DateBoundOp::OnOrAfter,
+                ymd: "2024-01-15".into(),
+            })
+        );
+        assert_eq!(
+            parse_date_bound_value("<2024-01-15", DateBoundOp::OnOrBefore),
+            Some(DateBound {
+                op: DateBoundOp::Before,
+                ymd: "2024-01-15".into(),
+            })
+        );
+        assert_eq!(
+            parse_date_bound_value("2024-01-15", DateBoundOp::OnOrBefore),
+            Some(DateBound {
+                op: DateBoundOp::OnOrBefore,
+                ymd: "2024-01-15".into(),
+            })
+        );
+        assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
     }
 }

@@ -24,7 +24,19 @@ type CountFilterInput = {
 
 type ActivityFilter = "any" | "messages" | "no-messages";
 
+/** Operator for first-/last-message calendar bounds. */
+type DateBoundOp = "after" | "before" | "between";
+
+type DateBoundFilter = {
+  op: DateBoundOp;
+  /** On or after / Before date, or Between start. */
+  start: string;
+  /** Between end only. */
+  end: string;
+};
+
 const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
+const EMPTY_DATE_BOUND: DateBoundFilter = { op: "after", start: "", end: "" };
 
 const SERVICE_ITEMS = [
   { id: "imessage", name: "iMessage" },
@@ -61,6 +73,28 @@ function composeCountComparison(input: CountFilterInput): string | null {
   return `${input.comparator}${value}`;
 }
 
+function dateBoundHasValue(bound: DateBoundFilter): boolean {
+  return Boolean(bound.start || (bound.op === "between" && bound.end));
+}
+
+/** Emit `prefix:>=D` / `prefix:<D` tokens (Between = half-open pair). */
+function pushDateBoundTokens(
+  push: (s: string) => void,
+  prefix: "first-contact" | "last-contact",
+  bound: DateBoundFilter,
+): void {
+  if (bound.op === "after") {
+    if (bound.start) push(`${prefix}:>=${bound.start}`);
+    return;
+  }
+  if (bound.op === "before") {
+    if (bound.start) push(`${prefix}:<${bound.start}`);
+    return;
+  }
+  if (bound.start) push(`${prefix}:>=${bound.start}`);
+  if (bound.end) push(`${prefix}:<${bound.end}`);
+}
+
 export default function AdvancedSearchForm({
   mode,
   onApply,
@@ -79,8 +113,8 @@ export default function AdvancedSearchForm({
   const [handle, setHandle] = useState("");
   const [msgType, setMsgType] = useState<"all" | "direct" | "group">("all");
   const [participants, setParticipants] = useState<CountFilterInput>(EMPTY_COUNT);
-  const [firstMsgDate, setFirstMsgDate] = useState("");
-  const [lastMsgDate, setLastMsgDate] = useState("");
+  const [firstMsgBound, setFirstMsgBound] = useState<DateBoundFilter>(EMPTY_DATE_BOUND);
+  const [lastMsgBound, setLastMsgBound] = useState<DateBoundFilter>(EMPTY_DATE_BOUND);
   const [activity, setActivity] = useState<ActivityFilter>("any");
   const [noPreferredName, setNoPreferredName] = useState(false);
   const [services, setServices] = useState<Key[]>([]);
@@ -101,8 +135,8 @@ export default function AdvancedSearchForm({
     } else {
       if (contactName.trim()) push(contactName.trim());
       if (handle.trim()) push(`handle:"${handle.trim()}"`);
-      if (firstMsgDate) push(`first-contact:${firstMsgDate}`);
-      if (lastMsgDate) push(`last-contact:${lastMsgDate}`);
+      pushDateBoundTokens(push, "first-contact", firstMsgBound);
+      pushDateBoundTokens(push, "last-contact", lastMsgBound);
       if (activity === "messages") push("has:messages");
       if (activity === "no-messages") push("has:no-messages");
       if (noPreferredName) push("has:no-name");
@@ -125,8 +159,8 @@ export default function AdvancedSearchForm({
       : Boolean(
           contactName.trim() ||
             handle.trim() ||
-            firstMsgDate ||
-            lastMsgDate ||
+            dateBoundHasValue(firstMsgBound) ||
+            dateBoundHasValue(lastMsgBound) ||
             activity !== "any" ||
             noPreferredName ||
             services.length > 0,
@@ -234,33 +268,15 @@ export default function AdvancedSearchForm({
               placeholder="+15555550100"
             />
           </div>
-          <DateField
-            label={
-              <>
-                First message{" "}
-                <span className="normal-case tracking-normal font-medium">(On or After)</span>
-              </>
-            }
-            pickAriaLabel="First message"
-            value={firstMsgDate}
-            onChange={setFirstMsgDate}
-            labelClassName={labelClass}
-            groupClassName={dateGroupClass}
-            className="min-w-0 w-full overflow-hidden"
+          <DateBoundField
+            label="First message"
+            value={firstMsgBound}
+            onChange={setFirstMsgBound}
           />
-          <DateField
-            label={
-              <>
-                Last message{" "}
-                <span className="normal-case tracking-normal font-medium">(Before)</span>
-              </>
-            }
-            pickAriaLabel="Last message"
-            value={lastMsgDate}
-            onChange={setLastMsgDate}
-            labelClassName={labelClass}
-            groupClassName={dateGroupClass}
-            className="min-w-0 w-full overflow-hidden"
+          <DateBoundField
+            label="Last message"
+            value={lastMsgBound}
+            onChange={setLastMsgBound}
           />
           <div className="min-w-0">
             <label className={labelClass}>Activity</label>
@@ -293,6 +309,85 @@ export default function AdvancedSearchForm({
         </Button>
         <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">Cancel</Button>
       </div>
+    </div>
+  );
+}
+
+/** Operator Select + one date (or two for Between) under First/Last message. */
+function DateBoundField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: DateBoundFilter;
+  onChange: (next: DateBoundFilter) => void;
+}) {
+  const compactTrigger = `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
+  const hiddenLabel = "sr-only";
+
+  return (
+    <div className="min-w-0">
+      <label className={labelClass}>{label}</label>
+      <Select
+        selectedKey={value.op}
+        onSelectionChange={(k) => {
+          const op = k as DateBoundOp;
+          onChange({
+            op,
+            start: value.start,
+            end: op === "between" ? value.end : "",
+          });
+        }}
+        aria-label={`${label} comparison`}
+        className="w-full min-w-0"
+        triggerClassName={compactTrigger}
+      >
+        <SelectListBoxItem id="after" className={compactSelectItemClassName}>
+          On or after
+        </SelectListBoxItem>
+        <SelectListBoxItem id="before" className={compactSelectItemClassName}>
+          Before
+        </SelectListBoxItem>
+        <SelectListBoxItem id="between" className={compactSelectItemClassName}>
+          Between
+        </SelectListBoxItem>
+      </Select>
+
+      {value.op === "between" ? (
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <DateField
+            label="Start"
+            pickAriaLabel={`${label} start`}
+            value={value.start}
+            onChange={(start) => onChange({ ...value, start })}
+            labelClassName={hiddenLabel}
+            groupClassName={dateGroupClass}
+            className="min-w-0 w-full overflow-hidden"
+          />
+          <DateField
+            label="End"
+            pickAriaLabel={`${label} end`}
+            value={value.end}
+            onChange={(end) => onChange({ ...value, end })}
+            labelClassName={hiddenLabel}
+            groupClassName={dateGroupClass}
+            className="min-w-0 w-full overflow-hidden"
+          />
+        </div>
+      ) : (
+        <div className="mt-1.5">
+          <DateField
+            label="Date"
+            pickAriaLabel={label}
+            value={value.start}
+            onChange={(start) => onChange({ ...value, start })}
+            labelClassName={hiddenLabel}
+            groupClassName={dateGroupClass}
+            className="min-w-0 w-full overflow-hidden"
+          />
+        </div>
+      )}
     </div>
   );
 }
