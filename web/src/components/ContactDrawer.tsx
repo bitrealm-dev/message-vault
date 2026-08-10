@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect } from "react";
-import { ModalOverlay, Modal, Dialog, Button } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import {
   fetchContactDetail,
@@ -7,6 +6,7 @@ import {
   invalidateContactDetail,
   type CachedContactDetail,
 } from "../lib/contactDetailCache";
+import Button from "./Button";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
   type ContactPreview,
@@ -17,6 +17,28 @@ import {
 export type { ContactPreview, ContactBrowseKind };
 
 type ContactDetail = CachedContactDetail;
+
+const iconBtnClass =
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
+
+function PencilIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
 
 /** Dock the drawer to the right edge of the list/contact column when present. */
 function useDrawerLeft(open: boolean): number | null {
@@ -125,7 +147,6 @@ export default function ContactDrawer({
     setDetail(cached);
 
     const ac = new AbortController();
-    // Cache hit: skip network. Miss: fetch and store.
     if (!cached) {
       void fetchContactDetail(
         contactId,
@@ -148,6 +169,21 @@ export default function ContactDrawer({
     setEditingName(false);
   }, [displayName, contactId]);
 
+  useEffect(() => {
+    if (!contactId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (editingName) {
+        setEditingName(false);
+        setNameValue(detailMatches ? detail!.name : nameValue);
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [contactId, editingName, detailMatches, detail, nameValue, onClose]);
+
   if (!contactId) return null;
 
   const handleRows: ContactDetail["handles"] = detailMatches
@@ -165,83 +201,84 @@ export default function ContactDrawer({
     });
   };
 
-  return (
-    <ModalOverlay
-      isOpen={!!contactId}
-      isDismissable
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-      className="fixed inset-0 z-40 bg-[rgba(0,0,0,0.2)]"
-    >
-      <Modal
-        className="fixed top-0 bottom-0 z-50 w-[min(640px,calc(100vw-12rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
-        style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
-      >
-        <Dialog aria-label={displayName} className="outline-none">
-          <div className="mb-4 flex justify-between gap-2">
-            {editingName && detailMatches ? (
-              <input
-                type="text"
-                value={nameValue}
-                onChange={(e) => setNameValue(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key === "Enter") {
-                    await apiClient.post(`/v1/export/contacts/${contactId}`, {
-                      name: nameValue,
-                    });
-                    setEditingName(false);
-                    loadDetail();
-                  } else if (e.key === "Escape") {
-                    e.stopPropagation();
-                    setEditingName(false);
-                    setNameValue(detail!.name);
-                  }
-                }}
-                onBlur={async () => {
-                  if (nameValue !== detail!.name) {
-                    await apiClient.post(`/v1/export/contacts/${contactId}`, {
-                      name: nameValue,
-                    });
-                    loadDetail();
-                  }
-                  setEditingName(false);
-                }}
-                autoFocus
-                className="box-border w-full rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-              />
-            ) : (
-              <h2
-                onClick={() => {
-                  if (detailMatches) setEditingName(true);
-                }}
-                className={`m-0 min-w-0 text-[1.125rem] ${
-                  detailMatches ? "cursor-pointer" : "cursor-default"
-                }`}
-                title={detailMatches ? "Click to edit" : undefined}
-              >
-                {displayName}
-                {detailMatches ? " ✎" : null}
-              </h2>
-            )}
-            <Button
-              slot="close"
-              aria-label="Close"
-              className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none data-hovered:text-text"
-            >
-              ×
-            </Button>
-          </div>
+  const saveName = async () => {
+    if (!detailMatches || nameValue === detail!.name) {
+      setEditingName(false);
+      return;
+    }
+    await apiClient.post(`/v1/export/contacts/${contactId}`, {
+      name: nameValue,
+    });
+    setEditingName(false);
+    loadDetail();
+  };
 
-          <ContactDrawerHandles
-            contactId={contactId}
-            handleRows={handleRows}
-            loading={loading}
-            onHandlesChanged={loadDetail}
-            onBrowse={onBrowseConversations ? browse : undefined}
+  // Non-modal panel: no full-screen underlay, so the contact list stays clickable.
+  return (
+    <aside
+      role="dialog"
+      aria-label={displayName}
+      className="fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
+      style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
+    >
+      <div className="mb-5 flex items-start justify-between gap-3">
+        {editingName && detailMatches ? (
+          <input
+            type="text"
+            value={nameValue}
+            onChange={(e) => setNameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void saveName();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setEditingName(false);
+                setNameValue(detail!.name);
+              }
+            }}
+            onBlur={() => {
+              void saveName();
+            }}
+            autoFocus
+            className="box-border min-w-0 flex-1 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
           />
-        </Dialog>
-      </Modal>
-    </ModalOverlay>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">
+              {displayName}
+            </h2>
+            {detailMatches ? (
+              <Button
+                variant="ghost"
+                title="Edit name"
+                aria-label="Edit name"
+                onClick={() => setEditingName(true)}
+                className={iconBtnClass}
+              >
+                <PencilIcon />
+              </Button>
+            ) : null}
+          </div>
+        )}
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={onClose}
+          className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none hover:text-text"
+        >
+          ×
+        </button>
+      </div>
+
+      <ContactDrawerHandles
+        contactId={contactId}
+        handleRows={handleRows}
+        loading={loading}
+        onHandlesChanged={loadDetail}
+        onBrowse={onBrowseConversations ? browse : undefined}
+      />
+    </aside>
   );
 }

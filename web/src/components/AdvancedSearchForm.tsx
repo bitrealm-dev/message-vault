@@ -348,7 +348,7 @@ function BoundDateInput({
   );
 }
 
-/** Operator Select + date field(s) when not Any Date. */
+/** Operator Select + date field(s) when not Any. */
 function DateBoundField({
   label,
   value,
@@ -412,7 +412,7 @@ function DateBoundField({
         triggerClassName={compactFieldTriggerClass}
       >
         <SelectListBoxItem id="any" className={compactSelectItemClassName}>
-          Any Date
+          Any
         </SelectListBoxItem>
         <SelectListBoxItem id="after" className={compactSelectItemClassName}>
           On or after

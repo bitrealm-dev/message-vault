@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Table,
   TableHeader,
@@ -27,13 +27,16 @@ type BrowseFn = (args: {
 }) => void;
 
 const thClass =
-  "px-1.5 py-1 text-left text-[0.688rem] font-semibold uppercase tracking-[0.04em] text-muted";
-const tdClass = "px-1.5 py-1.5 align-top text-[0.813rem] text-text";
+  "px-3 py-2 text-left text-[0.688rem] font-semibold uppercase tracking-[0.04em] text-muted";
+const tdClass = "px-3 py-2.5 align-top text-[0.813rem] text-text";
 const linkClass =
   "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent text-left no-underline cursor-pointer hover:underline";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !p-0 !leading-none !text-muted";
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
+const iconBtnDangerClass = `${iconBtnClass} hover:!text-danger data-hovered:!text-danger data-pressed:!text-danger`;
+const serviceSelectTriggerClass =
+  "!rounded-md !px-2 !py-1.5 !text-[0.813rem] !leading-snug";
 
 function TrashIcon() {
   return (
@@ -101,6 +104,71 @@ function CountCell({
   return <span className={value === 0 ? mutedClass : undefined}>{text}</span>;
 }
 
+function AddHandleRow({
+  newService,
+  setNewService,
+  newHandle,
+  setNewHandle,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  newService: string;
+  setNewService: (s: string) => void;
+  newHandle: string;
+  setNewHandle: (s: string) => void;
+  busy: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3">
+      <Select
+        selectedKey={newService}
+        onSelectionChange={(k) => setNewService(String(k))}
+        aria-label="New handle service"
+        triggerClassName={serviceSelectTriggerClass}
+        className="w-[10.5rem] shrink-0"
+      >
+        {HANDLE_SERVICE_OPTIONS.map((s) => (
+          <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
+            {s.label}
+          </ListBoxItem>
+        ))}
+      </Select>
+      <input
+        type="text"
+        value={newHandle}
+        onChange={(e) => setNewHandle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSave();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          }
+        }}
+        placeholder="user#1234, @handle…"
+        className="box-border min-w-0 flex-1 rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] leading-snug text-text"
+        autoFocus
+      />
+      <Button
+        variant="primary"
+        onClick={onSave}
+        disabled={!newHandle.trim() || busy}
+        className="!px-3 !py-1 !text-[0.813rem]"
+      >
+        Save
+      </Button>
+      <Button onClick={onCancel} className="!px-3 !py-1 !text-[0.813rem]">
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
 export function ContactDrawerHandles({
   contactId,
   handleRows,
@@ -123,6 +191,15 @@ export function ContactDrawerHandles({
   const [busy, setBusy] = useState(false);
 
   const totals = sumHandleTotals(handleRows);
+
+  useEffect(() => {
+    setAdding(false);
+    setNewHandle("");
+    setNewService("phone");
+    setEditingHandle(null);
+    setEditHandle("");
+    setBusy(false);
+  }, [contactId]);
 
   const startEdit = (h: CachedContactHandle) => {
     setAdding(false);
@@ -190,6 +267,11 @@ export function ContactDrawerHandles({
     }
   };
 
+  const cancelAdd = () => {
+    setAdding(false);
+    setNewHandle("");
+  };
+
   const footerAsHandle: CachedContactHandle = {
     ...emptyHandleRow(""),
     ...totals,
@@ -197,8 +279,7 @@ export function ContactDrawerHandles({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="m-0 text-[0.75rem] uppercase text-muted">Handles</h3>
+      <div className="mb-3 flex justify-end">
         <Button
           variant="primary"
           disabled={loading || busy || adding}
@@ -214,21 +295,33 @@ export function ContactDrawerHandles({
         </Button>
       </div>
 
+      {adding ? (
+        <AddHandleRow
+          newService={newService}
+          setNewService={setNewService}
+          newHandle={newHandle}
+          setNewHandle={setNewHandle}
+          busy={busy}
+          onSave={() => void saveAdd()}
+          onCancel={cancelAdd}
+        />
+      ) : null}
+
       {handleRows.length === 0 && !adding ? (
         <div className="mb-2 text-[0.813rem] text-muted">
           {loading ? "Loading…" : "No handles"}
         </div>
-      ) : (
-        <Table aria-label="Contact handles" className="w-full border-collapse text-left">
+      ) : handleRows.length === 0 ? null : (
+        <Table aria-label="Contact handles" className="w-full border-collapse text-left table-fixed">
           <TableHeader className="border-b border-border">
-            <Column isRowHeader className={`${thClass} w-[12%]`}>
+            <Column isRowHeader className={`${thClass} w-[14%]`}>
               Service
             </Column>
             <Column className={`${thClass} w-[18%]`}>Handle</Column>
-            <Column className={`${thClass} w-[18%]`}>Date Range</Column>
-            <Column className={`${thClass} w-[10%]`}>Conversations</Column>
-            <Column className={`${thClass} w-[14%]`}>Direct Messages</Column>
-            <Column className={`${thClass} w-[14%]`}>Group Messages</Column>
+            <Column className={`${thClass} w-[20%]`}>Date Range</Column>
+            <Column className={`${thClass} w-[12%]`}>Conversations</Column>
+            <Column className={`${thClass} w-[13%]`}>Direct Messages</Column>
+            <Column className={`${thClass} w-[13%]`}>Group Messages</Column>
             <Column className={`${thClass} w-[10%]`} />
           </TableHeader>
           <TableBody
@@ -247,8 +340,8 @@ export function ContactDrawerHandles({
                         selectedKey={editService}
                         onSelectionChange={(k) => setEditService(String(k))}
                         aria-label="Handle service"
-                        triggerClassName="!text-[0.75rem]"
-                        className="w-full min-w-0"
+                        triggerClassName={serviceSelectTriggerClass}
+                        className="w-full min-w-[10.5rem]"
                       >
                         {HANDLE_SERVICE_OPTIONS.map((s) => (
                           <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
@@ -274,14 +367,15 @@ export function ContactDrawerHandles({
                             void saveEdit();
                           } else if (e.key === "Escape") {
                             e.preventDefault();
+                            e.stopPropagation();
                             cancelEdit();
                           }
                         }}
-                        className="box-border w-full rounded border border-border bg-elevated px-1.5 py-1 text-[0.813rem] text-text"
+                        className="box-border w-full rounded border border-border bg-elevated px-1.5 py-1.5 text-[0.813rem] leading-snug text-text"
                         autoFocus
                       />
                     ) : (
-                      <span className="truncate" title={h.handle}>
+                      <span className="break-all" title={h.handle}>
                         {h.handle}
                       </span>
                     )}
@@ -309,21 +403,21 @@ export function ContactDrawerHandles({
                     {editing ? (
                       <div className="flex items-center justify-end gap-1">
                         <Button
-                          variant="secondary"
+                          variant="ghost"
                           disabled={busy || !editHandle.trim()}
                           title="Save"
                           aria-label="Save"
                           onClick={() => void saveEdit()}
-                          className={`${iconBtnClass} hover:!text-text`}
+                          className={iconBtnClass}
                         >
                           ✓
                         </Button>
                         <Button
-                          variant="secondary"
+                          variant="ghost"
                           title="Cancel"
                           aria-label="Cancel"
                           onClick={cancelEdit}
-                          className={`${iconBtnClass} hover:!text-text`}
+                          className={iconBtnClass}
                         >
                           ×
                         </Button>
@@ -331,22 +425,22 @@ export function ContactDrawerHandles({
                     ) : (
                       <div className="flex items-center justify-end gap-1">
                         <Button
-                          variant="secondary"
+                          variant="ghost"
                           disabled={busy || loading}
                           title="Edit handle"
                           aria-label="Edit handle"
                           onClick={() => startEdit(h)}
-                          className={`${iconBtnClass} hover:!text-text`}
+                          className={iconBtnClass}
                         >
                           <PencilIcon />
                         </Button>
                         <Button
-                          variant="secondary"
+                          variant="ghost"
                           disabled={busy || loading}
                           title="Unlink handle"
                           aria-label="Unlink handle"
                           onClick={() => void removeHandle(h.handle)}
-                          className={`${iconBtnClass} hover:!text-danger`}
+                          className={iconBtnDangerClass}
                         >
                           <TrashIcon />
                         </Button>
@@ -357,82 +451,27 @@ export function ContactDrawerHandles({
               );
             }}
           </TableBody>
-          {handleRows.length > 0 ? (
-            <TableBody className="border-t border-border">
-              <Row id="handles-total" className="outline-none">
-                <Cell className={`${tdClass} font-semibold text-muted`}>Total</Cell>
-                <Cell className={`${tdClass} text-muted`}>—</Cell>
-                <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
-                  {handleDateRangeLabel(footerAsHandle)}
-                </Cell>
-                <Cell className={tdClass}>
-                  <CountCell value={conversationCount(totals)} />
-                </Cell>
-                <Cell className={tdClass}>
-                  <CountCell value={totals.individual_message_count} />
-                </Cell>
-                <Cell className={tdClass}>
-                  <CountCell value={totals.group_message_count} />
-                </Cell>
-                <Cell className={tdClass} />
-              </Row>
-            </TableBody>
-          ) : null}
+          <TableBody className="border-t border-border">
+            <Row id="handles-total" className="outline-none">
+              <Cell className={`${tdClass} font-semibold text-muted`}>Total</Cell>
+              <Cell className={`${tdClass} text-muted`}>—</Cell>
+              <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
+                {handleDateRangeLabel(footerAsHandle)}
+              </Cell>
+              <Cell className={tdClass}>
+                <CountCell value={conversationCount(totals)} />
+              </Cell>
+              <Cell className={tdClass}>
+                <CountCell value={totals.individual_message_count} />
+              </Cell>
+              <Cell className={tdClass}>
+                <CountCell value={totals.group_message_count} />
+              </Cell>
+              <Cell className={tdClass} />
+            </Row>
+          </TableBody>
         </Table>
       )}
-
-      {adding ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-b border-border pb-2">
-          <Select
-            selectedKey={newService}
-            onSelectionChange={(k) => setNewService(String(k))}
-            aria-label="New handle service"
-            triggerClassName="!text-[0.75rem]"
-            className="w-[110px] shrink-0"
-          >
-            {HANDLE_SERVICE_OPTIONS.map((s) => (
-              <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
-                {s.label}
-              </ListBoxItem>
-            ))}
-          </Select>
-          <input
-            type="text"
-            value={newHandle}
-            onChange={(e) => setNewHandle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void saveAdd();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setAdding(false);
-                setNewHandle("");
-              }
-            }}
-            placeholder="user#1234, @handle…"
-            className="min-w-0 flex-1 rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text"
-            autoFocus
-          />
-          <Button
-            variant="primary"
-            onClick={() => void saveAdd()}
-            disabled={!newHandle.trim() || busy}
-            className="!px-3 !py-1 !text-[0.813rem]"
-          >
-            Save
-          </Button>
-          <Button
-            onClick={() => {
-              setAdding(false);
-              setNewHandle("");
-            }}
-            className="!px-3 !py-1 !text-[0.813rem]"
-          >
-            Cancel
-          </Button>
-        </div>
-      ) : null}
     </div>
   );
 }
