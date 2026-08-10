@@ -1,15 +1,20 @@
 /** In-memory contact detail cache (Next-like instant reopen). */
 
+export type CachedContactHandle = {
+  handle: string;
+  service: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  individual_conversations: number;
+  group_conversations: number;
+  individual_message_count: number;
+  group_message_count: number;
+};
+
 export type CachedContactDetail = {
   id: string;
   name: string;
-  handles: {
-    handle: string;
-    service: string | null;
-    start_date: string | null;
-    end_date: string | null;
-    message_count: number;
-  }[];
+  handles: CachedContactHandle[];
   direct_conversations: number;
   group_conversations: number;
   total_messages: number;

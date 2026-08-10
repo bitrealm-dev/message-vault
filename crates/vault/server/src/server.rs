@@ -269,7 +269,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route("/v1/export/contacts", get(contacts_list_handler))
         .route(
             "/v1/export/contacts/{id}",
-            get(contact_detail_handler),
+            get(contact_detail_handler).post(contact_mutate_handler),
         )
         .route(
             "/v1/export/conversations",
@@ -765,6 +765,40 @@ async fn contact_detail_handler(
         Some(d) => Ok(Json(d)),
         None => Err(ApiError::NotFound("contact not found".into())),
     }
+}
+
+async fn contact_mutate_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+    Json(body): Json<crate::contacts_api::ContactMutationBody>,
+) -> Result<Json<crate::contacts_api::ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let account_id = auth.account_id.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        match crate::contacts_api::mutate_contact(&conn, &account_id, contact_id, &body) {
+            Ok(false) => Ok::<_, anyhow::Error>(Err(ApiError::NotFound(
+                "contact not found".into(),
+            ))),
+            Err(e) => Ok(Err(ApiError::BadRequest(e.to_string()))),
+            Ok(true) => {
+                let detail = crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                    .ok_or_else(|| anyhow::anyhow!("contact missing after mutate"))?;
+                Ok(Ok(detail))
+            }
+        }
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("contact mutate task: {e}")))?
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    outcome.map(Json)
 }
 
 #[derive(Debug, Deserialize)]

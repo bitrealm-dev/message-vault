@@ -10,7 +10,18 @@ import ContactDrawer, {
 import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
 
-function contactBrowseQuery(contactId: string, kind: ContactBrowseKind): string {
+function contactBrowseQuery(
+  contactId: string,
+  kind: ContactBrowseKind,
+  handle?: string,
+): string {
+  const typeSuffix =
+    kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
+  const h = handle?.trim();
+  if (h) {
+    const quoted = /\s/.test(h) ? `"${h}"` : h;
+    return `handle:${quoted}${typeSuffix}`;
+  }
   if (kind === "direct") return `contact:${contactId} is:direct`;
   if (kind === "group") return `contact:${contactId} is:group`;
   return `contact:${contactId}`;
@@ -20,11 +31,17 @@ function visibleBrowseQuery(
   kind: ContactBrowseKind,
   handles: string[],
   contactId: string,
+  preferHandle?: string,
 ): string {
   const typeSuffix =
     kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
-  const handle = handles.find((h) => h.trim().length > 0)?.trim();
-  if (handle) return `handle:${handle}${typeSuffix}`;
+  const handle =
+    preferHandle?.trim() ||
+    handles.find((h) => h.trim().length > 0)?.trim();
+  if (handle) {
+    const quoted = /\s/.test(handle) ? `"${handle}"` : handle;
+    return `handle:${quoted}${typeSuffix}`;
+  }
   return `contact:${contactId}${typeSuffix}`;
 }
 
@@ -109,14 +126,16 @@ export default function AppLayout() {
   const handleBrowseContactConversations = ({
     contactId,
     kind,
+    handle,
     handles = [],
   }: {
     contactId: string;
     kind: ContactBrowseKind;
+    handle?: string;
     handles?: string[];
   }) => {
-    const visible = visibleBrowseQuery(kind, handles, contactId);
-    const apiQuery = contactBrowseQuery(contactId, kind);
+    const visible = visibleBrowseQuery(kind, handles, contactId, handle);
+    const apiQuery = contactBrowseQuery(contactId, kind, handle);
     setSelectedContact(null);
     navigate(`/?q=${encodeURIComponent(visible)}&f=${encodeURIComponent(apiQuery)}`);
   };

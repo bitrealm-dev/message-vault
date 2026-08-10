@@ -1,9 +1,12 @@
-//! Read-only contact query used by `GET /v1/export/contacts`
-//! and `GET /v1/export/contacts/{id}`.
+//! Contact list/detail used by `GET /v1/export/contacts` and
+//! `GET|POST /v1/export/contacts/{id}`.
 
-use rusqlite::{params_from_iter, Connection, OptionalExtension};
-use serde::Serialize;
+use anyhow::{bail, Result as AnyResult};
+use message_ir::HandleType;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
+use crate::db::account_profile;
 use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
@@ -36,7 +39,43 @@ pub struct ContactHandleInfo {
     pub start_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
-    pub message_count: u64,
+    pub individual_conversations: u64,
+    pub group_conversations: u64,
+    pub individual_message_count: u64,
+    pub group_message_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContactHandlePayload {
+    pub handle: String,
+    #[serde(default)]
+    pub service: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContactUpdateHandlePayload {
+    pub previous_handle: String,
+    pub handle: String,
+    #[serde(default)]
+    pub service: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContactRemoveHandlePayload {
+    pub handle: String,
+}
+
+/// Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.
+#[derive(Debug, Deserialize)]
+pub struct ContactMutationBody {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub add_handle: Option<ContactHandlePayload>,
+    #[serde(default)]
+    pub update_handle: Option<ContactUpdateHandlePayload>,
+    #[serde(default)]
+    pub remove_handle: Option<ContactRemoveHandlePayload>,
 }
 
 #[derive(Debug, Serialize)]
@@ -510,22 +549,28 @@ pub fn get_contact_detail(
         return Ok(None);
     };
 
-    // One row per handle. Date range covers direct + group conversations;
-    // message count is direct-messages only (group stats are not attributed).
+    // One row per handle. Date range and message counts cover direct + group
+    // conversations that include the handle (excluding trashed conversations).
     let mut stmt = conn
         .prepare(
             "SELECT h.raw,
-                    (SELECT c2.service FROM conversations c2
-                     WHERE c2.account_id = ch.account_id
-                       AND (c2.chat_handle_id = ch.handle_id
-                            OR EXISTS (
-                              SELECT 1 FROM participants p2
-                              WHERE p2.conversation_id = c2.id AND p2.handle_id = ch.handle_id
-                            ))
-                     ORDER BY c2.id DESC LIMIT 1) AS service,
+                    COALESCE(
+                      NULLIF(trim(h.service), ''),
+                      (SELECT c2.service FROM conversations c2
+                       WHERE c2.account_id = ch.account_id
+                         AND (c2.chat_handle_id = ch.handle_id
+                              OR EXISTS (
+                                SELECT 1 FROM participants p2
+                                WHERE p2.conversation_id = c2.id AND p2.handle_id = ch.handle_id
+                              ))
+                       ORDER BY c2.id DESC LIMIT 1)
+                    ) AS service,
                     MIN(m.timestamp) AS first_ts,
                     MAX(m.timestamp) AS last_ts,
-                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN m.id END)
+                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN c.id END),
+                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'group' THEN c.id END),
+                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN m.id END),
+                    COUNT(DISTINCT CASE WHEN c.conversation_type = 'group' THEN m.id END)
              FROM contact_handles ch
              JOIN handles h ON h.id = ch.handle_id
              LEFT JOIN conversations c ON c.account_id = ch.account_id
@@ -534,9 +579,17 @@ pub fn get_contact_detail(
                       SELECT 1 FROM participants p
                       WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                     ))
+               AND NOT EXISTS (
+                 SELECT 1 FROM trashed_conversations tc
+                 WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM trashed_handles th
+                 WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
+               )
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-             GROUP BY ch.handle_id, h.raw
+             GROUP BY ch.handle_id, h.raw, h.service
              ORDER BY h.raw",
         )
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
@@ -548,7 +601,10 @@ pub fn get_contact_detail(
                 service: row.get(1)?,
                 start_date: row.get(2)?,
                 end_date: row.get(3)?,
-                message_count: row.get::<_, i64>(4)?.max(0) as u64,
+                individual_conversations: row.get::<_, i64>(4)?.max(0) as u64,
+                group_conversations: row.get::<_, i64>(5)?.max(0) as u64,
+                individual_message_count: row.get::<_, i64>(6)?.max(0) as u64,
+                group_message_count: row.get::<_, i64>(7)?.max(0) as u64,
             })
         })
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
@@ -599,13 +655,224 @@ pub fn get_contact_detail(
     }))
 }
 
+fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
+    let svc = service.map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    match svc.as_str() {
+        "phone" | "sms" | "imessage" | "whatsapp" => HandleType::Phone,
+        "email" => HandleType::Email,
+        "" => {
+            let h = raw.trim();
+            if h.contains('@') {
+                HandleType::Email
+            } else {
+                let has_digit = h.bytes().any(|b| b.is_ascii_digit());
+                let all_phone = h.bytes().all(|b| {
+                    b.is_ascii_digit()
+                        || matches!(b, b'+' | b'-' | b' ' | b'(' | b')' | b'.' | b'#' | b'*')
+                });
+                if !h.is_empty() && has_digit && all_phone {
+                    HandleType::Phone
+                } else {
+                    HandleType::Other
+                }
+            }
+        }
+        _ => HandleType::Other,
+    }
+}
+
+fn find_contact_handle_id(
+    conn: &Connection,
+    account_id: &str,
+    contact_id: i64,
+    raw: &str,
+) -> AnyResult<Option<i64>> {
+    let needle = raw.trim();
+    if needle.is_empty() {
+        return Ok(None);
+    }
+    let id: Option<i64> = conn
+        .query_row(
+            "SELECT ch.handle_id
+             FROM contact_handles ch
+             JOIN handles h ON h.id = ch.handle_id
+             WHERE ch.account_id = ?1 AND ch.contact_id = ?2
+               AND (h.raw = ?3 OR h.normalized = ?3)
+             LIMIT 1",
+            params![account_id, contact_id, needle],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(id)
+}
+
+fn ensure_handle_row(
+    conn: &Connection,
+    account_id: &str,
+    raw: &str,
+    service: Option<&str>,
+) -> AnyResult<i64> {
+    let handle_type = infer_handle_type(raw, service);
+    // Reuse account-profile helper so normalization matches import/profile paths.
+    // It also links account_handles (harmless for contact-owned numbers).
+    let id = account_profile::link_account_handle_with_service(
+        conn,
+        account_id,
+        raw.trim(),
+        handle_type,
+        service.map(|s| s.trim()).filter(|s| !s.is_empty()),
+    )?;
+    Ok(id)
+}
+
+fn contact_exists(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM contacts WHERE id = ?1 AND account_id = ?2",
+            params![contact_id, account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some())
+}
+
+/// Apply a contact mutation. Returns false when the contact is missing.
+pub fn mutate_contact(
+    conn: &Connection,
+    account_id: &str,
+    contact_id: i64,
+    body: &ContactMutationBody,
+) -> AnyResult<bool> {
+    if !contact_exists(conn, account_id, contact_id)? {
+        return Ok(false);
+    }
+
+    let set_count = [
+        body.name.is_some(),
+        body.add_handle.is_some(),
+        body.update_handle.is_some(),
+        body.remove_handle.is_some(),
+    ]
+    .into_iter()
+    .filter(|b| *b)
+    .count();
+    if set_count != 1 {
+        bail!("exactly one of name, add_handle, update_handle, remove_handle is required");
+    }
+
+    if let Some(name) = body.name.as_ref() {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("name must not be empty");
+        }
+        conn.execute(
+            "UPDATE contacts SET preferred_name = ?1 WHERE id = ?2 AND account_id = ?3",
+            params![name, contact_id, account_id],
+        )?;
+        return Ok(true);
+    }
+
+    if let Some(add) = body.add_handle.as_ref() {
+        let raw = add.handle.trim();
+        if raw.is_empty() {
+            bail!("handle must not be empty");
+        }
+        let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref())?;
+        // One contact per handle (PK on contact_handles.handle_id + account).
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT contact_id FROM contact_handles
+                 WHERE account_id = ?1 AND handle_id = ?2",
+                params![account_id, handle_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(other) = existing {
+            if other != contact_id {
+                bail!("handle already linked to another contact");
+            }
+            return Ok(true);
+        }
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![account_id, handle_id, contact_id],
+        )?;
+        return Ok(true);
+    }
+
+    if let Some(upd) = body.update_handle.as_ref() {
+        let prev = upd.previous_handle.trim();
+        let next = upd.handle.trim();
+        if prev.is_empty() || next.is_empty() {
+            bail!("previous_handle and handle must not be empty");
+        }
+        let Some(old_id) = find_contact_handle_id(conn, account_id, contact_id, prev)? else {
+            bail!("previous handle not found on contact");
+        };
+        let new_id = ensure_handle_row(conn, account_id, next, upd.service.as_deref())?;
+        if old_id == new_id {
+            if let Some(svc) = upd.service.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                conn.execute(
+                    "UPDATE handles SET service = ?1 WHERE id = ?2",
+                    params![svc, new_id],
+                )?;
+            }
+            return Ok(true);
+        }
+        let taken: Option<i64> = conn
+            .query_row(
+                "SELECT contact_id FROM contact_handles
+                 WHERE account_id = ?1 AND handle_id = ?2",
+                params![account_id, new_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(other) = taken {
+            if other != contact_id {
+                bail!("handle already linked to another contact");
+            }
+            // Already on this contact — drop the previous link.
+            conn.execute(
+                "DELETE FROM contact_handles
+                 WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
+                params![account_id, contact_id, old_id],
+            )?;
+            return Ok(true);
+        }
+        conn.execute(
+            "UPDATE contact_handles SET handle_id = ?1
+             WHERE account_id = ?2 AND contact_id = ?3 AND handle_id = ?4",
+            params![new_id, account_id, contact_id, old_id],
+        )?;
+        return Ok(true);
+    }
+
+    if let Some(rem) = body.remove_handle.as_ref() {
+        let raw = rem.handle.trim();
+        if raw.is_empty() {
+            bail!("handle must not be empty");
+        }
+        let Some(handle_id) = find_contact_handle_id(conn, account_id, contact_id, raw)? else {
+            bail!("handle not found on contact");
+        };
+        conn.execute(
+            "DELETE FROM contact_handles
+             WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
+            params![account_id, contact_id, handle_id],
+        )?;
+        return Ok(true);
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use message_ir::HandleType;
     use rusqlite::params;
 
-    use crate::db::{account_profile, schema};
+    use crate::db::schema;
 
     fn setup() -> (Connection, String) {
         let conn = Connection::open_in_memory().unwrap();
@@ -827,6 +1094,107 @@ mod tests {
             "handle={:?}",
             detail.handles[0].handle
         );
+        assert_eq!(detail.handles[0].individual_conversations, 1);
+        assert_eq!(detail.handles[0].group_conversations, 1);
+        assert_eq!(detail.handles[0].individual_message_count, 2);
+        assert_eq!(detail.handles[0].group_message_count, 1);
+    }
+
+    #[test]
+    fn mutate_contact_add_update_remove_handle_and_rename() {
+        let (conn, account) = setup();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: Some(ContactHandlePayload {
+                    handle: "+15555550200".into(),
+                    service: Some("phone".into()),
+                }),
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
+
+        let detail = get_contact_detail(&conn, &account, contact_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.handles.len(), 1);
+        assert!(detail.handles[0].handle.contains("5555550200"));
+
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: Some("Samantha".into()),
+                add_handle: None,
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
+        let renamed = get_contact_detail(&conn, &account, contact_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.name, "Samantha");
+
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: None,
+                update_handle: Some(ContactUpdateHandlePayload {
+                    previous_handle: detail.handles[0].handle.clone(),
+                    handle: "sam@example.com".into(),
+                    service: Some("email".into()),
+                }),
+                remove_handle: None,
+            },
+        )
+        .unwrap());
+        let updated = get_contact_detail(&conn, &account, contact_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.handles.len(), 1);
+        assert_eq!(updated.handles[0].handle, "sam@example.com");
+
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: None,
+                update_handle: None,
+                remove_handle: Some(ContactRemoveHandlePayload {
+                    handle: "sam@example.com".into(),
+                }),
+            },
+        )
+        .unwrap());
+        let empty = get_contact_detail(&conn, &account, contact_id)
+            .unwrap()
+            .unwrap();
+        assert!(empty.handles.is_empty());
     }
 
     fn insert_contact_with_handle(

@@ -11,7 +11,7 @@ import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
   type ContactPreview,
   type ContactBrowseKind,
-  yearRangeLabel,
+  emptyHandleRow,
 } from "./contactDrawer/contactDrawerTypes";
 
 export type { ContactPreview, ContactBrowseKind };
@@ -78,6 +78,7 @@ export default function ContactDrawer({
   onBrowseConversations?: (args: {
     contactId: string;
     kind: ContactBrowseKind;
+    handle?: string;
     handles?: string[];
   }) => void;
 }) {
@@ -151,31 +152,18 @@ export default function ContactDrawer({
 
   const handleRows: ContactDetail["handles"] = detailMatches
     ? detail!.handles
-    : (previewMatches ? preview!.handles : undefined)?.map((h) => ({
-        handle: h,
-        service: null,
-        start_date: null,
-        end_date: null,
-        message_count: 0,
-      })) ?? [];
+    : (previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ??
+      [];
 
-  const years = detailMatches ? yearRangeLabel(detail!.handles) : null;
-  const totalMessages = detailMatches ? detail!.total_messages : null;
-  const directCount = detailMatches ? detail!.direct_conversations : null;
-  const groupCount = detailMatches ? detail!.group_conversations : null;
-
-  const browse = (kind: ContactBrowseKind) => {
+  const browse = (args: { kind: ContactBrowseKind; handle?: string }) => {
     if (!onBrowseConversations || !contactId) return;
     onBrowseConversations({
       contactId,
-      kind,
+      kind: args.kind,
+      handle: args.handle,
       handles: handleRows.map((h) => h.handle).filter(Boolean),
     });
   };
-
-  const browseLinkClass = `block border-none bg-transparent p-0 font-[inherit] font-semibold text-accent text-left no-underline ${
-    onBrowseConversations ? "cursor-pointer" : "cursor-default"
-  }`;
 
   return (
     <ModalOverlay
@@ -187,104 +175,71 @@ export default function ContactDrawer({
       className="fixed inset-0 z-40 bg-[rgba(0,0,0,0.2)]"
     >
       <Modal
-        className="fixed top-0 bottom-0 z-50 w-[320px] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
+        className="fixed top-0 bottom-0 z-50 w-[min(640px,calc(100vw-12rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
         style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
       >
         <Dialog aria-label={displayName} className="outline-none">
           <div className="mb-4 flex justify-between gap-2">
-          {editingName && detailMatches ? (
-            <input
-              type="text"
-              value={nameValue}
-              onChange={(e) => setNameValue(e.target.value)}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter") {
-                  await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
+            {editingName && detailMatches ? (
+              <input
+                type="text"
+                value={nameValue}
+                onChange={(e) => setNameValue(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter") {
+                    await apiClient.post(`/v1/export/contacts/${contactId}`, {
+                      name: nameValue,
+                    });
+                    setEditingName(false);
+                    loadDetail();
+                  } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    setEditingName(false);
+                    setNameValue(detail!.name);
+                  }
+                }}
+                onBlur={async () => {
+                  if (nameValue !== detail!.name) {
+                    await apiClient.post(`/v1/export/contacts/${contactId}`, {
+                      name: nameValue,
+                    });
+                    loadDetail();
+                  }
                   setEditingName(false);
-                  loadDetail();
-                } else if (e.key === "Escape") {
-                  e.stopPropagation();
-                  setEditingName(false);
-                  setNameValue(detail!.name);
-                }
-              }}
-              onBlur={async () => {
-                if (nameValue !== detail!.name) {
-                  await apiClient.post(`/v1/export/contacts/${contactId}`, { name: nameValue });
-                  loadDetail();
-                }
-                setEditingName(false);
-              }}
-              autoFocus
-              className="box-border w-full rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-            />
-          ) : (
-            <h2
-              onClick={() => {
-                if (detailMatches) setEditingName(true);
-              }}
-              className={`m-0 min-w-0 text-[1.125rem] ${
-                detailMatches ? "cursor-pointer" : "cursor-default"
-              }`}
-              title={detailMatches ? "Click to edit" : undefined}
+                }}
+                autoFocus
+                className="box-border w-full rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
+              />
+            ) : (
+              <h2
+                onClick={() => {
+                  if (detailMatches) setEditingName(true);
+                }}
+                className={`m-0 min-w-0 text-[1.125rem] ${
+                  detailMatches ? "cursor-pointer" : "cursor-default"
+                }`}
+                title={detailMatches ? "Click to edit" : undefined}
+              >
+                {displayName}
+                {detailMatches ? " ✎" : null}
+              </h2>
+            )}
+            <Button
+              slot="close"
+              aria-label="Close"
+              className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none data-hovered:text-text"
             >
-              {displayName}
-              {detailMatches ? " ✎" : null}
-            </h2>
-          )}
-          <Button
-            slot="close"
-            aria-label="Close"
-            className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none data-hovered:text-text"
-          >
-            ×
-          </Button>
+              ×
+            </Button>
           </div>
 
           <ContactDrawerHandles
-          contactId={contactId}
-          handleRows={handleRows}
-          loading={loading}
-          onHandlesChanged={loadDetail}
-        />
-
-        <div className="mt-5 text-[0.875rem]">
-          <h3 className="mb-[0.35rem] text-[0.75rem] uppercase text-muted">
-            Messages
-          </h3>
-          {detailMatches ? (
-            <>
-              {years ? (
-                <div className="mb-2 text-muted">
-                  {years}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className={`contact-drawer-browse-link mb-1 ${browseLinkClass}`}
-                onClick={() => browse("direct")}
-              >
-                {directCount} direct conversation{directCount === 1 ? "" : "s"}
-              </button>
-              <button
-                type="button"
-                className={`contact-drawer-browse-link mb-1 ${browseLinkClass}`}
-                onClick={() => browse("group")}
-              >
-                {groupCount} group conversation{groupCount === 1 ? "" : "s"}
-              </button>
-              <button
-                type="button"
-                className={`contact-drawer-browse-link ${browseLinkClass}`}
-                onClick={() => browse("all")}
-              >
-                {totalMessages} total message{totalMessages === 1 ? "" : "s"}
-              </button>
-            </>
-          ) : (
-            <div className="text-muted">Loading details…</div>
-          )}
-        </div>
+            contactId={contactId}
+            handleRows={handleRows}
+            loading={loading}
+            onHandlesChanged={loadDetail}
+            onBrowse={onBrowseConversations ? browse : undefined}
+          />
         </Dialog>
       </Modal>
     </ModalOverlay>
