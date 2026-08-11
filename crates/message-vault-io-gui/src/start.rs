@@ -1149,6 +1149,7 @@ fn run_vault_upload(
         cancel: Some(cancel),
         trust_export: false,
         contact_name_mode: "fill_missing".into(),
+        import_id: None,
     };
     let mut on_progress = |event: VaultProgressEvent| match event {
         VaultProgressEvent::Log(line) => {

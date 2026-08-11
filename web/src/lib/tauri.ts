@@ -48,6 +48,7 @@ export interface PushConfig {
   skip_attachments: boolean;
   trust_export: boolean;
   contact_name_mode?: string;
+  import_id?: number;
 }
 
 export async function invokePush(config: PushConfig): Promise<void> {
@@ -62,6 +63,7 @@ export async function invokePush(config: PushConfig): Promise<void> {
     skipAttachments: config.skip_attachments,
     trustExport: config.trust_export,
     contactNameMode: config.contact_name_mode ?? "fill_missing",
+    importId: config.import_id ?? null,
   });
 }
 

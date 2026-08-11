@@ -128,6 +128,8 @@ pub struct VaultPushConfig {
     /// How the vault applies account contacts to import display names
     /// (`fill_missing` or `overwrite`).
     pub contact_name_mode: String,
+    /// Existing import session to reuse when the caller already created one.
+    pub import_id: Option<i64>,
 }
 
 /// Per-conversation outcome written into the final report JSON.
@@ -765,43 +767,53 @@ fn prepare_run_setup(
         );
     }
 
-    // Best-effort: tell the vault "a new import run is starting" so Storage UI
-    // can show sessions. Older servers may not support this; we continue anyway.
     let source = detect_source(&input)?
         .unwrap_or_else(|| "unknown".to_string());
-    let import_id = match http.start_import(
-        &url,
-        &cfg.key,
-        &username,
-        &source,
-        &cfg.mode,
-        Some("vault-push"),
-    ) {
-        Ok(id) => {
-            if let Some(id) = id {
-                log.line(&format!("vault import session id={id} source={source}"));
+    // Best-effort: tell the vault "a new import run is starting" unless the
+    // caller already created a session and wants us to reuse it.
+    let import_id = if let Some(import_id) = cfg.import_id {
+        log.line(&format!("using provided vault import session id={import_id}"));
+        if let Some(cb) = progress.as_mut() {
+            cb(ProgressEvent::Log(format!(
+                "Reusing import session {import_id} ({source})"
+            )));
+        }
+        Some(import_id)
+    } else {
+        match http.start_import(
+            &url,
+            &cfg.key,
+            &username,
+            &source,
+            &cfg.mode,
+            Some("vault-push"),
+        ) {
+            Ok(id) => {
+                if let Some(id) = id {
+                    log.line(&format!("vault import session id={id} source={source}"));
+                    if let Some(cb) = progress.as_mut() {
+                        cb(ProgressEvent::Log(format!(
+                            "Recording import session {id} ({source})"
+                        )));
+                    }
+                } else {
+                    log.line(
+                        "vault import sessions not supported by this server; continuing without import_id",
+                    );
+                }
+                id
+            }
+            Err(error) => {
+                log.line(&format!(
+                    "warning: could not start vault import session: {error}"
+                ));
                 if let Some(cb) = progress.as_mut() {
                     cb(ProgressEvent::Log(format!(
-                        "Recording import session {id} ({source})"
+                        "Warning: could not start vault import session: {error}"
                     )));
                 }
-            } else {
-                log.line(
-                    "vault import sessions not supported by this server; continuing without import_id",
-                );
+                None
             }
-            id
-        }
-        Err(error) => {
-            log.line(&format!(
-                "warning: could not start vault import session: {error}"
-            ));
-            if let Some(cb) = progress.as_mut() {
-                cb(ProgressEvent::Log(format!(
-                    "Warning: could not start vault import session: {error}"
-                )));
-            }
-            None
         }
     };
 
@@ -923,7 +935,7 @@ fn finish_run(
         serde_json::to_string_pretty(&report).context("serialize report")?,
     )
     .with_context(|| format!("write report {}", report_path.display()))?;
-    if let Some(import_id) = import_id {
+    if cfg.import_id.is_none() && let Some(import_id) = import_id {
         match http.complete_import(
             &url,
             &cfg.key,

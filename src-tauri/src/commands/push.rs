@@ -25,6 +25,7 @@ pub async fn push(
     skip_attachments: bool,
     trust_export: bool,
     contact_name_mode: Option<String>,
+    import_id: Option<i64>,
 ) -> Result<(), String> {
     let app_handle = app.clone();
     let contact_name_mode = contact_name_mode
@@ -52,6 +53,7 @@ pub async fn push(
             journal_path: None,
             cancel: None,
             contact_name_mode,
+            import_id,
         };
 
         let mut progress = |event: ProgressEvent| match event {

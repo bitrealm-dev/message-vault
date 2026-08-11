@@ -146,7 +146,7 @@ export default function ImportScreen() {
         ),
       );
 
-      const importSession = await apiClient.post<{ id: string }>("/v1/imports", {
+      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
         source,
         tool: "message-vault-io",
         mode: "append",
@@ -166,6 +166,7 @@ export default function ImportScreen() {
             skip_attachments: false,
             trust_export: false,
             contact_name_mode: contactNameMode,
+            import_id: importSession.id,
           }),
         appendLog,
       );
