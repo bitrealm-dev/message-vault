@@ -14,13 +14,17 @@ function contactBrowseQuery(
   contactId: string,
   kind: ContactBrowseKind,
   handle?: string,
+  service?: string,
 ): string {
   const typeSuffix =
     kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
   const h = handle?.trim();
   if (h) {
     const quoted = /\s/.test(h) ? `"${h}"` : h;
-    return `handle:${quoted}${typeSuffix}`;
+    const platform = service?.trim().toLowerCase();
+    const serviceSuffix =
+      platform === "phone" || platform === "whatsapp" ? ` service:${platform}` : "";
+    return `handle:${quoted}${serviceSuffix}${typeSuffix}`;
   }
   if (kind === "direct") return `contact:${contactId} is:direct`;
   if (kind === "group") return `contact:${contactId} is:group`;
@@ -29,18 +33,19 @@ function contactBrowseQuery(
 
 function visibleBrowseQuery(
   kind: ContactBrowseKind,
-  handles: string[],
   contactId: string,
   preferHandle?: string,
+  service?: string,
 ): string {
   const typeSuffix =
     kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
-  const handle =
-    preferHandle?.trim() ||
-    handles.find((h) => h.trim().length > 0)?.trim();
+  const handle = preferHandle?.trim();
   if (handle) {
     const quoted = /\s/.test(handle) ? `"${handle}"` : handle;
-    return `handle:${quoted}${typeSuffix}`;
+    const platform = service?.trim().toLowerCase();
+    const serviceSuffix =
+      platform === "phone" || platform === "whatsapp" ? ` service:${platform}` : "";
+    return `handle:${quoted}${serviceSuffix}${typeSuffix}`;
   }
   return `contact:${contactId}${typeSuffix}`;
 }
@@ -127,15 +132,16 @@ export default function AppLayout() {
     contactId,
     kind,
     handle,
-    handles = [],
+    service,
   }: {
     contactId: string;
     kind: ContactBrowseKind;
     handle?: string;
+    service?: string;
     handles?: string[];
   }) => {
-    const visible = visibleBrowseQuery(kind, handles, contactId, handle);
-    const apiQuery = contactBrowseQuery(contactId, kind, handle);
+    const visible = visibleBrowseQuery(kind, contactId, handle, service);
+    const apiQuery = contactBrowseQuery(contactId, kind, handle, service);
     setSelectedContact(null);
     navigate(`/?q=${encodeURIComponent(visible)}&f=${encodeURIComponent(apiQuery)}`);
   };

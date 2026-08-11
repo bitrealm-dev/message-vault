@@ -89,6 +89,7 @@ export default function ContactDrawer({
     contactId: string;
     kind: ContactBrowseKind;
     handle?: string;
+    service?: string;
     handles?: string[];
   }) => void;
   variant?: "docked" | "overlay";
@@ -180,12 +181,17 @@ export default function ContactDrawer({
     : (previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ??
       [];
 
-  const browse = (args: { kind: ContactBrowseKind; handle?: string }) => {
+  const browse = (args: {
+    kind: ContactBrowseKind;
+    handle?: string;
+    service?: string;
+  }) => {
     if (!onBrowseConversations || !contactId) return;
     onBrowseConversations({
       contactId,
       kind: args.kind,
       handle: args.handle,
+      service: args.service,
       handles: handleRows.map((h) => h.handle).filter(Boolean),
     });
   };

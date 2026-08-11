@@ -25,6 +25,7 @@ import {
   formatHandleServiceLabel,
   HANDLE_SERVICE_OPTIONS,
   handleServiceSelectValue,
+  inferService,
   sumHandleTotals,
   type ContactBrowseKind,
 } from "./contactDrawerTypes";
@@ -32,11 +33,14 @@ import {
 type BrowseFn = (args: {
   kind: ContactBrowseKind;
   handle?: string;
+  service?: string;
 }) => void;
 
 const thClass = dataCardHeaderCellClass;
 const tdClass = dataCardBodyCellClass;
 const tdCenterClass = tdClass;
+const tdRightClass = `${tdClass} text-right`;
+const thRightClass = `${thClass} text-right`;
 const linkClass =
   "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent underline decoration-accent/80 underline-offset-2 cursor-pointer outline-none hover:decoration-accent hover:opacity-90 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
@@ -63,24 +67,29 @@ function serviceSelectItemClassName(state: {
 function SortableColumn({
   id,
   widthClass,
+  align = "center",
   isRowHeader,
   children,
 }: {
   id: string;
   widthClass: string;
+  align?: "center" | "right";
   isRowHeader?: boolean;
   children: ReactNode;
 }) {
+  const justify = align === "right" ? "justify-end" : "justify-center";
+  const textAlign = align === "right" ? "text-right" : "text-center";
+  const headerAlign = align === "right" ? thRightClass : thClass;
   return (
     <Column
       id={id}
       isRowHeader={isRowHeader}
       allowsSorting
-      className={`${thClass} ${widthClass}`}
+      className={`${headerAlign} ${widthClass}`}
     >
       {({ sortDirection }) => (
-        <span className="relative mx-auto inline-flex max-w-full items-center justify-center">
-          <span className="text-center leading-tight">{children}</span>
+        <span className={`relative mx-auto inline-flex max-w-full items-center ${justify}`}>
+          <span className={`${textAlign} leading-tight`}>{children}</span>
           <span
             aria-hidden="true"
             className={`absolute top-1/2 left-[calc(100%+0.25rem)] -translate-y-1/2 text-[0.55rem] leading-none ${
@@ -224,9 +233,9 @@ function AddHandleTableRow({
       </Cell>
       <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
       <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
-      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
-      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
-      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdRightClass} text-muted`}>—</Cell>
+      <Cell className={`${tdRightClass} text-muted`}>—</Cell>
+      <Cell className={`${tdRightClass} text-muted`}>—</Cell>
       <Cell className={`${tdClass} whitespace-nowrap`}>
         <div className="flex items-center justify-end gap-1.5">
           <Button
@@ -394,15 +403,15 @@ export function ContactDrawerHandles({
           <SortableColumn id="end_date" widthClass="w-[10%]">
             Last Seen
           </SortableColumn>
-          <SortableColumn id="conversations" widthClass="w-[12%]">
+          <SortableColumn id="conversations" widthClass="w-[12%]" align="right">
             Threads
           </SortableColumn>
-          <SortableColumn id="direct_messages" widthClass="w-[9%]">
+          <SortableColumn id="direct_messages" widthClass="w-[9%]" align="right">
             Direct
             <br />
             Messages
           </SortableColumn>
-          <SortableColumn id="group_messages" widthClass="w-[9%]">
+          <SortableColumn id="group_messages" widthClass="w-[9%]" align="right">
             Group
             <br />
             Messages
@@ -467,20 +476,25 @@ export function ContactDrawerHandles({
                   <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
                     {handleDateCell(h.end_date)}
                   </Cell>
-                  <Cell className={tdCenterClass}>
+                  <Cell className={tdRightClass}>
                     <CountCell
                       value={convos}
                       onClick={
                         onBrowse
-                          ? () => onBrowse({ kind: "all", handle: h.handle })
+                          ? () =>
+                              onBrowse({
+                                kind: "all",
+                                handle: h.handle,
+                                service: inferService(h.handle, h.service),
+                              })
                           : undefined
                       }
                     />
                   </Cell>
-                  <Cell className={tdCenterClass}>
+                  <Cell className={tdRightClass}>
                     <CountCell value={h.individual_message_count} />
                   </Cell>
-                  <Cell className={tdCenterClass}>
+                  <Cell className={tdRightClass}>
                     <CountCell value={h.group_message_count} />
                   </Cell>
                   <Cell className={`${tdClass} whitespace-nowrap`}>
@@ -506,7 +520,7 @@ export function ContactDrawerHandles({
         ) : null}
         <TableBody className="border-t-2 border-border">
           <Row id="handles-total" className="outline-none">
-            <Cell className={`${tdClass} font-semibold`}>Total</Cell>
+            <Cell className={`${tdClass} font-semibold`}>Summary</Cell>
             <Cell className={`${tdClass} text-muted`}>—</Cell>
             <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
               {handleDateCell(footerAsHandle.start_date)}
@@ -514,13 +528,20 @@ export function ContactDrawerHandles({
             <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
               {handleDateCell(footerAsHandle.end_date)}
             </Cell>
-            <Cell className={tdCenterClass}>
-              <CountCell value={conversationCount(totals)} />
+            <Cell className={tdRightClass}>
+              <CountCell
+                value={conversationCount(totals)}
+                onClick={
+                  onBrowse && conversationCount(totals) > 0
+                    ? () => onBrowse({ kind: "all" })
+                    : undefined
+                }
+              />
             </Cell>
-            <Cell className={tdCenterClass}>
+            <Cell className={tdRightClass}>
               <CountCell value={totals.individual_message_count} />
             </Cell>
-            <Cell className={tdCenterClass}>
+            <Cell className={tdRightClass}>
               <CountCell value={totals.group_message_count} />
             </Cell>
             <Cell className={tdClass} />
