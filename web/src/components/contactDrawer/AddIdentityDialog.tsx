@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import Button from "../Button";
 import ModalShell from "../ModalShell";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
-import { HANDLE_SERVICE_OPTIONS } from "./contactDrawerTypes";
+import {
+  HANDLE_SERVICE_OPTIONS,
+  handleServiceSelectValue,
+} from "./contactDrawerTypes";
 
 const fieldLabelClass = "mb-1 block text-[0.813rem] font-medium text-text";
 const inputClass =
@@ -11,14 +14,31 @@ const selectTriggerClass =
   "!box-border !h-9 !min-h-9 !w-full !rounded !px-3 !py-0 !text-[0.875rem] !font-normal !leading-none !bg-elevated";
 const selectValueClass = "!text-[0.875rem] !font-normal !leading-none";
 
+function identityAlreadyExists(
+  existing: { handle: string; service: string | null }[],
+  handle: string,
+  service: string,
+): boolean {
+  const needle = handle.trim().toLowerCase();
+  if (!needle) return false;
+  const platform = handleServiceSelectValue(handle, service);
+  return existing.some(
+    (row) =>
+      row.handle.trim().toLowerCase() === needle &&
+      handleServiceSelectValue(row.handle, row.service) === platform,
+  );
+}
+
 export default function AddIdentityDialog({
   open,
   busy = false,
+  existingHandles = [],
   onClose,
   onConfirm,
 }: {
   open: boolean;
   busy?: boolean;
+  existingHandles?: { handle: string; service: string | null }[];
   onClose: () => void;
   onConfirm: (args: { handle: string; service: string }) => void;
 }) {
@@ -32,11 +52,13 @@ export default function AddIdentityDialog({
     }
   }, [open]);
 
-  const canSubmit = handle.trim().length > 0 && !busy;
+  const trimmed = handle.trim();
+  const duplicate = identityAlreadyExists(existingHandles, handle, service);
+  const canSubmit = trimmed.length > 0 && !duplicate && !busy;
 
   const submit = () => {
     if (!canSubmit) return;
-    onConfirm({ handle: handle.trim(), service });
+    onConfirm({ handle: trimmed, service });
   };
 
   return (
@@ -97,9 +119,16 @@ export default function AddIdentityDialog({
           autoComplete="off"
           spellCheck={false}
           placeholder="Phone number or handle"
+          aria-invalid={duplicate || undefined}
+          aria-describedby={duplicate ? "add-identity-duplicate" : undefined}
           className={inputClass}
         />
       </label>
+      {duplicate ? (
+        <p id="add-identity-duplicate" className="mt-2 text-[0.813rem] text-danger" role="alert">
+          Identity already exists
+        </p>
+      ) : null}
 
       <div className="mt-5 flex justify-end gap-2">
         <Button onPress={onClose} isDisabled={busy}>

@@ -45,9 +45,10 @@ const linkClass =
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnDangerClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-danger-soft-border hover:!bg-danger-soft-bg hover:!text-danger data-hovered:!border-danger-soft-border data-hovered:!bg-danger-soft-bg data-hovered:!text-danger data-pressed:!border-danger-soft-border data-pressed:!bg-danger-soft-bg data-pressed:!text-danger";
-/** Trash: show on row hover/focus; always visible when hover isn't available. */
+/** Trash: show on row hover; on keyboard, when the button itself is focus-visible.
+ * Avoid row focus-within — table row focus after click would leave trash stuck on. */
 const rowActionsRevealClass =
-  "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/handle-row:opacity-100 [@media(hover:hover)]:group-data-hovered/handle-row:opacity-100 [@media(hover:hover)]:group-focus-within/handle-row:opacity-100";
+  "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/handle-row:opacity-100 [@media(hover:hover)]:group-data-hovered/handle-row:opacity-100 [@media(hover:hover)]:has-[:focus-visible]:opacity-100";
 
 function SortableColumn({
   id,
@@ -104,13 +105,29 @@ type RemoveIdentityTarget = {
   threadCount: number;
 };
 
-function removeIdentityConfirmBody(target: RemoveIdentityTarget): string {
+function removeIdentityConfirmBody(target: RemoveIdentityTarget): ReactNode {
   const { handle, serviceLabel, threadCount } = target;
+  const emphasize = "font-medium text-accent";
+  const serviceId = (
+    <>
+      <span className={emphasize}>{serviceLabel}</span>{" "}
+      <span className={`${emphasize} break-all`}>{handle}</span>
+    </>
+  );
   if (threadCount <= 0) {
-    return `Removing ${handle} for ${serviceLabel} will unlink it from this contact.`;
+    return (
+      <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">
+        Removing {serviceId} will unlink it from this contact.
+      </p>
+    );
   }
   const threadWord = threadCount === 1 ? "thread" : "threads";
-  return `Removing ${handle} for ${serviceLabel} will unlink ${threadCount} ${threadWord} from this contact. Message threads will not be removed.`;
+  return (
+    <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">
+      Removing {serviceId} will unlink {threadCount} {threadWord} from this
+      contact. Unlinked data will not be deleted.
+    </p>
+  );
 }
 
 function sortValue(h: CachedContactHandle, col: string): string | number {
@@ -418,6 +435,7 @@ export function ContactDrawerHandles({
       <AddIdentityDialog
         open={adding}
         busy={busy}
+        existingHandles={handleRows}
         onClose={() => {
           if (!busy) setAdding(false);
         }}
@@ -425,8 +443,8 @@ export function ContactDrawerHandles({
       />
       <ConfirmDialog
         open={removeTarget !== null}
-        title="Remove identity"
-        body={removeTarget ? removeIdentityConfirmBody(removeTarget) : ""}
+        title="Remove identity from contact?"
+        body={removeTarget ? removeIdentityConfirmBody(removeTarget) : null}
         confirmLabel="Remove identity"
         danger
         busy={busy}
