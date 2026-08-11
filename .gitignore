@@ -56,3 +56,4 @@ config/export-to-vault.sh
 /web-next/out/
 .claude/
 .worktrees/
+.superpowers/
