@@ -11,6 +11,11 @@ import {
 import { apiClient } from "../../lib/api";
 import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
 import Button from "../Button";
+import DataCard, {
+  dataCardBodyCellClass,
+  dataCardHeaderCellClass,
+  dataCardHeaderRowClass,
+} from "../DataCard";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import {
   emptyHandleRow,
@@ -27,12 +32,11 @@ type BrowseFn = (args: {
   handle?: string;
 }) => void;
 
-const thClass =
-  "px-2 py-2 text-center text-[0.688rem] font-semibold uppercase tracking-[0.04em] text-muted outline-none cursor-pointer hover:text-text data-hovered:text-text";
-const tdClass = "px-3 py-2.5 align-middle text-center text-[0.813rem] leading-snug text-text";
+const thClass = dataCardHeaderCellClass;
+const tdClass = dataCardBodyCellClass;
 const tdCenterClass = tdClass;
 const linkClass =
-  "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent no-underline cursor-pointer hover:underline";
+  "inline-flex items-center justify-center gap-0.5 border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent underline decoration-accent/70 underline-offset-2 cursor-pointer outline-none hover:decoration-accent focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
@@ -43,6 +47,25 @@ const serviceSelectTriggerClass =
 const serviceSelectValueClass = "!text-[0.813rem] !font-normal !leading-none";
 const handleEditInputClass =
   "box-border h-7 w-full min-w-0 max-w-full rounded border border-border bg-elevated px-1.5 py-0 text-[0.813rem] font-normal leading-none text-text outline-none focus:border-accent";
+
+function ThreadsOpenIcon() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0 opacity-90"
+    >
+      <path d="M3.5 2.5 6.5 5 3.5 7.5" />
+    </svg>
+  );
+}
 
 function serviceSelectItemClassName(state: {
   isFocused: boolean;
@@ -169,8 +192,14 @@ function CountCell({
   const text = value.toLocaleString();
   if (value > 0 && onClick) {
     return (
-      <button type="button" className={linkClass} onClick={onClick}>
+      <button
+        type="button"
+        className={linkClass}
+        onClick={onClick}
+        aria-label={`Open ${text} threads`}
+      >
         {text}
+        <ThreadsOpenIcon />
       </button>
     );
   }
@@ -393,8 +422,8 @@ export function ContactDrawerHandles({
   };
 
   return (
-    <div className="w-full max-w-4xl rounded-lg border border-border bg-elevated p-4">
-      <div className="mb-3 flex justify-end pr-5">
+    <DataCard
+      toolbar={
         <Button
           variant="primary"
           disabled={loading || busy || adding}
@@ -408,16 +437,15 @@ export function ContactDrawerHandles({
         >
           Add
         </Button>
-      </div>
-
-      <div className="overflow-x-auto">
+      }
+    >
       <Table
         aria-label="Contact handles"
         className="w-full border-collapse text-left table-fixed"
         sortDescriptor={sortDescriptor ?? undefined}
         onSortChange={setSortDescriptor}
       >
-        <TableHeader className="border-b border-border">
+        <TableHeader className={dataCardHeaderRowClass}>
           <SortableColumn id="service" isRowHeader widthClass="w-[15%]">
             Service
           </SortableColumn>
@@ -505,7 +533,7 @@ export function ContactDrawerHandles({
                         ))}
                       </Select>
                     ) : (
-                      <span className="text-muted">
+                      <span>
                         {formatHandleServiceLabel(h.handle, h.service)}
                       </span>
                     )}
@@ -610,9 +638,9 @@ export function ContactDrawerHandles({
             }}
           </TableBody>
         ) : null}
-        <TableBody className="border-t border-border">
+        <TableBody className="border-t-2 border-border">
           <Row id="handles-total" className="outline-none">
-            <Cell className={`${tdClass} font-semibold text-muted`}>Total</Cell>
+            <Cell className={`${tdClass} font-semibold`}>Total</Cell>
             <Cell className={`${tdClass} text-muted`}>—</Cell>
             <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
               {handleDateCell(footerAsHandle.start_date)}
@@ -633,7 +661,6 @@ export function ContactDrawerHandles({
           </Row>
         </TableBody>
       </Table>
-      </div>
-    </div>
+    </DataCard>
   );
 }
