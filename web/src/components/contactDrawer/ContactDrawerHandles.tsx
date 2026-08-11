@@ -391,10 +391,10 @@ export function ContactDrawerHandles({
         onSortChange={setSortDescriptor}
       >
         <TableHeader className={dataCardHeaderRowClass}>
-          <SortableColumn id="service" isRowHeader widthClass="w-[13%]">
+          <SortableColumn id="service" isRowHeader widthClass="w-[18%]">
             Service
           </SortableColumn>
-          <SortableColumn id="handle" widthClass="w-[13%]">
+          <SortableColumn id="handle" widthClass="w-[12%]">
             Identity
           </SortableColumn>
           <SortableColumn id="start_date" widthClass="w-[10%]">
@@ -416,7 +416,7 @@ export function ContactDrawerHandles({
             <br />
             Messages
           </SortableColumn>
-          <Column className={`${thClass} w-[14%] !cursor-default`} />
+          <Column className={`${thClass} w-[10%] !cursor-default`} />
         </TableHeader>
         {adding ? (
           <TableBody
