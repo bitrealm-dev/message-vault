@@ -6,7 +6,7 @@
 #
 # With COMPOSE_FILE=compose-dev.yml in .env (default), bare `docker compose up` works.
 #
-# Personal vault: VAULT_MODE=personal docker compose -f compose-dev.yml up
+# Blank vault (no demo seed): DEMO_DATA=false docker compose -f compose-dev.yml up
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
 #
 # SQLite browser (plain HTTP on loopback): http://127.0.0.1:8081
@@ -21,7 +21,7 @@ services:
     ports:
       - "0.0.0.0:8080:8080"
     environment:
-      VAULT_MODE: ${VAULT_MODE:-demo}
+      DEMO_DATA: ${DEMO_DATA:-true}
       VAULT_AUTH: ${VAULT_AUTH:-local}
       HANKO_API_URL: ${HANKO_API_URL:-}
     volumes:
