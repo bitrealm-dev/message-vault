@@ -56,6 +56,20 @@ export interface PushConfig {
   import_id?: number;
 }
 
+export interface PushFinishedReport {
+  ok: boolean;
+  messages: number;
+  assets_uploaded: number;
+  assets_bytes: number;
+  conversations_ok: number;
+  conversations_total: number;
+}
+
+export interface TauriJobResult {
+  summary: string;
+  report?: PushFinishedReport;
+}
+
 export async function invokePush(config: PushConfig): Promise<void> {
   return invoke("push", {
     baseUrl: config.base_url,
@@ -154,17 +168,17 @@ export async function awaitTauriJob(
   onLog?: (line: string) => void,
   onProgress?: (event: ImportProgressEvent) => void,
   onIssue?: (event: ImportIssueEvent) => void,
-): Promise<string> {
+): Promise<TauriJobResult> {
   let unlisten: UnlistenFn | undefined;
   try {
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<TauriJobResult>((resolve, reject) => {
       void (async () => {
         try {
           unlisten = await onExtractEvents({
             onLog: (line) => onLog?.(line),
             onProgress,
             onIssue,
-            onFinished: resolve,
+            onFinished: (summary) => resolve(parseTauriJobResult(summary)),
             onError: (err) =>
               reject(new Error(err.user_message ?? err.detail)),
           });
@@ -177,4 +191,26 @@ export async function awaitTauriJob(
   } finally {
     unlisten?.();
   }
+}
+
+function parseTauriJobResult(summary: string): TauriJobResult {
+  try {
+    const report = JSON.parse(summary) as Partial<PushFinishedReport> & { summary?: unknown };
+    if (
+      typeof report.ok === "boolean" &&
+      typeof report.messages === "number" &&
+      typeof report.assets_uploaded === "number" &&
+      typeof report.assets_bytes === "number" &&
+      typeof report.conversations_ok === "number" &&
+      typeof report.conversations_total === "number"
+    ) {
+      return {
+        summary: typeof report.summary === "string" ? report.summary : summary,
+        report: report as PushFinishedReport,
+      };
+    }
+  } catch {
+    // Extract jobs emit their human-readable summary directly.
+  }
+  return { summary };
 }

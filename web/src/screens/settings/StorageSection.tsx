@@ -112,7 +112,12 @@ function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
     : null);
 
   return {
-    status: detail.status === "completed" ? "completed" : "failed",
+    status:
+      detail.status === "completed"
+        ? "completed"
+        : detail.status === "running"
+          ? "running"
+          : "failed",
     parseMessages: toNumber(summary.parse_messages ?? summary.parseMessages),
     convertDetail: toString(summary.convert_detail ?? summary.convertDetail),
     uploadFiles: toNumber(summary.upload_files ?? summary.uploadFiles),
@@ -253,72 +258,32 @@ export function StorageSection() {
                 {imports.map((row) => (
                   <tr
                     key={row.id}
-                    className={selectedImportId === row.id ? "bg-hover" : "hover:bg-hover"}
+                    className={`cursor-pointer ${
+                      selectedImportId === row.id ? "bg-hover" : "hover:bg-hover"
+                    }`}
+                    onClick={() => openImportDetail(row.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openImportDetail(row.id);
+                      }
+                    }}
+                    tabIndex={0}
                   >
-                    <td
-                      className={`${tdStyle} cursor-pointer`}
-                      onClick={() => openImportDetail(row.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openImportDetail(row.id);
-                        }
-                      }}
-                      tabIndex={0}
-                    >
+                    <td className={tdStyle}>
                       {formatImportDate(row.finished_at ?? row.started_at)}
                     </td>
-                    <td
-                      className={`${tdStyle} cursor-pointer`}
-                      onClick={() => openImportDetail(row.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openImportDetail(row.id);
-                        }
-                      }}
-                      tabIndex={0}
-                    >
+                    <td className={tdStyle}>
                       {row.source}
                     </td>
-                    <td
-                      className={`${tdStyle} cursor-pointer text-right tabular-nums`}
-                      onClick={() => openImportDetail(row.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openImportDetail(row.id);
-                        }
-                      }}
-                      tabIndex={0}
-                    >
+                    <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.message_count.toLocaleString()}
                     </td>
-                    <td
-                      className={`${tdStyle} cursor-pointer text-right tabular-nums`}
-                      onClick={() => openImportDetail(row.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openImportDetail(row.id);
-                        }
-                      }}
-                      tabIndex={0}
-                    >
+                    <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.attachment_count.toLocaleString()}
                     </td>
                     {showDurationColumn ? (
-                      <td
-                        className={`${tdStyle} cursor-pointer text-right tabular-nums`}
-                        onClick={() => openImportDetail(row.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openImportDetail(row.id);
-                          }
-                        }}
-                        tabIndex={0}
-                      >
+                      <td className={`${tdStyle} text-right tabular-nums`}>
                         {formatDuration(row.duration_ms)}
                       </td>
                     ) : null}

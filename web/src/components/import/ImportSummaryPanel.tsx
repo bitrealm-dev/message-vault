@@ -6,7 +6,7 @@ export type ImportIssue = {
 };
 
 export type ImportSummaryView = {
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "running";
   parseMessages?: number;
   convertDetail?: string;
   uploadFiles?: number;
@@ -33,16 +33,17 @@ function formatDuration(milliseconds: number | null | undefined): string {
 
 export default function ImportSummaryPanel({ summary }: { summary: ImportSummaryView }) {
   const succeeded = summary.status === "completed";
+  const running = summary.status === "running";
 
   return (
     <section className="mt-5">
       <div
         className={`rounded-md p-4 text-[0.875rem] ${
-          succeeded ? "bg-ok-soft-bg" : "bg-danger-soft-bg"
+          succeeded ? "bg-ok-soft-bg" : running ? "bg-hover" : "bg-danger-soft-bg"
         }`}
       >
         <h2 className="m-0 text-base font-semibold">
-          {succeeded ? "Import complete" : "Import failed"}
+          {succeeded ? "Import complete" : running ? "Import in progress" : "Import failed"}
         </h2>
         <ol className="mb-0 mt-3 space-y-1 pl-5">
           <li>Parse backup{summary.parseMessages != null ? ` · ${summary.parseMessages} messages` : ""}</li>

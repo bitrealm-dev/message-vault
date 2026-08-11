@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
-import { invokeExtract, invokeCancel, invokePush, awaitTauriJob } from "../lib/tauri";
+import {
+  invokeExtract,
+  invokeCancel,
+  invokePush,
+  awaitTauriJob,
+  type TauriJobResult,
+} from "../lib/tauri";
 import { isTauri } from "../lib/tauri-check";
 import { EXPORT_SOURCES } from "../lib/exportSources";
 import {
@@ -143,24 +149,15 @@ export default function ImportScreen() {
     if (event.step === "parse") {
       activeStepRef.current = "parse";
       timingRef.current.parseStartedAt ??= now;
-      countsRef.current.parseMessages = event.done;
+      countsRef.current.parseMessages =
+        event.total > 0 && event.done >= event.total ? event.total : event.done;
     } else if (event.step === "convert") {
       activeStepRef.current = "convert";
-      if (event.status !== "included_in_extract") {
-        timingRef.current.parseEndedAt ??= now;
-        timingRef.current.convertStartedAt ??= now;
-        if (event.total > 0 && event.done >= event.total) {
-          timingRef.current.convertEndedAt = now;
-          countsRef.current.convertDetail = `${event.done} files`;
-        } else {
-          countsRef.current.convertDetail = `${event.done}/${event.total} files`;
-        }
-      } else {
-        countsRef.current.convertDetail = "Included in extract";
-      }
+      countsRef.current.convertDetail = "Included in extract";
     } else {
       activeStepRef.current = "upload";
-      countsRef.current.uploadFiles = event.done;
+      countsRef.current.uploadFiles =
+        event.total > 0 && event.done >= event.total - 1 ? event.total : event.done;
     }
 
     const stepIndex = event.step === "parse" ? 0 : event.step === "convert" ? 1 : 2;
@@ -230,6 +227,7 @@ export default function ImportScreen() {
     let parseMs: number | null = null;
     let convertMs: number | null = null;
     let uploadMs: number | null = null;
+    let pushResult: TauriJobResult | null = null;
     try {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
@@ -244,7 +242,7 @@ export default function ImportScreen() {
       const outputDir = await resolveImportStagingDir(backupPath, source);
       // extract/push return when the background thread starts — wait for events.
       timingRef.current.extractStartedAt = performance.now();
-      const extractSummary = await awaitTauriJob(
+      const extractResult = await awaitTauriJob(
         () =>
           invokeExtract({
             source,
@@ -268,17 +266,10 @@ export default function ImportScreen() {
         applyProgress,
         recordIssue,
       );
-      appendLog(extractSummary);
+      appendLog(extractResult.summary);
       const extractFinishedAt = performance.now();
       const timing = timingRef.current;
-      if (timing.convertStartedAt != null) {
-        parseMs =
-          (timing.parseEndedAt ?? timing.convertStartedAt) -
-          (timing.parseStartedAt ?? timing.extractStartedAt ?? timing.convertStartedAt);
-        convertMs = (timing.convertEndedAt ?? extractFinishedAt) - timing.convertStartedAt;
-      } else {
-        parseMs = extractFinishedAt - (timing.extractStartedAt ?? extractFinishedAt);
-      }
+      parseMs = extractFinishedAt - (timing.extractStartedAt ?? extractFinishedAt);
 
       setSteps((s) =>
         s.map((step, i) =>
@@ -292,7 +283,7 @@ export default function ImportScreen() {
 
       activeStepRef.current = "upload";
       const uploadStartedAt = performance.now();
-      const pushSummary = await awaitTauriJob(
+      pushResult = await awaitTauriJob(
         () =>
           invokePush({
             base_url: baseUrl,
@@ -312,7 +303,10 @@ export default function ImportScreen() {
         recordIssue,
       );
       uploadMs = performance.now() - uploadStartedAt;
-      appendLog(pushSummary);
+      appendLog(pushResult.summary);
+      if (pushResult.report) {
+        countsRef.current.uploadFiles = pushResult.report.conversations_total;
+      }
       importCompleted = true;
 
       setSteps((s) =>
@@ -347,6 +341,9 @@ export default function ImportScreen() {
         try {
           await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
             ok: importCompleted,
+            message_count: pushResult?.report?.messages,
+            attachment_count: pushResult?.report?.assets_uploaded,
+            bytes_uploaded: pushResult?.report?.assets_bytes,
             parse_ms: parseMs,
             convert_ms: convertMs,
             upload_ms: uploadMs,
