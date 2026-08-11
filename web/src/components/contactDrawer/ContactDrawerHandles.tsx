@@ -40,12 +40,16 @@ const linkClass =
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
-const iconBtnDangerClass = `${iconBtnClass} hover:!text-danger data-hovered:!text-danger data-pressed:!text-danger`;
+const iconBtnDangerClass =
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-danger-soft-border hover:!bg-danger-soft-bg hover:!text-danger data-hovered:!border-danger-soft-border data-hovered:!bg-danger-soft-bg data-hovered:!text-danger data-pressed:!border-danger-soft-border data-pressed:!bg-danger-soft-bg data-pressed:!text-danger";
 const iconBtnOkClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-ok hover:!border-ok-soft-border hover:!bg-ok-soft-bg hover:!text-ok data-hovered:!border-ok-soft-border data-hovered:!bg-ok-soft-bg data-hovered:!text-ok data-pressed:!border-ok-soft-border data-pressed:!bg-ok-soft-bg data-pressed:!text-ok";
-/** Soft accent fill + 3px left accent bar while the row is in edit mode. */
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-ok hover:!border-ok-soft-border hover:!bg-ok-soft-bg hover:!text-ok data-hovered:!border-ok-soft-border data-hovered:!bg-ok-soft-bg data-hovered:!text-ok data-pressed:!border-ok-soft-border data-pressed:!bg-ok-soft-bg data-pressed:!text-ok disabled:!text-muted";
+/** Soft accent fill + 3px left accent bar on first cell while the row is in edit mode. */
 const editingRowClass =
-  "bg-[color-mix(in_srgb,var(--accent)_12%,var(--panel))] shadow-[inset_3px_0_0_0_var(--accent)]";
+  "bg-[color-mix(in_srgb,var(--accent)_16%,var(--panel))] [&>td:first-child]:shadow-[inset_3px_0_0_0_var(--accent)]";
+/** Edit/trash: show on row hover/focus; always visible when hover isn't available. */
+const rowActionsRevealClass =
+  "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/handle-row:opacity-100 [@media(hover:hover)]:group-data-hovered/handle-row:opacity-100 [@media(hover:hover)]:group-focus-within/handle-row:opacity-100";
 /** Keep edit controls inside the cell (no min-width that spills into Handle). */
 const serviceSelectTriggerClass =
   "!box-border !h-7 !min-h-7 !w-full !rounded !px-1.5 !py-0 !text-[0.813rem] !font-normal !leading-none !bg-elevated";
@@ -364,7 +368,7 @@ export function ContactDrawerHandles({
 
   const removeHandle = async (handle: string) => {
     if (busy) return;
-    if (!window.confirm(`Unlink ${handle} from this contact?`)) return;
+    if (!window.confirm(`Remove identity ${handle} from this contact?`)) return;
     setBusy(true);
     try {
       await apiClient.post(`/v1/export/contacts/${contactId}`, {
@@ -597,12 +601,18 @@ export function ContactDrawerHandles({
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-center gap-1">
+                      <div
+                        className={`flex items-center justify-center gap-1 ${
+                          editingHandle != null
+                            ? "pointer-events-none opacity-0"
+                            : rowActionsRevealClass
+                        }`}
+                      >
                         <Button
                           variant="ghost"
                           disabled={busy || loading}
-                          title="Edit handle"
-                          aria-label="Edit handle"
+                          title="Edit identity"
+                          aria-label="Edit identity"
                           onClick={() => startEdit(h)}
                           className={iconBtnClass}
                         >
@@ -611,8 +621,8 @@ export function ContactDrawerHandles({
                         <Button
                           variant="ghost"
                           disabled={busy || loading}
-                          title="Unlink handle"
-                          aria-label="Unlink handle"
+                          title="Remove identity"
+                          aria-label="Remove identity"
                           onClick={() => void removeHandle(h.handle)}
                           className={iconBtnDangerClass}
                         >
