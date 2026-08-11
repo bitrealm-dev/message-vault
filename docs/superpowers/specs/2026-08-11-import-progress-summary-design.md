@@ -15,6 +15,7 @@ During Import Messages, the step list mostly shows vague status text such as “
 - After finish (or failure), show a Summary on the same screen: step totals, **per-stage and total timings**, and an **Errors & skips** list only (no full success file list).
 - Persist that summary, stage timings, total duration, and error/skip rows in the vault database so Import history can reopen the same view later.
 - Start the vault import session at the beginning of the GUI import so one `vault_imports` row covers parse, convert, and upload.
+- Link every message (and thus attachments via messages) written by that run to that same session via `messages.import_id`.
 
 ## Non-goals
 
@@ -34,10 +35,14 @@ During Import Messages, the step list mostly shows vague status text such as “
 | Architecture | Extend `vault_imports` + child `vault_import_issues`; structured progress events from extract/push |
 | Timings | Store **parse_ms**, **convert_ms**, **upload_ms**, and **duration_ms** (total) in the database with the session |
 | Import session start | `POST /v1/imports` when the GUI import starts (before extract), not only before push |
+| Message linkage | All messages uploaded in that GUI run set `messages.import_id` to that session id (existing column; required for this flow) |
+| Session ownership (GUI) | GUI creates and completes the session; push must **reuse** the provided `import_id` and must not open a second session |
 
 ## Approach
 
 Emit structured progress from the desktop extract and push jobs so the Import screen can update each step’s `done/total` and measure stage wall times. Keep an in-memory list of errors and skips. On completion, POST an enriched complete payload that writes session summary fields (including stage and total timings) and issue rows. Reuse the same Summary layout when opening a history row via `GET /v1/imports/{id}`.
+
+Today the Import screen opens a `vault_imports` row and completes it with empty counts, while `vault-push` opens a **second** row and stamps `messages.import_id` on that second id. History then shows a hollow GUI session and a separate push session. This design requires a **single** session id for the whole GUI import: create it at start, pass it into push so every imported message is linked to it, and complete that same row with timings and issues.
 
 ## Live Import UI
 
@@ -104,9 +109,17 @@ No rows for successful files.
 ## API
 
 - `POST /v1/imports` — unchanged shape; GUI calls this at **import start**.
-- `POST /v1/imports/{id}/complete` — accept `ok`, message/attachment/bytes counts (as today), plus `duration_ms`, `parse_ms`, `convert_ms`, `upload_ms`, `summary` (object), and `issues` (array of `{ kind, step, item, reason }`). Persist timings on the session row and insert issue rows. On failure paths, still persist timings and issues when available and mark status failed.
+- `POST /v1/imports/{id}/complete` — accept `ok`, message/attachment/bytes counts (as today), plus `duration_ms`, `parse_ms`, `convert_ms`, `upload_ms`, `summary` (object), and `issues` (array of `{ kind, step, item, reason }`). Persist timings on the session row and insert issue rows. On failure paths, still persist timings and issues when available and mark status failed. Prefer client-supplied counts when present; otherwise keep deriving counts from `messages` / attachments with that `import_id` (already supported).
 - `GET /v1/imports` — list may include `duration_ms` for the history table (optional column).
 - `GET /v1/imports/{id}` — new detail: session fields including timings + `summary` + `issues[]`.
+
+`POST /v1/import?import_id=` (existing) continues to stamp `messages.import_id` for each uploaded conversation. That query param must receive the GUI session id for every file in the run.
+
+### Desktop push changes
+
+- Accept an optional pre-created `import_id` on the push config / Tauri command.
+- When set: pass it on each import request; **do not** call `POST /v1/imports` again; **do not** call complete (the GUI owns complete with timings/issues).
+- When unset (CLI / standalone push): keep today’s behavior (start session, link messages, complete).
 
 CLI/single-POST import paths that already create a `vault_imports` row should leave new timing/issue fields null/empty when not supplied.
 
@@ -134,5 +147,6 @@ Parse already reports message progress at a finer grain (for example every 1,000
 ## Testing
 
 - Server: complete import persists timings and issues; get-by-id returns them; list still works for rows without timings.
-- GUI (manual or automated where practical): live counts update per step; Summary shows stage + total times; history detail matches what was just imported; failed convert/upload appears under Errors & skips only.
+- Server/push: with a pre-created `import_id`, imported messages have that `import_id`; no second `vault_imports` row is created for the same GUI run.
+- GUI (manual or automated where practical): live counts update per step; Summary shows stage + total times; history detail matches what was just imported; failed convert/upload appears under Errors & skips only; Import history shows one row whose message/attachment counts match the linked messages.
 - Confirm push chunk `total time` is not stored as `duration_ms`.
