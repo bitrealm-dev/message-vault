@@ -17,6 +17,11 @@ export type ImportSummaryView = {
   issues: ImportIssue[];
 };
 
+function formatIssueKind(kind: string): string {
+  if (!kind) return "Issue";
+  return kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
+}
+
 function formatDuration(milliseconds: number | null | undefined): string {
   if (milliseconds == null) return "—";
 
@@ -56,9 +61,7 @@ export default function ImportSummaryPanel({ summary }: { summary: ImportSummary
           <ul className="mt-2 space-y-2 pl-5 text-[0.813rem]">
             {summary.issues.map((issue, index) => (
               <li key={`${issue.kind}-${issue.step}-${issue.item}-${index}`}>
-                <span className="font-medium">{issue.item}</span>
-                {" · "}
-                {issue.reason}
+                {formatIssueKind(issue.kind)} · {issue.step} · {issue.item} — {issue.reason}
               </li>
             ))}
           </ul>
