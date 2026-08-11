@@ -65,8 +65,9 @@ Choosing a recent row fills the input, applies the filter, bumps that query to t
 ### Advanced search
 
 - Opened from the popdown item (not from a permanent under-field link).
-- Contacts fields: name, handle, no-name, first/last message date bounds, activity, service.
-- **First message** / **Last message** each use an operator Select (**Any**, **On or after**, **Before**, **Between**) plus date field(s):
+- Contacts fields: name, identity, no-name, no-identity, first/last message date bounds, activity, service.
+- Checking **No identity** clears the identity field and forces Service / First Seen / Last Seen / Activity to **Any**, then disables those controls (they depend on linked identities). Unchecking restores the previous values.
+- **First Seen** / **Last Seen** each use an operator Select (**Any**, **On or after**, **Before**, **Between**) plus date field(s):
   - Any → no date field; no tokens.
   - On or after / Before → one date under the Select.
   - Between → two dates in a row under the Select (start then end).

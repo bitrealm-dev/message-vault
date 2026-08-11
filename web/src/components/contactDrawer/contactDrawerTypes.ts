@@ -69,14 +69,6 @@ export function formatHandleDate(iso: string | null | undefined): string | null 
   return `${y}-${mo}-${day}`;
 }
 
-export function handleDateRangeLabel(h: CachedContactHandle): string {
-  const start = formatHandleDate(h.start_date);
-  const end = formatHandleDate(h.end_date);
-  if (!start && !end) return "—";
-  if (start && end) return start === end ? start : `${start} – ${end}`;
-  return start ?? end ?? "—";
-}
-
 export function emptyHandleRow(handle: string): CachedContactHandle {
   return {
     handle,

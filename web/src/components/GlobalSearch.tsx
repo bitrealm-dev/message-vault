@@ -155,7 +155,7 @@ export default function GlobalSearch({
           className="flex-1 border-none bg-transparent px-3 py-2.5 text-[0.875rem] text-text outline-none"
         />
       </div>
-      <Popover className={`z-[100] min-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}>
+      <Popover className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}>
         <ListBox className="max-h-72 overflow-auto outline-none">
           {suggestions.map((s) => (
             <ListBoxItem

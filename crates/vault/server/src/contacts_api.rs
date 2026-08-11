@@ -165,7 +165,10 @@ struct ContactListFilters {
     /// `Some(true)` = has messages; `Some(false)` = never messaged.
     has_messages: Option<bool>,
     no_name: bool,
+    /// Contacts with no rows in `contact_handles`.
+    no_handle: bool,
     /// Lowercased service ids (`imessage`, `sms`, `mms`, `whatsapp`); OR match.
+    /// UI may send `service:phone` (Text message), which expands to imessage/sms/mms.
     services: Vec<String>,
 }
 
@@ -205,6 +208,10 @@ fn parse_date_bound_value(raw: &str, bare: DateBoundOp) -> Option<DateBound> {
 
 fn expand_service_token(value: &str) -> Vec<String> {
     match value.trim().to_ascii_lowercase().as_str() {
+        // UI "Text message" / drawer phone bucket: any non-WhatsApp messaging service.
+        "phone" | "text" | "text-message" | "textmessage" => {
+            vec!["imessage".into(), "sms".into(), "mms".into()]
+        }
         "sms" | "mms" | "sms/mms" | "sms-mms" => vec!["sms".into(), "mms".into()],
         "imessage" => vec!["imessage".into()],
         "whatsapp" => vec!["whatsapp".into()],
@@ -250,6 +257,10 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
             out.no_name = true;
             continue;
         }
+        if lower == "has:no-handle" {
+            out.no_handle = true;
+            continue;
+        }
         if let Some(rest) = lower.strip_prefix("service:") {
             for s in expand_service_token(rest) {
                 if !out.services.iter().any(|x| x == &s) {
@@ -277,7 +288,7 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
 /// `handle:<raw>` restricts to contacts that have that handle substring.
 /// Advanced tokens: `first-contact:` / `last-contact:` (optional `>=` / `<` prefix;
 /// bare first = on or after, bare last = on or before; repeated tokens AND),
-/// `has:messages`, `has:no-messages`, `has:no-name`, `service:` (OR across services).
+/// `has:messages`, `has:no-messages`, `has:no-name`, `has:no-handle`, `service:` (OR across services).
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
@@ -349,6 +360,16 @@ pub fn list_contacts(
                     )
                   )
               ))"
+            .into(),
+        );
+    }
+
+    if filters.no_handle {
+        where_parts.push(
+            "NOT EXISTS (
+               SELECT 1 FROM contact_handles ch
+               WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
+             )"
             .into(),
         );
     }
@@ -1328,6 +1349,29 @@ mod tests {
     }
 
     #[test]
+    fn list_contacts_filters_no_handle() {
+        let (conn, account) = setup();
+        insert_contact_with_handle(&conn, &account, "WithHandle", "+15555550100");
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, ?2)",
+            params![account, "Orphan"],
+        )
+        .unwrap();
+
+        let page = list_contacts(
+            &conn,
+            &account,
+            "has:no-handle search:contacts",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.contacts[0].name, "Orphan");
+        assert_eq!(page.contacts[0].handle_count, 0);
+    }
+
+    #[test]
     fn list_contacts_filters_service_or() {
         let (conn, account) = setup();
         insert_contact_with_handle(&conn, &account, "IMsg", "+15555550100");
@@ -1361,7 +1405,7 @@ mod tests {
         let page = list_contacts(
             &conn,
             &account,
-            "service:imessage service:sms search:contacts",
+            "service:phone search:contacts",
             DEFAULT_LIST_LIMIT,
             0,
         )

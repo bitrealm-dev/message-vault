@@ -4,7 +4,7 @@ import GlobalSearch from "./GlobalSearch";
 import ContactSearch from "./ContactSearch";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import { ListColumnResizeContext } from "./ListColumnResizeContext";
-import { isPortaledOverlayTarget } from "../lib/portaledOverlay";
+import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 
 const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
@@ -59,13 +59,11 @@ export default function ListColumn({
   useEffect(() => {
     if (!showAdvancedSearch || isContacts) return;
     const onPointerDown = (e: MouseEvent) => {
-      const root = conversationsAdvancedRef.current;
-      if (!root || !(e.target instanceof Node)) return;
-      if (root.contains(e.target) || isPortaledOverlayTarget(e.target)) return;
+      if (shouldIgnoreOutsideDismiss(e, conversationsAdvancedRef.current)) return;
       setShowAdvancedSearch(false);
     };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    document.addEventListener("mousedown", onPointerDown, true);
+    return () => document.removeEventListener("mousedown", onPointerDown, true);
   }, [showAdvancedSearch, isContacts]);
 
   const startXRef = useRef(0);

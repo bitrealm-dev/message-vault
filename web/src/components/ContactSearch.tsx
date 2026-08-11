@@ -5,7 +5,7 @@ import {
   loadContactRecentSearches,
   pushContactRecentSearch,
 } from "../lib/contactRecentSearches";
-import { isPortaledOverlayTarget } from "../lib/portaledOverlay";
+import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
 
 function MagnifyingGlassIcon() {
@@ -91,14 +91,13 @@ export default function ContactSearch({
   useEffect(() => {
     if (!popdownOpen && !showAdvanced) return;
     const onPointerDown = (e: MouseEvent) => {
-      const root = rootRef.current;
-      if (!root || !(e.target instanceof Node)) return;
-      if (root.contains(e.target) || isPortaledOverlayTarget(e.target)) return;
+      // Capture phase: see open Select/Date menus before RAC removes them.
+      if (shouldIgnoreOutsideDismiss(e, rootRef.current)) return;
       setPopdownOpen(false);
       setShowAdvanced(false);
     };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    document.addEventListener("mousedown", onPointerDown, true);
+    return () => document.removeEventListener("mousedown", onPointerDown, true);
   }, [popdownOpen, showAdvanced]);
 
   const refreshRecents = () => {

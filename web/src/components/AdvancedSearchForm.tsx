@@ -39,8 +39,7 @@ const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
 const EMPTY_DATE_BOUND: DateBoundFilter = { op: "any", start: "", end: "" };
 
 const SERVICE_ITEMS = [
-  { id: "imessage", name: "iMessage" },
-  { id: "sms", name: "SMS/MMS" },
+  { id: "phone", name: "Text message" },
   { id: "whatsapp", name: "WhatsApp" },
 ] as const;
 
@@ -129,7 +128,16 @@ export default function AdvancedSearchForm({
   const [lastMsgBound, setLastMsgBound] = useState<DateBoundFilter>(EMPTY_DATE_BOUND);
   const [activity, setActivity] = useState<ActivityFilter>("any");
   const [noPreferredName, setNoPreferredName] = useState(false);
+  const [noHandle, setNoHandle] = useState(false);
+  const [handleSaved, setHandleSaved] = useState("");
   const [services, setServices] = useState<Key[]>([]);
+  /** Snapshot restored when unchecking No handle (handle-dependent filters). */
+  const [lockedByNoHandle, setLockedByNoHandle] = useState<{
+    services: Key[];
+    firstMsgBound: DateBoundFilter;
+    lastMsgBound: DateBoundFilter;
+    activity: ActivityFilter;
+  } | null>(null);
 
   const buildQuery = (): string => {
     const parts: string[] = [];
@@ -152,6 +160,7 @@ export default function AdvancedSearchForm({
       if (activity === "messages") push("has:messages");
       if (activity === "no-messages") push("has:no-messages");
       if (noPreferredName) push("has:no-name");
+      if (noHandle) push("has:no-handle");
       for (const id of services) {
         push(`service:${String(id)}`);
       }
@@ -175,6 +184,7 @@ export default function AdvancedSearchForm({
             dateBoundHasValue(lastMsgBound) ||
             activity !== "any" ||
             noPreferredName ||
+            noHandle ||
             services.length > 0,
         );
 
@@ -212,7 +222,7 @@ export default function AdvancedSearchForm({
             />
           </div>
           <div>
-            <label className={labelClass}>Handle</label>
+            <label className={labelClass}>Identity</label>
             <input
               className={inputClass}
               value={handle}
@@ -250,7 +260,7 @@ export default function AdvancedSearchForm({
               onChange={(e) => setContactName(e.target.value)}
               placeholder={noPreferredName ? undefined : "Pat Lee"}
             />
-            <label className="mt-2 flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
+            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
               <input
                 type="checkbox"
                 checked={noPreferredName}
@@ -272,26 +282,70 @@ export default function AdvancedSearchForm({
             </label>
           </div>
           <div className="min-w-0">
-            <label className={labelClass}>Handle</label>
+            <label className={labelClass}>Identity</label>
             <input
-              className={inputClass}
+              className={`${inputClass} ${noHandle ? "cursor-not-allowed opacity-40" : ""}`}
               value={handle}
+              disabled={noHandle}
               onChange={(e) => setHandle(e.target.value)}
-              placeholder="+15555550100"
+              placeholder={noHandle ? undefined : "+15555550100"}
             />
+            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
+              <input
+                type="checkbox"
+                checked={noHandle}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  if (checked) {
+                    setHandleSaved(handle);
+                    setHandle("");
+                    setLockedByNoHandle({
+                      services,
+                      firstMsgBound,
+                      lastMsgBound,
+                      activity,
+                    });
+                    setServices([]);
+                    setFirstMsgBound(EMPTY_DATE_BOUND);
+                    setLastMsgBound(EMPTY_DATE_BOUND);
+                    setActivity("any");
+                    setNoHandle(true);
+                  } else {
+                    setHandle(handleSaved);
+                    setHandleSaved("");
+                    if (lockedByNoHandle) {
+                      setServices(lockedByNoHandle.services);
+                      setFirstMsgBound(lockedByNoHandle.firstMsgBound);
+                      setLastMsgBound(lockedByNoHandle.lastMsgBound);
+                      setActivity(lockedByNoHandle.activity);
+                      setLockedByNoHandle(null);
+                    }
+                    setNoHandle(false);
+                  }
+                }}
+                className="checkbox-list"
+              />
+              No identity
+            </label>
           </div>
-          <ServiceMultiSelect value={services} onChange={setServices} />
+          <ServiceMultiSelect
+            value={services}
+            onChange={setServices}
+            isDisabled={noHandle}
+          />
           <DateBoundField
-            label="First message"
+            label="First Seen"
             value={firstMsgBound}
             onChange={setFirstMsgBound}
+            isDisabled={noHandle}
           />
           <DateBoundField
-            label="Last message"
+            label="Last Seen"
             value={lastMsgBound}
             onChange={setLastMsgBound}
+            isDisabled={noHandle}
           />
-          <div className="min-w-0">
+          <div className={`min-w-0 ${noHandle ? "opacity-40" : ""}`}>
             <label className={labelClass}>Activity</label>
             <Select
               selectedKey={activity}
@@ -299,6 +353,7 @@ export default function AdvancedSearchForm({
               aria-label="Activity"
               className="w-full min-w-0"
               triggerClassName={compactFieldTriggerClass}
+              isDisabled={noHandle}
             >
               <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
               <SelectListBoxItem id="messages" className={compactSelectItemClassName}>Has messages</SelectListBoxItem>
@@ -323,7 +378,7 @@ export default function AdvancedSearchForm({
   );
 }
 
-/** Compact DateField used under First/Last message operators (label is sr-only). */
+/** Compact DateField used under First/Last Seen operators (label is sr-only). */
 function BoundDateInput({
   label,
   pickAriaLabel,
@@ -353,10 +408,12 @@ function DateBoundField({
   label,
   value,
   onChange,
+  isDisabled = false,
 }: {
   label: string;
   value: DateBoundFilter;
   onChange: (next: DateBoundFilter) => void;
+  isDisabled?: boolean;
 }) {
   function setOp(op: DateBoundOp): void {
     if (op === "any") {
@@ -371,7 +428,7 @@ function DateBoundField({
   }
 
   let dateControls = null;
-  if (value.op === "between") {
+  if (!isDisabled && value.op === "between") {
     dateControls = (
       <div className="mt-1.5 grid grid-cols-2 gap-1.5">
         <BoundDateInput
@@ -388,7 +445,7 @@ function DateBoundField({
         />
       </div>
     );
-  } else if (value.op === "after" || value.op === "before") {
+  } else if (!isDisabled && (value.op === "after" || value.op === "before")) {
     dateControls = (
       <div className="mt-1.5">
         <BoundDateInput
@@ -402,7 +459,7 @@ function DateBoundField({
   }
 
   return (
-    <div className="min-w-0">
+    <div className={`min-w-0 ${isDisabled ? "opacity-40" : ""}`}>
       <label className={labelClass}>{label}</label>
       <Select
         selectedKey={value.op}
@@ -410,6 +467,7 @@ function DateBoundField({
         aria-label={`${label} comparison`}
         className="w-full min-w-0"
         triggerClassName={compactFieldTriggerClass}
+        isDisabled={isDisabled}
       >
         <SelectListBoxItem id="any" className={compactSelectItemClassName}>
           Any
@@ -440,9 +498,11 @@ function DateBoundField({
 function ServiceMultiSelect({
   value,
   onChange,
+  isDisabled = false,
 }: {
   value: Key[];
   onChange: (keys: Key[]) => void;
+  isDisabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const selectRef = useRef<HTMLDivElement>(null);
@@ -451,6 +511,10 @@ function ServiceMultiSelect({
   const selectedLabels = SERVICE_ITEMS.filter((item) => value.includes(item.id))
     .map((item) => item.name)
     .join(", ");
+
+  useEffect(() => {
+    if (isDisabled) setIsOpen(false);
+  }, [isDisabled]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -472,15 +536,23 @@ function ServiceMultiSelect({
       ref={selectRef}
       selectionMode="multiple"
       shouldCloseOnSelect={false}
-      isOpen={isOpen}
-      onOpenChange={setIsOpen}
+      isOpen={isDisabled ? false : isOpen}
+      onOpenChange={(open) => {
+        if (isDisabled) return;
+        setIsOpen(open);
+      }}
+      isDisabled={isDisabled}
       value={value}
       onChange={onChange}
       placeholder="Any"
-      className="w-full min-w-0"
+      className={`w-full min-w-0 ${isDisabled ? "opacity-40" : ""}`}
     >
       <Label className={labelClass}>Service</Label>
-      <AriaButton className="box-border flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border border-border bg-bg px-2 py-1 text-[0.813rem] text-text outline-none focus:border-accent">
+      <AriaButton
+        className={`box-border flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border border-border bg-bg px-2 py-1 text-[0.813rem] text-text outline-none focus:border-accent ${
+          isDisabled ? "cursor-not-allowed" : ""
+        }`}
+      >
         <span className="min-w-0 truncate text-muted">
           {value.length > 0 ? "Select…" : "Any"}
         </span>
@@ -499,7 +571,7 @@ function ServiceMultiSelect({
         ref={popoverRef}
         data-mv-overlay=""
         isNonModal
-        className={`z-[100] min-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
+        className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
       >
         <ListBox className="outline-none">
           {SERVICE_ITEMS.map((item) => (

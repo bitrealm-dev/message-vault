@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Table,
   TableHeader,
@@ -6,6 +6,7 @@ import {
   Column,
   Row,
   Cell,
+  type SortDescriptor,
 } from "react-aria-components";
 import { apiClient } from "../../lib/api";
 import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
@@ -13,8 +14,8 @@ import Button from "../Button";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import {
   emptyHandleRow,
+  formatHandleDate,
   formatHandleServiceLabel,
-  handleDateRangeLabel,
   handleServiceSelectValue,
   HANDLE_SERVICE_OPTIONS,
   sumHandleTotals,
@@ -27,16 +28,95 @@ type BrowseFn = (args: {
 }) => void;
 
 const thClass =
-  "px-3 py-2 text-left text-[0.688rem] font-semibold uppercase tracking-[0.04em] text-muted";
-const tdClass = "px-3 py-2.5 align-top text-[0.813rem] text-text";
+  "px-2 py-2 text-center text-[0.688rem] font-semibold uppercase tracking-[0.04em] text-muted outline-none cursor-pointer hover:text-text data-hovered:text-text";
+const tdClass = "px-3 py-2.5 align-middle text-center text-[0.813rem] leading-snug text-text";
+const tdCenterClass = tdClass;
 const linkClass =
-  "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent text-left no-underline cursor-pointer hover:underline";
+  "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent no-underline cursor-pointer hover:underline";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
 const iconBtnDangerClass = `${iconBtnClass} hover:!text-danger data-hovered:!text-danger data-pressed:!text-danger`;
+/** Keep edit controls inside the cell (no min-width that spills into Handle). */
 const serviceSelectTriggerClass =
-  "!rounded-md !px-2 !py-1.5 !text-[0.813rem] !leading-snug";
+  "!box-border !h-7 !min-h-7 !w-full !rounded !px-1.5 !py-0 !text-[0.813rem] !font-normal !leading-none !bg-elevated";
+const serviceSelectValueClass = "!text-[0.813rem] !font-normal !leading-none";
+const handleEditInputClass =
+  "box-border h-7 w-full min-w-0 max-w-full rounded border border-border bg-elevated px-1.5 py-0 text-[0.813rem] font-normal leading-none text-text outline-none focus:border-accent";
+
+function serviceSelectItemClassName(state: {
+  isFocused: boolean;
+  isSelected: boolean;
+}): string {
+  return selectItemClassName(state).replace("text-[0.875rem]", "text-[0.813rem] font-normal");
+}
+
+function SortableColumn({
+  id,
+  widthClass,
+  isRowHeader,
+  children,
+}: {
+  id: string;
+  widthClass: string;
+  isRowHeader?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Column
+      id={id}
+      isRowHeader={isRowHeader}
+      allowsSorting
+      className={`${thClass} ${widthClass}`}
+    >
+      {({ sortDirection }) => (
+        <span className="relative mx-auto inline-flex max-w-full items-center justify-center">
+          <span className="text-center leading-tight">{children}</span>
+          <span
+            aria-hidden="true"
+            className={`absolute top-1/2 left-[calc(100%+0.25rem)] -translate-y-1/2 text-[0.55rem] leading-none ${
+              sortDirection ? "text-accent" : "invisible"
+            }`}
+          >
+            {sortDirection === "descending" ? "▼" : "▲"}
+          </span>
+        </span>
+      )}
+    </Column>
+  );
+}
+
+function conversationCount(h: {
+  individual_conversations: number;
+  group_conversations: number;
+}): number {
+  return h.individual_conversations + h.group_conversations;
+}
+
+function sortValue(h: CachedContactHandle, column: string): string | number {
+  switch (column) {
+    case "service":
+      return formatHandleServiceLabel(h.handle, h.service).toLowerCase();
+    case "handle":
+      return h.handle.toLowerCase();
+    case "start_date":
+      return formatHandleDate(h.start_date) ?? "";
+    case "end_date":
+      return formatHandleDate(h.end_date) ?? "";
+    case "conversations":
+      return conversationCount(h);
+    case "direct_messages":
+      return h.individual_message_count;
+    case "group_messages":
+      return h.group_message_count;
+    default:
+      return "";
+  }
+}
+
+function handleDateCell(iso: string | null | undefined): string {
+  return formatHandleDate(iso) ?? "—";
+}
 
 function TrashIcon() {
   return (
@@ -79,13 +159,6 @@ function PencilIcon() {
   );
 }
 
-function conversationCount(h: {
-  individual_conversations: number;
-  group_conversations: number;
-}): number {
-  return h.individual_conversations + h.group_conversations;
-}
-
 function CountCell({
   value,
   onClick,
@@ -104,7 +177,7 @@ function CountCell({
   return <span className={value === 0 ? mutedClass : undefined}>{text}</span>;
 }
 
-function AddHandleRow({
+function AddHandleTableRow({
   newService,
   setNewService,
   newHandle,
@@ -122,50 +195,72 @@ function AddHandleRow({
   onCancel: () => void;
 }) {
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3">
-      <Select
-        selectedKey={newService}
-        onSelectionChange={(k) => setNewService(String(k))}
-        aria-label="New handle service"
-        triggerClassName={serviceSelectTriggerClass}
-        className="w-[10.5rem] shrink-0"
-      >
-        {HANDLE_SERVICE_OPTIONS.map((s) => (
-          <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
-            {s.label}
-          </ListBoxItem>
-        ))}
-      </Select>
-      <input
-        type="text"
-        value={newHandle}
-        onChange={(e) => setNewHandle(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            onSave();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
-            onCancel();
-          }
-        }}
-        placeholder="user#1234, @handle…"
-        className="box-border min-w-0 flex-1 rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] leading-snug text-text"
-        autoFocus
-      />
-      <Button
-        variant="primary"
-        onClick={onSave}
-        disabled={!newHandle.trim() || busy}
-        className="!px-3 !py-1 !text-[0.813rem]"
-      >
-        Save
-      </Button>
-      <Button onClick={onCancel} className="!px-3 !py-1 !text-[0.813rem]">
-        Cancel
-      </Button>
-    </div>
+    <Row id="handles-add" className="outline-none">
+      <Cell className={`${tdClass} overflow-hidden`}>
+        <Select
+          selectedKey={newService}
+          onSelectionChange={(k) => setNewService(String(k))}
+          aria-label="New handle service"
+          triggerClassName={serviceSelectTriggerClass}
+          valueClassName={serviceSelectValueClass}
+          className="block w-full min-w-0 max-w-full"
+        >
+          {HANDLE_SERVICE_OPTIONS.map((s) => (
+            <ListBoxItem key={s.value} id={s.value} className={serviceSelectItemClassName}>
+              {s.label}
+            </ListBoxItem>
+          ))}
+        </Select>
+      </Cell>
+      <Cell className={`${tdClass} overflow-hidden`}>
+        <input
+          type="text"
+          value={newHandle}
+          onChange={(e) => setNewHandle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSave();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              onCancel();
+            }
+          }}
+          placeholder="user#1234, @handle…"
+          className={handleEditInputClass}
+          autoFocus
+        />
+      </Cell>
+      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
+      <Cell className={`${tdClass} whitespace-nowrap`}>
+        <div className="flex items-center justify-center gap-1">
+          <Button
+            variant="ghost"
+            disabled={!newHandle.trim() || busy}
+            title="Save"
+            aria-label="Save"
+            onClick={onSave}
+            className={iconBtnClass}
+          >
+            ✓
+          </Button>
+          <Button
+            variant="ghost"
+            title="Cancel"
+            aria-label="Cancel"
+            onClick={onCancel}
+            className={iconBtnClass}
+          >
+            ×
+          </Button>
+        </div>
+      </Cell>
+    </Row>
   );
 }
 
@@ -189,8 +284,27 @@ export function ContactDrawerHandles({
   const [editHandle, setEditHandle] = useState("");
   const [editService, setEditService] = useState("phone");
   const [busy, setBusy] = useState(false);
+  const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
 
   const totals = sumHandleTotals(handleRows);
+
+  const sortedRows = useMemo(() => {
+    type RowItem = CachedContactHandle & { id: string };
+    const rows: RowItem[] = handleRows.map((h, i) => ({
+      ...h,
+      id: `${h.handle}-${i}`,
+    }));
+    if (!sortDescriptor?.column) return rows;
+    const col = String(sortDescriptor.column);
+    const dir = sortDescriptor.direction === "descending" ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const av = sortValue(a, col);
+      const bv = sortValue(b, col);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.handle.localeCompare(b.handle);
+    });
+  }, [handleRows, sortDescriptor]);
 
   useEffect(() => {
     setAdding(false);
@@ -199,6 +313,7 @@ export function ContactDrawerHandles({
     setEditingHandle(null);
     setEditHandle("");
     setBusy(false);
+    setSortDescriptor(null);
   }, [contactId]);
 
   const startEdit = (h: CachedContactHandle) => {
@@ -278,8 +393,8 @@ export function ContactDrawerHandles({
   };
 
   return (
-    <div>
-      <div className="mb-3 flex justify-end">
+    <div className="w-full max-w-4xl rounded-lg border border-border bg-elevated p-4">
+      <div className="mb-3 flex justify-end pr-5">
         <Button
           variant="primary"
           disabled={loading || busy || adding}
@@ -295,38 +410,77 @@ export function ContactDrawerHandles({
         </Button>
       </div>
 
-      {adding ? (
-        <AddHandleRow
-          newService={newService}
-          setNewService={setNewService}
-          newHandle={newHandle}
-          setNewHandle={setNewHandle}
-          busy={busy}
-          onSave={() => void saveAdd()}
-          onCancel={cancelAdd}
-        />
-      ) : null}
-
-      {handleRows.length === 0 && !adding ? (
-        <div className="mb-2 text-[0.813rem] text-muted">
-          {loading ? "Loading…" : "No handles"}
-        </div>
-      ) : handleRows.length === 0 ? null : (
-        <Table aria-label="Contact handles" className="w-full border-collapse text-left table-fixed">
-          <TableHeader className="border-b border-border">
-            <Column isRowHeader className={`${thClass} w-[14%]`}>
-              Service
-            </Column>
-            <Column className={`${thClass} w-[18%]`}>Handle</Column>
-            <Column className={`${thClass} w-[20%]`}>Date Range</Column>
-            <Column className={`${thClass} w-[12%]`}>Conversations</Column>
-            <Column className={`${thClass} w-[13%]`}>Direct Messages</Column>
-            <Column className={`${thClass} w-[13%]`}>Group Messages</Column>
-            <Column className={`${thClass} w-[10%]`} />
-          </TableHeader>
+      <div className="overflow-x-auto">
+      <Table
+        aria-label="Contact handles"
+        className="w-full border-collapse text-left table-fixed"
+        sortDescriptor={sortDescriptor ?? undefined}
+        onSortChange={setSortDescriptor}
+      >
+        <TableHeader className="border-b border-border">
+          <SortableColumn id="service" isRowHeader widthClass="w-[15%]">
+            Service
+          </SortableColumn>
+          <SortableColumn id="handle" widthClass="w-[15%]">
+            Identity
+          </SortableColumn>
+          <SortableColumn id="start_date" widthClass="w-[11%]">
+            First Seen
+          </SortableColumn>
+          <SortableColumn id="end_date" widthClass="w-[11%]">
+            Last Seen
+          </SortableColumn>
+          <SortableColumn id="conversations" widthClass="w-[12%]">
+            Threads
+          </SortableColumn>
+          <SortableColumn id="direct_messages" widthClass="w-[8%]">
+            Direct
+            <br />
+            Messages
+          </SortableColumn>
+          <SortableColumn id="group_messages" widthClass="w-[8%]">
+            Group
+            <br />
+            Messages
+          </SortableColumn>
+          <Column className={`${thClass} w-[14%] !cursor-default`} />
+        </TableHeader>
+        {adding ? (
           <TableBody
-            items={handleRows.map((h, i) => ({ ...h, id: `${h.handle}-${i}` }))}
-            dependencies={[editingHandle, editHandle, editService, busy]}
+            className="[&_tr]:border-b [&_tr]:border-border"
+            dependencies={[newHandle, newService, busy]}
+          >
+            <AddHandleTableRow
+              newService={newService}
+              setNewService={setNewService}
+              newHandle={newHandle}
+              setNewHandle={setNewHandle}
+              busy={busy}
+              onSave={() => void saveAdd()}
+              onCancel={cancelAdd}
+            />
+          </TableBody>
+        ) : null}
+        {handleRows.length === 0 && !adding ? (
+          <TableBody className="[&_tr]:border-b [&_tr]:border-border">
+            <Row id="handles-empty" className="outline-none">
+              <Cell className={`${tdClass} text-muted`}>
+                {loading ? "Loading…" : "No handles"}
+              </Cell>
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+              <Cell className={tdClass} />
+            </Row>
+          </TableBody>
+        ) : null}
+        {handleRows.length > 0 ? (
+          <TableBody
+            items={sortedRows}
+            dependencies={[editingHandle, editHandle, editService, busy, sortDescriptor]}
             className="[&_tr]:border-b [&_tr]:border-border"
           >
             {(h) => {
@@ -334,17 +488,18 @@ export function ContactDrawerHandles({
               const convos = conversationCount(h);
               return (
                 <Row id={h.id} className="outline-none">
-                  <Cell className={tdClass}>
+                  <Cell className={`${tdClass} overflow-hidden`}>
                     {editing ? (
                       <Select
                         selectedKey={editService}
                         onSelectionChange={(k) => setEditService(String(k))}
                         aria-label="Handle service"
                         triggerClassName={serviceSelectTriggerClass}
-                        className="w-full min-w-[10.5rem]"
+                        valueClassName={serviceSelectValueClass}
+                        className="block w-full min-w-0 max-w-full"
                       >
                         {HANDLE_SERVICE_OPTIONS.map((s) => (
-                          <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
+                          <ListBoxItem key={s.value} id={s.value} className={serviceSelectItemClassName}>
                             {s.label}
                           </ListBoxItem>
                         ))}
@@ -355,7 +510,7 @@ export function ContactDrawerHandles({
                       </span>
                     )}
                   </Cell>
-                  <Cell className={tdClass}>
+                  <Cell className={`${tdClass} overflow-hidden`}>
                     {editing ? (
                       <input
                         type="text"
@@ -371,7 +526,7 @@ export function ContactDrawerHandles({
                             cancelEdit();
                           }
                         }}
-                        className="box-border w-full rounded border border-border bg-elevated px-1.5 py-1.5 text-[0.813rem] leading-snug text-text"
+                        className={handleEditInputClass}
                         autoFocus
                       />
                     ) : (
@@ -380,10 +535,13 @@ export function ContactDrawerHandles({
                       </span>
                     )}
                   </Cell>
-                  <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
-                    {handleDateRangeLabel(h)}
+                  <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+                    {handleDateCell(h.start_date)}
                   </Cell>
-                  <Cell className={tdClass}>
+                  <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+                    {handleDateCell(h.end_date)}
+                  </Cell>
+                  <Cell className={tdCenterClass}>
                     <CountCell
                       value={convos}
                       onClick={
@@ -393,15 +551,15 @@ export function ContactDrawerHandles({
                       }
                     />
                   </Cell>
-                  <Cell className={tdClass}>
+                  <Cell className={tdCenterClass}>
                     <CountCell value={h.individual_message_count} />
                   </Cell>
-                  <Cell className={tdClass}>
+                  <Cell className={tdCenterClass}>
                     <CountCell value={h.group_message_count} />
                   </Cell>
                   <Cell className={`${tdClass} whitespace-nowrap`}>
                     {editing ? (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-center gap-1">
                         <Button
                           variant="ghost"
                           disabled={busy || !editHandle.trim()}
@@ -423,7 +581,7 @@ export function ContactDrawerHandles({
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-center gap-1">
                         <Button
                           variant="ghost"
                           disabled={busy || loading}
@@ -451,27 +609,31 @@ export function ContactDrawerHandles({
               );
             }}
           </TableBody>
-          <TableBody className="border-t border-border">
-            <Row id="handles-total" className="outline-none">
-              <Cell className={`${tdClass} font-semibold text-muted`}>Total</Cell>
-              <Cell className={`${tdClass} text-muted`}>—</Cell>
-              <Cell className={`${tdClass} whitespace-nowrap text-muted`}>
-                {handleDateRangeLabel(footerAsHandle)}
-              </Cell>
-              <Cell className={tdClass}>
-                <CountCell value={conversationCount(totals)} />
-              </Cell>
-              <Cell className={tdClass}>
-                <CountCell value={totals.individual_message_count} />
-              </Cell>
-              <Cell className={tdClass}>
-                <CountCell value={totals.group_message_count} />
-              </Cell>
-              <Cell className={tdClass} />
-            </Row>
-          </TableBody>
-        </Table>
-      )}
+        ) : null}
+        <TableBody className="border-t border-border">
+          <Row id="handles-total" className="outline-none">
+            <Cell className={`${tdClass} font-semibold text-muted`}>Total</Cell>
+            <Cell className={`${tdClass} text-muted`}>—</Cell>
+            <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+              {handleDateCell(footerAsHandle.start_date)}
+            </Cell>
+            <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+              {handleDateCell(footerAsHandle.end_date)}
+            </Cell>
+            <Cell className={tdCenterClass}>
+              <CountCell value={conversationCount(totals)} />
+            </Cell>
+            <Cell className={tdCenterClass}>
+              <CountCell value={totals.individual_message_count} />
+            </Cell>
+            <Cell className={tdCenterClass}>
+              <CountCell value={totals.group_message_count} />
+            </Cell>
+            <Cell className={tdClass} />
+          </Row>
+        </TableBody>
+      </Table>
+      </div>
     </div>
   );
 }

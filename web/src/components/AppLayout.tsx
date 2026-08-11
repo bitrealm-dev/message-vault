@@ -192,9 +192,19 @@ export default function AppLayout() {
               }
             />
           </ListColumn>
-          <main className={mainPane}>
-            <div className={emptyMain}>Select a contact to view details</div>
-          </main>
+          {selectedContact ? (
+            <ContactDrawer
+              variant="docked"
+              contactId={selectedContact.id}
+              preview={selectedContact}
+              onClose={closeContactDrawer}
+              onBrowseConversations={handleBrowseContactConversations}
+            />
+          ) : (
+            <main className={mainPane}>
+              <div className={emptyMain}>Select a contact to view details</div>
+            </main>
+          )}
         </>
       )}
 
@@ -233,12 +243,15 @@ export default function AppLayout() {
         </main>
       )}
 
-      <ContactDrawer
-        contactId={selectedContact?.id ?? openContactId ?? null}
-        preview={selectedContact}
-        onClose={closeContactDrawer}
-        onBrowseConversations={handleBrowseContactConversations}
-      />
+      {/* Overlay contact panel (e.g. opened from a message thread). */}
+      {openContactId ? (
+        <ContactDrawer
+          variant="overlay"
+          contactId={openContactId}
+          onClose={closeContactDrawer}
+          onBrowseConversations={handleBrowseContactConversations}
+        />
+      ) : null}
     </div>
   );
 }

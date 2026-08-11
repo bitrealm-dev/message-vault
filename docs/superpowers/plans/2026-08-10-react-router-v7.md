@@ -1,12 +1,12 @@
-# React Router v8 Declarative Mode — Implementation Plan
+# React Router v7 Declarative Mode — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** Replace manual `useState`-based view switching with React Router v8 declarative mode (`<HashRouter>` + `<Routes>` + `<Route>`), giving the Tauri desktop app URL-based navigation, browser history, and deep linking.
+**Goal:** Replace manual `useState`-based view switching with React Router v7 declarative mode (`<HashRouter>` + `<Routes>` + `<Route>`), giving the Tauri desktop app URL-based navigation, browser history, and deep linking.
 
 **Architecture:** Wrap the app in `<HashRouter>`. Auth states become sibling routes with redirect guards. `AppLayout` becomes a layout route that reads `useLocation().pathname` to drive column visibility/content and renders child routes via `<Outlet />`. The message route (`/messages/:id`) is a special case: `AppLayout` renders a single `<Outlet />` in a flex container, and the child `MessageRoute` component produces both columns (ListColumn + main) as siblings — one component, two columns, one Outlet. `LeftPanel` switches from `onNavigate` callback to `useNavigate()`. Search/filter state moves into URL search params.
 
-**Tech Stack:** React 19, React Router v8 (`react-router-dom`), Tauri v2, Vite 6, TypeScript
+**Tech Stack:** React 19, React Router v7 (`react-router-dom`), Tauri v2, Vite 6, TypeScript
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - Auth guard must redirect unauthenticated users to `/login` and new accounts to `/onboarding`
 - Contact drawer stays as a local-state overlay (not a route — it's a slide-over panel)
 - Vite dev server on port 5173 must still proxy `/v1` → `http://127.0.0.1:8080`
-- No new dependencies beyond `react-router-dom` v8
+- No new dependencies beyond `react-router-dom` v7
 - `LoginScreen` currently takes `onRegister` callback → replace with `useNavigate('/register')`
 - `RegisterScreen` currently takes `serverUrl` + `onBack` props → `serverUrl` from auth context, `onBack` → `useNavigate('/login')`
 
@@ -26,7 +26,7 @@
 
 | File                                  | Action     | Responsibility                                                                                    |
 | ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| `web/package.json`                    | Modify     | Add `react-router-dom` v8                                                                         |
+| `web/package.json`                    | Modify     | Add `react-router-dom` v7                                                                         |
 | `web/src/main.tsx`                    | Modify     | Wrap `<App />` in `<HashRouter>`                                                                  |
 | `web/src/App.tsx`                     | Modify     | Replace `useState` state machine with `<Routes>` tree                                             |
 | `web/src/components/AuthGuard.tsx`    | **Create** | Layout route that redirects based on auth state                                                   |
@@ -68,33 +68,33 @@ AppLayout owns the 3-column chrome. For the `/messages/:id` route, **AppLayout r
 
 
 
-### Task 1: Install react-router-dom v8
+### Task 1: Install react-router-dom v7
 
 **Files:**
 
 - Modify: `web/package.json`
 
-**Produces:** `react-router-dom` v8 available in node_modules
+**Produces:** `react-router-dom` v7 available in node_modules
 
-- [ ] **Step 1: Add dependency**
+- [x] **Step 1: Add dependency**
 
 ```bash
-cd web && npm install react-router-dom@^8
+cd web && npm install react-router-dom@^7
 ```
 
-- [ ] **Step 2: Verify install**
+- [x] **Step 2: Verify install**
 
 ```bash
 node -e "console.log(require('./web/node_modules/react-router-dom/package.json').version)"
 ```
 
-Expected: prints `8.x.x`
+Expected: prints `7.x.x`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/package.json web/package-lock.json
-git commit -m "deps: add react-router-dom v8"
+git commit -m "deps: add react-router-dom v7"
 ```
 
 ---
@@ -109,7 +109,7 @@ git commit -m "deps: add react-router-dom v8"
 
 **Consumes:** `react-router-dom` from Task 1
 
-- [ ] **Step 1: Update main.tsx**
+- [x] **Step 1: Update main.tsx**
 
 ```tsx
 import React from "react";
@@ -130,12 +130,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 );
 ```
 
-- [ ] **Step 2: Verify app loads without crashes**
+- [x] **Step 2: Verify app loads without crashes**
 
 Run: `cd web && npm run dev`
 Open `http://localhost:5173` — app renders (URL shows `/#/`). Existing useState routing still works inside HashRouter.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/main.tsx
@@ -156,7 +156,7 @@ git commit -m "feat: wrap app in HashRouter"
 
 **Produces:** `<AuthGuard />` — renders `<Outlet />` if authenticated + onboarded, else redirects
 
-- [ ] **Step 1: Write AuthGuard component**
+- [x] **Step 1: Write AuthGuard component**
 
 ```tsx
 import { Navigate, Outlet } from "react-router-dom";
@@ -181,12 +181,12 @@ export function AuthGuard() {
 }
 ```
 
-- [ ] **Step 2: Verify TypeScript compiles**
+- [x] **Step 2: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 Expected: no errors in this file
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/components/AuthGuard.tsx
@@ -205,7 +205,7 @@ git commit -m "feat: add AuthGuard layout route component"
 
 **Consumes:** `AuthGuard` from Task 3
 
-- [ ] **Step 1: Rewrite App.tsx**
+- [x] **Step 1: Rewrite App.tsx**
 
 ```tsx
 import { Routes, Route, Navigate } from "react-router-dom";
@@ -290,12 +290,12 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 2: Verify TypeScript**
+- [x] **Step 2: Verify TypeScript**
 
 Run: `cd web && npx tsc --noEmit`
 Expected: errors in `AppLayout.tsx`, `LeftPanel.tsx`, `LoginScreen.tsx`, `RegisterScreen.tsx` — all fixed in subsequent tasks.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/App.tsx
@@ -324,7 +324,7 @@ git commit -m "feat: replace useState state machine with React Router Routes tre
 - `onNavigate` prop to LeftPanel → removed
 - Message routes: render `<Outlet />` once in a flex div — MessageRoute provides both columns
 
-- [ ] **Step 1: Rewrite AppLayout**
+- [x] **Step 1: Rewrite AppLayout**
 
 ```tsx
 import { useState } from "react";
@@ -514,12 +514,12 @@ export default function AppLayout() {
 }
 ```
 
-- [ ] **Step 2: Verify TypeScript compiles**
+- [x] **Step 2: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 Expected: errors only in `LeftPanel.tsx` (still expects old props) — fixed in Task 6.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/components/AppLayout.tsx
@@ -545,7 +545,7 @@ git commit -m "feat: drive AppLayout columns from URL pathname + search params"
 - Each nav button's `onClick` calls `navigate("/path")`
 - Saved groups, search callbacks, Tauri gating, logout — unchanged
 
-- [ ] **Step 1: Update imports and function signature**
+- [x] **Step 1: Update imports and function signature**
 
 At the top of `LeftPanel.tsx`, add:
 
@@ -588,7 +588,7 @@ Remove the `ActiveView` import:
 import type { ActiveView } from "../lib/views";
 ```
 
-- [ ] **Step 2: Add router hooks and active derivation**
+- [x] **Step 2: Add router hooks and active derivation**
 
 Add these lines at the top of the function body, after the `const { logout } = useAuth();` line:
 
@@ -602,7 +602,7 @@ function isActive(path: string): boolean {
 }
 ```
 
-- [ ] **Step 3: Update the linkStyle helper**
+- [x] **Step 3: Update the linkStyle helper**
 
 Replace:
 
@@ -643,7 +643,7 @@ const signOutStyle: CSSProperties = {
 };
 ```
 
-- [ ] **Step 4: Update each nav button**
+- [x] **Step 4: Update each nav button**
 
 Replace each `onClick={() => onNavigate("viewName")}` with `onClick={() => navigate("/path")}`:
 
@@ -684,12 +684,12 @@ Replace each `onClick={() => onNavigate("viewName")}` with `onClick={() => navig
 </button>
 ```
 
-- [ ] **Step 5: Verify TypeScript compiles**
+- [x] **Step 5: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 Expected: errors only in `LoginScreen.tsx` and `RegisterScreen.tsx` — fixed in Tasks 7-8.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add web/src/components/LeftPanel.tsx
@@ -708,7 +708,7 @@ git commit -m "feat: replace onNavigate callback with useNavigate in LeftPanel"
 
 **Consumes:** `useNavigate` from `react-router-dom`
 
-- [ ] **Step 1: Replace** `onRegister` **prop with** `useNavigate`
+- [x] **Step 1: Replace** `onRegister` **prop with** `useNavigate`
 
 At the top of the file, add:
 
@@ -732,7 +732,7 @@ Add the hook inside the function body:
 const navigate = useNavigate();
 ```
 
-- [ ] **Step 2: Update the "Create an account" button**
+- [x] **Step 2: Update the "Create an account" button**
 
 Find the block guarded by `onRegister &&`:
 
@@ -766,11 +766,11 @@ Replace with (always renders when `authMode === "local"`):
 </>
 ```
 
-- [ ] **Step 3: Verify TypeScript compiles**
+- [x] **Step 3: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/screens/LoginScreen.tsx
@@ -789,7 +789,7 @@ git commit -m "feat: replace onRegister callback with useNavigate in LoginScreen
 
 **Consumes:** `useNavigate` from `react-router-dom`, `useAuth` from `@/lib/auth`
 
-- [ ] **Step 1: Replace** `serverUrl` **and** `onBack` **props**
+- [x] **Step 1: Replace** `serverUrl` **and** `onBack` **props**
 
 At the top of the file, add:
 
@@ -814,7 +814,7 @@ const navigate = useNavigate();
 const { login, serverUrl } = useAuth();
 ```
 
-- [ ] **Step 2: Update the back button**
+- [x] **Step 2: Update the back button**
 
 Find:
 
@@ -828,11 +828,11 @@ Replace with:
 <AuthBackButton label="Back to login" onClick={() => navigate("/login")} />
 ```
 
-- [ ] **Step 3: Verify TypeScript compiles**
+- [x] **Step 3: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/screens/RegisterScreen.tsx
@@ -854,7 +854,7 @@ git commit -m "feat: replace onBack callback with useNavigate in RegisterScreen"
 
 **Produces:** `<MessageRoute />` — renders `<ListColumn>` + `<main>` as siblings. AppLayout renders it via a single `<Outlet />` in a flex container. Conversation data flows through `useLocation().state`.
 
-- [ ] **Step 1: Write MessageRoute**
+- [x] **Step 1: Write MessageRoute**
 
 ```tsx
 import { useParams, useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -939,7 +939,7 @@ export default function MessageRoute() {
 }
 ```
 
-- [ ] **Step 2: Wire MessageRoute into App.tsx**
+- [x] **Step 2: Wire MessageRoute into App.tsx**
 
 In `web/src/App.tsx`, add the import and route:
 
@@ -951,12 +951,12 @@ import MessageRoute from "./components/MessageRoute";
 <Route path="messages/:conversationId" element={<MessageRoute />} />
 ```
 
-- [ ] **Step 3: Verify TypeScript compiles**
+- [x] **Step 3: Verify TypeScript compiles**
 
 Run: `cd web && npx tsc --noEmit`
 Expected: zero errors across the entire project.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/components/MessageRoute.tsx web/src/App.tsx
@@ -973,7 +973,7 @@ git commit -m "feat: add MessageRoute for URL-driven conversation selection via 
 
 - Delete: `web/src/lib/views.ts`
 
-- [ ] **Step 1: Verify no remaining references**
+- [x] **Step 1: Verify no remaining references**
 
 ```bash
 grep -r "ActiveView\|from.*lib/views\|from.*\.\./lib/views" web/src --include="*.tsx" --include="*.ts"
@@ -981,13 +981,13 @@ grep -r "ActiveView\|from.*lib/views\|from.*\.\./lib/views" web/src --include="*
 
 Expected: no output.
 
-- [ ] **Step 2: Delete the file**
+- [x] **Step 2: Delete the file**
 
 ```bash
 rm web/src/lib/views.ts
 ```
 
-- [ ] **Step 3: Verify full TypeScript compilation**
+- [x] **Step 3: Verify full TypeScript compilation**
 
 ```bash
 cd web && npx tsc --noEmit
@@ -995,7 +995,7 @@ cd web && npx tsc --noEmit
 
 Expected: zero errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git rm web/src/lib/views.ts

@@ -40,7 +40,10 @@ function PencilIcon() {
   );
 }
 
-/** Dock the drawer to the right edge of the list/contact column when present. */
+/**
+ * Overlay mode only: dock to the right edge of the list column.
+ * Skips setState when the measured edge is unchanged to avoid jitter.
+ */
 function useDrawerLeft(open: boolean): number | null {
   const [left, setLeft] = useState<number | null>(null);
 
@@ -55,12 +58,13 @@ function useDrawerLeft(open: boolean): number | null {
 
     const measure = () => {
       const col = document.querySelector<HTMLElement>("[data-list-column]");
-      if (col) {
-        setLeft(Math.round(col.getBoundingClientRect().right));
-        return col;
+      if (!col) {
+        setLeft(null);
+        return null;
       }
-      setLeft(null);
-      return null;
+      const next = Math.round(col.getBoundingClientRect().right);
+      setLeft((prev) => (prev === next ? prev : next));
+      return col;
     };
 
     const col = measure();
@@ -93,6 +97,8 @@ export default function ContactDrawer({
   preview = null,
   onClose,
   onBrowseConversations,
+  /** `docked` = flex sibling (contacts page). `overlay` = fixed panel (e.g. from messages). */
+  variant = "overlay",
 }: {
   contactId: string | null;
   preview?: ContactPreview | null;
@@ -103,11 +109,12 @@ export default function ContactDrawer({
     handle?: string;
     handles?: string[];
   }) => void;
+  variant?: "docked" | "overlay";
 }) {
   const [detail, setDetail] = useState<ContactDetail | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
-  const drawerLeft = useDrawerLeft(!!contactId);
+  const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -213,13 +220,25 @@ export default function ContactDrawer({
     loadDetail();
   };
 
-  // Non-modal panel: no full-screen underlay, so the contact list stays clickable.
+  const panelClass =
+    variant === "docked"
+      ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-border bg-panel p-6 outline-none"
+      : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
+
+  const panelStyle =
+    variant === "overlay"
+      ? {
+          left: drawerLeft ?? undefined,
+          right: drawerLeft == null ? 0 : undefined,
+        }
+      : undefined;
+
   return (
     <aside
       role="dialog"
       aria-label={displayName}
-      className="fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none"
-      style={{ left: drawerLeft ?? undefined, right: drawerLeft == null ? 0 : undefined }}
+      className={panelClass}
+      style={panelStyle}
     >
       <div className="mb-5 flex items-start justify-between gap-3">
         {editingName && detailMatches ? (
