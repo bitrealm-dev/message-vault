@@ -133,3 +133,10 @@ export interface ImportProgressEvent {
   total: number;
   status?: string;
 }
+
+export interface ImportIssueEvent {
+  kind: "error" | "skip";
+  step: "parse" | "convert" | "upload";
+  item: string;
+  reason: string;
+}

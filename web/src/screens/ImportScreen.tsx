@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
 import { invokeExtract, invokeCancel, invokePush, awaitTauriJob } from "../lib/tauri";
@@ -13,12 +13,17 @@ import {
 import type {
   AttachmentMediaMode,
   ContactNameMode,
+  ImportIssueEvent,
   ImportProgressEvent,
 } from "../lib/types";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
 import Button from "../components/Button";
+import ImportSummaryPanel, {
+  type ImportIssue,
+  type ImportSummaryView,
+} from "../components/import/ImportSummaryPanel";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import {
   ATTACHMENT_OPTIONS,
@@ -38,6 +43,12 @@ interface ImportStep {
 }
 
 const DEFAULT_SOURCE = "imessage-ios";
+
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
 
 export default function ImportScreen() {
   const { token } = useAuth();
@@ -70,13 +81,44 @@ export default function ImportScreen() {
   ]);
   const [showDetails, setShowDetails] = useState(false);
   const [log, setLog] = useState<string[]>([]);
-  const [summary, setSummary] = useState("");
   const [phase, setPhase] = useState<"form" | "progress" | "done">("form");
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [summaryView, setSummaryView] = useState<ImportSummaryView | null>(null);
+  const startedAtRef = useRef<number | null>(null);
+  const activeStepRef = useRef<ImportIssue["step"]>("parse");
+  const issuesRef = useRef<ImportIssue[]>([]);
+  const countsRef = useRef<{
+    parseMessages?: number;
+    convertDetail?: string;
+    uploadFiles?: number;
+  }>({});
+  const timingRef = useRef<{
+    extractStartedAt: number | null;
+    parseStartedAt: number | null;
+    parseEndedAt: number | null;
+    convertStartedAt: number | null;
+    convertEndedAt: number | null;
+  }>({
+    extractStartedAt: null,
+    parseStartedAt: null,
+    parseEndedAt: null,
+    convertStartedAt: null,
+    convertEndedAt: null,
+  });
 
   useEffect(() => {
     if (!getRememberImporterPaths()) return;
     setBackupPath(getImporterPath(source));
   }, [source]);
+
+  useEffect(() => {
+    if (!running || startedAtRef.current == null) return;
+
+    const timer = window.setInterval(() => {
+      setElapsedMs(performance.now() - (startedAtRef.current ?? performance.now()));
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   const updateBackupPath = (path: string) => {
     setBackupPath(path);
@@ -97,6 +139,30 @@ export default function ImportScreen() {
   };
 
   const applyProgress = (event: ImportProgressEvent) => {
+    const now = performance.now();
+    if (event.step === "parse") {
+      activeStepRef.current = "parse";
+      timingRef.current.parseStartedAt ??= now;
+      countsRef.current.parseMessages = event.done;
+    } else if (event.step === "convert") {
+      activeStepRef.current = "convert";
+      if (event.status !== "included_in_extract") {
+        timingRef.current.parseEndedAt ??= now;
+        timingRef.current.convertStartedAt ??= now;
+        if (event.total > 0 && event.done >= event.total) {
+          timingRef.current.convertEndedAt = now;
+          countsRef.current.convertDetail = `${event.done} files`;
+        } else {
+          countsRef.current.convertDetail = `${event.done}/${event.total} files`;
+        }
+      } else {
+        countsRef.current.convertDetail = "Included in extract";
+      }
+    } else {
+      activeStepRef.current = "upload";
+      countsRef.current.uploadFiles = event.done;
+    }
+
     const stepIndex = event.step === "parse" ? 0 : event.step === "convert" ? 1 : 2;
     const rawDetail =
       event.status === "included_in_extract"
@@ -128,11 +194,30 @@ export default function ImportScreen() {
     );
   };
 
+  const recordIssue = (issue: ImportIssueEvent) => {
+    issuesRef.current = [...issuesRef.current, issue];
+    appendLog(`${issue.kind === "skip" ? "Skipped" : "Error"}: ${issue.item}: ${issue.reason}`);
+  };
+
   const startImport = async () => {
     if (!isTauri()) return;
+    const importStartedAt = performance.now();
+    startedAtRef.current = importStartedAt;
+    activeStepRef.current = "parse";
+    issuesRef.current = [];
+    countsRef.current = {};
+    timingRef.current = {
+      extractStartedAt: null,
+      parseStartedAt: null,
+      parseEndedAt: null,
+      convertStartedAt: null,
+      convertEndedAt: null,
+    };
     setRunning(true);
     setPhase("progress");
+    setElapsedMs(0);
     setLog([]);
+    setSummaryView(null);
     setShowDetails(true);
     setSteps([
       { label: "Parse backup", status: "active", detail: "Parsing backup…" },
@@ -142,12 +227,23 @@ export default function ImportScreen() {
 
     let importSessionId: number | null = null;
     let importCompleted = false;
+    let parseMs: number | null = null;
+    let convertMs: number | null = null;
+    let uploadMs: number | null = null;
     try {
-      const outputDir = await resolveImportStagingDir(backupPath, source);
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
 
+      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
+        source,
+        tool: "message-vault-io",
+        mode: "append",
+      });
+      importSessionId = importSession.id;
+
+      const outputDir = await resolveImportStagingDir(backupPath, source);
       // extract/push return when the background thread starts — wait for events.
+      timingRef.current.extractStartedAt = performance.now();
       const extractSummary = await awaitTauriJob(
         () =>
           invokeExtract({
@@ -170,8 +266,19 @@ export default function ImportScreen() {
           }),
         appendLog,
         applyProgress,
+        recordIssue,
       );
       appendLog(extractSummary);
+      const extractFinishedAt = performance.now();
+      const timing = timingRef.current;
+      if (timing.convertStartedAt != null) {
+        parseMs =
+          (timing.parseEndedAt ?? timing.convertStartedAt) -
+          (timing.parseStartedAt ?? timing.extractStartedAt ?? timing.convertStartedAt);
+        convertMs = (timing.convertEndedAt ?? extractFinishedAt) - timing.convertStartedAt;
+      } else {
+        parseMs = extractFinishedAt - (timing.extractStartedAt ?? extractFinishedAt);
+      }
 
       setSteps((s) =>
         s.map((step, i) =>
@@ -183,13 +290,7 @@ export default function ImportScreen() {
         ),
       );
 
-      const importSession = await apiClient.post<{ id: number }>("/v1/imports", {
-        source,
-        tool: "message-vault-io",
-        mode: "append",
-      });
-      importSessionId = importSession.id;
-
+      const uploadStartedAt = performance.now();
       const pushSummary = await awaitTauriJob(
         () =>
           invokePush({
@@ -207,7 +308,9 @@ export default function ImportScreen() {
           }),
         appendLog,
         applyProgress,
+        recordIssue,
       );
+      uploadMs = performance.now() - uploadStartedAt;
       appendLog(pushSummary);
       importCompleted = true;
 
@@ -216,18 +319,43 @@ export default function ImportScreen() {
           i === 2 ? { ...step, status: "done", detail: "Upload complete" } : step,
         ),
       );
-      setPhase("done");
-      setSummary(pushSummary || "Import complete. Messages uploaded to vault.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setSteps((s) => s.map((step) => ({ ...step, status: "error" as const })));
+      issuesRef.current = [
+        ...issuesRef.current,
+        { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
+      ];
+      setSteps((s) =>
+        s.map((step) =>
+          step.status === "active" ? { ...step, status: "error" as const } : step,
+        ),
+      );
       setLog((l) => [...l, `Error: ${msg}`]);
-      setPhase("progress");
     } finally {
+      const durationMs = performance.now() - importStartedAt;
+      const finalSummary: ImportSummaryView = {
+        status: importCompleted ? "completed" : "failed",
+        ...countsRef.current,
+        parseMs,
+        convertMs,
+        uploadMs,
+        durationMs,
+        issues: issuesRef.current,
+      };
       if (importSessionId) {
         try {
           await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
             ok: importCompleted,
+            parse_ms: parseMs,
+            convert_ms: convertMs,
+            upload_ms: uploadMs,
+            duration_ms: durationMs,
+            summary: {
+              parse_messages: finalSummary.parseMessages,
+              convert_detail: finalSummary.convertDetail,
+              upload_files: finalSummary.uploadFiles,
+            },
+            issues: finalSummary.issues,
           });
         } catch (completeError) {
           const msg =
@@ -235,6 +363,9 @@ export default function ImportScreen() {
           appendLog(`Warning: could not complete vault import session ${importSessionId}: ${msg}`);
         }
       }
+      setElapsedMs(durationMs);
+      setSummaryView(finalSummary);
+      setPhase("done");
       setRunning(false);
     }
   };
@@ -453,6 +584,9 @@ export default function ImportScreen() {
           <h1 className="m-0 mb-4 text-2xl font-bold">
             Import Messages
           </h1>
+          <p className="m-0 text-[0.875rem] text-muted">
+            Elapsed {formatDuration(elapsedMs)}
+          </p>
           <StepProgress steps={steps} />
           <div className="mt-4 flex items-center gap-3">
             {running && (
@@ -465,7 +599,7 @@ export default function ImportScreen() {
                 variant="ghost"
                 onClick={() => {
                   setPhase("form");
-                  setSummary("");
+                  setSummaryView(null);
                   setLog([]);
                   setShowDetails(false);
                 }}
@@ -494,15 +628,13 @@ export default function ImportScreen() {
 
       {phase === "done" && (
         <>
-          <div className="mt-4 rounded-md bg-ok-soft-bg p-4 text-[0.875rem]">
-            {summary}
-          </div>
+          {summaryView ? <ImportSummaryPanel summary={summaryView} /> : null}
           <div className="mt-4">
             <Button
               variant="primary"
               onClick={() => {
                 setPhase("form");
-                setSummary("");
+                setSummaryView(null);
               }}
               className="!px-6 !py-2"
             >
