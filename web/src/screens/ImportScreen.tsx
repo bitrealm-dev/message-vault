@@ -10,7 +10,11 @@ import {
   setImporterPath,
   resolveImportStagingDir,
 } from "../lib/system-settings";
-import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
+import type {
+  AttachmentMediaMode,
+  ContactNameMode,
+  ImportProgressEvent,
+} from "../lib/types";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
@@ -92,6 +96,38 @@ export default function ImportScreen() {
     setLog((prev) => [...prev, line]);
   };
 
+  const applyProgress = (event: ImportProgressEvent) => {
+    const stepIndex = event.step === "parse" ? 0 : event.step === "convert" ? 1 : 2;
+    const rawDetail =
+      event.status === "included_in_extract"
+        ? "Included in extract"
+        : event.status
+          ? `${event.done}/${event.total} (${event.status})`
+          : `${event.done}/${event.total}`;
+
+    setSteps((current) =>
+      current.map((step, index) => {
+        if (index < stepIndex) {
+          return { ...step, status: "done", detail: step.detail ?? undefined };
+        }
+        if (index > stepIndex) {
+          return step;
+        }
+        const done = event.total > 0 && event.done >= event.total;
+        const verb =
+          event.step === "upload" ? "Uploading" : event.step === "convert" ? "Converting" : "Parsing";
+        return {
+          ...step,
+          status: done ? "done" : "active",
+          detail:
+            event.status === "included_in_extract" && event.step === "convert"
+              ? rawDetail
+              : `${verb} ${rawDetail}`,
+        };
+      }),
+    );
+  };
+
   const startImport = async () => {
     if (!isTauri()) return;
     setRunning(true);
@@ -133,6 +169,7 @@ export default function ImportScreen() {
               : {}),
           }),
         appendLog,
+        applyProgress,
       );
       appendLog(extractSummary);
 
@@ -169,6 +206,7 @@ export default function ImportScreen() {
             import_id: importSession.id,
           }),
         appendLog,
+        applyProgress,
       );
       appendLog(pushSummary);
       importCompleted = true;

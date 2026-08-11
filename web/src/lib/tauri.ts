@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ExtractConfig, ExtractErrorEvent } from "./types";
+import type { ExtractConfig, ExtractErrorEvent, ImportProgressEvent } from "./types";
 
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
   return invoke("extract", {
@@ -112,18 +112,20 @@ export async function invokeHomeDir(): Promise<HomeDirInfo> {
 }
 
 /**
- * Subscribes to the three extraction events emitted by the Rust backend:
- * `extract:log` (String log line), `extract:finished` (String summary),
- * `extract:error` ({ detail, user_message? }).
- * Returns a single unlisten function that tears down all three listeners.
+ * Subscribes to the extraction events emitted by the Rust backend:
+ * `extract:log` (String log line), `extract:progress` (structured progress),
+ * `extract:finished` (String summary), `extract:error` ({ detail, user_message? }).
+ * Returns a single unlisten function that tears down all listeners.
  */
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
+  onProgress?: (event: ImportProgressEvent) => void;
   onFinished: (summary: string) => void;
   onError: (err: ExtractErrorEvent) => void;
 }): Promise<UnlistenFn> {
   return Promise.all([
     listen<string>("extract:log", (e) => callbacks.onLog(e.payload)),
+    listen<ImportProgressEvent>("extract:progress", (e) => callbacks.onProgress?.(e.payload)),
     listen<string>("extract:finished", (e) => callbacks.onFinished(e.payload)),
     listen<ExtractErrorEvent>("extract:error", (e) => callbacks.onError(e.payload)),
   ]).then((unlisteners) => {
@@ -142,6 +144,7 @@ export function onExtractEvents(callbacks: {
 export async function awaitTauriJob(
   invokeFn: () => Promise<void>,
   onLog?: (line: string) => void,
+  onProgress?: (event: ImportProgressEvent) => void,
 ): Promise<string> {
   let unlisten: UnlistenFn | undefined;
   try {
@@ -150,6 +153,7 @@ export async function awaitTauriJob(
         try {
           unlisten = await onExtractEvents({
             onLog: (line) => onLog?.(line),
+            onProgress,
             onFinished: resolve,
             onError: (err) =>
               reject(new Error(err.user_message ?? err.detail)),

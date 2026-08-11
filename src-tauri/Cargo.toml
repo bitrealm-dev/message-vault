@@ -8,6 +8,8 @@ description = "Tauri desktop app for message-vault-io"
 name = "message_vault_io_tauri_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[workspace]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

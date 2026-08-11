@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invokeCancel, onExtractEvents } from "../lib/tauri";
+import type { ImportProgressEvent } from "../lib/types";
 
 /**
  * Shared lifecycle for Tauri long-running jobs that emit extract:* events
@@ -9,6 +10,7 @@ import { invokeCancel, onExtractEvents } from "../lib/tauri";
  */
 export function useTauriJob(options?: {
   onError?: (msg: string) => void;
+  onProgress?: (event: ImportProgressEvent) => void;
 }): {
   running: boolean;
   /** True after a successful `extract:finished` for the current run. */
@@ -18,6 +20,7 @@ export function useTauriJob(options?: {
   cancel: () => Promise<void>;
 } {
   const onError = options?.onError;
+  const onProgress = options?.onProgress;
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
   const [log, setLog] = useState<string[]>([]);
@@ -41,6 +44,7 @@ export function useTauriJob(options?: {
         onLog: (line) => {
           setLog((prev) => [...prev, line]);
         },
+        onProgress,
         onFinished: (summary) => {
           setLog((prev) => [...prev, summary]);
           setRunning(false);
@@ -69,7 +73,7 @@ export function useTauriJob(options?: {
         tearDown();
       }
     },
-    [onError, tearDown],
+    [onError, onProgress, tearDown],
   );
 
   const cancel = useCallback(async () => {

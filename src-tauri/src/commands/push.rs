@@ -8,7 +8,7 @@ use std::thread;
 use tauri::Emitter;
 use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
 
-use super::events::ExtractErrorEvent;
+use super::events::{ExtractErrorEvent, ExtractProgressEvent};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -56,16 +56,39 @@ pub async fn push(
             import_id,
         };
 
+        let mut current_upload: Option<(usize, usize)> = None;
         let mut progress = |event: ProgressEvent| match event {
             ProgressEvent::Log(line) => {
                 let _ = app_handle.emit("extract:log", line);
             }
             ProgressEvent::Auth { .. } => {}
-            ProgressEvent::FileStart { file, .. } => {
+            ProgressEvent::FileStart { index, total, file } => {
+                current_upload = Some((index, total));
                 let _ = app_handle.emit("extract:log", format!("Starting: {file}"));
+                let _ = app_handle.emit(
+                    "extract:progress",
+                    ExtractProgressEvent {
+                        step: "upload".into(),
+                        done: index.saturating_sub(1),
+                        total,
+                        status: None,
+                    },
+                );
             }
             ProgressEvent::FileDone { file, status } => {
                 let _ = app_handle.emit("extract:log", format!("Done: {file} ({status})"));
+                let (done, total) = current_upload
+                    .take()
+                    .unwrap_or((0, 0));
+                let _ = app_handle.emit(
+                    "extract:progress",
+                    ExtractProgressEvent {
+                        step: "upload".into(),
+                        done,
+                        total,
+                        status: Some(status),
+                    },
+                );
             }
             ProgressEvent::Finished(_) => {}
         };
