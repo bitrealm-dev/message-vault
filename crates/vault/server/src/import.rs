@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use message_ir::HandleType;
+use message_ir::{HandleService, HandleType};
 use rusqlite::{
     Connection, OptionalExtension, Statement, Transaction, params, params_from_iter,
 };
@@ -644,6 +644,9 @@ fn infer_handle_type(handle: &str) -> HandleType {
 
 /// Resolve or create a handle row. Returns the handle id and whether this call
 /// newly inserted a flagged (review-note) row.
+///
+/// `service` is the platform identity (`phone` | `whatsapp`); transport strings
+/// like `sms`/`imessage`/`rcs` map to `phone` via [`HandleService::parse`].
 fn resolve_handle(
     conn: &Connection,
     account_id: &str,
@@ -652,14 +655,24 @@ fn resolve_handle(
     service: Option<&str>,
 ) -> Result<(i64, bool)> {
     let (normalized, note) = normalize_handle(raw, handle_type);
+    let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
+    let service_str = platform.as_str();
     let inserted = conn.execute(
         "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![account_id, raw, normalized, note, handle_type.as_str(), service],
+        params![
+            account_id,
+            raw,
+            normalized,
+            note,
+            handle_type.as_str(),
+            service_str
+        ],
     )?;
     let id: i64 = conn.query_row(
-        "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3",
-        params![account_id, normalized, handle_type.as_str()],
+        "SELECT id FROM handles
+         WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3 AND service = ?4",
+        params![account_id, normalized, handle_type.as_str(), service_str],
         |row| row.get(0),
     )?;
     Ok((id, inserted > 0 && note.is_some()))
@@ -678,6 +691,47 @@ fn contact_id_for_handle(
             |row| row.get(0),
         )
         .optional()?)
+}
+
+/// If this handle has no contact but a sibling handle (same normalized + type,
+/// different platform service) is already linked, attach this handle to that contact.
+fn ensure_sibling_contact_link(
+    conn: &Connection,
+    account_id: &str,
+    handle_id: i64,
+) -> Result<Option<i64>> {
+    if let Some(existing) = contact_id_for_handle(conn, account_id, handle_id)? {
+        return Ok(Some(existing));
+    }
+    let sibling_contact: Option<i64> = conn
+        .query_row(
+            "SELECT ch.contact_id
+             FROM handles h
+             JOIN handles h2
+               ON h2.account_id = h.account_id
+              AND h2.normalized = h.normalized
+              AND h2.handle_type = h.handle_type
+              AND h2.id != h.id
+             JOIN contact_handles ch
+               ON ch.account_id = h.account_id AND ch.handle_id = h2.id
+             WHERE h.id = ?1 AND h.account_id = ?2
+             LIMIT 1",
+            params![handle_id, account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(contact_id) = sibling_contact else {
+        return Ok(None);
+    };
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO contact_handles (account_id, handle_id, contact_id)
+         VALUES (?1, ?2, ?3)",
+        params![account_id, handle_id, contact_id],
+    )?;
+    if inserted > 0 {
+        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
+    }
+    Ok(Some(contact_id))
 }
 
 fn contact_preferred_name(
@@ -740,8 +794,8 @@ impl<'conn> StagingInserts<'conn> {
             conv: tx.prepare(
                 r#"
                 INSERT INTO staging_conversations (
-                    account_id, chat_handle_id, service, conversation_type, group_title, exported_at, source_file
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 "#,
             )?,
             part: tx.prepare(
@@ -754,10 +808,10 @@ impl<'conn> StagingInserts<'conn> {
                 r#"
                 INSERT OR IGNORE INTO staging_messages (
                     conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                    sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                    thread_originator_part, num_replies, sort_order, import_id
+                    sender_handle_id, service, subject, body, is_announcement, is_reply,
+                    thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
                 )
                 "#,
             )?,
@@ -780,8 +834,9 @@ impl<'conn> StagingInserts<'conn> {
     }
 }
 
-/// chat_identifier, service, conversation_type, group_title, exported_at, participants, source
+/// chat_identifier, platform_service, conversation_type, group_title, exported_at, participants, source
 /// Participants are (handle, name_hint, handle_type).
+/// `platform_service` is `phone` | `whatsapp` for handle rows.
 type ConversationHeader = (
     String,
     Option<String>,
@@ -962,7 +1017,7 @@ fn import_conversation_to_staging(
 ) -> Result<ImportStats> {
     let (
         chat_identifier,
-        service,
+        platform_service,
         conversation_type,
         group_title,
         exported_at,
@@ -973,6 +1028,19 @@ fn import_conversation_to_staging(
     let assets_dir = assets_dir_for_source(opts, &source)?;
     let mut stats = ImportStats::default();
     let kept_participants = participants;
+
+    // Platform for chat/participant handles: conversation hint, else export source.
+    let platform = platform_service
+        .as_deref()
+        .map(HandleService::parse)
+        .unwrap_or_else(|| {
+            if source.eq_ignore_ascii_case("whatsapp") {
+                HandleService::Whatsapp
+            } else {
+                HandleService::Phone
+            }
+        });
+    let platform_str = platform.as_str();
 
     let mut prepared_messages = Vec::with_capacity(messages.len());
     for mut msg in messages {
@@ -994,16 +1062,16 @@ fn import_conversation_to_staging(
         &stmts.account_id,
         &chat_identifier,
         infer_handle_type(&chat_identifier),
-        service.as_deref(),
+        Some(platform_str),
     )?;
     if flagged {
         stats.phones_needing_review += 1;
     }
+    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id)?;
 
     stmts.conv.execute(params![
         stmts.account_id,
         chat_handle_id,
-        service,
         conversation_type,
         group_title,
         exported_at,
@@ -1020,12 +1088,12 @@ fn import_conversation_to_staging(
             &stmts.account_id,
             &handle,
             handle_type,
-            service.as_deref(),
+            Some(platform_str),
         )?;
         if flagged {
             stats.phones_needing_review += 1;
         }
-        let contact_id = contact_id_for_handle(tx, &stmts.account_id, handle_id)?;
+        let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
         let vault_name = match contact_id {
             Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
             None => None,
@@ -1044,7 +1112,12 @@ fn import_conversation_to_staging(
             clean_body(msg.text.as_deref())
         };
 
-        // Sender identity: resolved to a handle row (NULL for own messages).
+        // Sender identity: platform from message transport (whatsapp vs phone).
+        let sender_platform = msg
+            .service
+            .as_deref()
+            .map(HandleService::parse)
+            .unwrap_or(platform);
         let sender_handle_id = if !msg.is_from_me
             && let Some(sender) = msg
                 .sender
@@ -1060,11 +1133,12 @@ fn import_conversation_to_staging(
                 &stmts.account_id,
                 sender,
                 handle_type,
-                msg.service.as_deref(),
+                Some(sender_platform.as_str()),
             )?;
             if flagged {
                 stats.phones_needing_review += 1;
             }
+            let _ = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
             Some(handle_id)
         } else {
             None
@@ -1079,6 +1153,7 @@ fn import_conversation_to_staging(
             msg.timestamp_utc,
             msg.is_from_me as i64,
             sender_handle_id,
+            msg.service,
             msg.subject,
             body,
             msg.is_announcement as i64,
@@ -1143,11 +1218,12 @@ fn import_conversation_to_staging(
                     &stmts.account_id,
                     sender,
                     infer_handle_type(sender),
-                    msg.service.as_deref(),
+                    Some(sender_platform.as_str()),
                 )?;
                 if flagged {
                     stats.phones_needing_review += 1;
                 }
+                let _ = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
                 Some(handle_id)
             } else {
                 None
@@ -1215,16 +1291,15 @@ fn promote_append(
     tx.execute(
         r#"
         INSERT INTO conversations (
-            account_id, chat_handle_id, service, conversation_type,
+            account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         )
         SELECT
-            account_id, chat_handle_id, service, conversation_type,
+            account_id, chat_handle_id, conversation_type,
             group_title, exported_at, source_file
         FROM staging_conversations
         WHERE account_id = ?1
         ON CONFLICT(account_id, chat_handle_id) DO UPDATE SET
-            service = COALESCE(excluded.service, conversations.service),
             conversation_type = excluded.conversation_type,
             group_title = COALESCE(excluded.group_title, conversations.group_title),
             exported_at = COALESCE(excluded.exported_at, conversations.exported_at),
@@ -1528,12 +1603,12 @@ fn promote_messages_replace_chunked(
             r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order, import_id
+                sender_handle_id, service, subject, body, is_announcement, is_reply,
+                thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
                 sm.import_id
             FROM staging_messages sm
@@ -1628,12 +1703,12 @@ fn promote_messages_append_chunked(
             r#"
             INSERT OR IGNORE INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-                thread_originator_part, num_replies, sort_order, import_id
+                sender_handle_id, service, subject, body, is_announcement, is_reply,
+                thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
             )
             SELECT
                 cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+                sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
                 sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
                 sm.import_id
             FROM staging_messages sm
@@ -1707,12 +1782,12 @@ fn promote_messages_append_chunked(
         r#"
         INSERT INTO messages (
             conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-            sender_handle_id, subject, body, is_announcement, is_reply, thread_originator_guid,
-            thread_originator_part, num_replies, sort_order, import_id
+            sender_handle_id, service, subject, body, is_announcement, is_reply,
+            thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
         )
         SELECT
             cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-            sm.sender_handle_id, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
+            sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
             sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
             sm.import_id
         FROM staging_messages sm
@@ -2223,8 +2298,8 @@ mod tests {
         .unwrap();
         let contact_id = conn.last_insert_rowid();
         conn.execute(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type)
-             VALUES (?1, ?2, ?2, 'phone')",
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES (?1, ?2, ?2, 'phone', 'phone')",
             params![TEST_ACCOUNT, handle],
         )
         .unwrap();
@@ -2362,5 +2437,79 @@ mod tests {
         opts.contact_name_mode = ContactNameMode::Overwrite;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_hint(&db).as_deref(), Some("Vault Alice"));
+    }
+
+    #[test]
+    fn sibling_contact_link_bumps_last_modified_only_on_insert() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::configure_connection(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
+            params![TEST_ACCOUNT],
+        )
+        .unwrap();
+        let contact_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
+            params![TEST_ACCOUNT],
+        )
+        .unwrap();
+        let phone_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![TEST_ACCOUNT, phone_id, contact_id],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'whatsapp')",
+            params![TEST_ACCOUNT],
+        )
+        .unwrap();
+        let wa_id = conn.last_insert_rowid();
+
+        const OLD: &str = "2000-01-01 00:00:00";
+        conn.execute(
+            "UPDATE contacts SET last_modified = ?1 WHERE id = ?2",
+            params![OLD, contact_id],
+        )
+        .unwrap();
+
+        let linked = ensure_sibling_contact_link(&conn, TEST_ACCOUNT, wa_id)
+            .unwrap()
+            .expect("sibling link");
+        assert_eq!(linked, contact_id);
+        let after_insert: String = conn
+            .query_row(
+                "SELECT last_modified FROM contacts WHERE id = ?1",
+                params![contact_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_ne!(after_insert, OLD);
+
+        conn.execute(
+            "UPDATE contacts SET last_modified = ?1 WHERE id = ?2",
+            params![OLD, contact_id],
+        )
+        .unwrap();
+        let again = ensure_sibling_contact_link(&conn, TEST_ACCOUNT, wa_id)
+            .unwrap()
+            .expect("already linked");
+        assert_eq!(again, contact_id);
+        let after_noop: String = conn
+            .query_row(
+                "SELECT last_modified FROM contacts WHERE id = ?1",
+                params![contact_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_noop, OLD);
     }
 }

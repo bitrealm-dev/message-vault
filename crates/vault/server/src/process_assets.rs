@@ -87,8 +87,12 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
     let mut stats = ProcessAssetsStats::default();
 
     for account_id in &account_ids {
-        let mut source_ids =
-            discover_source_ids(&conn, account_id, &cfg.paths.data_dir, &cfg.paths.assets_dir)?;
+        let mut source_ids = discover_source_ids(
+            &conn,
+            account_id,
+            &cfg.paths.data_dir,
+            &cfg.paths.assets_dir,
+        )?;
         if let Some(filter) = opts.source.as_deref() {
             let filter = filter.trim();
             source_ids.retain(|id| id == filter);
@@ -116,13 +120,10 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
             }
             let cleaned = cleanup_incoming_parts(&assets_dir, opts.dry_run)?;
             if cleaned > 0 {
-                println!(
-                    "  cleaned {cleaned} leftover .part upload temp(s) under .incoming/"
-                );
+                println!("  cleaned {cleaned} leftover .part upload temp(s) under .incoming/");
             }
-            fs::create_dir_all(&converted_dir).with_context(|| {
-                format!("create converted dir {}", converted_dir.display())
-            })?;
+            fs::create_dir_all(&converted_dir)
+                .with_context(|| format!("create converted dir {}", converted_dir.display()))?;
 
             let rows = list_attachments(&conn, account_id, &source_id)?;
             for row in rows {
@@ -188,9 +189,8 @@ fn process_one(
                     row.assets_path
                 );
             } else {
-                fs::remove_file(&source_path).with_context(|| {
-                    format!("remove incomplete {}", source_path.display())
-                })?;
+                fs::remove_file(&source_path)
+                    .with_context(|| format!("remove incomplete {}", source_path.display()))?;
                 println!(
                     "removed incomplete {account_id}/{source_id}/{}",
                     row.assets_path
@@ -219,7 +219,10 @@ fn process_one(
 
     let source_path = assets_dir.join(&row.assets_path);
     if !source_path.is_file() {
-        bail!("missing original: {account_id}/{source_id}/{}", row.assets_path);
+        bail!(
+            "missing original: {account_id}/{source_id}/{}",
+            row.assets_path
+        );
     }
 
     let blob = match kind {
@@ -242,7 +245,10 @@ fn process_one(
                 return Ok(Outcome::Skipped);
             };
             if opts.dry_run {
-                println!("[dry-run] video {account_id}/{source_id}/{} -> mp4", row.assets_path);
+                println!(
+                    "[dry-run] video {account_id}/{source_id}/{} -> mp4",
+                    row.assets_path
+                );
                 let _ = fs::remove_file(&out);
                 return Ok(Outcome::Derived);
             }
@@ -255,7 +261,10 @@ fn process_one(
                 return Ok(Outcome::Skipped);
             };
             if opts.dry_run {
-                println!("[dry-run] audio {account_id}/{source_id}/{} -> mp3", row.assets_path);
+                println!(
+                    "[dry-run] audio {account_id}/{source_id}/{} -> mp3",
+                    row.assets_path
+                );
                 let _ = fs::remove_file(&out);
                 return Ok(Outcome::Derived);
             }
@@ -302,7 +311,9 @@ fn assert_schema(conn: &Connection) -> Result<()> {
         |r| r.get(0),
     )?;
     if has_source == 0 {
-        bail!("messages.source missing — re-import with the multi-source schema before process-assets");
+        bail!(
+            "messages.source missing — re-import with the multi-source schema before process-assets"
+        );
     }
     Ok(())
 }
@@ -461,9 +472,7 @@ fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
     }
     let mut removed = 0u64;
     let now = std::time::SystemTime::now();
-    for entry in fs::read_dir(&incoming)
-        .with_context(|| format!("read {}", incoming.display()))?
-    {
+    for entry in fs::read_dir(&incoming).with_context(|| format!("read {}", incoming.display()))? {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
@@ -488,8 +497,8 @@ fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
             continue;
         }
         // Multipart staging: `.incoming/{sha256}/{upload_id}/`
-        for session_ent in fs::read_dir(&path)
-            .with_context(|| format!("read {}", path.display()))?
+        for session_ent in
+            fs::read_dir(&path).with_context(|| format!("read {}", path.display()))?
         {
             let session_ent = session_ent?;
             let session = session_ent.path();
@@ -500,7 +509,10 @@ fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
                 continue;
             }
             if dry_run {
-                println!("[dry-run] would remove stale upload session {}", session.display());
+                println!(
+                    "[dry-run] would remove stale upload session {}",
+                    session.display()
+                );
                 removed += 1;
                 continue;
             }
@@ -668,7 +680,11 @@ fn probe_video_efficient(source_path: &Path) -> bool {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
         return false;
     };
-    let Some(s) = v.get("streams").and_then(|a| a.as_array()).and_then(|a| a.first()) else {
+    let Some(s) = v
+        .get("streams")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+    else {
         return false;
     };
     if s.get("codec_name").and_then(|c| c.as_str()) != Some("h264") {
@@ -763,7 +779,16 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
         .ok_or_else(|| anyhow::anyhow!("non-utf8 out path"))?;
     run_ffmpeg(
         &[
-            "-i", src, "-vn", "-ac", "1", "-c:a", "libmp3lame", "-q:a", "6", dest,
+            "-i",
+            src,
+            "-vn",
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "6",
+            dest,
         ],
         Some(&out),
     )?;
@@ -825,8 +850,7 @@ fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<Deri
         fs::create_dir_all(parent)?;
     }
     if !dest.exists() {
-        let mut f = File::create(&dest)
-            .with_context(|| format!("create {}", dest.display()))?;
+        let mut f = File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
         f.write_all(buf)?;
     }
     Ok(DerivedBlob {
@@ -864,14 +888,8 @@ mod tests {
     #[test]
     fn derived_rel_path_layout() {
         let sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-        assert_eq!(
-            derived_rel_path(sha, ".jpg"),
-            format!("ab/{sha}.jpg")
-        );
-        assert_eq!(
-            derived_rel_path(sha, ".jpeg"),
-            format!("ab/{sha}.jpg")
-        );
+        assert_eq!(derived_rel_path(sha, ".jpg"), format!("ab/{sha}.jpg"));
+        assert_eq!(derived_rel_path(sha, ".jpeg"), format!("ab/{sha}.jpg"));
     }
 
     #[test]
@@ -892,7 +910,11 @@ mod tests {
         fs::write(&dest, b"x").unwrap();
         assert!(should_skip_existing(false, Some(rel), dir.path()));
         assert!(!should_skip_existing(true, Some(rel), dir.path()));
-        assert!(!should_skip_existing(false, Some("missing.jpg"), dir.path()));
+        assert!(!should_skip_existing(
+            false,
+            Some("missing.jpg"),
+            dir.path()
+        ));
         assert!(!should_skip_existing(false, None, dir.path()));
     }
 
@@ -910,13 +932,13 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES ('acc', '+1', '+1', 'phone', NULL)",
+             VALUES ('acc', '+1', '+1', 'phone', 'phone')",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, account_id, chat_handle_id, service, conversation_type, source_file)
-             VALUES (1, 'acc', 1, NULL, 'individual', 't')",
+            "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
+             VALUES (1, 'acc', 1, 'individual', 't')",
             [],
         )
         .unwrap();

@@ -25,6 +25,18 @@ import {
   listUnassignedHandles,
 } from "./unassignedRead";
 
+/** Bump `contacts.last_modified` after an address-book shape change. */
+function touchContact(
+  db: Database.Database,
+  accountId: string,
+  contactId: number,
+): void {
+  db.prepare(
+    `UPDATE contacts SET last_modified = datetime('now')
+     WHERE id = ? AND account_id = ?`,
+  ).run(contactId, accountId);
+}
+
 /** One handle input for contact create/update. */
 export type ContactHandleInput = {
   raw: string;
@@ -256,7 +268,10 @@ export function setContactsLabelMembership(
         const result = enable
           ? insert.run(labelId, id, accountId)
           : remove.run(id, labelId, accountId);
-        if (result.changes > 0) changedIds.add(id);
+        if (result.changes > 0) {
+          changedIds.add(id);
+          touchContact(writeDb, accountId, id);
+        }
       }
     });
     tx();
@@ -538,6 +553,10 @@ export function patchContact(
         // (displayName falls back to the preferred handle).
         .run(preferredName ?? "", id, accountId);
 
+      if (handlesChanged || patch.preferredName !== undefined || patch.firstName !== undefined || patch.lastName !== undefined || patch.labels) {
+        touchContact(writeDb, accountId, id);
+      }
+
       if (patch.labels) {
         writeDb
           .prepare(`DELETE FROM contact_label_members WHERE contact_id = ?`)
@@ -604,6 +623,7 @@ export function addHandleToContact(
         )
         .run(accountId, handleId, id);
       clearTrashedHandles(writeDb, [trimmed], accountId);
+      touchContact(writeDb, accountId, id);
     }
   } finally {
     writeDb.close();
@@ -654,6 +674,7 @@ export function removeHandleFromContact(
         `DELETE FROM contact_handles WHERE account_id = ? AND handle_id = ?`,
       )
       .run(accountId, handleId);
+    touchContact(writeDb, accountId, id);
   } finally {
     writeDb.close();
   }
@@ -842,6 +863,7 @@ export function mergeContacts(fromId: number, intoId: number): ContactDetail {
       writeDb
         .prepare(`DELETE FROM contacts WHERE id = ? AND account_id = ?`)
         .run(fromId, accountId);
+      touchContact(writeDb, accountId, intoId);
     });
     tx();
   } finally {

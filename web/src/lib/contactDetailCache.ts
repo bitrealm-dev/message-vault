@@ -18,6 +18,7 @@ export type CachedContactDetail = {
   direct_conversations: number;
   group_conversations: number;
   total_messages: number;
+  last_modified?: string;
 };
 
 const cache = new Map<string, CachedContactDetail>();

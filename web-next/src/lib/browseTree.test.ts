@@ -29,6 +29,7 @@ function contact(id: number, name = `C${id}`): ContactListItem {
     groupMessageCount: 0,
     dateStart: null,
     dateEnd: null,
+    lastModified: "1970-01-01 00:00:00",
   };
 }
 

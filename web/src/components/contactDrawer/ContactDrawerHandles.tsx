@@ -11,19 +11,20 @@ import {
 import { apiClient } from "../../lib/api";
 import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
 import Button from "../Button";
+import ConfirmDialog from "../ConfirmDialog";
 import DataCard, {
   dataCardBodyCellClass,
   dataCardHeaderCellClass,
   dataCardHeaderRowClass,
 } from "../DataCard";
-import { PencilIcon, TrashIcon } from "../icons";
+import { TrashIcon } from "../icons";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import {
   emptyHandleRow,
   formatHandleDate,
   formatHandleServiceLabel,
-  handleServiceSelectValue,
   HANDLE_SERVICE_OPTIONS,
+  handleServiceSelectValue,
   sumHandleTotals,
   type ContactBrowseKind,
 } from "./contactDrawerTypes";
@@ -39,19 +40,13 @@ const tdCenterClass = tdClass;
 const linkClass =
   "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent underline decoration-accent/80 underline-offset-2 cursor-pointer outline-none hover:decoration-accent hover:opacity-90 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
-const iconBtnClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
 const iconBtnDangerClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-danger-soft-border hover:!bg-danger-soft-bg hover:!text-danger data-hovered:!border-danger-soft-border data-hovered:!bg-danger-soft-bg data-hovered:!text-danger data-pressed:!border-danger-soft-border data-pressed:!bg-danger-soft-bg data-pressed:!text-danger";
-const iconBtnOkClass =
-  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-ok hover:!border-ok-soft-border hover:!bg-ok-soft-bg hover:!text-ok data-hovered:!border-ok-soft-border data-hovered:!bg-ok-soft-bg data-hovered:!text-ok data-pressed:!border-ok-soft-border data-pressed:!bg-ok-soft-bg data-pressed:!text-ok disabled:!text-muted";
-/** Soft accent fill + 3px left accent bar on first cell while the row is in edit mode. */
-const editingRowClass =
-  "bg-[color-mix(in_srgb,var(--accent)_16%,var(--panel))] [&>td:first-child]:shadow-[inset_3px_0_0_0_var(--accent)]";
-/** Edit/trash: show on row hover/focus; always visible when hover isn't available. */
+/** Compact labeled Save / Cancel in the add-row actions column. */
+const rowActionBtnClass = "!h-7 !min-h-7 !shrink-0 !px-2 !py-0 !text-[0.813rem] !leading-none";
+/** Trash: show on row hover/focus; always visible when hover isn't available. */
 const rowActionsRevealClass =
   "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/handle-row:opacity-100 [@media(hover:hover)]:group-data-hovered/handle-row:opacity-100 [@media(hover:hover)]:group-focus-within/handle-row:opacity-100";
-/** Keep edit controls inside the cell (no min-width that spills into Handle). */
 const serviceSelectTriggerClass =
   "!box-border !h-7 !min-h-7 !w-full !rounded !px-1.5 !py-0 !text-[0.813rem] !font-normal !leading-none !bg-elevated";
 const serviceSelectValueClass = "!text-[0.813rem] !font-normal !leading-none";
@@ -105,6 +100,23 @@ function conversationCount(h: {
   group_conversations: number;
 }): number {
   return h.individual_conversations + h.group_conversations;
+}
+
+type RemoveIdentityTarget = {
+  handle: string;
+  /** Storage id (`phone` | `whatsapp`) for the mutation API. */
+  service: string | null;
+  serviceLabel: string;
+  threadCount: number;
+};
+
+function removeIdentityConfirmBody(target: RemoveIdentityTarget): string {
+  const { handle, serviceLabel, threadCount } = target;
+  if (threadCount <= 0) {
+    return `Removing ${handle} for ${serviceLabel} will unlink it from this contact.`;
+  }
+  const threadWord = threadCount === 1 ? "thread" : "threads";
+  return `Removing ${handle} for ${serviceLabel} will unlink ${threadCount} ${threadWord} from this contact. Message threads will not be removed.`;
 }
 
 function sortValue(h: CachedContactHandle, column: string): string | number {
@@ -198,7 +210,7 @@ function AddHandleTableRow({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              onSave();
+              if (newHandle.trim() && !busy) onSave();
             } else if (e.key === "Escape") {
               e.preventDefault();
               e.stopPropagation();
@@ -216,25 +228,25 @@ function AddHandleTableRow({
       <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
       <Cell className={`${tdCenterClass} text-muted`}>—</Cell>
       <Cell className={`${tdClass} whitespace-nowrap`}>
-        <div className="flex items-center justify-center gap-1">
+        <div className="flex items-center justify-end gap-1.5">
           <Button
-            variant="ghost"
+            variant="primary"
             disabled={!newHandle.trim() || busy}
             title="Save"
             aria-label="Save"
             onClick={onSave}
-            className={iconBtnClass}
+            className={rowActionBtnClass}
           >
-            ✓
+            Save
           </Button>
           <Button
-            variant="ghost"
+            variant="secondary"
             title="Cancel"
             aria-label="Cancel"
             onClick={onCancel}
-            className={iconBtnClass}
+            className={rowActionBtnClass}
           >
-            ×
+            Cancel
           </Button>
         </div>
       </Cell>
@@ -258,11 +270,9 @@ export function ContactDrawerHandles({
   const [adding, setAdding] = useState(false);
   const [newHandle, setNewHandle] = useState("");
   const [newService, setNewService] = useState("phone");
-  const [editingHandle, setEditingHandle] = useState<string | null>(null);
-  const [editHandle, setEditHandle] = useState("");
-  const [editService, setEditService] = useState("phone");
   const [busy, setBusy] = useState(false);
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<RemoveIdentityTarget | null>(null);
 
   const totals = sumHandleTotals(handleRows);
 
@@ -288,56 +298,34 @@ export function ContactDrawerHandles({
     setAdding(false);
     setNewHandle("");
     setNewService("phone");
-    setEditingHandle(null);
-    setEditHandle("");
     setBusy(false);
     setSortDescriptor(null);
+    setRemoveTarget(null);
   }, [contactId]);
 
-  const startEdit = (h: CachedContactHandle) => {
-    setAdding(false);
-    setEditingHandle(h.handle);
-    setEditHandle(h.handle);
-    setEditService(handleServiceSelectValue(h.handle, h.service));
-  };
-
-  const cancelEdit = () => {
-    setEditingHandle(null);
-    setEditHandle("");
-  };
-
-  const saveEdit = async () => {
-    if (!editingHandle || !editHandle.trim() || busy) return;
-    setBusy(true);
-    try {
-      await apiClient.post(`/v1/export/contacts/${contactId}`, {
-        update_handle: {
-          previous_handle: editingHandle,
-          handle: editHandle.trim(),
-          service: editService,
-        },
-      });
-      cancelEdit();
-      onHandlesChanged();
-    } catch {
-      /* keep edit open for retry */
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeHandle = async (handle: string) => {
+  const requestRemoveHandle = (h: CachedContactHandle) => {
     if (busy) return;
-    if (!window.confirm(`Remove identity ${handle} from this contact?`)) return;
+    setRemoveTarget({
+      handle: h.handle,
+      service: h.service,
+      serviceLabel: formatHandleServiceLabel(h.handle, h.service),
+      threadCount: conversationCount(h),
+    });
+  };
+
+  const confirmRemoveHandle = async () => {
+    if (!removeTarget || busy) return;
+    const handle = removeTarget.handle;
+    const service = handleServiceSelectValue(handle, removeTarget.service);
     setBusy(true);
     try {
       await apiClient.post(`/v1/export/contacts/${contactId}`, {
-        remove_handle: { handle },
+        remove_handle: { handle, service },
       });
-      if (editingHandle === handle) cancelEdit();
+      setRemoveTarget(null);
       onHandlesChanged();
     } catch {
-      /* ignore */
+      /* keep dialog open for retry */
     } finally {
       setBusy(false);
     }
@@ -377,7 +365,6 @@ export function ContactDrawerHandles({
           variant="primary"
           disabled={loading || busy || adding}
           onClick={() => {
-            cancelEdit();
             setAdding(true);
             setNewHandle("");
             setNewService("phone");
@@ -457,63 +444,22 @@ export function ContactDrawerHandles({
         {handleRows.length > 0 ? (
           <TableBody
             items={sortedRows}
-            dependencies={[editingHandle, editHandle, editService, busy, sortDescriptor]}
+            dependencies={[busy, sortDescriptor]}
             className="[&_tr]:border-b [&_tr]:border-border"
           >
             {(h) => {
-              const editing = editingHandle === h.handle;
               const convos = conversationCount(h);
               return (
-                <Row
-                  id={h.id}
-                  className={`group/handle-row outline-none${editing ? ` ${editingRowClass}` : ""}`}
-                >
+                <Row id={h.id} className="group/handle-row outline-none">
                   <Cell className={`${tdClass} overflow-hidden`}>
-                    {editing ? (
-                      <Select
-                        selectedKey={editService}
-                        onSelectionChange={(k) => setEditService(String(k))}
-                        aria-label="Handle service"
-                        triggerClassName={serviceSelectTriggerClass}
-                        valueClassName={serviceSelectValueClass}
-                        className="block w-full min-w-0 max-w-full"
-                      >
-                        {HANDLE_SERVICE_OPTIONS.map((s) => (
-                          <ListBoxItem key={s.value} id={s.value} className={serviceSelectItemClassName}>
-                            {s.label}
-                          </ListBoxItem>
-                        ))}
-                      </Select>
-                    ) : (
-                      <span>
-                        {formatHandleServiceLabel(h.handle, h.service)}
-                      </span>
-                    )}
+                    <span>
+                      {formatHandleServiceLabel(h.handle, h.service)}
+                    </span>
                   </Cell>
                   <Cell className={`${tdClass} overflow-hidden`}>
-                    {editing ? (
-                      <input
-                        type="text"
-                        value={editHandle}
-                        onChange={(e) => setEditHandle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void saveEdit();
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            cancelEdit();
-                          }
-                        }}
-                        className={handleEditInputClass}
-                        autoFocus
-                      />
-                    ) : (
-                      <span className="break-all" title={h.handle}>
-                        {h.handle}
-                      </span>
-                    )}
+                    <span className="break-all" title={h.handle}>
+                      {h.handle}
+                    </span>
                   </Cell>
                   <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
                     {handleDateCell(h.start_date)}
@@ -538,58 +484,20 @@ export function ContactDrawerHandles({
                     <CountCell value={h.group_message_count} />
                   </Cell>
                   <Cell className={`${tdClass} whitespace-nowrap`}>
-                    {editing ? (
-                      <div className="flex items-center justify-center gap-1">
-                        <Button
-                          variant="ghost"
-                          disabled={busy || !editHandle.trim()}
-                          title="Save"
-                          aria-label="Save"
-                          onClick={() => void saveEdit()}
-                          className={iconBtnOkClass}
-                        >
-                          ✓
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          title="Cancel"
-                          aria-label="Cancel"
-                          onClick={cancelEdit}
-                          className={iconBtnDangerClass}
-                        >
-                          ×
-                        </Button>
-                      </div>
-                    ) : (
-                      <div
-                        className={`flex items-center justify-center gap-1 ${
-                          editingHandle != null
-                            ? "pointer-events-none opacity-0"
-                            : rowActionsRevealClass
-                        }`}
+                    <div
+                      className={`flex items-center justify-center ${rowActionsRevealClass}`}
+                    >
+                      <Button
+                        variant="ghost"
+                        disabled={busy || loading}
+                        title="Remove identity"
+                        aria-label="Remove identity"
+                        onClick={() => requestRemoveHandle(h)}
+                        className={iconBtnDangerClass}
                       >
-                        <Button
-                          variant="ghost"
-                          disabled={busy || loading}
-                          title="Edit identity"
-                          aria-label="Edit identity"
-                          onClick={() => startEdit(h)}
-                          className={iconBtnClass}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          disabled={busy || loading}
-                          title="Remove identity"
-                          aria-label="Remove identity"
-                          onClick={() => void removeHandle(h.handle)}
-                          className={iconBtnDangerClass}
-                        >
-                          <TrashIcon />
-                        </Button>
-                      </div>
-                    )}
+                        <TrashIcon />
+                      </Button>
+                    </div>
                   </Cell>
                 </Row>
               );
@@ -619,6 +527,18 @@ export function ContactDrawerHandles({
           </Row>
         </TableBody>
       </Table>
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="Remove identity"
+        body={removeTarget ? removeIdentityConfirmBody(removeTarget) : ""}
+        confirmLabel="Remove identity"
+        danger
+        busy={busy}
+        onClose={() => {
+          if (!busy) setRemoveTarget(null);
+        }}
+        onConfirm={() => void confirmRemoveHandle()}
+      />
     </DataCard>
   );
 }

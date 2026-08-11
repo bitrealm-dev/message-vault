@@ -12,8 +12,9 @@ The Message Vault SQLite database falls into four groups:
 
 Chats and people are **not** joined by a shared person ID. They meet through
 the **`handles`** table: every phone number, email, or username appears once
-per account as a typed handle, and conversations, participants, messages, and
-contacts all point at the same handle rows.
+per account **per platform** (`phone` or `whatsapp`) as a typed handle, and
+conversations, participants, messages, and contacts all point at the same
+handle rows.
 
 ```mermaid
 erDiagram
@@ -38,7 +39,10 @@ erDiagram
 ### `conversations`
 
 One row = one chat thread (`account_id`, `chat_handle_id` → `handles`,
-`service`, `conversation_type`, `group_title`, and related fields).
+`conversation_type`, `group_title`, and related fields). There is no
+conversation-level messaging transport: SMS vs iMessage vs RCS varies per
+message. Thread chrome for “which backup” uses distinct `messages.source`
+values.
 
 ### `participants`
 
@@ -47,9 +51,10 @@ One row = one handle in one chat (`handle_id` → `handles`, optional
 
 ### `messages`
 
-One row = one message (`source`, `guid`, timestamps, `is_from_me`, `body`,
-`content_key`, optional `sender_handle_id` → `handles`, optional
-`duplicate_of`).
+One row = one message (`source`, `guid`, timestamps, `is_from_me`, optional
+`service` for per-message transport such as `sms` / `imessage` / `rcs` /
+`whatsapp`, `body`, `content_key`, optional `sender_handle_id` → `handles`,
+optional `duplicate_of`).
 
 ### `attachments` / `tapbacks`
 
@@ -70,13 +75,15 @@ import/export live in `account_api_tokens` (many per account; prefix `mv-api-`).
 
 ### `handles`
 
-One row = one identity per account: `raw` (as the source wrote it),
-`normalized`, `handle_type` (`phone` / `email` / `username` / `other`), an
-optional `service`, and an optional `normalized_note`. Handles are deduplicated
-per account by `(account_id, normalized, handle_type)`, so one phone number is
-a single row whether it appeared in a chat, a contact, or the account profile.
-Everywhere else in the schema, identities are referenced by `handle_id` —
-never by text.
+One row = one **platform** identity per account: `raw` (as the source wrote
+it), `normalized`, `handle_type` (`phone` / `email` / `username` / `other`),
+required `service` (`phone` | `whatsapp` — UI labels “Text message” /
+“WhatsApp”), and an optional `normalized_note`. Handles are deduplicated per
+account by `(account_id, normalized, handle_type, service)`, so the same phone
+number on Text message and WhatsApp is two rows. SMS / iMessage / RCS are
+**not** handle platforms; those are per-message transport values on
+`messages.service`. Everywhere else in the schema, identities are referenced by
+`handle_id` — never by text.
 
 `normalized_note` is the needs-review flag: phone numbers are written as
 E.164 only when unambiguous. Ambiguous values (e.g. a trunk-zero national
@@ -86,9 +93,13 @@ in `normalized_note` so the vault UI can surface them for review.
 
 ### `contacts` / `contact_handles`
 
-Address book rows; display name is `preferred_name` only. `contact_handles`
-links a contact to its `handles` rows per account (one contact per handle per
-account); the optional `name_hint` is the name the source gave for that handle.
+Address book rows; display name is `preferred_name` only. `last_modified` is a
+SQLite `datetime('now')` string bumped when the contact’s address-book shape
+changes (create, rename, handle add/update/remove, label membership, merge
+survivor, import sibling platform link) — not when messages arrive.
+`contact_handles` links a contact to its `handles` rows per account (one contact
+per handle per account); the optional `name_hint` is the name the source gave
+for that handle.
 
 ### `contact_labels` / `contact_label_members`
 

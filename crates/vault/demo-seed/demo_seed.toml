@@ -79,6 +79,8 @@ jpg_base_stride = 40
 other_base_stride = 90
 tapback_stride = 80
 reply_stride = 100
+# iMessage-tree messages that fall back to SMS/RCS (visible transport badges).
+apple_fallback_transport_fraction = 0.20
 
 [edge_cases]
 unassigned_phones = 4
@@ -98,3 +100,5 @@ overlap_shared_fraction = 0.35
 # Extra Android-only messages appended on overlap threads.
 overlap_android_extra_min = 20
 overlap_android_extra_max = 80
+# Contacts that also get a WhatsApp 1:1 thread (same phone, platform whatsapp).
+whatsapp_contact_fraction = 0.20

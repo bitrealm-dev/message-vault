@@ -7,6 +7,16 @@ use contacts::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
+/// Bump `contacts.last_modified` after an address-book shape change.
+pub fn touch_contact(conn: &Connection, account_id: &str, contact_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE contacts SET last_modified = datetime('now')
+         WHERE id = ?1 AND account_id = ?2",
+        params![contact_id, account_id],
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
     pub contacts: u64,
@@ -423,12 +433,13 @@ fn insert_contact_drafts(
         for (phone, note) in &draft.phones {
             // Ensure handle exists; the note flags ambiguous values for review.
             tx.execute(
-                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type)
-                 VALUES (?1, ?2, ?3, ?4, 'phone')",
+                "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
+                 VALUES (?1, ?2, ?3, ?4, 'phone', 'phone')",
                 params![account_id, phone, phone, note],
             )?;
             let handle_id: i64 = tx.query_row(
-                "SELECT id FROM handles WHERE account_id = ?1 AND normalized = ?2 AND handle_type = 'phone'",
+                "SELECT id FROM handles
+                 WHERE account_id = ?1 AND normalized = ?2 AND handle_type = 'phone' AND service = 'phone'",
                 params![account_id, phone],
                 |row| row.get(0),
             )?;

@@ -14,9 +14,9 @@ function normalizeToken(value: string | null | undefined): string {
   return (value || "").trim().toLowerCase();
 }
 
-/** Pick bubble style from conversation service and import source. */
+/** Pick bubble style from each message's transport and import source. */
 function resolveBubbleKind(message: Message): "imessage" | "discord" | "whatsapp" | "instagram" | "sms" {
-  const service = normalizeToken(message.conversation.service);
+  const service = normalizeToken(message.service);
   const source = normalizeToken(message.source);
 
   if (

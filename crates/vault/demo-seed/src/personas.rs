@@ -30,6 +30,8 @@ pub struct Contact {
     pub message_scope: MessageScope,
     pub msgs_per_year: f64,
     pub span_years: f64,
+    /// Also generate a WhatsApp staging thread for this contact's primary phone.
+    pub has_whatsapp: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +89,21 @@ pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> R
     let mut contacts = Vec::with_capacity(cfg.contacts.count);
     for _ in 0..cfg.contacts.count {
         contacts.push(make_contact(cfg, names, rng, &mut used_phones));
+    }
+
+    // Seed-stable WhatsApp slice among contacts that have a 1:1 phone thread.
+    let mut whatsapp_idxs: Vec<usize> = contacts
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.phones.is_empty() && c.has_one_to_one())
+        .map(|(i, _)| i)
+        .collect();
+    whatsapp_idxs.shuffle(rng);
+    let wa_n = ((whatsapp_idxs.len() as f64) * cfg.sources.whatsapp_contact_fraction)
+        .round()
+        .clamp(0.0, whatsapp_idxs.len() as f64) as usize;
+    for &idx in whatsapp_idxs.iter().take(wa_n) {
+        contacts[idx].has_whatsapp = true;
     }
 
     let groups = build_groups(cfg, &contacts, rng, &mut used_phones)?;
@@ -163,6 +180,7 @@ fn make_contact(
             cfg.one_to_one.newest_days,
             rng,
         ),
+        has_whatsapp: false,
     }
 }
 

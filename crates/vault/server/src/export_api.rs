@@ -57,6 +57,8 @@ pub struct ExportCountResponse {
 pub struct ExportMessage {
     pub id: i64,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
     pub guid: Option<String>,
     pub timestamp: String,
     pub timestamp_utc: Option<String>,
@@ -79,7 +81,6 @@ pub struct ExportMessage {
 pub struct ExportConversation {
     pub id: i64,
     pub chat_identifier: String,
-    pub service: Option<String>,
     pub conversation_type: String,
     pub group_title: Option<String>,
     pub participants: Vec<ExportParticipant>,
@@ -215,11 +216,11 @@ pub fn export_messages(
     let fetch_limit = limit + 1;
 
     let mut sql = format!(
-        "SELECT m.id, m.conversation_id, m.source, m.guid, m.timestamp, m.timestamp_utc,
+        "SELECT m.id, m.conversation_id, m.source, m.service, m.guid, m.timestamp, m.timestamp_utc,
                 m.sort_order, m.is_from_me, hs.raw AS sender, m.subject, m.body,
                 m.is_announcement, m.is_reply, m.thread_originator_guid,
                 m.thread_originator_part, m.num_replies,
-                hc.raw AS chat_identifier, c.service, c.conversation_type, c.group_title
+                hc.raw AS chat_identifier, c.conversation_type, c.group_title
          {messages_from_sql}
          WHERE {where_sql}{dedupe}",
         messages_from_sql = messages_from_sql(),
@@ -262,21 +263,21 @@ pub fn export_messages(
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
                 source: row.get(2)?,
-                guid: row.get(3)?,
-                timestamp: row.get(4)?,
-                timestamp_utc: row.get(5)?,
-                sort_order: row.get(6)?,
-                is_from_me: row.get::<_, i64>(7)? != 0,
-                sender: row.get(8)?,
-                subject: row.get(9)?,
-                body: row.get(10)?,
-                is_announcement: row.get::<_, i64>(11)? != 0,
-                is_reply: row.get::<_, i64>(12)? != 0,
-                thread_originator_guid: row.get(13)?,
-                thread_originator_part: row.get(14)?,
-                num_replies: row.get(15)?,
-                chat_identifier: row.get(16)?,
-                service: row.get(17)?,
+                service: row.get(3)?,
+                guid: row.get(4)?,
+                timestamp: row.get(5)?,
+                timestamp_utc: row.get(6)?,
+                sort_order: row.get(7)?,
+                is_from_me: row.get::<_, i64>(8)? != 0,
+                sender: row.get(9)?,
+                subject: row.get(10)?,
+                body: row.get(11)?,
+                is_announcement: row.get::<_, i64>(12)? != 0,
+                is_reply: row.get::<_, i64>(13)? != 0,
+                thread_originator_guid: row.get(14)?,
+                thread_originator_part: row.get(15)?,
+                num_replies: row.get(16)?,
+                chat_identifier: row.get(17)?,
                 conversation_type: row.get(18)?,
                 group_title: row.get(19)?,
             })
@@ -326,6 +327,7 @@ pub fn export_messages(
             ExportMessage {
                 id: r.id,
                 source: r.source,
+                service: r.service,
                 guid: r.guid,
                 timestamp: r.timestamp,
                 timestamp_utc: r.timestamp_utc,
@@ -342,7 +344,6 @@ pub fn export_messages(
                 conversation: ExportConversation {
                     id: r.conversation_id,
                     chat_identifier: r.chat_identifier,
-                    service: r.service,
                     conversation_type: r.conversation_type,
                     group_title: r.group_title,
                     participants: parts,
@@ -456,6 +457,7 @@ struct RawRow {
     id: i64,
     conversation_id: i64,
     source: String,
+    service: Option<String>,
     guid: Option<String>,
     timestamp: String,
     timestamp_utc: Option<String>,
@@ -470,7 +472,6 @@ struct RawRow {
     thread_originator_part: Option<i64>,
     num_replies: i64,
     chat_identifier: String,
-    service: Option<String>,
     conversation_type: String,
     group_title: Option<String>,
 }
@@ -595,8 +596,7 @@ fn build_message_filters(
     }
 
     if parsed.has_attachment == Some(true) {
-        where_parts
-            .push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)".into());
+        where_parts.push("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)".into());
     }
 
     if let Some(within) = &parsed.within {
@@ -652,10 +652,7 @@ fn append_metadata_text_filters(
         where_parts.push(metadata_term_matches_sql(params, term));
     }
     for term in metadata_exclude_terms(parsed) {
-        where_parts.push(format!(
-            "NOT {}",
-            metadata_term_matches_sql(params, term)
-        ));
+        where_parts.push(format!("NOT {}", metadata_term_matches_sql(params, term)));
     }
 }
 
@@ -997,22 +994,22 @@ mod tests {
         for (cid, phone) in [(1, "+1555"), (2, "+1666")] {
             conn.execute(
                 "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                 VALUES ('a1', ?1, ?1, 'phone', 'sms')",
+                 VALUES ('a1', ?1, ?1, 'phone', 'phone')",
                 params![phone],
             )
             .unwrap();
             let handle_id = conn.last_insert_rowid();
             conn.execute(
-                "INSERT INTO conversations (id, account_id, chat_handle_id, service, conversation_type, source_file)
-                 VALUES (?1, 'a1', ?2, 'sms', 'individual', 'backup-a.jsonl')",
+                "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
+                 VALUES (?1, 'a1', ?2, 'individual', 'backup-a.jsonl')",
                 params![cid, handle_id],
             )
             .unwrap();
         }
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order, body)
-             VALUES (1, 1, 'a1', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
-                    (2, 2, 'a1', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
+            "INSERT INTO messages (id, conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body)
+             VALUES (1, 1, 'a1', 'sms', 'sms', '2020-01-01T00:00:00Z', 0, 0, 'hello one'),
+                    (2, 2, 'a1', 'sms', 'sms', '2020-01-02T00:00:00Z', 0, 0, 'hello two')",
             [],
         )
         .unwrap();
@@ -1023,36 +1020,49 @@ mod tests {
     fn conversation_filter_scopes_messages() {
         let conn = setup();
 
-        let res = export_messages(&conn, ExportPageOpts {
-            account_id: "a1",
-            query: "in:1",
-            limit: 100,
-            offset: None,
-            cursor: None,
-            source_override: None,
-        }).unwrap();
+        let res = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "in:1",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].id, 1);
+        assert_eq!(res.messages[0].service.as_deref(), Some("sms"));
 
-        let res = export_messages(&conn, ExportPageOpts {
-            account_id: "a1",
-            query: "conversation:2",
-            limit: 100,
-            offset: None,
-            cursor: None,
-            source_override: None,
-        }).unwrap();
+        let res = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "conversation:2",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
         assert_eq!(res.messages.len(), 1);
         assert_eq!(res.messages[0].id, 2);
 
-        let res = export_messages(&conn, ExportPageOpts {
-            account_id: "a1",
-            query: "",
-            limit: 100,
-            offset: None,
-            cursor: None,
-            source_override: None,
-        }).unwrap();
+        let res = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
         assert_eq!(res.messages.len(), 2);
     }
 }

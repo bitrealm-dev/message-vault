@@ -45,7 +45,7 @@ describe("vault search + FTS", () => {
       const resolveHandle = (raw: string, handleType = "phone"): number => {
         db.prepare(
           `INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
-           VALUES (?, ?, ?, ?, 'iMessage')`,
+           VALUES (?, ?, ?, ?, 'phone')`,
         ).run(accountId, raw, raw, handleType);
         return Number(
           db
@@ -58,9 +58,9 @@ describe("vault search + FTS", () => {
       };
       const insertConv = db.prepare(
         `INSERT INTO conversations (
-           account_id, chat_handle_id, service, conversation_type,
+           account_id, chat_handle_id, conversation_type,
            group_title, exported_at, source_file
-         ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 't.json')`,
+         ) VALUES (?, ?, 'individual', NULL, NULL, 't.json')`,
       );
       const insertMsg = db.prepare(
         `INSERT INTO messages (
@@ -206,9 +206,9 @@ describe("vault search + FTS", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_handle_id, service, conversation_type,
+               account_id, chat_handle_id, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, ?, 'iMessage', 'group', 'Kumquat Crew', NULL, 't.json')`,
+             ) VALUES (?, ?, 'group', 'Kumquat Crew', NULL, 't.json')`,
           )
           .run(accountId, resolveHandle("chat-kumquat", "other")).lastInsertRowid,
       );
@@ -401,8 +401,8 @@ describe("vault search + FTS", () => {
       const db = new Database(dbPath());
       db.prepare(
         `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?, '+15555551999', '+15555551999', 'phone', NULL),
-                (?, '+15555551998', '+15555551998', 'phone', NULL)`,
+         VALUES (?, '+15555551999', '+15555551999', 'phone', 'phone'),
+                (?, '+15555551998', '+15555551998', 'phone', 'phone')`,
       ).run(accountId, accountId);
       const namelessHandleId = Number(
         db

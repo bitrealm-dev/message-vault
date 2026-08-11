@@ -26,11 +26,13 @@ use crate::personas::{
 
 const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
+const WHATSAPP_SOURCE: &str = "whatsapp";
 
 #[derive(Clone, Copy)]
 enum SourceFlavor {
     IMessage,
     SmsBackupRestore,
+    Whatsapp,
 }
 
 #[derive(Debug, Default)]
@@ -62,8 +64,6 @@ const PHOTO_CAPTIONS: &[&str] = &[
 
 const EMOJI_ONLY: &[&str] = &["👍", "😂", "❤️", "🎉", "😊"];
 
-const SERVICES: &[&str] = &["iMessage", "SMS", "RCS"];
-
 fn export_meta(source: &str) -> ExportMeta {
     ExportMeta {
         source: source.into(),
@@ -77,6 +77,7 @@ fn export_meta(source: &str) -> ExportMeta {
 pub fn write_all(
     imessage_staging: &Path,
     sbr_staging: &Path,
+    whatsapp_staging: &Path,
     roster: &Roster,
     cfg: &SeedConfig,
     corpus: &Corpus,
@@ -91,6 +92,7 @@ pub fn write_all(
 
     clear_jsonl(imessage_staging)?;
     clear_jsonl(sbr_staging)?;
+    clear_jsonl(whatsapp_staging)?;
 
     let mut one_to_one: Vec<&Contact> = roster
         .contacts
@@ -201,6 +203,24 @@ pub fn write_all(
         stats.conversation_files += 1;
     }
 
+    // WhatsApp slice: same phone chat id, separate platform handle on import.
+    for contact in roster.contacts.iter().filter(|c| c.has_whatsapp) {
+        let wa_count = contact.message_count().clamp(20, 80);
+        write_individual(
+            whatsapp_staging,
+            contact.primary_phone(),
+            contact.display_hint(),
+            contact.span_years.min(3.0),
+            wa_count,
+            SourceFlavor::Whatsapp,
+            cfg,
+            corpus,
+            rng,
+            &mut stats,
+            attachment_digests,
+        )?;
+    }
+
     Ok(stats)
 }
 
@@ -281,6 +301,9 @@ fn write_individual(
             }
             SourceFlavor::SmsBackupRestore => {
                 decorate_android_message(&mut msg, i, msg_count, cfg, rng, stats, attachment_digests);
+            }
+            SourceFlavor::Whatsapp => {
+                // Keep WhatsApp threads simple (no Apple decorations).
             }
         }
         write_message(&mut file, msg)?;
@@ -481,6 +504,7 @@ fn source_id(flavor: SourceFlavor) -> &'static str {
     match flavor {
         SourceFlavor::IMessage => IMESSAGE_SOURCE,
         SourceFlavor::SmsBackupRestore => SBR_SOURCE,
+        SourceFlavor::Whatsapp => WHATSAPP_SOURCE,
     }
 }
 
@@ -488,6 +512,7 @@ fn guid_prefix(flavor: SourceFlavor) -> &'static str {
     match flavor {
         SourceFlavor::IMessage => "",
         SourceFlavor::SmsBackupRestore => "sbr-",
+        SourceFlavor::Whatsapp => "wa-",
     }
 }
 
@@ -804,12 +829,19 @@ fn decorate_message(
         let im = msg.imessage.get_or_insert_with(IrImessage::default);
         im.num_replies = Some(rng.random_range(1..4));
     }
-    if i.is_multiple_of(120) {
-        msg.service = match *SERVICES.choose(rng).unwrap() {
-            "SMS" => IrService::Sms,
-            "RCS" => IrService::Rcs,
-            _ => IrService::IMessage,
-        };
+    // Mix SMS/RCS into Apple threads so per-message transport badges are visible.
+    if rng.random_bool(cfg.messages.apple_fallback_transport_fraction.clamp(0.0, 1.0)) {
+        if rng.random_bool(0.5) {
+            msg.service = IrService::Sms;
+            if !matches!(msg.message_kind, IrMessageKind::Mms | IrMessageKind::Announcement) {
+                msg.message_kind = IrMessageKind::Sms;
+            }
+        } else {
+            msg.service = IrService::Rcs;
+            if !matches!(msg.message_kind, IrMessageKind::Mms | IrMessageKind::Announcement) {
+                msg.message_kind = IrMessageKind::Sms;
+            }
+        }
     }
 }
 
@@ -873,6 +905,7 @@ fn text_message(
     let (service, message_kind) = match flavor {
         SourceFlavor::IMessage => (IrService::IMessage, IrMessageKind::IMessage),
         SourceFlavor::SmsBackupRestore => (IrService::Sms, IrMessageKind::Sms),
+        SourceFlavor::Whatsapp => (IrService::Whatsapp, IrMessageKind::Sms),
     };
     IrMessage {
         guid: guid.into(),

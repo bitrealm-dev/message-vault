@@ -26,7 +26,6 @@ export interface MessageParticipant {
 export interface MessageConversation {
   id: string;
   chat_identifier: string;
-  service: string | null;
   conversation_type: string;
   group_title: string | null;
   participants: MessageParticipant[];
@@ -77,6 +76,7 @@ export interface EditEntry {
 export interface Message {
   id: string;
   source: string;
+  service?: string | null;
   guid: string | null;
   timestamp: string;
   timestamp_utc: string | null;

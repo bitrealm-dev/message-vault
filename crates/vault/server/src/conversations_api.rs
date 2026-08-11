@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
 use crate::export_api::ExportQueryError;
@@ -47,7 +47,6 @@ pub struct ConversationSummary {
 
 struct RawConversation {
     id: i64,
-    service: Option<String>,
     conversation_type: String,
     group_title: Option<String>,
     message_count: i64,
@@ -291,7 +290,6 @@ pub fn list_conversations(
 
     let sql = format!(
         "SELECT c.id,
-                c.service,
                 c.conversation_type,
                 c.group_title,
                 (SELECT COUNT(*) FROM messages m
@@ -320,13 +318,12 @@ pub fn list_conversations(
         .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             Ok(RawConversation {
                 id: row.get(0)?,
-                service: row.get(1)?,
-                conversation_type: row.get(2)?,
-                group_title: row.get(3)?,
-                message_count: row.get(4)?,
-                last_message_at: row.get(5)?,
-                date_range_start: row.get(6)?,
-                date_range_end: row.get(7)?,
+                conversation_type: row.get(1)?,
+                group_title: row.get(2)?,
+                message_count: row.get(3)?,
+                last_message_at: row.get(4)?,
+                date_range_start: row.get(5)?,
+                date_range_end: row.get(6)?,
             })
         })
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?
@@ -349,7 +346,6 @@ pub fn list_conversations(
                 .get(&row.id)
                 .map(|s| s.as_slice())
                 .unwrap_or(&[]),
-            row.service.as_deref(),
         );
         let parts = participants.remove(&row.id).unwrap_or_default();
         let parts = if parts.is_empty() {
@@ -386,10 +382,10 @@ fn chat_handle_as_participant(
     conn: &Connection,
     conversation_id: i64,
 ) -> Result<Vec<ConversationParticipant>, ExportQueryError> {
-    let row: Option<(String, Option<String>, String)> = conn
+    let row: Option<(String, String, String)> = conn
         .query_row(
             "SELECT h.raw,
-                    nullif(trim(c.service), ''),
+                    h.service,
                     h.handle_type
              FROM conversations c
              JOIN handles h ON h.id = c.chat_handle_id
@@ -403,7 +399,11 @@ fn chat_handle_as_participant(
         Some((handle, service, handle_type)) => vec![ConversationParticipant {
             name: None,
             handle,
-            service: service.unwrap_or(handle_type),
+            service: if service.trim().is_empty() {
+                handle_type
+            } else {
+                service
+            },
             contact_id: None,
         }],
         None => Vec::new(),
@@ -424,7 +424,7 @@ fn load_participants(
             "SELECT p.conversation_id,
                     p.name_hint,
                     h.raw,
-                    coalesce(nullif(trim(h.service), ''), nullif(trim(c.service), ''), h.handle_type),
+                    coalesce(nullif(trim(h.service), ''), h.handle_type),
                     p.contact_id
              FROM participants p
              JOIN handles h ON h.id = p.handle_id
@@ -487,9 +487,10 @@ fn enrich_participant_names(
 
 const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
+const WHATSAPP_SOURCE: &str = "whatsapp";
 
 /// Header label from distinct message sources in a conversation.
-pub fn display_service_label(sources: &[String], stored_service: Option<&str>) -> String {
+pub fn display_service_label(sources: &[String]) -> String {
     let set: HashSet<&str> = sources.iter().map(|s| s.as_str()).collect();
     if set.contains(SBR_SOURCE) {
         return "SMS/MMS".into();
@@ -497,11 +498,13 @@ pub fn display_service_label(sources: &[String], stored_service: Option<&str>) -
     if set.len() == 1 && set.contains(IMESSAGE_SOURCE) {
         return IMESSAGE_SOURCE.into();
     }
-    stored_service
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown")
-        .to_string()
+    if set.len() == 1 && set.contains(WHATSAPP_SOURCE) {
+        return "WhatsApp".into();
+    }
+    if set.len() == 1 {
+        return sources[0].trim().to_string();
+    }
+    "unknown".into()
 }
 
 fn load_conversation_sources(
@@ -628,13 +631,17 @@ mod tests {
             params![&account],
         )
         .unwrap();
-        let peer =
-            account_profile::link_account_handle(&conn, &account, "+15555550200", HandleType::Phone)
-                .unwrap();
+        let peer = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550200",
+            HandleType::Phone,
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO conversations (
-                id, account_id, chat_handle_id, service, conversation_type, source_file
-             ) VALUES (1, ?1, ?2, 'iMessage', 'individual', 'c.jsonl')",
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (1, ?1, ?2, 'individual', 'c.jsonl')",
             params![&account, peer],
         )
         .unwrap();
@@ -670,14 +677,24 @@ mod tests {
     #[test]
     fn list_conversations_filters_by_handle() {
         let (conn, account) = setup();
-        let hit =
-            list_conversations(&conn, &account, "handle:+15555550200", DEFAULT_LIST_LIMIT, 0)
-                .unwrap();
+        let hit = list_conversations(
+            &conn,
+            &account,
+            "handle:+15555550200",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
         assert_eq!(hit.total, 1);
         assert_eq!(hit.conversations.len(), 1);
-        let miss =
-            list_conversations(&conn, &account, "handle:+19999999999", DEFAULT_LIST_LIMIT, 0)
-                .unwrap();
+        let miss = list_conversations(
+            &conn,
+            &account,
+            "handle:+19999999999",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
         assert_eq!(miss.total, 0);
         assert!(miss.conversations.is_empty());
     }
@@ -686,13 +703,17 @@ mod tests {
     fn list_conversations_paginates() {
         let (conn, account) = setup();
         // Second conversation + message.
-        let peer2 =
-            account_profile::link_account_handle(&conn, &account, "+15555550300", HandleType::Phone)
-                .unwrap();
+        let peer2 = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550300",
+            HandleType::Phone,
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO conversations (
-                id, account_id, chat_handle_id, service, conversation_type, source_file
-             ) VALUES (2, ?1, ?2, 'iMessage', 'individual', 'c2.jsonl')",
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (2, ?1, ?2, 'individual', 'c2.jsonl')",
             params![&account, peer2],
         )
         .unwrap();
@@ -757,13 +778,17 @@ mod tests {
         .unwrap();
 
         // Unrelated group conversation (no link to Sam).
-        let other =
-            account_profile::link_account_handle(&conn, &account, "+15555550999", HandleType::Phone)
-                .unwrap();
+        let other = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550999",
+            HandleType::Phone,
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO conversations (
-                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
-             ) VALUES (9, ?1, ?2, 'iMessage', 'group', 'Other', 'g.jsonl')",
+                id, account_id, chat_handle_id, conversation_type, group_title, source_file
+             ) VALUES (9, ?1, ?2, 'group', 'Other', 'g.jsonl')",
             params![&account, other],
         )
         .unwrap();
@@ -776,17 +801,13 @@ mod tests {
         .unwrap();
 
         // Group that includes Sam (distinct chat handle; Sam is a participant).
-        let group_chat = account_profile::link_account_handle(
-            &conn,
-            &account,
-            "chat123456",
-            HandleType::Other,
-        )
-        .unwrap();
+        let group_chat =
+            account_profile::link_account_handle(&conn, &account, "chat123456", HandleType::Other)
+                .unwrap();
         conn.execute(
             "INSERT INTO conversations (
-                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
-             ) VALUES (3, ?1, ?2, 'iMessage', 'group', 'Sam Group', 'sg.jsonl')",
+                id, account_id, chat_handle_id, conversation_type, group_title, source_file
+             ) VALUES (3, ?1, ?2, 'group', 'Sam Group', 'sg.jsonl')",
             params![&account, group_chat],
         )
         .unwrap();
@@ -891,8 +912,7 @@ mod tests {
             })
         );
 
-        let quoted_handle =
-            parse_conversation_list_query(r#"handle:"+15555550100""#);
+        let quoted_handle = parse_conversation_list_query(r#"handle:"+15555550100""#);
         assert_eq!(quoted_handle.handle.as_deref(), Some("+15555550100"));
     }
 
@@ -949,23 +969,27 @@ mod tests {
         let (conn, account) = setup();
         // setup() has conversation 1 with 1 participant.
 
-        let p2 =
-            account_profile::link_account_handle(&conn, &account, "+15555550301", HandleType::Phone)
-                .unwrap();
-        let p3 =
-            account_profile::link_account_handle(&conn, &account, "+15555550302", HandleType::Phone)
-                .unwrap();
-        let group_chat = account_profile::link_account_handle(
+        let p2 = account_profile::link_account_handle(
             &conn,
             &account,
-            "chat-big",
-            HandleType::Other,
+            "+15555550301",
+            HandleType::Phone,
         )
         .unwrap();
+        let p3 = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550302",
+            HandleType::Phone,
+        )
+        .unwrap();
+        let group_chat =
+            account_profile::link_account_handle(&conn, &account, "chat-big", HandleType::Other)
+                .unwrap();
         conn.execute(
             "INSERT INTO conversations (
-                id, account_id, chat_handle_id, service, conversation_type, group_title, source_file
-             ) VALUES (10, ?1, ?2, 'iMessage', 'group', 'Trio', 't.jsonl')",
+                id, account_id, chat_handle_id, conversation_type, group_title, source_file
+             ) VALUES (10, ?1, ?2, 'group', 'Trio', 't.jsonl')",
             params![&account, group_chat],
         )
         .unwrap();
@@ -1001,8 +1025,7 @@ mod tests {
 
     #[test]
     fn list_conversations_participants_eq_on_demo_fixture_db() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/vault.db");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/vault.db");
         if !path.is_file() {
             eprintln!("skip — missing {}", path.display());
             return;
@@ -1016,34 +1039,23 @@ mod tests {
             page.total
         );
         assert!(
-            page.conversations
-                .iter()
-                .all(|c| c.participants.len() == 3),
+            page.conversations.iter().all(|c| c.participants.len() == 3),
             "every returned conversation should have 3 participants"
         );
     }
 
     #[test]
     fn display_service_label_from_sources() {
+        assert_eq!(display_service_label(&["imessage".into()]), "imessage");
         assert_eq!(
-            display_service_label(&["imessage".into()], None),
-            "imessage"
-        );
-        assert_eq!(
-            display_service_label(&["sms-backup-restore".into()], None),
+            display_service_label(&["sms-backup-restore".into()]),
             "SMS/MMS"
         );
         assert_eq!(
-            display_service_label(
-                &["imessage".into(), "sms-backup-restore".into()],
-                Some("iMessage")
-            ),
+            display_service_label(&["imessage".into(), "sms-backup-restore".into()]),
             "SMS/MMS"
         );
-        assert_eq!(display_service_label(&[], None), "unknown");
-        assert_eq!(
-            display_service_label(&["whatsapp".into()], Some("WhatsApp")),
-            "WhatsApp"
-        );
+        assert_eq!(display_service_label(&[]), "unknown");
+        assert_eq!(display_service_label(&["whatsapp".into()]), "WhatsApp");
     }
 }

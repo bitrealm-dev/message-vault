@@ -192,6 +192,7 @@ function sectionSql(section: ContactSection): { sql: string; params: unknown[] }
 type ContactRow = {
   id: number;
   preferred_name: string | null;
+  last_modified: string;
 };
 
 function derivedNameParts(preferred: string | null | undefined): {
@@ -226,7 +227,7 @@ export function listContactsByIds(contactIds: number[]): ContactListItem[] {
   const placeholders = contactIds.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, preferred_name
+      `SELECT id, preferred_name, last_modified
        FROM contacts
        WHERE account_id = ? AND id IN (${placeholders})`,
     )
@@ -293,6 +294,7 @@ function contactListItems(rows: ContactRow[]): ContactListItem[] {
         groupMessageCount: groupMessageCounts.get(row.id) ?? 0,
         dateStart: range?.start ?? null,
         dateEnd: range?.end ?? null,
+        lastModified: row.last_modified,
         ...sorts,
       };
     })
@@ -317,13 +319,14 @@ export function getContact(id: number): ContactDetail | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name
+      `SELECT id, preferred_name, last_modified
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(id, accountId) as
     | {
         id: number;
         preferred_name: string | null;
+        last_modified: string;
       }
     | undefined;
   if (!row) return null;
@@ -373,6 +376,7 @@ export function getContact(id: number): ContactDetail | null {
     dateEnd: dateRange?.end ?? null,
     messageCount,
     groupMessageCount,
+    lastModified: row.last_modified,
     ...sorts,
   };
 }
@@ -652,13 +656,14 @@ export function loadContactThreadsPage(
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, preferred_name
+      `SELECT id, preferred_name, last_modified
        FROM contacts WHERE id = ? AND account_id = ?`,
     )
     .get(contactId, accountId) as
     | {
         id: number;
         preferred_name: string | null;
+        last_modified: string;
       }
     | undefined;
   if (!row) return null;
@@ -720,6 +725,7 @@ export function loadContactThreadsPage(
       dateEnd: dateRange?.end ?? null,
       messageCount: sourceCounts.all,
       groupMessageCount,
+      lastModified: row.last_modified,
       ...sorts,
     },
     yearly: phones.length

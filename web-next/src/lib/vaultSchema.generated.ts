@@ -90,7 +90,6 @@ export const MESSAGES_DDL = `CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     chat_handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
-    service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
@@ -122,6 +121,8 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
     sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL,
+    -- Per-message transport: sms / imessage / rcs / whatsapp / …
+    service TEXT,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -190,7 +191,6 @@ export const STAGING_DDL = `CREATE TABLE IF NOT EXISTS staging_conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     chat_handle_id INTEGER NOT NULL,
-    service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
     sender_handle_id INTEGER,
+    service TEXT,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,
@@ -270,7 +271,9 @@ CREATE INDEX IF NOT EXISTS ix_staging_tapbacks_message_id ON staging_tapbacks (m
 export const CONTACTS_DDL = `CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    preferred_name TEXT NOT NULL
+    preferred_name TEXT NOT NULL,
+    -- Address-book shape last changed (not message activity).
+    last_modified TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS ix_contacts_account_id ON contacts (account_id);
@@ -282,8 +285,9 @@ CREATE TABLE IF NOT EXISTS handles (
     normalized TEXT NOT NULL,
     normalized_note TEXT,
     handle_type TEXT NOT NULL,
-    service TEXT,
-    UNIQUE(account_id, normalized, handle_type)
+    -- Platform identity: 'phone' | 'whatsapp' (not per-message SMS/iMessage/RCS).
+    service TEXT NOT NULL,
+    UNIQUE(account_id, normalized, handle_type, service)
 );
 
 CREATE INDEX IF NOT EXISTS ix_handles_account_id ON handles (account_id);

@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone, Utc};
 use message_ir::{
-    ConversationHeader, HandleType, IrAttachment, IrDirection, IrImessage, IrMessage,
+    ConversationHeader, HandleService, HandleType, IrAttachment, IrDirection, IrImessage, IrMessage,
     IrMessageKind, IrService, SCHEMA_VERSION,
 };
 use phone::sanitize_number;
@@ -46,7 +46,7 @@ pub struct MessageRecord {
     pub sender: Option<String>,
     #[allow(dead_code)] // sender identity for import-time handle resolution
     pub sender_handle_type: Option<HandleType>,
-    #[allow(dead_code)] // retained from IR for future per-message service UI
+    /// Per-message transport (`sms` / `imessage` / `rcs` / `whatsapp` / …).
     pub service: Option<String>,
     pub subject: Option<String>,
     pub text: Option<String>,
@@ -145,7 +145,17 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
     };
     ConversationRecord {
         chat_identifier: header.conversation.chat_identifier.clone(),
-        service: None,
+        // Platform identity for handles (phone | whatsapp), not SMS/iMessage/RCS.
+        service: Some(
+            if export_source
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("whatsapp"))
+            {
+                HandleService::Whatsapp.as_str().to_string()
+            } else {
+                HandleService::Phone.as_str().to_string()
+            },
+        ),
         conversation_type: header.conversation.conversation_type.as_str().to_string(),
         group_title: header.conversation.group_title.clone(),
         participants: header
@@ -219,7 +229,7 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         } else {
             infer_sender_handle_type(msg.sender_handle.as_deref(), msg.service)
         },
-        service: Some(service_label(msg.service)),
+        service: Some(msg.service.as_str().to_string()),
         subject: msg.subject.clone().filter(|s| !s.is_empty()),
         text,
         is_announcement: im.map(|i| i.announcement.is_some()).unwrap_or(false)
@@ -318,20 +328,6 @@ struct WireTapback {
     sender: Option<String>,
 }
 
-fn service_label(service: IrService) -> String {
-    match service {
-        IrService::Sms => "SMS".into(),
-        IrService::IMessage => "iMessage".into(),
-        IrService::Whatsapp => "WhatsApp".into(),
-        IrService::Rcs => "RCS".into(),
-        IrService::Discord => "Discord".into(),
-        IrService::Signal => "Signal".into(),
-        IrService::Telegram => "Telegram".into(),
-        IrService::Slack => "Slack".into(),
-        IrService::Unknown => "Unknown".into(),
-    }
-}
-
 fn format_timestamps(secs: i64) -> Option<(String, String)> {
     let local = Local.timestamp_opt(secs, 0).single().or_else(|| {
         Utc.timestamp_opt(secs, 0)
@@ -362,7 +358,7 @@ mod tests {
                 assert_eq!(m.guid.as_deref(), Some("g1"));
                 assert!(!m.is_from_me);
                 assert_eq!(m.text.as_deref(), Some("hello"));
-                assert_eq!(m.service.as_deref(), Some("SMS"));
+                assert_eq!(m.service.as_deref(), Some("sms"));
                 assert_eq!(m.sender_handle_type, Some(HandleType::Phone));
                 assert!(m.tapbacks.is_empty());
                 assert!(!m.is_reply);

@@ -62,6 +62,7 @@ describe("fresh vault schema", () => {
       "id",
       "account_id",
       "preferred_name",
+      "last_modified",
     ]);
     assert.deepEqual(columns(db, "handles"), [
       "id",
@@ -126,7 +127,7 @@ describe("fresh vault schema", () => {
     );
     db.prepare(
       `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-       VALUES (?, '+15555550100', '+15555550100', 'phone', NULL)`,
+       VALUES (?, '+15555550100', '+15555550100', 'phone', 'phone')`,
     ).run(ACCOUNT_ID);
     const handleId = Number(
       db

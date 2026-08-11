@@ -846,7 +846,7 @@ mod tests {
         conn.execute(
             r#"
             INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-            VALUES (?1, '+14075551212', '+14075551212', 'phone', 'SMS')
+            VALUES (?1, '+14075551212', '+14075551212', 'phone', 'phone')
             "#,
             params![TEST_ACCOUNT_ID],
         )
@@ -861,9 +861,9 @@ mod tests {
         conn.execute(
             r#"
             INSERT INTO conversations (
-                account_id, chat_handle_id, service, conversation_type, group_title, exported_at, source_file
+                account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
             )
-            VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')
+            VALUES (?1, ?2, 'individual', NULL, NULL, 't.json')
             "#,
             params![TEST_ACCOUNT_ID, handle_id],
         )

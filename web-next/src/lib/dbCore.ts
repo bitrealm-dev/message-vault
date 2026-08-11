@@ -261,14 +261,15 @@ export function preferredHandleTypeOf(
 }
 
 /**
- * Resolve raw handles to handle ids for an account, dropping raws with no
- * handle row. Matching is by (normalized, handle_type) — the handles table's
- * identity key — so differently-formatted raws of the same handle share a row.
+ * Resolve raw handles to handle ids for one platform service, dropping raws
+ * with no handle row. Matching includes the service because the same phone can
+ * have separate text-message and WhatsApp identities.
  */
 export function handleIdsForRaws(
   db: Database.Database,
   accountId: string,
   raws: string[],
+  service = "phone",
 ): number[] {
   const seen = new Map<string, { type: HandleType; normalized: string }>();
   for (const raw of raws) {
@@ -281,10 +282,10 @@ export function handleIdsForRaws(
   const needles = [...seen.values()];
   if (!needles.length) return [];
   const where = needles
-    .map(() => `(h.normalized = ? AND h.handle_type = ?)`)
+    .map(() => `(h.normalized = ? AND h.handle_type = ? AND h.service = ?)`)
     .join(" OR ");
   const params: unknown[] = [accountId];
-  for (const n of needles) params.push(n.normalized, n.type);
+  for (const n of needles) params.push(n.normalized, n.type, service);
   const rows = db
     .prepare(
       `SELECT h.id AS id

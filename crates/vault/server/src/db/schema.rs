@@ -282,7 +282,9 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     // pragma_table_info does not accept bound table names; only call with known literals.
     let sql = match table {
-        "account_api_tokens" => "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = ?1",
+        "account_api_tokens" => {
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = ?1"
+        }
         "account_session_tokens" => {
             "SELECT COUNT(*) > 0 FROM pragma_table_info('account_session_tokens') WHERE name = ?1"
         }
@@ -390,7 +392,7 @@ mod tests {
             conn.execute(
                 r#"
                 INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-                VALUES (?1, '+15555550100', '+15555550100', 'phone', 'SMS')
+                VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')
                 "#,
                 params![id],
             )
@@ -399,9 +401,9 @@ mod tests {
             conn.execute(
                 r#"
                 INSERT INTO conversations (
-                    account_id, chat_handle_id, service, conversation_type,
+                    account_id, chat_handle_id, conversation_type,
                     group_title, exported_at, source_file
-                ) VALUES (?1, ?2, 'SMS', 'individual', NULL, NULL, 't.json')
+                ) VALUES (?1, ?2, 'individual', NULL, NULL, 't.json')
                 "#,
                 params![id, handle_id],
             )
@@ -414,8 +416,10 @@ mod tests {
     fn fresh_vault_has_complete_current_schema() {
         let conn = Connection::open_in_memory().unwrap();
         ensure_vault_schema(&conn).unwrap();
-        let contract: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../../fixtures/schema/current-schema.json")).unwrap();
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../fixtures/schema/current-schema.json"
+        ))
+        .unwrap();
 
         for table in contract["tables"].as_array().unwrap() {
             let table = table.as_str().unwrap();
@@ -476,7 +480,7 @@ mod tests {
         );
         assert_eq!(
             columns("contacts"),
-            ["id", "account_id", "preferred_name"]
+            ["id", "account_id", "preferred_name", "last_modified"]
         );
         assert_eq!(
             columns("handles"),
@@ -490,7 +494,11 @@ mod tests {
                 "service"
             ]
         );
-        assert!(columns("conversations").iter().any(|c| c == "chat_handle_id"));
+        assert!(
+            columns("conversations")
+                .iter()
+                .any(|c| c == "chat_handle_id")
+        );
         for column in ["account_id", "source", "content_key", "duplicate_of"] {
             assert!(columns("messages").iter().any(|c| c == column));
         }
@@ -548,9 +556,9 @@ mod tests {
             conn.execute(
                 r#"
                 INSERT INTO staging_conversations (
-                    account_id, chat_handle_id, service, conversation_type,
+                    account_id, chat_handle_id, conversation_type,
                     group_title, exported_at, source_file
-                ) VALUES (?1, 1, 'SMS', 'individual', NULL, NULL, 't.json')
+                ) VALUES (?1, 1, 'individual', NULL, NULL, 't.json')
                 "#,
                 params![account],
             )

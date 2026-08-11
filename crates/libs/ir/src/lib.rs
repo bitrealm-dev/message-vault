@@ -156,6 +156,51 @@ impl IrService {
     }
 }
 
+/// Platform identity stored on `handles.service` (not per-message SMS/iMessage/RCS).
+///
+/// UI labels: `Phone` → "Text message", `Whatsapp` → "WhatsApp".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HandleService {
+    Phone,
+    Whatsapp,
+}
+
+impl HandleService {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Whatsapp => "whatsapp",
+        }
+    }
+
+    /// Parse storage ids and common aliases from IR / UI / import.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "whatsapp" | "wa" => Self::Whatsapp,
+            // Phone-platform aliases (SMS/iMessage/RCS are transports, not platforms).
+            "phone" | "sms" | "mms" | "sms/mms" | "imessage" | "ios" | "rcs" | "text message"
+            | "text_message" | "textmessage" => Self::Phone,
+            _ => Self::Phone,
+        }
+    }
+
+    /// Map IR per-message/service transport onto a handle platform bucket.
+    pub fn from_ir_service(service: IrService) -> Self {
+        match service {
+            IrService::Whatsapp => Self::Whatsapp,
+            IrService::Sms
+            | IrService::IMessage
+            | IrService::Rcs
+            | IrService::Discord
+            | IrService::Signal
+            | IrService::Telegram
+            | IrService::Slack
+            | IrService::Unknown => Self::Phone,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IrMessageKind {
@@ -485,6 +530,58 @@ impl PendingConversation {
     /// Read an exporter-specific string field from [`Self::extra`].
     pub fn extra_str(&self, key: &str) -> &str {
         self.extra.get(key).map(String::as_str).unwrap_or("")
+    }
+}
+
+#[cfg(test)]
+mod handle_service_tests {
+    use super::{HandleService, IrService};
+
+    #[test]
+    fn parse_phone_aliases() {
+        for s in [
+            "phone",
+            "SMS",
+            "imessage",
+            "rcs",
+            "mms",
+            "Text message",
+            "text_message",
+        ] {
+            assert_eq!(HandleService::parse(s), HandleService::Phone, "{s}");
+        }
+    }
+
+    #[test]
+    fn parse_whatsapp() {
+        assert_eq!(HandleService::parse("whatsapp"), HandleService::Whatsapp);
+        assert_eq!(HandleService::parse("WA"), HandleService::Whatsapp);
+    }
+
+    #[test]
+    fn map_ir_service() {
+        assert_eq!(
+            HandleService::from_ir_service(IrService::Whatsapp),
+            HandleService::Whatsapp
+        );
+        assert_eq!(
+            HandleService::from_ir_service(IrService::IMessage),
+            HandleService::Phone
+        );
+        assert_eq!(
+            HandleService::from_ir_service(IrService::Sms),
+            HandleService::Phone
+        );
+        assert_eq!(
+            HandleService::from_ir_service(IrService::Rcs),
+            HandleService::Phone
+        );
+    }
+
+    #[test]
+    fn as_str_storage_ids() {
+        assert_eq!(HandleService::Phone.as_str(), "phone");
+        assert_eq!(HandleService::Whatsapp.as_str(), "whatsapp");
     }
 }
 

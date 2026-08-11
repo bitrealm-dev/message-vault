@@ -11,16 +11,16 @@ import { assertVaultWritable } from "./owner";
 import { openWritableVaultDb } from "./vaultSchema";
 
 /**
- * Ensure a `handles` row exists for (raw, handle_type) and return its id.
- * Matching is by (account_id, normalized, handle_type) — the handles table's
- * identity key — so a differently-formatted raw of the same handle reuses the
- * existing row.
+ * Ensure a `handles` row exists for (raw, handle_type, service) and return its
+ * id. Matching includes the platform service so the same phone can be used for
+ * both text messaging and WhatsApp.
  */
 export function resolveHandleId(
   db: Database.Database,
   accountId: string,
   raw: string,
   handleType: HandleType,
+  service = "phone",
 ): number {
   const trimmed = raw.trim();
   if (!trimmed) throw new Error("handle required");
@@ -31,14 +31,14 @@ export function resolveHandleId(
   const note = handleType === "phone" ? phoneReviewNote(trimmed) : null;
   db.prepare(
     `INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-     VALUES (?, ?, ?, ?, ?, NULL)`,
-  ).run(accountId, trimmed, normalized, note, handleType);
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(accountId, trimmed, normalized, note, handleType, service);
   const row = db
     .prepare(
       `SELECT id FROM handles
-       WHERE account_id = ? AND normalized = ? AND handle_type = ?`,
+       WHERE account_id = ? AND normalized = ? AND handle_type = ? AND service = ?`,
     )
-    .get(accountId, normalized, handleType) as { id: number } | undefined;
+    .get(accountId, normalized, handleType, service) as { id: number } | undefined;
   if (!row) throw new Error(`failed to resolve handle ${trimmed}`);
   return row.id;
 }
@@ -53,6 +53,7 @@ export function handleIdForRaw(
   accountId: string,
   raw: string,
   handleType?: HandleType,
+  service = "phone",
 ): number | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -61,9 +62,9 @@ export function handleIdForRaw(
   const row = db
     .prepare(
       `SELECT id FROM handles
-       WHERE account_id = ? AND normalized = ? AND handle_type = ?`,
+       WHERE account_id = ? AND normalized = ? AND handle_type = ? AND service = ?`,
     )
-    .get(accountId, normalized, type) as { id: number } | undefined;
+    .get(accountId, normalized, type, service) as { id: number } | undefined;
   return row?.id ?? null;
 }
 

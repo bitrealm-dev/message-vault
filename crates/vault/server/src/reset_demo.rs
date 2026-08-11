@@ -20,6 +20,7 @@ pub use crate::db::account_profile::DEMO_ACCOUNT_ID;
 
 const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
+const WHATSAPP_SOURCE: &str = "whatsapp";
 
 #[derive(Debug)]
 pub struct ResetDemoStats {
@@ -73,16 +74,18 @@ fn run_reset_demo_for_account(
     let demo_seed = bundle.join("config/seed.toml");
     let imessage_dir = bundle.join("staging").join(IMESSAGE_SOURCE);
     let sbr_dir = bundle.join("staging").join(SBR_SOURCE);
+    let whatsapp_dir = bundle.join("staging").join(WHATSAPP_SOURCE);
     let contacts_vcf = bundle.join("config/contacts.vcf");
     if !demo_config.is_file()
         || !demo_seed.is_file()
         || !imessage_dir.is_dir()
         || !sbr_dir.is_dir()
+        || !whatsapp_dir.is_dir()
         || !contacts_vcf.is_file()
     {
         bail!(
             "incomplete demo bundle under {} (need config/config.toml, config/seed.toml, \
-             staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, config/contacts.vcf)",
+             staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, staging/{WHATSAPP_SOURCE}/, config/contacts.vcf)",
             bundle.display()
         );
     }
@@ -103,6 +106,7 @@ fn run_reset_demo_for_account(
 
     let imessage_assets = cfg.paths.assets_dir_for_account(account_id, IMESSAGE_SOURCE);
     let sbr_assets = cfg.paths.assets_dir_for_account(account_id, SBR_SOURCE);
+    let whatsapp_assets = cfg.paths.assets_dir_for_account(account_id, WHATSAPP_SOURCE);
     let db = cfg.paths.db.clone();
 
     println!("Reset demo — importing");
@@ -110,6 +114,7 @@ fn run_reset_demo_for_account(
     println!("  account:      {}", account_id);
     println!("  imessage:     {}", imessage_dir.display());
     println!("  android:      {}", sbr_dir.display());
+    println!("  whatsapp:     {}", whatsapp_dir.display());
     println!("  db:           {}", db.display());
 
     seed_demo_account(&db, account_id, &seed)?;
@@ -136,6 +141,18 @@ fn run_reset_demo_for_account(
         account_id,
     )?;
     merge_import_stats(&mut import_stats, &sbr_stats);
+
+    let wa_stats = import::import_export(
+        &whatsapp_dir,
+        &db,
+        &whatsapp_assets,
+        None,
+        false,
+        ImportMode::Append,
+        WHATSAPP_SOURCE,
+        account_id,
+    )?;
+    merge_import_stats(&mut import_stats, &wa_stats);
 
     let dedupe_stats = dedupe::run_dedupe(&db, account_id, 2)?;
 
@@ -175,6 +192,7 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     let complete = bundle.join("config/seed.toml").is_file()
         && bundle.join("staging").join(IMESSAGE_SOURCE).is_dir()
         && bundle.join("staging").join(SBR_SOURCE).is_dir()
+        && bundle.join("staging").join(WHATSAPP_SOURCE).is_dir()
         && bundle.join("config/contacts.vcf").is_file();
     if complete {
         println!(
@@ -192,7 +210,7 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
 
     bail!(
         "cannot reset demo: {} is missing and {} is not a complete committed bundle \
-         (need staging/{IMESSAGE_SOURCE}/ and staging/{SBR_SOURCE}/)",
+         (need staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, and staging/{WHATSAPP_SOURCE}/)",
         seed_toml.display(),
         bundle.display()
     );

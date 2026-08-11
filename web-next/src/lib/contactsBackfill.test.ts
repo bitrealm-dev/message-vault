@@ -47,7 +47,7 @@ describe("unknown contact backfill", () => {
       const resolveHandle = (raw: string, handleType = "phone"): number => {
         db.prepare(
           `INSERT OR IGNORE INTO handles (account_id, raw, normalized, handle_type, service)
-           VALUES (?, ?, ?, ?, NULL)`,
+           VALUES (?, ?, ?, ?, 'phone')`,
         ).run(accountId, raw, raw, handleType);
         return Number(
           db
@@ -64,9 +64,9 @@ describe("unknown contact backfill", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_handle_id, service, conversation_type,
+               account_id, chat_handle_id, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, ?, 'iMessage', 'group', 'Crew', NULL, 't.json')`,
+             ) VALUES (?, ?, 'group', 'Crew', NULL, 't.json')`,
           )
           .run(accountId, resolveHandle("chat-crew", "other")).lastInsertRowid,
       );
@@ -84,9 +84,9 @@ describe("unknown contact backfill", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_handle_id, service, conversation_type,
+               account_id, chat_handle_id, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 't.json')`,
+             ) VALUES (?, ?, 'individual', NULL, NULL, 't.json')`,
           )
           .run(accountId, resolveHandle(DIRECT_PHONE)).lastInsertRowid,
       );

@@ -2,7 +2,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     chat_handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
-    service TEXT,
     conversation_type TEXT NOT NULL,
     group_title TEXT,
     exported_at TEXT,
@@ -34,6 +33,8 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp_utc TEXT,
     is_from_me INTEGER NOT NULL,
     sender_handle_id INTEGER REFERENCES handles(id) ON DELETE SET NULL,
+    -- Per-message transport: sms / imessage / rcs / whatsapp / …
+    service TEXT,
     subject TEXT,
     body TEXT,
     is_announcement INTEGER NOT NULL DEFAULT 0,

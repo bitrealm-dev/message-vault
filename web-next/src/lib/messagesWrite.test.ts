@@ -43,7 +43,7 @@ describe("deleteAllMessagesForAccount", () => {
       ensureVaultSchema(db);
       db.prepare(
         `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?, '+15555550999', '+15555550999', 'phone', 'iMessage')`,
+         VALUES (?, '+15555550999', '+15555550999', 'phone', 'phone')`,
       ).run(accountId);
       const handleId = Number(
         db
@@ -57,9 +57,9 @@ describe("deleteAllMessagesForAccount", () => {
         db
           .prepare(
             `INSERT INTO conversations (
-               account_id, chat_handle_id, service, conversation_type,
+               account_id, chat_handle_id, conversation_type,
                group_title, exported_at, source_file
-             ) VALUES (?, ?, 'iMessage', 'individual', NULL, NULL, 'test.json')`,
+             ) VALUES (?, ?, 'individual', NULL, NULL, 'test.json')`,
           )
           .run(accountId, handleId).lastInsertRowid,
       );

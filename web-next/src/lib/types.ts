@@ -39,6 +39,8 @@ export type ContactListItem = {
   dateStart: string | null;
   /** Latest 1:1 message date (YYYY-MM-DD), if any. */
   dateEnd: string | null;
+  /** When the contact’s address-book shape last changed (SQLite datetime). */
+  lastModified: string;
 };
 
 export type ContactDetail = ContactListItem & {

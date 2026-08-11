@@ -56,7 +56,7 @@ describe("read-only web vault mutations", () => {
       ensureVaultSchema(db);
       db.prepare(
         `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?, ?, ?, 'other', 'iMessage')`,
+         VALUES (?, ?, ?, 'other', 'phone')`,
       ).run(accountId, chatId, chatId);
       const handleId = Number(
         db
@@ -69,9 +69,9 @@ describe("read-only web vault mutations", () => {
       const result = db
         .prepare(
           `INSERT INTO conversations (
-             account_id, chat_handle_id, service, conversation_type,
+             account_id, chat_handle_id, conversation_type,
              group_title, exported_at, source_file
-           ) VALUES (?, ?, 'iMessage', 'group', 'Friends', NULL, 't.json')`,
+           ) VALUES (?, ?, 'group', 'Friends', NULL, 't.json')`,
         )
         .run(accountId, handleId);
       return Number(result.lastInsertRowid);

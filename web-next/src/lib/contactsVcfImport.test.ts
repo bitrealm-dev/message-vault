@@ -61,7 +61,7 @@ describe("contactsVcfImport preview/commit", () => {
       ensureVaultSchema(db);
       db.prepare(
         `INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-         VALUES (?, ?, ?, 'phone', 'SMS')`,
+         VALUES (?, ?, ?, 'phone', 'phone')`,
       ).run(acct, phone, phone);
       const handleId = Number(
         db
@@ -74,9 +74,9 @@ describe("contactsVcfImport preview/commit", () => {
       const result = db
         .prepare(
           `INSERT INTO conversations (
-             account_id, chat_handle_id, service, conversation_type,
+             account_id, chat_handle_id, conversation_type,
              group_title, exported_at, source_file
-           ) VALUES (?, ?, 'SMS', 'individual', NULL, NULL, 't.json')`,
+           ) VALUES (?, ?, 'individual', NULL, NULL, 't.json')`,
         )
         .run(acct, handleId);
       const cid = Number(result.lastInsertRowid);
@@ -230,7 +230,7 @@ END:VCARD
       ensureVaultSchema(db);
       db.prepare(
         `INSERT INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-         VALUES (?, ?, ?, ?, 'phone', 'SMS')`,
+         VALUES (?, ?, ?, ?, 'phone', 'phone')`,
       ).run(
         accountId,
         "020 7946 0000",
@@ -248,9 +248,9 @@ END:VCARD
       const result = db
         .prepare(
           `INSERT INTO conversations (
-             account_id, chat_handle_id, service, conversation_type,
+             account_id, chat_handle_id, conversation_type,
              group_title, exported_at, source_file
-           ) VALUES (?, ?, 'SMS', 'individual', NULL, NULL, 't.json')`,
+           ) VALUES (?, ?, 'individual', NULL, NULL, 't.json')`,
         )
         .run(accountId, handleId);
       const cid = Number(result.lastInsertRowid);

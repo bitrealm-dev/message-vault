@@ -21,6 +21,7 @@ pub use conversations::GenStats;
 
 const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
+const WHATSAPP_SOURCE: &str = "whatsapp";
 
 /// Generate (or regenerate) a demo bundle under `cfg.out`.
 pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
@@ -29,14 +30,18 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
 
     let imessage_staging = out.join("staging").join(IMESSAGE_SOURCE);
     let sbr_staging = out.join("staging").join(SBR_SOURCE);
+    let whatsapp_staging = out.join("staging").join(WHATSAPP_SOURCE);
     let imessage_attachments = imessage_staging.join("attachments");
     let sbr_attachments = sbr_staging.join("attachments");
+    let whatsapp_attachments = whatsapp_staging.join("attachments");
     let config_dir = out.join("config");
 
     fs::create_dir_all(&imessage_staging)?;
     fs::create_dir_all(&sbr_staging)?;
+    fs::create_dir_all(&whatsapp_staging)?;
     fs::create_dir_all(&imessage_attachments)?;
     fs::create_dir_all(&sbr_attachments)?;
+    fs::create_dir_all(&whatsapp_attachments)?;
     fs::create_dir_all(&config_dir)?;
 
     let corpus =
@@ -44,8 +49,9 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let names = names::NameBank::load_default().context("load name lists")?;
 
     let attachment_digests = assets::write_attachment_blobs(&imessage_attachments)?;
-    // Same blobs under the Android tree so relative attachment paths resolve on import.
+    // Same blobs under the Android/WhatsApp trees so relative attachment paths resolve on import.
     copy_dir_files(&imessage_attachments, &sbr_attachments)?;
+    copy_dir_files(&imessage_attachments, &whatsapp_attachments)?;
 
     let roster = personas::build_roster(cfg, &names, &mut rng)?;
     contacts::write_vcf(&config_dir, &roster)?;
@@ -55,6 +61,7 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let stats = conversations::write_all(
         &imessage_staging,
         &sbr_staging,
+        &whatsapp_staging,
         &roster,
         cfg,
         &corpus,
@@ -113,13 +120,15 @@ fn write_readme(
 
 Committed message-ir JSONL bundle for local browsing without a real phone backup.
 
-Two staging trees simulate separate phone backups:
+Three staging trees simulate separate backups:
 
 - `staging/imessage/` — Apple Messages-style export
 - `staging/sms-backup-restore/` — Android SMS Backup & Restore–style export
+- `staging/whatsapp/` — WhatsApp-style export for ~{whatsapp_pct}% of contacts (same phone, platform `whatsapp`)
 
-Most conversations are single-source. A small set appears in both so the Sources panel and
-cross-source dedupe can be exercised.
+Most conversations are single-source. A small set appears in both iMessage and Android so the
+Sources panel and cross-source dedupe can be exercised. WhatsApp threads share the phone number
+with Text message handles so the contact drawer shows both platforms.
 
 Regenerate + import in one step:
 
@@ -134,7 +143,8 @@ cargo run -p demo-seed -- --out demo
 ```
 
 Config knobs live in `crates/vault/demo-seed/demo_seed.toml` (seed, contact count, rate/span
-distributions, group membership, dual-source split). Message bodies are sampled from Pride and
+distributions, group membership, dual-source split, `whatsapp_contact_fraction`,
+`apple_fallback_transport_fraction`). Message bodies are sampled from Pride and
 Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corpus/`. Names come from
 `crates/vault/demo-seed/data/names/`.
 
@@ -150,7 +160,9 @@ Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corp
 
 ## Exercises
 
-- **Dual sources** — `imessage` vs `sms-backup-restore`; light overlap threads
+- **Triple sources** — `imessage` vs `sms-backup-restore` vs `whatsapp`
+- **Platform handles** — Text message + WhatsApp rows on the same contact
+- **Transport mix** — SMS/RCS mixed into iMessage threads (~20% by default)
 - **Contacts / labels / No Messages** — label memberships and zero-message rows
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year
@@ -166,6 +178,7 @@ Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corp
         conversation_count = stats.conversation_files,
         message_count = stats.messages,
         attachment_count = stats.attachment_refs,
+        whatsapp_pct = (cfg.sources.whatsapp_contact_fraction * 100.0).round() as i64,
     );
     fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
     Ok(())

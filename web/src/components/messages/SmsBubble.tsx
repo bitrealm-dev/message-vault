@@ -29,7 +29,7 @@ export default function SmsBubble({
   const mine = message.is_from_me;
   const group = isGroupConversation(message);
   const body = (message.text || "").trim();
-  const service = message.conversation.service?.trim();
+  const service = message.service?.trim() || message.source?.trim();
   const hasAttachments = message.attachments.length > 0;
 
   return (

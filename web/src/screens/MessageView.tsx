@@ -30,6 +30,13 @@ function yearQuery(conversationId: string, year: number): string {
   return `in:${conversationId} after:${year} before:${year + 1}`;
 }
 
+function displaySourceLabel(source: string): string {
+  const token = source.trim().toLowerCase();
+  if (token === "sms-backup-restore") return "SMS/MMS";
+  if (token === "whatsapp") return "WhatsApp";
+  return source.trim() || "unknown";
+}
+
 async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[]; total: number }> {
   const countRes = await apiClient.get<{ messages: number }>(
     `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
@@ -68,6 +75,10 @@ export default function MessageView({
   const [activeMatch, setActiveMatch] = useState(0);
   const [loading, setLoading] = useState(false);
   const [lightboxItems, setLightboxItems] = useState<LightboxItem[] | null>(null);
+  // The server derives this fallback from message sources before any page is loaded.
+  const sourceLabel = messages[0]
+    ? displaySourceLabel(messages[0].source)
+    : "unknown";
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showSources, setShowSources] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(true);
@@ -275,7 +286,7 @@ export default function MessageView({
         />
 
         <div className="flex flex-wrap gap-4 text-[0.75rem] text-muted">
-          <span>{conversation.service}</span>
+          <span>{sourceLabel}</span>
           {conversation.date_range_start && conversation.date_range_end && (
             <span>
               {new Date(conversation.date_range_start).toLocaleDateString([], { month: "short", year: "numeric" })} –{" "}

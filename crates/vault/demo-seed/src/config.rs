@@ -111,6 +111,13 @@ pub struct MessagesConfig {
     pub other_base_stride: usize,
     pub tapback_stride: usize,
     pub reply_stride: usize,
+    /// Fraction of iMessage-tree messages that use SMS or RCS transport (for badges).
+    #[serde(default = "default_apple_fallback_transport_fraction")]
+    pub apple_fallback_transport_fraction: f64,
+}
+
+fn default_apple_fallback_transport_fraction() -> f64 {
+    0.20
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,6 +145,9 @@ pub struct SourcesConfig {
     pub overlap_android_extra_min: usize,
     #[serde(default = "default_overlap_android_extra_max")]
     pub overlap_android_extra_max: usize,
+    /// Share of contacts that also get a WhatsApp 1:1 thread (same phone, platform whatsapp).
+    #[serde(default = "default_whatsapp_contact_fraction")]
+    pub whatsapp_contact_fraction: f64,
 }
 
 impl Default for SourcesConfig {
@@ -148,6 +158,7 @@ impl Default for SourcesConfig {
             overlap_shared_fraction: default_overlap_shared_fraction(),
             overlap_android_extra_min: default_overlap_android_extra_min(),
             overlap_android_extra_max: default_overlap_android_extra_max(),
+            whatsapp_contact_fraction: default_whatsapp_contact_fraction(),
         }
     }
 }
@@ -166,6 +177,9 @@ fn default_overlap_android_extra_min() -> usize {
 }
 fn default_overlap_android_extra_max() -> usize {
     80
+}
+fn default_whatsapp_contact_fraction() -> f64 {
+    0.20
 }
 
 impl SeedConfig {
