@@ -46,7 +46,7 @@ The published image is `mbeisser1/message-vault:latest`:
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=demo \
+  -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
@@ -55,12 +55,12 @@ Open **http://localhost:8080** for the web interface. The desktop app uses the s
 
 ### Personal vault
 
-For your own messages, use `VAULT_MODE=personal`:
+For your own messages, set `DEMO_DATA=false` so the new database starts empty:
 
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=personal \
+  -e DEMO_DATA=false \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
@@ -74,4 +74,4 @@ Then create an account through the web interface and generate an import token. S
 | Vault server | Web interface and `/v1/*` API on port **8080** |
 | SQLite | Database for messages, contacts, and settings |
 | FFmpeg | Media conversion for browser playback |
-| Demo dataset | 390 conversations, ~627k messages (demo mode only) |
+| Demo dataset | 390 conversations, ~627k messages (when `DEMO_DATA=true`) |

@@ -16,12 +16,12 @@ Open a terminal and run:
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=demo \
+  -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-This starts the vault in demo mode with sample conversations ready to browse. The web interface and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts.
+This starts the vault and seeds sample conversations on first boot. The web interface and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts.
 
 ## Browse the demo
 
@@ -36,4 +36,4 @@ The app and the vault are now linked. When you are ready for your own messages, 
 
 ## More details
 
-The [demo vault page](/set-up-the-server/try-the-demo/) covers the sample data and demo mode in more depth. When you are ready for a vault of your own, see [your first personal vault](/set-up-the-server/first-personal-vault/) and [install the desktop app](/introduction/install/).
+The [demo vault page](/set-up-the-server/try-the-demo/) covers the sample data and seeding behavior in more depth. When you are ready for a vault of your own, see [your first personal vault](/set-up-the-server/first-personal-vault/) and [install the desktop app](/introduction/install/).

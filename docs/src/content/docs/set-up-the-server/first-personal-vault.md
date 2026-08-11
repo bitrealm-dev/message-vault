@@ -5,17 +5,17 @@ description: Set up a vault for your own messages — create an account, create 
 
 A personal vault stores your messages behind an account you create. No demo data — it starts empty and you import your own exports.
 
-## 1. Start the vault in personal mode
+## 1. Start with an empty vault
 
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=personal \
+  -e DEMO_DATA=false \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-If you are using Compose, set `VAULT_MODE=personal` in your environment or `.env` file before running `docker compose up`.
+If you are using Compose, run `DEMO_DATA=false docker compose up` or set `DEMO_DATA=false` in your `.env` file.
 
 ## 2. Create your account
 

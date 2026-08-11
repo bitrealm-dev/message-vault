@@ -133,8 +133,8 @@ docker compose up
 # Release mode (production-shaped image; build Vite SPA first: cd web && npm run build)
 docker compose -f compose-release.yml up --build
 
-# Personal vault (non-demo mode)
-VAULT_MODE=personal docker compose up
+# Start with an empty vault instead of seeding demo data
+DEMO_DATA=false docker compose up
 ```
 
 The server exposes HTTP API + Web UI at `http://localhost:8080`. Create an account through the web UI, then use the Import API token from Settings for Push operations.

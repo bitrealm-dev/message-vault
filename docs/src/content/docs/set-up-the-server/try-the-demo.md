@@ -10,12 +10,12 @@ The demo vault comes with a built-in dataset: synthetic messages across hundreds
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=demo \
+  -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-The container seeds the demo dataset on first start. Subsequent restarts reuse the existing database.
+The container seeds the demo dataset on first start. Subsequent restarts reuse the existing database. Changing `DEMO_DATA` does not seed or remove data in an existing volume. To refresh the dataset in place, run the server CLI's `reset-demo` command as described in [Settings](/browse/settings/).
 
 ## Browse the demo
 
@@ -30,7 +30,7 @@ docker rm -f message-vault
 docker volume rm message-vault-data
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=demo \
+  -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```

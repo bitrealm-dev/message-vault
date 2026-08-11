@@ -15,7 +15,7 @@ docker rm message-vault
 docker pull mbeisser1/message-vault:latest
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=personal \
+  -e DEMO_DATA=false \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```

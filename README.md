@@ -26,7 +26,7 @@ Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/). Git
 ```bash
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e VAULT_MODE=demo \
+  -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
