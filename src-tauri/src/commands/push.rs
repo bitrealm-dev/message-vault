@@ -56,20 +56,18 @@ pub async fn push(
             import_id,
         };
 
-        let mut current_upload: Option<(usize, usize)> = None;
         let mut progress = |event: ProgressEvent| match event {
             ProgressEvent::Log(line) => {
                 let _ = app_handle.emit("extract:log", line);
             }
             ProgressEvent::Auth { .. } => {}
             ProgressEvent::FileStart { index, total, file } => {
-                current_upload = Some((index, total));
                 let _ = app_handle.emit("extract:log", format!("Starting: {file}"));
                 let _ = app_handle.emit(
                     "extract:progress",
                     ExtractProgressEvent {
                         step: "upload".into(),
-                        done: index.saturating_sub(1),
+                        done: index,
                         total,
                         status: None,
                     },
@@ -77,18 +75,18 @@ pub async fn push(
             }
             ProgressEvent::FileDone { file, status } => {
                 let _ = app_handle.emit("extract:log", format!("Done: {file} ({status})"));
-                let (done, total) = current_upload
-                    .take()
-                    .unwrap_or((0, 0));
-                let _ = app_handle.emit(
-                    "extract:progress",
-                    ExtractProgressEvent {
-                        step: "upload".into(),
-                        done,
-                        total,
-                        status: Some(status),
-                    },
-                );
+                if status.as_str() != "ok" {
+                    let kind = if status.as_str() == "skipped" { "skip" } else { "error" };
+                    let _ = app_handle.emit(
+                        "extract:issue",
+                        serde_json::json!({
+                            "kind": kind,
+                            "step": "upload",
+                            "item": file,
+                            "reason": status,
+                        }),
+                    );
+                }
             }
             ProgressEvent::Finished(_) => {}
         };
