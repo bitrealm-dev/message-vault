@@ -67,7 +67,7 @@ pub async fn push(
                     "extract:progress",
                     ExtractProgressEvent {
                         step: "upload".into(),
-                        done: index,
+                        done: index.saturating_sub(1),
                         total,
                         status: None,
                     },

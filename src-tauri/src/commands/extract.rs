@@ -332,6 +332,10 @@ fn extract_progress_from_log(
 }
 
 fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
+    if !(line.contains('…') || line.contains("messages") || line.contains("wrote")) {
+        return None;
+    }
+
     let (left, right) = line.split_once('/')?;
     let done = trailing_usize(left)?;
     let total = leading_usize(right)?;
@@ -366,7 +370,7 @@ mod tests {
     fn extract_progress_parser_tracks_parse_and_convert() {
         let stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
 
-        let parse = extract_progress_from_log("  …500/12345", &stage).unwrap();
+        let parse = extract_progress_from_log("  …500/12345 messages", &stage).unwrap();
         assert_eq!(parse.step, "parse");
         assert_eq!(parse.done, 500);
         assert_eq!(parse.total, 12345);
@@ -378,7 +382,10 @@ mod tests {
         assert_eq!(banner.total, 0);
         assert_eq!(banner.status.as_deref(), Some("included_in_extract"));
 
-        let convert = extract_progress_from_log("  wrote 2/3 conversations", &stage).unwrap();
+        let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
+        assert!(ignored.is_none());
+
+        let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
         assert_eq!(convert.step, "convert");
         assert_eq!(convert.done, 2);
         assert_eq!(convert.total, 3);
