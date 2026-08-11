@@ -75,11 +75,29 @@ CREATE TABLE IF NOT EXISTS vault_imports (
     finished_at TEXT,
     message_count INTEGER NOT NULL DEFAULT 0,
     attachment_count INTEGER NOT NULL DEFAULT 0,
-    bytes_uploaded INTEGER NOT NULL DEFAULT 0
+    bytes_uploaded INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    parse_ms INTEGER,
+    convert_ms INTEGER,
+    upload_ms INTEGER,
+    summary_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_vault_imports_account_started
     ON vault_imports(account_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS vault_import_issues (
+    id INTEGER PRIMARY KEY,
+    import_id INTEGER NOT NULL REFERENCES vault_imports(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    step TEXT NOT NULL,
+    item TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_vault_import_issues_import
+    ON vault_import_issues(import_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ix_accounts_hanko_user_id
     ON accounts(hanko_user_id)

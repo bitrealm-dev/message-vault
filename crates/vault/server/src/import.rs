@@ -249,6 +249,7 @@ pub fn import_export(
                     message_count: Some(stats.messages as i64),
                     attachment_count: Some(stats.attachments as i64),
                     bytes_uploaded: None,
+                    ..Default::default()
                 },
             ) {
                 eprintln!("warning: complete_import({import_id}) failed: {e}");
@@ -264,6 +265,7 @@ pub fn import_export(
                     message_count: None,
                     attachment_count: None,
                     bytes_uploaded: None,
+                    ..Default::default()
                 },
             ) {
                 eprintln!("warning: complete_import({import_id}) failed: {e}");
@@ -2127,6 +2129,7 @@ mod tests {
                 message_count: Some(stats.messages as i64),
                 attachment_count: Some(0),
                 bytes_uploaded: Some(0),
+                ..Default::default()
             },
         )
         .unwrap();

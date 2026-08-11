@@ -273,6 +273,8 @@ pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     migrate_session_and_api_token_tables(conn)?;
     conn.execute_batch(ACCOUNTS_DDL)?;
+    ensure_vault_imports_timing_columns(conn)?;
+    ensure_vault_import_issues_table(conn)?;
     ensure_named_api_token_scopes_column(conn)?;
     ensure_named_api_token_hint_column(conn)?;
     ensure_named_api_token_last_accessed_column(conn)?;
@@ -291,10 +293,50 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         "account_app_passwords" => {
             "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = ?1"
         }
+        "vault_imports" => "SELECT COUNT(*) > 0 FROM pragma_table_info('vault_imports') WHERE name = ?1",
         other => bail!("column_exists: unsupported table {other}"),
     };
     let exists: bool = conn.query_row(sql, params![column], |row| row.get(0))?;
     Ok(exists)
+}
+
+fn ensure_vault_imports_timing_columns(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "vault_imports")? {
+        return Ok(());
+    }
+
+    for (column, ddl) in [
+        ("duration_ms", "ALTER TABLE vault_imports ADD COLUMN duration_ms INTEGER"),
+        ("parse_ms", "ALTER TABLE vault_imports ADD COLUMN parse_ms INTEGER"),
+        ("convert_ms", "ALTER TABLE vault_imports ADD COLUMN convert_ms INTEGER"),
+        ("upload_ms", "ALTER TABLE vault_imports ADD COLUMN upload_ms INTEGER"),
+        ("summary_json", "ALTER TABLE vault_imports ADD COLUMN summary_json TEXT"),
+    ] {
+        if !column_exists(conn, "vault_imports", column)? {
+            conn.execute_batch(ddl)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_vault_import_issues_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS vault_import_issues (
+            id INTEGER PRIMARY KEY,
+            import_id INTEGER NOT NULL REFERENCES vault_imports(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            step TEXT NOT NULL,
+            item TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_vault_import_issues_import
+            ON vault_import_issues(import_id);
+        "#,
+    )?;
+    Ok(())
 }
 
 /// Move legacy session `account_api_tokens` → `account_session_tokens`, then

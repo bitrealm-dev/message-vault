@@ -919,6 +919,7 @@ async fn imports_complete_handler(
         message_count: body.message_count,
         attachment_count: body.attachment_count,
         bytes_uploaded: body.bytes_uploaded,
+        ..Default::default()
     };
     let row = tokio::task::spawn_blocking(move || {
         let conn = db
@@ -1734,12 +1735,14 @@ async fn run_import_path(
                         message_count: Some(stats.messages as i64),
                         attachment_count: Some(stats.attachments as i64),
                         bytes_uploaded: None,
+                        ..Default::default()
                     },
                     Err(_) => crate::db::vault_imports::CompleteImportArgs {
                         ok: false,
                         message_count: None,
                         attachment_count: None,
                         bytes_uploaded: None,
+                        ..Default::default()
                     },
                 };
                 if let Err(e) = crate::db::vault_imports::complete_import(

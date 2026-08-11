@@ -151,6 +151,7 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
                     message_count: Some(stats.messages as i64),
                     attachment_count: Some(stats.attachments as i64),
                     bytes_uploaded: None,
+                    ..Default::default()
                 },
             ) {
                 eprintln!("warning: complete_import({import_id}) failed: {e}");
@@ -167,6 +168,7 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
                     message_count: None,
                     attachment_count: None,
                     bytes_uploaded: None,
+                    ..Default::default()
                 },
             ) {
                 eprintln!("warning: complete_import({import_id}) failed: {e}");
