@@ -290,6 +290,7 @@ export default function ImportScreen() {
         ),
       );
 
+      activeStepRef.current = "upload";
       const uploadStartedAt = performance.now();
       const pushSummary = await awaitTauriJob(
         () =>
