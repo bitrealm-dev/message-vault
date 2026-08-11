@@ -6,7 +6,7 @@ cd /app
 
 CONFIG_DOCKER="config/config.docker.toml"
 CONFIG="config/config.toml"
-VAULT_MODE="${VAULT_MODE:-demo}"
+DEMO_DATA="${DEMO_DATA:-true}"
 
 export VAULT_DB="${VAULT_DB:-/app/data/vault.db}"
 export VAULT_DATA_DIR="${VAULT_DATA_DIR:-/app/data}"
@@ -16,32 +16,32 @@ ensure_docker_config() {
   cp "${CONFIG_DOCKER}" "${CONFIG}"
 }
 
+demo_data_requested() {
+  case "$(printf '%s' "${DEMO_DATA}" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 seed_if_needed() {
   if [[ -f data/vault.db ]]; then
-    echo "Vault DB present; skipping seed (VAULT_MODE=${VAULT_MODE})."
+    echo "Vault DB present; skipping seed (DEMO_DATA=${DEMO_DATA})."
     ensure_docker_config
     return
   fi
 
   ensure_docker_config
 
-  case "${VAULT_MODE}" in
-    demo)
-      echo "Seeding demo vault…"
-      message-vault-server reset-demo --config "${CONFIG}"
-      ensure_docker_config
-      echo "Converting demo media…"
-      message-vault-server process-assets --config "${CONFIG}" \
-        || echo "warning: process-assets failed; UI still works"
-      ;;
-    personal)
-      echo "Personal mode: empty data/ (create an account in the web UI)."
-      ;;
-    *)
-      echo "error: VAULT_MODE must be 'demo' or 'personal' (got '${VAULT_MODE}')" >&2
-      exit 1
-      ;;
-  esac
+  if demo_data_requested; then
+    echo "Seeding demo data (DEMO_DATA=${DEMO_DATA})…"
+    message-vault-server reset-demo --config "${CONFIG}"
+    ensure_docker_config
+    echo "Converting demo media…"
+    message-vault-server process-assets --config "${CONFIG}" \
+      || echo "warning: process-assets failed; UI still works"
+  else
+    echo "DEMO_DATA=${DEMO_DATA}: empty data/ (create an account in the web UI)."
+  fi
 }
 
 seed_if_needed
