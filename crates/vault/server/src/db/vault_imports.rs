@@ -40,6 +40,35 @@ pub struct CompleteImportArgs {
     pub issues: Vec<ImportIssueInput>,
 }
 
+struct ImportTransaction<'conn> {
+    conn: &'conn Connection,
+    committed: bool,
+}
+
+impl<'conn> ImportTransaction<'conn> {
+    fn begin(conn: &'conn Connection) -> Result<Self> {
+        conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
+        Ok(Self {
+            conn,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) -> Result<()> {
+        self.conn.execute_batch("COMMIT;")?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for ImportTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self.conn.execute_batch("ROLLBACK;");
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImportIssueInput {
     pub kind: String,
@@ -145,6 +174,10 @@ pub fn complete_import(
     let finished_at = Utc::now().to_rfc3339();
     let status = if args.ok { "completed" } else { "failed" };
 
+    for issue in &args.issues {
+        validate_issue_kind(&issue.kind)?;
+    }
+
     let message_count = if let Some(n) = args.message_count {
         n
     } else {
@@ -169,55 +202,46 @@ pub fn complete_import(
     };
     let bytes_uploaded = args.bytes_uploaded.unwrap_or(existing.bytes_uploaded);
 
-    conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
-    let result: Result<()> = (|| {
-        conn.execute(
-            r#"
-            UPDATE vault_imports
-            SET status = ?1,
-                finished_at = ?2,
-                message_count = ?3,
-                attachment_count = ?4,
-                bytes_uploaded = ?5,
-                duration_ms = ?6,
-                parse_ms = ?7,
-                convert_ms = ?8,
-                upload_ms = ?9,
-                summary_json = ?10
-            WHERE id = ?11 AND account_id = ?12
-            "#,
-            params![
-                status,
-                finished_at,
-                message_count,
-                attachment_count,
-                bytes_uploaded,
-                args.duration_ms,
-                args.parse_ms,
-                args.convert_ms,
-                args.upload_ms,
-                args.summary_json.as_deref(),
-                import_id,
-                account_id
-            ],
-        )?;
-        insert_issues(conn, import_id, &args.issues)?;
-        Ok(())
-    })();
-
-    match result {
-        Ok(()) => conn.execute_batch("COMMIT;")?,
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK;");
-            return Err(err);
-        }
-    }
+    let tx = ImportTransaction::begin(conn)?;
+    conn.execute(
+        r#"
+        UPDATE vault_imports
+        SET status = ?1,
+            finished_at = ?2,
+            message_count = ?3,
+            attachment_count = ?4,
+            bytes_uploaded = ?5,
+            duration_ms = ?6,
+            parse_ms = ?7,
+            convert_ms = ?8,
+            upload_ms = ?9,
+            summary_json = ?10
+        WHERE id = ?11 AND account_id = ?12
+        "#,
+        params![
+            status,
+            finished_at,
+            message_count,
+            attachment_count,
+            bytes_uploaded,
+            args.duration_ms,
+            args.parse_ms,
+            args.convert_ms,
+            args.upload_ms,
+            args.summary_json.as_deref(),
+            import_id,
+            account_id
+        ],
+    )?;
+    insert_issues(conn, import_id, &args.issues)?;
+    tx.commit()?;
 
     get_owned_import(conn, account_id, import_id)
 }
 
 fn insert_issues(conn: &Connection, import_id: i64, issues: &[ImportIssueInput]) -> Result<()> {
     for issue in issues {
+        validate_issue_kind(&issue.kind)?;
         conn.execute(
             r#"
             INSERT INTO vault_import_issues (
@@ -235,6 +259,13 @@ fn insert_issues(conn: &Connection, import_id: i64, issues: &[ImportIssueInput])
         )?;
     }
     Ok(())
+}
+
+fn validate_issue_kind(kind: &str) -> Result<()> {
+    match kind {
+        "error" | "skip" => Ok(()),
+        other => bail!("invalid import issue kind '{other}'; expected 'error' or 'skip'"),
+    }
 }
 
 /// Load one import row and its issue list.
@@ -494,6 +525,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!(issue_count, 1);
+    }
+
+    #[test]
+    fn complete_import_rejects_invalid_issue_kind() {
+        let conn = setup_accounts_only();
+        let import_id =
+            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+
+        let err = complete_import(
+            &conn,
+            ACCOUNT_ID,
+            import_id,
+            &CompleteImportArgs {
+                ok: false,
+                message_count: None,
+                attachment_count: None,
+                bytes_uploaded: None,
+                duration_ms: None,
+                parse_ms: None,
+                convert_ms: None,
+                upload_ms: None,
+                summary_json: None,
+                issues: vec![ImportIssueInput {
+                    kind: "warning".into(),
+                    step: "upload".into(),
+                    item: "archive.zip".into(),
+                    reason: "not allowed".into(),
+                }],
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("invalid import issue kind"));
+
+        let issue_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM vault_import_issues WHERE import_id = ?1",
+                params![import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(issue_count, 0);
+
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM vault_imports WHERE id = ?1",
+                params![import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
     }
 
     #[test]
