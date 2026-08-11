@@ -649,6 +649,20 @@ struct CompleteImportIssueBody {
     reason: String,
 }
 
+fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result<(), ApiError> {
+    for issue in issues {
+        match issue.kind.as_str() {
+            "error" | "skip" => {}
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "invalid import issue kind '{other}'; expected 'error' or 'skip'"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct CompleteImportResponse {
     ok: bool,
@@ -869,13 +883,11 @@ async fn imports_get_handler(
     })
     .await
     .map_err(|e| ApiError::Internal(format!("import detail task: {e}")))?
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::NotFound(msg)
-        } else {
-            ApiError::Internal(msg)
+    .map_err(|e| match e {
+        crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
+            ApiError::NotFound(format!("import {import_id} not found for this account"))
         }
+        crate::db::vault_imports::ImportLookupError::Db(err) => ApiError::Internal(err.to_string()),
     })?;
 
     Ok(Json(import_detail_response(detail)))
@@ -963,6 +975,7 @@ async fn imports_complete_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
+    validate_complete_import_issues(&body.issues)?;
     let db = Arc::clone(&state.db);
     let summary_json = match body.summary {
         Some(summary) => Some(serde_json::to_string(&summary).map_err(|e| {
@@ -1000,11 +1013,12 @@ async fn imports_complete_handler(
     .await
     .map_err(|e| ApiError::Internal(format!("complete import task failed: {e}")))?
     .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::NotFound(msg)
+        if let Some(crate::db::vault_imports::ImportLookupError::NotFound { import_id }) =
+            e.downcast_ref::<crate::db::vault_imports::ImportLookupError>()
+        {
+            ApiError::NotFound(format!("import {import_id} not found for this account"))
         } else {
-            ApiError::Internal(msg)
+            ApiError::Internal(e.to_string())
         }
     })?;
 
@@ -1897,6 +1911,7 @@ async fn run_import_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
 
@@ -2016,5 +2031,75 @@ mod tests {
         assert_eq!(value["issues"][0]["step"], "convert");
         assert_eq!(value["issues"][1]["kind"], "error");
         assert_eq!(value["issues"][1]["step"], "upload");
+    }
+
+    #[tokio::test]
+    async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
+        let (_tmp, state, token, import_id) = test_state();
+        let body = CompleteImportBody {
+            ok: true,
+            message_count: Some(10),
+            attachment_count: Some(2),
+            bytes_uploaded: Some(100),
+            duration_ms: Some(48_000),
+            parse_ms: Some(18_000),
+            convert_ms: Some(22_000),
+            upload_ms: Some(8_000),
+            summary: None,
+            issues: vec![CompleteImportIssueBody {
+                kind: "warning".into(),
+                step: "upload".into(),
+                item: "archive.zip".into(),
+                reason: "not allowed".into(),
+            }],
+        };
+
+        let err = imports_complete_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(body),
+        )
+        .await
+        .unwrap_err();
+
+        match err {
+            ApiError::BadRequest(msg) => {
+                assert!(msg.contains("invalid import issue kind"));
+            }
+            other => panic!("expected bad request, got {other:?}"),
+        }
+
+        let status: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM vault_imports WHERE id = ?1",
+                params![import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+    }
+
+    #[tokio::test]
+    async fn imports_get_handler_returns_not_found_for_missing_import() {
+        let (_tmp, state, token, import_id) = test_state();
+        let err = imports_get_handler(
+            State(state),
+            auth_headers(&token),
+            AxumPath(import_id + 1),
+        )
+        .await
+        .unwrap_err();
+
+        match err {
+            ApiError::NotFound(msg) => {
+                assert!(msg.contains("import"));
+                assert!(msg.contains("not found"));
+            }
+            other => panic!("expected not found, got {other:?}"),
+        }
     }
 }

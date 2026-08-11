@@ -1,5 +1,8 @@
 //! Per-account vault import session records (one row per vault-push / CLI import run).
 
+use std::error::Error;
+use std::fmt;
+
 use anyhow::{Result, bail};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -94,6 +97,44 @@ pub struct ImportDetail {
     pub issues: Vec<ImportIssueRow>,
 }
 
+#[derive(Debug)]
+pub enum ImportLookupError {
+    NotFound { import_id: i64 },
+    Db(anyhow::Error),
+}
+
+impl fmt::Display for ImportLookupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { import_id } => {
+                write!(f, "import {import_id} not found for this account")
+            }
+            Self::Db(err) => err.fmt(f),
+        }
+    }
+}
+
+impl Error for ImportLookupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::NotFound { .. } => None,
+            Self::Db(err) => err.source(),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for ImportLookupError {
+    fn from(value: rusqlite::Error) -> Self {
+        Self::Db(value.into())
+    }
+}
+
+impl From<anyhow::Error> for ImportLookupError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Db(value)
+    }
+}
+
 /// Start a running import session for `account_id`.
 pub fn start_import(
     conn: &Connection,
@@ -115,7 +156,11 @@ pub fn start_import(
     Ok(conn.last_insert_rowid())
 }
 
-fn load_import_row(conn: &Connection, account_id: &str, import_id: i64) -> Result<VaultImportRow> {
+fn load_import_row(
+    conn: &Connection,
+    account_id: &str,
+    import_id: i64,
+) -> std::result::Result<VaultImportRow, ImportLookupError> {
     match conn
         .query_row(
             r#"
@@ -150,7 +195,7 @@ fn load_import_row(conn: &Connection, account_id: &str, import_id: i64) -> Resul
         .optional()?
     {
         Some(row) => Ok(row),
-        None => bail!("import {import_id} not found for this account"),
+        None => Err(ImportLookupError::NotFound { import_id }),
     }
 }
 
@@ -159,7 +204,7 @@ pub fn get_owned_import(
     conn: &Connection,
     account_id: &str,
     import_id: i64,
-) -> Result<VaultImportRow> {
+) -> std::result::Result<VaultImportRow, ImportLookupError> {
     load_import_row(conn, account_id, import_id)
 }
 
@@ -236,7 +281,7 @@ pub fn complete_import(
     insert_issues(conn, import_id, &args.issues)?;
     tx.commit()?;
 
-    get_owned_import(conn, account_id, import_id)
+    Ok(get_owned_import(conn, account_id, import_id)?)
 }
 
 fn insert_issues(conn: &Connection, import_id: i64, issues: &[ImportIssueInput]) -> Result<()> {
@@ -273,7 +318,7 @@ pub fn get_import_detail(
     conn: &Connection,
     account_id: &str,
     import_id: i64,
-) -> Result<ImportDetail> {
+) -> std::result::Result<ImportDetail, ImportLookupError> {
     let row = get_owned_import(conn, account_id, import_id)?;
     let mut stmt = conn.prepare(
         r#"
