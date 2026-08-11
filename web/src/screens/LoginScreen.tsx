@@ -4,12 +4,9 @@ import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
 import TextField from "../components/TextField";
-import PasswordField from "../components/PasswordField";
-import AuthSubmitButton from "../components/AuthSubmitButton";
 import AuthBackButton from "../components/AuthBackButton";
 import Button from "../components/Button";
 import {
-  accentLink,
   authCard,
   authLabel,
   authTitle,
@@ -40,7 +37,6 @@ export default function LoginScreen() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
   const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
@@ -165,18 +161,17 @@ export default function LoginScreen() {
         {authMode === null && (
           <>
             <label className={authLabel}>Server URL</label>
-            <div className="mb-[0.35rem] flex gap-2">
-              <TextField
-                value={serverUrl}
-                onChange={setServerUrl}
-                onKeyDown={(e) => e.key === "Enter" && detectMode()}
-                placeholder={
-                  isTauri()
-                    ? "https://vault.example.com"
-                    : "Leave blank for this origin"
-                }
-                className="flex-1"
-              />
+            <TextField
+              value={serverUrl}
+              onChange={setServerUrl}
+              onKeyDown={(e) => e.key === "Enter" && detectMode()}
+              placeholder={
+                isTauri()
+                  ? "https://vault.example.com"
+                  : "Leave blank for this origin"
+              }
+            />
+            <div className="mt-3 mb-[0.35rem] flex justify-end">
               <Button
                 variant="primary"
                 onClick={detectMode}
@@ -237,31 +232,26 @@ export default function LoginScreen() {
             />
 
             <label className={`${authLabel} mt-3`}>Password</label>
-            <PasswordField
+            <TextField
+              type="password"
               value={password}
               onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
-              showPassword={showPassword}
-              onToggle={() => setShowPassword((v) => !v)}
+              autoComplete="current-password"
             />
 
-            <AuthSubmitButton
-              onClick={handleLocalLogin}
-              disabled={loading}
-            >
-              {loading ? "Signing in…" : "Sign in"}
-            </AuthSubmitButton>
-
-            <>
-              <div className={`${orRowClass} mb-3 mt-4`}>
-                <span className={orLineClass} />
-                <span className={orTextClass}>OR</span>
-                <span className={orLineClass} />
-              </div>
-              <button type="button" onClick={() => navigate("/register")} className={`${accentLink} block w-full text-center`}>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button onClick={() => navigate("/register")}>
                 Create an account
-              </button>
-            </>
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleLocalLogin}
+                disabled={loading}
+              >
+                {loading ? "Signing in…" : "Sign in"}
+              </Button>
+            </div>
 
             <ErrorFooter error={error} />
           </>

@@ -156,8 +156,6 @@ body {
   color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
   margin: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 /* Native form controls (select popups, date pickers) follow data-theme via color-scheme. */
@@ -174,14 +172,21 @@ select option {
   background-color: var(--panel);
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+/*
+  Scrollbars: Chromium/WebKit ignore ::-webkit-scrollbar sizing when
+  scrollbar-width is set to anything other than auto. Keep the standard
+  properties for Firefox only; use 4px webkit rules everywhere else.
+*/
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 4px;
+  height: 4px;
 }
 
 *::-webkit-scrollbar-track {
@@ -190,8 +195,8 @@ select option {
 
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 5px;
-  border: 2px solid var(--scrollbar-track);
+  border-radius: 2px;
+  border: none;
 }
 
 *::-webkit-scrollbar-thumb:hover {

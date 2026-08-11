@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
 import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
 import SavedGroupForm from "./SavedGroupForm";
+import { TrashIcon } from "./icons";
 
 function NavIcon({ children }: { children: ReactNode }) {
   return (
@@ -41,18 +42,6 @@ function ContactsIcon() {
       <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
       <circle cx="12" cy="8" r="2" />
       <path d="M9 14c0-1.1 1.3-2 3-2s3 .9 3 2" />
-    </NavIcon>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <NavIcon>
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
     </NavIcon>
   );
 }
@@ -125,7 +114,7 @@ export default function LeftPanel({
             Contacts
           </button>
           <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
-            <TrashIcon />
+            <TrashIcon size={15} />
             Trash
           </button>
         </div>
@@ -183,9 +172,10 @@ export default function LeftPanel({
                   setGroups(listGroups());
                 }}
                 title="Delete saved group"
-                className="shrink-0 cursor-pointer border-none bg-none px-1 text-[0.75rem] text-muted"
+                aria-label={`Delete saved group ${g.name}`}
+                className="shrink-0 cursor-pointer border-none bg-transparent p-1 text-muted hover:text-danger"
               >
-                ×
+                <TrashIcon size={13} />
               </button>
             </div>
           ))

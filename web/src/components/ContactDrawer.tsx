@@ -7,6 +7,7 @@ import {
   type CachedContactDetail,
 } from "../lib/contactDetailCache";
 import Button from "./Button";
+import { PencilIcon } from "./icons";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
   type ContactPreview,
@@ -20,25 +21,6 @@ type ContactDetail = CachedContactDetail;
 
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
-
-function PencilIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
 
 /**
  * Overlay mode only: dock to the right edge of the list column.
