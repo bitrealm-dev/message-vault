@@ -174,11 +174,11 @@ pub enum AuthMode {
 
 impl AuthMode {
     pub fn from_env() -> Self {
-        match std::env::var("AUTH_MODE")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str()
-        {
+        Self::parse(&std::env::var("VAULT_AUTH").unwrap_or_default())
+    }
+
+    fn parse(raw: &str) -> Self {
+        match raw.to_lowercase().as_str() {
             "hanko" => AuthMode::Hanko,
             _ => AuthMode::Local,
         }
@@ -212,5 +212,19 @@ mod tests {
         assert!(validate_source_id("../x").is_err());
         assert!(validate_source_id("-bad").is_err());
         assert!(validate_source_id("has space").is_err());
+    }
+
+    #[test]
+    fn auth_mode_parse_hanko_case_insensitive() {
+        assert_eq!(AuthMode::parse("hanko"), AuthMode::Hanko);
+        assert_eq!(AuthMode::parse("Hanko"), AuthMode::Hanko);
+        assert_eq!(AuthMode::parse("HANKO"), AuthMode::Hanko);
+    }
+
+    #[test]
+    fn auth_mode_parse_defaults_to_local() {
+        assert_eq!(AuthMode::parse(""), AuthMode::Local);
+        assert_eq!(AuthMode::parse("local"), AuthMode::Local);
+        assert_eq!(AuthMode::parse("anything-else"), AuthMode::Local);
     }
 }

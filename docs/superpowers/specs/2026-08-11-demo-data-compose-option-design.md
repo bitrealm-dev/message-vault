@@ -16,7 +16,7 @@ Operators should not think in terms of “demo mode vs personal mode.” They ru
 
 ### Single vault process
 
-Compose always starts the same service (`message-vault-server serve`). Auth and bind config stay as today (`VAULT_AUTH`, `AUTH_MODE`, etc.). No new server binary flags for this change.
+Compose always starts the same service (`message-vault-server serve`). Auth and bind config stay as today (`VAULT_AUTH`, etc.). No new server binary flags for this change.
 
 ### `DEMO_DATA` env
 
