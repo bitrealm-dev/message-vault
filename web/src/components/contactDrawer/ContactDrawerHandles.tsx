@@ -36,7 +36,7 @@ const thClass = dataCardHeaderCellClass;
 const tdClass = dataCardBodyCellClass;
 const tdCenterClass = tdClass;
 const linkClass =
-  "inline-flex items-center justify-center gap-0.5 border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent underline decoration-accent/70 underline-offset-2 cursor-pointer outline-none hover:decoration-accent focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "border-none bg-transparent p-0 text-[0.813rem] font-semibold leading-snug text-accent underline decoration-accent/80 underline-offset-2 cursor-pointer outline-none hover:decoration-accent hover:opacity-90 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
@@ -47,25 +47,6 @@ const serviceSelectTriggerClass =
 const serviceSelectValueClass = "!text-[0.813rem] !font-normal !leading-none";
 const handleEditInputClass =
   "box-border h-7 w-full min-w-0 max-w-full rounded border border-border bg-elevated px-1.5 py-0 text-[0.813rem] font-normal leading-none text-text outline-none focus:border-accent";
-
-function ThreadsOpenIcon() {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0 opacity-90"
-    >
-      <path d="M3.5 2.5 6.5 5 3.5 7.5" />
-    </svg>
-  );
-}
 
 function serviceSelectItemClassName(state: {
   isFocused: boolean;
@@ -199,7 +180,6 @@ function CountCell({
         aria-label={`Open ${text} threads`}
       >
         {text}
-        <ThreadsOpenIcon />
       </button>
     );
   }
@@ -446,27 +426,27 @@ export function ContactDrawerHandles({
         onSortChange={setSortDescriptor}
       >
         <TableHeader className={dataCardHeaderRowClass}>
-          <SortableColumn id="service" isRowHeader widthClass="w-[15%]">
+          <SortableColumn id="service" isRowHeader widthClass="w-[13%]">
             Service
           </SortableColumn>
-          <SortableColumn id="handle" widthClass="w-[15%]">
+          <SortableColumn id="handle" widthClass="w-[13%]">
             Identity
           </SortableColumn>
-          <SortableColumn id="start_date" widthClass="w-[11%]">
+          <SortableColumn id="start_date" widthClass="w-[10%]">
             First Seen
           </SortableColumn>
-          <SortableColumn id="end_date" widthClass="w-[11%]">
+          <SortableColumn id="end_date" widthClass="w-[10%]">
             Last Seen
           </SortableColumn>
           <SortableColumn id="conversations" widthClass="w-[12%]">
             Threads
           </SortableColumn>
-          <SortableColumn id="direct_messages" widthClass="w-[8%]">
+          <SortableColumn id="direct_messages" widthClass="w-[9%]">
             Direct
             <br />
             Messages
           </SortableColumn>
-          <SortableColumn id="group_messages" widthClass="w-[8%]">
+          <SortableColumn id="group_messages" widthClass="w-[9%]">
             Group
             <br />
             Messages
