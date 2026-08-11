@@ -65,6 +65,8 @@ enum ConversationTypeFilter {
 struct ConversationListQuery {
     trash_only: bool,
     handle: Option<String>,
+    /// Platform identity on `handles.service` (`phone` | `whatsapp`). Applied only with `handle:`.
+    service: Option<String>,
     contact_id: Option<i64>,
     type_filter: Option<ConversationTypeFilter>,
     /// Filter by number of rows in `participants` (`participants:=5`, `:>3`, `:<10`).
@@ -106,6 +108,7 @@ fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
 /// Parse space-separated tokens from `q`.
 ///
 /// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
+/// `service:phone` / `service:whatsapp` (only combined with `handle:`),
 /// `contact:<id>`, `participants:=N` / `:>N` / `:<N`. Remaining tokens become
 /// a free-text filter.
 fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
@@ -127,6 +130,11 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
             let rest = rest.trim().trim_matches('"');
             if !rest.is_empty() {
                 out.handle = Some(rest.to_string());
+            }
+        } else if let Some(rest) = lower.strip_prefix("service:") {
+            let rest = rest.trim().trim_matches('"');
+            if rest == "phone" || rest == "whatsapp" {
+                out.service = Some(rest.to_string());
             }
         } else if lower.starts_with("participants:") {
             if let Some((_, value)) = token.split_once(':') {
@@ -160,6 +168,7 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 /// - empty / whitespace: all non-trashed conversations with at least one message
 /// - `is:trash`: only trashed conversations
 /// - `handle:<raw>`: conversations involving that handle (chat or participant)
+/// - `service:phone` / `service:whatsapp`: with `handle:`, restrict to that platform
 /// - `contact:<id>`: conversations involving any handle of that contact
 /// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
@@ -213,16 +222,36 @@ pub fn list_conversations(
     );
 
     if let Some(ref handle) = parsed.handle {
-        where_parts.push(
-            "(hc.raw = ? OR EXISTS (
-                SELECT 1 FROM participants p
-                JOIN handles ph ON ph.id = p.handle_id
-                WHERE p.conversation_id = c.id AND ph.raw = ?
-              ))"
-            .into(),
-        );
-        params.push(handle.clone().into());
-        params.push(handle.clone().into());
+        if let Some(ref service) = parsed.service {
+            where_parts.push(
+                "(
+                    (hc.raw = ? AND lower(hc.service) = lower(?))
+                    OR EXISTS (
+                        SELECT 1 FROM participants p
+                        JOIN handles ph ON ph.id = p.handle_id
+                        WHERE p.conversation_id = c.id
+                          AND ph.raw = ?
+                          AND lower(ph.service) = lower(?)
+                    )
+                  )"
+                .into(),
+            );
+            params.push(handle.clone().into());
+            params.push(service.clone().into());
+            params.push(handle.clone().into());
+            params.push(service.clone().into());
+        } else {
+            where_parts.push(
+                "(hc.raw = ? OR EXISTS (
+                    SELECT 1 FROM participants p
+                    JOIN handles ph ON ph.id = p.handle_id
+                    WHERE p.conversation_id = c.id AND ph.raw = ?
+                  ))"
+                .into(),
+            );
+            params.push(handle.clone().into());
+            params.push(handle.clone().into());
+        }
     }
 
     if let Some(contact_id) = parsed.contact_id {
@@ -700,6 +729,83 @@ mod tests {
     }
 
     #[test]
+    fn list_conversations_filters_by_handle_and_service() {
+        let (conn, account) = setup();
+        // setup() already has phone:+15555550200 as conversation 1.
+        let wa = account_profile::link_account_handle_with_service(
+            &conn,
+            &account,
+            "+15555550200",
+            HandleType::Phone,
+            Some("whatsapp"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (10, ?1, ?2, 'individual', 'wa.jsonl')",
+            params![&account, wa],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+             VALUES (10, ?1, 'Sam WA')",
+            params![wa],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (10, ?1, 'whatsapp', '2024-08-01T12:00:00Z', 0, 0, 'wa hello')",
+            params![&account],
+        )
+        .unwrap();
+
+        let any_platform = list_conversations(
+            &conn,
+            &account,
+            "handle:+15555550200",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(any_platform.total, 2);
+
+        let phone_only = list_conversations(
+            &conn,
+            &account,
+            "handle:+15555550200 service:phone",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(phone_only.total, 1);
+        assert_eq!(phone_only.conversations[0].id, "1");
+
+        let wa_only = list_conversations(
+            &conn,
+            &account,
+            "handle:+15555550200 service:whatsapp",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(wa_only.total, 1);
+        assert_eq!(wa_only.conversations[0].id, "10");
+
+        let lone_service = list_conversations(
+            &conn,
+            &account,
+            "service:whatsapp",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(lone_service.total, all.total);
+    }
+
+    #[test]
     fn list_conversations_paginates() {
         let (conn, account) = setup();
         // Second conversation + message.
@@ -865,10 +971,13 @@ mod tests {
 
     #[test]
     fn parse_conversation_list_query_tokens() {
-        let q = parse_conversation_list_query("contact:42 is:direct handle:+15555550100");
+        let q = parse_conversation_list_query(
+            "contact:42 is:direct handle:+15555550100 service:whatsapp",
+        );
         assert_eq!(q.contact_id, Some(42));
         assert_eq!(q.type_filter, Some(ConversationTypeFilter::Direct));
         assert_eq!(q.handle.as_deref(), Some("+15555550100"));
+        assert_eq!(q.service.as_deref(), Some("whatsapp"));
         assert!(q.text.is_none());
         assert!(!q.trash_only);
 
