@@ -104,6 +104,8 @@ export default function ImportScreen() {
       { label: "Upload to vault", status: "pending" },
     ]);
 
+    let importSessionId: string | null = null;
+    let importCompleted = false;
     try {
       const outputDir = await resolveImportStagingDir(backupPath, source);
       const baseUrl = getBaseUrl();
@@ -149,6 +151,7 @@ export default function ImportScreen() {
         tool: "message-vault-io",
         mode: "append",
       });
+      importSessionId = importSession.id;
 
       const pushSummary = await awaitTauriJob(
         () =>
@@ -167,8 +170,7 @@ export default function ImportScreen() {
         appendLog,
       );
       appendLog(pushSummary);
-
-      await apiClient.post(`/v1/imports/${importSession.id}/complete`, {});
+      importCompleted = true;
 
       setSteps((s) =>
         s.map((step, i) =>
@@ -183,6 +185,17 @@ export default function ImportScreen() {
       setLog((l) => [...l, `Error: ${msg}`]);
       setPhase("progress");
     } finally {
+      if (importSessionId) {
+        try {
+          await apiClient.post(`/v1/imports/${importSessionId}/complete`, {
+            ok: importCompleted,
+          });
+        } catch (completeError) {
+          const msg =
+            completeError instanceof Error ? completeError.message : String(completeError);
+          appendLog(`Warning: could not complete vault import session ${importSessionId}: ${msg}`);
+        }
+      }
       setRunning(false);
     }
   };
