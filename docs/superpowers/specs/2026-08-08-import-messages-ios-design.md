@@ -20,6 +20,7 @@ Slint GUI is out of scope. The offline Extract tab is left on its thin form for 
 6. **Contacts** name mode (main section, after attachments):
    - Fill in missing names from vault contacts (default)
    - Overwrite all import names with vault contacts
+   - Leave unknown names as is
 7. Horizontal divider.
 8. **Message Filtering** (collapsed by default): participant filter, start date, end date (exclusive), obfuscate.
 9. **Import** / **Cancel** while running.
@@ -32,13 +33,14 @@ iOS-specific fields stay in the main section (no Advanced importer block this pa
 
 ## Contact name mode
 
-Enum: `fill_missing` | `overwrite`.
+Enum: `fill_missing` | `overwrite` | `as_is`.
 
 - Passed on push → `POST /v1/import` (query param).
 - Server looks up account contacts by handle when applying participant/sender display names:
   - **fill_missing**: set name only when the import name is empty and a vault contact name exists.
   - **overwrite**: when a vault contact name exists, always use it.
-- No matching contact → leave the import name unchanged.
+  - **as_is**: keep the import display name unchanged (including empty / unknown); never substitute a vault contact name.
+- No matching contact → leave the import name unchanged (all modes).
 
 This is separate from loading a contacts file (`overwrite_contacts`).
 

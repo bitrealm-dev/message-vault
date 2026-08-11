@@ -11,6 +11,7 @@ On the desktop app **Import** screen you can choose how vault contact names appl
 
 - **Fill in missing names using vault contacts** — keep names already on the export; fill blanks from the vault
 - **Overwrite all import names with vault contacts** — prefer vault contact names for matching handles
+- **Leave unknown names as is** — keep backup display names unchanged; do not fill from vault contacts
 
 Some backup types also accept a contacts file (VCF or contacts CSV) when preparing or extracting. See the [prepare your backups](/prepare-your-backups/iphone-ipad/) guides for when a contacts export helps name resolution.
 

@@ -105,7 +105,7 @@ export interface Message {
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
 
 /** How vault contacts apply display names during import push. */
-export type ContactNameMode = "fill_missing" | "overwrite";
+export type ContactNameMode = "fill_missing" | "overwrite" | "as_is";
 
 export interface ExtractConfig {
   source: string;

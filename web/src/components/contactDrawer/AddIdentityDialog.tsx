@@ -118,7 +118,7 @@ export default function AddIdentityDialog({
           autoFocus
           autoComplete="off"
           spellCheck={false}
-          placeholder="Phone number or handle"
+          placeholder="Enter a user id, phone number, or similar"
           aria-invalid={duplicate || undefined}
           aria-describedby={duplicate ? "add-identity-duplicate" : undefined}
           className={inputClass}

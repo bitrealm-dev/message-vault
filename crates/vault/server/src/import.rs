@@ -34,6 +34,8 @@ pub enum ContactNameMode {
     FillMissing,
     /// Prefer the vault contact name whenever one exists for the handle.
     Overwrite,
+    /// Keep the import display name unchanged (including empty / unknown).
+    AsIs,
 }
 
 impl ContactNameMode {
@@ -41,8 +43,9 @@ impl ContactNameMode {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "fill_missing" | "fill-missing" => Ok(Self::FillMissing),
             "overwrite" => Ok(Self::Overwrite),
+            "as_is" | "as-is" | "leave" | "keep_import" | "keep-import" => Ok(Self::AsIs),
             other => bail!(
-                "invalid contact_name_mode '{other}' (expected fill_missing or overwrite)"
+                "invalid contact_name_mode '{other}' (expected fill_missing, overwrite, or as_is)"
             ),
         }
     }
@@ -52,6 +55,7 @@ impl ContactNameMode {
         match self {
             Self::FillMissing => "fill_missing",
             Self::Overwrite => "overwrite",
+            Self::AsIs => "as_is",
         }
     }
 }
@@ -793,6 +797,7 @@ pub fn apply_contact_name_mode(
             }
         }
         ContactNameMode::Overwrite => vault_name.or(import_name),
+        ContactNameMode::AsIs => import_name,
     }
 }
 
@@ -2347,10 +2352,13 @@ mod tests {
     fn participant_name_alias(db: &Path) -> Option<String> {
         let conn = Connection::open(db).unwrap();
         conn.query_row("SELECT name_alias FROM participants LIMIT 1", [], |r| {
-            r.get(0)
+            r.get::<_, Option<String>>(0)
         })
         .optional()
         .unwrap()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
     }
 
     fn contact_handle_name_alias(db: &Path) -> Option<String> {
@@ -2391,6 +2399,18 @@ mod tests {
         );
         assert_eq!(
             apply_contact_name_mode(ContactNameMode::Overwrite, Some("Import".into()), None),
+            Some("Import".into())
+        );
+        assert_eq!(
+            apply_contact_name_mode(ContactNameMode::AsIs, None, Some("Vault".into())),
+            None
+        );
+        assert_eq!(
+            apply_contact_name_mode(
+                ContactNameMode::AsIs,
+                Some("Import".into()),
+                Some("Vault".into())
+            ),
             Some("Import".into())
         );
     }
@@ -2453,6 +2473,36 @@ mod tests {
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
+    }
+
+    #[test]
+    fn contact_name_mode_as_is_ignores_vault() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        seed_contact(&db, "+15555550123", "Vault Alice");
+        let path = write_jsonl(
+            tmp.path(),
+            "as-is.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-asis","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let mut opts = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        opts.contact_name_mode = ContactNameMode::AsIs;
+        import_jsonl_files(&[path], &opts).unwrap();
+        assert_eq!(participant_name_alias(&db), None);
     }
 
     #[test]

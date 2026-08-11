@@ -412,9 +412,10 @@ export default function ImportScreen() {
 
                 <StackedField label="Encryption password (optional)">
                   <PasswordField
+                    aria-label="Encryption password"
                     value={backupPassword}
                     onChange={setBackupPassword}
-                    autoComplete="off"
+                    autoComplete="new-password"
                     showPassword={showBackupPassword}
                     onToggle={() => setShowBackupPassword((v) => !v)}
                   />
@@ -490,6 +491,9 @@ export default function ImportScreen() {
                     </ListBoxItem>
                     <ListBoxItem id="overwrite" className={selectItemClassName}>
                       Overwrite all import names with vault contacts
+                    </ListBoxItem>
+                    <ListBoxItem id="as_is" className={selectItemClassName}>
+                      Leave unknown names as is
                     </ListBoxItem>
                   </Select>
                 </StackedField>

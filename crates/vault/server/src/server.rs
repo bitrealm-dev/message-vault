@@ -129,7 +129,7 @@ struct ImportQuery {
     /// Optional vault import session id from POST /v1/imports.
     #[serde(default)]
     import_id: Option<i64>,
-    /// How vault contacts supply participant names (`fill_missing` or `overwrite`).
+    /// How vault contacts supply participant names (`fill_missing`, `overwrite`, or `as_is`).
     #[serde(default = "default_contact_name_mode")]
     contact_name_mode: String,
 }

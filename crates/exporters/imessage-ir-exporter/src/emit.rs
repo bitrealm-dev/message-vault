@@ -68,7 +68,9 @@ use crate::{
 const EXPORT_SOURCE: &str = "imessage";
 const EXPORT_TOOL: &str = "imessage-ir-exporter";
 const DEFAULT_MESSAGE_PROGRESS_EVERY: u64 = 500;
-const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 10_000;
+/// JSONL still batches work, but report often enough that long attachment
+/// decrypts between ticks do not look frozen on large backups.
+const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 1_000;
 const CONVERSATION_PROGRESS_EVERY: u64 = 100;
 
 const fn message_progress_every(format: OutputFormat) -> u64 {
