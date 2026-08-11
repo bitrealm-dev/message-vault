@@ -331,8 +331,33 @@ fn extract_progress_from_log(
     })
 }
 
+fn has_bracketed_step_ratio(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        rest = &rest[open + 1..];
+        let Some((left, after_left)) = rest.split_once('/') else {
+            continue;
+        };
+        if !left.chars().all(|c| c.is_ascii_digit()) || left.is_empty() {
+            continue;
+        }
+        let Some((right, after_right)) = after_left.split_once(']') else {
+            continue;
+        };
+        if right.chars().all(|c| c.is_ascii_digit()) && !right.is_empty() {
+            return true;
+        }
+        rest = after_right;
+    }
+    false
+}
+
 fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
-    if !(line.contains('…') || line.contains("messages") || line.contains("wrote")) {
+    if has_bracketed_step_ratio(line) {
+        return None;
+    }
+
+    if !(line.contains('…') || line.contains("wrote")) {
         return None;
     }
 
@@ -384,6 +409,10 @@ mod tests {
 
         let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
         assert!(ignored.is_none());
+
+        let backup_step =
+            extract_progress_from_log("[2/5] Resolving messages database...", &stage);
+        assert!(backup_step.is_none());
 
         let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
         assert_eq!(convert.step, "convert");
