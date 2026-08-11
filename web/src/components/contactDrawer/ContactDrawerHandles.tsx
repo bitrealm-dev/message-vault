@@ -41,6 +41,11 @@ const mutedClass = "text-[0.813rem] leading-snug text-muted";
 const iconBtnClass =
   "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-muted hover:!border-border hover:!bg-elevated hover:!text-text data-hovered:!border-border data-hovered:!bg-elevated data-hovered:!text-text data-pressed:!border-border data-pressed:!bg-hover";
 const iconBtnDangerClass = `${iconBtnClass} hover:!text-danger data-hovered:!text-danger data-pressed:!text-danger`;
+const iconBtnOkClass =
+  "!inline-flex !aspect-square !h-7 !w-7 !min-h-7 !min-w-7 !shrink-0 !items-center !justify-center !rounded-sm !border-transparent !bg-transparent !p-0 !font-normal !leading-none !text-ok hover:!border-ok-soft-border hover:!bg-ok-soft-bg hover:!text-ok data-hovered:!border-ok-soft-border data-hovered:!bg-ok-soft-bg data-hovered:!text-ok data-pressed:!border-ok-soft-border data-pressed:!bg-ok-soft-bg data-pressed:!text-ok";
+/** Soft accent fill + 3px left accent bar while the row is in edit mode. */
+const editingRowClass =
+  "bg-[color-mix(in_srgb,var(--accent)_12%,var(--panel))] shadow-[inset_3px_0_0_0_var(--accent)]";
 /** Keep edit controls inside the cell (no min-width that spills into Handle). */
 const serviceSelectTriggerClass =
   "!box-border !h-7 !min-h-7 !w-full !rounded !px-1.5 !py-0 !text-[0.813rem] !font-normal !leading-none !bg-elevated";
@@ -495,7 +500,10 @@ export function ContactDrawerHandles({
               const editing = editingHandle === h.handle;
               const convos = conversationCount(h);
               return (
-                <Row id={h.id} className="outline-none">
+                <Row
+                  id={h.id}
+                  className={`group/handle-row outline-none${editing ? ` ${editingRowClass}` : ""}`}
+                >
                   <Cell className={`${tdClass} overflow-hidden`}>
                     {editing ? (
                       <Select
@@ -574,7 +582,7 @@ export function ContactDrawerHandles({
                           title="Save"
                           aria-label="Save"
                           onClick={() => void saveEdit()}
-                          className={iconBtnClass}
+                          className={iconBtnOkClass}
                         >
                           ✓
                         </Button>
@@ -583,7 +591,7 @@ export function ContactDrawerHandles({
                           title="Cancel"
                           aria-label="Cancel"
                           onClick={cancelEdit}
-                          className={iconBtnClass}
+                          className={iconBtnDangerClass}
                         >
                           ×
                         </Button>
