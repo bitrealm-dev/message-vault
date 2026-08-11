@@ -73,6 +73,7 @@ export function emptyHandleRow(handle: string): CachedContactHandle {
   return {
     handle,
     service: null,
+    name_alias: null,
     start_date: null,
     end_date: null,
     individual_conversations: 0,

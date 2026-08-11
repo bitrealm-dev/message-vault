@@ -27,7 +27,7 @@ pub fn build_document(
         .iter()
         .map(|p| IrParticipant {
             handle: p.handle.clone(),
-            display_name: p.name_hint.clone(),
+            display_name: p.name_alias.clone(),
             handle_type: None,
         })
         .collect::<Vec<_>>();
@@ -271,7 +271,7 @@ mod tests {
                 group_title: None,
                 participants: vec![ExportParticipant {
                     handle: "+1".into(),
-                    name_hint: Some("Sam".into()),
+                    name_alias: Some("Sam".into()),
                 }],
             },
             attachments: vec![],

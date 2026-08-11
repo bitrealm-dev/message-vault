@@ -388,7 +388,7 @@ function buildSearchFilters(
              SELECT 1 FROM participants p
              JOIN handles p_h ON p_h.id = p.handle_id
              WHERE p.conversation_id = c.id
-               AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+               AND (p_h.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
            )))`,
         );
         params.push(like, like, like);
@@ -413,7 +413,7 @@ function buildSearchFilters(
                SELECT 1 FROM participants p
                JOIN handles p_h ON p_h.id = p.handle_id
                WHERE p.conversation_id = c.id
-                 AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                 AND (p_h.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
              )
            ))`,
         );
@@ -435,7 +435,7 @@ function buildSearchFilters(
             SELECT 1 FROM participants p
             JOIN handles p_h ON p_h.id = p.handle_id
             WHERE p.conversation_id = c.id
-              AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+              AND (p_h.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
           ))`,
       );
       params.push(like, like, like);
@@ -536,7 +536,7 @@ function buildSearchFilters(
           SELECT 1 FROM participants p
           JOIN handles p_h ON p_h.id = p.handle_id
           WHERE p.conversation_id = c.id
-            AND (p_h.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+            AND (p_h.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
         ))`,
     );
     params.push(like, like, like, like);
@@ -797,7 +797,7 @@ function searchVaultMessages(
   const messageHits = msgRows.map((row) => {
     const participants = db
       .prepare(
-        `SELECT h.raw AS handle, p.name_hint
+        `SELECT h.raw AS handle, p.name_alias
          FROM participants p
          JOIN handles h ON h.id = p.handle_id
          WHERE p.conversation_id = ?
@@ -805,9 +805,9 @@ function searchVaultMessages(
       )
       .all(row.conversation_id) as Array<{
       handle: string;
-      name_hint: string | null;
+      name_alias: string | null;
     }>;
-    const names = participants.map((p) => p.name_hint?.trim() || p.handle);
+    const names = participants.map((p) => p.name_alias?.trim() || p.handle);
     const attachments = listAttachmentSummaries(db, row.message_id);
     const { before, after } =
       parsed.context > 0
@@ -1034,7 +1034,7 @@ function buildHits(
   return convRows.map((row) => {
     const participants = db
       .prepare(
-        `SELECT h.raw AS handle, p.name_hint
+        `SELECT h.raw AS handle, p.name_alias
          FROM participants p
          JOIN handles h ON h.id = p.handle_id
          WHERE p.conversation_id = ?
@@ -1042,9 +1042,9 @@ function buildHits(
       )
       .all(row.conversation_id) as Array<{
       handle: string;
-      name_hint: string | null;
+      name_alias: string | null;
     }>;
-    const names = participants.map((p) => p.name_hint?.trim() || p.handle);
+    const names = participants.map((p) => p.name_alias?.trim() || p.handle);
 
     let topMatch: SearchHitMessage | null = null;
     const msg = db

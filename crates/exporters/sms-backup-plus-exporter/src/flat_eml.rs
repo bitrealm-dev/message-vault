@@ -260,7 +260,7 @@ pub(crate) fn parse_flat_eml_mail(
         return Ok(None);
     }
 
-    let name_hint = subject_name.clone();
+    let name_alias = subject_name.clone();
     let sent = is_sent(headers, owner_emails);
     let body = extract_plain_text_body(mail);
 
@@ -303,7 +303,7 @@ pub(crate) fn parse_flat_eml_mail(
             sender_digits,
             text: body,
             attachments,
-            name_hint,
+            name_alias,
             smssync_id,
             source_kind: "flat".into(),
             android_type: headers.smssync_type.clone(),
@@ -322,7 +322,7 @@ pub(crate) fn parse_flat_eml_mail(
     };
     // Keep empty chat_key when we have a display name so contacts reverse-lookup can fill it.
     if conv_number.is_empty()
-        && name_hint
+        && name_alias
             .as_ref()
             .map(|s| s.trim().is_empty())
             .unwrap_or(true)
@@ -342,7 +342,7 @@ pub(crate) fn parse_flat_eml_mail(
         participant_digits: if conv_number.is_empty() {
             vec![]
         } else {
-            vec![(conv_number.clone(), name_hint.clone())]
+            vec![(conv_number.clone(), name_alias.clone())]
         },
         timestamp_secs: ts,
         is_from_me: sent,
@@ -353,7 +353,7 @@ pub(crate) fn parse_flat_eml_mail(
         },
         text: body,
         attachments,
-        name_hint,
+        name_alias,
         smssync_id,
         source_kind: "flat".into(),
         android_type: headers.smssync_type.clone(),

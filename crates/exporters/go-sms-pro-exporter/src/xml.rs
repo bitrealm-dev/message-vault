@@ -20,7 +20,7 @@ struct GoSmsFile {
 pub(crate) struct XmlMessage {
     /// Other-party digits (sanitized).
     pub other_digits: String,
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
     pub timestamp_secs: f64,
     pub is_from_me: bool,
     /// Sender digits when not from me.
@@ -113,7 +113,7 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
                 stats.sent += 1;
                 XmlMessage {
                     other_digits: other,
-                    name_hint: non_empty(&contact),
+                    name_alias: non_empty(&contact),
                     timestamp_secs,
                     is_from_me: true,
                     sender_digits: None,
@@ -129,7 +129,7 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
                     stats.received += 1;
                     XmlMessage {
                         other_digits: caller.clone(),
-                        name_hint: Some(caller.clone()),
+                        name_alias: Some(caller.clone()),
                         timestamp_secs,
                         is_from_me: false,
                         sender_digits: Some(caller),
@@ -152,7 +152,7 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
                     };
                     XmlMessage {
                         other_digits: other.clone(),
-                        name_hint: hint,
+                        name_alias: hint,
                         timestamp_secs,
                         is_from_me: false,
                         sender_digits: Some(other),

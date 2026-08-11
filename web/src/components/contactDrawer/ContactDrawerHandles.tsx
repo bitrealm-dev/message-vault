@@ -136,6 +136,8 @@ function sortValue(h: CachedContactHandle, col: string): string | number {
       return formatHandleServiceLabel(h.handle, h.service).toLowerCase();
     case "handle":
       return h.handle.toLowerCase();
+    case "name_alias":
+      return (h.name_alias ?? "").toLowerCase();
     case "start_date":
       return h.start_date ?? "";
     case "end_date":
@@ -293,32 +295,35 @@ export function ContactDrawerHandles({
         onSortChange={setSortDescriptor}
       >
         <TableHeader className={dataCardHeaderRowClass}>
-          <SortableColumn id="service" isRowHeader widthClass="w-[18%]">
+          <SortableColumn id="service" isRowHeader widthClass="w-[16%]">
             Service
           </SortableColumn>
           <SortableColumn id="handle" widthClass="w-[12%]">
             Identity
           </SortableColumn>
-          <SortableColumn id="start_date" widthClass="w-[10%]">
+          <SortableColumn id="name_alias" widthClass="w-[12%]">
+            Alias
+          </SortableColumn>
+          <SortableColumn id="start_date" widthClass="w-[9%]">
             First Seen
           </SortableColumn>
-          <SortableColumn id="end_date" widthClass="w-[10%]">
+          <SortableColumn id="end_date" widthClass="w-[9%]">
             Last Seen
           </SortableColumn>
-          <SortableColumn id="conversations" widthClass="w-[12%]" align="right">
+          <SortableColumn id="conversations" widthClass="w-[10%]" align="right">
             Threads
           </SortableColumn>
-          <SortableColumn id="direct_messages" widthClass="w-[9%]" align="right">
+          <SortableColumn id="direct_messages" widthClass="w-[8%]" align="right">
             Direct
             <br />
             Messages
           </SortableColumn>
-          <SortableColumn id="group_messages" widthClass="w-[9%]" align="right">
+          <SortableColumn id="group_messages" widthClass="w-[8%]" align="right">
             Group
             <br />
             Messages
           </SortableColumn>
-          <Column className={`${thClass} w-[10%] !cursor-default`} />
+          <Column className={`${thClass} w-[8%] !cursor-default`} />
         </TableHeader>
         {handleRows.length === 0 ? (
           <TableBody className="[&_tr]:border-b [&_tr]:border-border">
@@ -326,6 +331,7 @@ export function ContactDrawerHandles({
               <Cell className={`${tdClass} text-muted`}>
                 {loading ? "Loading…" : "No handles"}
               </Cell>
+              <Cell className={tdClass} />
               <Cell className={tdClass} />
               <Cell className={tdClass} />
               <Cell className={tdClass} />
@@ -343,6 +349,7 @@ export function ContactDrawerHandles({
           >
             {(h) => {
               const convos = conversationCount(h);
+              const alias = h.name_alias?.trim() || "";
               return (
                 <Row id={h.id} className="group/handle-row outline-none">
                   <Cell className={`${tdClass} overflow-hidden`}>
@@ -353,6 +360,11 @@ export function ContactDrawerHandles({
                   <Cell className={`${tdClass} overflow-hidden`}>
                     <span className="break-all" title={h.handle}>
                       {h.handle}
+                    </span>
+                  </Cell>
+                  <Cell className={`${tdClass} overflow-hidden text-muted`}>
+                    <span className="break-all" title={alias || undefined}>
+                      {alias || "—"}
                     </span>
                   </Cell>
                   <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
@@ -406,6 +418,7 @@ export function ContactDrawerHandles({
         <TableBody className="border-t-2 border-border">
           <Row id="handles-total" className="outline-none">
             <Cell className={`${tdClass} font-semibold`}>Summary</Cell>
+            <Cell className={`${tdClass} text-muted`}>—</Cell>
             <Cell className={`${tdClass} text-muted`}>—</Cell>
             <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
               {handleDateCell(footerAsHandle.start_date)}

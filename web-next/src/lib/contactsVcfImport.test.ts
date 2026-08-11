@@ -81,7 +81,7 @@ describe("contactsVcfImport preview/commit", () => {
         .run(acct, handleId);
       const cid = Number(result.lastInsertRowid);
       db.prepare(
-        `INSERT INTO participants (conversation_id, handle_id, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_alias)
          VALUES (?, ?, NULL)`,
       ).run(cid, handleId);
       db.prepare(
@@ -255,7 +255,7 @@ END:VCARD
         .run(accountId, handleId);
       const cid = Number(result.lastInsertRowid);
       db.prepare(
-        `INSERT INTO participants (conversation_id, handle_id, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_alias)
          VALUES (?, ?, NULL)`,
       ).run(cid, handleId);
       db.prepare(

@@ -323,7 +323,7 @@ function looksLikePhone(value: string): boolean {
 export { looksLikePhone };
 
 /** Prefer a real display hint; ignore phones and placeholder "(Unknown)" labels. */
-export function usefulNameHint(
+export function usefulNameAlias(
   hint: string | null | undefined,
   handle: string | null | undefined,
 ): string | null {

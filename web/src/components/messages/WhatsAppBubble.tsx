@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Message, MessageAttachment } from "../../lib/types";
 import MessageAttachments from "../MessageAttachments";
+import { senderName } from "./chatBubbleShared";
 
 function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
@@ -23,16 +24,6 @@ function highlightText(text: string, term: string): ReactNode[] {
     rest = rest.slice(idx + t.length);
   }
   return out;
-}
-
-function senderName(m: Message): string {
-  if (m.is_from_me) return "Me";
-  if (m.sender) {
-    const p = m.conversation.participants.find((x) => x.handle === m.sender);
-    return p?.name_hint || m.sender;
-  }
-  const p = m.conversation.participants[0];
-  return p ? p.name_hint || p.handle : "Unknown";
 }
 
 export default function WhatsAppBubble({

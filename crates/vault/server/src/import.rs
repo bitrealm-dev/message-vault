@@ -100,7 +100,7 @@ pub struct ImportOptions<'a> {
     pub media: MediaMode,
     /// When `source_from_jsonl` + Replace: wipe these sources before import.
     pub wipe_sources: Option<Vec<String>>,
-    /// Apply vault contact preferred names to import `name_hint` values.
+    /// Apply vault contact preferred names to import `name_alias` values.
     pub contact_name_mode: ContactNameMode,
 }
 
@@ -734,6 +734,28 @@ fn ensure_sibling_contact_link(
     Ok(Some(contact_id))
 }
 
+/// First-wins seed of `contact_handles.name_alias` from an import display name.
+/// Only fills when the linked row exists and `name_alias` is empty.
+fn seed_contact_handle_alias(
+    conn: &Connection,
+    account_id: &str,
+    handle_id: i64,
+    import_display: Option<&str>,
+) -> Result<()> {
+    let Some(alias) = import_display.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    conn.execute(
+        "UPDATE contact_handles
+         SET name_alias = ?1
+         WHERE account_id = ?2
+           AND handle_id = ?3
+           AND (name_alias IS NULL OR trim(name_alias) = '')",
+        params![alias, account_id, handle_id],
+    )?;
+    Ok(())
+}
+
 fn contact_preferred_name(
     conn: &Connection,
     account_id: &str,
@@ -800,7 +822,7 @@ impl<'conn> StagingInserts<'conn> {
             )?,
             part: tx.prepare(
                 r#"
-                INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_hint)
+                INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
                 VALUES (?1, ?2, ?3, ?4)
                 "#,
             )?,
@@ -835,7 +857,7 @@ impl<'conn> StagingInserts<'conn> {
 }
 
 /// chat_identifier, platform_service, conversation_type, group_title, exported_at, participants, source
-/// Participants are (handle, name_hint, handle_type).
+/// Participants are (handle, name_alias, handle_type).
 /// `platform_service` is `phone` | `whatsapp` for handle rows.
 type ConversationHeader = (
     String,
@@ -936,7 +958,7 @@ fn import_file_to_staging(
                     c.exported_at,
                     c.participants
                         .into_iter()
-                        .map(|p| (p.handle, p.name_hint, p.handle_type))
+                        .map(|p| (p.handle, p.name_alias, p.handle_type))
                         .collect(),
                     source,
                 ));
@@ -1080,7 +1102,7 @@ fn import_conversation_to_staging(
     let conversation_id = tx.last_insert_rowid();
     stats.conversations = 1;
 
-    for (handle, name_hint, handle_type) in kept_participants {
+    for (handle, name_alias, handle_type) in kept_participants {
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
         let (handle_id, flagged) = resolve_handle(
@@ -1094,14 +1116,21 @@ fn import_conversation_to_staging(
             stats.phones_needing_review += 1;
         }
         let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
+        // Seed contact identity alias from the import display name (first wins).
+        seed_contact_handle_alias(
+            tx,
+            &stmts.account_id,
+            handle_id,
+            name_alias.as_deref(),
+        )?;
         let vault_name = match contact_id {
             Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
             None => None,
         };
-        let name_hint = apply_contact_name_mode(opts.contact_name_mode, name_hint, vault_name);
+        let name_alias = apply_contact_name_mode(opts.contact_name_mode, name_alias, vault_name);
         stmts
             .part
-            .execute(params![conversation_id, handle_id, contact_id, name_hint])?;
+            .execute(params![conversation_id, handle_id, contact_id, name_alias])?;
         stats.participants += 1;
     }
 
@@ -1345,8 +1374,8 @@ fn promote_append(
     let _ = io::stdout().flush();
     stats.participants = u64::try_from(tx.execute(
         r#"
-        INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_hint)
-        SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_hint
+        INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_alias)
+        SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_alias
         FROM staging_participants sp
         JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
         "#,
@@ -2312,13 +2341,27 @@ mod tests {
         .unwrap();
     }
 
-    fn participant_name_hint(db: &Path) -> Option<String> {
+    fn participant_name_alias(db: &Path) -> Option<String> {
         let conn = Connection::open(db).unwrap();
-        conn.query_row("SELECT name_hint FROM participants LIMIT 1", [], |r| {
+        conn.query_row("SELECT name_alias FROM participants LIMIT 1", [], |r| {
             r.get(0)
         })
         .optional()
         .unwrap()
+    }
+
+    fn contact_handle_name_alias(db: &Path) -> Option<String> {
+        let conn = Connection::open(db).unwrap();
+        conn.query_row(
+            "SELECT name_alias FROM contact_handles LIMIT 1",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .unwrap()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
     }
 
     #[test]
@@ -2376,7 +2419,7 @@ mod tests {
         );
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path], &opts).unwrap();
-        assert_eq!(participant_name_hint(&db).as_deref(), Some("Backup Bob"));
+        assert_eq!(participant_name_alias(&db).as_deref(), Some("Backup Bob"));
     }
 
     #[test]
@@ -2406,7 +2449,7 @@ mod tests {
         );
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path], &opts).unwrap();
-        assert_eq!(participant_name_hint(&db).as_deref(), Some("Vault Alice"));
+        assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
     }
 
     #[test]
@@ -2436,7 +2479,87 @@ mod tests {
         );
         opts.contact_name_mode = ContactNameMode::Overwrite;
         import_jsonl_files(&[path], &opts).unwrap();
-        assert_eq!(participant_name_hint(&db).as_deref(), Some("Vault Alice"));
+        assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
+    }
+
+    #[test]
+    fn seed_contact_handle_alias_unit_first_wins() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::configure_connection(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
+            params![TEST_ACCOUNT],
+        )
+        .unwrap();
+        let contact_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES (?1, '+15555550999', '+15555550999', 'phone', 'phone')",
+            params![TEST_ACCOUNT],
+        )
+        .unwrap();
+        let handle_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![TEST_ACCOUNT, handle_id, contact_id],
+        )
+        .unwrap();
+
+        seed_contact_handle_alias(&conn, TEST_ACCOUNT, handle_id, Some("First")).unwrap();
+        seed_contact_handle_alias(&conn, TEST_ACCOUNT, handle_id, Some("Second")).unwrap();
+        let alias: Option<String> = conn
+            .query_row(
+                "SELECT name_alias FROM contact_handles WHERE handle_id = ?1",
+                [handle_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(alias.as_deref(), Some("First"));
+    }
+
+    #[test]
+    fn contact_handle_alias_seeds_first_wins() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        seed_contact(&db, "+15555550123", "Vault Alice");
+        assert!(contact_handle_name_alias(&db).is_none());
+
+        let path1 = write_jsonl(
+            tmp.path(),
+            "alias1.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Backup Bob"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-alias1","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let mut opts = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        opts.contact_name_mode = ContactNameMode::FillMissing;
+        import_jsonl_files(&[path1], &opts).unwrap();
+        assert_eq!(contact_handle_name_alias(&db).as_deref(), Some("Backup Bob"));
+
+        let path2 = write_jsonl(
+            tmp.path(),
+            "alias2.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":"Other Name"}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183463000,"last_timestamp_unix_ms":1426183463000}}}
+{"guid":"g-alias2","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"yo","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        import_jsonl_files(&[path2], &opts).unwrap();
+        assert_eq!(contact_handle_name_alias(&db).as_deref(), Some("Backup Bob"));
     }
 
     #[test]

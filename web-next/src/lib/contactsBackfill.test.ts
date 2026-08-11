@@ -71,7 +71,7 @@ describe("unknown contact backfill", () => {
           .run(accountId, resolveHandle("chat-crew", "other")).lastInsertRowid,
       );
       const insertParticipant = db.prepare(
-        `INSERT INTO participants (conversation_id, handle_id, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_alias)
          VALUES (?, ?, ?)`,
       );
       insertParticipant.run(groupId, resolveHandle(OWNER_PHONE), "Vault Owner");

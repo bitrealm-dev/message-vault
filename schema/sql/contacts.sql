@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS contact_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    name_hint TEXT,
+    name_alias TEXT,
     PRIMARY KEY (account_id, handle_id)
 );
 

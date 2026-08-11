@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS participants (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
-    name_hint TEXT,
+    name_alias TEXT,
     UNIQUE(conversation_id, handle_id)
 );
 

@@ -198,7 +198,7 @@ fn synthesize_sms(doc: &ConversationDocument, msg: &IrMessage) -> SbrMessage {
     set_attr(&mut attrs, "service_center", "null");
     set_attr(&mut attrs, "read", "1");
     set_attr(&mut attrs, "status", "-1");
-    if let Some(name) = contact_name_hint(doc, msg) {
+    if let Some(name) = contact_name_alias(doc, msg) {
         set_attr(&mut attrs, "contact_name", name);
     }
     SbrMessage::sms(attrs)
@@ -223,7 +223,7 @@ fn synthesize_mms(
     );
     set_attr(&mut attrs, "address", address);
     set_attr(&mut attrs, "read", "1");
-    if let Some(name) = contact_name_hint(doc, msg) {
+    if let Some(name) = contact_name_alias(doc, msg) {
         set_attr(&mut attrs, "contact_name", name);
     }
     if let Some(subj) = msg.subject.as_deref().filter(|s| !s.is_empty()) {
@@ -361,7 +361,7 @@ fn mms_address_field(doc: &ConversationDocument) -> String {
     }
 }
 
-fn contact_name_hint(doc: &ConversationDocument, msg: &IrMessage) -> Option<String> {
+fn contact_name_alias(doc: &ConversationDocument, msg: &IrMessage) -> Option<String> {
     if msg.direction == IrDirection::Incoming {
         if let Some(n) = msg.sender_display_name.as_deref().filter(|s| !s.is_empty()) {
             return Some(n.to_string());

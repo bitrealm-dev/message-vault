@@ -213,7 +213,7 @@ describe("vault search + FTS", () => {
           .run(accountId, resolveHandle("chat-kumquat", "other")).lastInsertRowid,
       );
       const insertParticipant = db.prepare(
-        `INSERT INTO participants (conversation_id, handle_id, name_hint)
+        `INSERT INTO participants (conversation_id, handle_id, name_alias)
          VALUES (?, ?, ?)`,
       );
       insertParticipant.run(groupConvId, resolveHandle("+15555551004"), "Labeled");

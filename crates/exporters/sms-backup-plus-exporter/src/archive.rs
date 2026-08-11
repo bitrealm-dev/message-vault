@@ -245,7 +245,7 @@ pub(crate) fn parse_archive_eml_mail(
             sender_digits,
             text,
             attachments: Vec::new(),
-            name_hint: name,
+            name_alias: name,
             smssync_id: None,
             source_kind: "archive".into(),
             android_type: String::new(),
@@ -346,7 +346,7 @@ Thanks\r\n",
         assert_eq!(msgs[0].text, "Check this");
         assert!(!msgs[1].is_from_me);
         assert_eq!(msgs[1].text, "Thanks");
-        assert_eq!(msgs[0].name_hint.as_deref(), Some("Alice"));
+        assert_eq!(msgs[0].name_alias.as_deref(), Some("Alice"));
     }
 
     #[test]

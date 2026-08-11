@@ -32,7 +32,7 @@ pub struct ConversationRecord {
 #[derive(Debug, Clone)]
 pub struct ParticipantRecord {
     pub handle: String,
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
     #[allow(dead_code)] // consumed by import-time handle resolution
     pub handle_type: Option<HandleType>,
 }
@@ -164,7 +164,7 @@ fn conversation_from_ir(header: &ConversationHeader) -> ConversationRecord {
             .iter()
             .map(|p| ParticipantRecord {
                 handle: p.handle.clone(),
-                name_hint: p.display_name.clone(),
+                name_alias: p.display_name.clone(),
                 handle_type: p.handle_type,
             })
             .collect(),

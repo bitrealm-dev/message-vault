@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS staging_participants (
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL,
     contact_id INTEGER,
-    name_hint TEXT,
+    name_alias TEXT,
     UNIQUE(conversation_id, handle_id)
 );
 

@@ -3,6 +3,7 @@
 export type CachedContactHandle = {
   handle: string;
   service: string | null;
+  name_alias?: string | null;
   start_date: string | null;
   end_date: string | null;
   individual_conversations: number;

@@ -188,12 +188,12 @@ fn merge_attachments(into: &mut Vec<PendingAttachment>, from: Vec<PendingAttachm
 
 fn pending_from_parsed(msg: ParsedMessage, pending_atts: Vec<PendingAttachment>) -> PendingMessage {
     let date_ms = timestamp_ms(msg.timestamp_secs).to_string();
-    let name = msg.name_hint.clone().unwrap_or_default();
+    let name = msg.name_alias.clone().unwrap_or_default();
     PendingMessage {
         sort_key: msg.timestamp_secs as i64,
         is_from_me: msg.is_from_me,
         sender_handle: msg.sender_digits.unwrap_or_default(),
-        sender_display_name: msg.name_hint,
+        sender_display_name: msg.name_alias,
         text: msg.text,
         attachments: pending_atts,
         extra: {

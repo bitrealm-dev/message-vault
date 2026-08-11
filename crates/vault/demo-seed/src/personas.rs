@@ -37,7 +37,7 @@ pub struct Contact {
 #[derive(Debug, Clone)]
 pub struct Unassigned {
     pub handle: String,
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
     pub email_only: bool,
 }
 
@@ -489,21 +489,21 @@ fn build_unassigned(
     let mut out = Vec::new();
     for i in 0..cfg.edge_cases.unassigned_phones {
         let handle = phones::generate_phone(rng, cfg.contacts.us_phones, used);
-        let name_hint = if i % 2 == 0 {
+        let name_alias = if i % 2 == 0 {
             Some("(Unverified)".into())
         } else {
             None
         };
         out.push(Unassigned {
             handle,
-            name_hint,
+            name_alias,
             email_only: false,
         });
     }
     for i in 0..cfg.edge_cases.unassigned_emails {
         out.push(Unassigned {
             handle: format!("guest{i}@demo.example"),
-            name_hint: Some(if i == 0 {
+            name_alias: Some(if i == 0 {
                 "Stranger Email".into()
             } else {
                 "Contractor".into()

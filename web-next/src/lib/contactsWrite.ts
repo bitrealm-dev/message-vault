@@ -732,23 +732,23 @@ export function ensureUnknownContacts(): number {
     ...listUnassignedHandles().map((row) => ({
       handle: row.handle,
       handleType: row.handleType,
-      nameHint: row.nameHint,
+      nameAlias: row.nameAlias,
     })),
     ...listUnassignedGroupParticipantHandles(),
   ];
   const byIdentity = new Map<
     string,
-    { raw: string; handleType: HandleType; nameHint: string | null }
+    { raw: string; handleType: HandleType; nameAlias: string | null }
   >();
   for (const candidate of candidates) {
     const raw = candidate.handle.trim();
     if (!raw || isOwner(raw)) continue;
     const handleType = candidate.handleType ?? inferHandleType(raw);
     const key = `${handleType}\0${normalizeHandle(raw, handleType)}`;
-    const hint = candidate.nameHint?.trim() || null;
+    const hint = candidate.nameAlias?.trim() || null;
     const prev = byIdentity.get(key);
-    if (!prev || (!prev.nameHint && hint)) {
-      byIdentity.set(key, { raw, handleType, nameHint: hint });
+    if (!prev || (!prev.nameAlias && hint)) {
+      byIdentity.set(key, { raw, handleType, nameAlias: hint });
     }
   }
   if (byIdentity.size === 0) return 0;
@@ -769,7 +769,7 @@ export function ensureUnknownContacts(): number {
           )
           // preferred_name is NOT NULL; an empty string keeps the contact
           // nameless (display falls back to the handle).
-          .run(accountId, entry.nameHint ?? "");
+          .run(accountId, entry.nameAlias ?? "");
         const newId = Number(result.lastInsertRowid);
         const handleId = resolveHandleId(
           writeDb,

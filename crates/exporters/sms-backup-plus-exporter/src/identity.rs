@@ -112,7 +112,7 @@ mod tests {
             },
             text: text.into(),
             attachments: vec![],
-            name_hint: None,
+            name_alias: None,
             smssync_id: None,
             source_kind: "flat".into(),
             android_type: String::new(),

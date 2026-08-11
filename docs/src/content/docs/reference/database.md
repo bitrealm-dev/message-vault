@@ -47,7 +47,7 @@ values.
 ### `participants`
 
 One row = one handle in one chat (`handle_id` → `handles`, optional
-`contact_id` → `contacts`, optional `name_hint`).
+`contact_id` → `contacts`, optional `name_alias`).
 
 ### `messages`
 
@@ -98,7 +98,7 @@ SQLite `datetime('now')` string bumped when the contact’s address-book shape
 changes (create, rename, handle add/update/remove, label membership, merge
 survivor, import sibling platform link) — not when messages arrive.
 `contact_handles` links a contact to its `handles` rows per account (one contact
-per handle per account); the optional `name_hint` is the name the source gave
+per handle per account); the optional `name_alias` is the name the source gave
 for that handle.
 
 ### `contact_labels` / `contact_label_members`

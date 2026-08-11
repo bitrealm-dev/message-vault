@@ -90,7 +90,9 @@ pub struct ExportConversation {
 pub struct ExportParticipant {
     pub handle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<i64>,
     pub handle_type: Option<String>,
@@ -522,7 +524,7 @@ fn build_message_filters(
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
                )))"
             .into(),
         );
@@ -538,7 +540,7 @@ fn build_message_filters(
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
                )"
             .into(),
         );
@@ -553,7 +555,7 @@ fn build_message_filters(
                  SELECT 1 FROM participants p
                  JOIN handles ph ON ph.id = p.handle_id
                  WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_hint, '') LIKE ?)
+                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
                )"
             .into(),
         );
@@ -669,7 +671,7 @@ fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &st
       WHERE p_md.conversation_id = c.id
         AND (
           hp.raw LIKE ? COLLATE NOCASE
-          OR coalesce(p_md.name_hint, '') LIKE ? COLLATE NOCASE
+          OR coalesce(p_md.name_alias, '') LIKE ? COLLATE NOCASE
         )
     )
     OR EXISTS (
@@ -822,9 +824,25 @@ fn load_participants(
     for chunk in conversation_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT p.conversation_id, h.raw AS handle, p.name_hint, h.handle_type, p.contact_id
+            "SELECT p.conversation_id,
+                    h.raw AS handle,
+                    CASE
+                      WHEN ch.handle_id IS NOT NULL THEN NULLIF(trim(ch.name_alias), '')
+                      ELSE NULLIF(trim(p.name_alias), '')
+                    END AS name_alias,
+                    CASE
+                      WHEN ch.handle_id IS NOT NULL THEN NULLIF(trim(c.preferred_name), '')
+                      ELSE NULL
+                    END AS preferred_name,
+                    h.handle_type,
+                    p.contact_id
              FROM participants p
              JOIN handles h ON h.id = p.handle_id
+             JOIN conversations conv ON conv.id = p.conversation_id
+             LEFT JOIN contact_handles ch
+               ON ch.handle_id = p.handle_id AND ch.account_id = conv.account_id
+             LEFT JOIN contacts c
+               ON c.id = ch.contact_id AND c.account_id = conv.account_id
              WHERE p.conversation_id IN ({placeholders})
              ORDER BY p.conversation_id, p.id"
         );
@@ -837,9 +855,10 @@ fn load_participants(
                     row.get::<_, i64>(0)?,
                     ExportParticipant {
                         handle: row.get(1)?,
-                        name_hint: row.get(2)?,
-                        handle_type: row.get(3)?,
-                        contact_id: row.get(4)?,
+                        name_alias: row.get(2)?,
+                        preferred_name: row.get(3)?,
+                        handle_type: row.get(4)?,
+                        contact_id: row.get(5)?,
                     },
                 ))
             })

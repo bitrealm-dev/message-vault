@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation, Message, MessageAttachment } from "../lib/types";
+import { personDisplayLabel } from "../lib/nameAliases";
+import { useNameAliases } from "../lib/useNameAliases";
 import MessageBubble from "../components/MessageBubble";
 import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentLightbox";
 import SourcesPanel from "../components/SourcesPanel";
@@ -177,19 +179,34 @@ export default function MessageView({
   };
 
   /** Prefer list-API participants; fall back to the loaded page's conversation header. */
+  const useAliases = useNameAliases();
   const displayParticipants = useMemo(() => {
     if (conversation.participants.length > 0) {
       return conversation.participants.map((p) => ({
-        label: p.name?.trim() || p.handle,
+        label: personDisplayLabel(
+          {
+            preferredName: p.name,
+            nameAlias: p.name_alias,
+            handle: p.handle,
+          },
+          useAliases,
+        ),
         contact_id: p.contact_id,
       }));
     }
     const fromMsg = messages[0]?.conversation.participants || [];
     return fromMsg.map((p) => ({
-      label: p.name_hint || p.handle,
+      label: personDisplayLabel(
+        {
+          preferredName: p.preferred_name,
+          nameAlias: p.name_alias,
+          handle: p.handle,
+        },
+        useAliases,
+      ),
       contact_id: p.contact_id,
     }));
-  }, [conversation.participants, messages]);
+  }, [conversation.participants, messages, useAliases]);
 
   // Find bar: collect visible message IDs that match the find term
   const matchIds = useMemo(() => {

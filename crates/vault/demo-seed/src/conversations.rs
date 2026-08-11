@@ -529,7 +529,7 @@ fn write_unassigned(
     let chat_id = &ua.handle;
     let participants = vec![IrParticipant {
         handle: chat_id.clone(),
-        display_name: ua.name_hint.clone(),
+        display_name: ua.name_alias.clone(),
         handle_type: None,
     }];
     let fname = if ua.email_only {
@@ -564,7 +564,7 @@ fn write_unassigned(
             rng,
             SourceFlavor::IMessage,
         );
-        if i == 2 && ua.name_hint.is_some() && !from_me {
+        if i == 2 && ua.name_alias.is_some() && !from_me {
             msg.sender_handle = Some(String::new());
         }
         if should_attach_jpg(i, msg_count, cfg) {

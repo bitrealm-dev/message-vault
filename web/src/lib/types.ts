@@ -1,5 +1,6 @@
 export interface Participant {
   name: string | null;
+  name_alias?: string | null;
   handle: string;
   service: string;
   contact_id: string | null;
@@ -19,7 +20,8 @@ export interface Conversation {
 
 export interface MessageParticipant {
   handle: string;
-  name_hint: string | null;
+  name_alias: string | null;
+  preferred_name?: string | null;
   contact_id: string | null;
 }
 

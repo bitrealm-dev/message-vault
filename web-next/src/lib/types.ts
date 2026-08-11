@@ -136,7 +136,7 @@ export type UnassignedHandle = {
   /** Handle type from the handles table (null when unknown). */
   handleType?: HandleType | null;
   displayName: string;
-  nameHint: string | null;
+  nameAlias: string | null;
   messageCount: number;
   dateStart: string | null;
   dateEnd: string | null;

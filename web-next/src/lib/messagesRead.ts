@@ -12,7 +12,7 @@ import {
   combinedDedupeSql,
   displayName,
   getDb,
-  usefulNameHint,
+  usefulNameAlias,
 } from "./dbCore";
 import type { MessageRow } from "./types";
 
@@ -102,7 +102,7 @@ type RawMessageRow = {
   is_announcement: number;
   preferred_name: string | null;
   preferred_handle: string | null;
-  name_hint: string | null;
+  name_alias: string | null;
 };
 
 function loadConversationMessages(
@@ -181,7 +181,7 @@ function loadConversationMessages(
                 ORDER BY CASE ch2_h.handle_type WHEN 'phone' THEN 0 ELSE 1 END, ch2_h.raw
                 LIMIT 1
               ) AS preferred_handle,
-              p.name_hint
+              p.name_alias
        FROM messages m
        JOIN conversations conv ON conv.id = m.conversation_id
        LEFT JOIN handles m_h ON m_h.id = m.sender_handle_id
@@ -261,7 +261,7 @@ function loadConversationMessages(
         preferred_handle: r.preferred_handle ?? r.sender,
       });
       if (!hasContactName) {
-        const hint = usefulNameHint(r.name_hint, r.sender);
+        const hint = usefulNameAlias(r.name_alias, r.sender);
         if (hint) senderName = hint;
       }
     }

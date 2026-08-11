@@ -22,6 +22,9 @@ pub struct ConversationListPage {
 #[derive(Debug, Serialize)]
 pub struct ConversationParticipant {
     pub name: Option<String>,
+    /// Per service+identity alias from `contact_handles` when linked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_alias: Option<String>,
     pub handle: String,
     pub service: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -286,7 +289,7 @@ pub fn list_conversations(
                 WHERE p.conversation_id = c.id
                   AND (
                     ph.raw LIKE ?
-                    OR coalesce(p.name_hint, '') LIKE ?
+                    OR coalesce(p.name_alias, '') LIKE ?
                     OR coalesce(ct.preferred_name, '') LIKE ?
                   )
               ))"
@@ -382,7 +385,7 @@ pub fn list_conversations(
         } else {
             parts
         };
-        // Prefer contact preferred_name over name_hint when linked.
+        // Prefer contact preferred_name for `name`; attach contact_handles alias separately.
         let enriched = enrich_participant_names(conn, account_id, parts)?;
         out.push(ConversationSummary {
             id: row.id.to_string(),
@@ -427,6 +430,7 @@ fn chat_handle_as_participant(
     Ok(match row {
         Some((handle, service, handle_type)) => vec![ConversationParticipant {
             name: None,
+            name_alias: None,
             handle,
             service: if service.trim().is_empty() {
                 handle_type
@@ -451,7 +455,7 @@ fn load_participants(
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
             "SELECT p.conversation_id,
-                    p.name_hint,
+                    p.name_alias,
                     h.raw,
                     coalesce(nullif(trim(h.service), ''), h.handle_type),
                     p.contact_id
@@ -471,6 +475,7 @@ fn load_participants(
                     row.get::<_, i64>(0)?,
                     ConversationParticipant {
                         name: row.get::<_, Option<String>>(1)?,
+                        name_alias: None,
                         handle: row.get(2)?,
                         service: row.get::<_, String>(3).unwrap_or_else(|_| "unknown".into()),
                         contact_id: contact_id.map(|id| id.to_string()),
@@ -498,16 +503,28 @@ fn enrich_participant_names(
         let Ok(cid) = contact_id.parse::<i64>() else {
             continue;
         };
-        let name: Option<String> = conn
+        let row: Option<(Option<String>, Option<String>)> = conn
             .query_row(
-                "SELECT NULLIF(trim(preferred_name), '')
-                 FROM contacts WHERE id = ?1 AND account_id = ?2",
-                rusqlite::params![cid, account_id],
-                |row| row.get(0),
+                "SELECT NULLIF(trim(c.preferred_name), ''),
+                        NULLIF(trim(ch.name_alias), '')
+                 FROM contacts c
+                 JOIN contact_handles ch
+                   ON ch.contact_id = c.id AND ch.account_id = c.account_id
+                 JOIN handles h ON h.id = ch.handle_id
+                 WHERE c.id = ?1 AND c.account_id = ?2 AND h.raw = ?3",
+                rusqlite::params![cid, account_id, p.handle],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
-        if let Some(n) = name.filter(|s| !s.is_empty()) {
+        let Some((preferred, alias)) = row else {
+            continue;
+        };
+        if let Some(a) = alias {
+            p.name_alias = Some(a);
+        }
+        // Prefer contact preferred_name over participant residue when linked.
+        if let Some(n) = preferred.filter(|s| !s.is_empty()) {
             p.name = Some(n);
         }
     }
@@ -675,7 +692,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (1, ?1, 'Sam')",
             params![peer],
         )
@@ -748,7 +765,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (10, ?1, 'Sam WA')",
             params![wa],
         )
@@ -918,7 +935,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (3, ?1, 'Sam')",
             params![peer_handle_id],
         )
@@ -1048,7 +1065,7 @@ mod tests {
             )
             .unwrap();
         conn.execute(
-            "UPDATE participants SET contact_id = ?1, name_hint = NULL
+            "UPDATE participants SET contact_id = ?1, name_alias = NULL
              WHERE conversation_id = '1' AND handle_id = ?2",
             params![contact_id, peer_handle_id],
         )
@@ -1103,7 +1120,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint) VALUES
+            "INSERT INTO participants (conversation_id, handle_id, name_alias) VALUES
              (10, ?1, 'A'), (10, ?2, 'B')",
             params![p2, p3],
         )

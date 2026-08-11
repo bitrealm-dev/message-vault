@@ -8,7 +8,7 @@ import {
   hasTrashedConversationsTable,
   looksLikePhone,
   resetDb,
-  usefulNameHint,
+  usefulNameAlias,
 } from "./dbCore";
 import type { HandleType } from "./handleKind";
 import { formatPhoneDisplay } from "./phoneE164";
@@ -40,12 +40,12 @@ function isGenericGroupTitle(title: string | null | undefined): boolean {
 
 function participantLabel(row: {
   preferred_name?: string | null;
-  name_hint: string | null;
+  name_alias: string | null;
   handle: string;
 }): { name: string; unknown: boolean } {
   const preferred = row.preferred_name?.trim() ?? "";
   if (preferred) return { name: preferred, unknown: false };
-  const hint = usefulNameHint(row.name_hint, row.handle);
+  const hint = usefulNameAlias(row.name_alias, row.handle);
   if (hint) return { name: hint, unknown: false };
   return { name: formatPhoneDisplay(row.handle), unknown: true };
 }
@@ -131,7 +131,7 @@ function groupPeopleTitles(
       `SELECT p.conversation_id,
               ph.raw AS handle,
               ph.handle_type AS handle_type,
-              p.name_hint,
+              p.name_alias,
               c.id AS contact_id, c.preferred_name
        FROM participants p
        JOIN conversations conv ON conv.id = p.conversation_id
@@ -144,7 +144,7 @@ function groupPeopleTitles(
     conversation_id: number;
     handle: string;
     handle_type: string | null;
-    name_hint: string | null;
+    name_alias: string | null;
     contact_id: number | null;
     preferred_name: string | null;
   }>;

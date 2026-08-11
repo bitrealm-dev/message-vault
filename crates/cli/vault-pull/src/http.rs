@@ -84,7 +84,7 @@ pub struct ExportConversation {
 pub struct ExportParticipant {
     pub handle: String,
     #[serde(default)]
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

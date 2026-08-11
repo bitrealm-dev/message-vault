@@ -21,7 +21,7 @@ pub(crate) struct ParsedMessage {
     pub sender_digits: Option<String>,
     pub text: String,
     pub attachments: Vec<AttachmentBlob>,
-    pub name_hint: Option<String>,
+    pub name_alias: Option<String>,
     /// `X-smssync-id` when present (flat EMLs only).
     pub smssync_id: Option<String>,
     /// `flat` or `archive`.

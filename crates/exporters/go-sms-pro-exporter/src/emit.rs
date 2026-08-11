@@ -195,7 +195,7 @@ fn add_xml_messages(
             sort_key: msg.timestamp_secs as i64,
             is_from_me: msg.is_from_me,
             sender_handle: msg.sender_digits.unwrap_or_default(),
-            sender_display_name: msg.name_hint.clone(),
+            sender_display_name: msg.name_alias.clone(),
             text: msg.text,
             attachments: Vec::new(),
             extra: {

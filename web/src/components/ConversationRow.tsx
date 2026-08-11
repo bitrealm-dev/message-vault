@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import type { Conversation } from "../lib/types";
+import { personDisplayLabel } from "../lib/nameAliases";
+import { useNameAliases } from "../lib/useNameAliases";
 import { listRowDividers } from "../lib/tw";
 import { useListColumnResizing } from "./ListColumnResizeContext";
 
@@ -58,16 +60,27 @@ function GroupIcon() {
   );
 }
 
-function participantLabel(p: { name: string | null; handle: string }): string {
-  return p.name || p.handle;
+function participantLabel(
+  p: { name: string | null; name_alias?: string | null; handle: string },
+  useAliases: boolean,
+): string {
+  return personDisplayLabel(
+    {
+      preferredName: p.name,
+      nameAlias: p.name_alias,
+      handle: p.handle,
+    },
+    useAliases,
+  );
 }
 
 /** Comma-separated names; each name stays whole; at most two lines then ellipsis. */
 function GroupNames({ conv }: { conv: Conversation }) {
+  const useAliases = useNameAliases();
   return (
     <span className="line-clamp-2 break-words leading-[1.35]">
       {conv.participants.map((p, i) => {
-        const label = participantLabel(p);
+        const label = participantLabel(p, useAliases);
         return (
           <span key={`${p.handle}-${i}`}>
             {i > 0 ? ", " : null}
@@ -79,11 +92,12 @@ function GroupNames({ conv }: { conv: Conversation }) {
   );
 }
 
-function titleContent(conv: Conversation): ReactNode {
+function titleContent(conv: Conversation, useAliases: boolean): ReactNode {
   if (conv.label) return conv.label;
   if (!conv.is_group) {
     const p = conv.participants[0];
-    return p?.name || p?.handle || "(unknown)";
+    if (!p) return "(unknown)";
+    return participantLabel(p, useAliases);
   }
   return <GroupNames conv={conv} />;
 }
@@ -126,6 +140,7 @@ export default function ConversationRow({
   onCheckChange?: (id: string) => void;
 }) {
   const columnResizing = useListColumnResizing();
+  const useAliases = useNameAliases();
   const isGroup = conversation.is_group;
   const wraps = isGroup && !conversation.label && !columnResizing;
   const dateSpan = formatDateSpan(
@@ -164,7 +179,7 @@ export default function ConversationRow({
               wraps ? "overflow-hidden" : "truncate"
             }`}
           >
-            {titleContent(conversation)}
+            {titleContent(conversation, useAliases)}
           </span>
           {isGroup ? (
             <GroupParticipantCount count={conversation.participants.length} />

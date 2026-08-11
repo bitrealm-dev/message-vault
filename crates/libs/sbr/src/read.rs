@@ -147,7 +147,7 @@ fn decode_body(raw: &str) -> String {
         .replace('\r', "\n")
 }
 
-fn name_hint(attrs: &HashMap<String, String>) -> Option<String> {
+fn name_alias(attrs: &HashMap<String, String>) -> Option<String> {
     let value = if get(attrs, "contact_name").is_empty() {
         get(attrs, "name")
     } else {
@@ -378,7 +378,7 @@ fn parse_sms(attrs: &HashMap<String, String>, stats: &mut ParseStats) -> Option<
             return None;
         }
     };
-    let hint = name_hint(attrs);
+    let hint = name_alias(attrs);
     Some(Record {
         chat_key: address.clone(),
         conversation_kind: ConversationKind::Individual,
@@ -495,7 +495,7 @@ fn parse_mms(
             .join("\n")
     };
     let blobs = attachments(parts, &image_refs, stats);
-    let hint = name_hint(attrs);
+    let hint = name_alias(attrs);
     let source_fields = SourceFields::Mms {
         attrs: btree(attrs),
         parts: parts.iter().map(part_fields).collect(),

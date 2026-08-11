@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Message } from "../../lib/types";
+import { personDisplayLabel, readUseNameAliases } from "../../lib/nameAliases";
 
 export type BubblePalette = "imessage" | "sms";
 
@@ -28,12 +29,26 @@ export function highlightText(text: string, term: string): ReactNode[] {
 
 export function senderName(m: Message): string {
   if (m.is_from_me) return "Me";
+  const useAliases = readUseNameAliases();
+  const labelFor = (p: {
+    preferred_name?: string | null;
+    name_alias: string | null;
+    handle: string;
+  }) =>
+    personDisplayLabel(
+      {
+        preferredName: p.preferred_name,
+        nameAlias: p.name_alias,
+        handle: p.handle,
+      },
+      useAliases,
+    );
   if (m.sender) {
     const p = m.conversation.participants.find((x) => x.handle === m.sender);
-    return p?.name_hint || m.sender;
+    return p ? labelFor(p) : m.sender;
   }
   const p = m.conversation.participants[0];
-  return p ? p.name_hint || p.handle : "Unknown";
+  return p ? labelFor(p) : "Unknown";
 }
 
 export function isGroupConversation(m: Message): boolean {

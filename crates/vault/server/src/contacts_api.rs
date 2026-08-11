@@ -38,6 +38,8 @@ pub struct ContactHandleInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
@@ -586,6 +588,7 @@ pub fn get_contact_detail(
         .prepare(
             "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
+                    NULLIF(trim(ch.name_alias), '') AS name_alias,
                     MIN(m.timestamp) AS first_ts,
                     MAX(m.timestamp) AS last_ts,
                     COUNT(DISTINCT CASE WHEN c.conversation_type = 'individual' THEN c.id END),
@@ -610,7 +613,7 @@ pub fn get_contact_detail(
                )
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-             GROUP BY ch.handle_id, h.raw, h.service
+             GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
              ORDER BY h.raw",
         )
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
@@ -620,12 +623,13 @@ pub fn get_contact_detail(
             Ok(ContactHandleInfo {
                 handle: row.get(0)?,
                 service: row.get(1)?,
-                start_date: row.get(2)?,
-                end_date: row.get(3)?,
-                individual_conversations: row.get::<_, i64>(4)?.max(0) as u64,
-                group_conversations: row.get::<_, i64>(5)?.max(0) as u64,
-                individual_message_count: row.get::<_, i64>(6)?.max(0) as u64,
-                group_message_count: row.get::<_, i64>(7)?.max(0) as u64,
+                name_alias: row.get(2)?,
+                start_date: row.get(3)?,
+                end_date: row.get(4)?,
+                individual_conversations: row.get::<_, i64>(5)?.max(0) as u64,
+                group_conversations: row.get::<_, i64>(6)?.max(0) as u64,
+                individual_message_count: row.get::<_, i64>(7)?.max(0) as u64,
+                group_message_count: row.get::<_, i64>(8)?.max(0) as u64,
             })
         })
         .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
@@ -1082,7 +1086,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (1, ?1, 'Sam')",
             params![peer],
         )
@@ -1116,7 +1120,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (2, ?1, 'Sam')",
             params![peer],
         )
@@ -1461,7 +1465,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO participants (conversation_id, handle_id, name_hint)
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
              VALUES (?1, ?2, NULL)",
             params![conversation_id, handle_id],
         )

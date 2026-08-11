@@ -21,34 +21,34 @@
 
 **Files:** `schema/sql/*.sql`, vault server, web, web-next generated schema, fixtures, `database.md` (not historical plans)
 
-- [ ] Replace `name_hint` → `name_alias` in schema SQL
-- [ ] Sync/regenerate web-next vaultSchema if scripted
-- [ ] Rename in Rust/TS code (fields, SQL strings, JSON)
-- [ ] `cargo test -p message-vault-server` relevant modules
+- [x] Replace `name_hint` → `name_alias` in schema SQL
+- [x] Sync/regenerate web-next vaultSchema if scripted
+- [x] Rename in Rust/TS code (fields, SQL strings, JSON)
+- [x] `cargo test -p message-vault-server` relevant modules
 - [ ] Commit
 
 ### Task 2: Seed `contact_handles.name_alias` on import
 
 **Files:** `crates/vault/server/src/import.rs` (+ tests)
 
-- [ ] When linking participant handle to contact, if `contact_handles.name_alias` empty and import display name non-empty, UPDATE set alias
-- [ ] Test first-wins
+- [x] When linking participant handle to contact, if `contact_handles.name_alias` empty and import display name non-empty, UPDATE set alias
+- [x] Test first-wins
 - [ ] Commit
 
 ### Task 3: Display enrichment + API fields
 
 **Files:** `conversations_api.rs`, contact detail GET for handles, web types
 
-- [ ] Return `name_alias` on contact handle detail
-- [ ] Enrichment: when aliases enabled… (Task 4 wires toggle; enrichment can always return both preferred + alias and let client choose, OR pass header/query — prefer client chooses from API fields for v1 localStorage toggle)
+- [x] Return `name_alias` on contact handle detail
+- [x] Enrichment: when aliases enabled… (Task 4 wires toggle; enrichment can always return both preferred + alias and let client choose, OR pass header/query — prefer client chooses from API fields for v1 localStorage toggle)
 - [ ] Commit
 
 ### Task 4: Appearance toggle + Contact Identity Alias column
 
 **Files:** `AppearanceSection`, theme-adjacent pref, `ContactDrawerHandles`, conversation/message label helpers
 
-- [ ] `mv-use-name-aliases` localStorage, default false, UI above Theme
-- [ ] Alias column view-only
-- [ ] Thread/message labels respect toggle
+- [x] `mv-use-name-aliases` localStorage, default false, UI above Theme
+- [x] Alias column view-only
+- [x] Thread/message labels respect toggle
 - [ ] Commit pending Contact Identity / Threads label UI if still dirty
 - [ ] Commit

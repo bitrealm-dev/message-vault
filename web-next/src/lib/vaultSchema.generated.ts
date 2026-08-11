@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS participants (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
-    name_hint TEXT,
+    name_alias TEXT,
     UNIQUE(conversation_id, handle_id)
 );
 
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS staging_participants (
     conversation_id INTEGER NOT NULL REFERENCES staging_conversations(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL,
     contact_id INTEGER,
-    name_hint TEXT,
+    name_alias TEXT,
     UNIQUE(conversation_id, handle_id)
 );
 
@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS contact_handles (
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     handle_id INTEGER NOT NULL REFERENCES handles(id) ON DELETE CASCADE,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    name_hint TEXT,
+    name_alias TEXT,
     PRIMARY KEY (account_id, handle_id)
 );
 

@@ -19,7 +19,7 @@ The initial release should support this complete path:
    sidecars are not used.
 4. Browse direct conversations, group messages, contacts, attachments, and
    sources. Contacts are also created from imported participants
-   (`name_hint` → `preferred_name` when empty).
+   (`name_alias` → `preferred_name` when empty).
 5. Search contacts and messages, including full-text body/subject matching via
    the vault FTS index.
 6. Edit contact preferred names and phone numbers.

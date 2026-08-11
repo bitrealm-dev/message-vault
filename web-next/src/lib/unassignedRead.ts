@@ -5,7 +5,7 @@ import {
   hasTrashedConversationsTable,
   hasTrashedHandlesTable,
   resetDb,
-  usefulNameHint,
+  usefulNameAlias,
 } from "./dbCore";
 import type { HandleType } from "./handleKind";
 import { formatPhoneDisplay } from "./phoneE164";
@@ -31,7 +31,7 @@ export function listTrashedHandles(): UnassignedHandle[] {
 export type GroupParticipantHandle = {
   handle: string;
   handleType: HandleType | null;
-  nameHint: string | null;
+  nameAlias: string | null;
 };
 
 /**
@@ -60,7 +60,7 @@ export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[
 
   const rows = db
     .prepare(
-      `SELECT h.raw AS handle, h.handle_type AS handle_type, MAX(p.name_hint) AS name_hint
+      `SELECT h.raw AS handle, h.handle_type AS handle_type, MAX(p.name_alias) AS name_alias
        FROM participants p
        JOIN conversations c ON c.id = p.conversation_id
        JOIN handles h ON h.id = p.handle_id
@@ -81,13 +81,13 @@ export function listUnassignedGroupParticipantHandles(): GroupParticipantHandle[
     .all(accountId) as Array<{
     handle: string;
     handle_type: string | null;
-    name_hint: string | null;
+    name_alias: string | null;
   }>;
 
   return rows.map((r) => ({
     handle: r.handle.trim(),
     handleType: (r.handle_type as HandleType | null) ?? null,
-    nameHint: usefulNameHint(r.name_hint, r.handle),
+    nameAlias: usefulNameAlias(r.name_alias, r.handle),
   }));
 }
 
@@ -124,7 +124,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
     .prepare(
       `SELECT h.raw AS handle,
               h.handle_type AS handle_type,
-              MAX(p.name_hint) AS name_hint,
+              MAX(p.name_alias) AS name_alias,
               COUNT(m.id) AS message_count,
               MIN(substr(m.timestamp, 1, 10)) AS date_start,
               MAX(substr(m.timestamp, 1, 10)) AS date_end
@@ -148,7 +148,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
     .all(accountId) as Array<{
     handle: string;
     handle_type: string | null;
-    name_hint: string | null;
+    name_alias: string | null;
     message_count: number;
     date_start: string | null;
     date_end: string | null;
@@ -157,7 +157,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
 
   return rows
     .map((r) => {
-      const hintUseful = usefulNameHint(r.name_hint, r.handle);
+      const hintUseful = usefulNameAlias(r.name_alias, r.handle);
       const displayName = hintUseful ?? formatPhoneDisplay(r.handle);
       const sortKey = hintUseful ? `${hintUseful}\0${r.handle}` : r.handle;
       const ch = (hintUseful ?? r.handle).charAt(0).toUpperCase();
@@ -166,7 +166,7 @@ function listHandleSection(section: "unassigned" | "trash"): UnassignedHandle[] 
         handle: r.handle,
         handleType: (r.handle_type as HandleType | null) ?? null,
         displayName,
-        nameHint: hintUseful,
+        nameAlias: hintUseful,
         messageCount: r.message_count,
         dateStart: r.date_start,
         dateEnd: r.date_end,
