@@ -104,7 +104,7 @@ export default function ImportScreen() {
       { label: "Upload to vault", status: "pending" },
     ]);
 
-    let importSessionId: string | null = null;
+    let importSessionId: number | null = null;
     let importCompleted = false;
     try {
       const outputDir = await resolveImportStagingDir(backupPath, source);
@@ -188,7 +188,7 @@ export default function ImportScreen() {
     } finally {
       if (importSessionId) {
         try {
-          await apiClient.post(`/v1/imports/${importSessionId}/complete`, {
+          await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
             ok: importCompleted,
           });
         } catch (completeError) {
