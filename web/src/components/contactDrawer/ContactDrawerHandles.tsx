@@ -274,6 +274,7 @@ export function ContactDrawerHandles({
 
   return (
     <DataCard
+      title="Contact Identity"
       toolbar={
         <Button
           variant="primary"
@@ -281,7 +282,7 @@ export function ContactDrawerHandles({
           onClick={() => setAdding(true)}
           className="!px-2.5 !py-1 !text-[0.75rem]"
         >
-          Add
+          Add identity
         </Button>
       }
     >

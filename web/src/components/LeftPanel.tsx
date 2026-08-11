@@ -107,7 +107,7 @@ export default function LeftPanel({
         <div className="pl-3">
           <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
             <ConversationsIcon />
-            Conversations
+            Threads
           </button>
           <button className={linkClass(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
             <ContactsIcon />
