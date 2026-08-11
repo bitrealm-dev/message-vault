@@ -167,6 +167,7 @@ struct ErrorBody {
     error: String,
 }
 
+#[derive(Debug)]
 pub enum ApiError {
     Unauthorized(String),
     Forbidden(String),
@@ -281,6 +282,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         )
         .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
+        .route("/v1/imports/{id}", get(imports_get_handler))
         .route("/v1/imports/{id}/complete", post(imports_complete_handler))
         .route("/v1/import", post(import_handler))
         .route(
@@ -621,10 +623,44 @@ struct CompleteImportBody {
     attachment_count: Option<i64>,
     #[serde(default)]
     bytes_uploaded: Option<i64>,
+    #[serde(default)]
+    duration_ms: Option<i64>,
+    #[serde(default)]
+    parse_ms: Option<i64>,
+    #[serde(default)]
+    convert_ms: Option<i64>,
+    #[serde(default)]
+    upload_ms: Option<i64>,
+    #[serde(default)]
+    summary: Option<serde_json::Value>,
+    #[serde(default)]
+    issues: Vec<CompleteImportIssueBody>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteImportIssueBody {
+    kind: String,
+    step: String,
+    item: String,
+    reason: String,
+}
+
+fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result<(), ApiError> {
+    for issue in issues {
+        match issue.kind.as_str() {
+            "error" | "skip" => {}
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "invalid import issue kind '{other}'; expected 'error' or 'skip'"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -831,6 +867,32 @@ async fn imports_list_handler(
     Ok(Json(serde_json::json!({ "imports": imports })))
 }
 
+async fn imports_get_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let detail = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("import detail task: {e}")))?
+    .map_err(|e| match e {
+        crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
+            ApiError::NotFound(format!("import {import_id} not found for this account"))
+        }
+        crate::db::vault_imports::ImportLookupError::Db(err) => ApiError::Internal(err.to_string()),
+    })?;
+
+    Ok(Json(import_detail_response(detail)))
+}
+
 /// `GET /v1/account/storage` — attachment usage + top 100 largest attachments.
 async fn account_storage_handler(
     State(state): State<AppState>,
@@ -913,12 +975,34 @@ async fn imports_complete_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
+    validate_complete_import_issues(&body.issues)?;
     let db = Arc::clone(&state.db);
+    let summary_json = match body.summary {
+        Some(summary) => Some(serde_json::to_string(&summary).map_err(|e| {
+            ApiError::Internal(format!("serialize import summary: {e}"))
+        })?),
+        None => None,
+    };
     let args = crate::db::vault_imports::CompleteImportArgs {
         ok: body.ok,
         message_count: body.message_count,
         attachment_count: body.attachment_count,
         bytes_uploaded: body.bytes_uploaded,
+        duration_ms: body.duration_ms,
+        parse_ms: body.parse_ms,
+        convert_ms: body.convert_ms,
+        upload_ms: body.upload_ms,
+        summary_json,
+        issues: body
+            .issues
+            .into_iter()
+            .map(|issue| crate::db::vault_imports::ImportIssueInput {
+                kind: issue.kind,
+                step: issue.step,
+                item: issue.item,
+                reason: issue.reason,
+            })
+            .collect(),
     };
     let row = tokio::task::spawn_blocking(move || {
         let conn = db
@@ -929,11 +1013,12 @@ async fn imports_complete_handler(
     .await
     .map_err(|e| ApiError::Internal(format!("complete import task failed: {e}")))?
     .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            ApiError::NotFound(msg)
+        if let Some(crate::db::vault_imports::ImportLookupError::NotFound { import_id }) =
+            e.downcast_ref::<crate::db::vault_imports::ImportLookupError>()
+        {
+            ApiError::NotFound(format!("import {import_id} not found for this account"))
         } else {
-            ApiError::Internal(msg)
+            ApiError::Internal(e.to_string())
         }
     })?;
 
@@ -945,6 +1030,48 @@ async fn imports_complete_handler(
         attachment_count: row.attachment_count,
         bytes_uploaded: row.bytes_uploaded,
     }))
+}
+
+fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
+    match summary_json {
+        Some(raw) => serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw)),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> serde_json::Value {
+    let row = detail.row;
+    let issues = detail
+        .issues
+        .into_iter()
+        .map(|issue| {
+            serde_json::json!({
+                "kind": issue.kind,
+                "step": issue.step,
+                "item": issue.item,
+                "reason": issue.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "id": row.id,
+        "source": row.source,
+        "tool": row.tool,
+        "mode": row.mode,
+        "status": row.status,
+        "started_at": row.started_at,
+        "finished_at": row.finished_at,
+        "message_count": row.message_count,
+        "attachment_count": row.attachment_count,
+        "bytes_uploaded": row.bytes_uploaded,
+        "duration_ms": row.duration_ms,
+        "parse_ms": row.parse_ms,
+        "convert_ms": row.convert_ms,
+        "upload_ms": row.upload_ms,
+        "summary": parse_summary_json(row.summary_json),
+        "issues": issues,
+    })
 }
 
 async fn import_handler(
@@ -1734,12 +1861,14 @@ async fn run_import_path(
                         message_count: Some(stats.messages as i64),
                         attachment_count: Some(stats.attachments as i64),
                         bytes_uploaded: None,
+                        ..Default::default()
                     },
                     Err(_) => crate::db::vault_imports::CompleteImportArgs {
                         ok: false,
                         message_count: None,
                         attachment_count: None,
                         bytes_uploaded: None,
+                        ..Default::default()
                     },
                 };
                 if let Err(e) = crate::db::vault_imports::complete_import(
@@ -1777,4 +1906,200 @@ async fn run_import_path(
             near_flagged: d.near_flagged,
         }),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tempfile::TempDir;
+
+    const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    fn test_state() -> (TempDir, AppState, String, i64) {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("vault.db");
+        let data_dir = tmp.path().join("data");
+        let conn = Connection::open(&db_path).unwrap();
+        schema::configure_connection(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        schema::ensure_accounts_schema(&conn).unwrap();
+        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
+        let token = crate::db::session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT)
+            .unwrap();
+        let import_id = crate::db::vault_imports::start_import(
+            &conn,
+            TEST_ACCOUNT,
+            "ios",
+            "append",
+            Some("message-vault-server"),
+        )
+        .unwrap();
+
+        let state = AppState {
+            cfg: Arc::new(crate::config::Config {
+                paths: crate::config::PathsConfig {
+                    db: db_path,
+                    data_dir,
+                    assets_dir: "assets".into(),
+                    assets_converted_dir: "assets_converted".into(),
+                },
+                server: Some(crate::config::ServerConfig {
+                    bind: "127.0.0.1:0".into(),
+                    asset_max_bytes: 8 * 1024 * 1024,
+                    asset_part_size: 1024 * 1024,
+                    asset_hash_threshold_bytes: 1024 * 1024,
+                }),
+            }),
+            db: Arc::new(StdMutex::new(conn)),
+            account_import_locks: Arc::new(Mutex::new(HashMap::new())),
+            asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
+            upload_limits: asset_uploads::UploadLimits::default(),
+            max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
+        };
+
+        (tmp, state, token, import_id)
+    }
+
+    fn auth_headers(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers
+    }
+
+    #[tokio::test]
+    async fn imports_complete_and_detail_surface_timings_and_issues() {
+        let (_tmp, state, token, import_id) = test_state();
+        let body = CompleteImportBody {
+            ok: true,
+            message_count: Some(10),
+            attachment_count: Some(2),
+            bytes_uploaded: Some(100),
+            duration_ms: Some(48_000),
+            parse_ms: Some(18_000),
+            convert_ms: Some(22_000),
+            upload_ms: Some(8_000),
+            summary: Some(serde_json::json!({
+                "parse": { "messages": 10 },
+                "convert": { "files": 2 }
+            })),
+            issues: vec![
+                CompleteImportIssueBody {
+                    kind: "skip".into(),
+                    step: "convert".into(),
+                    item: "photo.heic".into(),
+                    reason: "convert failed".into(),
+                },
+                CompleteImportIssueBody {
+                    kind: "error".into(),
+                    step: "upload".into(),
+                    item: "archive.zip".into(),
+                    reason: "upload failed".into(),
+                },
+            ],
+        };
+
+        let response = imports_complete_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(body),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.0.status, "completed");
+        assert_eq!(response.0.message_count, 10);
+        assert_eq!(response.0.attachment_count, 2);
+        assert_eq!(response.0.bytes_uploaded, 100);
+
+        let detail = imports_get_handler(State(state), auth_headers(&token), AxumPath(import_id))
+            .await
+            .unwrap();
+        let value = detail.0;
+        assert_eq!(value["id"], import_id);
+        assert_eq!(value["duration_ms"], 48_000);
+        assert_eq!(value["parse_ms"], 18_000);
+        assert_eq!(value["convert_ms"], 22_000);
+        assert_eq!(value["upload_ms"], 8_000);
+        assert_eq!(value["summary"]["parse"]["messages"], 10);
+        assert_eq!(value["issues"].as_array().unwrap().len(), 2);
+        assert_eq!(value["issues"][0]["kind"], "skip");
+        assert_eq!(value["issues"][0]["step"], "convert");
+        assert_eq!(value["issues"][1]["kind"], "error");
+        assert_eq!(value["issues"][1]["step"], "upload");
+    }
+
+    #[tokio::test]
+    async fn imports_complete_rejects_invalid_issue_kind_before_db_write() {
+        let (_tmp, state, token, import_id) = test_state();
+        let body = CompleteImportBody {
+            ok: true,
+            message_count: Some(10),
+            attachment_count: Some(2),
+            bytes_uploaded: Some(100),
+            duration_ms: Some(48_000),
+            parse_ms: Some(18_000),
+            convert_ms: Some(22_000),
+            upload_ms: Some(8_000),
+            summary: None,
+            issues: vec![CompleteImportIssueBody {
+                kind: "warning".into(),
+                step: "upload".into(),
+                item: "archive.zip".into(),
+                reason: "not allowed".into(),
+            }],
+        };
+
+        let err = imports_complete_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            AxumPath(import_id),
+            Json(body),
+        )
+        .await
+        .unwrap_err();
+
+        match err {
+            ApiError::BadRequest(msg) => {
+                assert!(msg.contains("invalid import issue kind"));
+            }
+            other => panic!("expected bad request, got {other:?}"),
+        }
+
+        let status: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM vault_imports WHERE id = ?1",
+                params![import_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "running");
+    }
+
+    #[tokio::test]
+    async fn imports_get_handler_returns_not_found_for_missing_import() {
+        let (_tmp, state, token, import_id) = test_state();
+        let err = imports_get_handler(
+            State(state),
+            auth_headers(&token),
+            AxumPath(import_id + 1),
+        )
+        .await
+        .unwrap_err();
+
+        match err {
+            ApiError::NotFound(msg) => {
+                assert!(msg.contains("import"));
+                assert!(msg.contains("not found"));
+            }
+            other => panic!("expected not found, got {other:?}"),
+        }
+    }
 }

@@ -110,6 +110,7 @@ fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
         journal_path: Some(dir.join(".vault-import-state.jsonl")),
         cancel: None,
         contact_name_mode: "fill_missing".into(),
+        import_id: None,
     }
 }
 
@@ -177,6 +178,70 @@ fn authenticate_and_push_text_only_conversation() {
     let report2 = run(&cfg, None).unwrap();
     assert!(report2.ok);
     assert_eq!(report2.conversations_skipped, 1);
+}
+
+#[test]
+fn reuses_supplied_import_session_without_starting_or_completing_one() {
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true
+        }));
+    });
+    let start = server.mock(|when, then| {
+        when.method(POST).path("/v1/imports");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "id": 42
+        }));
+    });
+    let complete = server.mock(|when, then| {
+        when.method(POST).path("/v1/imports/99/complete");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "id": 99,
+            "status": "completed",
+            "message_count": 1,
+            "attachment_count": 0,
+            "bytes_uploaded": 0
+        }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/import")
+            .query_param("import_id", "99");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "source": "sms-backup-restore",
+            "account": "acct-1",
+            "messages": 1,
+            "messages_appended": 1,
+            "conversations": 1,
+            "attachments": 0,
+            "assets_copied": 0,
+            "assets_missing": 0,
+            "mode": "append"
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    write_jsonl(dir.path(), &sample_doc());
+
+    let cfg = VaultPushConfig {
+        import_id: Some(99),
+        ..text_only_config(dir.path(), server.base_url())
+    };
+    let report = run(&cfg, None).unwrap();
+
+    assert!(report.ok);
+    assert_eq!(report.conversations_ok, 1);
+    assert_eq!(start.hits(), 0, "push must not start a new session");
+    assert_eq!(complete.hits(), 0, "push must not complete a reused session");
+    import.assert();
 }
 
 #[test]
@@ -459,6 +524,7 @@ fn profiles_attachment_upload_phases() {
         journal_path: Some(dir.path().join(".vault-import-state.jsonl")),
         cancel: None,
         contact_name_mode: "fill_missing".into(),
+        import_id: None,
     };
     let mut progress_lines = Vec::new();
     let report = {

@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ExtractConfig, ExtractErrorEvent } from "./types";
+import type {
+  ExtractConfig,
+  ExtractErrorEvent,
+  ImportIssueEvent,
+  ImportProgressEvent,
+} from "./types";
 
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
   return invoke("extract", {
@@ -48,6 +53,21 @@ export interface PushConfig {
   skip_attachments: boolean;
   trust_export: boolean;
   contact_name_mode?: string;
+  import_id?: number;
+}
+
+export interface PushFinishedReport {
+  ok: boolean;
+  messages: number;
+  assets_uploaded: number;
+  assets_bytes: number;
+  conversations_ok: number;
+  conversations_total: number;
+}
+
+export interface TauriJobResult {
+  summary: string;
+  report?: PushFinishedReport;
 }
 
 export async function invokePush(config: PushConfig): Promise<void> {
@@ -62,6 +82,7 @@ export async function invokePush(config: PushConfig): Promise<void> {
     skipAttachments: config.skip_attachments,
     trustExport: config.trust_export,
     contactNameMode: config.contact_name_mode ?? "fill_missing",
+    importId: config.import_id ?? null,
   });
 }
 
@@ -110,18 +131,23 @@ export async function invokeHomeDir(): Promise<HomeDirInfo> {
 }
 
 /**
- * Subscribes to the three extraction events emitted by the Rust backend:
- * `extract:log` (String log line), `extract:finished` (String summary),
+ * Subscribes to the extraction events emitted by the Rust backend:
+ * `extract:log` (String log line), `extract:progress` (structured progress),
+ * `extract:issue` (structured error or skip), `extract:finished` (String summary),
  * `extract:error` ({ detail, user_message? }).
- * Returns a single unlisten function that tears down all three listeners.
+ * Returns a single unlisten function that tears down all listeners.
  */
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
+  onProgress?: (event: ImportProgressEvent) => void;
+  onIssue?: (event: ImportIssueEvent) => void;
   onFinished: (summary: string) => void;
   onError: (err: ExtractErrorEvent) => void;
 }): Promise<UnlistenFn> {
   return Promise.all([
     listen<string>("extract:log", (e) => callbacks.onLog(e.payload)),
+    listen<ImportProgressEvent>("extract:progress", (e) => callbacks.onProgress?.(e.payload)),
+    listen<ImportIssueEvent>("extract:issue", (e) => callbacks.onIssue?.(e.payload)),
     listen<string>("extract:finished", (e) => callbacks.onFinished(e.payload)),
     listen<ExtractErrorEvent>("extract:error", (e) => callbacks.onError(e.payload)),
   ]).then((unlisteners) => {
@@ -140,15 +166,19 @@ export function onExtractEvents(callbacks: {
 export async function awaitTauriJob(
   invokeFn: () => Promise<void>,
   onLog?: (line: string) => void,
-): Promise<string> {
+  onProgress?: (event: ImportProgressEvent) => void,
+  onIssue?: (event: ImportIssueEvent) => void,
+): Promise<TauriJobResult> {
   let unlisten: UnlistenFn | undefined;
   try {
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<TauriJobResult>((resolve, reject) => {
       void (async () => {
         try {
           unlisten = await onExtractEvents({
             onLog: (line) => onLog?.(line),
-            onFinished: resolve,
+            onProgress,
+            onIssue,
+            onFinished: (summary) => resolve(parseTauriJobResult(summary)),
             onError: (err) =>
               reject(new Error(err.user_message ?? err.detail)),
           });
@@ -161,4 +191,26 @@ export async function awaitTauriJob(
   } finally {
     unlisten?.();
   }
+}
+
+function parseTauriJobResult(summary: string): TauriJobResult {
+  try {
+    const report = JSON.parse(summary) as Partial<PushFinishedReport> & { summary?: unknown };
+    if (
+      typeof report.ok === "boolean" &&
+      typeof report.messages === "number" &&
+      typeof report.assets_uploaded === "number" &&
+      typeof report.assets_bytes === "number" &&
+      typeof report.conversations_ok === "number" &&
+      typeof report.conversations_total === "number"
+    ) {
+      return {
+        summary: typeof report.summary === "string" ? report.summary : summary,
+        report: report as PushFinishedReport,
+      };
+    }
+  } catch {
+    // Extract jobs emit their human-readable summary directly.
+  }
+  return { summary };
 }

@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
+import ImportSummaryPanel, {
+  type ImportIssue,
+  type ImportSummaryView,
+} from "../../components/import/ImportSummaryPanel";
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -28,6 +32,15 @@ function formatImportDate(iso: string | null | undefined): string {
   });
 }
 
+function formatDuration(milliseconds: number | null | undefined): string {
+  if (milliseconds == null) return "—";
+
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+}
+
 const ATTACHMENT_PAGE_SIZE = 20;
 
 const sectionTitle = "m-0 text-[0.938rem] font-semibold text-text";
@@ -48,6 +61,7 @@ interface ImportRow {
   finished_at: string | null;
   message_count: number;
   attachment_count: number;
+  duration_ms: number | null;
 }
 
 interface TopAttachment {
@@ -59,6 +73,62 @@ interface TopAttachment {
   chat_identifier: string;
 }
 
+interface ImportDetailResponse {
+  id: number;
+  source: string;
+  tool: string | null;
+  mode: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  message_count: number;
+  attachment_count: number;
+  bytes_uploaded: number;
+  duration_ms: number | null;
+  parse_ms: number | null;
+  convert_ms: number | null;
+  upload_ms: number | null;
+  summary: unknown;
+  issues: ImportIssue[];
+}
+
+function toNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function toString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
+  const summary =
+    detail.summary && typeof detail.summary === "object"
+      ? (detail.summary as Record<string, unknown>)
+      : {};
+  const hasAnyStageTiming =
+    detail.parse_ms != null || detail.convert_ms != null || detail.upload_ms != null;
+  const durationMs = detail.duration_ms ?? (hasAnyStageTiming
+    ? (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0)
+    : null);
+
+  return {
+    status:
+      detail.status === "completed"
+        ? "completed"
+        : detail.status === "running"
+          ? "running"
+          : "failed",
+    parseMessages: toNumber(summary.parse_messages ?? summary.parseMessages),
+    convertDetail: toString(summary.convert_detail ?? summary.convertDetail),
+    uploadFiles: toNumber(summary.upload_files ?? summary.uploadFiles),
+    parseMs: detail.parse_ms,
+    convertMs: detail.convert_ms,
+    uploadMs: detail.upload_ms,
+    durationMs,
+    issues: detail.issues,
+  };
+}
+
 export function StorageSection() {
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [totalBytes, setTotalBytes] = useState(0);
@@ -67,6 +137,10 @@ export function StorageSection() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedImportId, setSelectedImportId] = useState<number | null>(null);
+  const [selectedImport, setSelectedImport] = useState<ImportDetailResponse | null>(null);
+  const [selectedImportLoading, setSelectedImportLoading] = useState(false);
+  const [selectedImportError, setSelectedImportError] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -92,6 +166,36 @@ export function StorageSection() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (selectedImportId == null) return;
+
+    const controller = new AbortController();
+    setSelectedImportLoading(true);
+    setSelectedImportError("");
+
+    apiClient
+      .get<ImportDetailResponse>(`/v1/imports/${selectedImportId}`, {
+        signal: controller.signal,
+      })
+      .then((detail) => {
+        setSelectedImport(detail);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setSelectedImport(null);
+        setSelectedImportError(
+          err instanceof Error ? err.message : "Couldn’t load import details.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setSelectedImportLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [selectedImportId]);
+
   if (loading) {
     return <div className="text-[0.875rem] text-muted">Loading storage…</div>;
   }
@@ -101,6 +205,14 @@ export function StorageSection() {
     page * ATTACHMENT_PAGE_SIZE,
     page * ATTACHMENT_PAGE_SIZE + ATTACHMENT_PAGE_SIZE,
   );
+  const showDurationColumn = imports.some((row) => row.duration_ms != null);
+  const selectedImportSummary = selectedImport ? toImportSummaryView(selectedImport) : null;
+
+  const openImportDetail = (importId: number) => {
+    setSelectedImportId(importId);
+    setSelectedImport(null);
+    setSelectedImportError("");
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -137,25 +249,118 @@ export function StorageSection() {
                   <th className={thStyle}>Import type</th>
                   <th className={`${thStyle} text-right`}>Messages</th>
                   <th className={`${thStyle} text-right`}>Attachments</th>
+                  {showDurationColumn ? (
+                    <th className={`${thStyle} text-right`}>Duration</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
                 {imports.map((row) => (
-                  <tr key={row.id}>
+                  <tr
+                    key={row.id}
+                    className={`cursor-pointer ${
+                      selectedImportId === row.id ? "bg-hover" : "hover:bg-hover"
+                    }`}
+                    onClick={() => openImportDetail(row.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openImportDetail(row.id);
+                      }
+                    }}
+                    tabIndex={0}
+                  >
                     <td className={tdStyle}>
                       {formatImportDate(row.finished_at ?? row.started_at)}
                     </td>
-                    <td className={tdStyle}>{row.source}</td>
+                    <td className={tdStyle}>
+                      {row.source}
+                    </td>
                     <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.message_count.toLocaleString()}
                     </td>
                     <td className={`${tdStyle} text-right tabular-nums`}>
                       {row.attachment_count.toLocaleString()}
                     </td>
+                    {showDurationColumn ? (
+                      <td className={`${tdStyle} text-right tabular-nums`}>
+                        {formatDuration(row.duration_ms)}
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {selectedImportId != null && (
+          <div className="rounded-lg border border-border bg-elevated p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className={sectionTitle}>Import details</h3>
+                <p className={sectionHint}>
+                  {selectedImport
+                    ? `${selectedImport.source} · ${selectedImport.mode} · ${selectedImport.status}`
+                    : "Loading import details…"}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSelectedImportId(null);
+                  setSelectedImport(null);
+                  setSelectedImportLoading(false);
+                  setSelectedImportError("");
+                }}
+                className="!px-3 !py-1.5 !text-[0.813rem]"
+              >
+                Back to history
+              </Button>
+            </div>
+
+            {selectedImportLoading && (
+              <p className="mt-4 text-[0.813rem] text-muted">Loading import summary…</p>
+            )}
+
+            {selectedImportError && (
+              <div className="mt-4 rounded-md border border-danger-soft-border bg-danger-soft-bg p-2 px-3 text-[0.813rem] text-danger">
+                {selectedImportError}
+              </div>
+            )}
+
+            {selectedImport && selectedImportSummary ? (
+              <>
+                <dl className="mt-4 grid gap-3 text-[0.813rem] text-text sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <dt className="text-muted">Started</dt>
+                    <dd className="mt-1">{formatImportDate(selectedImport.started_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Finished</dt>
+                    <dd className="mt-1">
+                      {formatImportDate(selectedImport.finished_at ?? selectedImport.started_at)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Duration</dt>
+                    <dd className="mt-1">{formatDuration(selectedImportSummary.durationMs)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Messages</dt>
+                    <dd className="mt-1">{selectedImport.message_count.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Attachments</dt>
+                    <dd className="mt-1">{selectedImport.attachment_count.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Bytes uploaded</dt>
+                    <dd className="mt-1">{formatBytes(selectedImport.bytes_uploaded)}</dd>
+                  </div>
+                </dl>
+                <ImportSummaryPanel summary={selectedImportSummary} />
+              </>
+            ) : null}
           </div>
         )}
       </section>

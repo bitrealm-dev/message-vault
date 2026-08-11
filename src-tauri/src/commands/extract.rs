@@ -32,7 +32,7 @@ use sms_backup_plus_exporter::run as run_sms_plus;
 use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
-use super::events::ExtractErrorEvent;
+use super::events::{ExtractErrorEvent, ExtractProgressEvent};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -93,8 +93,13 @@ pub async fn extract(
     let app_handle = app.clone();
     config.cancel = Some(cancel);
     let log_app = app_handle.clone();
+    let progress_stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
+    let log_progress_stage = Arc::clone(&progress_stage);
     config.log = Some(LogSink::new(move |line: &str| {
         let _ = log_app.emit("extract:log", line.to_string());
+        if let Some(progress) = extract_progress_from_log(line, &log_progress_stage) {
+            let _ = log_app.emit("extract:progress", progress);
+        }
     }));
 
     thread::spawn(move || {
@@ -280,5 +285,139 @@ fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core
         SourceConfig::Apple(_) => run_imessage(config),
         SourceConfig::Whatsapp(_) => run_whatsapp(config),
         SourceConfig::Format(_) => Err(anyhow::anyhow!("Format conversion not yet wired")),
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ExtractProgressStage {
+    Parse,
+    Convert,
+}
+
+fn extract_progress_from_log(
+    line: &str,
+    stage: &Arc<Mutex<ExtractProgressStage>>,
+) -> Option<ExtractProgressEvent> {
+    if line.contains("Writing ") && line.contains("conversation file(s)") {
+        if let Ok(mut current_stage) = stage.lock() {
+            *current_stage = ExtractProgressStage::Convert;
+        }
+        return Some(ExtractProgressEvent {
+            step: "convert".into(),
+            done: 0,
+            total: 0,
+            status: Some("included_in_extract".into()),
+        });
+    }
+
+    let Some((done, total)) = extract_progress_ratio(line) else {
+        return None;
+    };
+
+    let step = match stage
+        .lock()
+        .map(|current_stage| *current_stage)
+        .unwrap_or(ExtractProgressStage::Parse)
+    {
+        ExtractProgressStage::Parse => "parse",
+        ExtractProgressStage::Convert => "convert",
+    };
+
+    Some(ExtractProgressEvent {
+        step: step.into(),
+        done,
+        total,
+        status: None,
+    })
+}
+
+fn has_bracketed_step_ratio(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        rest = &rest[open + 1..];
+        let Some((left, after_left)) = rest.split_once('/') else {
+            continue;
+        };
+        if !left.chars().all(|c| c.is_ascii_digit()) || left.is_empty() {
+            continue;
+        }
+        let Some((right, after_right)) = after_left.split_once(']') else {
+            continue;
+        };
+        if right.chars().all(|c| c.is_ascii_digit()) && !right.is_empty() {
+            return true;
+        }
+        rest = after_right;
+    }
+    false
+}
+
+fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
+    if has_bracketed_step_ratio(line) {
+        return None;
+    }
+
+    if !(line.contains('…') || line.contains("wrote")) {
+        return None;
+    }
+
+    let (left, right) = line.split_once('/')?;
+    let done = trailing_usize(left)?;
+    let total = leading_usize(right)?;
+    Some((done, total))
+}
+
+fn trailing_usize(text: &str) -> Option<usize> {
+    let digits: String = text
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.chars().rev().collect::<String>().parse().ok()
+}
+
+fn leading_usize(text: &str) -> Option<usize> {
+    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_progress_parser_tracks_parse_and_convert() {
+        let stage = Arc::new(Mutex::new(ExtractProgressStage::Parse));
+
+        let parse = extract_progress_from_log("  …500/12345 messages", &stage).unwrap();
+        assert_eq!(parse.step, "parse");
+        assert_eq!(parse.done, 500);
+        assert_eq!(parse.total, 12345);
+        assert_eq!(parse.status, None);
+
+        let banner = extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
+        assert_eq!(banner.step, "convert");
+        assert_eq!(banner.done, 0);
+        assert_eq!(banner.total, 0);
+        assert_eq!(banner.status.as_deref(), Some("included_in_extract"));
+
+        let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
+        assert!(ignored.is_none());
+
+        let backup_step =
+            extract_progress_from_log("[2/5] Resolving messages database...", &stage);
+        assert!(backup_step.is_none());
+
+        let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();
+        assert_eq!(convert.step, "convert");
+        assert_eq!(convert.done, 2);
+        assert_eq!(convert.total, 3);
+        assert_eq!(convert.status, None);
     }
 }

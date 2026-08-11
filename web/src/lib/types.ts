@@ -126,3 +126,17 @@ export interface ExtractErrorEvent {
   detail: string;
   user_message?: string;
 }
+
+export interface ImportProgressEvent {
+  step: "parse" | "convert" | "upload";
+  done: number;
+  total: number;
+  status?: string;
+}
+
+export interface ImportIssueEvent {
+  kind: "error" | "skip";
+  step: "parse" | "convert" | "upload";
+  item: string;
+  reason: string;
+}

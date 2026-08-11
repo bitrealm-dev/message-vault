@@ -7,6 +7,16 @@
 
 use serde::Serialize;
 
+/// Structured payload for `extract:progress`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtractProgressEvent {
+    pub step: String,
+    pub done: usize,
+    pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 /// Payload of the `extract:error` event.
 ///
 /// `user_message` is omitted from the JSON payload when absent
