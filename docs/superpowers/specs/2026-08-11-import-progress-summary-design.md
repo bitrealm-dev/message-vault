@@ -1,7 +1,7 @@
 # Import progress summary and stage timings
 
 **Date:** 2026-08-11  
-**Status:** Draft — pending user review  
+**Status:** Approved for planning  
 **Scope:** Import Messages UI (`web/src/screens/ImportScreen.tsx`), Tauri extract/push progress events, vault import session API and SQLite (`vault_imports`, new issues table)
 
 ## Problem
