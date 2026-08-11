@@ -15,7 +15,7 @@ docker run -d --name message-vault \
   mbeisser1/message-vault:latest
 ```
 
-The container seeds the demo dataset on first start. Subsequent restarts reuse the existing database. Changing `DEMO_DATA` does not seed or remove data in an existing volume. To refresh the dataset in place, run the server CLI's `reset-demo` command as described in [Settings](/browse/settings/).
+The container seeds the demo dataset on first start. Subsequent restarts reuse the existing database. Changing `DEMO_DATA` does not seed or remove data in an existing volume. To refresh the dataset in place, run the server CLI's [`reset-demo`](/reference/server-cli/#reset-demo) command.
 
 ## Browse the demo
 

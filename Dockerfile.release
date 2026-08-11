@@ -48,7 +48,7 @@ WORKDIR /app
 # Rust CLI / serve binary
 COPY --from=rust-builder /src/target/release/message-vault-server /usr/local/bin/message-vault-server
 
-# Demo bundle (seeded on first start when VAULT_MODE=demo)
+# Demo bundle (seeded on first start when DEMO_DATA is truthy)
 COPY demo ./demo
 
 # Container config template

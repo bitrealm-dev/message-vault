@@ -6,7 +6,7 @@ cd /app
 
 CONFIG_DOCKER="config/config.docker.toml"
 CONFIG="config/config.toml"
-DEMO_DATA="${DEMO_DATA:-true}"
+DEMO_DATA="${DEMO_DATA-true}"
 
 export VAULT_DB="${VAULT_DB:-/app/data/vault.db}"
 export VAULT_DATA_DIR="${VAULT_DATA_DIR:-/app/data}"

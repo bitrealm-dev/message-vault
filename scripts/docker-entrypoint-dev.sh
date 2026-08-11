@@ -6,7 +6,7 @@ cd /app
 
 CONFIG_DOCKER="config/config.docker.toml"
 CONFIG="config/config.toml"
-DEMO_DATA="${DEMO_DATA:-true}"
+DEMO_DATA="${DEMO_DATA-true}"
 
 ensure_docker_config() {
   mkdir -p config data

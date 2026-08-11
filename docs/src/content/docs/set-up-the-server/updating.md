@@ -15,13 +15,11 @@ docker rm message-vault
 docker pull mbeisser1/message-vault:latest
 docker run -d --name message-vault \
   -p 8080:8080 \
-  -e DEMO_DATA=false \
   -v message-vault-data:/app/data \
   mbeisser1/message-vault:latest
 ```
 
-
-The named volume keeps your database and assets. The new container picks them up on restart. Database schema upgrades apply automatically when the server starts — nothing to run by hand.
+The named volume keeps your database and assets. The new container picks them up on restart. `DEMO_DATA` only controls seeding when the container starts with an empty volume, so it does not need to be set during an upgrade. Database schema upgrades apply automatically when the server starts — nothing to run by hand.
 
 ### Compose
 
