@@ -13,7 +13,7 @@ export type ImportSummaryView = {
   parseMs?: number | null;
   convertMs?: number | null;
   uploadMs?: number | null;
-  durationMs: number;
+  durationMs: number | null;
   issues: ImportIssue[];
 };
 

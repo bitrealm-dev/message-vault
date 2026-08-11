@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import ImportSummaryPanel, {
@@ -105,9 +105,11 @@ function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
     detail.summary && typeof detail.summary === "object"
       ? (detail.summary as Record<string, unknown>)
       : {};
-  const durationMs =
-    detail.duration_ms ??
-    (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0);
+  const hasAnyStageTiming =
+    detail.parse_ms != null || detail.convert_ms != null || detail.upload_ms != null;
+  const durationMs = detail.duration_ms ?? (hasAnyStageTiming
+    ? (detail.parse_ms ?? 0) + (detail.convert_ms ?? 0) + (detail.upload_ms ?? 0)
+    : null);
 
   return {
     status: detail.status === "completed" ? "completed" : "failed",
