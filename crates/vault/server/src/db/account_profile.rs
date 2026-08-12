@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use message_ir::{HandleService, HandleType};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::db::handles::normalize_handle;
 use crate::db::schema;
 
 /// Account identity loaded for profile display: the handles migration replaced the
@@ -73,28 +74,6 @@ pub fn ensure_account_row(conn: &Connection, account_id: &str) -> Result<()> {
     )
     .with_context(|| format!("failed to ensure account row for {account_id}"))?;
     Ok(())
-}
-
-/// Canonical form of a handle for identity matching, per type, plus a
-/// human-readable note when the canonical form is ambiguous (guarded policy).
-///
-/// Mirrors `import.rs::normalize_handle` (and the address-book normalization in
-/// `db/contacts.rs`): phones become E.164 when unambiguous, else digits-as-is
-/// with a note; emails lowercase; others verbatim.
-fn normalize_handle(raw: &str, handle_type: HandleType) -> (String, Option<String>) {
-    match handle_type {
-        HandleType::Phone => {
-            let guarded = phone::normalize_guarded(raw, phone::PhoneRegion::for_raw(raw));
-            if guarded.normalized.is_empty() {
-                // No usable digits: fall back to the raw, unflagged.
-                (raw.trim().to_string(), None)
-            } else {
-                (guarded.normalized, guarded.note)
-            }
-        }
-        HandleType::Email => (raw.trim().to_lowercase(), None),
-        HandleType::Username | HandleType::Other => (raw.trim().to_string(), None),
-    }
 }
 
 /// Ensure a `handles` row exists and link it to the account via `account_handles`.

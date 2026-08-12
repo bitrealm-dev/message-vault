@@ -5,8 +5,8 @@ use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
 use crate::search_query::{
-    ConversationTypeFilter, ParsedSearchQuery, SearchMode, has_date_bounds, has_search_criteria,
-    metadata_exclude_terms, metadata_include_terms, parse_search_query,
+    ParsedSearchQuery, SearchMode, has_date_bounds, metadata_exclude_terms, metadata_include_terms,
+    parse_search_query,
 };
 
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
@@ -150,6 +150,12 @@ impl From<anyhow::Error> for ExportQueryError {
     }
 }
 
+impl From<rusqlite::Error> for ExportQueryError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 impl ExportQueryError {
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
@@ -213,9 +219,6 @@ pub fn export_messages(
         _ => None,
     };
 
-    // Empty q with no criteria → export all (date filters alone still apply when present).
-    let _ = has_search_criteria(&parsed);
-
     let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
     let fetch_limit = limit + 1;
 
@@ -259,8 +262,7 @@ pub fn export_messages(
     }
 
     let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(params.iter().cloned()), |row| {
             Ok(RawRow {
@@ -285,10 +287,8 @@ pub fn export_messages(
                 conversation_type: row.get(18)?,
                 group_title: row.get(19)?,
             })
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     let truncated = rows.len() > limit;
     let page_rows: Vec<RawRow> = if truncated {
@@ -382,7 +382,6 @@ pub fn export_message_count(
         ));
     }
 
-    let _ = has_search_criteria(&parsed);
     let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
 
     let msg_sql = format!(
@@ -398,8 +397,7 @@ pub fn export_message_count(
             &msg_sql,
             params_from_iter(filters.params.iter().cloned()),
             |row| row.get(0),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
@@ -414,8 +412,7 @@ pub fn export_message_count(
             &conv_sql,
             params_from_iter(filters.params.iter().cloned()),
             |row| row.get(0),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
 
     let size_expr = if column_exists(conn, "attachments", "size_bytes")? {
         "MAX(a.size_bytes)"
@@ -444,8 +441,7 @@ pub fn export_message_count(
             &att_sql,
             params_from_iter(filters.params.iter().cloned()),
             |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
 
     Ok(ExportCountResponse {
         ok: true,
@@ -750,13 +746,10 @@ fn list_label_member_contact_ids(
              JOIN contact_labels cl ON cl.id = clm.label_id
              WHERE cl.name = ? COLLATE NOCASE AND cl.account_id = ?
              ORDER BY clm.contact_id",
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     let rows = stmt
-        .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<i64>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
     Ok(rows)
 }
 
@@ -805,13 +798,10 @@ fn contact_ids_within_day_bounds(
          HAVING {having_sql}"
     );
     let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .prepare(&sql)?;
     let rows = stmt
-        .query_map(params_from_iter(params.iter().cloned()), |r| r.get(0))
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<i64>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .query_map(params_from_iter(params.iter().cloned()), |r| r.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
     Ok(rows)
 }
 
@@ -849,8 +839,7 @@ fn load_participants(
              ORDER BY p.conversation_id, p.id"
         );
         let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(chunk.iter().copied()), |row| {
                 Ok((
@@ -863,10 +852,9 @@ fn load_participants(
                         contact_id: row.get(5)?,
                     },
                 ))
-            })
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            })?;
         for row in rows {
-            let (cid, p) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            let (cid, p) = row?;
             map.entry(cid).or_insert_with(Vec::new).push(p);
         }
     }
@@ -891,8 +879,7 @@ fn load_attachments(
              ORDER BY message_id, id"
         );
         let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(chunk.iter().copied()), |row| {
                 Ok((
@@ -907,10 +894,9 @@ fn load_attachments(
                         missing_reason: row.get(7)?,
                     },
                 ))
-            })
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            })?;
         for row in rows {
-            let (mid, att) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            let (mid, att) = row?;
             map.entry(mid).or_insert_with(Vec::new).push(att);
         }
     }
@@ -936,8 +922,7 @@ fn load_tapbacks(
              ORDER BY t.message_id, t.id"
         );
         let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(chunk.iter().copied()), |row| {
                 Ok((
@@ -950,10 +935,9 @@ fn load_tapbacks(
                         sender: row.get(5)?,
                     },
                 ))
-            })
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            })?;
         for row in rows {
-            let (mid, t) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            let (mid, t) = row?;
             map.entry(mid).or_insert_with(Vec::new).push(t);
         }
     }
@@ -967,36 +951,25 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, ExportQueryError>
             [name],
             |r| r.get(0),
         )
-        .optional()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .optional()?;
     Ok(n.is_some())
 }
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, ExportQueryError> {
     let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt
-        .query([])
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .query([])?;
     while let Some(row) = rows
-        .next()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
+        .next()?
     {
         let name: String = row
-            .get(1)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .get(1)?;
         if name == column {
             return Ok(true);
         }
     }
     Ok(false)
-}
-
-// Silence unused import warning for ConversationTypeFilter in non-test builds if only used via Display
-#[allow(dead_code)]
-fn _ct_used(ct: ConversationTypeFilter) -> String {
-    ct.to_string()
 }
 
 #[cfg(test)]

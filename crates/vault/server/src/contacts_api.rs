@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::db::account_profile;
+use crate::db::handles::infer_handle_type_from_shape;
 use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
@@ -99,12 +100,13 @@ pub struct ContactDetail {
 /// A contact is linked to a conversation when one of its handles is either
 /// the conversation's chat handle or a participant handle in it.
 ///
-/// Expects one bind parameter: `contact_id` (i64). Alias `c` = conversations.
-pub(crate) fn involves_contact_sql() -> &'static str {
-    "EXISTS (
+/// `contact_id_expr` is the SQL expression for the contact id (`?` or `ct.id`).
+fn involves_contact_expr(contact_id_expr: &str) -> String {
+    format!(
+        "EXISTS (
        SELECT 1 FROM contact_handles ch
        WHERE ch.account_id = c.account_id
-         AND ch.contact_id = ?
+         AND ch.contact_id = {contact_id_expr}
          AND (
            ch.handle_id = c.chat_handle_id
            OR EXISTS (
@@ -113,22 +115,17 @@ pub(crate) fn involves_contact_sql() -> &'static str {
            )
          )
      )"
+    )
+}
+
+/// Expects one bind parameter: `contact_id` (i64). Alias `c` = conversations.
+pub(crate) fn involves_contact_sql() -> String {
+    involves_contact_expr("?")
 }
 
 /// Correlated: conversation `c` involves contact row `ct` (no bind params).
-fn involves_ct_sql() -> &'static str {
-    "EXISTS (
-       SELECT 1 FROM contact_handles ch
-       WHERE ch.account_id = c.account_id
-         AND ch.contact_id = ct.id
-         AND (
-           ch.handle_id = c.chat_handle_id
-           OR EXISTS (
-             SELECT 1 FROM participants p
-             WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
-           )
-         )
-     )"
+fn involves_ct_sql() -> String {
+    involves_contact_expr("ct.id")
 }
 
 /// Contact has at least one non-duplicate message in an involved conversation.
@@ -448,8 +445,7 @@ pub fn list_contacts(
             &count_sql,
             params_from_iter(params.iter().cloned()),
             |row| row.get(0),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     let total = total.max(0) as u64;
 
     let sql = format!(
@@ -484,8 +480,7 @@ pub fn list_contacts(
     page_params.push((offset as i64).into());
 
     let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             let handles_blob: Option<String> = row.get(3)?;
@@ -505,10 +500,8 @@ pub fn list_contacts(
                 handles,
                 last_modified: row.get(4)?,
             })
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ContactListPage {
         contacts: rows,
@@ -576,8 +569,7 @@ pub fn get_contact_detail(
             rusqlite::params![contact_id, account_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .optional()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .optional()?;
     let Some((name, last_modified)) = name_and_modified else {
         return Ok(None);
     };
@@ -615,8 +607,7 @@ pub fn get_contact_detail(
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
              GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
              ORDER BY h.raw",
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     let mut handles = Vec::new();
     let rows = stmt
         .query_map(rusqlite::params![account_id, contact_id], |row| {
@@ -631,10 +622,9 @@ pub fn get_contact_detail(
                 individual_message_count: row.get::<_, i64>(7)?.max(0) as u64,
                 group_message_count: row.get::<_, i64>(8)?.max(0) as u64,
             })
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?;
     for row in rows {
-        handles.push(row.map_err(|e| ExportQueryError::Internal(e.to_string()))?);
+        handles.push(row?);
     }
 
     // Conversation + message stats across handles of this contact only.
@@ -662,13 +652,11 @@ pub fn get_contact_detail(
                 WHERE m.duplicate_of IS NULL
                   AND m.conversation_id IN (SELECT id FROM involved))",
             involves_contact_sql = involves_contact_sql(),
-        ))
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        ))?;
     let (direct, groups, total): (i64, i64, i64) = stats_stmt
         .query_row(rusqlite::params![account_id, contact_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?;
 
     Ok(Some(ContactDetail {
         id: contact_id,
@@ -688,23 +676,7 @@ fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     match svc.as_str() {
         "phone" | "sms" | "imessage" | "whatsapp" => HandleType::Phone,
         "email" => HandleType::Email,
-        "" => {
-            let h = raw.trim();
-            if h.contains('@') {
-                HandleType::Email
-            } else {
-                let has_digit = h.bytes().any(|b| b.is_ascii_digit());
-                let all_phone = h.bytes().all(|b| {
-                    b.is_ascii_digit()
-                        || matches!(b, b'+' | b'-' | b' ' | b'(' | b')' | b'.' | b'#' | b'*')
-                });
-                if !h.is_empty() && has_digit && all_phone {
-                    HandleType::Phone
-                } else {
-                    HandleType::Other
-                }
-            }
-        }
+        "" => infer_handle_type_from_shape(raw),
         _ => HandleType::Other,
     }
 }

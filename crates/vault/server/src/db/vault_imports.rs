@@ -156,7 +156,29 @@ pub fn start_import(
     Ok(conn.last_insert_rowid())
 }
 
-fn load_import_row(
+fn map_vault_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultImportRow> {
+    Ok(VaultImportRow {
+        id: row.get(0)?,
+        account_id: row.get(1)?,
+        source: row.get(2)?,
+        tool: row.get(3)?,
+        mode: row.get(4)?,
+        status: row.get(5)?,
+        started_at: row.get(6)?,
+        finished_at: row.get(7)?,
+        message_count: row.get(8)?,
+        attachment_count: row.get(9)?,
+        bytes_uploaded: row.get(10)?,
+        duration_ms: row.get(11)?,
+        parse_ms: row.get(12)?,
+        convert_ms: row.get(13)?,
+        upload_ms: row.get(14)?,
+        summary_json: row.get(15)?,
+    })
+}
+
+/// Load an import row owned by `account_id`, or error.
+pub fn get_owned_import(
     conn: &Connection,
     account_id: &str,
     import_id: i64,
@@ -171,41 +193,13 @@ fn load_import_row(
             WHERE id = ?1 AND account_id = ?2
             "#,
             params![import_id, account_id],
-            |row| {
-                Ok(VaultImportRow {
-                    id: row.get(0)?,
-                    account_id: row.get(1)?,
-                    source: row.get(2)?,
-                    tool: row.get(3)?,
-                    mode: row.get(4)?,
-                    status: row.get(5)?,
-                    started_at: row.get(6)?,
-                    finished_at: row.get(7)?,
-                    message_count: row.get(8)?,
-                    attachment_count: row.get(9)?,
-                    bytes_uploaded: row.get(10)?,
-                    duration_ms: row.get(11)?,
-                    parse_ms: row.get(12)?,
-                    convert_ms: row.get(13)?,
-                    upload_ms: row.get(14)?,
-                    summary_json: row.get(15)?,
-                })
-            },
+            map_vault_import_row,
         )
         .optional()?
     {
         Some(row) => Ok(row),
         None => Err(ImportLookupError::NotFound { import_id }),
     }
-}
-
-/// Load an import row owned by `account_id`, or error.
-pub fn get_owned_import(
-    conn: &Connection,
-    account_id: &str,
-    import_id: i64,
-) -> std::result::Result<VaultImportRow, ImportLookupError> {
-    load_import_row(conn, account_id, import_id)
 }
 
 /// Finish an import: prefer client counts, else derive from linked messages.
@@ -401,26 +395,7 @@ pub fn list_imports_for_account(
         "#,
     )?;
     let rows = stmt
-        .query_map(params![account_id, limit], |row| {
-            Ok(VaultImportRow {
-                id: row.get(0)?,
-                account_id: row.get(1)?,
-                source: row.get(2)?,
-                tool: row.get(3)?,
-                mode: row.get(4)?,
-                status: row.get(5)?,
-                started_at: row.get(6)?,
-                finished_at: row.get(7)?,
-                message_count: row.get(8)?,
-                attachment_count: row.get(9)?,
-                bytes_uploaded: row.get(10)?,
-                duration_ms: row.get(11)?,
-                parse_ms: row.get(12)?,
-                convert_ms: row.get(13)?,
-                upload_ms: row.get(14)?,
-                summary_json: row.get(15)?,
-            })
-        })?
+        .query_map(params![account_id, limit], map_vault_import_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

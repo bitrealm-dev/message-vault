@@ -1282,10 +1282,8 @@ async fn export_messages_count_handler(
     let db_path = state.cfg.paths.db.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db_path)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
-        schema::configure_connection(&conn)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let conn = Connection::open(&db_path)?;
+        schema::configure_connection(&conn)?;
         export_api::export_message_count(
             &conn,
             ExportCountOpts {
@@ -1322,10 +1320,8 @@ async fn export_messages_handler(
     let db_path = state.cfg.paths.db.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db_path)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
-        schema::configure_connection(&conn)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        let conn = Connection::open(&db_path)?;
+        schema::configure_connection(&conn)?;
         export_api::export_messages(
             &conn,
             ExportPageOpts {
