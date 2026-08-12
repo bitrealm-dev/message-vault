@@ -657,6 +657,21 @@ fn imazing_packaging_stem_suffix(source_kind: &str) -> Option<String> {
     }
 }
 
+/// Materials for [`stable_guid`]: prefer content digests so a later run that
+/// finds and copies a previously missing file does not change the message id.
+fn attachment_guid_materials(attachments: &[PendingAttachment]) -> Vec<String> {
+    let mut digests: Vec<String> = attachments
+        .iter()
+        .map(|a| {
+            a.digest_sha256
+                .clone()
+                .unwrap_or_else(|| a.rel_path.clone())
+        })
+        .collect();
+    digests.sort();
+    digests
+}
+
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
@@ -710,7 +725,7 @@ fn pending_to_document(
         report.messages += 1;
 
         let (ts_local, _, _) = format_local_ts(msg.sort_key).expect("timestamp validated above");
-        let digests: Vec<String> = msg.attachments.iter().map(|a| a.rel_path.clone()).collect();
+        let digests = attachment_guid_materials(&msg.attachments);
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let timestamp_unix_ms = msg
             .extra_str("date_ms")
@@ -838,6 +853,45 @@ mod tests {
         let mut f = File::create(&path).unwrap();
         write!(f, "{body}").unwrap();
         path
+    }
+
+    fn pending_att(rel_path: &str, digest: Option<&str>) -> PendingAttachment {
+        PendingAttachment {
+            rel_path: rel_path.into(),
+            content_type: String::new(),
+            extension: "jpg".into(),
+            digest_sha256: digest.map(str::to_string),
+            name_hint: None,
+        }
+    }
+
+    #[test]
+    fn message_guid_prefers_digest_over_rel_path() {
+        // Same digest, different relative paths → same GUID material.
+        let a = pending_att("attachments/old_name.jpg", Some("abc123"));
+        let b = pending_att("attachments/new_name.jpg", Some("abc123"));
+        assert_eq!(
+            attachment_guid_materials(&[a]),
+            attachment_guid_materials(&[b])
+        );
+
+        // Digest present wins over path; path alone differs from digest.
+        let with_digest = pending_att("attachments/x.jpg", Some("deadbeef"));
+        let path_only = pending_att("attachments/x.jpg", None);
+        assert_ne!(
+            attachment_guid_materials(&[with_digest]),
+            attachment_guid_materials(&[path_only])
+        );
+
+        // Order of attachments must not change the sorted material list.
+        let mixed = [
+            pending_att("a.jpg", Some("bb")),
+            pending_att("b.jpg", Some("aa")),
+        ];
+        assert_eq!(
+            attachment_guid_materials(&mixed),
+            vec!["aa".to_string(), "bb".to_string()]
+        );
     }
 
     #[test]
