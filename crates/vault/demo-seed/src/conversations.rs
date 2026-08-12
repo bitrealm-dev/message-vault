@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use chrono::{Duration, FixedOffset, TimeZone, Utc};
 use message_ir::{
     ConversationHeader, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
-    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService,
-    SCHEMA_VERSION,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
+    IrService, SCHEMA_VERSION,
 };
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -20,7 +20,7 @@ use crate::assets::{JPG_PHOTOS, OTHER_ATTACHMENTS};
 use crate::config::SeedConfig;
 use crate::corpus::Corpus;
 use crate::personas::{
-    EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, OWNER_PHONE, Contact, Roster,
+    Contact, EMPTY_GROUP_HANDLE, EMPTY_THREAD_HANDLE, ORPHAN_SENDER, OWNER_PHONE, Roster,
     Unassigned,
 };
 
@@ -300,7 +300,15 @@ fn write_individual(
                 );
             }
             SourceFlavor::SmsBackupRestore => {
-                decorate_android_message(&mut msg, i, msg_count, cfg, rng, stats, attachment_digests);
+                decorate_android_message(
+                    &mut msg,
+                    i,
+                    msg_count,
+                    cfg,
+                    rng,
+                    stats,
+                    attachment_digests,
+                );
             }
             SourceFlavor::Whatsapp => {
                 // Keep WhatsApp threads simple (no Apple decorations).
@@ -383,11 +391,7 @@ fn write_overlap_individual(
                 },
                 service: IrService::IMessage,
                 message_kind: IrMessageKind::IMessage,
-                sender_handle: if *from_me {
-                    None
-                } else {
-                    Some(chat_id.into())
-                },
+                sender_handle: if *from_me { None } else { Some(chat_id.into()) },
                 sender_display_name: None,
                 subject: None,
                 text: text.clone(),
@@ -456,11 +460,7 @@ fn write_overlap_individual(
                 },
                 service: IrService::Sms,
                 message_kind: IrMessageKind::Sms,
-                sender_handle: if *from_me {
-                    None
-                } else {
-                    Some(chat_id.into())
-                },
+                sender_handle: if *from_me { None } else { Some(chat_id.into()) },
                 sender_display_name: None,
                 subject: None,
                 text: text.clone(),
@@ -618,8 +618,7 @@ fn write_group(
     }
 
     let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
-    let msg_count = ((group.msgs_per_year * group.span_years).round() as isize)
-        .max(1) as usize;
+    let msg_count = ((group.msgs_per_year * group.span_years).round() as isize).max(1) as usize;
     let timestamps = bursty_timestamps(msg_count, group.span_years, sample_group_day_burst, rng);
     let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
@@ -681,13 +680,7 @@ fn write_group(
         if should_attach_jpg(i, msg_count, cfg) {
             add_jpg_attachment(&mut msg, i + group.index, stats, attachment_digests);
         } else if should_attach_other(i, msg_count, cfg) {
-            add_attachment(
-                &mut msg,
-                i,
-                stats,
-                OTHER_ATTACHMENTS,
-                attachment_digests,
-            );
+            add_attachment(&mut msg, i, stats, OTHER_ATTACHMENTS, attachment_digests);
         }
         if cfg.messages.tapback_stride > 0
             && i % cfg.messages.tapback_stride == 0
@@ -830,15 +823,25 @@ fn decorate_message(
         im.num_replies = Some(rng.random_range(1..4));
     }
     // Mix SMS/RCS into Apple threads so per-message transport badges are visible.
-    if rng.random_bool(cfg.messages.apple_fallback_transport_fraction.clamp(0.0, 1.0)) {
+    if rng.random_bool(
+        cfg.messages
+            .apple_fallback_transport_fraction
+            .clamp(0.0, 1.0),
+    ) {
         if rng.random_bool(0.5) {
             msg.service = IrService::Sms;
-            if !matches!(msg.message_kind, IrMessageKind::Mms | IrMessageKind::Announcement) {
+            if !matches!(
+                msg.message_kind,
+                IrMessageKind::Mms | IrMessageKind::Announcement
+            ) {
                 msg.message_kind = IrMessageKind::Sms;
             }
         } else {
             msg.service = IrService::Rcs;
-            if !matches!(msg.message_kind, IrMessageKind::Mms | IrMessageKind::Announcement) {
+            if !matches!(
+                msg.message_kind,
+                IrMessageKind::Mms | IrMessageKind::Announcement
+            ) {
                 msg.message_kind = IrMessageKind::Sms;
             }
         }
@@ -992,13 +995,11 @@ fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
             let spaced = secs + (i as i64) * rng.random_range(8..45);
             let mut dt = day_start + Duration::seconds(spaced.min(23 * 3600 + 3599));
             if let Some(&prev) = out.last()
-                && dt.timestamp_millis() <= prev {
-                    dt = Utc
-                        .timestamp_millis_opt(prev)
-                        .single()
-                        .unwrap_or(now)
-                        + Duration::seconds(rng.random_range(12..90));
-                }
+                && dt.timestamp_millis() <= prev
+            {
+                dt = Utc.timestamp_millis_opt(prev).single().unwrap_or(now)
+                    + Duration::seconds(rng.random_range(12..90));
+            }
             let local = offset.from_utc_datetime(&dt.naive_utc());
             out.push(local.timestamp_millis());
         }

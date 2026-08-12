@@ -1,15 +1,10 @@
 //! Attachment media + obfuscate transforms applied before IR projection.
 
 use crate::util::read_attachment_file;
-use message_ir::{
-    ConversationDocument,
-    IrAttachment,
-    IrDirection,
-    IrParticipant,
-};
 use anyhow::{Context, Result};
-use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
 use media::{CompressOptions, MediaMode, MediaReport};
+use message_ir::{ConversationDocument, IrAttachment, IrDirection, IrParticipant};
+use message_vault_io_core::{LogSink, MediaConfig, ObfuscateConfig, emit_log};
 use obfuscate::{
     Obfuscator, classify_attachment, materialize_placeholders, placeholder_rel_path,
     resolve_obfuscator_with_log,
@@ -284,10 +279,8 @@ pub(crate) fn apply_transforms(
     if transforms.obfuscate {
         materialize_placeholders(output_dir)?;
         let log_fn = |line: &str| emit_log(transforms.log.as_ref(), line);
-        let mut anon = resolve_obfuscator_with_log(
-            transforms.obfuscate_seed.as_deref(),
-            Some(&log_fn),
-        )?;
+        let mut anon =
+            resolve_obfuscator_with_log(transforms.obfuscate_seed.as_deref(), Some(&log_fn))?;
         for doc in docs.iter_mut() {
             obfuscate_document(doc, &mut anon);
             obfuscated_docs += 1;
@@ -309,18 +302,11 @@ pub(crate) fn apply_transforms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use message_ir::{
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    IrConversationType,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    SCHEMA_VERSION,
-};
     use media::MediaMode;
+    use message_ir::{
+        ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrMessage,
+        IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
+    };
     use std::fs;
 
     fn doc_with_image_attachment() -> ConversationDocument {

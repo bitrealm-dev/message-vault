@@ -116,10 +116,7 @@ pub fn query_stats(
     let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
         .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
     let account = auth.account_id.clone();
-    let username = auth
-        .username
-        .clone()
-        .unwrap_or_else(|| account.clone());
+    let username = auth.username.clone().unwrap_or_else(|| account.clone());
     emit(
         &mut on_progress,
         ProgressEvent::Auth {
@@ -132,11 +129,7 @@ pub fn query_stats(
         ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
     );
 
-    let q = compose_query(
-        &cfg.query,
-        cfg.after.as_deref(),
-        cfg.before.as_deref(),
-    );
+    let q = compose_query(&cfg.query, cfg.after.as_deref(), cfg.before.as_deref());
     emit(
         &mut on_progress,
         ProgressEvent::Log(if q.is_empty() {
@@ -271,7 +264,10 @@ fn query_stats_by_paging(
     Ok(stats)
 }
 
-pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) -> Result<PullReport> {
+pub fn run(
+    cfg: &VaultPullConfig,
+    mut on_progress: Option<&mut ProgressFn<'_>>,
+) -> Result<PullReport> {
     let emit = |on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent| {
         if let Some(cb) = on_progress.as_mut() {
             cb(event);
@@ -288,10 +284,7 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
     let auth = authenticate(&cfg.base_url, &cfg.key, &cfg.username)
         .map_err(|e| anyhow::anyhow!("{}", e.detail()))?;
     let account = auth.account_id.clone();
-    let username = auth
-        .username
-        .clone()
-        .unwrap_or_else(|| account.clone());
+    let username = auth.username.clone().unwrap_or_else(|| account.clone());
     emit(
         &mut on_progress,
         ProgressEvent::Auth {
@@ -304,11 +297,7 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
         ProgressEvent::Log(format!("Authenticated as {username} ({account})")),
     );
 
-    let q = compose_query(
-        &cfg.query,
-        cfg.after.as_deref(),
-        cfg.before.as_deref(),
-    );
+    let q = compose_query(&cfg.query, cfg.after.as_deref(), cfg.before.as_deref());
     emit(
         &mut on_progress,
         ProgressEvent::Log(if q.is_empty() {
@@ -411,7 +400,9 @@ pub fn run(cfg: &VaultPullConfig, mut on_progress: Option<&mut ProgressFn<'_>>) 
             }
             let key = conversation_key(&msg);
             let ir = to_ir_message(&msg, cfg.skip_attachments)?;
-            let entry = by_conv.entry(key).or_insert_with(|| (msg.clone(), Vec::new()));
+            let entry = by_conv
+                .entry(key)
+                .or_insert_with(|| (msg.clone(), Vec::new()));
             // Keep first message as seed for conversation metadata.
             entry.1.push(ir);
         }
@@ -579,8 +570,7 @@ fn download_assets_parallel(
     for (sha256, (source, rel)) in assets {
         let dest = out_dir.join(rel);
         if dest.is_file() {
-            let meta = fs::metadata(&dest)
-                .with_context(|| format!("stat {}", dest.display()))?;
+            let meta = fs::metadata(&dest).with_context(|| format!("stat {}", dest.display()))?;
             stats.bytes = stats.bytes.saturating_add(meta.len());
             stats.skipped += 1;
             continue;
@@ -623,8 +613,9 @@ fn download_assets_parallel(
                             &job.sha256,
                             &job.dest,
                         )?;
-                        let meta = fs::metadata(&job.dest)
-                            .with_context(|| format!("stat after download {}", job.dest.display()))?;
+                        let meta = fs::metadata(&job.dest).with_context(|| {
+                            format!("stat after download {}", job.dest.display())
+                        })?;
                         Ok(meta.len())
                     })()
                     .map_err(|e| e.to_string());

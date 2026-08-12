@@ -3,8 +3,10 @@
 use crate::emit::convert_json;
 use crate::wtsexporter::{Platform, WtsexporterArgs, resolve_wtsexporter, run_wtsexporter};
 use anyhow::{Context, Result, bail};
-use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig, WhatsappPlatform as CorePlatform};
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::{
+    ExporterConfig, RunResult, SourceConfig, WhatsappPlatform as CorePlatform,
+};
 use std::env;
 use std::fs;
 
@@ -123,4 +125,3 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     report.summary_lines(&config.output, &mut messages);
     Ok(RunResult { messages })
 }
-

@@ -76,7 +76,8 @@ impl DataSource {
                         get_decrypted_message_database(&backup, log.as_ref())?,
                         log.clone(),
                     );
-                    let contacts_path = match get_decrypted_contacts_database(&backup, log.as_ref()) {
+                    let contacts_path = match get_decrypted_contacts_database(&backup, log.as_ref())
+                    {
                         Ok(path) => Some(path),
                         Err(e) => {
                             emit_log(

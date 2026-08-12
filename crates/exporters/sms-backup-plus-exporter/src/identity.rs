@@ -25,7 +25,8 @@ pub(crate) fn chat_id_for(msg: &ParsedMessage) -> String {
         // Guarded policy on the raw chat key: E.164 only when unambiguous,
         // so a trunk-zero value stays digits-as-is instead of being
         // fabricated into `+02079460000`.
-        phone::normalize_guarded(&msg.chat_key, phone::PhoneRegion::for_raw(&msg.chat_key)).normalized
+        phone::normalize_guarded(&msg.chat_key, phone::PhoneRegion::for_raw(&msg.chat_key))
+            .normalized
     }
 }
 

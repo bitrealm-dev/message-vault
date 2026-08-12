@@ -1,14 +1,14 @@
 //! Convert an existing Message Vault output directory to another format.
 
+use anyhow::{Context, Result, bail};
 use message_ir::ConversationDocument;
 use message_ir_format::{
     CSV_HEADERS, ExportTransforms, FormatSink, FormatSinkResult, SbrReadOptions,
     clean_previous_ir_output, read_conversation_csv, read_conversation_eml_dir,
     read_conversation_json, read_conversation_jsonl, read_conversation_mbox, read_sbr_documents,
 };
-use anyhow::{Context, Result, bail};
-use message_vault_io_core::{ExporterConfig, OutputFormat};
 pub use message_vault_io_core::RunResult;
+use message_vault_io_core::{ExporterConfig, OutputFormat};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -287,12 +287,11 @@ fn looks_like_ir_json(path: &Path) -> Result<bool> {
         Ok(value) => value,
         Err(_) => return Ok(false),
     };
-    Ok(
-        value.get("schema_version").and_then(|value| value.as_u64()) == Some(message_ir::SCHEMA_VERSION as u64)
-            && value.get("export").is_some()
-            && value.get("conversation").is_some()
-            && value.get("messages").is_some(),
-    )
+    Ok(value.get("schema_version").and_then(|value| value.as_u64())
+        == Some(message_ir::SCHEMA_VERSION as u64)
+        && value.get("export").is_some()
+        && value.get("conversation").is_some()
+        && value.get("messages").is_some())
 }
 
 fn looks_like_ir_jsonl(path: &Path) -> Result<bool> {
@@ -304,12 +303,11 @@ fn looks_like_ir_jsonl(path: &Path) -> Result<bool> {
         Ok(value) => value,
         Err(_) => return Ok(false),
     };
-    Ok(
-        value.get("schema_version").and_then(|value| value.as_u64()) == Some(message_ir::SCHEMA_VERSION as u64)
-            && value.get("export").is_some()
-            && value.get("conversation").is_some()
-            && value.get("messages").is_none(),
-    )
+    Ok(value.get("schema_version").and_then(|value| value.as_u64())
+        == Some(message_ir::SCHEMA_VERSION as u64)
+        && value.get("export").is_some()
+        && value.get("conversation").is_some()
+        && value.get("messages").is_none())
 }
 
 fn looks_like_ir_csv(path: &Path) -> Result<bool> {
@@ -372,9 +370,7 @@ mod tests {
         IrMessage, IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
     };
     use message_ir_format::{read_conversation_csv, read_conversation_json};
-    use message_vault_io_core::{
-        MediaConfig, FormatConfig, ObfuscateConfig, SourceConfig,
-    };
+    use message_vault_io_core::{FormatConfig, MediaConfig, ObfuscateConfig, SourceConfig};
 
     fn sample_doc() -> ConversationDocument {
         let mut document = ConversationDocument {

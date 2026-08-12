@@ -3,7 +3,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use contacts::{
-    ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows, strip_tags,
+    ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows,
+    strip_tags,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 

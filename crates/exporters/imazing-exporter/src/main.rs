@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use imazing_exporter::{parse_date_range, run};
+use media::compress_options_from_cli;
 use message_vault_io_core::{
     CommonCli, ExporterConfig, ImazingConfig, MediaConfig, OutputFormat, SourceConfig,
 };
-use media::compress_options_from_cli;
 
 #[derive(Parser, Debug)]
 #[command(name = "imazing-exporter")]

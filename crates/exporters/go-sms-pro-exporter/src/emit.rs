@@ -1,34 +1,19 @@
 //! Convert GO SMS Pro export → common message → packaging via FormatSink.
 
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
-use go_sms_mms::{ParsedPdu, parse_pdu_file};
 use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone};
 use contacts::ContactsBook;
+use go_sms_mms::{ParsedPdu, parse_pdu_file};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    PendingAttachment,
-    PendingConversation,
-    PendingMessage,
-    SCHEMA_VERSION,
-    owner_sender,
-    parse_android_type,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
+    owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use phone::OwnerHandleSet;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -701,8 +686,8 @@ pub(crate) fn convert_export(
     // would otherwise delete the backup itself when both paths are the same.
     let input_dir =
         fs::canonicalize(input_dir).with_context(|| format!("resolve {}", input_dir.display()))?;
-    let output_dir =
-        fs::canonicalize(output_dir).with_context(|| format!("resolve {}", output_dir.display()))?;
+    let output_dir = fs::canonicalize(output_dir)
+        .with_context(|| format!("resolve {}", output_dir.display()))?;
     if output_dir == input_dir || input_dir.starts_with(&output_dir) {
         bail!(
             "output {} must not be the same as, or contain, the input {}",
@@ -739,11 +724,23 @@ pub(crate) fn convert_export(
             Ok((msgs, stats)) => {
                 bump(&mut report, "xml_messages_seen", stats.messages);
                 report.skipped_invalid_date += stats.skipped_invalid_date;
-                bump(&mut report, "skipped_unknown_type", stats.skipped_unknown_type);
-                bump(&mut report, "skipped_unknown_address", stats.skipped_unknown_address);
+                bump(
+                    &mut report,
+                    "skipped_unknown_type",
+                    stats.skipped_unknown_type,
+                );
+                bump(
+                    &mut report,
+                    "skipped_unknown_address",
+                    stats.skipped_unknown_address,
+                );
                 skips.invalid_address_more += stats.skipped_unknown_address_details_more;
                 for d in stats.skipped_unknown_address_details {
-                    push_skip_detail(&mut skips.invalid_address, &mut skips.invalid_address_more, d);
+                    push_skip_detail(
+                        &mut skips.invalid_address,
+                        &mut skips.invalid_address_more,
+                        d,
+                    );
                 }
                 let msgs: Vec<_> = msgs
                     .into_iter()
@@ -774,7 +771,11 @@ pub(crate) fn convert_export(
     for pdu_path in pdu_paths {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         let all_digits = owners.all_phone_digits();
-        match parse_pdu_file(&pdu_path, &all_digits, owners.primary_phone_digit().unwrap_or("")) {
+        match parse_pdu_file(
+            &pdu_path,
+            &all_digits,
+            owners.primary_phone_digit().unwrap_or(""),
+        ) {
             Ok(None) => {
                 bump(&mut report, "skipped_unparseable_pdu", 1);
                 if report.errors.len() < 20 {
@@ -825,7 +826,11 @@ pub(crate) fn convert_export(
 
     let sink_result = sink.finish()?;
 
-    write_skipped_invalid_address_csv(&output_dir, &skips.invalid_address, skips.invalid_address_more)?;
+    write_skipped_invalid_address_csv(
+        &output_dir,
+        &skips.invalid_address,
+        skips.invalid_address_more,
+    )?;
     write_skipped_empty_pdu_csv(&output_dir, &skips.empty_pdu, skips.empty_pdu_more)?;
     write_skipped_no_party_csv(&output_dir, &skips.no_party, skips.no_party_more)?;
 
@@ -979,10 +984,7 @@ mod tests {
 
     #[test]
     fn dedupe_base_key_prefix() {
-        assert_eq!(
-            dedupe_base_key("1609459200|1|hello|"),
-            "1609459200|1|hello"
-        );
+        assert_eq!(dedupe_base_key("1609459200|1|hello|"), "1609459200|1|hello");
         assert_eq!(
             dedupe_base_key("1609459200|1|hello|attachments/a1.jpg"),
             "1609459200|1|hello"

@@ -11,8 +11,8 @@ mod process;
 #[cfg(feature = "cli")]
 pub use cli::CommonCli;
 pub use config::{
-    AppleConfig, ContactsConfig, ExporterConfig, GoSmsProConfig, ImazingConfig, MediaConfig,
-    FormatConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,
+    AppleConfig, ContactsConfig, ExporterConfig, FormatConfig, GoSmsProConfig, ImazingConfig,
+    MediaConfig, OUTPUT_FORMATS_MAIL, ObfuscateConfig, OpenExtractConfig, OutputFormat,
     SmsBackupPlusConfig, SmsBackupRestoreConfig, SourceConfig, WhatsappConfig,
 };
 pub use export_ini::{AppearanceSection, ExportIniState, FormatSection, VaultSection};

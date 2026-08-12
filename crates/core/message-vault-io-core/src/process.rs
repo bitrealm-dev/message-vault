@@ -71,10 +71,7 @@ impl JobError {
         }
     }
 
-    pub fn with_user_message(
-        detail: impl Into<String>,
-        user_message: impl Into<String>,
-    ) -> Self {
+    pub fn with_user_message(detail: impl Into<String>, user_message: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
             user_message: Some(user_message.into()),

@@ -2,8 +2,8 @@
 
 use crate::emit::MAX_SKIP_DETAILS;
 use crate::phone::parse_google_voice_voicemail_caller;
-use go_sms_mms::decode_gosms_emojis;
 use anyhow::{Context, Result};
+use go_sms_mms::decode_gosms_emojis;
 use phone::sanitize_number;
 use serde::Deserialize;
 use std::collections::BTreeMap;

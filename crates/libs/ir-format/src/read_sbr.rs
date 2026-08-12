@@ -1,29 +1,15 @@
 //! Read SMS Backup & Restore XML into [`ConversationDocument`] values.
 
-use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    SCHEMA_VERSION,
-    owner_sender,
-};
 use anyhow::{Context, Result, bail};
 use message_csv::{DateRange, format_local_ts, stable_guid};
+use message_ir::{
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, SCHEMA_VERSION, owner_sender,
+};
 use message_vault_io_core::{CancelFlag, check_cancel, discover_files};
 use phone::OwnerHandleSet;
-use sbr::{
-    AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file,
-};
+use sbr::{AttachmentBlob, ConversationKind, ParseStats, Record, infer_owner_phones, parse_file};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -170,7 +156,10 @@ fn chat_id(record: &Record) -> String {
         // a trunk-zero `020 7946 0000` stays digits-as-is instead of being
         // fabricated into `+02079460000`.
         ConversationKind::Individual => {
-            let guarded = phone::normalize_guarded(&record.chat_key, phone::PhoneRegion::for_raw(&record.chat_key));
+            let guarded = phone::normalize_guarded(
+                &record.chat_key,
+                phone::PhoneRegion::for_raw(&record.chat_key),
+            );
             guarded.normalized
         }
     }
@@ -250,7 +239,10 @@ fn names_by_handle(conversation: &PendingConversation) -> HashMap<String, String
                 .filter(|s| !s.is_empty()),
         ) {
             names
-                .entry(phone::normalize_guarded(digits, phone::PhoneRegion::for_raw(digits)).normalized)
+                .entry(
+                    phone::normalize_guarded(digits, phone::PhoneRegion::for_raw(digits))
+                        .normalized,
+                )
                 .or_insert_with(|| name.to_string());
         }
         if conversation.kind == ConversationKind::Individual {

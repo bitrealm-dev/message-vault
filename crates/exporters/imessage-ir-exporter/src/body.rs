@@ -58,9 +58,9 @@ impl AttachmentResolver {
         }
         // Prefer unclaimed rows that have no GUID — those are the ones the
         // positional fallback is meant for. Never reuse a GUID-claimed index.
-        if let Some(idx) = (0..self.len).find(|i| {
-            !self.claimed.contains(i) && !self.has_guid.contains(i)
-        }) {
+        if let Some(idx) =
+            (0..self.len).find(|i| !self.claimed.contains(i) && !self.has_guid.contains(i))
+        {
             self.claimed.insert(idx);
             if idx >= self.next_positional {
                 self.next_positional = idx + 1;
@@ -93,7 +93,10 @@ pub(crate) fn resolve_run<'r>(
 /// Indices into `attachments` referenced by the message body.
 ///
 /// When `components` is empty (parse failure), falls back to every join row.
-pub(crate) fn referenced_attachment_indices(message: &Message, attachments: &[Attachment]) -> Vec<usize> {
+pub(crate) fn referenced_attachment_indices(
+    message: &Message,
+    attachments: &[Attachment],
+) -> Vec<usize> {
     if attachments.is_empty() {
         return Vec::new();
     }

@@ -67,15 +67,28 @@ pub struct ExportReport {
 impl ExportReport {
     /// Append one or more summary lines to `out`.
     pub fn summary_lines(&self, output: &std::path::Path, out: &mut Vec<String>) {
-        out.push(format!("Wrote {} export under {}", crate::name_stem(output.to_string_lossy().as_ref()), output.display()));
+        out.push(format!(
+            "Wrote {} export under {}",
+            crate::name_stem(output.to_string_lossy().as_ref()),
+            output.display()
+        ));
         if self.skipped_invalid_date > 0 {
-            out.push(format!("  skipped {} invalid-date rows", self.skipped_invalid_date));
+            out.push(format!(
+                "  skipped {} invalid-date rows",
+                self.skipped_invalid_date
+            ));
         }
         if self.skipped_out_of_range > 0 {
-            out.push(format!("  skipped {} out-of-range rows", self.skipped_out_of_range));
+            out.push(format!(
+                "  skipped {} out-of-range rows",
+                self.skipped_out_of_range
+            ));
         }
         if self.duplicates_dropped > 0 {
-            out.push(format!("  dropped {} duplicate rows", self.duplicates_dropped));
+            out.push(format!(
+                "  dropped {} duplicate rows",
+                self.duplicates_dropped
+            ));
         }
         if self.attachments_saved > 0 {
             out.push(format!("  saved {} attachments", self.attachments_saved));

@@ -3,8 +3,8 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Local, TimeZone, Utc};
 use message_ir::{
-    ConversationHeader, HandleService, HandleType, IrAttachment, IrDirection, IrImessage, IrMessage,
-    IrMessageKind, IrService, SCHEMA_VERSION,
+    ConversationHeader, HandleService, HandleType, IrAttachment, IrDirection, IrImessage,
+    IrMessage, IrMessageKind, IrService, SCHEMA_VERSION,
 };
 use phone::sanitize_number;
 use serde::Deserialize;
@@ -198,19 +198,19 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         && let Some(kind) = im
             .and_then(|i| i.tapback_kind.as_ref())
             .filter(|s| !s.is_empty())
-        {
-            tapbacks.push(TapbackRecord {
-                part_index: i64::from(im.and_then(|i| i.associated_part).unwrap_or(0)),
-                kind: kind.clone(),
-                emoji: im.and_then(|i| i.tapback_emoji.clone()),
-                is_from_me,
-                sender: if is_from_me {
-                    None
-                } else {
-                    msg.sender_handle.clone()
-                },
-            });
-        }
+    {
+        tapbacks.push(TapbackRecord {
+            part_index: i64::from(im.and_then(|i| i.associated_part).unwrap_or(0)),
+            kind: kind.clone(),
+            emoji: im.and_then(|i| i.tapback_emoji.clone()),
+            is_from_me,
+            sender: if is_from_me {
+                None
+            } else {
+                msg.sender_handle.clone()
+            },
+        });
+    }
 
     Ok(MessageRecord {
         guid: if msg.guid.trim().is_empty() {
@@ -242,9 +242,7 @@ fn message_from_ir(msg: &IrMessage) -> Result<MessageRecord> {
         is_reply: im.map(|i| i.is_reply).unwrap_or(false),
         thread_originator_guid: im.and_then(|i| i.in_reply_to_guid.clone()),
         thread_originator_part: im.and_then(|i| i.thread_originator_part.map(i64::from)),
-        num_replies: im
-            .and_then(|i| i.num_replies.map(i64::from))
-            .unwrap_or(0),
+        num_replies: im.and_then(|i| i.num_replies.map(i64::from)).unwrap_or(0),
     })
 }
 
@@ -311,9 +309,7 @@ fn tapbacks_from_im(
                 kind: t.kind,
                 emoji: t.emoji,
                 is_from_me: t.is_from_me.unwrap_or(fallback_from_me),
-                sender: t
-                    .sender
-                    .or_else(|| fallback_sender.map(|s| s.to_string())),
+                sender: t.sender.or_else(|| fallback_sender.map(|s| s.to_string())),
             })
         })
         .collect()

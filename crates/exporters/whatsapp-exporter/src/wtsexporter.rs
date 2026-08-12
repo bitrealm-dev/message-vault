@@ -68,9 +68,7 @@ pub(crate) fn resolve_wtsexporter() -> Result<PathBuf> {
             dir.join(executable),
             dir.join("cli").join(executable),
             // Legacy flat-root archives.
-            dir.parent()
-                .map(|p| p.join(executable))
-                .unwrap_or_default(),
+            dir.parent().map(|p| p.join(executable)).unwrap_or_default(),
         ];
         for candidate in candidates {
             if candidate.as_os_str().is_empty() {
@@ -313,8 +311,8 @@ fn push_opt(cmd: &mut Command, flag: &str, path: Option<&Path>) {
 fn write_key_file(work_dir: &Path, hex_key: &str) -> Result<PathBuf> {
     let cleaned: String = hex_key.chars().filter(|c| !c.is_whitespace()).collect();
     // Deliberately do not echo the key material in the error message.
-    let raw = hex::decode(&cleaned)
-        .with_context(|| "decryption key is not a hex string".to_string())?;
+    let raw =
+        hex::decode(&cleaned).with_context(|| "decryption key is not a hex string".to_string())?;
     let path = work_dir.join("decryption.key");
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);

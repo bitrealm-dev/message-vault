@@ -41,7 +41,10 @@ impl AttachmentIndex {
         for (name, path) in &files {
             by_name.entry(name.clone()).or_default().push(path.clone());
         }
-        AttachmentIndex { by_name, all: files }
+        AttachmentIndex {
+            by_name,
+            all: files,
+        }
     }
 
     /// Find a file whose name matches `csv_name` (exact, `_`/`-` prefixed, or
@@ -161,7 +164,7 @@ pub(crate) fn resolve_attachment_cell(
                 transcription: None,
                 sticker_effect: None,
             }
-        },
+        }
     }
 }
 
@@ -238,13 +241,8 @@ fn find_and_copy_attachment(
     let name = format!("{date_prefix}-{digest_prefix}{ext}");
     let dest = attachments_dir.join(&name);
     if !dest.exists() {
-        fs::copy(&src, &dest).with_context(|| {
-            format!(
-                "copy {} to {}",
-                src.display(),
-                dest.display()
-            )
-        })?;
+        fs::copy(&src, &dest)
+            .with_context(|| format!("copy {} to {}", src.display(), dest.display()))?;
         *attachments_saved += 1;
     }
     Ok(Some((format!("attachments/{name}"), digest_hex)))

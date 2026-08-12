@@ -1,11 +1,10 @@
+mod api_tokens_api;
 mod asset_uploads;
 mod assets;
 mod auth;
-mod api_tokens_api;
 mod config;
 mod contacts_api;
 mod conversations_api;
-mod profile;
 mod db;
 mod dedupe;
 mod export_api;
@@ -15,6 +14,7 @@ mod import_media;
 mod jsonl;
 mod models;
 mod process_assets;
+mod profile;
 mod reset_demo;
 mod search_query;
 mod server;
@@ -275,18 +275,9 @@ fn main() -> Result<()> {
                     "  fingerprints set:   {} (one per message; not a duplicate count)",
                     d.keys_filled
                 );
-                println!(
-                    "  exact duplicate groups: {}",
-                    d.exact_groups
-                );
-                println!(
-                    "  exact duplicates hidden: {}",
-                    d.exact_flagged
-                );
-                println!(
-                    "  near duplicates flagged: {}",
-                    d.near_flagged
-                );
+                println!("  exact duplicate groups: {}", d.exact_groups);
+                println!("  exact duplicates hidden: {}", d.exact_flagged);
+                println!("  near duplicates flagged: {}", d.near_flagged);
             } else {
                 println!("Cross-source soft-dedupe skipped (--skip-dedupe)");
             }
@@ -352,12 +343,8 @@ fn main() -> Result<()> {
 
             let mut conn = rusqlite::Connection::open(&db)?;
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-            let stats = contacts_db::load_contacts_if_needed(
-                &mut conn,
-                Some(&contacts),
-                true,
-                &account,
-            )?;
+            let stats =
+                contacts_db::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)?;
 
             println!("Imported contacts into {}", db.display());
             println!("  config:       {}", config.display());
@@ -411,10 +398,7 @@ fn main() -> Result<()> {
                 "  left as-is:            {} (already converted, non-media, or small JPEG)",
                 stats.process_assets.skipped
             );
-            println!(
-                "  conversion failures:   {}",
-                stats.process_assets.errors
-            );
+            println!("  conversion failures:   {}", stats.process_assets.errors);
         }
 
         Commands::Serve { config } => {

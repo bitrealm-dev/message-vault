@@ -1,7 +1,7 @@
 //! Small shared helpers for IR readers / projectors.
 
-use message_ir::{HandleType, IrAttachment};
 use anyhow::{Context, Result};
+use message_ir::{HandleType, IrAttachment};
 use std::fs;
 use std::path::Path;
 

@@ -1,15 +1,10 @@
 //! Project [`ConversationDocument`] → SMS Backup & Restore XML messages.
 
 use crate::util::load_attachment_bytes_strict;
-use message_ir::{
-    ConversationDocument,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-};
 use anyhow::{Context, Result, bail};
+use message_ir::{
+    ConversationDocument, IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind,
+};
 use sbr::{
     SbrBackupWriter, SbrMessage, default_backup_path, encode_part_data, ensure_attr, set_attr,
 };

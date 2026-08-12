@@ -332,10 +332,7 @@ pub fn preset_by_id(id: &str) -> &'static ThemePreset {
 }
 
 pub fn preset_index(id: &str) -> i32 {
-    THEME_PRESETS
-        .iter()
-        .position(|p| p.id == id)
-        .unwrap_or(0) as i32
+    THEME_PRESETS.iter().position(|p| p.id == id).unwrap_or(0) as i32
 }
 
 pub fn preset_from_index(index: i32) -> &'static ThemePreset {

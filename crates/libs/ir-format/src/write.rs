@@ -3,21 +3,20 @@
 use crate::util;
 use crate::write_sbr;
 use anyhow::{Context, Result, bail};
-use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
-use message_vault_io_core::OutputFormat;
-use message_ir::{
-    ConversationDocument, ConversationHeader, HandleType, IrDirection, IrImessage, IrMessageKind,
-};
 use mail::{
     Direction as MailDirection, MailAttachment, MailMessage, MailPackage, Participant,
     SmsMailFields, write_mail_package,
 };
+use message_csv::{AttachmentCell, conversation_filename, format_local_ts, json_cell};
+use message_ir::{
+    ConversationDocument, ConversationHeader, HandleType, IrDirection, IrImessage, IrMessageKind,
+};
+use message_vault_io_core::OutputFormat;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-
 
 /// Unified CSV columns for every exporter (IR v3 projection).
 ///
@@ -206,7 +205,10 @@ fn sender_handle_type_cell(sender_handle: Option<&str>) -> &'static str {
 }
 
 /// Per-conversation CSV using the unified [`CSV_HEADERS`] contract.
-pub(crate) fn write_conversation_csv(output_dir: &Path, doc: &ConversationDocument) -> Result<PathBuf> {
+pub(crate) fn write_conversation_csv(
+    output_dir: &Path,
+    doc: &ConversationDocument,
+) -> Result<PathBuf> {
     fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
     let filename = conversation_filename(
         doc.conversation.conversation_type.as_str(),
@@ -488,4 +490,3 @@ fn apply_imessage_fields(mail: &mut MailMessage, imessage: &IrImessage) {
     mail.tapback_emoji = imessage.tapback_emoji.clone();
     mail.tapback_action = imessage.tapback_action.clone();
 }
-

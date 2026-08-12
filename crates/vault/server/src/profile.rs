@@ -1,9 +1,9 @@
 //! Account profile read + update handlers.
 
-use anyhow::{Context, bail, Result};
+use anyhow::{Context, Result, bail};
+use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::Json;
 use message_ir::HandleType;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -110,20 +110,10 @@ fn apply_profile_update(
         let service = entry.service.trim().to_ascii_lowercase();
         match service.as_str() {
             "phone" | "whatsapp" => {
-                account_profile::unlink_account_handle(
-                    conn,
-                    account_id,
-                    raw,
-                    HandleType::Phone,
-                )?;
+                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Phone)?;
             }
             "email" => {
-                account_profile::unlink_account_handle(
-                    conn,
-                    account_id,
-                    raw,
-                    HandleType::Email,
-                )?;
+                account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Email)?;
             }
             other => bail!("unsupported handle service: {other}"),
         }
@@ -137,21 +127,16 @@ fn apply_profile_update(
         let service = entry.service.trim().to_ascii_lowercase();
         match service.as_str() {
             "phone" => {
-                account_profile::link_account_handle(
-                    conn,
-                    account_id,
-                    raw,
-                    HandleType::Phone,
-                )?;
+                account_profile::link_account_handle(conn, account_id, raw, HandleType::Phone)?;
             }
             "email" => {
-                account_profile::link_account_handle(
+                account_profile::link_account_handle(conn, account_id, raw, HandleType::Email)?;
+                account_profile::upsert_account_email(
                     conn,
                     account_id,
-                    raw,
-                    HandleType::Email,
+                    &raw.to_ascii_lowercase(),
+                    false,
                 )?;
-                account_profile::upsert_account_email(conn, account_id, &raw.to_ascii_lowercase(), false)?;
             }
             "whatsapp" => {
                 account_profile::link_account_handle_with_service(
@@ -255,7 +240,9 @@ pub async fn delete_messages_handler(
     Json(req): Json<DeleteMessagesRequest>,
 ) -> Result<Json<DeleteMessagesResponse>, ApiError> {
     if !req.confirm {
-        return Err(ApiError::BadRequest("confirmation flag must be true".into()));
+        return Err(ApiError::BadRequest(
+            "confirmation flag must be true".into(),
+        ));
     }
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
@@ -265,16 +252,17 @@ pub async fn delete_messages_handler(
     let assets_name = state.cfg.paths.assets_dir.clone();
     let converted_name = state.cfg.paths.assets_converted_dir.clone();
 
-    let stats = tokio::task::spawn_blocking(move || -> Result<account_profile::DeletedMessagesStats> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        let stats = account_profile::delete_all_messages_for_account(&conn, &account_id)?;
-        remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
-        Ok(stats)
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("delete messages task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let stats =
+        tokio::task::spawn_blocking(move || -> Result<account_profile::DeletedMessagesStats> {
+            let conn = Connection::open(&db)?;
+            schema::configure_connection(&conn)?;
+            let stats = account_profile::delete_all_messages_for_account(&conn, &account_id)?;
+            remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
+            Ok(stats)
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("delete messages task: {e}")))?
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(DeleteMessagesResponse {
         ok: true,

@@ -1,27 +1,14 @@
 //! Reverse projector: unified CSV → [`ConversationDocument`].
 
-use crate::normalize::{imessage_from_parts, source_from_parts};
-use message_ir::{
-    ConversationDocument,
-    ConversationHeader,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrImessage,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    SCHEMA_VERSION,
-    parse_android_type,
-};
 use crate::CSV_HEADERS;
+use crate::normalize::{imessage_from_parts, source_from_parts};
 use anyhow::{Context, Result, bail};
 use message_csv::AttachmentCell;
+use message_ir::{
+    ConversationDocument, ConversationHeader, ConversationMeta, ConversationStats, ExportMeta,
+    HandleType, IrAttachment, IrConversationType, IrDirection, IrImessage, IrMessage,
+    IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION, parse_android_type,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;

@@ -328,8 +328,7 @@ fn write_ini_restricted(path: &Path, ini: &Ini) -> Result<(), String> {
     }
 
     // Rename the temp file into place. On most filesystems this is atomic.
-    fs::rename(&tmp, path)
-        .map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
 
     // Set restrictive permissions on the final file (Unix only).
     #[cfg(unix)]
@@ -552,11 +551,7 @@ fn read_appearance_section(ini: &Ini) -> AppearanceSection {
     let mode = get(ini, Some(APPEARANCE), "mode");
     let preset = get(ini, Some(APPEARANCE), "preset");
     AppearanceSection {
-        mode: if mode.is_empty() {
-            defaults.mode
-        } else {
-            mode
-        },
+        mode: if mode.is_empty() { defaults.mode } else { mode },
         preset: if preset.is_empty() {
             defaults.preset
         } else {
@@ -787,7 +782,9 @@ apple_platform = ios
         assert_eq!(loaded.appearance.mode, "system");
         assert_eq!(loaded.appearance.preset, "ocean");
         let text = fs::read_to_string(file.path()).unwrap();
-        assert!(text.contains("key=secret-import-token") || text.contains("key = secret-import-token"));
+        assert!(
+            text.contains("key=secret-import-token") || text.contains("key = secret-import-token")
+        );
         assert!(text.contains("[appearance]"));
         assert!(text.contains("mode=system") || text.contains("mode = system"));
         assert!(text.contains("preset=ocean") || text.contains("preset = ocean"));

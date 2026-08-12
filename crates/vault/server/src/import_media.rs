@@ -30,9 +30,7 @@ impl MediaMode {
             "none" | "skip" | "disabled" => Ok(Self::None),
             "convert" => Ok(Self::Convert),
             "compress" => Ok(Self::Compress),
-            other => bail!(
-                "invalid --media '{other}' (expected copy, none, convert, or compress)"
-            ),
+            other => bail!("invalid --media '{other}' (expected copy, none, convert, or compress)"),
         }
     }
 

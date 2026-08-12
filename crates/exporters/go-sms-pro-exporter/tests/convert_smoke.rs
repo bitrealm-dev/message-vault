@@ -1,8 +1,8 @@
 use crate::emit::convert_export;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -87,7 +87,8 @@ fn output_equals_input_bails_before_cleaning() {
     )
     .expect_err("output == input must fail");
     assert!(
-        err.to_string().contains("must not be the same as, or contain"),
+        err.to_string()
+            .contains("must not be the same as, or contain"),
         "unexpected error: {err}"
     );
     // The backup directory must not have been cleaned by the failed run.

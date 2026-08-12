@@ -373,7 +373,8 @@ impl From<VaultImportRow> for ImportSummary {
 
 /// List imports for an account, newest first. Returns serializable summaries.
 pub fn list_imports(conn: &Connection, account_id: &str) -> Result<Vec<ImportSummary>> {
-    list_imports_for_account(conn, account_id, 100).map(|rows| rows.into_iter().map(Into::into).collect())
+    list_imports_for_account(conn, account_id, 100)
+        .map(|rows| rows.into_iter().map(Into::into).collect())
 }
 
 /// List imports for an account, newest first.
@@ -531,7 +532,10 @@ mod tests {
         assert_eq!(row.parse_ms, Some(18_000));
         assert_eq!(row.convert_ms, Some(22_000));
         assert_eq!(row.upload_ms, Some(8_000));
-        assert_eq!(row.summary_json.as_deref(), Some(r#"{"parse":{"messages":10}}"#));
+        assert_eq!(
+            row.summary_json.as_deref(),
+            Some(r#"{"parse":{"messages":10}}"#)
+        );
 
         let issue_count: i64 = conn
             .query_row(

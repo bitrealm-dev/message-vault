@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use message_vault_io_core::{
-    ExporterConfig, MediaConfig, FormatConfig, ObfuscateConfig, OutputFormat, SourceConfig,
-};
-use message_reexport::run;
 use media::{MaxResolution, MediaMode, compress_options_from_cli};
+use message_reexport::run;
+use message_vault_io_core::{
+    ExporterConfig, FormatConfig, MediaConfig, ObfuscateConfig, OutputFormat, SourceConfig,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "message-reexporter")]

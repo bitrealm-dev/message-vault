@@ -6,17 +6,8 @@ use std::path::Path;
 
 use httpmock::prelude::*;
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
+    IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant, IrService,
     SCHEMA_VERSION,
 };
 use serde_json::json;
@@ -171,7 +162,12 @@ fn authenticate_and_push_text_only_conversation() {
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
     let report_json = serde_json::to_value(&report).unwrap();
-    assert!(report_json.get("elapsed_ms").and_then(|v| v.as_u64()).is_some());
+    assert!(
+        report_json
+            .get("elapsed_ms")
+            .and_then(|v| v.as_u64())
+            .is_some()
+    );
     import.assert();
 
     // Second run should skip via journal.
@@ -240,7 +236,11 @@ fn reuses_supplied_import_session_without_starting_or_completing_one() {
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 1);
     assert_eq!(start.hits(), 0, "push must not start a new session");
-    assert_eq!(complete.hits(), 0, "push must not complete a reused session");
+    assert_eq!(
+        complete.hits(),
+        0,
+        "push must not complete a reused session"
+    );
     import.assert();
 }
 
@@ -673,7 +673,8 @@ fn multipart_upload_when_over_proxy_threshold() {
         }));
     });
     let start = server.mock(|when, then| {
-        when.method(POST).path(format!("/v1/assets/{digest}/uploads"));
+        when.method(POST)
+            .path(format!("/v1/assets/{digest}/uploads"));
         then.status(200).json_body(json!({
             "ok": true,
             "upload_id": "up-1",
@@ -681,19 +682,26 @@ fn multipart_upload_when_over_proxy_threshold() {
         }));
     });
     let part1 = server.mock(|when, then| {
-        when.method(PUT).path(format!("/v1/assets/{digest}/uploads/up-1/parts/1"));
-        then.status(200).json_body(json!({ "ok": true, "part": 1, "bytes": 16 }));
+        when.method(PUT)
+            .path(format!("/v1/assets/{digest}/uploads/up-1/parts/1"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "part": 1, "bytes": 16 }));
     });
     let part2 = server.mock(|when, then| {
-        when.method(PUT).path(format!("/v1/assets/{digest}/uploads/up-1/parts/2"));
-        then.status(200).json_body(json!({ "ok": true, "part": 2, "bytes": 16 }));
+        when.method(PUT)
+            .path(format!("/v1/assets/{digest}/uploads/up-1/parts/2"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "part": 2, "bytes": 16 }));
     });
     let part3 = server.mock(|when, then| {
-        when.method(PUT).path(format!("/v1/assets/{digest}/uploads/up-1/parts/3"));
-        then.status(200).json_body(json!({ "ok": true, "part": 3, "bytes": 8 }));
+        when.method(PUT)
+            .path(format!("/v1/assets/{digest}/uploads/up-1/parts/3"));
+        then.status(200)
+            .json_body(json!({ "ok": true, "part": 3, "bytes": 8 }));
     });
     let complete = server.mock(|when, then| {
-        when.method(POST).path(format!("/v1/assets/{digest}/uploads/up-1/complete"));
+        when.method(POST)
+            .path(format!("/v1/assets/{digest}/uploads/up-1/complete"));
         then.status(200).json_body(json!({
             "ok": true,
             "sha256": digest,
@@ -747,7 +755,11 @@ fn multipart_upload_when_over_proxy_threshold() {
     part2.assert();
     part3.assert();
     complete.assert();
-    assert_eq!(single_put.hits(), 0, "single PUT must not be used for multipart path");
+    assert_eq!(
+        single_put.hits(),
+        0,
+        "single PUT must not be used for multipart path"
+    );
     import.assert();
     assert_eq!(report.assets_uploaded, 1);
 }
@@ -773,7 +785,8 @@ fn multipart_aborts_on_hash_mismatch_complete() {
         then.status(404);
     });
     let _start = server.mock(|when, then| {
-        when.method(POST).path(format!("/v1/assets/{digest}/uploads"));
+        when.method(POST)
+            .path(format!("/v1/assets/{digest}/uploads"));
         then.status(200).json_body(json!({
             "ok": true,
             "upload_id": "up-bad",
@@ -783,17 +796,20 @@ fn multipart_aborts_on_hash_mismatch_complete() {
     let _part = server.mock(|when, then| {
         when.method(PUT)
             .path_contains(format!("/v1/assets/{digest}/uploads/up-bad/parts/"));
-        then.status(200).json_body(json!({ "ok": true, "part": 1, "bytes": 24 }));
+        then.status(200)
+            .json_body(json!({ "ok": true, "part": 1, "bytes": 24 }));
     });
     let _complete = server.mock(|when, then| {
-        when.method(POST).path(format!("/v1/assets/{digest}/uploads/up-bad/complete"));
+        when.method(POST)
+            .path(format!("/v1/assets/{digest}/uploads/up-bad/complete"));
         then.status(400).json_body(json!({
             "ok": false,
             "error": "sha256 mismatch: claimed abc, got def"
         }));
     });
     let abort = server.mock(|when, then| {
-        when.method(DELETE).path(format!("/v1/assets/{digest}/uploads/up-bad"));
+        when.method(DELETE)
+            .path(format!("/v1/assets/{digest}/uploads/up-bad"));
         then.status(200).json_body(json!({ "ok": true }));
     });
 
@@ -889,7 +905,8 @@ fn verify_digests_fails_on_mismatch() {
     });
     let put = server.mock(|when, then| {
         when.method(PUT).path_contains("/v1/assets/");
-        then.status(200).json_body(json!({ "ok": true, "already_present": false }));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
     });
 
     let dir = tempdir().unwrap();
@@ -938,11 +955,13 @@ fn shared_attachment_uploaded_once_across_conversations() {
     });
     let head = server.mock(|when, then| {
         when.method("HEAD").path(format!("/v1/assets/{digest}"));
-        then.status(404).json_body(json!({ "ok": false, "error": "asset not found" }));
+        then.status(404)
+            .json_body(json!({ "ok": false, "error": "asset not found" }));
     });
     let put = server.mock(|when, then| {
         when.method(PUT).path(format!("/v1/assets/{digest}"));
-        then.status(200).json_body(json!({ "ok": true, "already_present": false }));
+        then.status(200)
+            .json_body(json!({ "ok": true, "already_present": false }));
     });
     let import = server.mock(|when, then| {
         when.method(POST).path("/v1/import");
@@ -1016,7 +1035,8 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     let small_digest = hex::encode(Sha256::digest(SMALL));
     let big_digest = hex::encode(Sha256::digest(BIG));
     let _small_head = server.mock(|when, then| {
-        when.method("HEAD").path(format!("/v1/assets/{small_digest}"));
+        when.method("HEAD")
+            .path(format!("/v1/assets/{small_digest}"));
         then.status(404);
     });
     let small_put = server.mock(|when, then| {
@@ -1089,10 +1109,7 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
     let report = {
         let mut progress = |event: ProgressEvent| {
             if let ProgressEvent::Issue {
-                kind,
-                item,
-                reason,
-                ..
+                kind, item, reason, ..
             } = event
             {
                 issues.push((kind, item, reason));
@@ -1101,7 +1118,10 @@ fn skips_oversized_attachment_keeps_conversation_ok() {
         run(&cfg, Some(&mut progress)).unwrap()
     };
 
-    assert!(report.ok, "oversized attachment must not fail the conversation");
+    assert!(
+        report.ok,
+        "oversized attachment must not fail the conversation"
+    );
     assert_eq!(report.conversations_ok, 1);
     assert_eq!(report.conversations_failed, 0);
     assert_eq!(report.messages_attempted, 1);
@@ -1135,7 +1155,8 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
     });
     let small_digest = hex::encode(Sha256::digest(SMALL));
     let _small_head = server.mock(|when, then| {
-        when.method("HEAD").path(format!("/v1/assets/{small_digest}"));
+        when.method("HEAD")
+            .path(format!("/v1/assets/{small_digest}"));
         then.status(404);
     });
     let small_put = server.mock(|when, then| {
@@ -1200,10 +1221,7 @@ fn skips_missing_attachment_file_keeps_conversation_ok() {
     let report = {
         let mut progress = |event: ProgressEvent| {
             if let ProgressEvent::Issue {
-                kind,
-                item,
-                reason,
-                ..
+                kind, item, reason, ..
             } = event
             {
                 issues.push((kind, item, reason));

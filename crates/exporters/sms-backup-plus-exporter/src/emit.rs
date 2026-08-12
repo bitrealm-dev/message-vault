@@ -8,29 +8,14 @@ use crate::types::{AttachmentBlob, ParsedMessage};
 use anyhow::{Context, Result, bail};
 use contacts::{ContactsBook, NameMapping};
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, emit_log};
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    PendingAttachment,
-    PendingConversation,
-    PendingMessage,
-    SCHEMA_VERSION,
-    owner_sender,
-    parse_android_type,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
+    owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, emit_log};
 use phone::OwnerHandleSet;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -279,8 +264,11 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
     let mut names = HashMap::new();
     for msg in &convo.messages {
         if !msg.sender_handle.is_empty() {
-            let handle =
-                phone::normalize_guarded(&msg.sender_handle, phone::PhoneRegion::for_raw(&msg.sender_handle)).normalized;
+            let handle = phone::normalize_guarded(
+                &msg.sender_handle,
+                phone::PhoneRegion::for_raw(&msg.sender_handle),
+            )
+            .normalized;
             if let Some(name) = msg
                 .sender_display_name
                 .as_deref()
@@ -492,7 +480,10 @@ fn collect_eml_paths<P: AsRef<Path>>(
     fn in_skipped_dir(path: &Path) -> bool {
         path.components().any(|c| {
             matches!(
-                c.as_os_str().to_str().map(str::to_ascii_lowercase).as_deref(),
+                c.as_os_str()
+                    .to_str()
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
                 Some("duplicate" | "exclude" | ".git")
             )
         })
@@ -622,13 +613,7 @@ fn vlog(verbose: bool, log: Option<&LogSink>, msg: impl AsRef<str>) {
     }
 }
 
-fn report_progress(
-    verbose: bool,
-    log: Option<&LogSink>,
-    label: &str,
-    processed: u64,
-    total: u64,
-) {
+fn report_progress(verbose: bool, log: Option<&LogSink>, label: &str, processed: u64, total: u64) {
     if !verbose || total == 0 {
         return;
     }
@@ -855,10 +840,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
             emit_log(log, format!("  {err}"));
         }
         if report.errors.len() > 20 {
-            emit_log(
-                log,
-                format!("  … and {} more", report.errors.len() - 20),
-            );
+            emit_log(log, format!("  … and {} more", report.errors.len() - 20));
         }
     }
 

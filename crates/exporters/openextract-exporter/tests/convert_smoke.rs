@@ -1,8 +1,8 @@
 use crate::emit::convert_export;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs;
 use std::path::PathBuf;
 
@@ -29,7 +29,14 @@ fn convert_all_conversations_with_vcf() {
 
     assert_eq!(report.conversations, 1);
     assert_eq!(report.messages, 2);
-    assert_eq!(report.extra.get("unresolved_chat_phone").copied().unwrap_or(0), 0);
+    assert_eq!(
+        report
+            .extra
+            .get("unresolved_chat_phone")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
 
     let out = tmp.path().join("+15555550122.csv");
     let body = fs::read_to_string(&out).expect("read csv");

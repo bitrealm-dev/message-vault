@@ -27,29 +27,14 @@ use imessage_database::{
     },
     util::dates::TIMESTAMP_FACTOR,
 };
-use message_vault_io_core::OutputFormat;
-use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrImessage,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    SCHEMA_VERSION,
-    owner_sender,
-    parse_json_value,
-};
-use message_ir_format::{
-    FormatSink,
-    FormatSinkResult,
-};
 use mail::{Direction as MailDirection, MailAttachment, MailMessage, Participant};
+use message_ir::{
+    ConversationDocument, ConversationMeta, ExportMeta, HandleType, IrAttachment,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
+    IrService, SCHEMA_VERSION, owner_sender, parse_json_value,
+};
+use message_ir_format::{FormatSink, FormatSinkResult};
+use message_vault_io_core::OutputFormat;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -57,9 +42,9 @@ use crate::{
     body::{apply_body, referenced_attachment_indices},
     error::RuntimeError,
     fields::{
-        TapbackCell, balloon_kind_label, balloon_summary, build_balloon_value, build_edit_records,
-        build_part_records, expressive_label, parse_thread_part, shared_location_label,
-        PartRecord, sticker_extras, transcription_for_attachment,
+        PartRecord, TapbackCell, balloon_kind_label, balloon_summary, build_balloon_value,
+        build_edit_records, build_part_records, expressive_label, parse_thread_part,
+        shared_location_label, sticker_extras, transcription_for_attachment,
     },
     options::AttachmentEmbed,
     session::MailSession,
@@ -171,16 +156,16 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     }
 
     if failures > 0 {
-        session
-            .options
-            .emit_log(format!("{failures} messages skipped due to formatting errors."));
+        session.options.emit_log(format!(
+            "{failures} messages skipped due to formatting errors."
+        ));
     }
 
     let total_conversations = conversations.len() as u64;
     session.options.emit_log("");
-    session
-        .options
-        .emit_log(format!("Writing {total_conversations} conversation file(s)..."));
+    session.options.emit_log(format!(
+        "Writing {total_conversations} conversation file(s)..."
+    ));
     let mut sink = FormatSink::open(
         &session.options.export_path,
         format,
@@ -248,8 +233,7 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         // `%` instead of `u64::is_multiple_of`: that method needs Rust 1.87,
         // but this crate's MSRV is 1.85.
         #[allow(clippy::manual_is_multiple_of)]
-        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total_conversations
-        {
+        if written % CONVERSATION_PROGRESS_EVERY == 0 || written == total_conversations {
             session.options.emit_log(format!(
                 "  wrote {written}/{total_conversations} conversations"
             ));

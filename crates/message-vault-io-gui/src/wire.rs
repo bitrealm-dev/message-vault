@@ -6,14 +6,14 @@ use chrono::{Datelike, Local, NaiveDate};
 use message_vault_io_core::VaultSection;
 use slint::ComponentHandle;
 
+use crate::BackupAccountAdapter;
 use crate::browse;
 use crate::options;
 use crate::start;
 use crate::state::{self, AppState};
 use crate::sync;
-use crate::wsl;
 use crate::theme;
-use crate::BackupAccountAdapter;
+use crate::wsl;
 use crate::{
     AppWindow, AppearanceAdapter, ContactsAdapter, CredentialsAdapter, Date, ExtractAdapter,
     FormatAdapter, HomeAdapter, ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
@@ -142,9 +142,7 @@ fn wire_navigate_back(ui: &AppWindow) {
             x if x == state::screen::IMPORT || x == state::screen::EXPORT => {
                 state::screen::CREDENTIALS
             }
-            x if x == state::screen::BACKUP || x == state::screen::EXTRACT => {
-                state::screen::HOME
-            }
+            x if x == state::screen::BACKUP || x == state::screen::EXTRACT => state::screen::HOME,
             _ => current - 1,
         };
         ui.set_workflow_screen(previous);

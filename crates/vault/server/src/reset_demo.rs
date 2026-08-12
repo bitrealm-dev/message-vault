@@ -104,9 +104,13 @@ fn run_reset_demo_for_account(
 
     wipe_demo_account(&cfg, account_id)?;
 
-    let imessage_assets = cfg.paths.assets_dir_for_account(account_id, IMESSAGE_SOURCE);
+    let imessage_assets = cfg
+        .paths
+        .assets_dir_for_account(account_id, IMESSAGE_SOURCE);
     let sbr_assets = cfg.paths.assets_dir_for_account(account_id, SBR_SOURCE);
-    let whatsapp_assets = cfg.paths.assets_dir_for_account(account_id, WHATSAPP_SOURCE);
+    let whatsapp_assets = cfg
+        .paths
+        .assets_dir_for_account(account_id, WHATSAPP_SOURCE);
     let db = cfg.paths.db.clone();
 
     println!("Reset demo — importing");
@@ -184,9 +188,11 @@ fn run_reset_demo_for_account(
 fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     let seed_toml = demo_seed::SeedConfig::default_path();
     if seed_toml.is_file() {
-        println!("Reset demo — regenerating bundle from {}", seed_toml.display());
-        return demo_seed::generate_to(bundle, None)
-            .context("regenerate demo bundle (demo-seed)");
+        println!(
+            "Reset demo — regenerating bundle from {}",
+            seed_toml.display()
+        );
+        return demo_seed::generate_to(bundle, None).context("regenerate demo bundle (demo-seed)");
     }
 
     let complete = bundle.join("config/seed.toml").is_file()

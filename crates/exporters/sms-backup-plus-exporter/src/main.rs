@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use media::compress_options_from_cli;
 use message_vault_io_core::{
     CommonCli, ExporterConfig, MediaConfig, OutputFormat, SmsBackupPlusConfig, SourceConfig,
 };
-use media::compress_options_from_cli;
 use sms_backup_plus_exporter::{parse_date_range, run};
 
 #[derive(Parser, Debug)]
@@ -67,8 +67,9 @@ fn main() -> Result<()> {
             common,
         } => {
             let common = &common;
-            let date_range = parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
-                .map_err(anyhow::Error::msg)?;
+            let date_range =
+                parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
+                    .map_err(anyhow::Error::msg)?;
             let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
             let compress = compress_options_from_cli(
                 common.media_max_resolution,

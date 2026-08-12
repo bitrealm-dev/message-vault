@@ -191,7 +191,10 @@ mod tests {
         let name = "中".repeat(60);
         let base = safe_basename(&name);
         assert!(base.len() <= MAX_BASENAME_BYTES);
-        assert!(base.len().is_multiple_of(3), "char boundary truncation failed");
+        assert!(
+            base.len().is_multiple_of(3),
+            "char boundary truncation failed"
+        );
         assert!(base.chars().all(|c| c == '中'));
     }
 

@@ -403,7 +403,9 @@ fn parse_fts_lexemes(lexemes: &[FtsLex]) -> Option<FtsNode> {
                     };
                     nodes.push(next);
                 }
-                Some(FtsLex::Not | FtsLex::LParen | FtsLex::Term { .. } | FtsLex::Phrase { .. }) => {
+                Some(
+                    FtsLex::Not | FtsLex::LParen | FtsLex::Term { .. } | FtsLex::Phrase { .. },
+                ) => {
                     let Some(next) = parse_unary(lexemes, i) else {
                         break;
                     };
@@ -439,7 +441,13 @@ fn parse_fts_lexemes(lexemes: &[FtsLex]) -> Option<FtsNode> {
     parse_or(lexemes, &mut i)
 }
 
-fn flatten_fts_leaves(node: &FtsNode, terms: &mut Vec<String>, phrases: &mut Vec<String>, exclude: &mut Vec<String>, negated: bool) {
+fn flatten_fts_leaves(
+    node: &FtsNode,
+    terms: &mut Vec<String>,
+    phrases: &mut Vec<String>,
+    exclude: &mut Vec<String>,
+    negated: bool,
+) {
     match node {
         FtsNode::Term { value, .. } => {
             if negated {
@@ -477,50 +485,52 @@ fn normalize_date(raw: &str) -> Option<String> {
         let unit = bytes[bytes.len() - 1].to_ascii_lowercase();
         if matches!(unit, b'd' | b'w' | b'm' | b'y') {
             let num = &t[..t.len() - 1];
-            if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit())
+            if !num.is_empty()
+                && num.bytes().all(|b| b.is_ascii_digit())
                 && let Ok(n) = num.parse::<i64>()
-                    && n >= 0 {
-                        let today = Local::now().date_naive();
-                        let d = match unit {
-                            b'd' => today
-                                .checked_sub_signed(chrono::Duration::days(n))
-                                .unwrap_or(today),
-                            b'w' => today
-                                .checked_sub_signed(chrono::Duration::days(n * 7))
-                                .unwrap_or(today),
-                            b'm' => {
-                                let (y, m, day) = (today.year(), today.month(), today.day());
-                                let total = i64::from(y) * 12 + i64::from(m) - 1 - n;
-                                let ny = (total.div_euclid(12)) as i32;
-                                let nm = (total.rem_euclid(12) + 1) as u32;
-                                chrono::NaiveDate::from_ymd_opt(ny, nm, 1)
-                                    .and_then(|_first| {
-                                        let last_day = if nm == 12 {
-                                            chrono::NaiveDate::from_ymd_opt(ny + 1, 1, 1)
-                                                .unwrap()
-                                                .pred_opt()
-                                                .unwrap()
-                                                .day()
-                                        } else {
-                                            chrono::NaiveDate::from_ymd_opt(ny, nm + 1, 1)
-                                                .unwrap()
-                                                .pred_opt()
-                                                .unwrap()
-                                                .day()
-                                        };
-                                        chrono::NaiveDate::from_ymd_opt(ny, nm, day.min(last_day))
-                                    })
-                                    .unwrap_or(today)
-                            }
-                            _ => {
-                                let y = today.year() - n as i32;
-                                chrono::NaiveDate::from_ymd_opt(y, today.month(), today.day())
-                                    .or_else(|| chrono::NaiveDate::from_ymd_opt(y, today.month(), 28))
-                                    .unwrap_or(today)
-                            }
-                        };
-                        return Some(d.format("%Y-%m-%d").to_string());
+                && n >= 0
+            {
+                let today = Local::now().date_naive();
+                let d = match unit {
+                    b'd' => today
+                        .checked_sub_signed(chrono::Duration::days(n))
+                        .unwrap_or(today),
+                    b'w' => today
+                        .checked_sub_signed(chrono::Duration::days(n * 7))
+                        .unwrap_or(today),
+                    b'm' => {
+                        let (y, m, day) = (today.year(), today.month(), today.day());
+                        let total = i64::from(y) * 12 + i64::from(m) - 1 - n;
+                        let ny = (total.div_euclid(12)) as i32;
+                        let nm = (total.rem_euclid(12) + 1) as u32;
+                        chrono::NaiveDate::from_ymd_opt(ny, nm, 1)
+                            .and_then(|_first| {
+                                let last_day = if nm == 12 {
+                                    chrono::NaiveDate::from_ymd_opt(ny + 1, 1, 1)
+                                        .unwrap()
+                                        .pred_opt()
+                                        .unwrap()
+                                        .day()
+                                } else {
+                                    chrono::NaiveDate::from_ymd_opt(ny, nm + 1, 1)
+                                        .unwrap()
+                                        .pred_opt()
+                                        .unwrap()
+                                        .day()
+                                };
+                                chrono::NaiveDate::from_ymd_opt(ny, nm, day.min(last_day))
+                            })
+                            .unwrap_or(today)
                     }
+                    _ => {
+                        let y = today.year() - n as i32;
+                        chrono::NaiveDate::from_ymd_opt(y, today.month(), today.day())
+                            .or_else(|| chrono::NaiveDate::from_ymd_opt(y, today.month(), 28))
+                            .unwrap_or(today)
+                    }
+                };
+                return Some(d.format("%Y-%m-%d").to_string());
+            }
         }
     }
     if t.len() == 10
@@ -657,9 +667,7 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
         | "source" | "is" | "within" | "label" | "in" | "show" | "handle" | "filename"
         | "filetype" | "larger" | "smaller" | "group-count" | "message-count" | "group"
         | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last" | "phone"
-        | "conversation" => {
-            Some((op, value))
-        }
+        | "conversation" => Some((op, value)),
         _ => None,
     }
 }
@@ -861,7 +869,8 @@ mod tests {
             let parsed = parse_search_query(input);
             let actual = serde_json::to_value(&parsed).unwrap();
             assert_eq!(
-                actual, *expected,
+                actual,
+                *expected,
                 "golden mismatch for case {name:?}\ninput: {input:?}\nactual: {}\nexpected: {}",
                 serde_json::to_string_pretty(&actual).unwrap(),
                 serde_json::to_string_pretty(expected).unwrap()

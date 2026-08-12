@@ -5,26 +5,13 @@ use anyhow::Result;
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    PendingConversation,
-    PendingMessage,
-    SCHEMA_VERSION,
-    owner_sender,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant, IrService, IrSource,
+    PendingConversation, PendingMessage, SCHEMA_VERSION, owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::BTreeMap;
@@ -118,17 +105,18 @@ pub(crate) fn convert_export(
             let (sender_handle, sender_display_name) =
                 resolve_sender(book, &row, is_from_me, &chat_id, &contact_name);
 
-            let convo = conversations
-                .entry(chat_id.clone())
-                .or_insert_with(|| PendingConversation {
-                    chat_id: chat_id.clone(),
-                    display_name: None,
-                    participant_e164s: Vec::new(),
-                    messages: Vec::new(),
-                    is_group: false,
-                    has_attachments: false,
-                    extra: BTreeMap::new(),
-                });
+            let convo =
+                conversations
+                    .entry(chat_id.clone())
+                    .or_insert_with(|| PendingConversation {
+                        chat_id: chat_id.clone(),
+                        display_name: None,
+                        participant_e164s: Vec::new(),
+                        messages: Vec::new(),
+                        is_group: false,
+                        has_attachments: false,
+                        extra: BTreeMap::new(),
+                    });
             convo.messages.push(PendingMessage {
                 sort_key: secs,
                 is_from_me,
@@ -232,7 +220,11 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
         return (e164, peer.to_string(), false);
     }
     // Name-only chat id — not fatal; vault may struggle later.
-    (message_vault_io_core::name_stem(peer), peer.to_string(), true)
+    (
+        message_vault_io_core::name_stem(peer),
+        peer.to_string(),
+        true,
+    )
 }
 
 fn resolve_is_from_me(row: &RawRow) -> bool {

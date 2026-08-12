@@ -1,8 +1,8 @@
 use crate::emit::convert_export;
 use contacts::{ContactsBook, NameMapping};
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::PathBuf;
@@ -122,7 +122,14 @@ fn end_dedupe_collapses_duplicate_flats() {
     .unwrap();
 
     assert_eq!(report.extra.get("flat_eml").copied().unwrap_or(0), 2);
-    assert_eq!(report.extra.get("messages_before_dedupe").copied().unwrap_or(0), 2);
+    assert_eq!(
+        report
+            .extra
+            .get("messages_before_dedupe")
+            .copied()
+            .unwrap_or(0),
+        2
+    );
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
     assert_eq!(report.conversations, 1);
@@ -191,7 +198,14 @@ Will do\r\n"
     )
     .unwrap();
 
-    assert_eq!(report.extra.get("messages_before_dedupe").copied().unwrap_or(0), 2);
+    assert_eq!(
+        report
+            .extra
+            .get("messages_before_dedupe")
+            .copied()
+            .unwrap_or(0),
+        2
+    );
     assert_eq!(report.messages, 1);
     assert_eq!(report.duplicates_dropped, 1);
 

@@ -1,14 +1,8 @@
 //! Normalize IR documents before content equality checks.
 
 #[cfg(test)]
-use message_ir::{
-    ConversationDocument,
-    IrAttachment,
-};
-use message_ir::{
-    IrImessage,
-    IrSource,
-};
+use message_ir::{ConversationDocument, IrAttachment};
+use message_ir::{IrImessage, IrSource};
 
 /// Prepare a document for content equality after round-trip.
 ///
@@ -23,8 +17,7 @@ pub(crate) fn normalize_document_for_compare(doc: &mut ConversationDocument) {
         }
         if let Some(mut imessage) = msg.imessage.take() {
             // Match CSV packaging: a single text/run part equal to `text` is omitted.
-            if crate::write::parts_are_trivial_text_duplicate(&msg.text, imessage.parts.as_ref())
-            {
+            if crate::write::parts_are_trivial_text_duplicate(&msg.text, imessage.parts.as_ref()) {
                 imessage.parts = None;
             }
             msg.imessage = imessage.into_option();

@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
-    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant, IrService,
-    IrSource, SCHEMA_VERSION,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, SCHEMA_VERSION,
 };
 use serde_json::{Value, json};
 
@@ -95,9 +95,13 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
     let mut imessage = IrImessage {
         is_reply: msg.is_reply,
         in_reply_to_guid: msg.thread_originator_guid.clone(),
-        thread_originator_part: msg.thread_originator_part.and_then(|n| u32::try_from(n).ok()),
+        thread_originator_part: msg
+            .thread_originator_part
+            .and_then(|n| u32::try_from(n).ok()),
         num_replies: u32::try_from(msg.num_replies).ok().filter(|&n| n > 0),
-        announcement: msg.is_announcement.then(|| msg.text.clone().unwrap_or_default()),
+        announcement: msg
+            .is_announcement
+            .then(|| msg.text.clone().unwrap_or_default()),
         tapbacks: tapbacks_json(&msg.tapbacks),
         ..Default::default()
     };
@@ -137,11 +141,10 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
 }
 
 fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
-    let path = att.path.clone().or_else(|| {
-        att.sha256
-            .as_ref()
-            .map(|sha| format!("attachments/{sha}"))
-    });
+    let path = att
+        .path
+        .clone()
+        .or_else(|| att.sha256.as_ref().map(|sha| format!("attachments/{sha}")));
     IrAttachment {
         path,
         original_name: att.original_name.clone(),
