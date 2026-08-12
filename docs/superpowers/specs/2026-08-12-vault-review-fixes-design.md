@@ -1,7 +1,7 @@
 # Vault Review Fixes
 
-**Date:** 2026-08-12  
-**Status:** approved  
+**Date:** 2026-08-12
+**Status:** approved
 **Scope:** Remaining Must fix and Should fix findings from the 2026-08-12 review of `crates/vault/`.
 
 ## Problem
