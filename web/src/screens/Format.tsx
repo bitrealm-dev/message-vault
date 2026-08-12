@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invokeFormat } from "../lib/tauri";
 import { useTauriJob } from "../hooks/useTauriJob";
+import BackToLoginLink from "../components/BackToLoginLink";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
 import ProgressBar from "../components/ProgressBar";
@@ -30,14 +31,7 @@ export default function Format({
 
   return (
     <div className="max-w-[700px] p-6">
-      {onBack && (
-        <button
-          onClick={onBack}
-          className="mb-4 cursor-pointer border-none bg-none p-0 text-[0.875rem] text-accent"
-        >
-          ← Back to login
-        </button>
-      )}
+      <BackToLoginLink onBack={onBack} />
       <h2 className="m-0 mb-6">Format Conversion</h2>
 
       <FormRow label="Input directory">

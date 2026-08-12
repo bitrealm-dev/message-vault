@@ -12,9 +12,9 @@ export default function AttachmentThumbnail({
   onClick: () => void;
 }) {
   const isMissing = Boolean(attachment.missing_reason);
-  const isVideo = attachment.mime_type?.startsWith("video/");
+  // Playable videos never reach here — MessageAttachments routes them to VideoPlayer.
   const isImage = attachment.mime_type?.startsWith("image/");
-  const wantsMedia = Boolean(!isMissing && attachment.sha256 && (isImage || isVideo));
+  const wantsMedia = Boolean(!isMissing && attachment.sha256 && isImage);
   const { url, loading, error } = useAssetObjectUrl(
     wantsMedia ? attachment.sha256 : null,
     wantsMedia ? source : null,
@@ -30,7 +30,7 @@ export default function AttachmentThumbnail({
   }
 
   // No renderable asset (missing digest) or an unknown file type — show a file chip
-  if (!attachment.sha256 || (!isImage && !isVideo)) {
+  if (!attachment.sha256 || !isImage) {
     return (
       <div className="mt-1.5 flex items-center gap-2 rounded bg-elevated px-2 py-2 text-[0.813rem]">
         <span>📎</span>
@@ -61,27 +61,12 @@ export default function AttachmentThumbnail({
       onClick={onClick}
       className="mt-1.5 max-w-[300px] cursor-pointer overflow-hidden rounded-md border border-border"
     >
-      {isImage && (
-        <img
-          src={url}
-          alt={attachment.original_name || "attachment"}
-          loading="lazy"
-          className="block h-auto w-full"
-        />
-      )}
-      {isVideo && (
-        <div className="relative">
-          <img
-            src={url}
-            alt={attachment.original_name || "attachment"}
-            loading="lazy"
-            className="block h-auto w-full opacity-70"
-          />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[2rem]">▶️</span>
-          </div>
-        </div>
-      )}
+      <img
+        src={url}
+        alt={attachment.original_name || "attachment"}
+        loading="lazy"
+        className="block h-auto w-full"
+      />
     </div>
   );
 }

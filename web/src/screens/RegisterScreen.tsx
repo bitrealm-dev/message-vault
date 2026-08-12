@@ -6,6 +6,7 @@ import TextField from "../components/TextField";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import AuthBackButton from "../components/AuthBackButton";
+import AuthErrorFooter from "../components/AuthErrorFooter";
 import {
   authCard,
   authLabel,
@@ -95,13 +96,7 @@ export default function RegisterScreen() {
           {loading ? "Creating account…" : "Create account"}
         </AuthSubmitButton>
 
-        <div
-          className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
-          style={{ color: error ? "var(--danger)" : "transparent" }}
-          aria-live="polite"
-        >
-          {error || " "}
-        </div>
+        <AuthErrorFooter error={error} />
 
         <AuthBackButton label="Back to login" onClick={() => navigate("/login")} />
       </div>

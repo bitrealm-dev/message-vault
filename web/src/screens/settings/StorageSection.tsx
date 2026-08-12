@@ -87,6 +87,20 @@ function toNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Any status the server does not report as in-flight or successful counts as failed. */
+function toSummaryStatus(status: string): ImportSummaryView["status"] {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "canceled":
+      return "canceled";
+    case "running":
+      return "running";
+    default:
+      return "failed";
+  }
+}
+
 function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
   const summary =
     detail.summary && typeof detail.summary === "object"
@@ -99,14 +113,7 @@ function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
     : null);
 
   return {
-    status:
-      detail.status === "completed"
-        ? "completed"
-        : detail.status === "canceled"
-          ? "canceled"
-        : detail.status === "running"
-          ? "running"
-          : "failed",
+    status: toSummaryStatus(detail.status),
     filesTotal: toNumber(summary.files_total ?? summary.filesTotal),
     filesSucceeded: toNumber(summary.files_succeeded ?? summary.filesSucceeded),
     filesFailed: toNumber(summary.files_failed ?? summary.filesFailed),

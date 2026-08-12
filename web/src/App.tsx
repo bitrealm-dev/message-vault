@@ -15,28 +15,21 @@ import SettingsScreen from "./screens/SettingsScreen";
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
 
+  // Where an already-signed-in visitor to a public route belongs.
+  const signedInDestination = (
+    <Navigate to={needsOnboarding ? "/onboarding" : "/"} replace />
+  );
+
   return (
     <Routes>
       {/* Public routes — redirect to / if already authenticated */}
       <Route
         path="/login"
-        element={
-          isAuthenticated ? (
-            needsOnboarding ? <Navigate to="/onboarding" replace /> : <Navigate to="/" replace />
-          ) : (
-            <LoginScreen />
-          )
-        }
+        element={isAuthenticated ? signedInDestination : <LoginScreen />}
       />
       <Route
         path="/register"
-        element={
-          isAuthenticated ? (
-            needsOnboarding ? <Navigate to="/onboarding" replace /> : <Navigate to="/" replace />
-          ) : (
-            <RegisterScreen />
-          )
-        }
+        element={isAuthenticated ? signedInDestination : <RegisterScreen />}
       />
       <Route
         path="/onboarding"

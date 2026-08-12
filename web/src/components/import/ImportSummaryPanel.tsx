@@ -55,8 +55,8 @@ function difference(
   return total - accounted;
 }
 
-function completionTextFor(
-  status: ImportSummaryView["status"],
+export function completionTextFor(
+  status: ImportSummaryView["status"] | undefined,
 ): string | undefined {
   if (status === "completed") return "Import complete";
   if (status === "failed") return "Import failed";

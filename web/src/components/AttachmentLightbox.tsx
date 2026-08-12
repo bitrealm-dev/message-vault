@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Dialog,
   Modal,
@@ -33,6 +34,23 @@ export default function AttachmentLightbox({
 
   if (!attachment) return null;
 
+  let media: ReactNode;
+  if (error) {
+    media = (
+      <div className="text-[0.875rem] text-white">Failed to load attachment</div>
+    );
+  } else if (loading || !url) {
+    media = <div className="text-[0.875rem] text-white">Loading…</div>;
+  } else {
+    media = (
+      <img
+        src={url}
+        alt={attachment.original_name || "attachment"}
+        className="max-h-[90vh] max-w-[90vw] object-contain"
+      />
+    );
+  }
+
   return (
     <ModalOverlay
       isOpen
@@ -63,19 +81,7 @@ export default function AttachmentLightbox({
             </button>
           )}
 
-          {error ? (
-            <div className="text-[0.875rem] text-white">
-              Failed to load attachment
-            </div>
-          ) : loading || !url ? (
-            <div className="text-[0.875rem] text-white">Loading…</div>
-          ) : (
-            <img
-              src={url}
-              alt={attachment.original_name || "attachment"}
-              className="max-h-[90vh] max-w-[90vw] object-contain"
-            />
-          )}
+          {media}
 
           {items.length > 1 && (
             <button

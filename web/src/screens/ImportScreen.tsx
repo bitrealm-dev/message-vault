@@ -28,6 +28,7 @@ import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
 import Button from "../components/Button";
 import ImportSummaryPanel, {
+  completionTextFor,
   type ImportIssue,
   type ImportSummaryView,
 } from "../components/import/ImportSummaryPanel";
@@ -82,15 +83,6 @@ function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "upload") return "Uploading";
   if (step === "convert") return "Converting";
   return "Parsing";
-}
-
-function completionTextFor(
-  status: ImportSummaryView["status"] | undefined,
-): string | undefined {
-  if (status === "completed") return "Import complete";
-  if (status === "canceled") return "Import canceled";
-  if (status === "failed") return "Import failed";
-  return undefined;
 }
 
 function stageDurations(

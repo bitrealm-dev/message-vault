@@ -5,6 +5,7 @@ import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
 import TextField from "../components/TextField";
 import AuthBackButton from "../components/AuthBackButton";
+import AuthErrorFooter from "../components/AuthErrorFooter";
 import Button from "../components/Button";
 import {
   authCard,
@@ -217,7 +218,7 @@ export default function LoginScreen() {
               </>
             )}
 
-            <ErrorFooter error={error} />
+            <AuthErrorFooter error={error} />
           </>
         )}
 
@@ -253,7 +254,7 @@ export default function LoginScreen() {
               </Button>
             </div>
 
-            <ErrorFooter error={error} />
+            <AuthErrorFooter error={error} />
           </>
         )}
 
@@ -269,7 +270,7 @@ export default function LoginScreen() {
               )}
             </div>
 
-            <ErrorFooter error={error} />
+            <AuthErrorFooter error={error} />
           </>
         )}
 
@@ -277,18 +278,6 @@ export default function LoginScreen() {
           <AuthBackButton label="Back to Vault Selection" onClick={changeServer} />
         )}
       </div>
-    </div>
-  );
-}
-
-function ErrorFooter({ error }: { error: string }) {
-  return (
-    <div
-      className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
-      style={{ color: error ? "var(--danger)" : "transparent" }}
-      aria-live="polite"
-    >
-      {error || " "}
     </div>
   );
 }

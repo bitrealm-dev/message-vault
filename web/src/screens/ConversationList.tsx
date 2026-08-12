@@ -122,6 +122,10 @@ export default function ConversationList({
           conversations.length,
         );
 
+  let activitySuffix = "";
+  if (refreshing) activitySuffix = " · updating…";
+  else if (filling) activitySuffix = " · loading more…";
+
   if (error && conversations.length === 0) {
     return (
       <div className="p-4 text-[0.813rem] text-danger">
@@ -134,7 +138,7 @@ export default function ConversationList({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
         {rangeLabel}
-        {refreshing ? " · updating…" : filling ? " · loading more…" : null}
+        {activitySuffix}
       </div>
       <VirtualList
         count={conversations.length}
