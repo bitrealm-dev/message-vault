@@ -326,44 +326,92 @@ fn copy_media(
 }
 
 /// Resolve a wtsexporter media path against `media_base` and search roots.
+///
+/// Only paths that canonicalize inside an allowed root (search roots, or an
+/// absolute `media_base`) are accepted — absolute hints and `..` segments
+/// cannot escape those roots.
 fn resolve_media_file(
     src: &str,
     media_base: Option<&str>,
     media_search_roots: &[PathBuf],
 ) -> Option<PathBuf> {
-    let hint = Path::new(src);
-    if hint.is_file() {
-        return Some(hint.to_path_buf());
+    let allowed = allowed_media_roots(media_base, media_search_roots);
+    if allowed.is_empty() {
+        return None;
     }
 
+    let hint = Path::new(src);
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
+    if hint.is_absolute() {
+        candidates.push(hint.to_path_buf());
+    } else if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
         let base_path = Path::new(base);
-        candidates.push(base_path.join(hint));
+        if base_path.is_absolute() {
+            candidates.push(base_path.join(hint));
+        }
         for root in media_search_roots {
             candidates.push(root.join(base_path).join(hint));
-            if base_path.is_absolute() {
-                candidates.push(base_path.join(hint));
-            }
+        }
+        for root in media_search_roots {
+            candidates.push(root.join(hint));
+        }
+    } else {
+        for root in media_search_roots {
+            candidates.push(root.join(hint));
         }
     }
-    for root in media_search_roots {
-        candidates.push(root.join(hint));
-    }
 
-    candidates.into_iter().find(|p| p.is_file())
+    candidates
+        .into_iter()
+        .find(|p| p.is_file() && path_within_any(p, &allowed))
+}
+
+fn allowed_media_roots(media_base: Option<&str>, media_search_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = media_search_roots.to_vec();
+    if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
+        let base_path = Path::new(base);
+        if base_path.is_absolute() {
+            roots.push(base_path.to_path_buf());
+        }
+    }
+    roots
+}
+
+fn path_within_any(path: &Path, roots: &[PathBuf]) -> bool {
+    let Ok(canon) = fs::canonicalize(path) else {
+        return false;
+    };
+    roots.iter().any(|root| {
+        fs::canonicalize(root)
+            .ok()
+            .is_some_and(|root_canon| canon.starts_with(root_canon))
+    })
 }
 
 fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson) -> String {
-    let base = format!("{chat_stem}_{original}");
-    let candidate = output.join("attachments").join(&base);
-    if !candidate.exists() {
-        return base;
+    let dir = output.join("attachments");
+    let short: String = key_id_string(msg).chars().take(12).collect();
+    let primary = format!("{chat_stem}_{original}");
+    if !dir.join(&primary).exists() {
+        return primary;
     }
-    let suffix = key_id_string(msg);
-    // Truncate at a UTF-8 char boundary (never byte-slice a String).
-    let short: String = suffix.chars().take(12).collect();
-    format!("{chat_stem}_{short}_{original}")
+    if !short.is_empty() {
+        let with_key = format!("{chat_stem}_{short}_{original}");
+        if !dir.join(&with_key).exists() {
+            return with_key;
+        }
+    }
+    for n in 2u32.. {
+        let name = if short.is_empty() {
+            format!("{chat_stem}_{n}_{original}")
+        } else {
+            format!("{chat_stem}_{short}_{n}_{original}")
+        };
+        if !dir.join(&name).exists() {
+            return name;
+        }
+    }
+    unreachable!("u32 counter exhausted for attachment names");
 }
 
 fn sanitize_att_stem(chat_id: &str) -> String {
@@ -593,4 +641,80 @@ fn pending_to_document(
         messages,
         packaging_stem_suffix: Some("__whatsapp".into()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn msg_with_key(key: &str) -> MessageJson {
+        MessageJson {
+            from_me: false,
+            timestamp: Some(1.0),
+            data: None,
+            sender: None,
+            media: json!(true),
+            mime: Some("image/jpeg".into()),
+            caption: None,
+            sticker: false,
+            key_id: Some(json!(key)),
+            reply: None,
+            reactions: json!({}),
+        }
+    }
+
+    #[test]
+    fn unique_name_avoids_overwrite_on_repeated_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let att = tmp.path().join("attachments");
+        fs::create_dir_all(&att).unwrap();
+        let msg = msg_with_key("SAMEKEY");
+        fs::write(att.join("chat_IMG_001.jpg"), b"a").unwrap();
+        fs::write(att.join("chat_SAMEKEY_IMG_001.jpg"), b"b").unwrap();
+        let name = unique_name(tmp.path(), "chat", "IMG_001.jpg", &msg);
+        assert_eq!(name, "chat_SAMEKEY_2_IMG_001.jpg");
+        assert!(!att.join(&name).exists());
+    }
+
+    #[test]
+    fn resolve_media_rejects_absolute_paths_outside_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.bin");
+        fs::write(&secret, b"secret").unwrap();
+        assert!(
+            resolve_media_file(
+                secret.to_str().unwrap(),
+                None,
+                &[root.path().to_path_buf()],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_media_rejects_dotdot_escape() {
+        let root = tempfile::tempdir().unwrap();
+        let sibling = root.path().parent().unwrap().join("escape_probe.bin");
+        fs::write(&sibling, b"x").unwrap();
+        let hint = "../escape_probe.bin";
+        assert!(
+            resolve_media_file(hint, None, &[root.path().to_path_buf()]).is_none(),
+            "relative .. must not escape search roots"
+        );
+        let _ = fs::remove_file(&sibling);
+    }
+
+    #[test]
+    fn resolve_media_accepts_path_under_search_root() {
+        let root = tempfile::tempdir().unwrap();
+        let media_base = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared";
+        let rel = "Message/Media/chat/a/b/photo.jpg";
+        let src = root.path().join(media_base).join(rel);
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        fs::write(&src, b"jpeg").unwrap();
+        let found = resolve_media_file(rel, Some(media_base), &[root.path().to_path_buf()]);
+        assert_eq!(found.as_deref(), Some(src.as_path()));
+    }
 }

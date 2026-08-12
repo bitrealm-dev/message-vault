@@ -132,11 +132,11 @@ pub(crate) fn resolve_attachment_cell(
         message_secs,
         attachments_saved,
     ) {
-        Ok(Some(rel_path)) => AttachmentCell {
+        Ok(Some((rel_path, digest))) => AttachmentCell {
             path: Some(rel_path),
             original_name: Some(csv_name.to_string()),
             mime_type: mime,
-            digest_sha256: None,
+            digest_sha256: Some(digest),
             is_sticker,
             transcription: None,
             sticker_effect: None,
@@ -171,7 +171,20 @@ fn attachment_name_matches(disk_name: &str, csv_name: &str) -> bool {
     if disk == csv {
         return true;
     }
-    disk.ends_with(&csv) || disk.ends_with(&format!("_{csv}")) || disk.ends_with(&format!("-{csv}"))
+    // Require a separator boundary before a suffix match so short CSV names
+    // like `1.jpg` do not match unrelated files such as `photo11.jpg`.
+    if disk.ends_with(&format!("_{csv}")) || disk.ends_with(&format!("-{csv}")) {
+        return true;
+    }
+    if disk.len() > csv.len() {
+        let prefix = &disk[..disk.len() - csv.len()];
+        if let Some(c) = prefix.chars().last()
+            && !c.is_ascii_alphanumeric()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn find_attachment_on_disk(
@@ -181,10 +194,14 @@ fn find_attachment_on_disk(
 ) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(csv_parent) {
         for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // Match the index walker: do not follow symlinks out of the tree.
+            if file_type.is_symlink() || !file_type.is_file() {
                 continue;
             }
+            let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
                 && attachment_name_matches(name, csv_name)
             {
@@ -202,7 +219,7 @@ fn find_and_copy_attachment(
     attachments_dir: &Path,
     message_secs: i64,
     attachments_saved: &mut u64,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, String)>> {
     let Some(src) = index.and_then(|i| find_attachment_on_disk(csv_name, csv_parent, i)) else {
         return Ok(None);
     };
@@ -230,7 +247,7 @@ fn find_and_copy_attachment(
         })?;
         *attachments_saved += 1;
     }
-    Ok(Some(format!("attachments/{name}")))
+    Ok(Some((format!("attachments/{name}"), digest_hex)))
 }
 
 /// Stream a file through SHA-256 in 64 KB chunks (no full read into memory).
@@ -287,7 +304,60 @@ mod tests {
         assert!(attachment_name_matches("IMG_1234.jpg", "1234.jpg"));
         assert!(attachment_name_matches("photo_abc.jpg", "abc.jpg"));
         assert!(attachment_name_matches("photo-abc.jpg", "abc.jpg"));
+        assert!(attachment_name_matches("prefix.abc.jpg", "abc.jpg"));
         assert!(!attachment_name_matches("other.jpg", "abc.jpg"));
+        // Bare ends_with would wrongly match these short CSV names.
+        assert!(!attachment_name_matches("photo11.jpg", "1.jpg"));
+        assert!(!attachment_name_matches("image10.jpg", "0.jpg"));
+        assert!(!attachment_name_matches("photo11.jpg", "11.jpg"));
+    }
+
+    #[test]
+    fn copied_attachment_includes_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chat");
+        let attachments = dir.path().join("attachments");
+        fs::create_dir_all(&chat).unwrap();
+        fs::create_dir_all(&attachments).unwrap();
+        fs::write(chat.join("photo.jpg"), b"jpeg-bytes").unwrap();
+        let index = AttachmentIndex::build(dir.path());
+        let mut saved = 0;
+        let mut failures = 0;
+        let cell = resolve_attachment_cell(
+            "photo.jpg",
+            "image",
+            &chat,
+            Some(&index),
+            &attachments,
+            true,
+            1_600_000_000,
+            &mut saved,
+            &mut failures,
+        );
+        assert_eq!(saved, 1);
+        assert_eq!(failures, 0);
+        let digest = cell.digest_sha256.expect("digest set after copy");
+        assert_eq!(digest.len(), 64);
+        assert!(cell.path.as_deref().unwrap().starts_with("attachments/"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_dir_skips_symlinks() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chat");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&chat).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.jpg"), b"secret").unwrap();
+        symlink(outside.join("secret.jpg"), chat.join("photo.jpg")).unwrap();
+        let index = AttachmentIndex::build(&chat);
+        assert_eq!(
+            find_attachment_on_disk("photo.jpg", &chat, &index),
+            None,
+            "symlink in CSV parent must not be followed"
+        );
     }
 
     #[test]

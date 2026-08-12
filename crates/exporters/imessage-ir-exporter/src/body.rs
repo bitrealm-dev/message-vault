@@ -20,18 +20,29 @@ pub(crate) fn apply_body(msg: &mut Message, db: &Connection) {
 
 pub(crate) struct AttachmentResolver {
     by_guid: HashMap<String, usize>,
+    /// Attachment indices that have a GUID (prefer GUID matching for these).
+    has_guid: HashSet<usize>,
+    claimed: HashSet<usize>,
     next_positional: usize,
+    len: usize,
 }
 
 impl AttachmentResolver {
     pub(crate) fn new(attachments: &[Attachment]) -> Self {
+        let mut by_guid = HashMap::new();
+        let mut has_guid = HashSet::new();
+        for (i, a) in attachments.iter().enumerate() {
+            if let Some(g) = a.guid.clone() {
+                by_guid.insert(g, i);
+                has_guid.insert(i);
+            }
+        }
         Self {
-            by_guid: attachments
-                .iter()
-                .enumerate()
-                .filter_map(|(i, a)| a.guid.clone().map(|g| (g, i)))
-                .collect(),
+            by_guid,
+            has_guid,
+            claimed: HashSet::new(),
             next_positional: 0,
+            len: attachments.len(),
         }
     }
 
@@ -42,10 +53,26 @@ impl AttachmentResolver {
             .and_then(|meta| meta.guid.as_deref())
             .and_then(|guid| self.by_guid.get(guid).copied())
         {
+            self.claimed.insert(idx);
             return idx;
+        }
+        // Prefer unclaimed rows that have no GUID — those are the ones the
+        // positional fallback is meant for. Never reuse a GUID-claimed index.
+        if let Some(idx) = (0..self.len).find(|i| {
+            !self.claimed.contains(i) && !self.has_guid.contains(i)
+        }) {
+            self.claimed.insert(idx);
+            if idx >= self.next_positional {
+                self.next_positional = idx + 1;
+            }
+            return idx;
+        }
+        while self.next_positional < self.len && self.claimed.contains(&self.next_positional) {
+            self.next_positional += 1;
         }
         let idx = self.next_positional;
         self.next_positional += 1;
+        self.claimed.insert(idx);
         idx
     }
 }
@@ -99,4 +126,54 @@ pub(crate) fn referenced_attachment_indices(message: &Message, attachments: &[At
     let mut out: Vec<_> = indices.into_iter().collect();
     out.sort_unstable();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use imessage_database::tables::messages::models::AttachmentMeta;
+
+    fn stub_attachment(guid: Option<&str>) -> Attachment {
+        Attachment {
+            rowid: 0,
+            guid: guid.map(str::to_string),
+            filename: None,
+            uti: None,
+            mime_type: None,
+            transfer_name: None,
+            total_bytes: 0,
+            is_sticker: false,
+            hide_attachment: 0,
+            emoji_description: None,
+            copied_path: None,
+        }
+    }
+
+    fn att_range(guid: Option<&str>) -> AttributedRange {
+        AttributedRange::attachment(
+            0,
+            1,
+            AttachmentMeta {
+                guid: guid.map(str::to_string),
+                ..AttachmentMeta::default()
+            },
+        )
+    }
+
+    #[test]
+    fn positional_skips_guid_claimed_indices() {
+        let attachments = vec![
+            stub_attachment(Some("guid-a")),
+            stub_attachment(Some("guid-b")),
+            stub_attachment(None),
+        ];
+        let mut resolver = AttachmentResolver::new(&attachments);
+        // First body range points at attachment 0 by GUID.
+        assert_eq!(resolver.resolve(&att_range(Some("guid-a"))), 0);
+        // Second range has no usable GUID — must take the next free slot (2),
+        // not reuse 0.
+        assert_eq!(resolver.resolve(&att_range(None)), 2);
+        // Third range resolves the remaining GUID attachment.
+        assert_eq!(resolver.resolve(&att_range(Some("guid-b"))), 1);
+    }
 }

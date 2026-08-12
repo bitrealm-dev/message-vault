@@ -67,11 +67,13 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
     query_context.start = config
         .date_range
         .start_secs
-        .map(|s| s * TIMESTAMP_FACTOR - offset_ns);
+        .map(|s| unix_secs_to_apple_ns(s, offset_ns));
+    // DateRange.end_secs is exclusive (`secs >= end` rejected). QueryContext
+    // filters with inclusive `m.date <= end`, so subtract 1 ns.
     query_context.end = config
         .date_range
         .end_secs
-        .map(|s| s * TIMESTAMP_FACTOR - offset_ns);
+        .map(|s| exclusive_unix_end_to_inclusive_apple_ns(s, offset_ns));
 
     let db_path = match config.primary_input() {
         Some(path) if !path.as_os_str().is_empty() => path.to_path_buf(),
@@ -152,4 +154,29 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
         log: config.log.clone(),
         cancel: config.cancel.clone(),
     })
+}
+
+fn unix_secs_to_apple_ns(secs: i64, offset_ns: i64) -> i64 {
+    secs * TIMESTAMP_FACTOR - offset_ns
+}
+
+/// Convert exclusive Unix end seconds to an inclusive Apple-ns bound for `m.date <= end`.
+fn exclusive_unix_end_to_inclusive_apple_ns(end_secs: i64, offset_ns: i64) -> i64 {
+    unix_secs_to_apple_ns(end_secs, offset_ns).saturating_sub(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_end_maps_to_inclusive_sql_bound() {
+        let offset_ns = 0;
+        let end_secs = 1_578_009_600; // 2020-01-03 00:00:00 UTC
+        let inclusive = exclusive_unix_end_to_inclusive_apple_ns(end_secs, offset_ns);
+        let at_bound = unix_secs_to_apple_ns(end_secs, offset_ns);
+        assert_eq!(inclusive, at_bound - 1);
+        // A message stamped exactly at the exclusive midnight must fail `<= inclusive`.
+        assert!(at_bound > inclusive);
+    }
 }
