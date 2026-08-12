@@ -1001,7 +1001,10 @@ mod tests {
         let convo = conversations.values().next().unwrap();
         assert!(convo.is_group);
         assert!(convo.chat_id.starts_with("chat-group-"));
-        assert_eq!(report.extra.get("pdu_group_messages").copied().unwrap_or(0), 1);
+        assert_eq!(
+            report.extra.get("pdu_group_messages").copied().unwrap_or(0),
+            1
+        );
     }
 
     fn test_msg(key: &str, attachments: usize) -> PendingMessage {
