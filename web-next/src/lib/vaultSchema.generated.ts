@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS account_session_tokens (
     account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     -- Hash of the session Bearer secret (never store the raw token).
     token_hash TEXT NOT NULL UNIQUE,
-    -- When this session token was issued (SQLite datetime / ISO string).
+    -- Unix-seconds string for when this session token was issued.
     created_at TEXT NOT NULL
 );
 
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     scopes TEXT NOT NULL DEFAULT 'both',
     -- Masked form for Settings (e.g. mv-api-Sd..mE). Not enough to recover the secret.
     token_hint TEXT NOT NULL DEFAULT 'mv-api-..',
-    -- When this API token was created.
+    -- Unix-seconds string for when this API token was created.
     created_at TEXT NOT NULL,
     -- Unix-seconds string; NULL until first successful Bearer use.
     last_accessed_at TEXT
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS messages (
     source TEXT NOT NULL,
     -- Source-native message id when available; used for exact dedupe with source.
     guid TEXT,
-    -- Message time as stored by the source (often local / offset-bearing RFC3339).
+    -- Message time as RFC3339 with the importing server's local offset (derived from the source epoch).
     timestamp TEXT NOT NULL,
     -- Message time normalized to UTC when available.
     timestamp_utc TEXT,
@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS messages (
     num_replies INTEGER NOT NULL DEFAULT 0,
     -- Stable order within the conversation when timestamps collide.
     sort_order INTEGER NOT NULL,
-    -- Hash fingerprint for cross-source duplicate detection (chat/time/body/attachments).
+    -- Hash fingerprint for cross-source duplicate detection (chat/direction/time/body/attachments).
     content_key TEXT,
     -- Points at the kept message when this row is a flagged duplicate.
     duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL,
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     source TEXT NOT NULL,
     -- Source-native message id when available.
     guid TEXT,
-    -- Message time as stored by the source.
+    -- Message time as RFC3339 with the importing server's local offset (derived from the source epoch).
     timestamp TEXT NOT NULL,
     -- Message time normalized to UTC when available.
     timestamp_utc TEXT,

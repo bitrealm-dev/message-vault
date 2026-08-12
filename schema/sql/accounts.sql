@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS account_session_tokens (
     account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     -- Hash of the session Bearer secret (never store the raw token).
     token_hash TEXT NOT NULL UNIQUE,
-    -- When this session token was issued (SQLite datetime / ISO string).
+    -- Unix-seconds string for when this session token was issued.
     created_at TEXT NOT NULL
 );
 
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     scopes TEXT NOT NULL DEFAULT 'both',
     -- Masked form for Settings (e.g. mv-api-Sd..mE). Not enough to recover the secret.
     token_hint TEXT NOT NULL DEFAULT 'mv-api-..',
-    -- When this API token was created.
+    -- Unix-seconds string for when this API token was created.
     created_at TEXT NOT NULL,
     -- Unix-seconds string; NULL until first successful Bearer use.
     last_accessed_at TEXT

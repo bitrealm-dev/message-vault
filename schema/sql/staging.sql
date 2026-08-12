@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS staging_messages (
     source TEXT NOT NULL,
     -- Source-native message id when available.
     guid TEXT,
-    -- Message time as stored by the source.
+    -- Message time as RFC3339 with the importing server's local offset (derived from the source epoch).
     timestamp TEXT NOT NULL,
     -- Message time normalized to UTC when available.
     timestamp_utc TEXT,

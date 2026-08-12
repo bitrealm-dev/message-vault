@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS messages (
     source TEXT NOT NULL,
     -- Source-native message id when available; used for exact dedupe with source.
     guid TEXT,
-    -- Message time as stored by the source (often local / offset-bearing RFC3339).
+    -- Message time as RFC3339 with the importing server's local offset (derived from the source epoch).
     timestamp TEXT NOT NULL,
     -- Message time normalized to UTC when available.
     timestamp_utc TEXT,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS messages (
     num_replies INTEGER NOT NULL DEFAULT 0,
     -- Stable order within the conversation when timestamps collide.
     sort_order INTEGER NOT NULL,
-    -- Hash fingerprint for cross-source duplicate detection (chat/time/body/attachments).
+    -- Hash fingerprint for cross-source duplicate detection (chat/direction/time/body/attachments).
     content_key TEXT,
     -- Points at the kept message when this row is a flagged duplicate.
     duplicate_of INTEGER REFERENCES messages(id) ON DELETE SET NULL,
