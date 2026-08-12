@@ -4,7 +4,7 @@
 use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{fold_in_id_chunks, in_placeholders};
+use crate::db::sql::group_rows_by_id;
 use crate::search_query::{
     ParsedSearchQuery, SearchMode, metadata_exclude_terms, metadata_include_terms,
     parse_search_query,
@@ -737,14 +737,9 @@ fn contact_ids_within_day_bounds(
         params.push(from.clone().into());
     }
     if let Some(to) = &bounds.to {
+        // Exclusive upper bound: the string compare on YYYY-MM-DD already excludes the day.
         having.push(format!("{day}(substr(m.timestamp, 1, 10)) < ?"));
-        let to_val = if to.len() == 10 {
-            // exclusive upper: next day handled by string compare on YYYY-MM-DD
-            to.clone()
-        } else {
-            to.clone()
-        };
-        params.push(to_val.into());
+        params.push(to.clone().into());
     }
     if having.is_empty() {
         return Ok(Vec::new());
@@ -773,10 +768,12 @@ fn load_participants(
     conn: &Connection,
     conversation_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ExportQueryError> {
-    fold_in_id_chunks(conversation_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT p.conversation_id,
+    group_rows_by_id(
+        conn,
+        conversation_ids,
+        |placeholders| {
+            format!(
+                "SELECT p.conversation_id,
                     h.raw AS handle,
                     CASE
                       WHEN ch.handle_id IS NOT NULL THEN NULLIF(trim(ch.name_alias), '')
@@ -797,9 +794,9 @@ fn load_participants(
                ON c.id = ch.contact_id AND c.account_id = conv.account_id
              WHERE p.conversation_id IN ({placeholders})
              ORDER BY p.conversation_id, p.id"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            )
+        },
+        |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 ExportParticipant {
@@ -810,27 +807,27 @@ fn load_participants(
                     contact_id: row.get(5)?,
                 },
             ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    })
+        },
+    )
 }
 
 fn load_attachments(
     conn: &Connection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ExportQueryError> {
-    fold_in_id_chunks(message_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription,
+    group_rows_by_id(
+        conn,
+        message_ids,
+        |placeholders| {
+            format!(
+                "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription,
                     missing_reason
              FROM attachments
              WHERE message_id IN ({placeholders})
              ORDER BY message_id, id"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            )
+        },
+        |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 ExportAttachment {
@@ -843,28 +840,28 @@ fn load_attachments(
                     missing_reason: row.get(7)?,
                 },
             ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    })
+        },
+    )
 }
 
 fn load_tapbacks(
     conn: &Connection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
-    fold_in_id_chunks(message_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me,
+    group_rows_by_id(
+        conn,
+        message_ids,
+        |placeholders| {
+            format!(
+                "SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me,
                     hs.raw AS sender
              FROM tapbacks t
              LEFT JOIN handles hs ON hs.id = t.sender_handle_id
              WHERE t.message_id IN ({placeholders})
              ORDER BY t.message_id, t.id"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            )
+        },
+        |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 ExportTapback {
@@ -875,10 +872,8 @@ fn load_tapbacks(
                     sender: row.get(5)?,
                 },
             ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    })
+        },
+    )
 }
 
 #[cfg(test)]

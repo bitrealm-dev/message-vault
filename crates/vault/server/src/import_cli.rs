@@ -166,7 +166,8 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     })
 }
 
-fn list_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
+/// Every `.jsonl` file directly inside `dir`, sorted by path.
+pub fn list_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths: Vec<PathBuf> = fs::read_dir(dir)
         .with_context(|| format!("failed to read {}", dir.display()))?
         .filter_map(|entry| entry.ok())
@@ -206,10 +207,7 @@ pub fn discover_sources(paths: &[PathBuf]) -> Result<Vec<String>> {
                 set.insert(source.to_string());
             }
         }
-        let is_orphaned = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .is_some_and(|s| s.eq_ignore_ascii_case("orphaned"));
+        let is_orphaned = import::is_orphaned_export(path);
         if !saw_conversation && !is_orphaned {
             bail!(
                 "{}: no conversation header (cannot determine export.source)",

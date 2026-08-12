@@ -348,7 +348,6 @@ pub fn list_contacts(
     offset: usize,
 ) -> Result<ContactListPage, ExportQueryError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
-    let offset = offset;
 
     let filters = parse_contact_list_filters(q);
     let involves = involves_ct_sql();

@@ -22,6 +22,29 @@ pub struct ApiTokenItem {
     pub last_accessed_at: Option<String>,
 }
 
+impl From<api_tokens::ApiTokenRow> for ApiTokenItem {
+    fn from(row: api_tokens::ApiTokenRow) -> Self {
+        Self {
+            id: row.id,
+            label: row.label,
+            scopes: row.scopes.as_str().to_string(),
+            token_hint: row.token_hint,
+            created_at: row.created_at,
+            last_accessed_at: row.last_accessed_at,
+        }
+    }
+}
+
+/// Label validation rejections are the caller's fault; anything else is a server error.
+fn map_label_error(e: anyhow::Error) -> ApiError {
+    let msg = e.to_string();
+    if msg.contains("label is required") || msg.contains("at most 120") {
+        ApiError::BadRequest(msg)
+    } else {
+        ApiError::Internal(msg)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ListApiTokensResponse {
     pub items: Vec<ApiTokenItem>,
@@ -87,17 +110,7 @@ pub async fn list_api_tokens_handler(
     let items = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ApiTokenItem>> {
         let conn = open_accounts_conn(&db)?;
         let rows = api_tokens::list_api_tokens(&conn, &account_id)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| ApiTokenItem {
-                id: r.id,
-                label: r.label,
-                scopes: r.scopes.as_str().to_string(),
-                token_hint: r.token_hint,
-                created_at: r.created_at,
-                last_accessed_at: r.last_accessed_at,
-            })
-            .collect())
+        Ok(rows.into_iter().map(ApiTokenItem::from).collect())
     })
     .await
     .join_blocking("list API tokens task")?;
@@ -126,17 +139,7 @@ pub async fn create_api_token_handler(
         },
     )
     .await
-    .join_map("create API token task", |e| {
-        let msg = e.to_string();
-        if msg.contains("label is required")
-            || msg.contains("at most 120")
-            || msg.contains("scopes must be")
-        {
-            ApiError::BadRequest(msg)
-        } else {
-            ApiError::Internal(msg)
-        }
-    })?;
+    .join_map("create API token task", map_label_error)?;
 
     Ok(Json(CreateApiTokenResponse {
         id: created.0,
@@ -193,14 +196,7 @@ pub async fn rename_api_token_handler(
         Ok((ok, trimmed))
     })
     .await
-    .join_map("rename API token task", |e| {
-        let msg = e.to_string();
-        if msg.contains("label is required") || msg.contains("at most 120") {
-            ApiError::BadRequest(msg)
-        } else {
-            ApiError::Internal(msg)
-        }
-    })?;
+    .join_map("rename API token task", map_label_error)?;
 
     if !updated.0 {
         return Err(ApiError::NotFound("API token not found".into()));

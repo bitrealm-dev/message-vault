@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{fold_in_id_chunks, in_placeholders};
+use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
-use crate::search_query::{CountComparator, CountComparison, parse_count_comparison};
+use crate::search_query::{CountComparison, parse_count_comparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
@@ -174,7 +174,6 @@ pub fn list_conversations(
     offset: usize,
 ) -> Result<ConversationListPage, ExportQueryError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
-    let offset = offset;
 
     let parsed = parse_conversation_list_query(q.trim());
 
@@ -437,10 +436,12 @@ fn load_participants(
     // issue one follow-up SELECT per participant. Contact fields apply only when
     // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
     // exposed as `name` and `name_alias` stays unset.
-    fold_in_id_chunks(conversation_ids, |chunk| {
-        let placeholders = in_placeholders(chunk.len());
-        let sql = format!(
-            "SELECT p.conversation_id,
+    group_rows_by_id(
+        conn,
+        conversation_ids,
+        |placeholders| {
+            format!(
+                "SELECT p.conversation_id,
                     CASE
                       WHEN NULLIF(trim(c.preferred_name), '') IS NOT NULL
                         THEN NULLIF(trim(c.preferred_name), '')
@@ -461,9 +462,9 @@ fn load_participants(
                ON c.id = ch.contact_id AND c.account_id = conv.account_id
              WHERE p.conversation_id IN ({placeholders})
              ORDER BY p.conversation_id, p.id"
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            )
+        },
+        |row| {
             let contact_id: Option<i64> = row.get(5)?;
             Ok((
                 row.get::<_, i64>(0)?,
@@ -475,10 +476,8 @@ fn load_participants(
                     contact_id: contact_id.map(|id| id.to_string()),
                 },
             ))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    })
+        },
+    )
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -603,6 +602,7 @@ mod tests {
     use rusqlite::params;
 
     use crate::db::{account_profile, schema, vault_imports};
+    use crate::search_query::CountComparator;
 
     fn setup() -> (Connection, String) {
         let conn = Connection::open_in_memory().unwrap();

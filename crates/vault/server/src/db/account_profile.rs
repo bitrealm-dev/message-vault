@@ -5,53 +5,38 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::db::handles::{normalize_handle, upsert_handle_row};
 use crate::db::schema;
 
-/// Account identity loaded for profile display: the handles migration replaced the
-/// load-for-matching path with direct joins through `account_handles`/`handles`,
-/// so this struct/loader now exists to pin the soft-default behavior.
-
+/// Contact points linked to an account, for profile display.
 #[derive(Debug, Clone)]
 pub struct AccountProfile {
-    pub display_name: String,
-    pub handle_ids: Vec<i64>,
     pub emails: Vec<String>,
     pub phones: Vec<String>,
 }
 
-/// Load account identity (preferred name + linked handle ids) and optional email handles.
-/// Soft-defaults when the row is missing or name/handles are empty (`"Me"`, empty sets).
-
+/// Load the email and phone handles linked to an account. Both default to empty
+/// when nothing is linked.
 pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
-    let display_name = load_preferred_name(conn, account_id)?.unwrap_or_else(|| "Me".to_string());
-
-    let mut handle_stmt = conn.prepare(
-        "SELECT ah.handle_id FROM account_handles ah WHERE ah.account_id = ?1 ORDER BY ah.handle_id",
+    let emails = query_account_strings(
+        conn,
+        "SELECT email FROM account_emails WHERE account_id = ?1 ORDER BY email",
+        account_id,
     )?;
-    let handle_ids: Vec<i64> = handle_stmt
-        .query_map(params![account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut email_stmt =
-        conn.prepare("SELECT email FROM account_emails WHERE account_id = ?1 ORDER BY email")?;
-    let emails: Vec<String> = email_stmt
-        .query_map(params![account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut phone_stmt = conn.prepare(
+    let phones = query_account_strings(
+        conn,
         "SELECT h.normalized FROM handles h
          JOIN account_handles ah ON ah.handle_id = h.id
          WHERE ah.account_id = ?1 AND h.handle_type = 'phone'
          ORDER BY h.normalized",
+        account_id,
     )?;
-    let phones: Vec<String> = phone_stmt
-        .query_map(params![account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AccountProfile { emails, phones })
+}
 
-    Ok(AccountProfile {
-        display_name,
-        handle_ids,
-        emails,
-        phones,
-    })
+fn query_account_strings(conn: &Connection, sql: &str, account_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(params![account_id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(rows)
 }
 
 /// Ensure `accounts` row exists (stub username = id) for CLI imports.
@@ -485,18 +470,22 @@ mod tests {
     }
 
     #[test]
-    fn load_profile_soft_defaults_and_preferred_name() {
+    fn load_profile_returns_linked_handles_and_preferred_name() {
         let conn = setup();
         let empty = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
-        assert_eq!(empty.display_name, "Me");
-        assert!(empty.handle_ids.is_empty());
+        assert!(empty.phones.is_empty());
+        assert!(empty.emails.is_empty());
+        assert_eq!(
+            load_preferred_name(&conn, "00000000-0000-4000-8000-000000000001").unwrap(),
+            None
+        );
 
         conn.execute(
             "UPDATE accounts SET preferred_name = 'MB' WHERE id = ?1",
             params!["00000000-0000-4000-8000-000000000001"],
         )
         .unwrap();
-        let handle_id = link_account_handle(
+        link_account_handle(
             &conn,
             "00000000-0000-4000-8000-000000000001",
             "+15555550100",
@@ -504,8 +493,11 @@ mod tests {
         )
         .unwrap();
         let loaded = load_account_profile(&conn, "00000000-0000-4000-8000-000000000001").unwrap();
-        assert_eq!(loaded.display_name, "MB");
-        assert_eq!(loaded.handle_ids, vec![handle_id]);
+        assert_eq!(loaded.phones, vec!["+15555550100".to_string()]);
+        assert_eq!(
+            load_preferred_name(&conn, "00000000-0000-4000-8000-000000000001").unwrap(),
+            Some("MB".to_string())
+        );
     }
 
     #[test]
@@ -536,9 +528,15 @@ mod tests {
         // Email handles are lowercased and stored separately by type.
         let email =
             link_account_handle(&conn, account, "ME@EXAMPLE.com", HandleType::Email).unwrap();
-        let loaded = load_account_profile(&conn, account).unwrap();
-        assert_eq!(loaded.handle_ids.len(), 2);
-        assert!(loaded.handle_ids.contains(&email));
+        let linked_ids: Vec<i64> = conn
+            .prepare("SELECT handle_id FROM account_handles WHERE account_id = ?1")
+            .unwrap()
+            .query_map(params![account], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(linked_ids.len(), 2);
+        assert!(linked_ids.contains(&email));
     }
 
     #[test]

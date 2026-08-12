@@ -47,6 +47,24 @@ pub struct AuthTokenResponse {
     pub username: String,
 }
 
+impl AuthTokenResponse {
+    /// Issue (or reuse) the session token for an existing account. Falls back to
+    /// the account id when the row has no username.
+    fn for_existing_account(
+        conn: &rusqlite::Connection,
+        account_id: String,
+    ) -> Result<AuthTokenResponse> {
+        let token = session_tokens::get_or_create_session_token(conn, &account_id)?;
+        let username = account_profile::username_for_account(conn, &account_id)?
+            .unwrap_or_else(|| account_id.clone());
+        Ok(AuthTokenResponse {
+            token,
+            account_id,
+            username,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Password helpers
 // ---------------------------------------------------------------------------
@@ -191,15 +209,7 @@ pub async fn login_handler(
             bail!("invalid password");
         }
 
-        let token = session_tokens::get_or_create_session_token(&conn, &account_id)?;
-        let username = account_profile::username_for_account(&conn, &account_id)?
-            .unwrap_or_else(|| account_id.clone());
-
-        Ok(AuthTokenResponse {
-            token,
-            account_id,
-            username,
-        })
+        AuthTokenResponse::for_existing_account(&conn, account_id)
     })
     .await
     .join_map("login task", |e| ApiError::Unauthorized(e.to_string()))?;
@@ -322,15 +332,7 @@ pub async fn hanko_session_handler(
             }
         };
 
-        let token = session_tokens::get_or_create_session_token(&conn, &account_id)?;
-        let username = account_profile::username_for_account(&conn, &account_id)?
-            .unwrap_or_else(|| account_id.clone());
-
-        Ok(AuthTokenResponse {
-            token,
-            account_id,
-            username,
-        })
+        AuthTokenResponse::for_existing_account(&conn, account_id)
     })
     .await
     .join_map("hanko session task", |e| {

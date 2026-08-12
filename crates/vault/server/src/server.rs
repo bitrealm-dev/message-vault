@@ -617,10 +617,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     })
     .await?;
 
-    match resolved {
-        Some(identity) => Ok(identity),
-        None => Err(ApiError::Unauthorized("invalid API token".into())),
-    }
+    resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
 }
 
 /// Resolve the account id for an import: Bearer token binds the account.
@@ -840,10 +837,8 @@ async fn conversation_sources_handler(
         )
     })
     .await?;
-    match page {
-        Some(p) => Ok(Json(serde_json::json!({ "sources": p.sources }))),
-        None => Err(ApiError::NotFound("conversation not found".into())),
-    }
+    page.map(|p| Json(serde_json::json!({ "sources": p.sources })))
+        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
 async fn contact_detail_handler(
@@ -858,10 +853,9 @@ async fn contact_detail_handler(
         crate::contacts_api::get_contact_detail(conn, &auth.account_id, contact_id)
     })
     .await?;
-    match detail {
-        Some(d) => Ok(Json(d)),
-        None => Err(ApiError::NotFound("contact not found".into())),
-    }
+    detail
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound("contact not found".into()))
 }
 
 async fn contact_mutate_handler(
@@ -1156,6 +1150,17 @@ struct AssetPutResponse {
     already_present: bool,
 }
 
+impl AssetPutResponse {
+    fn stored(asset: assets::StoredAsset, already_present: bool) -> Json<Self> {
+        Json(Self {
+            ok: true,
+            sha256: asset.sha256,
+            assets_path: asset.assets_path,
+            already_present,
+        })
+    }
+}
+
 enum AssetAccess {
     /// GET asset bytes — needs export (or full session).
     Read,
@@ -1215,12 +1220,7 @@ async fn asset_head_handler(
     let Some(stored) = existing else {
         return Err(ApiError::NotFound("asset not found".into()));
     };
-    Ok(Json(AssetPutResponse {
-        ok: true,
-        sha256: stored.sha256,
-        assets_path: stored.assets_path,
-        already_present: true,
-    }))
+    Ok(AssetPutResponse::stored(stored, true))
 }
 
 /// Download a previously stored content-addressed asset (read-only).
@@ -1354,20 +1354,13 @@ async fn asset_put_handler(
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
 
-    let mime = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"));
+    let mime = content_type_base(&headers)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"))
+        .map(str::to_string);
 
     if let Some(stored) = existing {
         discard_body(request.into_body(), state.max_body_bytes).await?;
-        return Ok(Json(AssetPutResponse {
-            ok: true,
-            sha256: stored.sha256,
-            assets_path: stored.assets_path,
-            already_present: true,
-        }));
+        return Ok(AssetPutResponse::stored(stored, true));
     }
 
     // Write the upload into the account assets tree so verify can rename into place
@@ -1415,12 +1408,7 @@ async fn asset_put_handler(
 
     // Rename consumes the temp file; remove leftovers after errors / already_present races.
     let _ = tokio::fs::remove_file(&tmp_path).await;
-    Ok(Json(AssetPutResponse {
-        ok: true,
-        sha256: stored.sha256,
-        assets_path: stored.assets_path,
-        already_present,
-    }))
+    Ok(AssetPutResponse::stored(stored, already_present))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1545,12 +1533,7 @@ async fn asset_upload_complete_handler(
             asset_uploads::abort_upload(&assets_dir, &sha, &uid)
         })
         .await;
-        return Ok(Json(AssetPutResponse {
-            ok: true,
-            sha256: stored.sha256,
-            assets_path: stored.assets_path,
-            already_present: true,
-        }));
+        return Ok(AssetPutResponse::stored(stored, true));
     }
 
     let lock_key = format!("{account}:{sha256}");
@@ -1566,7 +1549,7 @@ async fn asset_upload_complete_handler(
     let sha = sha256.clone();
     let uid = upload_id.clone();
     let limits = state.upload_limits;
-    let result = tokio::task::spawn_blocking(move || {
+    let (stored, already_present) = tokio::task::spawn_blocking(move || {
         asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
     })
     .await
@@ -1574,13 +1557,7 @@ async fn asset_upload_complete_handler(
         ApiError::BadRequest(e.to_string())
     })?;
 
-    let (stored, already_present) = result;
-    Ok(Json(AssetPutResponse {
-        ok: true,
-        sha256: stored.sha256,
-        assets_path: stored.assets_path,
-        already_present,
-    }))
+    Ok(AssetPutResponse::stored(stored, already_present))
 }
 
 async fn asset_upload_abort_handler(
