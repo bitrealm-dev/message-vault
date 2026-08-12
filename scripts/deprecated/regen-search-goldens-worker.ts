@@ -1,10 +1,10 @@
 /**
- * Worker for scripts/regen-search-goldens.mjs — run via tsx only.
+ * Worker for scripts/deprecated/regen-search-goldens.mjs — run via tsx only.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSearchQuery } from "../web/src/lib/searchQuery.ts";
+import { parseSearchQuery } from "../../web-next/src/lib/searchQuery.ts";
 
 type Case = {
   name: string;
@@ -12,7 +12,7 @@ type Case = {
   expected?: unknown;
 };
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const casesPath = path.join(root, "tests", "fixtures", "search", "parse-cases.json");
 
 const cases = JSON.parse(fs.readFileSync(casesPath, "utf8")) as Case[];

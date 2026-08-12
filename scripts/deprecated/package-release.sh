@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Stage a self-contained platform archive for a message-vault-io release.
 #
+# Deprecated: packages the Slint GUI binary from crates/message-vault-io-gui and
+# downloads ffmpeg/ffprobe/wtsexporter. Releases now come from `cargo tauri build`
+# in CI, which bundles no helper binaries. Nothing calls this script.
+#
 # Layout (GUI-only product — exporters are linked as libraries into the GUI):
 #   root       — message-vault-io (GUI)
 #   lib/       — ffmpeg, ffprobe
@@ -174,7 +178,7 @@ chmod +x "${LIB_DIR}/${FFMPEG_BIN}" "${LIB_DIR}/${FFPROBE_BIN}" || true
 
 # --- licenses ---
 cp LICENSE "${LICENSES_DIR}/LICENSE"
-cp scripts/release/THIRD_PARTY_NOTICES.md "${LICENSES_DIR}/THIRD_PARTY_NOTICES.md"
+cp scripts/deprecated/release/THIRD_PARTY_NOTICES.md "${LICENSES_DIR}/THIRD_PARTY_NOTICES.md"
 
 # --- archive (paths relative to stage root; no nested folder) ---
 rm -f "$OUT_ARCHIVE"

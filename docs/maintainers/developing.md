@@ -6,11 +6,19 @@ End-user documentation lives in the [Starlight source](../src/content/docs/) (st
 
 ## Cutting a release
 
+> **Retired process.** Everything in this section describes the Slint GUI
+> (`crates/message-vault-io-gui`), which is deprecated, and a
+> `.github/workflows/release.yml` that no longer exists. Releases now come from
+> pushing a `v*` tag, which makes [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
+> build the Docker image and the Tauri desktop installers. Bump `version` in
+> `src-tauri/Cargo.toml` before tagging. The text below is kept for reference
+> while the Slint GUI is still in the workspace.
+
 Prebuilt archives are published only by a **manual** GitHub Actions workflow. Nothing builds or releases on push, PR, or tag by default.
 
 Workflow file: [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
 
-Packaging script: [`scripts/package-release.sh`](../../scripts/package-release.sh)
+Packaging script: [`scripts/deprecated/package-release.sh`](../../scripts/deprecated/package-release.sh)
 
 ### Version
 
@@ -49,7 +57,7 @@ Layout (same on every platform):
 
 **`cli/` — WhatsApp helper only**
 
-- `wtsexporter` — KnugiHK WhatsApp-Chat-Exporter `0.13.0` (pinned + SHA-256 in `scripts/package-release.sh`)
+- `wtsexporter` — KnugiHK WhatsApp-Chat-Exporter `0.13.0` (pinned + SHA-256 in `scripts/deprecated/package-release.sh`)
 
 **`licenses/`**
 
@@ -68,7 +76,7 @@ Windows Authenticode and macOS codesign / notarization steps are already in the 
 
 ```bash
 cargo build --release -p message-vault-io-gui
-scripts/package-release.sh 0.0.0-dev x86_64-unknown-linux-gnu
+scripts/deprecated/package-release.sh 0.0.0-dev x86_64-unknown-linux-gnu
 tar -tzf dist/message-vault-io-0.0.0-dev-x86_64-unknown-linux-gnu.tgz | head
 ```
 

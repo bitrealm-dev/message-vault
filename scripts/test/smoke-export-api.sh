@@ -2,10 +2,10 @@
 # Smoke-test GET /v1/export/messages and GET /v1/assets/{sha256}.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-SAMPLE="${ROOT}/scripts/fixtures/smoke-sms-text.jsonl"
+SAMPLE="${ROOT}/scripts/test/fixtures/smoke-sms-text.jsonl"
 ACCOUNT="00000000-0000-0000-0000-00000000s001"
 TOKEN="mv_smoke_export_token"
 TOKEN_HASH="$(printf '%s' "${TOKEN}" | sha256sum | awk '{print $1}')"
