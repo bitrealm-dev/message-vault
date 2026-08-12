@@ -47,7 +47,7 @@ export default function ConversationList({
 
   useEffect(() => {
     // Structured filters should apply immediately (no debounce flicker/empty wait).
-    if (/\b(contact:|handle:|is:direct|is:group|is:trash|participants:)\b/i.test(query)) {
+    if (/\b(contact:|handle:|import:|is:direct|is:group|is:trash|participants:)\b/i.test(query)) {
       setDebouncedQ(query);
       return;
     }
