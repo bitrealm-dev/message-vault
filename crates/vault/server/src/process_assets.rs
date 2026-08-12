@@ -76,7 +76,6 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
         .with_context(|| format!("open database {}", db_path.display()))?;
     schema::configure_connection(&conn)?;
     schema::ensure_vault_schema(&conn)?;
-    assert_schema(&conn)?;
 
     let account_ids = list_account_ids(&conn, &cfg.paths.data_dir)?;
     if account_ids.is_empty() {
@@ -281,41 +280,6 @@ fn process_one(
         row.assets_path, blob.assets_path
     );
     Ok(Outcome::Derived)
-}
-
-fn assert_schema(conn: &Connection) -> Result<()> {
-    let has_attachments: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'attachments'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_attachments == 0 {
-        bail!("no attachments table — run import first");
-    }
-    for col in ["derived_sha256", "derived_assets_path", "derived_mime_type"] {
-        let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('attachments') WHERE name = ?1",
-            params![col],
-            |r| r.get(0),
-        )?;
-        if n == 0 {
-            bail!(
-                "attachments.{col} missing after schema ensure — wipe vault.db and re-ingest \
-                 (incompatible old DB shape)"
-            );
-        }
-    }
-    let has_source: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'source'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_source == 0 {
-        bail!(
-            "messages.source missing — re-import with the multi-source schema before process-assets"
-        );
-    }
-    Ok(())
 }
 
 fn list_account_ids(conn: &Connection, data_dir: &Path) -> Result<Vec<String>> {
