@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
-use rusqlite::{Connection, params};
+use rusqlite::params;
 use serde::Deserialize;
 
 use crate::config::Config;
@@ -244,8 +244,7 @@ fn load_demo_seed(path: &Path) -> Result<DemoSeed> {
 }
 
 fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Result<()> {
-    let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    let conn = schema::open_configured(db_path)?;
     schema::ensure_vault_schema(&conn)?;
     account_profile::ensure_account_row(&conn, account_id)?;
 
@@ -302,9 +301,8 @@ fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
     let db = &cfg.paths.db;
     if db.is_file() {
         println!("Reset demo — clearing account data in {}", db.display());
-        let conn = Connection::open(db)
+        let conn = schema::open_configured(db)
             .with_context(|| format!("open {} for demo account wipe", db.display()))?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         schema::ensure_vault_schema(&conn)?;
         let deleted = conn
             .execute("DELETE FROM accounts WHERE id = ?1", params![account_id])

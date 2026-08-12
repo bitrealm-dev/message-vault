@@ -12,6 +12,7 @@ mod import;
 mod import_cli;
 mod import_media;
 mod jsonl;
+mod media_tools;
 mod models;
 mod process_assets;
 mod profile;
@@ -297,8 +298,7 @@ fn main() -> Result<()> {
             }
 
             let priority = {
-                let conn = rusqlite::Connection::open(&db)?;
-                conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+                let conn = crate::db::schema::open_configured(&db)?;
                 dedupe::source_priority_from_db(&conn, &account)?
             };
 
@@ -341,8 +341,7 @@ fn main() -> Result<()> {
                 std::fs::create_dir_all(parent)?;
             }
 
-            let mut conn = rusqlite::Connection::open(&db)?;
-            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            let mut conn = crate::db::schema::open_configured(&db)?;
             let stats =
                 contacts_db::load_contacts_if_needed(&mut conn, Some(&contacts), true, &account)?;
 

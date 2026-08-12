@@ -125,13 +125,7 @@ pub fn create_api_token(
     label: &str,
     scopes: ApiTokenScopes,
 ) -> Result<(String, String, ApiTokenScopes, String, String)> {
-    let label = label.trim();
-    if label.is_empty() {
-        bail!("label is required");
-    }
-    if label.len() > 120 {
-        bail!("label must be at most 120 characters");
-    }
+    let label = validate_api_token_label(label)?;
     let id = uuid::Uuid::new_v4().to_string();
     let token = generate_api_token();
     let token_hash = hash_api_token(&token);
@@ -213,13 +207,7 @@ pub fn update_api_token_label(
     id: &str,
     label: &str,
 ) -> Result<bool> {
-    let label = label.trim();
-    if label.is_empty() {
-        bail!("label is required");
-    }
-    if label.len() > 120 {
-        bail!("label must be at most 120 characters");
-    }
+    let label = validate_api_token_label(label)?;
     let n = conn
         .execute(
             "UPDATE account_api_tokens SET label = ?1 WHERE id = ?2 AND account_id = ?3",
@@ -227,6 +215,17 @@ pub fn update_api_token_label(
         )
         .with_context(|| format!("rename API token {id} for {account_id}"))?;
     Ok(n > 0)
+}
+
+fn validate_api_token_label(label: &str) -> Result<&str> {
+    let label = label.trim();
+    if label.is_empty() {
+        bail!("label is required");
+    }
+    if label.len() > 120 {
+        bail!("label must be at most 120 characters");
+    }
+    Ok(label)
 }
 
 #[cfg(test)]
