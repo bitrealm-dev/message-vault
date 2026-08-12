@@ -87,25 +87,15 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
-    // Clean prior IR artifacts (including stale attachments/) before writing new
-    // media, matching WhatsApp / SMS Backup & Restore `open_prepared` behavior.
-    // Attachments are persisted during the message stream, so cleaning must
-    // happen before that pass — not when the sink opens afterward.
-    message_ir_format::clean_previous_ir_output(&session.options.export_path).map_err(|e| {
-        RuntimeError::InvalidOptions(format!("clean previous export output: {e:#}"))
-    })?;
-
-    let copy_attachments = session.options.transforms.copies_attachments();
-    let attachments_dir = session.options.export_path.join("attachments");
-    if copy_attachments
-        && matches!(
-            format,
-            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-        )
-        && session.options.attachment_embed == AttachmentEmbed::Embed
-    {
-        fs::create_dir_all(&attachments_dir)?;
-    }
+    // Prepare the sink before the message stream: attachments are written during
+    // collect, so prior IR artifacts (including stale attachments/) must be
+    // cleaned first — same pattern as WhatsApp / SMS Backup & Restore.
+    let (mut sink, attachments_dir) = FormatSink::open_prepared(
+        &session.options.export_path,
+        format,
+        session.options.transforms.clone(),
+    )
+    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
 
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     let mut current_message_row = -1;
@@ -174,12 +164,6 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     session.options.emit_log(format!(
         "Writing {total_conversations} conversation file(s)..."
     ));
-    let mut sink = FormatSink::open(
-        &session.options.export_path,
-        format,
-        session.options.transforms.clone(),
-    )
-    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
     let mut written = 0u64;
     for (chat_identifier, convo) in conversations {
         // Cheap AtomicBool load; abort promptly when the user cancels.
@@ -427,6 +411,83 @@ mod tests {
         assert_eq!(digest2, digest);
         assert_eq!(fs::read(&dest).unwrap(), bytes);
         assert!(!dir.path().join(format!("{name}.tmp")).exists());
+    }
+
+    fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {
+        MailMessage::sms(mail::SmsMailFields {
+            chat_identifier: "+15555550122".into(),
+            conversation_type: "individual".into(),
+            group_title: None,
+            participants: vec![],
+            guid: "guid-1".into(),
+            timestamp_unix_ms: 1_609_459_200_000,
+            direction: MailDirection::Incoming,
+            service: "SMS".into(),
+            message_kind: "sms".into(),
+            sender_handle: Some("+15555550122".into()),
+            sender_display_name: None,
+            owner_handle: "+15555550100".into(),
+            subject: None,
+            text: "hi".into(),
+            android_type: None,
+            source_fields_json: None,
+            export_source: "imessage".into(),
+            export_tool: "test".into(),
+            export_tool_version: "0".into(),
+            attachments: vec![MailAttachment {
+                bytes,
+                original_name: Some("a.jpg".into()),
+                mime_type: Some("image/jpeg".into()),
+                digest_sha256: None,
+                is_sticker: false,
+                transcription: None,
+                sticker_effect: None,
+            }],
+            filename_suffix: None,
+        })
+    }
+
+    #[test]
+    fn missing_reason_reflects_embed_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let with_bytes = sample_mail_with_attachment(b"abc".to_vec());
+        let ir = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(ir.attachments[0].missing_reason, None);
+        assert!(ir.attachments[0].path.is_some());
+
+        let empty = sample_mail_with_attachment(Vec::new());
+        let ir_missing = mail_message_to_ir(
+            &empty,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_missing.attachments[0].missing_reason.as_deref(),
+            Some("file_missing")
+        );
+
+        let ir_disabled = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Disabled,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_disabled.attachments[0].missing_reason.as_deref(),
+            Some("embed_disabled")
+        );
     }
 }
 
