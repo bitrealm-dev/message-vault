@@ -323,14 +323,10 @@ pub fn abort_upload(assets_root: &Path, sha256: &str, upload_id: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
     fn hash_bytes(data: &[u8]) -> String {
-        Sha256::digest(data)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        crate::assets::sha256_hex(data)
     }
 
     #[test]

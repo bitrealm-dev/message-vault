@@ -19,6 +19,14 @@ pub struct StoredAsset {
     pub mime_type: Option<String>,
 }
 
+pub fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    hex_encode(&Sha256::digest(data))
+}
+
 /// Look up an already-stored blob by lowercase hex SHA-256.
 pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
     let sha = normalize_sha256(sha256)?;
@@ -172,11 +180,7 @@ fn hash_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(hex_encode(&hasher.finalize()))
 }
 
 fn normalize_ext(ext: Option<&str>) -> String {

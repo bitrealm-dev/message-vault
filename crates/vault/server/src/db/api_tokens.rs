@@ -3,9 +3,7 @@
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::session_tokens::hash_api_token;
-
-const API_TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+use super::session_tokens::{generate_prefixed_token, hash_api_token, unix_secs_string};
 
 /// Access granted to a named API token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,13 +85,7 @@ pub struct ApiTokenAuth {
 
 /// Generate a new API token (`mv-api-` + 32 alphanumeric characters).
 pub fn generate_api_token() -> String {
-    let mut buf = [0u8; 32];
-    fill_random(&mut buf);
-    let mut suffix = String::with_capacity(32);
-    for b in buf {
-        suffix.push(API_TOKEN_ALPHANUM[(b as usize) % API_TOKEN_ALPHANUM.len()] as char);
-    }
-    format!("mv-api-{suffix}")
+    generate_prefixed_token("mv-api-")
 }
 
 /// Look up which account owns this API token Bearer value.
@@ -114,7 +106,7 @@ pub fn lookup_account_for_api_token(
         Some((account_id, scopes_raw)) => {
             conn.execute(
                 "UPDATE account_api_tokens SET last_accessed_at = ?1 WHERE token_hash = ?2",
-                params![now_secs(), token_hash],
+                params![unix_secs_string(), token_hash],
             )
             .with_context(|| "update API token last_accessed_at")?;
             Ok(Some(ApiTokenAuth {
@@ -144,7 +136,7 @@ pub fn create_api_token(
     let token = generate_api_token();
     let token_hash = hash_api_token(&token);
     let token_hint = mask_api_token(&token);
-    let created_at = now_secs();
+    let created_at = unix_secs_string();
     let label_owned = label.to_string();
     conn.execute(
         r#"
@@ -235,48 +227,6 @@ pub fn update_api_token_label(
         )
         .with_context(|| format!("rename API token {id} for {account_id}"))?;
     Ok(n > 0)
-}
-
-fn now_secs() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{secs}")
-}
-
-fn fill_random(buf: &mut [u8]) {
-    if getrandom_fill(buf) {
-        return;
-    }
-    let mut seed = format!(
-        "{}:{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
-        std::process::id()
-    )
-    .into_bytes();
-    let mut offset = 0;
-    while offset < buf.len() {
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(&seed);
-        let n = (buf.len() - offset).min(digest.len());
-        buf[offset..offset + n].copy_from_slice(&digest[..n]);
-        offset += n;
-        seed = digest.to_vec();
-    }
-}
-
-fn getrandom_fill(buf: &mut [u8]) -> bool {
-    use std::fs::File;
-    use std::io::Read;
-    let mut f = match File::open("/dev/urandom") {
-        Ok(f) => f,
-        Err(_) => return false,
-    };
-    f.read_exact(buf).is_ok()
 }
 
 #[cfg(test)]

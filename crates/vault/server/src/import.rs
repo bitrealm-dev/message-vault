@@ -1570,23 +1570,12 @@ fn promote_messages_replace_chunked(
             )?
             .query_map(params![account_id, lo, hi], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        let prod_ids: Vec<i64> = tx
-            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-            .query_map(params![max_before], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        if staging_ids.len() != prod_ids.len() {
-            bail!(
-                "promote replace message id map mismatch: staging={} new_prod={} (chunk staging id {}..{})",
-                staging_ids.len(),
-                prod_ids.len(),
-                lo + 1,
-                hi
-            );
-        }
-        for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
-            msg_map.insert(staging_id, prod_id);
-        }
-        max_before = tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+        max_before = zip_new_message_ids(tx, &mut msg_map, staging_ids, max_before, |n, p| {
+            format!(
+                "promote replace message id map mismatch: staging={n} new_prod={p} (chunk staging id {}..{hi})",
+                lo + 1
+            )
+        })?;
 
         promote_phase_done(
             started,
@@ -1677,23 +1666,12 @@ fn promote_messages_append_chunked(
             )?
             .query_map(params![max_before, account_id, lo, hi], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        let prod_ids: Vec<i64> = tx
-            .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-            .query_map(params![max_before], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        if staging_ids.len() != prod_ids.len() {
-            bail!(
-                "promote append message id map mismatch: staging_new={} new_prod={} (chunk staging id {}..{})",
-                staging_ids.len(),
-                prod_ids.len(),
-                lo + 1,
-                hi
-            );
-        }
-        for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
-            msg_map.insert(staging_id, prod_id);
-        }
-        max_before = tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+        max_before = zip_new_message_ids(tx, &mut msg_map, staging_ids, max_before, |n, p| {
+            format!(
+                "promote append message id map mismatch: staging_new={n} new_prod={p} (chunk staging id {}..{hi})",
+                lo + 1
+            )
+        })?;
 
         promote_phase_done(
             started,
@@ -1743,20 +1721,13 @@ fn promote_messages_append_chunked(
         )?
         .query_map(params![account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    let empty_prod_ids: Vec<i64> = tx
-        .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-        .query_map(params![empty_max_before], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    if empty_staging_ids.len() != empty_prod_ids.len() {
-        bail!(
-            "promote append empty-guid id map mismatch: staging={} new_prod={}",
-            empty_staging_ids.len(),
-            empty_prod_ids.len()
-        );
-    }
-    for (staging_id, prod_id) in empty_staging_ids.into_iter().zip(empty_prod_ids) {
-        msg_map.insert(staging_id, prod_id);
-    }
+    zip_new_message_ids(
+        tx,
+        &mut msg_map,
+        empty_staging_ids,
+        empty_max_before,
+        |n, p| format!("promote append empty-guid id map mismatch: staging={n} new_prod={p}"),
+    )?;
     promote_phase_done(
         started,
         phase,
@@ -1767,6 +1738,26 @@ fn promote_messages_append_chunked(
     stats.messages_appended = inserted_total;
     stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted_total);
     Ok(msg_map)
+}
+
+fn zip_new_message_ids(
+    tx: &Transaction<'_>,
+    msg_map: &mut HashMap<i64, i64>,
+    staging_ids: Vec<i64>,
+    max_before: i64,
+    mismatch: impl FnOnce(usize, usize) -> String,
+) -> Result<i64> {
+    let prod_ids: Vec<i64> = tx
+        .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
+        .query_map(params![max_before], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if staging_ids.len() != prod_ids.len() {
+        bail!("{}", mismatch(staging_ids.len(), prod_ids.len()));
+    }
+    for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
+        msg_map.insert(staging_id, prod_id);
+    }
+    Ok(tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?)
 }
 
 fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Result<()> {
