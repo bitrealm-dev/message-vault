@@ -546,6 +546,8 @@ enum ParsedEmlKind {
     NotSms,
     IoError(String),
     ParseError(String),
+    /// Cooperative cancel observed at the start of a parallel worker.
+    Cancelled,
 }
 
 fn parse_one_eml(
@@ -723,34 +725,65 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
 
     let owner_all_digits = owners.all_phone_digits();
 
-    // Parallel: read + MIME parse + message build. Serial: attachment write + dedupe merge.
-    let outcomes: Vec<ParsedEmlKind> = eml_paths
-        .par_iter()
-        .map(|eml_path| {
-            let rel_path = relative_eml_path(eml_path, &input_roots, &file_inputs);
-            parse_one_eml(
-                eml_path,
-                rel_path,
-                &owner_all_digits,
-                &owner_emails_lc,
-                contacts,
-                name_mapping,
-            )
-        })
-        .collect();
-
-    for (idx, outcome) in outcomes.into_iter().enumerate() {
+    // Parallel parse in chunks so attachment payloads are not all held at once.
+    // Each worker checks cancel before reading an EML.
+    const EML_PARSE_CHUNK: usize = 256;
+    let mut scanned: u64 = 0;
+    for chunk in eml_paths.chunks(EML_PARSE_CHUNK) {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
-        report_progress(verbose, log, "scanned", (idx + 1) as u64, total);
-        match outcome {
-            ParsedEmlKind::Archive {
-                msgs,
-                skipped_dates,
-                path_display,
-            } => {
-                bump(&mut report, "archive_eml", 1);
-                report.skipped_invalid_date += skipped_dates;
-                for msg in msgs {
+        let outcomes: Vec<ParsedEmlKind> = chunk
+            .par_iter()
+            .map(|eml_path| {
+                if message_vault_io_core::is_cancelled(cancel) {
+                    return ParsedEmlKind::Cancelled;
+                }
+                let rel_path = relative_eml_path(eml_path, &input_roots, &file_inputs);
+                parse_one_eml(
+                    eml_path,
+                    rel_path,
+                    &owner_all_digits,
+                    &owner_emails_lc,
+                    contacts,
+                    name_mapping,
+                )
+            })
+            .collect();
+
+        for outcome in outcomes {
+            message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
+            scanned += 1;
+            report_progress(verbose, log, "scanned", scanned, total);
+            match outcome {
+                ParsedEmlKind::Cancelled => {
+                    bail!("cancelled");
+                }
+                ParsedEmlKind::Archive {
+                    msgs,
+                    skipped_dates,
+                    path_display,
+                } => {
+                    bump(&mut report, "archive_eml", 1);
+                    report.skipped_invalid_date += skipped_dates;
+                    for msg in msgs {
+                        if !date_range.contains_secs_f64(msg.timestamp_secs) {
+                            report.skipped_out_of_range += 1;
+                            continue;
+                        }
+                        if msg.chat_key.is_empty() {
+                            bump(&mut report, "unknown_chat_messages", 1);
+                        }
+                        let atts = write_attachments(
+                            &msg.attachments,
+                            &attachments_dir,
+                            &mut report,
+                            copy_attachments,
+                            &path_display,
+                        );
+                        add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
+                    }
+                }
+                ParsedEmlKind::Flat { msg, path_display } => {
+                    bump(&mut report, "flat_eml", 1);
                     if !date_range.contains_secs_f64(msg.timestamp_secs) {
                         report.skipped_out_of_range += 1;
                         continue;
@@ -758,7 +791,6 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     if msg.chat_key.is_empty() {
                         bump(&mut report, "unknown_chat_messages", 1);
                     }
-                    // Keep the message even when some attachments fail to write.
                     let atts = write_attachments(
                         &msg.attachments,
                         &attachments_dir,
@@ -768,38 +800,19 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     );
                     add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
                 }
-            }
-            ParsedEmlKind::Flat { msg, path_display } => {
-                bump(&mut report, "flat_eml", 1);
-                if !date_range.contains_secs_f64(msg.timestamp_secs) {
-                    report.skipped_out_of_range += 1;
-                    continue;
+                ParsedEmlKind::FlatNone => {
+                    bump(&mut report, "skipped_parse_error", 1);
                 }
-                if msg.chat_key.is_empty() {
-                    bump(&mut report, "unknown_chat_messages", 1);
+                ParsedEmlKind::NotSms => {
+                    bump(&mut report, "skipped_not_sms_backup_plus", 1);
                 }
-                // Keep the message even when some attachments fail to write.
-                let atts = write_attachments(
-                    &msg.attachments,
-                    &attachments_dir,
-                    &mut report,
-                    copy_attachments,
-                    &path_display,
-                );
-                add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
-            }
-            ParsedEmlKind::FlatNone => {
-                bump(&mut report, "skipped_parse_error", 1);
-            }
-            ParsedEmlKind::NotSms => {
-                bump(&mut report, "skipped_not_sms_backup_plus", 1);
-            }
-            ParsedEmlKind::IoError(msg) => {
-                report.errors.push(msg);
-            }
-            ParsedEmlKind::ParseError(msg) => {
-                bump(&mut report, "skipped_parse_error", 1);
-                report.errors.push(msg);
+                ParsedEmlKind::IoError(msg) => {
+                    report.errors.push(msg);
+                }
+                ParsedEmlKind::ParseError(msg) => {
+                    bump(&mut report, "skipped_parse_error", 1);
+                    report.errors.push(msg);
+                }
             }
         }
     }

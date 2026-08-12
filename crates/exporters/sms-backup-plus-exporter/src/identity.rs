@@ -64,15 +64,30 @@ pub(crate) fn floor_ms_to_sec(ms: i64) -> i64 {
 
 /// Convert dedupe key: chat + whole-second time + direction + text.
 ///
-/// Ignores attachment digests, sub-second time, and `X-smssync-id` so archive
-/// body timestamps match flat `X-smssync-date` ms values.
+/// When the message has attachment digests, those digests are appended so two
+/// same-second empty-caption MMS with different media stay distinct. Text-only
+/// messages keep the previous key so archive↔flat copies of the same SMS still
+/// collapse. Sub-second time and `X-smssync-id` stay ignored.
 pub(crate) fn cover_identity(msg: &ParsedMessage) -> String {
-    cover_identity_from_parts(
+    let mut key = cover_identity_from_parts(
         &chat_id_for(msg),
         timestamp_ms(msg.timestamp_secs),
         msg.is_from_me,
         &normalized_text(&msg.text),
-    )
+    );
+    let mut digests: Vec<&str> = msg
+        .attachments
+        .iter()
+        .map(|a| a.digest_hex.as_str())
+        .filter(|d| !d.is_empty())
+        .collect();
+    if !digests.is_empty() {
+        digests.sort_unstable();
+        digests.dedup();
+        key.push('|');
+        key.push_str(&digests.join(","));
+    }
+    key
 }
 
 pub(crate) fn cover_identity_from_parts(
@@ -143,6 +158,31 @@ mod tests {
         let a = sample_msg("5555550122", 1609459300.0, false, "Hello from Sam");
         let b = sample_msg("5555550111", 1609459200.313, true, "Hello from Alex");
         assert_ne!(cover_identity(&a), cover_identity(&b));
+    }
+
+    #[test]
+    fn cover_identity_separates_same_second_mms_by_digest() {
+        use crate::types::AttachmentBlob;
+        let mut a = sample_msg("4075551234", 1609459200.1, false, "");
+        a.attachments.push(AttachmentBlob {
+            filename: "a.jpg".into(),
+            digest_hex: "aaa".into(),
+            ..Default::default()
+        });
+        let mut b = sample_msg("4075551234", 1609459200.9, false, "");
+        b.attachments.push(AttachmentBlob {
+            filename: "b.jpg".into(),
+            digest_hex: "bbb".into(),
+            ..Default::default()
+        });
+        assert_ne!(cover_identity(&a), cover_identity(&b));
+        let mut a2 = sample_msg("4075551234", 1609459200.2, false, "");
+        a2.attachments.push(AttachmentBlob {
+            filename: "a-copy.jpg".into(),
+            digest_hex: "aaa".into(),
+            ..Default::default()
+        });
+        assert_eq!(cover_identity(&a), cover_identity(&a2));
     }
 
     #[test]
