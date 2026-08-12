@@ -1,6 +1,6 @@
 # Exporter review fixes 1–8 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Close the must-fix and should-fix exporter review findings (priority order 1–8) so converters refuse destructive input/output overlap, confine WhatsApp media roots, write iMessage attachments atomically, keep group and message IDs stable, fix WhatsApp phone/path metadata, improve SMS Backup+ cancel/memory/dedupe, and finish remaining consistency gaps with tests.
 
@@ -44,17 +44,17 @@
 - Consumes: `FormatSink::open_prepared` (must not run when paths overlap)
 - Produces: early `bail!` with message containing `must not be the same as, or contain`
 
-- [ ] **Step 1: Write failing OpenExtract test**
+- [x] **Step 1: Write failing OpenExtract test**
 
 Mirror go-sms `output_equals_input_bails_before_cleaning`: call convert with fixture input as both input and output; expect error; assert a fixture CSV still exists.
 
-- [ ] **Step 2: Run OpenExtract test — expect FAIL**
+- [x] **Step 2: Run OpenExtract test — expect FAIL**
 
 ```bash
 cargo test -p openextract-exporter output_equals_input -- --nocapture
 ```
 
-- [ ] **Step 3: Implement OpenExtract guard before `open_prepared`**
+- [x] **Step 3: Implement OpenExtract guard before `open_prepared`**
 
 ```rust
 fs::create_dir_all(output)?;
@@ -71,16 +71,16 @@ if output == input || input.starts_with(&output) {
 
 Then call `FormatSink::open_prepared(&output, ...)`.
 
-- [ ] **Step 4: Same pattern for SMS Backup+** before `open_prepared`, for every input root: refuse if any canonical input equals output or starts with output (file inputs: compare parent or the file path when output is that file’s parent incorrectly — match go-sms semantics: output must not be same as / contain input). For a list of inputs, canonicalize each; if any `input == output || input.starts_with(output)`, bail.
+- [x] **Step 4: Same pattern for SMS Backup+** before `open_prepared`, for every input root: refuse if any canonical input equals output or starts with output (file inputs: compare parent or the file path when output is that file’s parent incorrectly — match go-sms semantics: output must not be same as / contain input). For a list of inputs, canonicalize each; if any `input == output || input.starts_with(output)`, bail.
 
-- [ ] **Step 5: Tests pass**
+- [x] **Step 5: Tests pass**
 
 ```bash
 cargo test -p openextract-exporter
 cargo test -p sms-backup-plus-exporter
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/exporters/openextract-exporter crates/exporters/sms-backup-plus-exporter
@@ -105,23 +105,23 @@ EOF
 - Consumes: `media_search_roots` passed into `convert_json`
 - Produces: roots = work dir + backup input + optional absolute media only (no `env::current_dir()`)
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 Add a unit test that builds allowed roots without CWD and asserts a file that only lives under a fake CWD-like path is rejected by `path_within_any` / `resolve_media_file`.
 
-- [ ] **Step 2: Remove CWD pushes in `run.rs`**
+- [x] **Step 2: Remove CWD pushes in `run.rs`**
 
 `--json` path: roots = input (if any) + json parent (if any).  
 wtsexporter path: roots = `work.path()` + `input` only.  
 If `source.media` is absolute, it is already covered via `media_base` / allowed roots in emit — ensure absolute `media` is passed through as today.
 
-- [ ] **Step 3: Tests pass**
+- [x] **Step 3: Tests pass**
 
 ```bash
 cargo test -p whatsapp-exporter
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -144,7 +144,7 @@ EOF
 **Interfaces:**
 - Produces: final dest only appears after successful write+rename; hash bytes once
 
-- [ ] **Step 1: Failing unit test**
+- [x] **Step 1: Failing unit test**
 
 Test that writing via the new helper leaves no truncated final file if the temp write is the only complete artifact (or assert dest is created via rename: write dest.tmp then rename; existing incomplete dest without matching length is replaced).
 
@@ -158,7 +158,7 @@ fn persist_attachment_uses_temp_then_rename() {
 }
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```rust
 fn persist_attachment(...) -> Result<(String, String, u64), RuntimeError> {
@@ -181,13 +181,13 @@ fn persist_attachment(...) -> Result<(String, String, u64), RuntimeError> {
 
 Refactor `attachment_dest_name` to accept precomputed digest or compute once.
 
-- [ ] **Step 3: Tests**
+- [x] **Step 3: Tests**
 
 ```bash
 cargo test -p imessage-ir-exporter
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -206,7 +206,7 @@ EOF
 **Files:**
 - Modify: `crates/exporters/go-sms-pro-exporter/src/emit.rs` (`chat_id_group`)
 
-- [ ] **Step 1: Failing unit test**
+- [x] **Step 1: Failing unit test**
 
 ```rust
 #[test]
@@ -219,7 +219,7 @@ fn group_chat_ids_do_not_collide_on_digit_boundaries() {
 
 (Adapt to actual `chat_id_group` signature.)
 
-- [ ] **Step 2: Implement length-prefix like SMS Backup+**
+- [x] **Step 2: Implement length-prefix like SMS Backup+**
 
 ```rust
 let slug = others
@@ -231,7 +231,7 @@ let slug = others
 
 Keep the >180 digest truncation.
 
-- [ ] **Step 3: Tests + commit**
+- [x] **Step 3: Tests + commit**
 
 ```bash
 cargo test -p go-sms-pro-exporter
@@ -251,11 +251,11 @@ EOF
 **Files:**
 - Modify: `crates/exporters/imazing-exporter/src/emit.rs` (~713)
 
-- [ ] **Step 1: Failing test** (unit or emit test)
+- [x] **Step 1: Failing test** (unit or emit test)
 
 Same message metadata with `digest_sha256` set vs only `rel_path` differing must produce the same GUID when digests match; GUID must follow digest not path.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```rust
 let digests: Vec<String> = msg
@@ -271,7 +271,7 @@ let digests: Vec<String> = msg
 
 Sort digests before `stable_guid` if order is unstable.
 
-- [ ] **Step 3: Tests + commit**
+- [x] **Step 3: Tests + commit**
 
 ```bash
 cargo test -p imazing-exporter
@@ -292,7 +292,7 @@ EOF
 - Modify: `crates/exporters/whatsapp-exporter/src/jid.rs`
 - Modify: `crates/exporters/whatsapp-exporter/src/emit.rs` (no-copy branch ~201–211)
 
-- [ ] **Step 1: Failing jid tests**
+- [x] **Step 1: Failing jid tests**
 
 ```rust
 assert_eq!(jid_to_e164("447911123456@s.whatsapp.net").as_deref(), Some("+447911123456"));
@@ -300,7 +300,7 @@ assert_eq!(jid_to_e164("447911123456@s.whatsapp.net").as_deref(), Some("+4479111
 assert_eq!(jid_to_e164("15555550122@s.whatsapp.net").as_deref(), Some("+15555550122"));
 ```
 
-- [ ] **Step 2: Implement `jid_to_e164`**
+- [x] **Step 2: Implement `jid_to_e164`**
 
 After `sanitize_number(local)`:
 - If `normalize_guarded(&digits, Usa)` yields a value starting with `+`, use it.
@@ -309,7 +309,7 @@ After `sanitize_number(local)`:
 
 Do not invent `+0…` for trunk-zero locals.
 
-- [ ] **Step 3: No-copy branch**
+- [x] **Step 3: No-copy branch**
 
 When `copy_attachments` is false and `src` is present:
 
@@ -325,7 +325,7 @@ vec![PendingAttachment {
 
 Ensure document conversion sets `IrAttachment.path` to `None` when rel_path empty, puts original hint in `source.fields` if needed (`media_path` key). Prefer minimal change: `digest_sha256: None`, and store only the basename in `name_hint` / leave `rel_path` empty so packaging does not treat it as export-relative.
 
-- [ ] **Step 4: Tests + commit**
+- [x] **Step 4: Tests + commit**
 
 ```bash
 cargo test -p whatsapp-exporter
@@ -347,15 +347,15 @@ EOF
 - Modify: `crates/exporters/sms-backup-plus-exporter/src/emit.rs`
 - Modify: `crates/exporters/sms-backup-plus-exporter/src/identity.rs`
 
-- [ ] **Step 1: Failing identity test**
+- [x] **Step 1: Failing identity test**
 
 Two messages same chat/second/direction/empty text, digests `aaa` vs `bbb` → different `cover_identity` (or new helper used as map key).
 
-- [ ] **Step 2: Extend `cover_identity`**
+- [x] **Step 2: Extend `cover_identity`**
 
 When attachment digests (sorted, non-empty) exist, append `|digest1,digest2` to the key. Text-only / no-attachment messages keep today’s key so archive↔flat text SMS still collapse.
 
-- [ ] **Step 3: Cancel inside parallel work**
+- [x] **Step 3: Cancel inside parallel work**
 
 In `par_iter` map closure, first line:
 
@@ -367,11 +367,11 @@ if message_vault_io_core::check_cancel(cancel).is_err() {
 
 Propagate cancel after `collect` so the function returns the cancelled error promptly. Define how `ParsedEmlKind` represents cancel, or use `map` → `Result` and find first cancel.
 
-- [ ] **Step 4: Chunk EML paths**
+- [x] **Step 4: Chunk EML paths**
 
 Process `eml_paths` in chunks (e.g. 256 or 512 files): `par_iter` each chunk, merge into conversations, drop chunk outcomes before next chunk. Keeps peak attachment payloads bounded.
 
-- [ ] **Step 5: Tests + commit**
+- [x] **Step 5: Tests + commit**
 
 ```bash
 cargo test -p sms-backup-plus-exporter
@@ -406,8 +406,8 @@ EOF
 
 **GO SMS:** If `others.len() >= 2`, use `chat_id_group` path regardless of `parsed.is_group`.
 
-- [ ] **Step 1–N:** Test → implement → `cargo test` for each sub-fix
-- [ ] **Step final: Commit**
+- [x] **Step 1–N:** Test → implement → `cargo test` for each sub-fix
+- [x] **Step final: Commit**
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -424,15 +424,15 @@ EOF
 
 ### Task 9: Workspace verification
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cargo test -p openextract-exporter -p sms-backup-plus-exporter -p whatsapp-exporter \
   -p imessage-ir-exporter -p go-sms-pro-exporter -p imazing-exporter -p sms-backup-restore-exporter
 ```
 
-- [ ] Fix any fallout from API signature changes
-- [ ] Mark plan checkboxes done in this file as tasks complete
+- [x] Fix any fallout from API signature changes
+- [x] Mark plan checkboxes done in this file as tasks complete
 
 ---
 
