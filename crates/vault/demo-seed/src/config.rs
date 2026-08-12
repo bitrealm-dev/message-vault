@@ -26,7 +26,7 @@ fn default_seed() -> u64 {
     42
 }
 fn default_out() -> String {
-    "demo".into()
+    "crates/vault/demo-seed".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]

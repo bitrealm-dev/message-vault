@@ -58,7 +58,7 @@ fn escape_vcf(value: &str) -> String {
 pub fn write_config_toml(config_dir: &Path) -> Result<()> {
     let path = config_dir.join("config.toml");
     let body = r#"# Instance config restored by `reset-demo`.
-# Demo account identity lives in demo/config/seed.toml.
+# Demo account identity lives in crates/vault/demo-seed/config/seed.toml.
 
 [paths]
 db = "data/vault.db"

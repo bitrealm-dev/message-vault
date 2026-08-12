@@ -139,7 +139,7 @@ cargo run --release -p message-vault-server -- reset-demo
 Or regenerate the bundle only:
 
 ```bash
-cargo run -p demo-seed -- --out demo
+cargo run -p demo-seed
 ```
 
 Config knobs live in `crates/vault/demo-seed/demo_seed.toml` (seed, contact count, rate/span

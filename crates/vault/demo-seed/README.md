@@ -21,14 +21,14 @@ cargo run --release -p message-vault-server -- reset-demo
 Or regenerate the bundle only:
 
 ```bash
-cargo run -p demo-seed -- --out demo
+cargo run -p demo-seed
 ```
 
-Config knobs live in `crates/vault/demo-seed/demo_seed.toml` (seed, contact count, rate/span
+Config knobs live in `demo_seed.toml` (seed, contact count, rate/span
 distributions, group membership, dual-source split, `whatsapp_contact_fraction`,
 `apple_fallback_transport_fraction`). Message bodies are sampled from Pride and
-Prejudice (5274 sentences) under `crates/vault/demo-seed/data/corpus/`. Names come from
-`crates/vault/demo-seed/data/names/`.
+Prejudice (5274 sentences) under `data/corpus/`. Names come from
+`data/names/`.
 
 ## Contents (seed 42)
 

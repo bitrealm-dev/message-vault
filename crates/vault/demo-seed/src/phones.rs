@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-/// Stable demo owner / account phone (matches `demo/config/seed.toml`).
+/// Stable demo owner / account phone (matches `crates/vault/demo-seed/config/seed.toml`).
 pub const OWNER_PHONE: &str = "+14155559000";
 
 /// Valid-looking US NANP area codes (avoid 555 exchange for generated peers).

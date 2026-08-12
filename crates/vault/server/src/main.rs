@@ -128,7 +128,7 @@ enum Commands {
     /// Regenerate demo bundle, clear demo account data, import, and process assets
     ResetDemo {
         /// Demo bundle directory (rewritten by demo-seed, then imported)
-        #[arg(long, default_value = "demo")]
+        #[arg(long, default_value = "crates/vault/demo-seed")]
         bundle: PathBuf,
 
         /// Active config path to overwrite (default config/config.toml)

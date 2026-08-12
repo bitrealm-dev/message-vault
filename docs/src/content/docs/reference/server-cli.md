@@ -82,13 +82,13 @@ Regenerate the demo bundle, clear demo account data, import, and process assets.
 
 ```bash
 cargo run --release -- reset-demo \
-  [--bundle demo] \
+  [--bundle crates/vault/demo-seed] \
   [--config config/config.toml]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--bundle` | Bundle directory (default `demo`) |
+| `--bundle` | Bundle directory (default `crates/vault/demo-seed`) |
 | `--config` | Config path (default `config/config.toml` — **overwrites** it with the demo config, which comments out `[server]`) |
 
 The final summary groups counters so they are easier to read:

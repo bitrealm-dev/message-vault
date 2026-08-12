@@ -89,7 +89,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 8. **`crates/vault/server/`** (`message-vault-server`) — HTTP API server backed by SQLite. Provides import (`POST /v1/import`), export, contacts, search, auth, and asset endpoints. The server can also run CLI commands (`import`, `dedupe-cross-source`, `import-contacts`, `reset-demo`, `serve`, `process-assets`) via its `main.rs`. Built as a Docker image (`Dockerfile.release`); also usable directly via `cargo run --release -p message-vault-server -- serve`.
 
-9. **`crates/vault/demo-seed/`** (`demo-seed`) — Generates synthetic conversation data for the demo vault. Has both a library (`src/lib.rs`) and a CLI binary (`src/main.rs`). Used by `message-vault-server`'s `reset-demo` command.
+9. **`crates/vault/demo-seed/`** (`demo-seed`) — Generates synthetic conversation data for the demo vault (`staging/`, `config/`, README). Has both a library (`src/lib.rs`) and a CLI binary (`src/main.rs`). Used by `message-vault-server`'s `reset-demo` command.
 
 ### Supporting libraries
 
