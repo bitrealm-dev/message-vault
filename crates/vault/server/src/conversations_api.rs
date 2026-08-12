@@ -74,6 +74,8 @@ struct ConversationListQuery {
     type_filter: Option<ConversationTypeFilter>,
     /// Filter by number of rows in `participants` (`participants:=5`, `:>3`, `:<10`).
     participants: Option<CountComparison>,
+    /// Filter to conversations with at least one message from this import session.
+    import_id: Option<i64>,
     text: Option<String>,
 }
 
@@ -112,7 +114,7 @@ fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
 ///
 /// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
 /// `service:phone` / `service:whatsapp` (only combined with `handle:`),
-/// `contact:<id>`, `participants:=N` / `:>N` / `:<N`. Remaining tokens become
+/// `contact:<id>`, `import:<id>`, `participants:=N` / `:>N` / `:<N`. Remaining tokens become
 /// a free-text filter.
 fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
     let mut out = ConversationListQuery::default();
@@ -145,6 +147,12 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
                     out.participants = Some(cmp);
                 }
             }
+        } else if let Some(rest) = lower.strip_prefix("import:") {
+            if let Ok(id) = rest.trim().parse::<i64>() {
+                if id > 0 {
+                    out.import_id = Some(id);
+                }
+            }
         } else if let Some((_, id_part)) = token.split_once(':') {
             if lower.starts_with("contact:") {
                 if let Ok(id) = id_part.trim().parse::<i64>() {
@@ -173,6 +181,7 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 /// - `handle:<raw>`: conversations involving that handle (chat or participant)
 /// - `service:phone` / `service:whatsapp`: with `handle:`, restrict to that platform
 /// - `contact:<id>`: conversations involving any handle of that contact
+/// - `import:<id>`: conversations with at least one message from that import session
 /// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
 pub fn list_conversations(
@@ -278,6 +287,19 @@ pub fn list_conversations(
             cmp.comparator.as_str()
         ));
         params.push((cmp.value as i64).into());
+    }
+
+    if let Some(import_id) = parsed.import_id {
+        where_parts.push(
+            "EXISTS (
+               SELECT 1 FROM messages m
+               WHERE m.conversation_id = c.id
+                 AND m.account_id = c.account_id
+                 AND m.import_id = ?
+             )"
+            .into(),
+        );
+        params.push(import_id.into());
     }
 
     if let Some(ref text) = parsed.text {
@@ -665,7 +687,7 @@ mod tests {
     use message_ir::HandleType;
     use rusqlite::params;
 
-    use crate::db::{account_profile, schema};
+    use crate::db::{account_profile, schema, vault_imports};
 
     fn setup() -> (Connection, String) {
         let conn = Connection::open_in_memory().unwrap();
@@ -1168,6 +1190,116 @@ mod tests {
             page.conversations.iter().all(|c| c.participants.len() == 3),
             "every returned conversation should have 3 participants"
         );
+    }
+
+    #[test]
+    fn list_conversations_filters_by_import_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        let account = "00000000-0000-4000-8000-0000000000c2".to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
+            params![&account],
+        )
+        .unwrap();
+
+        let import_a =
+            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
+                .unwrap();
+        let import_b =
+            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
+                .unwrap();
+
+        let peer1 = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550200",
+            HandleType::Phone,
+        )
+        .unwrap();
+        let peer2 = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550300",
+            HandleType::Phone,
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (1, ?1, ?2, 'individual', 'c1.jsonl')",
+            params![&account, peer1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (1, ?1, 'Sam')",
+            params![peer1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (2, ?1, ?2, 'individual', 'c2.jsonl')",
+            params![&account, peer2],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (2, ?1, 'Alex')",
+            params![peer2],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
+                import_id
+             ) VALUES (1, ?1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'hello', ?2)",
+            params![&account, import_a],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
+                import_id
+             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'later', ?2)",
+            params![&account, import_b],
+        )
+        .unwrap();
+
+        let a = list_conversations(
+            &conn,
+            &account,
+            &format!("import:{import_a}"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(a.total, 1);
+        assert_eq!(a.conversations[0].id, "1");
+
+        let b = list_conversations(
+            &conn,
+            &account,
+            &format!("import:{import_b}"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(b.total, 1);
+        assert_eq!(b.conversations[0].id, "2");
+
+        let missing = list_conversations(&conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0)
+            .unwrap();
+        assert_eq!(missing.total, 0);
+
+        let junk = list_conversations(&conn, &account, "import:not-a-number", DEFAULT_LIST_LIMIT, 0)
+            .unwrap();
+        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(junk.total, all.total);
     }
 
     #[test]
