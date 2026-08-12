@@ -87,17 +87,15 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
-    let copy_attachments = session.options.transforms.copies_attachments();
-    let attachments_dir = session.options.export_path.join("attachments");
-    if copy_attachments
-        && matches!(
-            format,
-            OutputFormat::Csv | OutputFormat::Json | OutputFormat::Jsonl | OutputFormat::Xml
-        )
-        && session.options.attachment_embed == AttachmentEmbed::Embed
-    {
-        fs::create_dir_all(&attachments_dir)?;
-    }
+    // Prepare the sink before the message stream: attachments are written during
+    // collect, so prior IR artifacts (including stale attachments/) must be
+    // cleaned first — same pattern as WhatsApp / SMS Backup & Restore.
+    let (mut sink, attachments_dir) = FormatSink::open_prepared(
+        &session.options.export_path,
+        format,
+        session.options.transforms.clone(),
+    )
+    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
 
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     let mut current_message_row = -1;
@@ -166,12 +164,6 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     session.options.emit_log(format!(
         "Writing {total_conversations} conversation file(s)..."
     ));
-    let mut sink = FormatSink::open(
-        &session.options.export_path,
-        format,
-        session.options.transforms.clone(),
-    )
-    .map_err(|e| RuntimeError::InvalidOptions(format!("open export sink: {e:#}")))?;
     let mut written = 0u64;
     for (chat_identifier, convo) in conversations {
         // Cheap AtomicBool load; abort promptly when the user cancels.
@@ -308,6 +300,13 @@ fn mail_message_to_ir(
     let mut attachments = Vec::with_capacity(mail.attachments.len());
     for attachment in &mail.attachments {
         let has_bytes = embed == AttachmentEmbed::Embed && !attachment.bytes.is_empty();
+        let missing_reason = if has_bytes {
+            None
+        } else if embed == AttachmentEmbed::Disabled {
+            Some("embed_disabled".to_string())
+        } else {
+            Some("file_missing".to_string())
+        };
         let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
             if has_bytes {
                 let (rel_path, digest, size) = persist_attachment(
@@ -334,7 +333,7 @@ fn mail_message_to_ir(
             transcription: attachment.transcription.clone(),
             sticker_effect: attachment.sticker_effect.clone(),
             size_bytes: file_size,
-            missing_reason: None,
+            missing_reason,
             bytes,
         });
     }
@@ -386,6 +385,108 @@ mod tests {
         assert_eq!(
             message_progress_every(OutputFormat::Json),
             DEFAULT_MESSAGE_PROGRESS_EVERY
+        );
+    }
+
+    #[test]
+    fn persist_attachment_uses_temp_then_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = b"hello-attachment-bytes";
+        let (rel, digest, len) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(len, bytes.len() as u64);
+        assert_eq!(digest, hex::encode(Sha256::digest(bytes)));
+        let name = rel.strip_prefix("attachments/").expect("rel path prefix");
+        let dest = dir.path().join(name);
+        assert!(dest.is_file());
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+
+        // Incomplete dest (wrong length) must be rewritten.
+        fs::write(&dest, b"x").unwrap();
+        assert_ne!(fs::metadata(&dest).unwrap().len(), bytes.len() as u64);
+        let (rel2, digest2, _) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(rel2, rel);
+        assert_eq!(digest2, digest);
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+    }
+
+    fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {
+        MailMessage::sms(mail::SmsMailFields {
+            chat_identifier: "+15555550122".into(),
+            conversation_type: "individual".into(),
+            group_title: None,
+            participants: vec![],
+            guid: "guid-1".into(),
+            timestamp_unix_ms: 1_609_459_200_000,
+            direction: MailDirection::Incoming,
+            service: "SMS".into(),
+            message_kind: "sms".into(),
+            sender_handle: Some("+15555550122".into()),
+            sender_display_name: None,
+            owner_handle: "+15555550100".into(),
+            subject: None,
+            text: "hi".into(),
+            android_type: None,
+            source_fields_json: None,
+            export_source: "imessage".into(),
+            export_tool: "test".into(),
+            export_tool_version: "0".into(),
+            attachments: vec![MailAttachment {
+                bytes,
+                original_name: Some("a.jpg".into()),
+                mime_type: Some("image/jpeg".into()),
+                digest_sha256: None,
+                is_sticker: false,
+                transcription: None,
+                sticker_effect: None,
+            }],
+            filename_suffix: None,
+        })
+    }
+
+    #[test]
+    fn missing_reason_reflects_embed_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let with_bytes = sample_mail_with_attachment(b"abc".to_vec());
+        let ir = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(ir.attachments[0].missing_reason, None);
+        assert!(ir.attachments[0].path.is_some());
+
+        let empty = sample_mail_with_attachment(Vec::new());
+        let ir_missing = mail_message_to_ir(
+            &empty,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_missing.attachments[0].missing_reason.as_deref(),
+            Some("file_missing")
+        );
+
+        let ir_disabled = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Disabled,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_disabled.attachments[0].missing_reason.as_deref(),
+            Some("embed_disabled")
         );
     }
 }
@@ -447,10 +548,9 @@ fn imessage_bag(mail: &MailMessage) -> Option<IrImessage> {
 /// Destination file name for a persisted attachment: `<local-date>-<digest16><ext>`.
 fn attachment_dest_name(
     timestamp_unix_ms: i64,
-    bytes: &[u8],
+    digest_hex: &str,
     original_name: Option<&str>,
 ) -> String {
-    let digest_hex = hex::encode(Sha256::digest(bytes));
     let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
     let secs = timestamp_unix_ms.div_euclid(1000);
     let date_prefix = Local
@@ -468,6 +568,9 @@ fn attachment_dest_name(
 
 /// Write attachment bytes under `attachments_dir` (idempotent by digest name).
 ///
+/// Writes via `{name}.tmp` then renames into place so a crash mid-write cannot
+/// leave a short final file that later runs treat as complete. Hashes once.
+///
 /// Returns the export-relative path (`attachments/<name>`), the sha256 digest,
 /// and the byte length of the persisted file.
 fn persist_attachment(
@@ -476,17 +579,20 @@ fn persist_attachment(
     bytes: &[u8],
     original_name: Option<&str>,
 ) -> Result<(String, String, u64), RuntimeError> {
-    let name = attachment_dest_name(timestamp_unix_ms, bytes, original_name);
+    let digest_hex = hex::encode(Sha256::digest(bytes));
+    let name = attachment_dest_name(timestamp_unix_ms, &digest_hex, original_name);
     let dest = attachments_dir.join(&name);
-    if !dest.is_file() {
-        fs::write(&dest, bytes)?;
-    }
     let byte_len = bytes.len() as u64;
-    Ok((
-        format!("attachments/{name}"),
-        hex::encode(Sha256::digest(bytes)),
-        byte_len,
-    ))
+    let needs_write = match fs::metadata(&dest) {
+        Ok(meta) => meta.len() != byte_len,
+        Err(_) => true,
+    };
+    if needs_write {
+        let tmp = attachments_dir.join(format!("{name}.tmp"));
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, &dest)?;
+    }
+    Ok((format!("attachments/{name}"), digest_hex, byte_len))
 }
 
 fn timestamp_unix_ms(message: &Message, offset: i64) -> i64 {

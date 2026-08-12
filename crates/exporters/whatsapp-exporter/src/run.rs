@@ -26,10 +26,9 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let input = config.primary_input().map(|p| p.to_path_buf());
 
     let (json_path, media_roots, _work_keep_alive) = if let Some(json) = &source.json {
+        // Allowed roots are only the backup input and the JSON parent — never
+        // the process CWD, which would let crafted paths copy arbitrary files.
         let mut media_roots = Vec::new();
-        if let Ok(cwd) = env::current_dir() {
-            media_roots.push(cwd);
-        }
         if let Some(path) = &input {
             media_roots.push(path.clone());
         }
@@ -87,10 +86,8 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
         let kept = config.output.join("wtsexporter_result.json");
         fs::copy(&json_out, &kept).with_context(|| format!("copy JSON to {}", kept.display()))?;
 
+        // Work dir (wtsexporter extract) + backup input only — not CWD.
         let mut media_roots = vec![work.path().to_path_buf(), input];
-        if let Ok(cwd) = env::current_dir() {
-            media_roots.push(cwd);
-        }
         media_roots.sort();
         media_roots.dedup();
 

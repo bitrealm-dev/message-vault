@@ -14,7 +14,7 @@ use message_vault_io_core::{ApplePlatform, ExporterConfig, RunResult, SourceConf
 use crate::{
     emit::run_export,
     error::RuntimeError,
-    options::{MailOptions, attachment_embed_from_copy_method, validate_export_path},
+    options::{MailOptions, attachment_embed_from_copy_method},
     session::MailSession,
 };
 
@@ -131,8 +131,10 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
 
     let attachment_embed = attachment_embed_from_copy_method(&source.copy_method)?;
 
-    let export_path = validate_export_path(&config.output, config.output_format)?;
-    std::fs::create_dir_all(&export_path)?;
+    // Create the output directory; prior IR artifacts are removed in `run_export`
+    // via FormatSink::open_prepared.
+    std::fs::create_dir_all(&config.output)?;
+    let export_path = config.output.clone();
 
     Ok(MailOptions {
         db_path,

@@ -126,7 +126,7 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (Str
     };
     let slug = others
         .iter()
-        .map(|d| d.as_str())
+        .map(|d| format!("{}:{}", d.len(), d))
         .collect::<Vec<_>>()
         .join("_");
     let id = if slug.is_empty() {
@@ -283,16 +283,7 @@ fn add_pdu_message(
         return;
     }
 
-    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = if parsed.is_group {
-        let (id, title) = chat_id_group(&parsed.participants, owners);
-        let peers: Vec<String> = parsed
-            .participants
-            .iter()
-            .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
-            .map(|d| guarded_phone(d))
-            .collect();
-        vec![(id, true, Some(title), peers)]
-    } else {
+    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = {
         let others: Vec<_> = parsed
             .participants
             .iter()
@@ -314,12 +305,19 @@ fn add_pdu_message(
             );
             return;
         }
-        let other = &others[0];
-        vec![(chat_id_individual(other), false, None, Vec::new())]
+        // Treat multi-peer MMS as a group even when the PDU flag is unset.
+        if parsed.is_group || others.len() >= 2 {
+            let (id, title) = chat_id_group(&parsed.participants, owners);
+            let peers: Vec<String> = others.iter().map(|d| guarded_phone(d)).collect();
+            vec![(id, true, Some(title), peers)]
+        } else {
+            let other = &others[0];
+            vec![(chat_id_individual(other), false, None, Vec::new())]
+        }
     };
 
     bump(report, "pdu_messages", 1);
-    if parsed.is_group {
+    if targets.iter().any(|(_, is_group, _, _)| *is_group) {
         bump(report, "pdu_group_messages", 1);
     }
 
@@ -956,6 +954,55 @@ fn write_skipped_no_party_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_chat_ids_do_not_collide_on_digit_boundaries() {
+        let owners = OwnerHandleSet::from_phones(&["+15555550100".into()]).unwrap();
+        let (a, _) = chat_id_group(&["12".into(), "34".into()], &owners);
+        let (b, _) = chat_id_group(&["123".into(), "4".into()], &owners);
+        assert_ne!(a, b);
+        assert!(a.contains("2:12"));
+        assert!(b.contains("3:123"));
+    }
+
+    #[test]
+    fn multi_peer_pdu_without_group_flag_uses_group_chat_id() {
+        let owners = OwnerHandleSet::from_phones(&["+15555550100".into()]).unwrap();
+        let parsed = ParsedPdu {
+            path: std::path::PathBuf::from("I_1609459200_x.pdu"),
+            timestamp: 1_609_459_200,
+            participants: vec![
+                "15555550100".into(),
+                "15555550122".into(),
+                "15555550133".into(),
+            ],
+            body: "hi".into(),
+            attachments: Vec::new(),
+            is_sent: true,
+            is_group: false,
+            sender_number: String::new(),
+            has_from: false,
+            has_to: true,
+            pdu_fields: BTreeMap::new(),
+            decode_quality: "structured",
+        };
+        let mut conversations = BTreeMap::new();
+        let mut report = ExportReport::default();
+        let mut skips = SkipDetails::default();
+        add_pdu_message(
+            &mut conversations,
+            parsed,
+            Vec::new(),
+            &owners,
+            &mut report,
+            &mut skips,
+        );
+        assert_eq!(conversations.len(), 1);
+        let convo = conversations.values().next().unwrap();
+        assert!(convo.is_group);
+        assert!(convo.chat_id.starts_with("chat-group-"));
+        assert_eq!(report.extra.get("pdu_group_messages").copied().unwrap_or(0), 1);
+    }
 
     fn test_msg(key: &str, attachments: usize) -> PendingMessage {
         PendingMessage {

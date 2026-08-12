@@ -10,7 +10,9 @@ pub(crate) fn is_group_jid(jid: &str) -> bool {
 /// Map a user JID / phone-like sender to E.164 when possible.
 ///
 /// - `15551234567@s.whatsapp.net` → `+15551234567`
+/// - `447911123456@s.whatsapp.net` → `+447911123456` (country-code locals)
 /// - bare digits / `+E164` → guarded normalization (E.164 when unambiguous)
+/// - trunk-zero locals stay without a fabricated `+0…`
 /// - otherwise `None`
 pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
     let jid = jid.trim();
@@ -25,9 +27,19 @@ pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
     if jid.contains("@lid") {
         return None;
     }
-    // JID locals are bare digits (no `+`), so the US region applies; guarded
-    // so a non-NANP digit string is never fabricated into `+0…`.
-    sanitize_number(local).map(|digits| normalize_guarded(&digits, PhoneRegion::Usa).normalized)
+    let digits = sanitize_number(local)?;
+    // Prefer US guarded form when it produces a real E.164 (`+…`).
+    let usa = normalize_guarded(&digits, PhoneRegion::Usa).normalized;
+    if usa.starts_with('+') {
+        return Some(usa);
+    }
+    // WhatsApp JID locals are country-code–prefixed digit strings. When the US
+    // guard leaves bare digits, keep a leading `+` for international lengths
+    // that are not trunk-zero.
+    if (8..=15).contains(&digits.len()) && !digits.starts_with('0') {
+        return Some(format!("+{digits}"));
+    }
+    Some(usa)
 }
 
 /// Chat identifier for CSV: E.164 for 1:1 user JIDs; otherwise the raw JID.
@@ -50,6 +62,23 @@ mod tests {
             Some("+15555550122")
         );
         assert_eq!(jid_to_e164("+15555550122").as_deref(), Some("+15555550122"));
+    }
+
+    #[test]
+    fn international_jid_gets_plus() {
+        assert_eq!(
+            jid_to_e164("447911123456@s.whatsapp.net").as_deref(),
+            Some("+447911123456")
+        );
+    }
+
+    #[test]
+    fn trunk_zero_not_fabricated_into_plus_zero() {
+        let out = jid_to_e164("02079460000@s.whatsapp.net");
+        assert!(
+            out.as_deref().is_none_or(|s| !s.starts_with("+0")),
+            "unexpected {out:?}"
+        );
     }
 
     #[test]

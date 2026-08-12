@@ -7,6 +7,36 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
+fn output_equals_input_dir_bails_before_cleaning() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let csv = fixture.join("all_conversations.csv");
+    assert!(csv.is_file(), "missing {}", csv.display());
+    let book = ContactsBook::empty();
+    // Output = fixture dir that holds the source CSV — open_prepared would
+    // delete every *.csv before discovery.
+    let err = convert_export(
+        &fixture,
+        &fixture,
+        &book,
+        &DateRange::default(),
+        ExportTransforms::none(),
+        OutputFormat::Csv,
+        None,
+    )
+    .expect_err("output == input must fail");
+    assert!(
+        err.to_string()
+            .contains("must not be the same as, or contain"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        csv.is_file(),
+        "source CSV must survive the refused run: {}",
+        csv.display()
+    );
+}
+
+#[test]
 fn convert_all_conversations_with_vcf() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let csv = fixture.join("all_conversations.csv");
