@@ -1,8 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { isTauri } from "../lib/tauri-check";
-import { listGroups, addGroup, removeGroup } from "../lib/savedGroups";
+import {
+  listGroups,
+  addGroup,
+  removeGroup,
+  SAVED_GROUPS_CHANGED_EVENT,
+} from "../lib/savedGroups";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
 
@@ -98,6 +103,12 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
+
+  useEffect(() => {
+    const refresh = () => setGroups(listGroups());
+    globalThis.addEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
+    return () => globalThis.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, refresh);
+  }, []);
 
   return (
     <div className="flex h-screen w-[220px] shrink-0 flex-col overflow-auto border-r border-border bg-panel text-text">

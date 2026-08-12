@@ -81,6 +81,7 @@ In `conversations_api` conversation list parsing:
   ```
 
 - Keep existing trash exclusion and other structured tokens combinable as today.
+- When `import:` is present, skip the usual “at least one non-duplicate message” list gate so threads whose only matching messages are later marked `duplicate_of` still appear. Visible message count / last-activity in the list may still ignore duplicates (existing list column semantics), so a duplicate-only row can show **0** messages until the user opens it or undoes dedupe.
 
 Add unit tests: conversations with messages from import A appear for `import:A`; conversations only touched by import B do not; empty/unknown id yields empty page.
 

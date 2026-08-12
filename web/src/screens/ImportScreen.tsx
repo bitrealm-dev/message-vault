@@ -16,6 +16,7 @@ import {
   setImporterPath,
   resolveImportStagingDir,
 } from "../lib/system-settings";
+import { saveImportSavedGroup } from "../lib/savedGroups";
 import type {
   AttachmentMediaMode,
   ContactNameMode,
@@ -407,6 +408,13 @@ export default function ImportScreen() {
         } catch {
           // Session complete is best-effort; summary UI still shows local results.
         }
+      }
+      if (importSessionId != null) {
+        saveImportSavedGroup({
+          importSessionId,
+          source,
+          messagesInserted: pushReport?.messages_inserted,
+        });
       }
       setSummaryView(finalSummary);
       setPhase("done");
