@@ -9,6 +9,7 @@ import {
 import { formatVisibleRange } from "../lib/usePagedList";
 import { isTauri } from "../lib/tauri-check";
 import { listRowDividersThin } from "../lib/tw";
+import ListRangeHeader from "./ListRangeHeader";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
 const NEAR_END_THRESHOLD = 10;
@@ -293,10 +294,11 @@ export default function InfiniteOffsetList<T extends object>({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
-        {rangeLabel}
-        {refreshing ? " · updating…" : filling ? " · loading more…" : null}
-      </div>
+      <ListRangeHeader
+        rangeLabel={rangeLabel}
+        refreshing={refreshing}
+        filling={filling}
+      />
       {isTauri() ? (
         <RacVirtualList {...listProps} ariaLabel={ariaLabel} />
       ) : (

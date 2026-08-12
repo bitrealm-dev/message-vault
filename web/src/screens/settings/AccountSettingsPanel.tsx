@@ -1,31 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { apiClient } from "../../lib/api";
+import { useAccountProfile } from "../../lib/useAccountProfile";
 import Button from "../../components/Button";
 import { ProfileDangerZone } from "./ProfileDangerZone";
 import { ApiTokensSection } from "./ApiTokensSection";
-import {
-  type AccountProfile,
-  inputClassName,
-  sectionTitleClass,
-} from "./profileStyles";
+import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Account settings: username, password, API tokens, danger zone. */
 export function AccountSettingsPanel() {
-  const [profile, setProfile] = useState<AccountProfile | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const { profile, loading, error: loadError } = useAccountProfile();
 
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
   const [pwOk, setPwOk] = useState(false);
-
-  useEffect(() => {
-    apiClient
-      .get<AccountProfile>("/v1/account/profile")
-      .then(setProfile)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
-  }, []);
 
   if (loadError) {
     return (
@@ -35,7 +24,7 @@ export function AccountSettingsPanel() {
     );
   }
 
-  if (!profile) {
+  if (loading || !profile) {
     return <div className="text-muted">Loading…</div>;
   }
 

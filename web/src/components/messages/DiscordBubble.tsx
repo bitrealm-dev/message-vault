@@ -1,9 +1,7 @@
 import MessageAttachments from "../MessageAttachments";
 import {
-  formatMessageTime,
-  senderName,
+  ServiceBubbleShell,
   ServiceMessageText,
-  ServiceRow,
   type MessageBubbleProps,
 } from "./chatBubbleShared";
 
@@ -16,23 +14,13 @@ export default function DiscordBubble({
   const mine = message.is_from_me;
 
   return (
-    <ServiceRow messageId={message.id} isActive={isActive}>
-      <div
-        className={`mb-1 flex items-center gap-2 ${
-          mine ? "justify-end" : "justify-start"
-        }`}
-      >
-        <span
-          className="text-[0.75rem] font-semibold"
-          style={{ color: message.role_color || "#5865f2" }}
-        >
-          {senderName(message)}
-        </span>
-        <span className="text-[0.688rem] text-muted">
-          {formatMessageTime(message.timestamp)}
-        </span>
-      </div>
-
+    <ServiceBubbleShell
+      message={message}
+      isActive={isActive}
+      senderStyle={{ color: message.role_color || "#5865f2" }}
+      timeClassName="text-[0.688rem] text-muted"
+      headerAlignClassName="items-center"
+    >
       <ServiceMessageText
         text={message.text || ""}
         highlight={highlight}
@@ -69,6 +57,6 @@ export default function DiscordBubble({
           ))}
         </div>
       )}
-    </ServiceRow>
+    </ServiceBubbleShell>
   );
 }

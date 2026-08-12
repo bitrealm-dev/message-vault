@@ -3,9 +3,12 @@ import Button from "../Button";
 import ModalShell from "../ModalShell";
 import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import {
-  HANDLE_SERVICE_OPTIONS,
+  CONTACT_IDENTITY_SERVICE_OPTIONS,
+  CONTACT_IDENTITY_SERVICES,
   handleServiceSelectValue,
-} from "./contactDrawerTypes";
+  type ContactIdentityService,
+} from "../../lib/handleService";
+import { parseSelectKey } from "../../lib/selectKey";
 
 const fieldLabelClass = "mb-1 block text-[0.813rem] font-medium text-text";
 const inputClass =
@@ -42,7 +45,7 @@ export default function AddIdentityDialog({
   onClose: () => void;
   onConfirm: (args: { handle: string; service: string }) => void;
 }) {
-  const [service, setService] = useState("phone");
+  const [service, setService] = useState<ContactIdentityService>("phone");
   const [handle, setHandle] = useState("");
 
   useEffect(() => {
@@ -86,7 +89,10 @@ export default function AddIdentityDialog({
         <span className={fieldLabelClass}>Service</span>
         <Select
           selectedKey={service}
-          onSelectionChange={(k) => setService(String(k))}
+          onSelectionChange={(k) => {
+            const next = parseSelectKey(k, CONTACT_IDENTITY_SERVICES);
+            if (next) setService(next);
+          }}
           aria-label="Service"
           isDisabled={busy}
           triggerClassName={selectTriggerClass}
@@ -94,7 +100,7 @@ export default function AddIdentityDialog({
           popoverClassName="!z-[250]"
           className="block w-full min-w-0"
         >
-          {HANDLE_SERVICE_OPTIONS.map((s) => (
+          {CONTACT_IDENTITY_SERVICE_OPTIONS.map((s) => (
             <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
               {s.label}
             </ListBoxItem>

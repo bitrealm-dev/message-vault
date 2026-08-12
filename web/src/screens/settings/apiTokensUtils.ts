@@ -1,4 +1,6 @@
 /** Normalize stored hints (old `**********` or new `..`) to `mv-api-xx..yy`. */
+import { formatUnixDate } from "../../lib/formatDate";
+
 export function displayKeyHint(hint: string | null | undefined): string {
   const raw = (hint ?? "").trim();
   if (!raw) return "mv-api-..";
@@ -9,14 +11,7 @@ export function displayKeyHint(hint: string | null | undefined): string {
 }
 
 export function formatTokenDate(secs: string | null | undefined): string {
-  if (secs == null || secs === "") return "Never";
-  const n = Number(secs);
-  if (!Number.isFinite(n) || n <= 0) return "Never";
-  try {
-    return new Date(n * 1000).toLocaleDateString();
-  } catch {
-    return "Never";
-  }
+  return formatUnixDate(secs);
 }
 
 export function scopesLabel(scopes: string): string {

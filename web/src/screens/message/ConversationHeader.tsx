@@ -1,4 +1,5 @@
 import type { Conversation } from "../../lib/types";
+import { formatMonthYear } from "../../lib/formatDate";
 import YearChipBar from "./YearChipBar";
 
 export default function ConversationHeader({
@@ -90,8 +91,8 @@ export default function ConversationHeader({
         <span>{sourceLabel}</span>
         {conversation.date_range_start && conversation.date_range_end && (
           <span>
-            {new Date(conversation.date_range_start).toLocaleDateString([], { month: "short", year: "numeric" })} –{" "}
-            {new Date(conversation.date_range_end).toLocaleDateString([], { month: "short", year: "numeric" })}
+            {formatMonthYear(conversation.date_range_start)} –{" "}
+            {formatMonthYear(conversation.date_range_end)}
           </span>
         )}
         <span>{conversation.message_count} messages</span>

@@ -1,30 +1,10 @@
 import type { ReactNode } from "react";
 import type { Conversation } from "../lib/types";
+import { formatDateSpan } from "../lib/formatDate";
 import { personDisplayLabel } from "../lib/nameAliases";
 import { useNameAliases } from "../lib/useNameAliases";
 import { listRowDividers } from "../lib/tw";
 import { useListColumnResizing } from "./ListColumnResizeContext";
-
-/** Calendar date: year, month, and day (e.g. "Sep 9, 2024"). */
-function formatYmd(iso: string): string {
-  return new Date(iso).toLocaleDateString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-/** First and last message dates for the bottom-right corner. */
-function formatDateSpan(start: string | null, end: string | null): string | null {
-  if (start && end) {
-    const a = formatYmd(start);
-    const b = formatYmd(end);
-    return a === b ? a : `${a} – ${b}`;
-  }
-  if (end) return formatYmd(end);
-  if (start) return formatYmd(start);
-  return null;
-}
 
 /** Short service label (imessage / sms/mms). */
 function formatServiceLabel(service: string): string | null {

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { apiClient } from "../lib/api";
+import { formatLocaleDate } from "../lib/formatDate";
 import { useResource } from "../lib/useResource";
 import Button from "../components/Button";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -82,7 +83,7 @@ export default function TrashScreen() {
             <div>
               <div className="text-[0.875rem] font-medium">{entry.label}</div>
               <div className="text-[0.75rem] text-muted">
-                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {new Date(entry.deleted_at).toLocaleDateString()}
+                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {formatLocaleDate(entry.deleted_at)}
               </div>
             </div>
             <Button onClick={() => restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">

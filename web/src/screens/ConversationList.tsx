@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation } from "../lib/types";
 import ConversationRow from "../components/ConversationRow";
+import ListRangeHeader from "../components/ListRangeHeader";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import {
   formatVisibleRange,
@@ -80,10 +81,6 @@ export default function ConversationList({
           conversations.length,
         );
 
-  let activitySuffix = "";
-  if (refreshing) activitySuffix = " · updating…";
-  else if (filling) activitySuffix = " · loading more…";
-
   if (error && conversations.length === 0) {
     return (
       <div className="p-4 text-[0.813rem] text-danger">
@@ -94,10 +91,11 @@ export default function ConversationList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
-        {rangeLabel}
-        {activitySuffix}
-      </div>
+      <ListRangeHeader
+        rangeLabel={rangeLabel}
+        refreshing={refreshing}
+        filling={filling}
+      />
       <VirtualList
         count={conversations.length}
         estimateSize={64}

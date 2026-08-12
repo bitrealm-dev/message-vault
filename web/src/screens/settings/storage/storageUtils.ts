@@ -1,4 +1,5 @@
 import type { ImportIssue, ImportSummaryView } from "../../../components/import/ImportSummaryPanel";
+import { formatDateTime } from "../../../lib/formatDate";
 
 export const ATTACHMENT_PAGE_SIZE = 20;
 
@@ -64,13 +65,7 @@ export function formatImportDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTime(iso);
 }
 
 function toNumber(value: unknown): number | undefined {

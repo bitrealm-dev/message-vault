@@ -14,17 +14,17 @@ import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
+import {
+  HANDLE_SERVICE_OPTIONS,
+  HANDLE_SERVICES,
+  type HandleService,
+} from "../lib/handleService";
+import { parseSelectKey } from "../lib/selectKey";
 
 interface HandleInput {
   handle: string;
-  service: string;
+  service: HandleService;
 }
-
-const SERVICES: { value: string; label: string }[] = [
-  { value: "phone", label: "Phone Number" },
-  { value: "email", label: "Email" },
-  { value: "whatsapp", label: "WhatsApp" },
-];
 
 export default function OnboardingScreen() {
   const { login, logout, token, serverUrl, accountId } = useAuth();
@@ -40,11 +40,17 @@ export default function OnboardingScreen() {
 
   const updateHandle = (
     index: number,
-    field: keyof HandleInput,
+    field: "handle" | "service",
     value: string,
   ) => {
     const next = [...handles];
-    next[index] = { ...next[index], [field]: value };
+    if (field === "service") {
+      const service = parseSelectKey(value, HANDLE_SERVICES);
+      if (!service) return;
+      next[index] = { ...next[index], service };
+    } else {
+      next[index] = { ...next[index], handle: value };
+    }
     setHandles(next);
   };
 
@@ -103,10 +109,13 @@ export default function OnboardingScreen() {
           >
             <Select
               selectedKey={h.service}
-              onSelectionChange={(k) => updateHandle(i, "service", String(k))}
+              onSelectionChange={(k) => {
+                const service = parseSelectKey(k, HANDLE_SERVICES);
+                if (service) updateHandle(i, "service", service);
+              }}
               className="w-[140px] shrink-0"
             >
-              {SERVICES.map((s) => (
+              {HANDLE_SERVICE_OPTIONS.map((s) => (
                 <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
                   {s.label}
                 </ListBoxItem>
