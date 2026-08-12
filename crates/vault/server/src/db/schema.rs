@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use rusqlite::{Connection, params};
 
 /// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
@@ -45,15 +45,6 @@ const DROP_MESSAGES_FTS_TRIGGERS_SQL: &str =
 const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_create.sql");
 
-fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        [name],
-        |row| row.get(0),
-    )?;
-    Ok(exists)
-}
-
 /// Create every table and index required by a current vault.
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -64,7 +55,6 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(CONTACTS_TABLES_DDL)?;
     conn.execute_batch(MESSAGE_TABLES_DDL)?;
     conn.execute_batch(STAGING_TABLES_DDL)?;
-    ensure_attachment_missing_reason_columns(conn)?;
     ensure_messages_fts(conn)?;
     Ok(())
 }
@@ -74,9 +64,6 @@ pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
 /// Contentless FTS5 index over message body/subject plus attachment text.
 fn ensure_messages_fts(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "messages")? {
-        return Ok(());
-    }
     conn.execute_batch(FTS_VIRTUAL_DDL)?;
 
     let triggers_ready: bool = conn.query_row(
@@ -252,151 +239,7 @@ pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<
 
 /// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
-    migrate_session_and_api_token_tables(conn)?;
     conn.execute_batch(ACCOUNTS_DDL)?;
-    ensure_vault_imports_timing_columns(conn)?;
-    ensure_vault_import_issues_table(conn)?;
-    ensure_named_api_token_columns(conn)?;
-    Ok(())
-}
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    // pragma_table_info does not accept bound table names; only call with known literals.
-    let sql = match table {
-        "account_api_tokens" => {
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_api_tokens') WHERE name = ?1"
-        }
-        "account_session_tokens" => {
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_session_tokens') WHERE name = ?1"
-        }
-        "account_app_passwords" => {
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = ?1"
-        }
-        "vault_imports" => "SELECT COUNT(*) > 0 FROM pragma_table_info('vault_imports') WHERE name = ?1",
-        "attachments" => "SELECT COUNT(*) > 0 FROM pragma_table_info('attachments') WHERE name = ?1",
-        "staging_attachments" => {
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('staging_attachments') WHERE name = ?1"
-        }
-        other => bail!("column_exists: unsupported table {other}"),
-    };
-    let exists: bool = conn.query_row(sql, params![column], |row| row.get(0))?;
-    Ok(exists)
-}
-
-fn ensure_vault_imports_timing_columns(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "vault_imports")? {
-        return Ok(());
-    }
-
-    for (column, ddl) in [
-        ("duration_ms", "ALTER TABLE vault_imports ADD COLUMN duration_ms INTEGER"),
-        ("parse_ms", "ALTER TABLE vault_imports ADD COLUMN parse_ms INTEGER"),
-        ("convert_ms", "ALTER TABLE vault_imports ADD COLUMN convert_ms INTEGER"),
-        ("upload_ms", "ALTER TABLE vault_imports ADD COLUMN upload_ms INTEGER"),
-        ("summary_json", "ALTER TABLE vault_imports ADD COLUMN summary_json TEXT"),
-    ] {
-        if !column_exists(conn, "vault_imports", column)? {
-            conn.execute_batch(ddl)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn ensure_attachment_missing_reason_columns(conn: &Connection) -> Result<()> {
-    for (table, ddl) in [
-        (
-            "attachments",
-            "ALTER TABLE attachments ADD COLUMN missing_reason TEXT",
-        ),
-        (
-            "staging_attachments",
-            "ALTER TABLE staging_attachments ADD COLUMN missing_reason TEXT",
-        ),
-    ] {
-        if table_exists(conn, table)? && !column_exists(conn, table, "missing_reason")? {
-            conn.execute_batch(ddl)?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_vault_import_issues_table(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS vault_import_issues (
-            id INTEGER PRIMARY KEY,
-            import_id INTEGER NOT NULL REFERENCES vault_imports(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL,
-            step TEXT NOT NULL,
-            item TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS ix_vault_import_issues_import
-            ON vault_import_issues(import_id);
-        "#,
-    )?;
-    Ok(())
-}
-
-/// Move legacy session `account_api_tokens` → `account_session_tokens`, then
-/// `account_app_passwords` → `account_api_tokens` (named CLI tokens).
-fn migrate_session_and_api_token_tables(conn: &Connection) -> Result<()> {
-    // Old session table occupied `account_api_tokens` (no `label` column).
-    if table_exists(conn, "account_api_tokens")?
-        && !column_exists(conn, "account_api_tokens", "label")?
-        && !table_exists(conn, "account_session_tokens")?
-    {
-        conn.execute_batch("ALTER TABLE account_api_tokens RENAME TO account_session_tokens;")?;
-    }
-
-    if table_exists(conn, "account_app_passwords")? && !table_exists(conn, "account_api_tokens")? {
-        conn.execute_batch("ALTER TABLE account_app_passwords RENAME TO account_api_tokens;")?;
-        // Recreate index under the new name when the old one was renamed with the table
-        // (SQLite keeps the old index name on RENAME TABLE).
-        let has_old_ix: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = 'ix_account_app_passwords_account'",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_old_ix {
-            conn.execute_batch("DROP INDEX IF EXISTS ix_account_app_passwords_account;")?;
-        }
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS ix_account_api_tokens_account ON account_api_tokens(account_id);",
-        )?;
-    }
-    Ok(())
-}
-
-/// Older DBs may lack columns on named API tokens (session leftovers skipped via `label`).
-fn ensure_named_api_token_columns(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "account_api_tokens")? {
-        return Ok(());
-    }
-    // Session-shaped leftover should not happen after migrate; skip if no label.
-    if !column_exists(conn, "account_api_tokens", "label")? {
-        return Ok(());
-    }
-    for (column, ddl) in [
-        (
-            "scopes",
-            "ALTER TABLE account_api_tokens ADD COLUMN scopes TEXT NOT NULL DEFAULT 'both';",
-        ),
-        (
-            "token_hint",
-            "ALTER TABLE account_api_tokens ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'mv-api-..';",
-        ),
-        (
-            "last_accessed_at",
-            "ALTER TABLE account_api_tokens ADD COLUMN last_accessed_at TEXT;",
-        ),
-    ] {
-        if !column_exists(conn, "account_api_tokens", column)? {
-            conn.execute_batch(ddl)?;
-        }
-    }
     Ok(())
 }
 
@@ -406,6 +249,15 @@ mod tests {
 
     const A1: &str = "11111111-1111-1111-1111-111111111111";
     const A2: &str = "22222222-2222-2222-2222-222222222222";
+
+    fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
+    }
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

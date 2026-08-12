@@ -1,7 +1,7 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
 use crate::search_query::{
@@ -414,15 +414,10 @@ pub fn export_message_count(
             |row| row.get(0),
         )?;
 
-    let size_expr = if column_exists(conn, "attachments", "size_bytes")? {
-        "MAX(a.size_bytes)"
-    } else {
-        "CAST(NULL AS INTEGER)"
-    };
     let att_sql = format!(
         "SELECT COUNT(*), COALESCE(SUM(sz), 0)
          FROM (
-           SELECT {size_expr} AS sz
+           SELECT MAX(a.size_bytes) AS sz
            FROM attachments a
            JOIN messages m ON m.id = a.message_id
            {conversation_join_sql}
@@ -431,7 +426,6 @@ pub fn export_message_count(
              AND length(trim(a.sha256)) > 0
            GROUP BY lower(trim(a.sha256))
          )",
-        size_expr = size_expr,
         conversation_join_sql = conversation_join_sql(),
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
@@ -614,10 +608,8 @@ fn build_message_filters(
 
     let dedupe_sql = if source_filter.is_some() {
         String::new()
-    } else if column_exists(conn, "messages", "duplicate_of")? {
-        " AND m.duplicate_of IS NULL".to_string()
     } else {
-        String::new()
+        " AND m.duplicate_of IS NULL".to_string()
     };
 
     Ok(BuiltFilters {
@@ -720,9 +712,6 @@ fn list_label_member_contact_ids(
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    if !table_exists(conn, "contact_labels")? {
-        return Ok(Vec::new());
-    }
     let mut stmt = conn
         .prepare(
             "SELECT clm.contact_id
@@ -744,11 +733,6 @@ fn contact_ids_within_day_bounds(
     bounds: &crate::search_query::DateBounds,
 ) -> Result<Vec<i64>, ExportQueryError> {
     let day = if bound == "first" { "MIN" } else { "MAX" };
-    let hide_dupes = if column_exists(conn, "messages", "duplicate_of")? {
-        " AND m.duplicate_of IS NULL"
-    } else {
-        ""
-    };
     let mut having = Vec::new();
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
     if let Some(from) = &bounds.from {
@@ -777,7 +761,7 @@ fn contact_ids_within_day_bounds(
           AND c.conversation_type = 'individual'
           AND c.chat_handle_id = ch.handle_id
          JOIN messages m ON m.conversation_id = c.id
-         WHERE ch.account_id = ?{hide_dupes}
+         WHERE ch.account_id = ? AND m.duplicate_of IS NULL
          GROUP BY ch.contact_id
          HAVING {having_sql}"
     );
@@ -892,7 +876,7 @@ fn load_tapbacks(
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
     let mut map = std::collections::HashMap::new();
-    if message_ids.is_empty() || !table_exists(conn, "tapbacks")? {
+    if message_ids.is_empty() {
         return Ok(map);
     }
     for chunk in message_ids.chunks(400) {
@@ -926,34 +910,6 @@ fn load_tapbacks(
         }
     }
     Ok(map)
-}
-
-fn table_exists(conn: &Connection, name: &str) -> Result<bool, ExportQueryError> {
-    let n: Option<i64> = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-            [name],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(n.is_some())
-}
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, ExportQueryError> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))?;
-    let mut rows = stmt
-        .query([])?;
-    while let Some(row) = rows
-        .next()?
-    {
-        let name: String = row
-            .get(1)?;
-        if name == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 #[cfg(test)]
