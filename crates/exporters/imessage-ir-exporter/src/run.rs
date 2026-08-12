@@ -132,7 +132,7 @@ fn options_from_export_config(config: &ExporterConfig) -> Result<MailOptions, Ru
     let attachment_embed = attachment_embed_from_copy_method(&source.copy_method)?;
 
     // Create the output directory; prior IR artifacts are removed in `run_export`
-    // via `clean_previous_ir_output` (same idea as FormatSink::open_prepared).
+    // via FormatSink::open_prepared.
     std::fs::create_dir_all(&config.output)?;
     let export_path = config.output.clone();
 

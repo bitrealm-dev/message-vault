@@ -965,6 +965,45 @@ mod tests {
         assert!(b.contains("3:123"));
     }
 
+    #[test]
+    fn multi_peer_pdu_without_group_flag_uses_group_chat_id() {
+        let owners = OwnerHandleSet::from_phones(&["+15555550100".into()]).unwrap();
+        let parsed = ParsedPdu {
+            path: std::path::PathBuf::from("I_1609459200_x.pdu"),
+            timestamp: 1_609_459_200,
+            participants: vec![
+                "15555550100".into(),
+                "15555550122".into(),
+                "15555550133".into(),
+            ],
+            body: "hi".into(),
+            attachments: Vec::new(),
+            is_sent: true,
+            is_group: false,
+            sender_number: String::new(),
+            has_from: false,
+            has_to: true,
+            pdu_fields: BTreeMap::new(),
+            decode_quality: "structured",
+        };
+        let mut conversations = BTreeMap::new();
+        let mut report = ExportReport::default();
+        let mut skips = SkipDetails::default();
+        add_pdu_message(
+            parsed,
+            Vec::new(),
+            &mut conversations,
+            &owners,
+            &mut report,
+            &mut skips,
+        );
+        assert_eq!(conversations.len(), 1);
+        let convo = conversations.values().next().unwrap();
+        assert!(convo.is_group);
+        assert!(convo.chat_id.starts_with("chat-group-"));
+        assert_eq!(report.extra.get("pdu_group_messages").copied().unwrap_or(0), 1);
+    }
+
     fn test_msg(key: &str, attachments: usize) -> PendingMessage {
         PendingMessage {
             sort_key: 1609459200,

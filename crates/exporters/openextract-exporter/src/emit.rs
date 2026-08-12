@@ -559,4 +559,32 @@ TEL:+15555550999\nEND:VCARD\n",
         assert!(!body.contains("Old"));
         assert!(!body.contains("New"));
     }
+
+    #[test]
+    fn duplicate_rows_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir,
+            "conversation_1.csv",
+            "Date,Sender,Text,Is From Me,Has Attachments\n\
+2020-01-01T12:00:00+00:00,+15555550122,Hello,False,False\n\
+2020-01-01T12:00:00+00:00,+15555550122,Hello,False,False\n\
+2020-01-01T12:01:00+00:00,me,Hi,True,False\n",
+        );
+        let book = ContactsBook::empty();
+        let out = dir.path().join("out");
+        let (report, _) = convert_export(
+            dir.path(),
+            &out,
+            &book,
+            &DateRange::default(),
+            ExportTransforms::none(),
+            OutputFormat::Csv,
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.duplicates_dropped, 1);
+        assert_eq!(report.messages, 2);
+        assert_eq!(report.conversations, 1);
+    }
 }
