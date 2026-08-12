@@ -1,5 +1,5 @@
-export const CONTACT_RECENT_SEARCHES_KEY = "mv-contact-recent-searches:v1";
-export const CONTACT_RECENT_SEARCHES_MAX = 10;
+const CONTACT_RECENT_SEARCHES_KEY = "mv-contact-recent-searches:v1";
+const CONTACT_RECENT_SEARCHES_MAX = 10;
 
 function readRaw(): unknown {
   try {
@@ -21,7 +21,7 @@ export function loadContactRecentSearches(): string[] {
     .slice(0, CONTACT_RECENT_SEARCHES_MAX);
 }
 
-export function saveContactRecentSearches(queries: string[]): void {
+function saveContactRecentSearches(queries: string[]): void {
   try {
     localStorage.setItem(
       CONTACT_RECENT_SEARCHES_KEY,

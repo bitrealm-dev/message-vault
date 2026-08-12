@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  CONTACT_RECENT_SEARCHES_KEY,
   clearContactRecentSearches,
   loadContactRecentSearches,
   pushContactRecentSearch,
 } from "./contactRecentSearches.ts";
+
+const CONTACT_RECENT_SEARCHES_KEY = "mv-contact-recent-searches:v1";
 
 const mem = new Map<string, string>();
 

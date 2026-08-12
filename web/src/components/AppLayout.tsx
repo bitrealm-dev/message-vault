@@ -225,6 +225,7 @@ export default function AppLayout() {
           >
             <ConversationList
               selectedId={null}
+              // Trash thread selection is handled by TrashScreen in the outlet.
               onSelect={() => {}}
               query="is:trash"
             />

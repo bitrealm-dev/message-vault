@@ -56,7 +56,7 @@ export interface PushConfig {
   import_id?: number;
 }
 
-export interface PushFinishedReport {
+interface PushFinishedReport {
   ok: boolean;
   /** Legacy count of messages in successful HTTP requests. */
   messages: number;
