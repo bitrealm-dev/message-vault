@@ -1169,7 +1169,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         let mut stop_submitting = false;
 
         while next_consume < total {
-            check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+            // Cancel must still join in-flight import and write a report (abort path).
+            if check_cancel(cfg.cancel.as_ref()).is_err() {
+                aborted = true;
+                stop_submitting = true;
+                break;
+            }
 
             // If we already have a large pending import batch, start its HTTP
             // request now (without waiting) so prepare workers keep the pipeline full.
@@ -1178,9 +1183,11 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
             }) {
                 let request_ok = flush_imports!(wait: false)?;
-                if !request_ok && !cfg.continue_on_error {
-                    aborted = true;
-                    stop_submitting = true;
+                if !request_ok {
+                    if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
+                        aborted = true;
+                        stop_submitting = true;
+                    }
                 }
             }
 
@@ -1335,10 +1342,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     .is_some_and(|batch| batch.source != prepared.source)
                 {
                     let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                    if !request_ok && !cfg.continue_on_error {
-                        aborted = true;
-                        stop_submitting = true;
-                        break;
+                    if !request_ok {
+                        if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
+                        }
                     }
                 }
 
@@ -1366,10 +1375,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     });
                     if must_flush {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok && !cfg.continue_on_error {
-                            aborted = true;
-                            stop_submitting = true;
-                            break;
+                        if !request_ok {
+                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
+                            {
+                                aborted = true;
+                                stop_submitting = true;
+                                break;
+                            }
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1385,10 +1397,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         || batch.body.len() >= MAX_IMPORT_BODY_BYTES
                     {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok && !cfg.continue_on_error {
-                            aborted = true;
-                            stop_submitting = true;
-                            break;
+                        if !request_ok {
+                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
+                            {
+                                aborted = true;
+                                stop_submitting = true;
+                                break;
+                            }
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1449,14 +1464,21 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         Ok(())
     })?;
 
+    if check_cancel(cfg.cancel.as_ref()).is_err() {
+        aborted = true;
+    }
+
     if !aborted {
         // End of run: send any leftover pending batch and wait for the last import.
         let request_ok = flush_imports!(wait: true)?;
-        if !request_ok && !cfg.continue_on_error {
-            aborted = true;
+        if !request_ok {
+            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
+                aborted = true;
+            }
         }
-    } else {
-        // Aborted: still wait for the in-flight import so the journal stays consistent.
+    }
+    if aborted {
+        // Aborted/cancelled: still wait for the in-flight import so the journal stays consistent.
         let mut guard = shared_journal.lock().expect("journal mutex poisoned");
         let _ = join_inflight_import(JoinInflightImport {
             inflight: &mut inflight,
@@ -1743,10 +1765,10 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     for (i, msg) in messages.iter().enumerate() {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
         let (line, guid) = if cfg.skip_attachments {
-            project::message_line_without_attachments(msg)?
+            project::message_line_without_attachments(msg, i)?
         } else {
             // Rewrite attachment fields to uploaded digests or missing placeholders.
-            project::message_line(msg, &per_message_projections[i])?
+            project::message_line(msg, &per_message_projections[i], i)?
         };
         if !cfg.force {
             let key = JournalState::message_key(name, &guid);
@@ -2317,7 +2339,10 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
     if args.pending.is_none() {
         return Ok(ok);
     }
-    check_cancel(args.cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
+    // Do not start a new import after cancel; leave pending unsent.
+    if check_cancel(args.cfg.cancel.as_ref()).is_err() {
+        return Ok(false);
+    }
     let mode = if args.cfg.mode == "replace" && *args.first_import {
         "replace".to_string()
     } else {
