@@ -1,8 +1,11 @@
-import { useParams, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import ListColumn from "./ListColumn";
 import ConversationList from "../screens/ConversationList";
 import MessageView from "../screens/MessageView";
 import type { Conversation } from "../lib/types";
+import { asMessagesLocationState } from "../lib/messagesLocationState";
+import { fetchConversationById } from "../lib/fetchConversationById";
 
 export default function MessageRoute() {
   const { conversationId } = useParams<{ conversationId: string }>();
@@ -14,12 +17,50 @@ export default function MessageRoute() {
   const conversationFilter = searchParams.get("f") || "";
   const query = conversationFilter || conversationSearch;
 
-  const state = location.state as {
-    conversation?: Conversation;
-    openContactId?: string;
-  } | null;
-  const conversation = state?.conversation ?? null;
-  const openContactId = state?.openContactId ?? null;
+  const locationState = asMessagesLocationState(location.state);
+  const stateConversation = locationState?.conversation ?? null;
+  const openContactId = locationState?.openContactId ?? null;
+
+  const [fetchedConversation, setFetchedConversation] = useState<Conversation | null>(null);
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const conversation = stateConversation ?? fetchedConversation;
+
+  useEffect(() => {
+    if (stateConversation || !conversationId) {
+      setFetchedConversation(null);
+      setFetchLoading(false);
+      setFetchError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setFetchLoading(true);
+    setFetchError(null);
+    setFetchedConversation(null);
+
+    void (async () => {
+      try {
+        const found = await fetchConversationById(conversationId, controller.signal);
+        if (controller.signal.aborted) return;
+        if (found) {
+          setFetchedConversation(found);
+        } else {
+          setFetchError("Conversation not found.");
+        }
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        setFetchError(String(e));
+      } finally {
+        if (!controller.signal.aborted) {
+          setFetchLoading(false);
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [conversationId, stateConversation]);
 
   const handleSearchChange = (q: string) => {
     const next = new URLSearchParams(searchParams);
@@ -62,6 +103,20 @@ export default function MessageRoute() {
               });
             }}
           />
+        ) : fetchLoading ? (
+          <div className="flex h-full items-center justify-center text-[0.875rem] text-muted">
+            Loading conversation…
+          </div>
+        ) : fetchError ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="m-0 text-[0.875rem] text-danger">{fetchError}</p>
+            <Link
+              to="/"
+              className="text-[0.875rem] text-accent underline-offset-2 hover:underline"
+            >
+              Back to conversations
+            </Link>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center text-[0.875rem] text-muted">
             Select a conversation to view messages

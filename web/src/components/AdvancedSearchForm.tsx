@@ -1,110 +1,23 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Button as AriaButton,
-  Label,
-  ListBox,
-  ListBoxItem,
-  Popover,
-  Select as RACSelect,
-  type Key,
-} from "react-aria-components";
+import { useState } from "react";
+import type { Key } from "react-aria-components";
 import Button from "./Button";
-import DateField from "./DateField";
-import Select, { ListBoxItem as SelectListBoxItem, selectItemClassName } from "./Select";
 import { popupShadow } from "../lib/uiStyles";
+import {
+  buildContactsQuery,
+  buildMessagesQuery,
+  canSubmitContacts,
+  canSubmitMessages,
+  EMPTY_COUNT,
+  EMPTY_DATE_BOUND,
+  type ActivityFilter,
+  type AdvancedSearchMode,
+  type CountFilterInput,
+  type DateBoundFilter,
+} from "./advancedSearch/buildAdvancedQuery";
+import ContactsSearchFields from "./advancedSearch/ContactsSearchFields";
+import MessagesSearchFields from "./advancedSearch/MessagesSearchFields";
 
-export type AdvancedSearchMode = "messages" | "contacts";
-
-/** Same operators as web-next CountField (Any / Equal to / More than / Less than). */
-type CountComparator = "=" | ">" | "<";
-type CountFilterInput = {
-  comparator: CountComparator | "any";
-  value: string;
-};
-
-type ActivityFilter = "any" | "messages" | "no-messages";
-
-/** Operator for first-/last-message calendar bounds. */
-type DateBoundOp = "any" | "after" | "before" | "between";
-
-type DateBoundFilter = {
-  op: DateBoundOp;
-  /** On or after / Before date, or Between start. */
-  start: string;
-  /** Between end only. */
-  end: string;
-};
-
-const EMPTY_COUNT: CountFilterInput = { comparator: "any", value: "" };
-const EMPTY_DATE_BOUND: DateBoundFilter = { op: "any", start: "", end: "" };
-
-const SERVICE_ITEMS = [
-  { id: "phone", name: "Text message" },
-  { id: "whatsapp", name: "WhatsApp" },
-] as const;
-
-/** Compact text input for the filter grid (8px vertical to keep rows dense). */
-const inputClass =
-  "box-border w-full rounded-md border border-border bg-bg px-2 py-1 text-[0.813rem] text-text outline-none focus:border-accent";
-
-/** Uppercase micro-label above each filter field. */
-const labelClass =
-  "mb-1 block text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted";
-
-const dateGroupClass =
-  "box-border flex w-full min-w-0 items-center overflow-hidden rounded-md border border-border bg-bg px-2 py-1 focus-within:border-accent";
-
-/** Select triggers in this panel — slightly squarer than the shared Select default. */
-const selectTriggerClass = "!rounded-md !bg-bg";
-
-/** Compact Select trigger matching filter field padding/size. */
-const compactFieldTriggerClass =
-  `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
-
-/** Single-column stack used for every contacts filter block. */
-const contactStackClass = "flex min-w-0 flex-col gap-3";
-
-/** Menu rows sized to match the compact field text (0.813rem), not the shared 0.875rem Select. */
-function compactSelectItemClassName(state: {
-  isFocused: boolean;
-  isSelected: boolean;
-}): string {
-  return selectItemClassName(state).replace("text-[0.875rem]", "text-[0.813rem]");
-}
-
-function composeCountComparison(input: CountFilterInput): string | null {
-  if (input.comparator === "any") return null;
-  const value = input.value.trim();
-  if (!/^\d+$/.test(value)) return null;
-  return `${input.comparator}${value}`;
-}
-
-function dateBoundHasValue(bound: DateBoundFilter): boolean {
-  if (bound.op === "any") return false;
-  return Boolean(bound.start || (bound.op === "between" && bound.end));
-}
-
-/** Emit `prefix:>=D` / `prefix:<D` tokens (Between = half-open pair). */
-function pushDateBoundTokens(
-  push: (s: string) => void,
-  prefix: "first-contact" | "last-contact",
-  bound: DateBoundFilter,
-): void {
-  switch (bound.op) {
-    case "any":
-      return;
-    case "after":
-      if (bound.start) push(`${prefix}:>=${bound.start}`);
-      return;
-    case "before":
-      if (bound.start) push(`${prefix}:<${bound.start}`);
-      return;
-    case "between":
-      if (bound.start) push(`${prefix}:>=${bound.start}`);
-      if (bound.end) push(`${prefix}:<${bound.end}`);
-      return;
-  }
-}
+export type { AdvancedSearchMode } from "./advancedSearch/buildAdvancedQuery";
 
 export default function AdvancedSearchForm({
   mode,
@@ -139,54 +52,19 @@ export default function AdvancedSearchForm({
     activity: ActivityFilter;
   } | null>(null);
 
-  const buildQuery = (): string => {
-    const parts: string[] = [];
-    const push = (s: string) => {
-      if (s.trim()) parts.push(s.trim());
-    };
-    if (mode === "messages") {
-      // Conversation list API: free-text name/handle, is:, participants:, handle:.
-      if (nameOrHandle.trim()) push(nameOrHandle.trim());
-      if (handle.trim()) push(`handle:${handle.trim()}`);
-      if (msgType === "direct") push("is:direct");
-      if (msgType === "group") push("is:group");
-      const participantCmp = composeCountComparison(participants);
-      if (participantCmp) push(`participants:${participantCmp}`);
-    } else {
-      if (contactName.trim()) push(contactName.trim());
-      if (handle.trim()) push(`handle:"${handle.trim()}"`);
-      pushDateBoundTokens(push, "first-contact", firstMsgBound);
-      pushDateBoundTokens(push, "last-contact", lastMsgBound);
-      if (activity === "messages") push("has:messages");
-      if (activity === "no-messages") push("has:no-messages");
-      if (noPreferredName) push("has:no-name");
-      if (noHandle) push("has:no-handle");
-      for (const id of services) {
-        push(`service:${String(id)}`);
-      }
-      push("search:contacts");
-    }
-    return parts.join(" ");
-  };
-
   const canSubmit =
     mode === "messages"
-      ? Boolean(
-          nameOrHandle.trim() ||
-            handle.trim() ||
-            msgType !== "all" ||
-            composeCountComparison(participants),
-        )
-      : Boolean(
-          contactName.trim() ||
-            handle.trim() ||
-            dateBoundHasValue(firstMsgBound) ||
-            dateBoundHasValue(lastMsgBound) ||
-            activity !== "any" ||
-            noPreferredName ||
-            noHandle ||
-            services.length > 0,
-        );
+      ? canSubmitMessages({ nameOrHandle, handle, msgType, participants })
+      : canSubmitContacts({
+          contactName,
+          handle,
+          firstMsgBound,
+          lastMsgBound,
+          activity,
+          noPreferredName,
+          noHandle,
+          services,
+        });
 
   const submit = () => {
     if (!canSubmit) return;
@@ -194,11 +72,30 @@ export default function AdvancedSearchForm({
     if (mode === "messages") {
       setNameOrHandle((v) => v.trim());
       setHandle((v) => v.trim());
+      onApply(
+        buildMessagesQuery({
+          nameOrHandle: nameOrHandle.trim(),
+          handle: handle.trim(),
+          msgType,
+          participants,
+        }),
+      );
     } else {
       setContactName((v) => v.trim());
       setHandle((v) => v.trim());
+      onApply(
+        buildContactsQuery({
+          contactName: contactName.trim(),
+          handle: handle.trim(),
+          firstMsgBound,
+          lastMsgBound,
+          activity,
+          noPreferredName,
+          noHandle,
+          services,
+        }),
+      );
     }
-    onApply(buildQuery());
   };
 
   return (
@@ -211,156 +108,41 @@ export default function AdvancedSearchForm({
       ) : null}
 
       {mode === "messages" ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className={labelClass}>Name or title</label>
-            <input
-              className={inputClass}
-              value={nameOrHandle}
-              onChange={(e) => setNameOrHandle(e.target.value)}
-              placeholder="Gregory Coleman"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Identity</label>
-            <input
-              className={inputClass}
-              value={handle}
-              onChange={(e) => setHandle(e.target.value)}
-              placeholder="+15555550100"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Conversation type</label>
-            <Select
-              selectedKey={msgType}
-              onSelectionChange={(k) => setMsgType(k as "all" | "direct" | "group")}
-              aria-label="Conversation type"
-              triggerClassName={selectTriggerClass}
-            >
-              <SelectListBoxItem id="all" className={compactSelectItemClassName}>All</SelectListBoxItem>
-              <SelectListBoxItem id="direct" className={compactSelectItemClassName}>Direct</SelectListBoxItem>
-              <SelectListBoxItem id="group" className={compactSelectItemClassName}>Group</SelectListBoxItem>
-            </Select>
-          </div>
-          <CountField
-            label="Group participants"
-            value={participants}
-            onChange={setParticipants}
-          />
-        </div>
+        <MessagesSearchFields
+          nameOrHandle={nameOrHandle}
+          onNameOrHandleChange={setNameOrHandle}
+          handle={handle}
+          onHandleChange={setHandle}
+          msgType={msgType}
+          onMsgTypeChange={setMsgType}
+          participants={participants}
+          onParticipantsChange={setParticipants}
+        />
       ) : (
-        <div className={contactStackClass}>
-          <div className="min-w-0">
-            <label className={labelClass}>Name</label>
-            <input
-              className={`${inputClass} ${noPreferredName ? "cursor-not-allowed opacity-40" : ""}`}
-              value={contactName}
-              disabled={noPreferredName}
-              onChange={(e) => setContactName(e.target.value)}
-              placeholder={noPreferredName ? undefined : "Pat Lee"}
-            />
-            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
-              <input
-                type="checkbox"
-                checked={noPreferredName}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  if (checked) {
-                    setContactNameSaved(contactName);
-                    setContactName("");
-                    setNoPreferredName(true);
-                  } else {
-                    setContactName(contactNameSaved);
-                    setContactNameSaved("");
-                    setNoPreferredName(false);
-                  }
-                }}
-                className="checkbox-list"
-              />
-              No name
-            </label>
-          </div>
-          <div className="min-w-0">
-            <label className={labelClass}>Identity</label>
-            <input
-              className={`${inputClass} ${noHandle ? "cursor-not-allowed opacity-40" : ""}`}
-              value={handle}
-              disabled={noHandle}
-              onChange={(e) => setHandle(e.target.value)}
-              placeholder={noHandle ? undefined : "+15555550100"}
-            />
-            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
-              <input
-                type="checkbox"
-                checked={noHandle}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  if (checked) {
-                    setHandleSaved(handle);
-                    setHandle("");
-                    setLockedByNoHandle({
-                      services,
-                      firstMsgBound,
-                      lastMsgBound,
-                      activity,
-                    });
-                    setServices([]);
-                    setFirstMsgBound(EMPTY_DATE_BOUND);
-                    setLastMsgBound(EMPTY_DATE_BOUND);
-                    setActivity("any");
-                    setNoHandle(true);
-                  } else {
-                    setHandle(handleSaved);
-                    setHandleSaved("");
-                    if (lockedByNoHandle) {
-                      setServices(lockedByNoHandle.services);
-                      setFirstMsgBound(lockedByNoHandle.firstMsgBound);
-                      setLastMsgBound(lockedByNoHandle.lastMsgBound);
-                      setActivity(lockedByNoHandle.activity);
-                      setLockedByNoHandle(null);
-                    }
-                    setNoHandle(false);
-                  }
-                }}
-                className="checkbox-list"
-              />
-              No identity
-            </label>
-          </div>
-          <ServiceMultiSelect
-            value={services}
-            onChange={setServices}
-            isDisabled={noHandle}
-          />
-          <DateBoundField
-            label="First Seen"
-            value={firstMsgBound}
-            onChange={setFirstMsgBound}
-            isDisabled={noHandle}
-          />
-          <DateBoundField
-            label="Last Seen"
-            value={lastMsgBound}
-            onChange={setLastMsgBound}
-            isDisabled={noHandle}
-          />
-          <div className={`min-w-0 ${noHandle ? "opacity-40" : ""}`}>
-            <label className={labelClass}>Activity</label>
-            <Select
-              selectedKey={activity}
-              onSelectionChange={(k) => setActivity(k as ActivityFilter)}
-              aria-label="Activity"
-              className="w-full min-w-0"
-              triggerClassName={compactFieldTriggerClass}
-              isDisabled={noHandle}
-            >
-              <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
-              <SelectListBoxItem id="messages" className={compactSelectItemClassName}>Has messages</SelectListBoxItem>
-              <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>Never messaged</SelectListBoxItem>
-            </Select>
-          </div>
-        </div>
+        <ContactsSearchFields
+          contactName={contactName}
+          onContactNameChange={setContactName}
+          contactNameSaved={contactNameSaved}
+          onContactNameSavedChange={setContactNameSaved}
+          handle={handle}
+          onHandleChange={setHandle}
+          handleSaved={handleSaved}
+          onHandleSavedChange={setHandleSaved}
+          noPreferredName={noPreferredName}
+          onNoPreferredNameChange={setNoPreferredName}
+          noHandle={noHandle}
+          onNoHandleChange={setNoHandle}
+          services={services}
+          onServicesChange={setServices}
+          firstMsgBound={firstMsgBound}
+          onFirstMsgBoundChange={setFirstMsgBound}
+          lastMsgBound={lastMsgBound}
+          onLastMsgBoundChange={setLastMsgBound}
+          activity={activity}
+          onActivityChange={setActivity}
+          lockedByNoHandle={lockedByNoHandle}
+          onLockedByNoHandleChange={setLockedByNoHandle}
+        />
       )}
 
       <div className="mt-5 flex justify-start gap-2">
@@ -373,280 +155,6 @@ export default function AdvancedSearchForm({
           Search
         </Button>
         <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">Cancel</Button>
-      </div>
-    </div>
-  );
-}
-
-/** Compact DateField used under First/Last Seen operators (label is sr-only). */
-function BoundDateInput({
-  label,
-  pickAriaLabel,
-  value,
-  onChange,
-}: {
-  label: string;
-  pickAriaLabel: string;
-  value: string;
-  onChange: (next: string) => void;
-}) {
-  return (
-    <DateField
-      label={label}
-      pickAriaLabel={pickAriaLabel}
-      value={value}
-      onChange={onChange}
-      labelClassName="sr-only"
-      groupClassName={dateGroupClass}
-      className="min-w-0 w-full overflow-hidden"
-    />
-  );
-}
-
-/** Operator Select + date field(s) when not Any. */
-function DateBoundField({
-  label,
-  value,
-  onChange,
-  isDisabled = false,
-}: {
-  label: string;
-  value: DateBoundFilter;
-  onChange: (next: DateBoundFilter) => void;
-  isDisabled?: boolean;
-}) {
-  function setOp(op: DateBoundOp): void {
-    if (op === "any") {
-      onChange({ op: "any", start: "", end: "" });
-      return;
-    }
-    onChange({
-      op,
-      start: value.start,
-      end: op === "between" ? value.end : "",
-    });
-  }
-
-  let dateControls = null;
-  if (!isDisabled && value.op === "between") {
-    dateControls = (
-      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-        <BoundDateInput
-          label="Start"
-          pickAriaLabel={`${label} start`}
-          value={value.start}
-          onChange={(start) => onChange({ ...value, start })}
-        />
-        <BoundDateInput
-          label="End"
-          pickAriaLabel={`${label} end`}
-          value={value.end}
-          onChange={(end) => onChange({ ...value, end })}
-        />
-      </div>
-    );
-  } else if (!isDisabled && (value.op === "after" || value.op === "before")) {
-    dateControls = (
-      <div className="mt-1.5">
-        <BoundDateInput
-          label="Date"
-          pickAriaLabel={label}
-          value={value.start}
-          onChange={(start) => onChange({ ...value, start })}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className={`min-w-0 ${isDisabled ? "opacity-40" : ""}`}>
-      <label className={labelClass}>{label}</label>
-      <Select
-        selectedKey={value.op}
-        onSelectionChange={(k) => setOp(k as DateBoundOp)}
-        aria-label={`${label} comparison`}
-        className="w-full min-w-0"
-        triggerClassName={compactFieldTriggerClass}
-        isDisabled={isDisabled}
-      >
-        <SelectListBoxItem id="any" className={compactSelectItemClassName}>
-          Any
-        </SelectListBoxItem>
-        <SelectListBoxItem id="after" className={compactSelectItemClassName}>
-          On or after
-        </SelectListBoxItem>
-        <SelectListBoxItem id="before" className={compactSelectItemClassName}>
-          Before
-        </SelectListBoxItem>
-        <SelectListBoxItem id="between" className={compactSelectItemClassName}>
-          Between
-        </SelectListBoxItem>
-      </Select>
-      {dateControls}
-    </div>
-  );
-}
-
-/**
- * Multi-select without search — click the whole field to open.
- *
- * Uses a non-modal popover (no full-screen underlay) plus a controlled open
- * state and document mousedown listener. That lets one click close the list
- * and activate the clicked form control, without the modal underlay racing
- * Advanced Search's own outside-click dismiss handler.
- */
-function ServiceMultiSelect({
-  value,
-  onChange,
-  isDisabled = false,
-}: {
-  value: Key[];
-  onChange: (keys: Key[]) => void;
-  isDisabled?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const selectRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLElement>(null);
-
-  const selectedLabels = SERVICE_ITEMS.filter((item) => value.includes(item.id))
-    .map((item) => item.name)
-    .join(", ");
-
-  useEffect(() => {
-    if (isDisabled) setIsOpen(false);
-  }, [isDisabled]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const target = e.target;
-      if (!(target instanceof Node)) return;
-      if (selectRef.current?.contains(target)) return;
-      if (popoverRef.current?.contains(target)) return;
-      // Close only the Service list; do not stopPropagation so the same click
-      // can activate Search, another field, or dismiss Advanced Search.
-      setIsOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [isOpen]);
-
-  return (
-    <RACSelect<object, "multiple">
-      ref={selectRef}
-      selectionMode="multiple"
-      shouldCloseOnSelect={false}
-      isOpen={isDisabled ? false : isOpen}
-      onOpenChange={(open) => {
-        if (isDisabled) return;
-        setIsOpen(open);
-      }}
-      isDisabled={isDisabled}
-      value={value}
-      onChange={onChange}
-      placeholder="Any"
-      className={`w-full min-w-0 ${isDisabled ? "opacity-40" : ""}`}
-    >
-      <Label className={labelClass}>Service</Label>
-      <AriaButton
-        className={`box-border flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border border-border bg-bg px-2 py-1 text-[0.813rem] text-text outline-none focus:border-accent ${
-          isDisabled ? "cursor-not-allowed" : ""
-        }`}
-      >
-        <span className="min-w-0 truncate text-muted">
-          {value.length > 0 ? "Select…" : "Any"}
-        </span>
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden className="ml-1 shrink-0 text-muted">
-          <path
-            d="M2.5 3.5 5 6l2.5-2.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </AriaButton>
-      <Popover
-        ref={popoverRef}
-        data-mv-overlay=""
-        isNonModal
-        className={`z-[100] box-border w-[var(--trigger-width)] max-w-[var(--trigger-width)] rounded-md border border-border bg-popover p-1 outline-none ${popupShadow}`}
-      >
-        <ListBox className="outline-none">
-          {SERVICE_ITEMS.map((item) => (
-            <ListBoxItem
-              key={item.id}
-              id={item.id}
-              textValue={item.name}
-              className={compactSelectItemClassName}
-            >
-              {({ isSelected }) => (
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded border text-[0.625rem] ${
-                      isSelected
-                        ? "border-accent bg-accent text-sent-text"
-                        : "border-border bg-bg text-transparent"
-                    }`}
-                  >
-                    ✓
-                  </span>
-                  {item.name}
-                </div>
-              )}
-            </ListBoxItem>
-          ))}
-        </ListBox>
-      </Popover>
-      {selectedLabels ? (
-        <div className="mt-1 text-[0.75rem] leading-snug text-muted">{selectedLabels}</div>
-      ) : null}
-    </RACSelect>
-  );
-}
-
-function CountField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: CountFilterInput;
-  onChange: (next: CountFilterInput) => void;
-}) {
-  return (
-    <div>
-      <label className={labelClass}>{label}</label>
-      <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5">
-        <Select
-          selectedKey={value.comparator}
-          aria-label={`${label} comparison`}
-          triggerClassName={selectTriggerClass}
-          onSelectionChange={(k) => {
-            const comparator = k as CountComparator | "any";
-            onChange({
-              comparator,
-              value: comparator === "any" ? "" : value.value,
-            });
-          }}
-        >
-          <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
-          <SelectListBoxItem id="=" className={compactSelectItemClassName}>Equal to</SelectListBoxItem>
-          <SelectListBoxItem id=">" className={compactSelectItemClassName}>More than</SelectListBoxItem>
-          <SelectListBoxItem id="<" className={compactSelectItemClassName}>Less than</SelectListBoxItem>
-        </Select>
-        <input
-          type="number"
-          min={0}
-          step={1}
-          className={`${inputClass} ${value.comparator === "any" ? "opacity-40" : ""}`}
-          value={value.comparator === "any" ? "" : value.value}
-          disabled={value.comparator === "any"}
-          aria-label={`${label} value`}
-          onChange={(e) => onChange({ ...value, value: e.target.value })}
-        />
       </div>
     </div>
   );

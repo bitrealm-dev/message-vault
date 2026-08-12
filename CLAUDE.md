@@ -37,8 +37,16 @@ cargo build --workspace
 # Release build (substantially faster for real export work)
 cargo build --workspace --release
 
-# Build the web frontend only (Vite SPA)
-cd web && npm run build
+# Build / lint / test the Vite SPA under web/ (not web-next/)
+cd web && npm ci          # first time or after lockfile changes
+cd web && npm run lint    # ESLint (errors fail; warnings do not)
+cd web && npm test        # Vitest unit tests
+cd web && npm run build   # tsc typecheck + Vite production build
+
+# Fix frontend check failures: open the file:line from the tool output, prefer
+# a real fix, use a leading `_` for intentionally unused bindings, and avoid
+# broad eslint-disable. Config: web/eslint.config.js. Same lint/test commands
+# run on every push/PR to main (CI jobs Lint (web) and Test (web)).
 
 # Run all tests (uses committed fixtures, no personal backups needed)
 cargo test --workspace

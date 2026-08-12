@@ -1,6 +1,6 @@
 import type { MessageAttachment } from "./types";
 
-export function attachmentDisplayName(attachment: MessageAttachment): string {
+function attachmentDisplayName(attachment: MessageAttachment): string {
   if (attachment.original_name?.trim()) return attachment.original_name.trim();
   const path = attachment.path?.trim();
   if (path) {

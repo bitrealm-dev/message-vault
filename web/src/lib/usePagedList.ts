@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export const PAGE_SIZE_FIRST = 40;
-export const PAGE_SIZE_FILL = 100;
+const PAGE_SIZE_FILL = 100;
 /** Contacts catalog first page — large enough for typical vaults in one request. */
 export const PAGE_SIZE_CONTACTS_FIRST = 500;
 
-export type PagedFetchResult<T> = {
+type PagedFetchResult<T> = {
   items: T[];
   total: number;
 };
@@ -16,7 +16,7 @@ export type PagedFetchPage<T> = (args: {
   signal: AbortSignal;
 }) => Promise<PagedFetchResult<T>>;
 
-export type UsePagedListResult<T> = {
+type UsePagedListResult<T> = {
   items: T[];
   total: number;
   loading: boolean;
@@ -28,7 +28,7 @@ export type UsePagedListResult<T> = {
   loadMore: () => void;
 };
 
-export type UsePagedListOptions = {
+type UsePagedListOptions = {
   firstPageSize?: number;
   fillPageSize?: number;
 };

@@ -5,6 +5,7 @@ import {
   DisclosurePanel,
 } from "react-aria-components";
 import type { AttachmentMediaMode } from "../../lib/types";
+import FormField from "../../components/FormField";
 import { textInputClassName } from "../../components/TextField";
 export { default as DateField } from "../../components/DateField";
 
@@ -22,6 +23,7 @@ export const hintStyle = "mt-1 text-[0.75rem] text-muted";
 
 export const sectionGap = "mb-[1.1rem]";
 
+/** Stacked label + control; thin wrap around FormField. */
 export function StackedField({
   label,
   children,
@@ -32,13 +34,9 @@ export function StackedField({
   trailing?: ReactNode;
 }) {
   return (
-    <div className={sectionGap}>
-      <div className="flex items-baseline gap-3">
-        <label className="mb-1 block flex-1 text-[0.875rem] font-medium text-text">{label}</label>
-        {trailing}
-      </div>
+    <FormField label={label} layout="stacked" trailing={trailing}>
       {children}
-    </div>
+    </FormField>
   );
 }
 

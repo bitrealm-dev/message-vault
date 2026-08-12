@@ -28,7 +28,28 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "warn",
       "react-refresh/only-export-components": [
         "warn",
-        { allowConstantExport: true },
+        {
+          allowConstantExport: true,
+          // Co-located hooks/helpers stay in the same module as the component
+          // for now; splitting them is a follow-up, not a CI gate.
+          allowExportNames: [
+            "ATTACHMENT_OPTIONS",
+            "ListBoxItem",
+            "RESOLUTION_OPTIONS",
+            "bubbleBody",
+            "completionTextFor",
+            "fieldStyle",
+            "formatCompare",
+            "formatMessageTime",
+            "hintStyle",
+            "isGroupConversation",
+            "sectionGap",
+            "selectItemClassName",
+            "senderName",
+            "useAuth",
+            "useTheme",
+          ],
+        },
       ],
     },
   },

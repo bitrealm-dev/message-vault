@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { Message, MessageAttachment } from "../../lib/types";
 import { personDisplayLabel, readUseNameAliases } from "../../lib/nameAliases";
 import { highlightText } from "../../lib/highlightText";
@@ -172,6 +172,54 @@ export function ServiceRow({
     >
       {children}
     </div>
+  );
+}
+
+/**
+ * Shared branded-service row: ServiceRow + sender/time header.
+ * Color and optional header slots stay per-service; body is `children`.
+ */
+export function ServiceBubbleShell({
+  message,
+  isActive,
+  senderClassName,
+  senderStyle,
+  timeClassName = "text-[0.75rem] text-muted",
+  headerAlignClassName,
+  headerExtra,
+  children,
+}: {
+  message: Message;
+  isActive?: boolean;
+  senderClassName?: string;
+  senderStyle?: CSSProperties;
+  timeClassName?: string;
+  /** Extra flex alignment on the header row (e.g. `items-center`). */
+  headerAlignClassName?: string;
+  headerExtra?: ReactNode;
+  children: ReactNode;
+}) {
+  const mine = message.is_from_me;
+  return (
+    <ServiceRow messageId={message.id} isActive={isActive}>
+      <div
+        className={`mb-1 flex gap-2 ${headerAlignClassName ?? ""} ${
+          mine ? "justify-end" : "justify-start"
+        }`}
+      >
+        <span
+          className={`text-[0.75rem] font-semibold ${senderClassName ?? ""}`}
+          style={senderStyle}
+        >
+          {senderName(message)}
+        </span>
+        <span className={timeClassName}>
+          {formatMessageTime(message.timestamp)}
+        </span>
+        {headerExtra}
+      </div>
+      {children}
+    </ServiceRow>
   );
 }
 

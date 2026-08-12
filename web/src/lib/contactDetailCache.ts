@@ -29,7 +29,7 @@ export function getCachedContactDetail(id: string): CachedContactDetail | null {
   return cache.get(String(id)) ?? null;
 }
 
-export function setCachedContactDetail(detail: CachedContactDetail): void {
+function setCachedContactDetail(detail: CachedContactDetail): void {
   cache.set(String(detail.id), detail);
 }
 

@@ -176,6 +176,9 @@ export default function VirtualList({
       if (last.start === pending.start && last.end === pending.end) return;
       publish(pending);
     }, RANGE_REPORT_MS);
+    // Depend on start/end primitives, not `nextRange` object identity — a new
+    // range object each render would defeat the throttle and re-fire forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nextRange.start/end
   }, [nextRange.start, nextRange.end, count, nearEndThreshold]);
 
   useEffect(() => {

@@ -1,4 +1,17 @@
 import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
+import { formatIsoDateOnly } from "../../lib/formatDate";
+
+export type {
+  ContactIdentityService,
+  HandleService,
+} from "../../lib/handleService";
+export {
+  CONTACT_IDENTITY_SERVICE_OPTIONS as HANDLE_SERVICE_OPTIONS,
+  CONTACT_IDENTITY_SERVICES,
+  formatHandleServiceLabel,
+  handleServiceSelectValue,
+  inferService,
+} from "../../lib/handleService";
 
 /** Lightweight row data so the drawer can paint before the detail API returns. */
 export type ContactPreview = {
@@ -9,64 +22,9 @@ export type ContactPreview = {
 
 export type ContactBrowseKind = "all" | "direct" | "group";
 
-/** Messaging service choices for the handles table Add/Edit controls. */
-export const HANDLE_SERVICE_OPTIONS = [
-  { value: "phone", label: "Text message" },
-  { value: "whatsapp", label: "WhatsApp" },
-] as const;
-
-export function inferService(handle: string, service: string | null | undefined): string {
-  if (service && service.trim()) return service.trim().toLowerCase();
-  const h = handle.trim();
-  if (h.includes("@") && !h.startsWith("@")) return "email";
-  if (/^\+?\d[\d\s().-]{6,}$/.test(h)) return "phone";
-  return "unknown";
-}
-
-/** User-facing service label for the handles table Service column. */
-export function formatHandleServiceLabel(
-  handle: string,
-  service: string | null | undefined,
-): string {
-  const lower = inferService(handle, service);
-  if (lower === "whatsapp") return "WhatsApp";
-  if (
-    lower === "phone" ||
-    lower === "sms" ||
-    lower === "mms" ||
-    lower === "sms/mms" ||
-    lower === "imessage" ||
-    lower === "ios" ||
-    lower === "rcs"
-  ) {
-    return "Text message";
-  }
-  if (lower === "email") return "Email";
-  if (lower === "unknown") return "—";
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
-
-/** Map an API/inferred service id onto a HANDLE_SERVICE_OPTIONS value. */
-export function handleServiceSelectValue(
-  handle: string,
-  service: string | null | undefined,
-): "phone" | "whatsapp" {
-  return inferService(handle, service) === "whatsapp" ? "whatsapp" : "phone";
-}
-
 /** Format an API ISO timestamp as YYYY-MM-DD for the handles table. */
 export function formatHandleDate(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    // Already a date-only string, or unparseable — take the leading YYYY-MM-DD if present.
-    const m = iso.match(/^(\d{4}-\d{2}-\d{2})/);
-    return m ? m[1] : null;
-  }
-  const y = d.getUTCFullYear();
-  const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${mo}-${day}`;
+  return formatIsoDateOnly(iso);
 }
 
 export function emptyHandleRow(handle: string): CachedContactHandle {

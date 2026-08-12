@@ -5,9 +5,10 @@ import {
   RadioGroup,
   ToggleButton,
 } from "react-aria-components";
-import { type ThemeMode, type ThemeSeeds } from "../lib/theme";
+import { type ThemeSeeds } from "../lib/theme";
 import { useTheme } from "../lib/ThemeProvider";
 import { ColorRow, formatCompare } from "./theme/ThemeColorRow";
+import { parseSelectKey } from "../lib/selectKey";
 
 const SEED_FIELDS: {
   key: keyof ThemeSeeds;
@@ -85,7 +86,10 @@ export default function ThemeSettings() {
         // value matching no radio ("system") would drop every radio's
         // tabindex and make the picker unreachable by keyboard.
         value={resolvedMode}
-        onChange={(value) => setMode(value as ThemeMode)}
+        onChange={(value) => {
+          const mode = parseSelectKey(value, ["light", "dark"] as const);
+          if (mode) setMode(mode);
+        }}
         aria-label="Color mode"
         className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2"
       >

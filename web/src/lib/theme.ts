@@ -21,9 +21,6 @@ export type ThemePreset = {
 export const THEME_MODE_KEY = "mv-theme";
 export const THEME_SEEDS_KEY = "mv-theme-seeds";
 
-/** @deprecated use THEME_MODE_KEY — kept for older localStorage values */
-export const THEME_STORAGE_KEY = THEME_MODE_KEY;
-
 export const DEFAULT_MODE: ThemeMode = "dark";
 
 /** Ocean Depths — theme-factory default. */
@@ -163,12 +160,12 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
-export function isThemeMode(value: string | null | undefined): value is ThemeMode {
+function isThemeMode(value: string | null | undefined): value is ThemeMode {
   return value === "light" || value === "dark" || value === "system";
 }
 
 /** Legacy: treat bare light/dark as mode (not system). */
-export function isResolvedTheme(
+function isResolvedTheme(
   value: string | null | undefined,
 ): value is ResolvedTheme {
   return value === "light" || value === "dark";
@@ -211,7 +208,7 @@ export function parseThemeShare(raw: string): ThemeSeeds | null {
   };
 }
 
-export function parseStoredSeeds(raw: string | null): ThemeSeeds | null {
+function parseStoredSeeds(raw: string | null): ThemeSeeds | null {
   if (!raw) return null;
   const asShare = parseThemeShare(raw);
   if (asShare) return asShare;
@@ -237,7 +234,7 @@ export function parseStoredSeeds(raw: string | null): ThemeSeeds | null {
   }
 }
 
-export function prefersDarkScheme(): boolean {
+function prefersDarkScheme(): boolean {
   if (typeof window === "undefined") return true;
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -250,7 +247,7 @@ export function resolveMode(
   return mode;
 }
 
-export function activeSeeds(
+function activeSeeds(
   seeds: ThemeSeeds,
   resolved: ResolvedTheme,
 ): { header: string; accent: string } {
@@ -284,8 +281,4 @@ export function readStoredSeeds(): ThemeSeeds {
   return parseStoredSeeds(window.localStorage.getItem(THEME_SEEDS_KEY)) ?? DEFAULT_SEEDS;
 }
 
-/**
- * Inline FOUC boot: set data-theme + --header/--accent from localStorage
- * before first paint. Surfaces derive in CSS via color-mix.
- */
-export const THEME_BOOT_SCRIPT = `(function(){try{var mk=${JSON.stringify(THEME_MODE_KEY)};var sk=${JSON.stringify(THEME_SEEDS_KEY)};var defH=${JSON.stringify(DEFAULT_SEEDS.darkHeader)};var defA=${JSON.stringify(DEFAULT_SEEDS.darkAccent)};var defLH=${JSON.stringify(DEFAULT_SEEDS.lightHeader)};var defLA=${JSON.stringify(DEFAULT_SEEDS.lightAccent)};var mode=localStorage.getItem(mk);if(mode!=="light"&&mode!=="dark"&&mode!=="system")mode="dark";var dark=mode==="dark"||(mode==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var seeds=null;try{var raw=localStorage.getItem(sk);if(raw){if(raw.charAt(0)==="{"){seeds=JSON.parse(raw);}else{var p=raw.split(/[,\\s]+/).filter(Boolean);if(p.length===4)seeds={lightHeader:p[0],lightAccent:p[1],darkHeader:p[2],darkAccent:p[3]};}}}catch(e){}var h=dark?(seeds&&seeds.darkHeader||defH):(seeds&&seeds.lightHeader||defLH);var a=dark?(seeds&&seeds.darkAccent||defA):(seeds&&seeds.lightAccent||defLA);var r=document.documentElement;r.setAttribute("data-theme",dark?"dark":"light");r.style.setProperty("--header",h);r.style.setProperty("--accent",a);}catch(e){var r2=document.documentElement;r2.setAttribute("data-theme","dark");r2.style.setProperty("--header",${JSON.stringify(DEFAULT_SEEDS.darkHeader)});r2.style.setProperty("--accent",${JSON.stringify(DEFAULT_SEEDS.darkAccent)});}})();`;
+// FOUC boot script lives in web/index.html (must run before first paint).

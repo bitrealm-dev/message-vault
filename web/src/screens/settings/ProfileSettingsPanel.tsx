@@ -1,35 +1,32 @@
 import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
+import type { AccountProfile } from "../../lib/account";
+import { useAccountProfile } from "../../lib/useAccountProfile";
+import {
+  HANDLE_SERVICE_OPTIONS,
+  HANDLE_SERVICES,
+  type HandleService,
+} from "../../lib/handleService";
 import Button from "../../components/Button";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
-import {
-  type AccountProfile,
-  inputClassName,
-  sectionTitleClass,
-} from "./profileStyles";
+import { parseSelectKey } from "../../lib/selectKey";
+import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Profile settings: display name and phone/email/WhatsApp handles. */
 export function ProfileSettingsPanel() {
-  const [profile, setProfile] = useState<AccountProfile | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const { profile, setProfile, loading, error: loadError } = useAccountProfile();
   const [name, setName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState("");
 
   const [newHandle, setNewHandle] = useState("");
-  const [newHandleService, setNewHandleService] = useState<"phone" | "email" | "whatsapp">("phone");
+  const [newHandleService, setNewHandleService] = useState<HandleService>("phone");
   const [handleError, setHandleError] = useState("");
   const [handleBusy, setHandleBusy] = useState(false);
 
   useEffect(() => {
-    apiClient
-      .get<AccountProfile>("/v1/account/profile")
-      .then((p) => {
-        setProfile(p);
-        setName(p.preferred_name ?? "");
-      })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)));
-  }, []);
+    if (profile) setName(profile.preferred_name ?? "");
+  }, [profile]);
 
   if (loadError) {
     return (
@@ -39,7 +36,7 @@ export function ProfileSettingsPanel() {
     );
   }
 
-  if (!profile) {
+  if (loading || !profile) {
     return <div className="text-muted">Loading…</div>;
   }
 
@@ -176,13 +173,18 @@ export function ProfileSettingsPanel() {
       <div className="mb-[0.35rem] flex flex-wrap items-center gap-2">
         <Select
           selectedKey={newHandleService}
-          onSelectionChange={(k) => setNewHandleService(k as "phone" | "email" | "whatsapp")}
+          onSelectionChange={(k) => {
+            const service = parseSelectKey(k, HANDLE_SERVICES);
+            if (service) setNewHandleService(service);
+          }}
           aria-label="Handle service"
           className="shrink-0 min-w-[7rem]"
         >
-          <ListBoxItem id="phone" className={selectItemClassName}>Phone</ListBoxItem>
-          <ListBoxItem id="email" className={selectItemClassName}>Email</ListBoxItem>
-          <ListBoxItem id="whatsapp" className={selectItemClassName}>WhatsApp</ListBoxItem>
+          {HANDLE_SERVICE_OPTIONS.map((s) => (
+            <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
+              {s.label}
+            </ListBoxItem>
+          ))}
         </Select>
         <input
           type="text"

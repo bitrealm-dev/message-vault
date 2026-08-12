@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState } from "react";
 import { apiClient } from "../lib/api";
+import { formatLocaleDate } from "../lib/formatDate";
+import { useResource } from "../lib/useResource";
 import Button from "../components/Button";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -11,28 +13,31 @@ interface TrashEntry {
   conversation_exists: boolean;
 }
 
+const TRASH_RESOURCE_KEY = "trash";
+
 export default function TrashScreen() {
-  const [entries, setEntries] = useState<TrashEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchTrash = () => {
-    setLoading(true);
-    apiClient
-      .get<{ trash: TrashEntry[] }>("/v1/export/trash")
-      .then((res) => setEntries(res.trash))
-      .catch(() => setEntries([]))
-      .finally(() => setLoading(false));
-  };
+  const fetchTrash = useCallback(async (signal: AbortSignal) => {
+    const res = await apiClient.get<{ trash: TrashEntry[] }>("/v1/export/trash", {
+      signal,
+    });
+    return res.trash;
+  }, []);
 
-  useEffect(() => { fetchTrash(); }, []);
+  const { data, loading, error, reload } = useResource(
+    TRASH_RESOURCE_KEY,
+    fetchTrash,
+  );
+
+  const entries = data ?? [];
 
   const restore = async (id: string) => {
     await apiClient.post(`/v1/trash/${id}/restore`);
     setMessage("Conversation restored.");
-    fetchTrash();
+    reload();
   };
 
   const emptyTrash = async () => {
@@ -40,7 +45,7 @@ export default function TrashScreen() {
     try {
       await apiClient.post("/v1/trash/empty");
       setMessage("Trash emptied.");
-      fetchTrash();
+      reload();
     } finally {
       setDeleting(false);
       setConfirmOpen(false);
@@ -60,6 +65,11 @@ export default function TrashScreen() {
           </Button>
         )}
       </div>
+      {error && (
+        <div className="mb-4 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger">
+          {error}
+        </div>
+      )}
       {message && (
         <div className="mb-4 rounded bg-ok-soft-bg px-3 py-2 text-[0.813rem] text-ok-soft-text">
           {message}
@@ -73,7 +83,7 @@ export default function TrashScreen() {
             <div>
               <div className="text-[0.875rem] font-medium">{entry.label}</div>
               <div className="text-[0.75rem] text-muted">
-                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {new Date(entry.deleted_at).toLocaleDateString()}
+                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {formatLocaleDate(entry.deleted_at)}
               </div>
             </div>
             <Button onClick={() => restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">

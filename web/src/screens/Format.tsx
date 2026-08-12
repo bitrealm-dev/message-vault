@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { invokeFormat } from "../lib/tauri";
 import { useTauriJob } from "../hooks/useTauriJob";
-import BackToLoginLink from "../components/BackToLoginLink";
+import TauriJobFormShell from "../components/TauriJobFormShell";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
-import ProgressBar from "../components/ProgressBar";
-import Button from "../components/Button";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 
 const FORMATS = [
@@ -30,10 +28,27 @@ export default function Format({
   const { running, log, start, cancel } = useTauriJob({ onError });
 
   return (
-    <div className="max-w-[700px] p-6">
-      <BackToLoginLink onBack={onBack} />
-      <h2 className="m-0 mb-6">Format Conversion</h2>
-
+    <TauriJobFormShell
+      title="Format Conversion"
+      onBack={onBack}
+      startLabel="Convert"
+      runningLabel="Converting…"
+      running={running}
+      log={log}
+      startDisabled={!inputDir || !outputDir}
+      onStart={() =>
+        void start(
+          () =>
+            invokeFormat({
+              input_dir: inputDir,
+              output_dir: outputDir,
+              output_format: outputFormat,
+            }),
+          "Error starting format",
+        )
+      }
+      onCancel={cancel}
+    >
       <FormRow label="Input directory">
         <PathPicker
           value={inputDir}
@@ -61,34 +76,6 @@ export default function Format({
           ))}
         </Select>
       </FormRow>
-
-      <div className="mt-6 flex gap-3">
-        <Button
-          variant="primary"
-          onClick={() =>
-            start(
-              () =>
-                invokeFormat({
-                  input_dir: inputDir,
-                  output_dir: outputDir,
-                  output_format: outputFormat,
-                }),
-              "Error starting format",
-            )
-          }
-          disabled={running || !inputDir || !outputDir}
-          className="!px-6 !py-2"
-        >
-          {running ? "Converting…" : "Convert"}
-        </Button>
-        <Button onClick={cancel} disabled={!running} className="!px-6 !py-2">
-          Cancel
-        </Button>
-      </div>
-
-      <div className="mt-6">
-        <ProgressBar log={log} running={running} />
-      </div>
-    </div>
+    </TauriJobFormShell>
   );
 }

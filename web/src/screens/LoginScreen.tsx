@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { isTauri } from "../lib/tauri-check";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import TextField from "../components/TextField";
+import PasswordField from "../components/PasswordField";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
 import Button from "../components/Button";
@@ -16,8 +18,7 @@ import {
 } from "../lib/uiStyles";
 import ExtractScreen from "./Extract";
 import FormatScreen from "./Format";
-
-type AuthMode = "hanko" | "local" | null;
+import { isAuthMode, type AuthMode } from "../lib/authGuards";
 
 interface AuthModeResponse {
   mode: string;
@@ -31,63 +32,58 @@ export default function LoginScreen() {
     if (typeof savedUrl === "string" && savedUrl.length > 0) return savedUrl;
     return isTauri() ? "http://localhost:8080" : "";
   });
-  const [authMode, setAuthMode] = useState<AuthMode>(null);
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run, clearError } = useAsyncAction();
+  const [hankoError, setHankoError] = useState("");
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const hankoRef = useRef<HTMLDivElement>(null);
   const [offlineScreen, setOfflineScreen] = useState<"none" | "extract" | "format">("none");
 
-  const detectMode = async () => {
-    setLoading(true);
-    setError("");
+  const displayError = error || hankoError;
+
+  const detectMode = () => {
     setAuthMode(null);
-    try {
-      const url = serverUrl.trim();
-      setBaseUrl(url);
-      const res = await apiClient.get<AuthModeResponse>("/v1/auth/mode");
-      setAuthMode(res.mode as AuthMode);
-      setHankoApiUrl(res.hanko_api_url || null);
-      setAuthServer(url);
-    } catch {
-      setError(
-        isTauri()
-          ? "Could not reach server. Check the URL and try again."
-          : "Could not reach server. Leave the URL blank for this origin (Vite proxy / vault UI), or enter an absolute vault URL.",
-      );
-    } finally {
-      setLoading(false);
-    }
+    void run(async () => {
+      try {
+        const url = serverUrl.trim();
+        setBaseUrl(url);
+        const res = await apiClient.get<AuthModeResponse>("/v1/auth/mode");
+        setAuthMode(isAuthMode(res.mode) ? res.mode : null);
+        setHankoApiUrl(res.hanko_api_url || null);
+        setAuthServer(url);
+      } catch {
+        throw new Error(
+          isTauri()
+            ? "Could not reach server. Check the URL and try again."
+            : "Could not reach server. Leave the URL blank for this origin (Vite proxy / vault UI), or enter an absolute vault URL.",
+        );
+      }
+    });
   };
 
-  const handleLocalLogin = async () => {
-    if (!username.trim()) {
-      setError("Username is required.");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
+  const handleLocalLogin = () => {
+    void run(async () => {
+      if (!username.trim()) {
+        throw new Error("Username is required.");
+      }
       const res = await apiClient.post<{
         token: string;
         account_id: string;
       }>("/v1/auth/login", { username, password });
       login(serverUrl.trim(), res.token, res.account_id);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const changeServer = () => {
     setAuthMode(null);
     setHankoApiUrl(null);
-    setError("");
+    clearError();
+    setHankoError("");
   };
 
   // Wire Hanko elements when in hanko mode
@@ -104,7 +100,7 @@ export default function LoginScreen() {
         // Register the Hanko auth web component
         mod.register(hankoApiUrl).catch(() => {
           if (!cancelled) {
-            setError("Failed to load Hanko sign-in.");
+            setHankoError("Failed to load Hanko sign-in.");
           }
         });
 
@@ -113,19 +109,15 @@ export default function LoginScreen() {
 
         const remove = hanko.onSessionCreated(() => {
           if (cancelled) return;
-          void (async () => {
-            try {
-              const jwt = hanko.getSessionToken();
-              setBaseUrl(serverUrl.trim());
-              const res = await apiClient.post<{
-                token: string;
-                account_id: string;
-              }>("/v1/auth/hanko/session", { hanko_jwt: jwt });
-              login(serverUrl.trim(), res.token, res.account_id);
-            } catch (e) {
-              setError(`Hanko login failed: ${e}`);
-            }
-          })();
+          void run(async () => {
+            const jwt = hanko.getSessionToken();
+            setBaseUrl(serverUrl.trim());
+            const res = await apiClient.post<{
+              token: string;
+              account_id: string;
+            }>("/v1/auth/hanko/session", { hanko_jwt: jwt });
+            login(serverUrl.trim(), res.token, res.account_id);
+          });
         });
 
         return () => {
@@ -133,7 +125,7 @@ export default function LoginScreen() {
         };
       } catch {
         if (!cancelled) {
-          setError("Failed to load Hanko. Is @teamhanko/hanko-elements installed?");
+          setHankoError("Failed to load Hanko. Is @teamhanko/hanko-elements installed?");
         }
       }
     };
@@ -143,7 +135,7 @@ export default function LoginScreen() {
     return () => {
       cancelled = true;
     };
-  }, [authMode, hankoApiUrl, serverUrl, login]);
+  }, [authMode, hankoApiUrl, serverUrl, login, run]);
 
   if (offlineScreen === "extract") {
     return <ExtractScreen onBack={() => setOfflineScreen("none")} />;
@@ -176,10 +168,10 @@ export default function LoginScreen() {
               <Button
                 variant="primary"
                 onClick={detectMode}
-                disabled={loading}
+                disabled={busy}
                 className="!px-4 !py-2"
               >
-                {loading ? "Connecting…" : "Connect"}
+                {busy ? "Connecting…" : "Connect"}
               </Button>
             </div>
             {!isTauri() && (
@@ -218,7 +210,7 @@ export default function LoginScreen() {
               </>
             )}
 
-            <AuthErrorFooter error={error} />
+            <AuthErrorFooter error={displayError} />
           </>
         )}
 
@@ -233,12 +225,13 @@ export default function LoginScreen() {
             />
 
             <label className={`${authLabel} mt-3`}>Password</label>
-            <TextField
-              type="password"
+            <PasswordField
               value={password}
               onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
               autoComplete="current-password"
+              showPassword={showPassword}
+              onToggle={() => setShowPassword((v) => !v)}
             />
 
             <div className="mt-6 flex justify-end gap-3">
@@ -248,13 +241,13 @@ export default function LoginScreen() {
               <Button
                 variant="primary"
                 onClick={handleLocalLogin}
-                disabled={loading}
+                disabled={busy}
               >
-                {loading ? "Signing in…" : "Sign in"}
+                {busy ? "Signing in…" : "Sign in"}
               </Button>
             </div>
 
-            <AuthErrorFooter error={error} />
+            <AuthErrorFooter error={displayError} />
           </>
         )}
 
@@ -270,7 +263,7 @@ export default function LoginScreen() {
               )}
             </div>
 
-            <AuthErrorFooter error={error} />
+            <AuthErrorFooter error={displayError} />
           </>
         )}
 

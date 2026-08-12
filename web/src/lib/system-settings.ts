@@ -3,9 +3,9 @@
 import { invokeHomeDir } from "./tauri";
 import { isTauri } from "./tauri-check";
 
-export const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
-export const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
-export const IMPORTER_PATHS_KEY = "mv-importer-paths";
+const VAULT_WORKING_DIR_KEY = "mv-vault-working-dir";
+const REMEMBER_IMPORTER_PATHS_KEY = "mv-remember-importer-paths";
+const IMPORTER_PATHS_KEY = "mv-importer-paths";
 
 let cachedHomeDir: string | null = null;
 let homeDirPromise: Promise<string> | null = null;
@@ -50,7 +50,7 @@ export async function getHomeDir(): Promise<string> {
 }
 
 /** Stored working dir, or OS home when unset. */
-export async function getEffectiveVaultWorkingDir(): Promise<string> {
+async function getEffectiveVaultWorkingDir(): Promise<string> {
   const stored = getVaultWorkingDir();
   if (stored) return stored;
   return getHomeDir();
@@ -114,14 +114,14 @@ export function setImporterPath(sourceId: string, path: string): void {
  * Importer slug in staging folder names — matches Slint GUI
  * (`crates/message-vault-io-gui/src/staging.rs`).
  */
-export function importerSlugForSource(sourceId: string): string {
+function importerSlugForSource(sourceId: string): string {
   if (sourceId === "imessage-ios") return "iphone-ios";
   if (sourceId === "imessage-macos") return "macos";
   return sourceId;
 }
 
 /** Local `YYMMDD-HHMMSS` — same shape as Slint `chrono` `%y%m%d-%H%M%S`. */
-export function formatStagingTimestamp(now: Date = new Date()): string {
+function formatStagingTimestamp(now: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const yy = pad(now.getFullYear() % 100);
   const mm = pad(now.getMonth() + 1);
@@ -133,7 +133,7 @@ export function formatStagingTimestamp(now: Date = new Date()): string {
 }
 
 /** `staging-<importer>-YYMMDD-HHMMSS` — matches Slint `staging_dir_name`. */
-export function stagingDirName(sourceId: string, now: Date = new Date()): string {
+function stagingDirName(sourceId: string, now: Date = new Date()): string {
   return `staging-${importerSlugForSource(sourceId)}-${formatStagingTimestamp(now)}`;
 }
 

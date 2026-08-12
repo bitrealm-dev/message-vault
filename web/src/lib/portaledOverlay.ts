@@ -10,21 +10,6 @@ const PORTALED_OVERLAY_SELECTOR = [
   "[data-testid='underlay']",
 ].join(", ");
 
-function elementFromEventTarget(target: EventTarget | null): Element | null {
-  if (target instanceof Element) return target;
-  if (target instanceof Node) return target.parentElement;
-  return null;
-}
-
-/**
- * True when the event target is inside a portaled overlay (or is a text node
- * inside one). Outside-click handlers should ignore these so Select/Date menus
- * do not dismiss the parent panel.
- */
-export function isPortaledOverlayTarget(target: EventTarget | null): boolean {
-  return Boolean(elementFromEventTarget(target)?.closest(PORTALED_OVERLAY_SELECTOR));
-}
-
 /**
  * True when an outside-click should leave a parent panel open.
  *

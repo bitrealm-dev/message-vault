@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient } from "../lib/api";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import {
   accentLink,
   authCard,
@@ -13,17 +14,17 @@ import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
+import {
+  HANDLE_SERVICE_OPTIONS,
+  HANDLE_SERVICES,
+  type HandleService,
+} from "../lib/handleService";
+import { parseSelectKey } from "../lib/selectKey";
 
 interface HandleInput {
   handle: string;
-  service: string;
+  service: HandleService;
 }
-
-const SERVICES: { value: string; label: string }[] = [
-  { value: "phone", label: "Phone Number" },
-  { value: "email", label: "Email" },
-  { value: "whatsapp", label: "WhatsApp" },
-];
 
 export default function OnboardingScreen() {
   const { login, logout, token, serverUrl, accountId } = useAuth();
@@ -31,8 +32,7 @@ export default function OnboardingScreen() {
   const [handles, setHandles] = useState<HandleInput[]>([
     { handle: "", service: "phone" },
   ]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAsyncAction();
 
   const addHandle = () => {
     setHandles([...handles, { handle: "", service: "phone" }]);
@@ -40,11 +40,17 @@ export default function OnboardingScreen() {
 
   const updateHandle = (
     index: number,
-    field: keyof HandleInput,
+    field: "handle" | "service",
     value: string,
   ) => {
     const next = [...handles];
-    next[index] = { ...next[index], [field]: value };
+    if (field === "service") {
+      const service = parseSelectKey(value, HANDLE_SERVICES);
+      if (!service) return;
+      next[index] = { ...next[index], service };
+    } else {
+      next[index] = { ...next[index], handle: value };
+    }
     setHandles(next);
   };
 
@@ -53,10 +59,8 @@ export default function OnboardingScreen() {
     setHandles(handles.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = async () => {
-    setLoading(true);
-    setError("");
-    try {
+  const handleSubmit = () => {
+    void run(async () => {
       await apiClient.post("/v1/account/profile", {
         preferred_name: displayName.trim(),
         handles: handles
@@ -68,11 +72,7 @@ export default function OnboardingScreen() {
       });
       // Re-run login so needsOnboarding is recomputed from the saved profile
       await login(serverUrl, token!, accountId!);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const canSubmit =
@@ -109,10 +109,13 @@ export default function OnboardingScreen() {
           >
             <Select
               selectedKey={h.service}
-              onSelectionChange={(k) => updateHandle(i, "service", String(k))}
+              onSelectionChange={(k) => {
+                const service = parseSelectKey(k, HANDLE_SERVICES);
+                if (service) updateHandle(i, "service", service);
+              }}
               className="w-[140px] shrink-0"
             >
-              {SERVICES.map((s) => (
+              {HANDLE_SERVICE_OPTIONS.map((s) => (
                 <ListBoxItem key={s.value} id={s.value} className={selectItemClassName}>
                   {s.label}
                 </ListBoxItem>
@@ -149,8 +152,8 @@ export default function OnboardingScreen() {
           + Add another account
         </button>
 
-        <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || loading}>
-          {loading ? "Saving…" : "Continue to Vault"}
+        <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || busy}>
+          {busy ? "Saving…" : "Continue to Vault"}
         </AuthSubmitButton>
 
         <button type="button" onClick={logout} className={`${accentLink} mt-3 block w-full text-center`}>

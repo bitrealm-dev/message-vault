@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation } from "../lib/types";
 import ConversationRow from "../components/ConversationRow";
+import ListRangeHeader from "../components/ListRangeHeader";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import {
   formatVisibleRange,
@@ -18,32 +19,17 @@ type ConversationsPage = {
   offset: number;
 };
 
-export type ConversationAutoSelect = "first" | "sole";
-
 export default function ConversationList({
   selectedId,
   onSelect,
   query,
-  autoSelect = null,
-  onAutoSelectDone,
 }: {
   selectedId: string | null;
   onSelect: (conversation: Conversation) => void;
   query: string;
-  autoSelect?: ConversationAutoSelect | null;
-  onAutoSelectDone?: () => void;
 }) {
   const [debouncedQ, setDebouncedQ] = useState(query);
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
-  const autoSelectRef = useRef(autoSelect);
-  autoSelectRef.current = autoSelect;
-  const onAutoSelectDoneRef = useRef(onAutoSelectDone);
-  onAutoSelectDoneRef.current = onAutoSelectDone;
-  const didAutoSelectRef = useRef(false);
-
-  useEffect(() => {
-    didAutoSelectRef.current = false;
-  }, [autoSelect, query]);
 
   useEffect(() => {
     // Structured filters should apply immediately (no debounce flicker/empty wait).
@@ -85,33 +71,6 @@ export default function ConversationList({
     loadMore,
   } = usePagedList(debouncedQ, fetchPage);
 
-  useEffect(() => {
-    if (loading || didAutoSelectRef.current) return;
-    const mode = autoSelectRef.current;
-    if (!mode) return;
-
-    if (mode === "first" && conversations[0]) {
-      didAutoSelectRef.current = true;
-      onSelect(conversations[0]);
-      onAutoSelectDoneRef.current?.();
-      return;
-    }
-    if (mode === "sole" && conversations.length === 1 && total === 1) {
-      didAutoSelectRef.current = true;
-      onSelect(conversations[0]);
-      onAutoSelectDoneRef.current?.();
-      return;
-    }
-    if (mode === "sole" && !loading && (conversations.length === 0 || total !== 1)) {
-      didAutoSelectRef.current = true;
-      onAutoSelectDoneRef.current?.();
-    }
-    if (mode === "first" && !loading && conversations.length === 0) {
-      didAutoSelectRef.current = true;
-      onAutoSelectDoneRef.current?.();
-    }
-  }, [loading, conversations, total, onSelect]);
-
   const rangeLabel =
     loading && conversations.length === 0
       ? "Loading…"
@@ -121,10 +80,6 @@ export default function ConversationList({
           total,
           conversations.length,
         );
-
-  let activitySuffix = "";
-  if (refreshing) activitySuffix = " · updating…";
-  else if (filling) activitySuffix = " · loading more…";
 
   if (error && conversations.length === 0) {
     return (
@@ -136,10 +91,11 @@ export default function ConversationList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-border px-3 py-1.5 text-[0.688rem] text-muted">
-        {rangeLabel}
-        {activitySuffix}
-      </div>
+      <ListRangeHeader
+        rangeLabel={rangeLabel}
+        refreshing={refreshing}
+        filling={filling}
+      />
       <VirtualList
         count={conversations.length}
         estimateSize={64}
