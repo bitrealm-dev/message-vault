@@ -29,7 +29,7 @@ describe("fresh vault schema", () => {
     ensureVaultSchema(db);
     const contract = JSON.parse(
       fs.readFileSync(
-        path.join(process.cwd(), "..", "fixtures", "schema", "current-schema.json"),
+        path.join(process.cwd(), "..", "tests", "fixtures", "schema", "current-schema.json"),
         "utf8",
       ),
     ) as {

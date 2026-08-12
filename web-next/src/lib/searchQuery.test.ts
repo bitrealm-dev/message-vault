@@ -21,6 +21,7 @@ describe("parseSearchQuery goldens", () => {
   const casesPath = path.join(
     process.cwd(),
     "..",
+    "tests",
     "fixtures",
     "search",
     "parse-cases.json",

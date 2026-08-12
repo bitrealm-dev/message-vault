@@ -291,7 +291,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         ensure_vault_schema(&conn).unwrap();
         let contract: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../fixtures/schema/current-schema.json"
+            "../../../../../tests/fixtures/schema/current-schema.json"
         ))
         .unwrap();
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Copy schema/sql/*.sql into web-next/src/lib/vaultSchema.generated.ts.
- * Optionally refresh fixtures/schema/current-schema.json from a fresh apply.
+ * Optionally refresh tests/fixtures/schema/current-schema.json from a fresh apply.
  *
  * Usage:
  *   node scripts/sync-vault-schema.mjs
@@ -24,6 +24,7 @@ const generatedPath = path.join(
 );
 const fixturePath = path.join(
   root,
+  "tests",
   "fixtures",
   "schema",
   "current-schema.json",

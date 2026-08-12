@@ -13,7 +13,7 @@ type Case = {
 };
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const casesPath = path.join(root, "fixtures", "search", "parse-cases.json");
+const casesPath = path.join(root, "tests", "fixtures", "search", "parse-cases.json");
 
 const cases = JSON.parse(fs.readFileSync(casesPath, "utf8")) as Case[];
 for (const c of cases) {

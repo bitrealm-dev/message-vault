@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Fill fixtures/search/parse-cases.json `expected` from TypeScript parseSearchQuery.
+ * Fill tests/fixtures/search/parse-cases.json `expected` from TypeScript parseSearchQuery.
  *
  * Usage (from repo root):
  *   node scripts/regen-search-goldens.mjs
