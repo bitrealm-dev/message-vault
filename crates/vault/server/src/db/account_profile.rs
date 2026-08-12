@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
-use message_ir::{HandleService, HandleType};
+use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::handles::normalize_handle;
+use crate::db::handles::{normalize_handle, upsert_handle_row};
 use crate::db::schema;
 
 /// Account identity loaded for profile display: the handles migration replaced the
@@ -96,27 +96,7 @@ pub fn link_account_handle_with_service(
     handle_type: HandleType,
     service: Option<&str>,
 ) -> Result<i64> {
-    let (normalized, note) = normalize_handle(raw, handle_type);
-    let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
-    let service_str = platform.as_str();
-    conn.execute(
-        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            account_id,
-            raw,
-            normalized,
-            note,
-            handle_type.as_str(),
-            service_str
-        ],
-    )?;
-    let handle_id: i64 = conn.query_row(
-        "SELECT id FROM handles
-         WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3 AND service = ?4",
-        params![account_id, normalized, handle_type.as_str(), service_str],
-        |row| row.get(0),
-    )?;
+    let (handle_id, _) = upsert_handle_row(conn, account_id, raw, handle_type, service)?;
     conn.execute(
         "INSERT OR IGNORE INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
         params![account_id, handle_id],
@@ -423,9 +403,8 @@ pub fn unlink_account_handle(
 
 /// Open the vault DB and resolve `account_ref` to a UUID.
 pub fn resolve_account_ref_at(db_path: &std::path::Path, account_ref: &str) -> Result<String> {
-    let conn = Connection::open(db_path)
+    let conn = schema::open_configured(db_path)
         .with_context(|| format!("open database {}", db_path.display()))?;
-    crate::db::schema::configure_connection(&conn)?;
     resolve_account_ref(&conn, account_ref)
 }
 

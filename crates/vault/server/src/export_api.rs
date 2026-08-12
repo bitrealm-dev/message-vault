@@ -4,7 +4,7 @@
 use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{SQLITE_IN_CHUNK, in_placeholders};
+use crate::db::sql::{fold_in_id_chunks, in_placeholders};
 use crate::search_query::{
     ParsedSearchQuery, SearchMode, metadata_exclude_terms, metadata_include_terms,
     parse_search_query,
@@ -197,6 +197,21 @@ struct BuiltFilters {
     dedupe_sql: String,
 }
 
+fn prepare_message_export(
+    conn: &Connection,
+    account_id: &str,
+    query: &str,
+    source_override: Option<&str>,
+) -> Result<BuiltFilters, ExportQueryError> {
+    let parsed = parse_search_query(query);
+    if parsed.mode == SearchMode::Contacts {
+        return Err(ExportQueryError::bad(
+            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
+        ));
+    }
+    build_message_filters(conn, account_id, &parsed, source_override)
+}
+
 /// Export messages matching a Fastmail-style query (message mode only).
 ///
 /// Empty query (no criteria) returns all non-trashed, non-duplicate messages for the account.
@@ -204,13 +219,6 @@ pub fn export_messages(
     conn: &Connection,
     opts: ExportPageOpts<'_>,
 ) -> Result<ExportMessagesResponse, ExportQueryError> {
-    let parsed = parse_search_query(opts.query);
-    if parsed.mode == SearchMode::Contacts {
-        return Err(ExportQueryError::bad(
-            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
-        ));
-    }
-
     let limit = opts.limit.clamp(1, MAX_EXPORT_LIMIT);
     let cursor = match opts.cursor {
         Some(raw) if !raw.trim().is_empty() => Some(
@@ -220,7 +228,7 @@ pub fn export_messages(
         _ => None,
     };
 
-    let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
+    let filters = prepare_message_export(conn, opts.account_id, opts.query, opts.source_override)?;
     let fetch_limit = limit + 1;
 
     let mut sql = format!(
@@ -375,14 +383,7 @@ pub fn export_message_count(
     conn: &Connection,
     opts: ExportCountOpts<'_>,
 ) -> Result<ExportCountResponse, ExportQueryError> {
-    let parsed = parse_search_query(opts.query);
-    if parsed.mode == SearchMode::Contacts {
-        return Err(ExportQueryError::bad(
-            "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
-        ));
-    }
-
-    let filters = build_message_filters(conn, opts.account_id, &parsed, opts.source_override)?;
+    let filters = prepare_message_export(conn, opts.account_id, opts.query, opts.source_override)?;
 
     let msg_sql = format!(
         "SELECT COUNT(*)
@@ -772,11 +773,7 @@ fn load_participants(
     conn: &Connection,
     conversation_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportParticipant>>, ExportQueryError> {
-    let mut map = std::collections::HashMap::new();
-    if conversation_ids.is_empty() {
-        return Ok(map);
-    }
-    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+    fold_in_id_chunks(conversation_ids, |chunk| {
         let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT p.conversation_id,
@@ -814,23 +811,16 @@ fn load_participants(
                 },
             ))
         })?;
-        for row in rows {
-            let (cid, p) = row?;
-            map.entry(cid).or_insert_with(Vec::new).push(p);
-        }
-    }
-    Ok(map)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    })
 }
 
 fn load_attachments(
     conn: &Connection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportAttachment>>, ExportQueryError> {
-    let mut map = std::collections::HashMap::new();
-    if message_ids.is_empty() {
-        return Ok(map);
-    }
-    for chunk in message_ids.chunks(SQLITE_IN_CHUNK) {
+    fold_in_id_chunks(message_ids, |chunk| {
         let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription,
@@ -854,23 +844,16 @@ fn load_attachments(
                 },
             ))
         })?;
-        for row in rows {
-            let (mid, att) = row?;
-            map.entry(mid).or_insert_with(Vec::new).push(att);
-        }
-    }
-    Ok(map)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    })
 }
 
 fn load_tapbacks(
     conn: &Connection,
     message_ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, Vec<ExportTapback>>, ExportQueryError> {
-    let mut map = std::collections::HashMap::new();
-    if message_ids.is_empty() {
-        return Ok(map);
-    }
-    for chunk in message_ids.chunks(SQLITE_IN_CHUNK) {
+    fold_in_id_chunks(message_ids, |chunk| {
         let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me,
@@ -893,12 +876,9 @@ fn load_tapbacks(
                 },
             ))
         })?;
-        for row in rows {
-            let (mid, t) = row?;
-            map.entry(mid).or_insert_with(Vec::new).push(t);
-        }
-    }
-    Ok(map)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    })
 }
 
 #[cfg(test)]

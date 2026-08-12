@@ -14,7 +14,6 @@ use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 use crate::import_media::MediaMode;
 use crate::jsonl;
 use crate::models::ExportRecord;
-use rusqlite::Connection;
 
 #[derive(Debug, Clone)]
 pub struct CliImportOptions {
@@ -100,9 +99,8 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     });
 
     let session_source = sources.join(",");
-    let mut conn = Connection::open(&db_path)
+    let mut conn = schema::open_configured(&db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
-    schema::configure_connection(&conn)?;
     schema::ensure_vault_schema(&conn)?;
     account_profile::ensure_account_row(&conn, &account_id)?;
 

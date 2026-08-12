@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::db::account_profile;
+use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
@@ -788,8 +789,7 @@ pub fn mutate_contact(
             "UPDATE contacts SET preferred_name = ?1 WHERE id = ?2 AND account_id = ?3",
             params![name, contact_id, account_id],
         )?;
-        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-        return Ok(true);
+        return touch_ok(conn, account_id, contact_id);
     }
 
     if let Some(add) = body.add_handle.as_ref() {
@@ -799,18 +799,7 @@ pub fn mutate_contact(
         }
         let handle_id = ensure_handle_row(conn, account_id, raw, add.service.as_deref())?;
         // One contact per handle (PK on contact_handles.handle_id + account).
-        let existing: Option<i64> = conn
-            .query_row(
-                "SELECT contact_id FROM contact_handles
-                 WHERE account_id = ?1 AND handle_id = ?2",
-                params![account_id, handle_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(other) = existing {
-            if other != contact_id {
-                bail!("handle already linked to another contact");
-            }
+        if require_handle_available(conn, account_id, handle_id, contact_id)?.is_some() {
             // Already linked — no address-book change.
             return Ok(true);
         }
@@ -819,8 +808,7 @@ pub fn mutate_contact(
              VALUES (?1, ?2, ?3)",
             params![account_id, handle_id, contact_id],
         )?;
-        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-        return Ok(true);
+        return touch_ok(conn, account_id, contact_id);
     }
 
     if let Some(upd) = body.update_handle.as_ref() {
@@ -846,38 +834,25 @@ pub fn mutate_contact(
                     "UPDATE handles SET service = ?1 WHERE id = ?2",
                     params![svc, new_id],
                 )?;
-                crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
+                return touch_ok(conn, account_id, contact_id);
             }
             return Ok(true);
         }
-        let taken: Option<i64> = conn
-            .query_row(
-                "SELECT contact_id FROM contact_handles
-                 WHERE account_id = ?1 AND handle_id = ?2",
-                params![account_id, new_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(other) = taken {
-            if other != contact_id {
-                bail!("handle already linked to another contact");
-            }
+        if require_handle_available(conn, account_id, new_id, contact_id)?.is_some() {
             // Already on this contact — drop the previous link.
             conn.execute(
                 "DELETE FROM contact_handles
                  WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
                 params![account_id, contact_id, old_id],
             )?;
-            crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-            return Ok(true);
+            return touch_ok(conn, account_id, contact_id);
         }
         conn.execute(
             "UPDATE contact_handles SET handle_id = ?1
              WHERE account_id = ?2 AND contact_id = ?3 AND handle_id = ?4",
             params![new_id, account_id, contact_id, old_id],
         )?;
-        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-        return Ok(true);
+        return touch_ok(conn, account_id, contact_id);
     }
 
     if let Some(rem) = body.remove_handle.as_ref() {
@@ -895,10 +870,29 @@ pub fn mutate_contact(
              WHERE account_id = ?1 AND contact_id = ?2 AND handle_id = ?3",
             params![account_id, contact_id, handle_id],
         )?;
-        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-        return Ok(true);
+        return touch_ok(conn, account_id, contact_id);
     }
 
+    Ok(true)
+}
+
+fn require_handle_available(
+    conn: &Connection,
+    account_id: &str,
+    handle_id: i64,
+    contact_id: i64,
+) -> AnyResult<Option<i64>> {
+    let existing = contact_id_for_handle(conn, account_id, handle_id)?;
+    if let Some(other) = existing
+        && other != contact_id
+    {
+        bail!("handle already linked to another contact");
+    }
+    Ok(existing)
+}
+
+fn touch_ok(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
+    contacts::touch_contact(conn, account_id, contact_id)?;
     Ok(true)
 }
 

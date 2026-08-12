@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{SQLITE_IN_CHUNK, in_placeholders};
+use crate::db::sql::{fold_in_id_chunks, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparator, CountComparison, parse_count_comparison};
 
@@ -432,17 +432,13 @@ fn chat_handle_as_participant(
 fn load_participants(
     conn: &Connection,
     conversation_ids: &[i64],
-) -> Result<std::collections::HashMap<i64, Vec<ConversationParticipant>>, ExportQueryError> {
-    let mut map = std::collections::HashMap::new();
-    if conversation_ids.is_empty() {
-        return Ok(map);
-    }
-    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+) -> Result<HashMap<i64, Vec<ConversationParticipant>>, ExportQueryError> {
+    // Join contact preferred_name / name_alias here so the list path does not
+    // issue one follow-up SELECT per participant. Contact fields apply only when
+    // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
+    // exposed as `name` and `name_alias` stays unset.
+    fold_in_id_chunks(conversation_ids, |chunk| {
         let placeholders = in_placeholders(chunk.len());
-        // Join contact preferred_name / name_alias here so the list path does not
-        // issue one follow-up SELECT per participant. Contact fields apply only when
-        // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
-        // exposed as `name` and `name_alias` stays unset.
         let sql = format!(
             "SELECT p.conversation_id,
                     CASE
@@ -480,12 +476,9 @@ fn load_participants(
                 },
             ))
         })?;
-        for row in rows {
-            let (cid, p) = row?;
-            map.entry(cid).or_insert_with(Vec::new).push(p);
-        }
-    }
-    Ok(map)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    })
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -514,11 +507,7 @@ fn load_conversation_sources(
     conn: &Connection,
     conversation_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<String>>, ExportQueryError> {
-    let mut map: HashMap<i64, Vec<String>> = HashMap::new();
-    if conversation_ids.is_empty() {
-        return Ok(map);
-    }
-    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+    fold_in_id_chunks(conversation_ids, |chunk| {
         let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT conversation_id, source
@@ -532,15 +521,16 @@ fn load_conversation_sources(
         let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
+        let mut out = Vec::new();
         for row in rows {
             let (cid, source) = row?;
             if source.trim().is_empty() {
                 continue;
             }
-            map.entry(cid).or_default().push(source);
+            out.push((cid, source));
         }
-    }
-    Ok(map)
+        Ok(out)
+    })
 }
 
 #[derive(Debug, Serialize)]

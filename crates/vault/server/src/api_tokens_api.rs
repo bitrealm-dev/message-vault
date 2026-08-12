@@ -40,8 +40,7 @@ fn default_scopes() -> String {
 }
 
 fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
-    let conn = Connection::open(db)?;
-    schema::configure_connection(&conn)?;
+    let conn = schema::open_configured(db)?;
     schema::ensure_accounts_schema(&conn)?;
     Ok(conn)
 }
@@ -127,8 +126,7 @@ pub async fn create_api_token_handler(
         },
     )
     .await
-    .map_err(|e| ApiError::Internal(format!("create API token task: {e}")))?
-    .map_err(|e| {
+    .join_map("create API token task", |e| {
         let msg = e.to_string();
         if msg.contains("label is required")
             || msg.contains("at most 120")
@@ -195,8 +193,7 @@ pub async fn rename_api_token_handler(
         Ok((ok, trimmed))
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("rename API token task: {e}")))?
-    .map_err(|e| {
+    .join_map("rename API token task", |e| {
         let msg = e.to_string();
         if msg.contains("label is required") || msg.contains("at most 120") {
             ApiError::BadRequest(msg)

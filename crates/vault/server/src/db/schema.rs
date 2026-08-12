@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Result;
 use rusqlite::{Connection, params};
 
@@ -32,6 +34,12 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn open_configured(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    configure_connection(&conn)?;
+    Ok(conn)
 }
 
 /// Baseline DDL lives in `schema/sql/` (shared with the web app via sync script).

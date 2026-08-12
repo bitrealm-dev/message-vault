@@ -194,28 +194,64 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Map a `spawn_blocking` join + inner `anyhow` error to `ApiError::Internal`.
-pub(crate) trait JoinBlocking<T> {
-    fn join_blocking(self, task: &str) -> Result<T, ApiError>;
+impl From<ExportQueryError> for ApiError {
+    fn from(e: ExportQueryError) -> Self {
+        match e {
+            ExportQueryError::BadRequest(m) => Self::BadRequest(m),
+            ExportQueryError::Internal(m) => Self::Internal(m),
+        }
+    }
 }
 
-impl<T, E: ToString> JoinBlocking<T> for Result<Result<T, E>, tokio::task::JoinError> {
-    fn join_blocking(self, task: &str) -> Result<T, ApiError> {
+/// Map a `spawn_blocking` join + inner error onto `ApiError`.
+pub(crate) trait JoinBlocking<T, E>: Sized {
+    fn join_blocking(self, task: &str) -> Result<T, ApiError>
+    where
+        E: ToString,
+    {
+        self.join_map(task, |e| ApiError::Internal(e.to_string()))
+    }
+
+    fn join_map(self, task: &str, map: impl FnOnce(E) -> ApiError) -> Result<T, ApiError>;
+}
+
+impl<T, E> JoinBlocking<T, E> for Result<Result<T, E>, tokio::task::JoinError> {
+    fn join_map(self, task: &str, map: impl FnOnce(E) -> ApiError) -> Result<T, ApiError> {
         self.map_err(|e| ApiError::Internal(format!("{task}: {e}")))?
-            .map_err(|e| ApiError::Internal(e.to_string()))
+            .map_err(map)
     }
 }
 
 fn lock_conn(db: &StdMutex<Connection>) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
-    db.lock()
-        .map_err(|_| anyhow::anyhow!("database mutex poisoned"))
+    lock_named(db, "database")
 }
 
 fn lock_import_conn(
     db: &StdMutex<Connection>,
 ) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+    lock_named(db, "import database")
+}
+
+fn lock_named<'a>(
+    db: &'a StdMutex<Connection>,
+    what: &str,
+) -> anyhow::Result<std::sync::MutexGuard<'a, Connection>> {
     db.lock()
-        .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))
+        .map_err(|_| anyhow::anyhow!("{what} mutex poisoned"))
+}
+
+async fn with_configured_db<T, F>(db_path: &Path, task: &str, f: F) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
+{
+    let db = db_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db)?;
+        f(&conn)
+    })
+    .await
+    .join_blocking(task)
 }
 
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
@@ -229,8 +265,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let max_body_bytes = upload_limits.max_bytes as usize;
 
     // Open a warm writer, recover hot journals, and ensure schema once before serving.
-    let db_conn = Connection::open(&cfg.paths.db)?;
-    schema::configure_connection(&db_conn)?;
+    let db_conn = schema::open_configured(&cfg.paths.db)?;
     let _: i64 = db_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
     schema::ensure_vault_schema(&db_conn)?;
     let mode: String = db_conn
@@ -452,43 +487,31 @@ async fn auth_check(
 }
 
 async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
-    let db = db_path.to_path_buf();
     let account_id = account_id.to_string();
-    tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
-        dedupe::source_priority_from_db(&conn, &account_id)
+    // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
+    with_configured_db(db_path, "sources list task", move |conn| {
+        dedupe::source_priority_from_db(conn, &account_id)
     })
     .await
-    .join_blocking("sources list task")
 }
 
 async fn lookup_or_resolve_query(
     db_path: &Path,
     account_ref: &str,
 ) -> Result<Option<String>, ApiError> {
-    let db = db_path.to_path_buf();
     let account_ref = account_ref.to_string();
-    tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        account_profile::lookup_account_ref(&conn, &account_ref)
+    with_configured_db(db_path, "account lookup task", move |conn| {
+        account_profile::lookup_account_ref(conn, &account_ref)
     })
     .await
-    .join_blocking("account lookup task")
 }
 
 async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
-    let db = db_path.to_path_buf();
     let account_id = account_id.to_string();
-    tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        account_profile::username_for_account(&conn, &account_id)
+    with_configured_db(db_path, "username lookup task", move |conn| {
+        account_profile::username_for_account(conn, &account_id)
     })
     .await
-    .join_blocking("username lookup task")
 }
 
 async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
@@ -496,8 +519,9 @@ async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<
     let account_ref = account_ref.to_string();
     tokio::task::spawn_blocking(move || account_profile::resolve_account_ref_at(&db, &account_ref))
         .await
-        .map_err(|e| ApiError::Internal(format!("account resolve task: {e}")))?
-        .map_err(|e| ApiError::BadRequest(e.to_string()))
+        .join_map("account resolve task", |e| {
+            ApiError::BadRequest(e.to_string())
+        })
 }
 
 fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
@@ -528,8 +552,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     let db = state.cfg.paths.db.clone();
     let token_owned = token.clone();
     let resolved = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<AuthIdentity>> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
         schema::ensure_accounts_schema(&conn)?;
         if let Some(account_id) = session_tokens::lookup_account_for_token(&conn, &token_owned)? {
             return Ok(Some(AuthIdentity {
@@ -1268,9 +1291,8 @@ async fn export_messages_count_handler(
     let source = query.source.clone();
     let db_path = state.cfg.paths.db.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db_path)?;
-        schema::configure_connection(&conn)?;
+    let body = tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db_path)?;
         export_api::export_message_count(
             &conn,
             ExportCountOpts {
@@ -1281,13 +1303,8 @@ async fn export_messages_count_handler(
         )
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("export count task: {e}")))?;
-
-    match result {
-        Ok(body) => Ok(Json(body)),
-        Err(ExportQueryError::BadRequest(m)) => Err(ApiError::BadRequest(m)),
-        Err(ExportQueryError::Internal(m)) => Err(ApiError::Internal(m)),
-    }
+    .join_map("export count task", ApiError::from)?;
+    Ok(Json(body))
 }
 
 async fn export_messages_handler(
@@ -1306,9 +1323,8 @@ async fn export_messages_handler(
     let source = query.source.clone();
     let db_path = state.cfg.paths.db.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        let conn = Connection::open(&db_path)?;
-        schema::configure_connection(&conn)?;
+    let body = tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db_path)?;
         export_api::export_messages(
             &conn,
             ExportPageOpts {
@@ -1322,13 +1338,8 @@ async fn export_messages_handler(
         )
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("export task: {e}")))?;
-
-    match result {
-        Ok(body) => Ok(Json(body)),
-        Err(ExportQueryError::BadRequest(m)) => Err(ApiError::BadRequest(m)),
-        Err(ExportQueryError::Internal(m)) => Err(ApiError::Internal(m)),
-    }
+    .join_map("export task", ApiError::from)?;
+    Ok(Json(body))
 }
 
 async fn asset_put_handler(
@@ -1618,19 +1629,23 @@ async fn discard_body(body: axum::body::Body, max_body_bytes: usize) -> Result<(
     Ok(())
 }
 
-async fn stream_body_to_file(
-    body: axum::body::Body,
-    dest: &Path,
-    max_body_bytes: usize,
-) -> Result<u64, ApiError> {
+async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
     }
-    let mut file = tokio::fs::File::create(dest)
+    tokio::fs::File::create(dest)
         .await
-        .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))?;
+        .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))
+}
+
+async fn stream_body_to_file(
+    body: axum::body::Body,
+    dest: &Path,
+    max_body_bytes: usize,
+) -> Result<u64, ApiError> {
+    let mut file = create_dest_file(dest).await?;
     let mut written = 0u64;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -1653,14 +1668,7 @@ async fn stream_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     dest: &Path,
 ) -> Result<u64, ApiError> {
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", parent.display())))?;
-    }
-    let mut file = tokio::fs::File::create(dest)
-        .await
-        .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))?;
+    let mut file = create_dest_file(dest).await?;
     let mut written = 0u64;
     while let Some(chunk) = field
         .chunk()
@@ -1816,9 +1824,8 @@ async fn run_import_path(
         opts.contact_name_mode = contact_name_mode;
         // Dedicated connection for the long import so we do not hold `state.db`
         // across JSONL / asset IO / promote (export and session SQL stay free).
-        let mut conn = Connection::open(&cfg.paths.db)
+        let mut conn = schema::open_configured(&cfg.paths.db)
             .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
-        schema::configure_connection(&conn)?;
         let import_result = import::import_jsonl_files_on_conn(
             &mut conn,
             &[jsonl_path],
