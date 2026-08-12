@@ -1,8 +1,8 @@
-use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Default)]
@@ -49,9 +49,8 @@ pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset>
 /// When `consume_source` is true (HTTP upload temps), prefers `rename` into place.
 /// When false (export/import sources), always copies so the original file remains.
 ///
-/// When `skip_hash` is true, the claimed sha256 is trusted without hashing the
-/// file — callers should only pass true when the file size has already been
-/// verified against a declared size (see `UploadLimits::hash_threshold_bytes`).
+/// When `skip_hash` is true, the claimed sha256 is trusted without hashing.
+/// Callers should pass `false`; the flag remains only for API stability.
 ///
 /// Returns `(stored, already_present)`.
 pub fn store_verified(
@@ -63,9 +62,7 @@ pub fn store_verified(
     skip_hash: bool,
 ) -> Result<(StoredAsset, bool)> {
     let claimed = require_sha256(claimed_sha256)?;
-    if !source.is_file() {
-        anyhow::bail!("asset source is not a file: {}", source.display());
-    }
+    ensure_regular_file(source)?;
 
     // Prefer existence check before hashing — duplicate PUTs skip a full SHA pass.
     if let Some(existing) = lookup_by_sha256(assets_root, &claimed) {
@@ -108,33 +105,70 @@ pub fn store_verified(
     ))
 }
 
-/// Install `source` at `dest`. Returns `true` when `dest` already existed.
+/// Install `source` at `dest` without following symlinks. Returns `true` when
+/// `dest` already existed as a regular file. Uses create-new semantics so a
+/// concurrent install cannot silently overwrite.
 fn install_blob(source: &Path, dest: &Path, consume_source: bool) -> Result<bool> {
-    if dest.exists() {
-        return Ok(true);
+    if let Ok(meta) = fs::symlink_metadata(dest) {
+        if meta.file_type().is_symlink() {
+            bail!("refusing to install over symlink {}", dest.display());
+        }
+        if meta.is_file() {
+            return Ok(true);
+        }
+        bail!(
+            "asset destination exists and is not a regular file: {}",
+            dest.display()
+        );
     }
-    if !consume_source {
-        fs::copy(source, dest)
-            .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
-        return Ok(false);
-    }
-    match fs::rename(source, dest) {
-        Ok(()) => Ok(false),
-        Err(err) => {
-            if dest.exists() {
-                return Ok(true);
+
+    if consume_source {
+        match fs::rename(source, dest) {
+            Ok(()) => return Ok(false),
+            Err(err) => {
+                if let Ok(meta) = fs::symlink_metadata(dest) {
+                    if meta.file_type().is_symlink() {
+                        bail!("refusing to install over symlink {}", dest.display());
+                    }
+                    if meta.is_file() {
+                        let _ = fs::remove_file(source);
+                        return Ok(true);
+                    }
+                }
+                // Cross-device rename: fall through to create_new copy.
+                let _ = err;
             }
-            fs::copy(source, dest).with_context(|| {
-                format!(
-                    "failed to install {} → {} (rename: {err})",
-                    source.display(),
-                    dest.display()
-                )
-            })?;
-            let _ = fs::remove_file(source);
-            Ok(false)
         }
     }
+
+    ensure_regular_file(source)?;
+    let mut src =
+        open_nofollow_read(source).with_context(|| format!("open source {}", source.display()))?;
+    let mut dest_file = match OpenOptions::new().write(true).create_new(true).open(dest) {
+        Ok(f) => f,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if let Ok(meta) = fs::symlink_metadata(dest) {
+                if meta.file_type().is_symlink() {
+                    bail!("refusing to install over symlink {}", dest.display());
+                }
+                if meta.is_file() {
+                    if consume_source {
+                        let _ = fs::remove_file(source);
+                    }
+                    return Ok(true);
+                }
+            }
+            return Err(err).with_context(|| format!("create {}", dest.display()));
+        }
+        Err(err) => return Err(err).with_context(|| format!("create {}", dest.display())),
+    };
+    std::io::copy(&mut src, &mut dest_file)
+        .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
+    dest_file.flush()?;
+    if consume_source {
+        let _ = fs::remove_file(source);
+    }
+    Ok(false)
 }
 
 /// Hash `source` and store under `assets_root/<sha[0:2]>/<sha><ext>`.
@@ -145,7 +179,7 @@ pub fn hash_and_store(
     export_mime: Option<&str>,
     stats: &mut AssetStats,
 ) -> Result<Option<StoredAsset>> {
-    if !source.is_file() {
+    if !is_regular_file(source) {
         stats.missing += 1;
         return Ok(None);
     }
@@ -158,6 +192,53 @@ pub fn hash_and_store(
         stats.copied += 1;
     }
     Ok(Some(stored))
+}
+
+/// Delete orphaned multipart staging under `{assets}/.incoming` older than `max_age_secs`.
+///
+/// Completed uploads remove their session dirs; abandoned ones can linger forever
+/// without this sweep (called opportunistically from upload start).
+pub fn gc_stale_incoming(assets_root: &Path, max_age_secs: u64) -> Result<u64> {
+    let incoming = assets_root.join(".incoming");
+    if !incoming.is_dir() {
+        return Ok(0);
+    }
+    let now = std::time::SystemTime::now();
+    let mut removed = 0u64;
+    for sha_entry in
+        fs::read_dir(&incoming).with_context(|| format!("read {}", incoming.display()))?
+    {
+        let sha_entry = sha_entry?;
+        let sha_path = sha_entry.path();
+        if !sha_path.is_dir() {
+            continue;
+        }
+        for session_entry in fs::read_dir(&sha_path)? {
+            let session_entry = session_entry?;
+            let session_path = session_entry.path();
+            if !session_path.is_dir() {
+                continue;
+            }
+            let Ok(meta) = session_entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            let Ok(age) = now.duration_since(modified) else {
+                continue;
+            };
+            if age.as_secs() >= max_age_secs {
+                let _ = fs::remove_dir_all(&session_path);
+                removed += 1;
+            }
+        }
+        // Drop empty sha shard dirs.
+        if fs::read_dir(&sha_path)?.next().is_none() {
+            let _ = fs::remove_dir(&sha_path);
+        }
+    }
+    Ok(removed)
 }
 
 pub(crate) fn normalize_sha256(sha: &str) -> Option<String> {
@@ -174,7 +255,7 @@ pub(crate) fn require_sha256(sha: &str) -> Result<String> {
 }
 
 pub(crate) fn hash_file(path: &Path) -> Result<String> {
-    let file = File::open(path)?;
+    let file = open_nofollow_read(path)?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 1024 * 1024];
@@ -210,7 +291,7 @@ fn find_existing(assets_root: &Path, sha: &str) -> Option<PathBuf> {
             p.file_stem()
                 .and_then(|s| s.to_str())
                 .is_some_and(|stem| stem == sha)
-                && p.is_file()
+                && is_regular_file(p)
         })
         .collect();
     matches.sort();
@@ -256,6 +337,40 @@ fn guess_mime(ext: Option<&str>) -> Option<String> {
         _ => return None,
     };
     Some(mime.to_string())
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|m| m.is_file() && !m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn ensure_regular_file(path: &Path) -> Result<()> {
+    let meta = fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        bail!("refusing to follow symlink: {}", path.display());
+    }
+    if !meta.is_file() {
+        bail!("asset source is not a file: {}", path.display());
+    }
+    Ok(())
+}
+
+fn open_nofollow_read(path: &Path) -> Result<File> {
+    ensure_regular_file(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        return OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .with_context(|| format!("open {}", path.display()));
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path).with_context(|| format!("open {}", path.display()))
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +433,36 @@ mod tests {
             fs::read(root.join(&stored.assets_path)).unwrap(),
             b"rename-me"
         );
+    }
+
+    #[test]
+    fn store_verified_rejects_symlink_source() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let real = dir.path().join("real.bin");
+        fs::write(&real, b"payload").unwrap();
+        let link = dir.path().join("link.bin");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let sha = hash_file(&real).unwrap();
+            let err = store_verified(&link, &sha, root, None, false, false).unwrap_err();
+            assert!(
+                err.to_string().contains("symlink"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn gc_stale_incoming_removes_old_sessions() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let session = root.join(".incoming").join("ab").join("deadbeef");
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("manifest.json"), b"{}").unwrap();
+        let removed = gc_stale_incoming(root, 0).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!session.exists());
     }
 }

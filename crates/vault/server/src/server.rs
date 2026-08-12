@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 
@@ -171,6 +171,7 @@ pub enum ApiError {
     Forbidden(String),
     BadRequest(String),
     NotFound(String),
+    TooManyRequests(String),
     Internal(String),
 }
 
@@ -181,7 +182,15 @@ impl IntoResponse for ApiError {
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
-            Self::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
+            Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
+            Self::Internal(m) => {
+                // Keep diagnostics server-side; clients only see a stable message.
+                eprintln!("internal error: {m}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".into(),
+                )
+            }
         };
         (
             status,
@@ -208,6 +217,9 @@ impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
         match e {
             crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
                 Self::NotFound(format!("import {import_id} not found for this account"))
+            }
+            crate::db::vault_imports::ImportLookupError::InvalidSession { message } => {
+                Self::BadRequest(message)
             }
             crate::db::vault_imports::ImportLookupError::Db(err) => Self::Internal(err.to_string()),
         }
@@ -249,6 +261,34 @@ fn lock_named<'a>(
 ) -> anyhow::Result<std::sync::MutexGuard<'a, Connection>> {
     db.lock()
         .map_err(|_| anyhow::anyhow!("{what} mutex poisoned"))
+}
+
+/// Build CORS from `[server].cors_origins`.
+///
+/// - empty → no cross-origin allow list (same-origin UI / API is fine)
+/// - `["*"]` → fully permissive (local debugging only)
+/// - otherwise → exact origin allow list
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    if origins.iter().any(|o| o.trim() == "*") {
+        return CorsLayer::permissive();
+    }
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
+    let allowed: Vec<header::HeaderValue> = origins
+        .iter()
+        .filter_map(|o| {
+            let t = o.trim();
+            if t.is_empty() { None } else { t.parse().ok() }
+        })
+        .collect();
+    if allowed.is_empty() {
+        return CorsLayer::new();
+    }
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed))
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
 }
 
 pub(crate) async fn with_configured_db<T, F>(
@@ -337,16 +377,22 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         max_body_bytes,
     };
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/v1/auth/mode", get(auth_mode_handler))
+    let auth_public = Router::new()
         .route("/v1/auth/register", post(crate::auth::register_handler))
         .route("/v1/auth/login", post(crate::auth::login_handler))
         .route(
             "/v1/auth/hanko/session",
             post(crate::auth::hanko_session_handler),
         )
+        // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
+        .layer(RequestBodyLimitLayer::new(32 * 1024));
+
+    let app = Router::new()
+        .merge(auth_public)
+        .route("/health", get(health))
+        .route("/v1/auth/mode", get(auth_mode_handler))
         .route("/v1/auth/check", get(auth_check))
+        .route("/v1/auth/logout", post(crate::auth::logout_handler))
         .route(
             "/v1/auth/change-password",
             post(crate::auth::change_password_handler),
@@ -418,7 +464,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             delete(asset_upload_abort_handler),
         )
         .fallback_service(ServeDir::new("static"))
-        .layer(CorsLayer::permissive())
+        .layer(build_cors_layer(&server.cors_origins))
         .layer(RequestBodyLimitLayer::new(max_body_bytes))
         .with_state(state);
 
@@ -573,7 +619,7 @@ async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<
         })
 }
 
-fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
+pub fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     let Some(value) = headers.get(header::AUTHORIZATION) else {
         return Err(ApiError::Unauthorized(
             "missing Authorization: Bearer <token>".into(),
@@ -654,34 +700,7 @@ fn is_multipart_content_type(base: &str) -> bool {
 
 /// Reject path traversal; allow only relative Normal/CurDir components.
 fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest("empty attachment path".into()));
-    }
-    let path = Path::new(name);
-    if path.is_absolute() {
-        return Err(ApiError::BadRequest(format!(
-            "attachment path must be relative: {name}"
-        )));
-    }
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::Normal(s) => out.push(s),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ApiError::BadRequest(format!(
-                    "unsafe attachment path: {name}"
-                )));
-            }
-        }
-    }
-    if out.as_os_str().is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "empty attachment path after normalize: {name}"
-        )));
-    }
-    Ok(out)
+    crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1238,7 +1257,15 @@ async fn asset_get_handler(
 
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let path = assets_dir.join(&stored.assets_path);
-    if !path.is_file() {
+    // Reject symlinks / missing files before streaming.
+    let meta = tokio::fs::symlink_metadata(&path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ApiError::NotFound("asset file missing on disk".into())
+        } else {
+            ApiError::Internal(format!("stat {}: {e}", path.display()))
+        }
+    })?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
         return Err(ApiError::NotFound("asset file missing on disk".into()));
     }
 
@@ -1246,17 +1273,33 @@ async fn asset_get_handler(
         .mime_type
         .clone()
         .unwrap_or_else(|| "application/octet-stream".into());
-    let bytes = tokio::fs::read(&path)
+    let file = tokio::fs::File::open(&path)
         .await
-        .map_err(|e| ApiError::Internal(format!("read {}: {e}", path.display())))?;
-    let len = bytes.len();
+        .map_err(|e| ApiError::Internal(format!("open {}: {e}", path.display())))?;
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
 
-    let mut response = bytes.into_response();
+    let mut response = Response::new(body);
+    *response.status_mut() = StatusCode::OK;
     let headers_mut = response.headers_mut();
     if let Ok(value) = header::HeaderValue::from_str(&mime) {
         headers_mut.insert(header::CONTENT_TYPE, value);
     }
-    headers_mut.insert(header::CONTENT_LENGTH, header::HeaderValue::from(len));
+    headers_mut.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        header::HeaderValue::from_static("nosniff"),
+    );
+    // Force download-ish disposition with a fixed safe name (never echo client paths).
+    headers_mut.insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_static("attachment; filename=\"asset\""),
+    );
+    if meta.len() > 0 {
+        headers_mut.insert(
+            header::CONTENT_LENGTH,
+            header::HeaderValue::from(meta.len()),
+        );
+    }
     Ok(response)
 }
 
@@ -1756,19 +1799,46 @@ async fn run_import_path(
     };
     let _guard = account_lock.lock().await;
 
+    // Validate client-owned sessions before staging work so bad ids return 400.
+    if let Some(id) = query_import_id {
+        let db = Arc::clone(&db);
+        let account_check = account.clone();
+        let source_check = source_id.clone();
+        let mode_check = mode.as_str().to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = lock_import_conn(&db)?;
+            crate::db::vault_imports::require_reusable_import(
+                &conn,
+                &account_check,
+                id,
+                &source_check,
+                &mode_check,
+            )
+            .map_err(anyhow::Error::new)?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .join_map("import session check", |e| {
+            let msg = e.to_string();
+            if msg.contains("not found") {
+                ApiError::NotFound(msg)
+            } else if msg.contains("not running") || msg.contains("mismatch") {
+                ApiError::BadRequest(msg)
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
+    }
+
     let result = tokio::task::spawn_blocking(move || {
         let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
         // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
         // Multipart supplies a temp asset_root for relative file parts.
         let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
 
-        // Client session (vault-push): verify ownership. Otherwise start a one-shot
-        // vault_imports row so Storage history works for curl / single POSTs.
+        // Client session (vault-push): ownership/status already checked above.
+        // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
         let (import_id, owns_session) = if let Some(id) = query_import_id {
-            let conn = lock_import_conn(&db)?;
-            crate::db::vault_imports::get_owned_import(&conn, &account, id)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            drop(conn);
             (Some(id), false)
         } else {
             let conn = lock_import_conn(&db)?;
@@ -1887,6 +1957,7 @@ mod tests {
                     asset_max_bytes: 8 * 1024 * 1024,
                     asset_part_size: 1024 * 1024,
                     asset_hash_threshold_bytes: 1024 * 1024,
+                    cors_origins: Vec::new(),
                 }),
             }),
             db: Arc::new(StdMutex::new(conn)),

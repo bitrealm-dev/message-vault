@@ -117,7 +117,13 @@ pub struct ImportDetail {
 
 #[derive(Debug)]
 pub enum ImportLookupError {
-    NotFound { import_id: i64 },
+    NotFound {
+        import_id: i64,
+    },
+    /// Session exists but cannot be reused (wrong status/source/mode).
+    InvalidSession {
+        message: String,
+    },
     Db(anyhow::Error),
 }
 
@@ -127,6 +133,7 @@ impl fmt::Display for ImportLookupError {
             Self::NotFound { import_id } => {
                 write!(f, "import {import_id} not found for this account")
             }
+            Self::InvalidSession { message } => f.write_str(message),
             Self::Db(err) => err.fmt(f),
         }
     }
@@ -135,7 +142,7 @@ impl fmt::Display for ImportLookupError {
 impl Error for ImportLookupError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::NotFound { .. } => None,
+            Self::NotFound { .. } | Self::InvalidSession { .. } => None,
             Self::Db(err) => err.source(),
         }
     }
@@ -221,6 +228,40 @@ pub fn get_owned_import(
         Some(row) => Ok(row),
         None => Err(ImportLookupError::NotFound { import_id }),
     }
+}
+
+/// Like [`get_owned_import`], but the session must still be `running` and match
+/// the source/mode the client is about to import with.
+pub fn require_reusable_import(
+    conn: &Connection,
+    account_id: &str,
+    import_id: i64,
+    source: &str,
+    mode: &str,
+) -> std::result::Result<VaultImportRow, ImportLookupError> {
+    let row = get_owned_import(conn, account_id, import_id)?;
+    if row.status != "running" {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!("import {import_id} is not running (status={})", row.status),
+        });
+    }
+    if row.source != source {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!(
+                "import {import_id} source mismatch (session={}, request={})",
+                row.source, source
+            ),
+        });
+    }
+    if row.mode != mode {
+        return Err(ImportLookupError::InvalidSession {
+            message: format!(
+                "import {import_id} mode mismatch (session={}, request={})",
+                row.mode, mode
+            ),
+        });
+    }
+    Ok(row)
 }
 
 /// Finish an import: prefer client counts, else derive from linked messages.
@@ -613,6 +654,37 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, "running");
+    }
+
+    #[test]
+    fn require_reusable_import_rejects_completed_and_mismatched() {
+        let conn = setup_accounts_only();
+        let import_id =
+            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+        complete_import(
+            &conn,
+            ACCOUNT_ID,
+            import_id,
+            &CompleteImportArgs::succeeded(1, 0),
+        )
+        .unwrap();
+
+        let err = require_reusable_import(&conn, ACCOUNT_ID, import_id, "ios", "append")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not running"), "{err}");
+
+        let running =
+            start_import(&conn, ACCOUNT_ID, "ios", "append", Some("message-vault-io")).unwrap();
+        let src_err = require_reusable_import(&conn, ACCOUNT_ID, running, "android", "append")
+            .unwrap_err()
+            .to_string();
+        assert!(src_err.contains("source mismatch"), "{src_err}");
+        let mode_err = require_reusable_import(&conn, ACCOUNT_ID, running, "ios", "replace")
+            .unwrap_err()
+            .to_string();
+        assert!(mode_err.contains("mode mismatch"), "{mode_err}");
+        assert!(require_reusable_import(&conn, ACCOUNT_ID, running, "ios", "append").is_ok());
     }
 
     #[test]

@@ -317,19 +317,17 @@ pub fn import_jsonl_files_on_conn(
         let _ = io::stdout().flush();
     }
     schema::reset_staging_for_account(conn, opts.account_id)?;
-    if opts.mode == ImportMode::Replace {
-        let wipe: Vec<String> = if opts.source_from_jsonl {
+    let wipe_sources: Vec<String> = if opts.mode == ImportMode::Replace {
+        if opts.source_from_jsonl {
             opts.wipe_sources.clone().unwrap_or_default()
         } else {
             vec![opts.source.to_string()]
-        };
-        for source in &wipe {
-            validate_source_id(source)?;
-            println!("  sql:      deleting existing messages for source '{source}'…");
-            let _ = io::stdout().flush();
-            schema::delete_messages_for_source(conn, opts.account_id, source)?;
         }
-        println!("  sql:      wipe complete");
+    } else {
+        Vec::new()
+    };
+    for source in &wipe_sources {
+        validate_source_id(source)?;
     }
     let _ = io::stdout().flush();
 
@@ -340,19 +338,8 @@ pub fn import_jsonl_files_on_conn(
         if total_files == 1 { "" } else { "s" }
     );
     if opts.mode == ImportMode::Replace {
-        if opts.source_from_jsonl {
-            let wiped = opts
-                .wipe_sources
-                .as_ref()
-                .map(|s| s.join(", "))
-                .unwrap_or_default();
-            println!("  import:   wiped existing rows for source(s) '{wiped}'");
-        } else {
-            println!(
-                "  import:   wiped existing rows for source '{}'",
-                opts.source
-            );
-        }
+        let wiped = wipe_sources.join(", ");
+        println!("  import:   will wipe source(s) '{wiped}' after staging succeeds");
     }
     let _ = io::stdout().flush();
 
@@ -420,7 +407,13 @@ pub fn import_jsonl_files_on_conn(
         started.elapsed().as_secs_f64()
     );
     let _ = io::stdout().flush();
-    let promote_stats = promote_append(conn, opts.mode, opts.account_id, opts.fill_content_keys)?;
+    let promote_stats = promote_append(
+        conn,
+        opts.mode,
+        opts.account_id,
+        opts.fill_content_keys,
+        &wipe_sources,
+    )?;
     stats.messages_deduped += promote_stats.messages_deduped;
     stats.messages_appended = promote_stats.messages_appended;
     if opts.mode == ImportMode::Append {
@@ -468,7 +461,7 @@ fn try_store_converted(
     let Some(rel) = nonempty_rel(&att.path) else {
         return Ok(None);
     };
-    let source = export_dir.join(rel);
+    let source = crate::config::resolve_under_root(export_dir, rel)?;
     if !source.is_file() {
         return Ok(None);
     }
@@ -508,7 +501,7 @@ fn store_claimed_or_path(
             }));
         }
         if let Some(rel) = nonempty_rel(&att.path) {
-            let source = export_dir.join(rel);
+            let source = crate::config::resolve_under_root(export_dir, rel)?;
             return match assets::store_verified(
                 &source,
                 sha,
@@ -537,12 +530,8 @@ fn store_claimed_or_path(
     }
 
     if let Some(rel) = att.path.as_deref() {
-        return assets::hash_and_store(
-            &export_dir.join(rel),
-            assets_dir,
-            att.mime_type.as_deref(),
-            asset_stats,
-        );
+        let source = crate::config::resolve_under_root(export_dir, rel)?;
+        return assets::hash_and_store(&source, assets_dir, att.mime_type.as_deref(), asset_stats);
     }
     asset_stats.missing += 1;
     Ok(None)
@@ -1180,11 +1169,24 @@ fn promote_append(
     mode: ImportMode,
     account_id: &str,
     fill_content_keys: bool,
+    wipe_sources: &[String],
 ) -> Result<PromoteStats> {
     let mut stats = PromoteStats::default();
     let started = Instant::now();
 
     let tx = conn.transaction()?;
+
+    if mode == ImportMode::Replace {
+        for source in wipe_sources {
+            println!("  sql:      deleting existing messages for source '{source}'…");
+            let _ = io::stdout().flush();
+            schema::delete_messages_for_source(&tx, account_id, source)?;
+        }
+        if !wipe_sources.is_empty() {
+            println!("  sql:      wipe complete (inside promote transaction)");
+            let _ = io::stdout().flush();
+        }
+    }
 
     // Staging→prod conversation id map for set-based inserts.
     tx.execute_batch(
@@ -2600,5 +2602,117 @@ mod tests {
         assert_eq!(missing_reason.as_deref(), Some("too_large"));
         assert_eq!(size_bytes, Some(999));
         assert_eq!(original_name.as_deref(), Some("gone.bin"));
+    }
+
+    #[test]
+    fn rejects_attachment_path_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let export_dir = tmp.path().join("export");
+        fs::create_dir_all(&assets).unwrap();
+        fs::create_dir_all(&export_dir).unwrap();
+        fs::write(tmp.path().join("secret.txt"), b"secret-bytes").unwrap();
+
+        let path = write_jsonl(
+            &export_dir,
+            "traverse.jsonl",
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-trav","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"mms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"x","attachments":[{"path":"../secret.txt","original_name":"secret.txt","mime_type":"text/plain","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null,"size_bytes":12,"missing_reason":null}],"imessage":null,"source":null}
+"#,
+        );
+        let err = import_jsonl_files(
+            &[path],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                &export_dir,
+                None,
+                false,
+                ImportMode::Append,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("unsafe attachment path"),
+            "expected path rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn failed_replace_keeps_existing_messages() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let export_dir = tmp.path().join("export");
+        fs::create_dir_all(&assets).unwrap();
+        fs::create_dir_all(&export_dir).unwrap();
+
+        let first = write_jsonl(
+            &export_dir,
+            "ok.jsonl",
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+14075551234","conversation_type":"individual","group_title":null,"participants":[{"handle":"+14075551234","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-keep-replace","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+14075551234","sender_display_name":null,"subject":null,"text":"keep me","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        import_jsonl_files(
+            &[first],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                &export_dir,
+                None,
+                false,
+                ImportMode::Replace,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let bad = write_jsonl(
+            &export_dir,
+            "bad.jsonl",
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+14075551234","conversation_type":"individual","group_title":null,"participants":[{"handle":"+14075551234","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-bad","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"mms","sender_handle":"+14075551234","sender_display_name":null,"subject":null,"text":"nope","attachments":[{"path":"../secret.txt","original_name":"secret.txt","mime_type":"text/plain","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null,"size_bytes":1,"missing_reason":null}],"imessage":null,"source":null}
+"#,
+        );
+        let err = import_jsonl_files(
+            &[bad],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                &export_dir,
+                None,
+                false,
+                ImportMode::Replace,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unsafe attachment path"));
+
+        let conn = Connection::open(&db).unwrap();
+        let body: String = conn
+            .query_row(
+                "SELECT body FROM messages WHERE guid = 'g-keep-replace'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(body, "keep me");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 }

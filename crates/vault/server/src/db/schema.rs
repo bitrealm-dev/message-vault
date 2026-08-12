@@ -234,6 +234,37 @@ pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<
 /// Create current account and vault metadata tables.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(ACCOUNTS_DDL)?;
+    // Additive migrations for DBs created before expiry/disable columns existed.
+    ensure_column(
+        conn,
+        "account_session_tokens",
+        "expires_at",
+        "ALTER TABLE account_session_tokens ADD COLUMN expires_at TEXT NOT NULL DEFAULT '0'",
+    )?;
+    ensure_column(
+        conn,
+        "account_api_tokens",
+        "expires_at",
+        "ALTER TABLE account_api_tokens ADD COLUMN expires_at TEXT",
+    )?;
+    ensure_column(
+        conn,
+        "account_api_tokens",
+        "disabled",
+        "ALTER TABLE account_api_tokens ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, alter_sql: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(alter_sql)?;
+    }
     Ok(())
 }
 

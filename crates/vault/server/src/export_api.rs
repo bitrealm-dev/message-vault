@@ -12,6 +12,11 @@ use crate::search_query::{
 
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
 pub const MAX_EXPORT_LIMIT: usize = 500;
+/// Cap expensive OFFSET skips (prefer cursor pagination for deep pages).
+pub const MAX_EXPORT_OFFSET: usize = 50_000;
+/// Reject pathological search strings before parsing / SQL build.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 2_048;
+pub const MAX_SEARCH_TEXT_TERMS: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct ExportPageOpts<'a> {
@@ -203,11 +208,31 @@ fn prepare_message_export(
     query: &str,
     source_override: Option<&str>,
 ) -> Result<BuiltFilters, ExportQueryError> {
+    if query.len() > MAX_SEARCH_QUERY_BYTES {
+        return Err(ExportQueryError::bad(format!(
+            "search query exceeds {MAX_SEARCH_QUERY_BYTES} bytes"
+        )));
+    }
     let parsed = parse_search_query(query);
     if parsed.mode == SearchMode::Contacts {
         return Err(ExportQueryError::bad(
             "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
         ));
+    }
+    let text_term_count = parsed.terms.len() + parsed.phrases.len() + parsed.exclude.len();
+    if text_term_count > MAX_SEARCH_TEXT_TERMS {
+        return Err(ExportQueryError::bad(format!(
+            "search query has too many text terms (max {MAX_SEARCH_TEXT_TERMS})"
+        )));
+    }
+    if let Some(ast) = &parsed.fts_ast {
+        let nodes = crate::search_query::count_fts_nodes(ast);
+        if nodes > crate::search_query::MAX_FTS_NODES {
+            return Err(ExportQueryError::bad(format!(
+                "search query is too complex (max {} expression nodes)",
+                crate::search_query::MAX_FTS_NODES
+            )));
+        }
     }
     build_message_filters(conn, account_id, &parsed, source_override)
 }
@@ -262,6 +287,11 @@ pub fn export_messages(
     }
     sql.push_str(" ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC");
     if let (Some(offset), None) = (opts.offset, &cursor) {
+        if offset > MAX_EXPORT_OFFSET {
+            return Err(ExportQueryError::bad(format!(
+                "offset exceeds maximum of {MAX_EXPORT_OFFSET}; use cursor pagination instead"
+            )));
+        }
         sql.push_str(" LIMIT ? OFFSET ?");
         params.push((fetch_limit as i64).into());
         params.push((offset as i64).into());
@@ -503,12 +533,51 @@ fn push_participant_handle_or_alias_like(
     params.push(like.into());
 }
 
+fn reject_unimplemented_message_filters(
+    parsed: &ParsedSearchQuery,
+) -> Result<(), ExportQueryError> {
+    let mut unsupported = Vec::new();
+    if parsed.text.is_some() {
+        unsupported.push("text:");
+    }
+    if parsed.filename.is_some() {
+        unsupported.push("filename:");
+    }
+    if parsed.filetype.is_some() {
+        unsupported.push("filetype:");
+    }
+    if parsed.larger_bytes.is_some() {
+        unsupported.push("larger:");
+    }
+    if parsed.smaller_bytes.is_some() {
+        unsupported.push("smaller:");
+    }
+    if parsed.message_count.is_some() {
+        unsupported.push("message-count:");
+    }
+    if parsed.group_count.is_some() {
+        unsupported.push("group-count:");
+    }
+    if parsed.has_attachment == Some(false) {
+        unsupported.push("has:noattachment");
+    }
+    if unsupported.is_empty() {
+        return Ok(());
+    }
+    Err(ExportQueryError::BadRequest(format!(
+        "unsupported search operators (not implemented in SQL yet): {}",
+        unsupported.join(", ")
+    )))
+}
+
 fn build_message_filters(
     conn: &Connection,
     account_id: &str,
     parsed: &ParsedSearchQuery,
     source_override: Option<&str>,
 ) -> Result<BuiltFilters, ExportQueryError> {
+    reject_unimplemented_message_filters(parsed)?;
+
     let mut where_parts = vec!["c.account_id = ?".to_string()];
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
@@ -635,6 +704,8 @@ fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &st
     for _ in 0..8 {
         params.push(like.clone().into());
     }
+    // FTS5 MATCH for body/subject/attachment_text (quoted to treat the term literally).
+    params.push(fts5_literal_query(term).into());
     "(
     coalesce(hs.raw, '') LIKE ? COLLATE NOCASE
     OR EXISTS (
@@ -672,8 +743,17 @@ fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &st
           OR coalesce(a_md.derived_mime_type, '') LIKE ? COLLATE NOCASE
         )
     )
+    OR EXISTS (
+      SELECT 1 FROM messages_fts fts
+      WHERE fts.rowid = m.id AND messages_fts MATCH ?
+    )
   )"
     .into()
+}
+
+/// Quote a free-text token for FTS5 so operators/punctuation are literal.
+fn fts5_literal_query(term: &str) -> String {
+    format!("\"{}\"", term.replace('"', "\"\""))
 }
 
 fn involves_contacts_sql(contact_ids: &[i64]) -> String {
@@ -997,5 +1077,124 @@ mod tests {
         )
         .unwrap();
         assert_eq!(res.messages.len(), 2);
+    }
+
+    #[test]
+    fn free_text_matches_message_body_via_fts() {
+        let conn = setup();
+        let res = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "one",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(res.messages.len(), 1);
+        assert_eq!(res.messages[0].id, 1);
+        assert!(
+            res.messages[0]
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .contains("one")
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_search_query_and_offset() {
+        let conn = setup();
+        let huge = "x".repeat(MAX_SEARCH_QUERY_BYTES + 1);
+        let err = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: &huge,
+                limit: 10,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "{err}");
+
+        let err = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "",
+                limit: 10,
+                offset: Some(MAX_EXPORT_OFFSET + 1),
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("offset"), "{err}");
+    }
+
+    #[test]
+    fn export_does_not_leak_other_account_messages() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES ('a2', 'bob', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ('a2', '+1777', '+1777', 'phone', 'phone')",
+            [],
+        )
+        .unwrap();
+        let bob_handle = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
+             VALUES (99, 'a2', ?1, 'individual', 'bob.jsonl')",
+            params![bob_handle],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, account_id, source, service, timestamp, is_from_me, sort_order, body)
+             VALUES (99, 99, 'a2', 'sms', 'sms', '2020-02-01T00:00:00Z', 0, 0, 'bob secret')",
+            [],
+        )
+        .unwrap();
+
+        let alice = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "secret",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
+        assert!(
+            alice.messages.is_empty(),
+            "alice must not see bob's FTS hits"
+        );
+
+        let alice_all = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
+        assert!(alice_all.messages.iter().all(|m| m.id != 99));
     }
 }

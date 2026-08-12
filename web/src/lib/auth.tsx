@@ -34,6 +34,8 @@ function profileNeedsOnboarding(profile: Profile): boolean {
 
 interface AuthContextValue extends AuthState {
   login: (serverUrl: string, token: string, accountId: string) => Promise<void>;
+  /** Persist a rotated session token (e.g. after change-password). */
+  updateToken: (token: string) => void;
   logout: () => void;
   setServer: (url: string) => void;
 }
@@ -201,8 +203,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const updateToken = useCallback((token: string) => {
+    setToken(token);
+    setState((s) => {
+      if (!s.isAuthenticated) return s;
+      const next: AuthState = { ...s, token };
+      persistState(next);
+      return next;
+    });
+  }, []);
+
   const logout = useCallback(() => {
     authEpoch.current++;
+    // Revoke while the bearer token is still configured on the API client.
+    void apiClient.post("/v1/auth/logout", {}).catch(() => {});
     setToken(null);
     clearContactDetailCache();
     clearPersisted();
@@ -216,7 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, setServer }}>
+    <AuthContext.Provider value={{ ...state, login, logout, updateToken, setServer }}>
       {children}
     </AuthContext.Provider>
   );

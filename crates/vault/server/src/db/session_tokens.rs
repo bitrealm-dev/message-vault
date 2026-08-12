@@ -1,25 +1,28 @@
 //! GUI session Bearer tokens (`mv-user-…`); one per account, rotates on login.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 
 const TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+/// Default GUI session lifetime (30 days).
+pub const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
 /// Generate a new GUI session token (`mv-user-` + 32 alphanumeric characters).
 #[allow(dead_code)] // used by rotate_account_session_token
-pub fn generate_session_token() -> String {
+pub fn generate_session_token() -> Result<String> {
     generate_prefixed_token("mv-user-")
 }
 
-pub(crate) fn generate_prefixed_token(prefix: &str) -> String {
+pub(crate) fn generate_prefixed_token(prefix: &str) -> Result<String> {
     let mut buf = [0u8; 32];
-    fill_random(&mut buf);
+    fill_random(&mut buf)?;
     let mut suffix = String::with_capacity(32);
     for b in buf {
         suffix.push(TOKEN_ALPHANUM[(b as usize) % TOKEN_ALPHANUM.len()] as char);
     }
-    format!("{prefix}{suffix}")
+    Ok(format!("{prefix}{suffix}"))
 }
 
 /// SHA-256 hex digest of a plaintext token (stored in DB; used for Bearer lookup).
@@ -27,52 +30,51 @@ pub fn hash_api_token(token: &str) -> String {
     crate::assets::sha256_hex(token.as_bytes())
 }
 
-#[allow(dead_code)]
-fn fill_random(buf: &mut [u8]) {
-    if getrandom_fill(buf) {
-        return;
+fn fill_random(buf: &mut [u8]) -> Result<()> {
+    rand::rngs::OsRng
+        .try_fill_bytes(buf)
+        .map_err(|e| anyhow::anyhow!("secure random unavailable: {e}"))?;
+    if buf.iter().all(|&b| b == 0) {
+        bail!("secure random returned an empty entropy buffer");
     }
-    let mut seed = format!(
-        "{}:{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
-        std::process::id()
-    )
-    .into_bytes();
-    let mut offset = 0;
-    while offset < buf.len() {
-        let digest = Sha256::digest(&seed);
-        let n = (buf.len() - offset).min(digest.len());
-        buf[offset..offset + n].copy_from_slice(&digest[..n]);
-        offset += n;
-        seed = digest.to_vec();
-    }
+    Ok(())
 }
 
-#[allow(dead_code)]
-fn getrandom_fill(buf: &mut [u8]) -> bool {
-    use std::fs::File;
-    use std::io::Read;
-    let mut f = match File::open("/dev/urandom") {
-        Ok(f) => f,
-        Err(_) => return false,
-    };
-    f.read_exact(buf).is_ok()
+fn session_expiry_unix(now_secs: u64) -> String {
+    format!("{}", now_secs.saturating_add(SESSION_TTL_SECS))
 }
 
-/// Look up which account owns this session Bearer (by hash).
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Look up which account owns this session Bearer (by hash). Expired rows are removed.
 pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option<String>> {
     let token_hash = hash_api_token(token);
-    let found: Option<String> = conn
+    let found: Option<(String, String)> = conn
         .query_row(
-            "SELECT account_id FROM account_session_tokens WHERE token_hash = ?1",
+            "SELECT account_id, expires_at FROM account_session_tokens WHERE token_hash = ?1",
             params![token_hash],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    Ok(found)
+    let Some((account_id, expires_at)) = found else {
+        return Ok(None);
+    };
+    let expires = expires_at.parse::<u64>().unwrap_or(0);
+    let now = now_unix_secs();
+    // Legacy rows migrated with expires_at='0' are treated as expired; rotate via login.
+    if expires == 0 || expires <= now {
+        let _ = conn.execute(
+            "DELETE FROM account_session_tokens WHERE token_hash = ?1",
+            params![token_hash],
+        );
+        return Ok(None);
+    }
+    Ok(Some(account_id))
 }
 
 #[allow(dead_code)]
@@ -88,18 +90,20 @@ pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<
 /// Create or replace the account's session token hash; returns plaintext once.
 #[allow(dead_code)]
 pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
-    let token = generate_session_token();
+    let token = generate_session_token()?;
     let token_hash = hash_api_token(&token);
     let created_at = unix_secs_string();
+    let expires_at = session_expiry_unix(now_unix_secs());
     conn.execute(
         r#"
-        INSERT INTO account_session_tokens (account_id, token_hash, created_at)
-        VALUES (?1, ?2, ?3)
+        INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
+        VALUES (?1, ?2, ?3, ?4)
         ON CONFLICT(account_id) DO UPDATE SET
             token_hash = excluded.token_hash,
-            created_at = excluded.created_at
+            created_at = excluded.created_at,
+            expires_at = excluded.expires_at
         "#,
-        params![account_id, token_hash, created_at],
+        params![account_id, token_hash, created_at, expires_at],
     )
     .with_context(|| format!("rotate session token for {account_id}"))?;
     Ok(token)
@@ -107,12 +111,14 @@ pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Resu
 
 /// Create a fresh session token for an account and return the plaintext.
 pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
-    let token = generate_session_token();
+    let token = generate_session_token()?;
     let token_hash = hash_api_token(&token);
     let created_at = unix_secs_string();
+    let expires_at = session_expiry_unix(now_unix_secs());
     conn.execute(
-        "INSERT INTO account_session_tokens (account_id, token_hash, created_at) VALUES (?1, ?2, ?3)",
-        params![account_id, token_hash, created_at],
+        "INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![account_id, token_hash, created_at, expires_at],
     )
     .with_context(|| format!("insert session token for {account_id}"))?;
     Ok(token)
@@ -133,7 +139,17 @@ pub fn get_or_create_session_token(conn: &Connection, account_id: &str) -> Resul
     }
 }
 
-#[allow(dead_code)]
+/// Revoke the presented session token (logout). Returns whether a row was deleted.
+pub fn revoke_session_token(conn: &Connection, token: &str) -> Result<bool> {
+    let token_hash = hash_api_token(token);
+    let n = conn.execute(
+        "DELETE FROM account_session_tokens WHERE token_hash = ?1",
+        params![token_hash],
+    )?;
+    Ok(n > 0)
+}
+
+/// Revoke every session for an account (e.g. after password change).
 pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM account_session_tokens WHERE account_id = ?1",
@@ -144,16 +160,13 @@ pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Resu
 }
 
 pub(crate) fn unix_secs_string() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{secs}")
+    format!("{}", now_unix_secs())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema;
 
     #[test]
     fn hash_is_stable_hex() {
@@ -161,5 +174,45 @@ mod tests {
         assert_eq!(h.len(), 64);
         assert_eq!(h, hash_api_token("mv-user-abc"));
         assert_ne!(h, hash_api_token("mv-user-xyz"));
+    }
+
+    #[test]
+    fn generate_prefixed_token_uses_os_entropy() {
+        let a = generate_prefixed_token("mv-user-").unwrap();
+        let b = generate_prefixed_token("mv-user-").unwrap();
+        assert!(a.starts_with("mv-user-"));
+        assert_eq!(a.len(), "mv-user-".len() + 32);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn lookup_rejects_expired_session() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        schema::ensure_accounts_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
+            [],
+        )
+        .unwrap();
+        let token = insert_account_session_token(&conn, "a1").unwrap();
+        // Force expiry into the past.
+        conn.execute("UPDATE account_session_tokens SET expires_at = '1'", [])
+            .unwrap();
+        assert!(lookup_account_for_token(&conn, &token).unwrap().is_none());
+    }
+
+    #[test]
+    fn revoke_session_token_removes_row() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        schema::ensure_accounts_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
+            [],
+        )
+        .unwrap();
+        let token = insert_account_session_token(&conn, "a1").unwrap();
+        assert!(lookup_account_for_token(&conn, &token).unwrap().is_some());
+        assert!(revoke_session_token(&conn, &token).unwrap());
+        assert!(lookup_account_for_token(&conn, &token).unwrap().is_none());
     }
 }

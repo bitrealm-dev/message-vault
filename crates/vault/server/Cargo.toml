@@ -13,6 +13,7 @@ contacts = { workspace = true }
 demo-seed = { path = "../demo-seed" }
 futures-util = { version = "0.3.31", default-features = false }
 jsonwebtoken = "9.3.1"
+libc = "0.2"
 message-ir = { workspace = true }
 phone = { workspace = true }
 rand = "0.8.5"
@@ -23,6 +24,7 @@ serde_json = "1.0.150"
 sha2 = "0.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
 toml = "1.1.2"
 tower-http = { version = "0.7.0", features = ["limit", "cors", "fs"] }
 uuid = { version = "1.18.1", features = ["v4"] }

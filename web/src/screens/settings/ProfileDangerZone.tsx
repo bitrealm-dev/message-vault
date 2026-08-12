@@ -38,12 +38,15 @@ export function ProfileDangerZone({
     }
   };
 
-  const performDeleteAccount = async () => {
+  const performDeleteAccount = async (currentPassword: string) => {
     if (demoLocked) return;
     setDeleting(true);
     setDangerError("");
     try {
-      await apiClient.post("/v1/auth/delete-account", { confirm: true });
+      await apiClient.post("/v1/auth/delete-account", {
+        confirm: true,
+        current_password: currentPassword,
+      });
       setDeleteDialogOpen(false);
       logout();
     } catch (e) {
@@ -138,7 +141,7 @@ export function ProfileDangerZone({
         onClose={() => {
           if (!deleting) setDeleteDialogOpen(false);
         }}
-        onConfirm={() => void performDeleteAccount()}
+        onConfirm={(password) => void performDeleteAccount(password)}
       />
 
       <ConfirmDialog
