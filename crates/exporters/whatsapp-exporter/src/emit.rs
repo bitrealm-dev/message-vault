@@ -679,6 +679,23 @@ mod tests {
     }
 
     #[test]
+    fn resolve_media_rejects_file_only_under_cwd_like_path() {
+        // Media roots passed to convert must be explicit (input / JSON parent /
+        // work dir). A path that only exists under a separate "CWD-like" tree
+        // must not resolve when that tree is omitted from the allowlist.
+        let allowed = tempfile::tempdir().unwrap();
+        let cwd_like = tempfile::tempdir().unwrap();
+        let secret = cwd_like.path().join("media.jpg");
+        fs::write(&secret, b"jpeg").unwrap();
+        let roots = [allowed.path().to_path_buf()];
+        assert!(!path_within_any(&secret, &roots));
+        assert!(
+            resolve_media_file(secret.to_str().unwrap(), None, &roots).is_none(),
+            "file under a non-allowed tree must be rejected"
+        );
+    }
+
+    #[test]
     fn resolve_media_rejects_dotdot_escape() {
         let root = tempfile::tempdir().unwrap();
         let sibling = root.path().parent().unwrap().join("escape_probe.bin");
