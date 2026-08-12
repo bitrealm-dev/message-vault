@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useCallback } from "react";
 import { ModalOverlay, Modal, Dialog } from "react-aria-components";
 import { apiClient } from "../lib/api";
+import { useResource } from "../lib/useResource";
 
 interface SourceInfo {
   backup_name: string;
@@ -16,18 +17,22 @@ export default function SourcesPanel({
   conversationId: string | null;
   onClose: () => void;
 }) {
-  const [sources, setSources] = useState<SourceInfo[]>([]);
+  const fetchSources = useCallback(
+    async (signal: AbortSignal) => {
+      const res = await apiClient.get<{ sources: SourceInfo[] }>(
+        `/v1/export/conversations/${conversationId}/sources`,
+        { signal },
+      );
+      return res.sources;
+    },
+    [conversationId],
+  );
 
-  useEffect(() => {
-    if (!conversationId) return;
-    apiClient
-      .get<{ sources: SourceInfo[] }>(`/v1/export/conversations/${conversationId}/sources`)
-      .then((res) => setSources(res.sources))
-      .catch(() => setSources([]));
-  }, [conversationId]);
+  const { data, loading, error } = useResource(conversationId, fetchSources);
 
   if (!conversationId) return null;
 
+  const sources = data ?? [];
   const total = sources.reduce((sum, s) => sum + s.unique_count, 0);
 
   return (
@@ -49,7 +54,13 @@ export default function SourcesPanel({
             <button onClick={onClose} className="cursor-pointer border-none bg-none text-[1.25rem] text-muted">×</button>
           </div>
 
-          {sources.length === 0 ? (
+          {loading ? (
+            <div className="text-[0.875rem] text-muted">Loading…</div>
+          ) : error ? (
+            <div className="rounded border border-danger-soft-border bg-danger-soft-bg p-2 text-[0.813rem] text-danger">
+              {error}
+            </div>
+          ) : sources.length === 0 ? (
             <div className="text-[0.875rem] text-muted">No source data available.</div>
           ) : (
             <>

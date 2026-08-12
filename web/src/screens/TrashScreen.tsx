@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState } from "react";
 import { apiClient } from "../lib/api";
+import { useResource } from "../lib/useResource";
 import Button from "../components/Button";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -11,28 +12,31 @@ interface TrashEntry {
   conversation_exists: boolean;
 }
 
+const TRASH_RESOURCE_KEY = "trash";
+
 export default function TrashScreen() {
-  const [entries, setEntries] = useState<TrashEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchTrash = () => {
-    setLoading(true);
-    apiClient
-      .get<{ trash: TrashEntry[] }>("/v1/export/trash")
-      .then((res) => setEntries(res.trash))
-      .catch(() => setEntries([]))
-      .finally(() => setLoading(false));
-  };
+  const fetchTrash = useCallback(async (signal: AbortSignal) => {
+    const res = await apiClient.get<{ trash: TrashEntry[] }>("/v1/export/trash", {
+      signal,
+    });
+    return res.trash;
+  }, []);
 
-  useEffect(() => { fetchTrash(); }, []);
+  const { data, loading, error, reload } = useResource(
+    TRASH_RESOURCE_KEY,
+    fetchTrash,
+  );
+
+  const entries = data ?? [];
 
   const restore = async (id: string) => {
     await apiClient.post(`/v1/trash/${id}/restore`);
     setMessage("Conversation restored.");
-    fetchTrash();
+    reload();
   };
 
   const emptyTrash = async () => {
@@ -40,7 +44,7 @@ export default function TrashScreen() {
     try {
       await apiClient.post("/v1/trash/empty");
       setMessage("Trash emptied.");
-      fetchTrash();
+      reload();
     } finally {
       setDeleting(false);
       setConfirmOpen(false);
@@ -60,6 +64,11 @@ export default function TrashScreen() {
           </Button>
         )}
       </div>
+      {error && (
+        <div className="mb-4 rounded border border-danger-soft-border bg-danger-soft-bg px-3 py-2 text-[0.813rem] text-danger">
+          {error}
+        </div>
+      )}
       {message && (
         <div className="mb-4 rounded bg-ok-soft-bg px-3 py-2 text-[0.813rem] text-ok-soft-text">
           {message}

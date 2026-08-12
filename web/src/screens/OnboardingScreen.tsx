@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import { apiClient } from "../lib/api";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import {
   accentLink,
   authCard,
@@ -31,8 +32,7 @@ export default function OnboardingScreen() {
   const [handles, setHandles] = useState<HandleInput[]>([
     { handle: "", service: "phone" },
   ]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAsyncAction();
 
   const addHandle = () => {
     setHandles([...handles, { handle: "", service: "phone" }]);
@@ -53,10 +53,8 @@ export default function OnboardingScreen() {
     setHandles(handles.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = async () => {
-    setLoading(true);
-    setError("");
-    try {
+  const handleSubmit = () => {
+    void run(async () => {
       await apiClient.post("/v1/account/profile", {
         preferred_name: displayName.trim(),
         handles: handles
@@ -68,11 +66,7 @@ export default function OnboardingScreen() {
       });
       // Re-run login so needsOnboarding is recomputed from the saved profile
       await login(serverUrl, token!, accountId!);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const canSubmit =
@@ -149,8 +143,8 @@ export default function OnboardingScreen() {
           + Add another account
         </button>
 
-        <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || loading}>
-          {loading ? "Saving…" : "Continue to Vault"}
+        <AuthSubmitButton onClick={handleSubmit} disabled={!canSubmit || busy}>
+          {busy ? "Saving…" : "Continue to Vault"}
         </AuthSubmitButton>
 
         <button type="button" onClick={logout} className={`${accentLink} mt-3 block w-full text-center`}>

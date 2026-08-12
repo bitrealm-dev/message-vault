@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { apiClient, setBaseUrl } from "../lib/api";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import TextField from "../components/TextField";
 import PasswordField from "../components/PasswordField";
 import AuthSubmitButton from "../components/AuthSubmitButton";
@@ -22,24 +23,18 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAsyncAction();
 
-  const handleRegister = async () => {
-    setError("");
+  const handleRegister = () => {
+    void run(async () => {
+      if (!username.trim()) {
+        throw new Error("Username is required.");
+      }
+      // Blank passwords are allowed; only reject when the two fields disagree.
+      if (password !== confirmPassword) {
+        throw new Error("Passwords do not match.");
+      }
 
-    if (!username.trim()) {
-      setError("Username is required.");
-      return;
-    }
-    // Blank passwords are allowed; only reject when the two fields disagree.
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-
-    setLoading(true);
-    try {
       setBaseUrl(serverUrl.trim());
       const res = await apiClient.post<{
         token: string;
@@ -52,11 +47,7 @@ export default function RegisterScreen() {
         phone: null,
       });
       login(serverUrl.trim(), res.token, res.account_id);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   return (
@@ -92,8 +83,8 @@ export default function RegisterScreen() {
           onToggle={() => setShowConfirm((v) => !v)}
         />
 
-        <AuthSubmitButton onClick={handleRegister} disabled={loading}>
-          {loading ? "Creating account…" : "Create account"}
+        <AuthSubmitButton onClick={handleRegister} disabled={busy}>
+          {busy ? "Creating account…" : "Create account"}
         </AuthSubmitButton>
 
         <AuthErrorFooter error={error} />
