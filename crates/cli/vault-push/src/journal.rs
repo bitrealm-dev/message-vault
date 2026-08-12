@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,10 @@ use serde::{Deserialize, Serialize};
 pub const JOURNAL_NAME: &str = ".vault-import-state.jsonl";
 pub const REPORT_NAME: &str = "vault-push-report.json";
 pub const LOG_NAME: &str = "vault-push.log";
+
+/// Serializes append and compact so concurrent prepare workers cannot tear lines
+/// and cannot interleave with a full rewrite.
+static JOURNAL_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalMessage {
@@ -60,6 +65,18 @@ pub enum JournalEvent {
     },
 }
 
+impl JournalEvent {
+    fn target(&self) -> (&str, &str) {
+        match self {
+            Self::AssetOk { url, username, .. }
+            | Self::MessageOk { url, username, .. }
+            | Self::MessageBatchOk { url, username, .. }
+            | Self::FileOk { url, username, .. }
+            | Self::Fail { url, username, .. } => (url.as_str(), username.as_str()),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct JournalState {
     pub assets: HashSet<String>,
@@ -75,6 +92,13 @@ impl JournalState {
 
 pub fn journal_path(input: &Path) -> PathBuf {
     input.join(JOURNAL_NAME)
+}
+
+fn write_event_line(out: &mut impl Write, event: &JournalEvent) -> Result<()> {
+    let mut buf = serde_json::to_vec(event).context("serialize journal event")?;
+    buf.push(b'\n');
+    out.write_all(&buf)?;
+    Ok(())
 }
 
 pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
@@ -150,6 +174,9 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
 }
 
 pub fn append(path: &Path, event: &JournalEvent) -> Result<()> {
+    let _guard = JOURNAL_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -158,14 +185,40 @@ pub fn append(path: &Path, event: &JournalEvent) -> Result<()> {
         .append(true)
         .open(path)
         .with_context(|| format!("open journal for append {}", path.display()))?;
-    serde_json::to_writer(&mut file, event)?;
-    file.write_all(b"\n")?;
+    write_event_line(&mut file, event)?;
     file.flush()?;
     Ok(())
 }
 
+/// Rewrite the journal for one vault target from in-memory `state`, keeping
+/// events that belong to other `(url, username)` pairs.
 pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> Result<()> {
+    let _guard = JOURNAL_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let mut events = Vec::new();
+
+    // Preserve other vault targets so one export folder can resume against
+    // multiple servers without wiping their skip state.
+    if path.is_file() {
+        let file = File::open(path).with_context(|| format!("open journal {}", path.display()))?;
+        for (i, line) in BufReader::new(file).lines().enumerate() {
+            let line = line.with_context(|| format!("read journal line {}", i + 1))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: JournalEvent = match serde_json::from_str(&line) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let (u, a) = event.target();
+            if u != url || a != username {
+                events.push(event);
+            }
+        }
+    }
+
     let mut assets: Vec<_> = state.assets.iter().collect();
     assets.sort_unstable();
     for sha in assets {
@@ -207,10 +260,10 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> 
     let tmp = path.with_extension("jsonl.tmp");
     {
         let mut out = File::create(&tmp)?;
-        for event in events {
-            serde_json::to_writer(&mut out, &event)?;
-            out.write_all(b"\n")?;
+        for event in &events {
+            write_event_line(&mut out, event)?;
         }
+        out.flush()?;
     }
     fs::rename(&tmp, path)?;
     Ok(())
@@ -219,6 +272,8 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn loads_legacy_and_batch_message_success_events() {
@@ -247,5 +302,75 @@ mod tests {
                 .messages
                 .contains(&JournalState::message_key("second.jsonl", "guid-2"))
         );
+    }
+
+    #[test]
+    fn compact_preserves_other_vault_target_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(JOURNAL_NAME);
+        fs::write(
+            &path,
+            concat!(
+                r#"{"event":"asset_ok","url":"http://a","username":"alice","source":"sms","sha256":"aaa"}"#,
+                "\n",
+                r#"{"event":"file_ok","url":"http://b","username":"bob","source":"sms","file":"chat.jsonl"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let mut state = JournalState::default();
+        state.assets.insert("bbb".into());
+        compact(&path, "http://b", "bob", &state).unwrap();
+
+        let a = load(&path, "http://a", "alice").unwrap();
+        assert!(a.assets.contains("aaa"));
+        let b = load(&path, "http://b", "bob").unwrap();
+        assert!(b.assets.contains("bbb"));
+        assert!(!b.files.contains("chat.jsonl"));
+    }
+
+    #[test]
+    fn append_writes_complete_lines_under_contention() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join(JOURNAL_NAME));
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let path = Arc::clone(&path);
+            handles.push(thread::spawn(move || {
+                for j in 0..50 {
+                    let guid = format!("g-{i}-{j}");
+                    let messages: Vec<_> = (0..200)
+                        .map(|k| JournalMessage {
+                            file: format!("f{i}.jsonl"),
+                            guid: format!("{guid}-{k}"),
+                        })
+                        .collect();
+                    append(
+                        &path,
+                        &JournalEvent::MessageBatchOk {
+                            url: "http://vault".into(),
+                            username: "alice".into(),
+                            source: "sms".into(),
+                            messages,
+                        },
+                    )
+                    .unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let text = fs::read_to_string(&*path).unwrap();
+        let mut lines = 0usize;
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            serde_json::from_str::<JournalEvent>(line).expect("torn line");
+            lines += 1;
+        }
+        assert_eq!(lines, 8 * 50);
     }
 }
