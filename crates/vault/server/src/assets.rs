@@ -27,6 +27,11 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex_encode(&Sha256::digest(data))
 }
 
+pub fn shard_rel_path(sha256: &str, ext: &str) -> String {
+    let ext = if ext == ".jpeg" { ".jpg" } else { ext };
+    format!("{}/{}{}", &sha256[..2], sha256, ext)
+}
+
 /// Look up an already-stored blob by lowercase hex SHA-256.
 pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
     let sha = normalize_sha256(sha256)?;
@@ -86,7 +91,7 @@ pub fn store_verified(
     }
 
     let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
-    let rel = format!("{}/{}{}", &claimed[..2], claimed, ext);
+    let rel = shard_rel_path(&claimed, &ext);
     let dest = assets_root.join(&rel);
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
@@ -168,7 +173,7 @@ pub(crate) fn require_sha256(sha: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))
 }
 
-fn hash_file(path: &Path) -> Result<String> {
+pub(crate) fn hash_file(path: &Path) -> Result<String> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();

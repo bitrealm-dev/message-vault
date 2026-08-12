@@ -731,9 +731,8 @@ pub fn run_dedupe(
     account_id: &str,
     near_window_secs: i64,
 ) -> Result<DedupeStats> {
-    let mut conn = Connection::open(db_path)
+    let mut conn = crate::db::schema::open_configured(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     crate::db::schema::ensure_vault_schema(&conn)?;
     dedupe_cross_source(&mut conn, account_id, None, near_window_secs)
 }

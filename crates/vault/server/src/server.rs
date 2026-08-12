@@ -203,6 +203,17 @@ impl From<ExportQueryError> for ApiError {
     }
 }
 
+impl From<crate::db::vault_imports::ImportLookupError> for ApiError {
+    fn from(e: crate::db::vault_imports::ImportLookupError) -> Self {
+        match e {
+            crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
+                Self::NotFound(format!("import {import_id} not found for this account"))
+            }
+            crate::db::vault_imports::ImportLookupError::Db(err) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 /// Map a `spawn_blocking` join + inner error onto `ApiError`.
 pub(crate) trait JoinBlocking<T, E>: Sized {
     fn join_blocking(self, task: &str) -> Result<T, ApiError>
@@ -256,6 +267,22 @@ where
     })
     .await
     .join_blocking(task)
+}
+
+async fn with_configured_db_map<T, E, F>(db_path: &Path, task: &str, f: F) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    E: From<anyhow::Error> + Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, E> + Send + 'static,
+    ApiError: From<E>,
+{
+    let db = db_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db)?;
+        f(&conn)
+    })
+    .await
+    .join_map(task, ApiError::from)
 }
 
 async fn with_locked_conn<T, E, F>(
@@ -571,18 +598,16 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     let token = bearer_token(headers)?;
     // Always look up against SQLite so rotate/delete in Settings takes effect
     // without restarting serve (no process-local token cache).
-    let db = state.cfg.paths.db.clone();
     let token_owned = token.clone();
-    let resolved = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<AuthIdentity>> {
-        let conn = schema::open_configured(&db)?;
-        schema::ensure_accounts_schema(&conn)?;
-        if let Some(account_id) = session_tokens::lookup_account_for_token(&conn, &token_owned)? {
+    let resolved = with_configured_db(&state.cfg.paths.db, "auth lookup task", move |conn| {
+        schema::ensure_accounts_schema(conn)?;
+        if let Some(account_id) = session_tokens::lookup_account_for_token(conn, &token_owned)? {
             return Ok(Some(AuthIdentity {
                 account_id,
                 capability: AuthCapability::Full,
             }));
         }
-        if let Some(tok) = api_tokens::lookup_account_for_api_token(&conn, &token_owned)? {
+        if let Some(tok) = api_tokens::lookup_account_for_api_token(conn, &token_owned)? {
             return Ok(Some(AuthIdentity {
                 account_id: tok.account_id,
                 capability: AuthCapability::ApiToken(tok.scopes),
@@ -590,8 +615,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
         }
         Ok(None)
     })
-    .await
-    .join_blocking("auth lookup task")?;
+    .await?;
 
     match resolved {
         Some(identity) => Ok(identity),
@@ -904,12 +928,7 @@ async fn imports_get_handler(
         crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
     })
     .await
-    .join_map("import detail task", |e| match e {
-        crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
-            ApiError::NotFound(format!("import {import_id} not found for this account"))
-        }
-        crate::db::vault_imports::ImportLookupError::Db(err) => ApiError::Internal(err.to_string()),
-    })?;
+    .join_map("import detail task", ApiError::from)?;
 
     Ok(Json(import_detail_response(detail)))
 }
@@ -1015,12 +1034,9 @@ async fn imports_complete_handler(
     })
     .await
     .join_map("complete import task failed", |e| {
-        if let Some(crate::db::vault_imports::ImportLookupError::NotFound { import_id }) =
-            e.downcast_ref::<crate::db::vault_imports::ImportLookupError>()
-        {
-            ApiError::NotFound(format!("import {import_id} not found for this account"))
-        } else {
-            ApiError::Internal(e.to_string())
+        match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
+            Ok(lookup) => ApiError::from(lookup),
+            Err(other) => ApiError::Internal(other.to_string()),
         }
     })?;
 
@@ -1281,12 +1297,10 @@ async fn export_messages_count_handler(
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
     let q = query.q.clone();
     let source = query.source.clone();
-    let db_path = state.cfg.paths.db.clone();
 
-    let body = tokio::task::spawn_blocking(move || {
-        let conn = schema::open_configured(&db_path)?;
+    let body = with_configured_db_map(&state.cfg.paths.db, "export count task", move |conn| {
         export_api::export_message_count(
-            &conn,
+            conn,
             ExportCountOpts {
                 account_id: &account,
                 query: &q,
@@ -1294,8 +1308,7 @@ async fn export_messages_count_handler(
             },
         )
     })
-    .await
-    .join_map("export count task", ApiError::from)?;
+    .await?;
     Ok(Json(body))
 }
 
@@ -1313,12 +1326,10 @@ async fn export_messages_handler(
     let q = query.q.clone();
     let cursor = query.cursor.clone();
     let source = query.source.clone();
-    let db_path = state.cfg.paths.db.clone();
 
-    let body = tokio::task::spawn_blocking(move || {
-        let conn = schema::open_configured(&db_path)?;
+    let body = with_configured_db_map(&state.cfg.paths.db, "export task", move |conn| {
         export_api::export_messages(
-            &conn,
+            conn,
             ExportPageOpts {
                 account_id: &account,
                 query: &q,
@@ -1329,8 +1340,7 @@ async fn export_messages_handler(
             },
         )
     })
-    .await
-    .join_map("export task", ApiError::from)?;
+    .await?;
     Ok(Json(body))
 }
 

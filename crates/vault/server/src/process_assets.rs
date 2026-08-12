@@ -7,19 +7,17 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::config::Config;
 use crate::db::schema;
-
-const JPEG_MIN_BYTES: u64 = 500 * 1024;
-const MP3_MIN_BYTES: u64 = 100 * 1024;
-const MP4_MIN_BYTES: u64 = 10 * 1024 * 1024;
+use crate::media_tools::{
+    self, JPEG_MIN_BYTES, MP3_MIN_BYTES, MP4_MIN_BYTES, MediaKind, ext_of, path_str,
+    probe_video_efficient,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessAssetsOptions {
@@ -40,14 +38,6 @@ pub struct ProcessAssetsStats {
     pub derived: u64,
     pub skipped: u64,
     pub errors: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MediaKind {
-    Image,
-    Video,
-    Audio,
-    Other,
 }
 
 #[derive(Debug, Clone)]
@@ -409,13 +399,6 @@ fn update_derived(
     Ok(())
 }
 
-fn ext_of(path: &Path) -> String {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| format!(".{}", e.to_ascii_lowercase()))
-        .unwrap_or_default()
-}
-
 /// Incomplete iMessage/SMS transfers and aborted vault uploads use a `.part` suffix.
 fn is_part_path(path: &str) -> bool {
     Path::new(path)
@@ -511,71 +494,7 @@ fn kind_of(assets_path: &str, mime: Option<&str>) -> MediaKind {
     if is_part_path(assets_path) {
         return MediaKind::Other;
     }
-    let ext = ext_of(Path::new(assets_path));
-    if ext == ".gif" || mime == Some("image/gif") {
-        return MediaKind::Other;
-    }
-    const IMAGE: &[&str] = &[
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif",
-    ];
-    const VIDEO: &[&str] = &[
-        ".mp4", ".m4v", ".mov", ".3gp", ".3gpp", ".webm", ".mpeg", ".mpg", ".mkv",
-    ];
-    const AUDIO: &[&str] = &[".mp3", ".m4a", ".aac", ".caf", ".amr", ".wav", ".ogg"];
-    if IMAGE.contains(&ext.as_str()) || mime.is_some_and(|m| m.starts_with("image/")) {
-        return MediaKind::Image;
-    }
-    if VIDEO.contains(&ext.as_str()) || mime.is_some_and(|m| m.starts_with("video/")) {
-        return MediaKind::Video;
-    }
-    if AUDIO.contains(&ext.as_str()) || mime.is_some_and(|m| m.starts_with("audio/")) {
-        return MediaKind::Audio;
-    }
-    MediaKind::Other
-}
-
-fn ffmpeg_available() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn run_ffmpeg(args: &[&str], cleanup_on_fail: Option<&Path>) -> Result<()> {
-    let output = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-y"])
-        .args(args)
-        .output()
-        .context("spawn ffmpeg")?;
-    if !output.status.success() {
-        if let Some(path) = cleanup_on_fail {
-            let _ = fs::remove_file(path);
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        bail!(
-            "ffmpeg failed: {}",
-            if !stderr.trim().is_empty() {
-                stderr
-            } else {
-                stdout
-            }
-        );
-    }
-    Ok(())
+    media_tools::kind_of(Path::new(assets_path), mime)
 }
 
 fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
@@ -585,7 +504,7 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
     if is_jpeg && size <= JPEG_MIN_BYTES {
         return Ok(None);
     }
-    if !ffmpeg_available() {
+    if !media_tools::tool_on_path("ffmpeg") {
         bail!("ffmpeg required for image derived media");
     }
     let tmp = tempfile::Builder::new()
@@ -594,79 +513,23 @@ fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
         .context("temp jpeg")?;
     let tmp_path = tmp.path().to_path_buf();
     // High-quality still (`-q:v 2` ≈ quality ~85 intent); autorotate is ffmpeg default.
-    run_ffmpeg(
+    media_tools::run_ffmpeg(
         &[
             "-i",
-            source_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("non-utf8 path"))?,
+            path_str(source_path)?,
             "-frames:v",
             "1",
             "-update",
             "1",
             "-q:v",
             "2",
-            tmp_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("non-utf8 temp path"))?,
+            path_str(&tmp_path)?,
         ],
         Some(&tmp_path),
     )?;
     let mut buf = Vec::new();
     File::open(&tmp_path)?.read_to_end(&mut buf)?;
     Ok(Some(buf))
-}
-
-fn probe_video_efficient(source_path: &Path) -> bool {
-    if !ffprobe_available() {
-        return false;
-    }
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height,avg_frame_rate",
-            "-of",
-            "json",
-        ])
-        .arg(source_path)
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return false;
-    };
-    let Some(s) = v
-        .get("streams")
-        .and_then(|a| a.as_array())
-        .and_then(|a| a.first())
-    else {
-        return false;
-    };
-    if s.get("codec_name").and_then(|c| c.as_str()) != Some("h264") {
-        return false;
-    }
-    let w = s.get("width").and_then(|x| x.as_u64()).unwrap_or(0);
-    let h = s.get("height").and_then(|x| x.as_u64()).unwrap_or(0);
-    if w.min(h) > 720 {
-        return false;
-    }
-    let rate = s
-        .get("avg_frame_rate")
-        .and_then(|x| x.as_str())
-        .unwrap_or("0/1");
-    let mut parts = rate.split('/');
-    let num: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0.0);
-    let den: f64 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1.0);
-    let fps = if den == 0.0 { 0.0 } else { num / den };
-    fps > 0.0 && fps <= 30.01
 }
 
 fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> {
@@ -680,23 +543,17 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
             return Ok(None);
         }
     }
-    if !ffmpeg_available() {
+    if !media_tools::tool_on_path("ffmpeg") {
         bail!("ffmpeg required for video derived media");
     }
     let out = work_dir.join(format!(
         "out-{}.mp4",
         hash_file_prefix(source_path).unwrap_or_else(|| "vid".into())
     ));
-    let src = source_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-utf8 path"))?;
-    let dest = out
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-utf8 out path"))?;
-    run_ffmpeg(
+    media_tools::run_ffmpeg(
         &[
             "-i",
-            src,
+            path_str(source_path)?,
             "-vf",
             "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',fps=30",
             "-c:v",
@@ -711,7 +568,7 @@ fn derive_video(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
             "96k",
             "-movflags",
             "+faststart",
-            dest,
+            path_str(&out)?,
         ],
         Some(&out),
     )?;
@@ -724,7 +581,7 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
     if ext == ".mp3" && size <= MP3_MIN_BYTES {
         return Ok(None);
     }
-    if !ffmpeg_available() {
+    if !media_tools::tool_on_path("ffmpeg") {
         bail!("ffmpeg required for audio derived media");
     }
     let out = work_dir.join(format!(
@@ -734,16 +591,10 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
             .and_then(|s| s.to_str())
             .unwrap_or("audio")
     ));
-    let src = source_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-utf8 path"))?;
-    let dest = out
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-utf8 out path"))?;
-    run_ffmpeg(
+    media_tools::run_ffmpeg(
         &[
             "-i",
-            src,
+            path_str(source_path)?,
             "-vn",
             "-ac",
             "1",
@@ -751,7 +602,7 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
             "libmp3lame",
             "-q:a",
             "6",
-            dest,
+            path_str(&out)?,
         ],
         Some(&out),
     )?;
@@ -759,24 +610,14 @@ fn derive_audio(source_path: &Path, work_dir: &Path) -> Result<Option<PathBuf>> 
 }
 
 fn hash_file_prefix(path: &Path) -> Option<String> {
-    let mut file = File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = file.read(&mut buf).ok()?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    let hex = crate::assets::hex_encode(&hasher.finalize());
-    Some(hex[..12].to_string())
+    crate::assets::hash_file(path)
+        .ok()
+        .map(|h| h[..12].to_string())
 }
 
 /// Content-addressed relative path: `<aa>/<sha><ext>`.
 pub fn derived_rel_path(sha256: &str, ext: &str) -> String {
-    let normalized = if ext == ".jpeg" { ".jpg" } else { ext };
-    format!("{}/{}{}", &sha256[..2], sha256, normalized)
+    crate::assets::shard_rel_path(sha256, ext)
 }
 
 fn mime_for_ext(ext: &str) -> &'static str {
