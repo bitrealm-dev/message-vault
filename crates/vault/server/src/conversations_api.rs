@@ -406,11 +406,9 @@ pub fn list_conversations(
         } else {
             parts
         };
-        // Prefer contact preferred_name for `name`; attach contact_handles alias separately.
-        let enriched = enrich_participant_names(conn, account_id, parts)?;
         out.push(ConversationSummary {
             id: row.id.to_string(),
-            participants: enriched,
+            participants: parts,
             message_count: row.message_count.max(0) as u64,
             last_message_at: last,
             date_range_start: row.date_range_start,
@@ -473,79 +471,53 @@ fn load_participants(
     }
     for chunk in conversation_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        // Join contact preferred_name / name_alias here so the list path does not
+        // issue one follow-up SELECT per participant. Contact fields apply only when
+        // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
+        // exposed as `name` and `name_alias` stays unset.
         let sql = format!(
             "SELECT p.conversation_id,
-                    p.name_alias,
+                    CASE
+                      WHEN NULLIF(trim(c.preferred_name), '') IS NOT NULL
+                        THEN NULLIF(trim(c.preferred_name), '')
+                      ELSE NULLIF(trim(p.name_alias), '')
+                    END AS name,
+                    NULLIF(trim(ch.name_alias), '') AS name_alias,
                     h.raw,
                     coalesce(nullif(trim(h.service), ''), h.handle_type),
                     p.contact_id
              FROM participants p
              JOIN handles h ON h.id = p.handle_id
-             JOIN conversations c ON c.id = p.conversation_id
+             JOIN conversations conv ON conv.id = p.conversation_id
+             LEFT JOIN contact_handles ch
+               ON ch.contact_id = p.contact_id
+              AND ch.account_id = conv.account_id
+              AND ch.handle_id = p.handle_id
+             LEFT JOIN contacts c
+               ON c.id = ch.contact_id AND c.account_id = conv.account_id
              WHERE p.conversation_id IN ({placeholders})
              ORDER BY p.conversation_id, p.id"
         );
-        let mut stmt = conn
-            .prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(chunk.iter().copied()), |row| {
-                let contact_id: Option<i64> = row.get(4)?;
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    ConversationParticipant {
-                        name: row.get::<_, Option<String>>(1)?,
-                        name_alias: None,
-                        handle: row.get(2)?,
-                        service: row.get::<_, String>(3).unwrap_or_else(|_| "unknown".into()),
-                        contact_id: contact_id.map(|id| id.to_string()),
-                    },
-                ))
-            })?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            let contact_id: Option<i64> = row.get(5)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                ConversationParticipant {
+                    name: row.get(1)?,
+                    name_alias: row.get(2)?,
+                    handle: row.get(3)?,
+                    service: row.get::<_, String>(4).unwrap_or_else(|_| "unknown".into()),
+                    contact_id: contact_id.map(|id| id.to_string()),
+                },
+            ))
+        })?;
         for row in rows {
             let (cid, p) = row?;
             map.entry(cid).or_insert_with(Vec::new).push(p);
         }
     }
     Ok(map)
-}
-
-fn enrich_participant_names(
-    conn: &Connection,
-    account_id: &str,
-    mut participants: Vec<ConversationParticipant>,
-) -> Result<Vec<ConversationParticipant>, ExportQueryError> {
-    for p in &mut participants {
-        let Some(ref contact_id) = p.contact_id else {
-            continue;
-        };
-        let Ok(cid) = contact_id.parse::<i64>() else {
-            continue;
-        };
-        let row: Option<(Option<String>, Option<String>)> = conn
-            .query_row(
-                "SELECT NULLIF(trim(c.preferred_name), ''),
-                        NULLIF(trim(ch.name_alias), '')
-                 FROM contacts c
-                 JOIN contact_handles ch
-                   ON ch.contact_id = c.id AND ch.account_id = c.account_id
-                 JOIN handles h ON h.id = ch.handle_id
-                 WHERE c.id = ?1 AND c.account_id = ?2 AND h.raw = ?3",
-                rusqlite::params![cid, account_id, p.handle],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let Some((preferred, alias)) = row else {
-            continue;
-        };
-        if let Some(a) = alias {
-            p.name_alias = Some(a);
-        }
-        // Prefer contact preferred_name over participant residue when linked.
-        if let Some(n) = preferred.filter(|s| !s.is_empty()) {
-            p.name = Some(n);
-        }
-    }
-    Ok(participants)
 }
 
 const IMESSAGE_SOURCE: &str = "imessage";
@@ -1051,6 +1023,101 @@ mod tests {
 
         let quoted_handle = parse_conversation_list_query(r#"handle:"+15555550100""#);
         assert_eq!(quoted_handle.handle.as_deref(), Some("+15555550100"));
+    }
+
+    #[test]
+    fn list_conversations_enriches_participant_names_from_contact() {
+        let (conn, account) = setup();
+        // setup() participant residue is name_alias 'Sam' on +15555550200.
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam Preferred')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let peer_handle_id: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
+                params![&account, "+15555550200"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
+             VALUES (?1, ?2, ?3, 'Sammy')",
+            params![&account, peer_handle_id, contact_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE participants SET contact_id = ?1 WHERE conversation_id = 1 AND handle_id = ?2",
+            params![contact_id, peer_handle_id],
+        )
+        .unwrap();
+
+        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+        assert_eq!(page.conversations.len(), 1);
+        let p = &page.conversations[0].participants[0];
+        assert_eq!(p.handle, "+15555550200");
+        assert_eq!(p.name.as_deref(), Some("Sam Preferred"));
+        assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
+        assert_eq!(p.contact_id, Some(contact_id.to_string()));
+    }
+
+    #[test]
+    fn list_conversations_keeps_participant_residue_name_without_contact() {
+        let (conn, account) = setup();
+        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+        let p = &page.conversations[0].participants[0];
+        // No contact_id → residue `participants.name_alias` is exposed as `name`.
+        assert_eq!(p.name.as_deref(), Some("Sam"));
+        assert_eq!(p.name_alias, None);
+        assert_eq!(p.contact_id, None);
+    }
+
+    #[test]
+    fn list_conversations_keeps_residue_when_linked_contact_has_empty_preferred_name() {
+        let (conn, account) = setup();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, '')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let peer_handle_id: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1 AND raw = ?2",
+                params![&account, "+15555550200"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id, name_alias)
+             VALUES (?1, ?2, ?3, 'Sammy')",
+            params![&account, peer_handle_id, contact_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE participants SET contact_id = ?1 WHERE conversation_id = 1 AND handle_id = ?2",
+            params![contact_id, peer_handle_id],
+        )
+        .unwrap();
+
+        let page = list_conversations(&conn, &account, "", 10, 0).unwrap();
+        let p = &page.conversations[0].participants[0];
+        assert_eq!(p.name.as_deref(), Some("Sam"));
+        assert_eq!(p.name_alias.as_deref(), Some("Sammy"));
     }
 
     #[test]
