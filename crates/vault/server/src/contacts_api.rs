@@ -695,32 +695,30 @@ fn find_contact_handle_id(
     if needle.is_empty() {
         return Ok(None);
     }
-    let id: Option<i64> = if let Some(svc) = service.map(str::trim).filter(|s| !s.is_empty()) {
+    let mut sql = String::from(
+        "SELECT ch.handle_id
+         FROM contact_handles ch
+         JOIN handles h ON h.id = ch.handle_id
+         WHERE ch.account_id = ?1 AND ch.contact_id = ?2
+           AND (h.raw = ?3 OR h.normalized = ?3)",
+    );
+    let id = if let Some(svc) = service.map(str::trim).filter(|s| !s.is_empty()) {
+        sql.push_str(" AND h.service = ?4 LIMIT 1");
         let platform = message_ir::HandleService::parse(svc);
         conn.query_row(
-            "SELECT ch.handle_id
-             FROM contact_handles ch
-             JOIN handles h ON h.id = ch.handle_id
-             WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-               AND (h.raw = ?3 OR h.normalized = ?3)
-               AND h.service = ?4
-             LIMIT 1",
+            &sql,
             params![account_id, contact_id, needle, platform.as_str()],
             |row| row.get(0),
         )
         .optional()?
     } else {
-        conn.query_row(
-            "SELECT ch.handle_id
-             FROM contact_handles ch
-             JOIN handles h ON h.id = ch.handle_id
-             WHERE ch.account_id = ?1 AND ch.contact_id = ?2
-               AND (h.raw = ?3 OR h.normalized = ?3)
-             ORDER BY CASE h.service WHEN 'phone' THEN 0 WHEN 'whatsapp' THEN 1 ELSE 2 END
+        sql.push_str(
+            " ORDER BY CASE h.service WHEN 'phone' THEN 0 WHEN 'whatsapp' THEN 1 ELSE 2 END
              LIMIT 1",
-            params![account_id, contact_id, needle],
-            |row| row.get(0),
-        )
+        );
+        conn.query_row(&sql, params![account_id, contact_id, needle], |row| {
+            row.get(0)
+        })
         .optional()?
     };
     Ok(id)

@@ -50,12 +50,10 @@ pub async fn account_profile_handler(
     let account_id = auth.account_id;
 
     let db = state.cfg.paths.db.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<AccountProfileResponse> {
-        let conn = schema::open_configured(&db)?;
-        load_response(&conn, &account_id)
+    let result = crate::server::with_configured_db(&db, "profile load task", move |conn| {
+        load_response(conn, &account_id)
     })
-    .await
-    .join_blocking("profile load task")?;
+    .await?;
 
     Ok(Json(result))
 }
@@ -105,15 +103,13 @@ fn apply_profile_update(
         if raw.is_empty() {
             continue;
         }
-        let service = entry.service.trim().to_ascii_lowercase();
-        match service.as_str() {
-            "phone" | "whatsapp" => {
+        match parse_profile_service(&entry.service)? {
+            ProfileHandleKind::Phone | ProfileHandleKind::Whatsapp => {
                 account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Phone)?;
             }
-            "email" => {
+            ProfileHandleKind::Email => {
                 account_profile::unlink_account_handle(conn, account_id, raw, HandleType::Email)?;
             }
-            other => bail!("unsupported handle service: {other}"),
         }
     }
 
@@ -122,12 +118,11 @@ fn apply_profile_update(
         if raw.is_empty() {
             continue;
         }
-        let service = entry.service.trim().to_ascii_lowercase();
-        match service.as_str() {
-            "phone" => {
+        match parse_profile_service(&entry.service)? {
+            ProfileHandleKind::Phone => {
                 account_profile::link_account_handle(conn, account_id, raw, HandleType::Phone)?;
             }
-            "email" => {
+            ProfileHandleKind::Email => {
                 account_profile::link_account_handle(conn, account_id, raw, HandleType::Email)?;
                 account_profile::upsert_account_email(
                     conn,
@@ -136,7 +131,7 @@ fn apply_profile_update(
                     false,
                 )?;
             }
-            "whatsapp" => {
+            ProfileHandleKind::Whatsapp => {
                 account_profile::link_account_handle_with_service(
                     conn,
                     account_id,
@@ -145,11 +140,25 @@ fn apply_profile_update(
                     Some("whatsapp"),
                 )?;
             }
-            other => bail!("unsupported handle service: {other}"),
         }
     }
 
     Ok(())
+}
+
+enum ProfileHandleKind {
+    Phone,
+    Email,
+    Whatsapp,
+}
+
+fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
+    match service.trim().to_ascii_lowercase().as_str() {
+        "phone" => Ok(ProfileHandleKind::Phone),
+        "email" => Ok(ProfileHandleKind::Email),
+        "whatsapp" => Ok(ProfileHandleKind::Whatsapp),
+        other => bail!("unsupported handle service: {other}"),
+    }
 }
 
 /// `POST /v1/account/profile`

@@ -83,11 +83,7 @@ pub fn compute_content_key(
         hasher.update(b"|");
         hasher.update(sha.as_bytes());
     }
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::assets::hex_encode(&hasher.finalize())
 }
 
 fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64> {
@@ -442,31 +438,7 @@ fn flag_exact_content_key_dupes(
         return Ok((groups, 0));
     }
 
-    conn.execute_batch(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS _pass_a_flags (
-            id INTEGER PRIMARY KEY,
-            winner INTEGER NOT NULL
-        );
-        DELETE FROM _pass_a_flags;
-        "#,
-    )?;
-    {
-        let mut ins = conn.prepare("INSERT INTO _pass_a_flags (id, winner) VALUES (?1, ?2)")?;
-        for (id, winner) in &flags {
-            ins.execute(params![id, winner])?;
-        }
-    }
-    conn.execute(
-        r#"
-        UPDATE messages AS m
-        SET duplicate_of = f.winner
-        FROM _pass_a_flags AS f
-        WHERE m.id = f.id
-        "#,
-        [],
-    )?;
-    conn.execute_batch("DROP TABLE IF EXISTS _pass_a_flags;")?;
+    apply_duplicate_flags(conn, "_pass_a_flags", &flags)?;
 
     Ok((groups, flagged))
 }
@@ -720,33 +692,37 @@ fn flag_near_time_dupes(
         return Ok(0);
     }
 
-    conn.execute_batch(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS _pass_b_flags (
+    apply_duplicate_flags(conn, "_pass_b_flags", &flags)?;
+
+    Ok(flagged)
+}
+
+fn apply_duplicate_flags(conn: &Connection, table: &str, flags: &[(i64, i64)]) -> Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TEMP TABLE IF NOT EXISTS {table} (
             id INTEGER PRIMARY KEY,
             winner INTEGER NOT NULL
         );
-        DELETE FROM _pass_b_flags;
-        "#,
-    )?;
+        DELETE FROM {table};"
+    ))?;
     {
-        let mut ins = conn.prepare("INSERT INTO _pass_b_flags (id, winner) VALUES (?1, ?2)")?;
-        for (id, winner) in &flags {
+        let sql = format!("INSERT INTO {table} (id, winner) VALUES (?1, ?2)");
+        let mut ins = conn.prepare(&sql)?;
+        for (id, winner) in flags {
             ins.execute(params![id, winner])?;
         }
     }
     conn.execute(
-        r#"
-        UPDATE messages AS m
-        SET duplicate_of = f.winner
-        FROM _pass_b_flags AS f
-        WHERE m.id = f.id
-        "#,
+        &format!(
+            "UPDATE messages AS m
+             SET duplicate_of = f.winner
+             FROM {table} AS f
+             WHERE m.id = f.id"
+        ),
         [],
     )?;
-    conn.execute_batch("DROP TABLE IF EXISTS _pass_b_flags;")?;
-
-    Ok(flagged)
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+    Ok(())
 }
 
 /// Open DB helpers used by CLI.

@@ -769,24 +769,8 @@ fn hash_file_prefix(path: &Path) -> Option<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Some(
-        hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()[..12]
-            .to_string(),
-    )
-}
-
-fn sha256_bytes(buf: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(buf);
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    let hex = crate::assets::hex_encode(&hasher.finalize());
+    Some(hex[..12].to_string())
 }
 
 /// Content-addressed relative path: `<aa>/<sha><ext>`.
@@ -805,9 +789,8 @@ fn mime_for_ext(ext: &str) -> &'static str {
 }
 
 fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<DerivedBlob> {
-    let sha = sha256_bytes(buf);
-    let normalized = if ext == ".jpeg" { ".jpg" } else { ext };
-    let rel = derived_rel_path(&sha, normalized);
+    let sha = crate::assets::sha256_hex(buf);
+    let rel = derived_rel_path(&sha, ext);
     let dest = derived_dir.join(&rel);
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -819,7 +802,7 @@ fn store_derived_bytes(derived_dir: &Path, buf: &[u8], ext: &str) -> Result<Deri
     Ok(DerivedBlob {
         sha256: sha,
         assets_path: rel,
-        mime_type: mime_for_ext(normalized).to_string(),
+        mime_type: mime_for_ext(ext).to_string(),
     })
 }
 

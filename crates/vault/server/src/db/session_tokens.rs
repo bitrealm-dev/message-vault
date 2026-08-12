@@ -4,27 +4,27 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
-const SESSION_TOKEN_ALPHANUM: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 /// Generate a new GUI session token (`mv-user-` + 32 alphanumeric characters).
 #[allow(dead_code)] // used by rotate_account_session_token
 pub fn generate_session_token() -> String {
+    generate_prefixed_token("mv-user-")
+}
+
+pub(crate) fn generate_prefixed_token(prefix: &str) -> String {
     let mut buf = [0u8; 32];
     fill_random(&mut buf);
     let mut suffix = String::with_capacity(32);
     for b in buf {
-        suffix.push(SESSION_TOKEN_ALPHANUM[(b as usize) % SESSION_TOKEN_ALPHANUM.len()] as char);
+        suffix.push(TOKEN_ALPHANUM[(b as usize) % TOKEN_ALPHANUM.len()] as char);
     }
-    format!("mv-user-{suffix}")
+    format!("{prefix}{suffix}")
 }
 
 /// SHA-256 hex digest of a plaintext token (stored in DB; used for Bearer lookup).
 pub fn hash_api_token(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::assets::sha256_hex(token.as_bytes())
 }
 
 #[allow(dead_code)]
@@ -90,7 +90,7 @@ pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<
 pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
     let token = generate_session_token();
     let token_hash = hash_api_token(&token);
-    let created_at = chrono_like_now();
+    let created_at = unix_secs_string();
     conn.execute(
         r#"
         INSERT INTO account_session_tokens (account_id, token_hash, created_at)
@@ -109,7 +109,7 @@ pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Resu
 pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
     let token = generate_session_token();
     let token_hash = hash_api_token(&token);
-    let created_at = chrono_like_now();
+    let created_at = unix_secs_string();
     conn.execute(
         "INSERT INTO account_session_tokens (account_id, token_hash, created_at) VALUES (?1, ?2, ?3)",
         params![account_id, token_hash, created_at],
@@ -143,8 +143,7 @@ pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Resu
     Ok(())
 }
 
-#[allow(dead_code)]
-fn chrono_like_now() -> String {
+pub(crate) fn unix_secs_string() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

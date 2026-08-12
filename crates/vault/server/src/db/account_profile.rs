@@ -21,19 +21,7 @@ pub struct AccountProfile {
 /// Soft-defaults when the row is missing or name/handles are empty (`"Me"`, empty sets).
 
 pub fn load_account_profile(conn: &Connection, account_id: &str) -> Result<AccountProfile> {
-    let preferred_name: Option<Option<String>> = conn
-        .query_row(
-            "SELECT preferred_name FROM accounts WHERE id = ?1",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    let preferred = preferred_name
-        .flatten()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let display_name = preferred.unwrap_or_else(|| "Me".to_string());
+    let display_name = load_preferred_name(conn, account_id)?.unwrap_or_else(|| "Me".to_string());
 
     let mut handle_stmt = conn.prepare(
         "SELECT ah.handle_id FROM account_handles ah WHERE ah.account_id = ?1 ORDER BY ah.handle_id",

@@ -240,7 +240,11 @@ fn lock_named<'a>(
         .map_err(|_| anyhow::anyhow!("{what} mutex poisoned"))
 }
 
-async fn with_configured_db<T, F>(db_path: &Path, task: &str, f: F) -> Result<T, ApiError>
+pub(crate) async fn with_configured_db<T, F>(
+    db_path: &Path,
+    task: &str,
+    f: F,
+) -> Result<T, ApiError>
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> anyhow::Result<T> + Send + 'static,
@@ -248,6 +252,24 @@ where
     let db = db_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let conn = schema::open_configured(&db)?;
+        f(&conn)
+    })
+    .await
+    .join_blocking(task)
+}
+
+async fn with_locked_conn<T, E, F>(
+    db: Arc<StdMutex<Connection>>,
+    task: &str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    E: From<anyhow::Error> + ToString + Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, E> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let conn = lock_conn(&db)?;
         f(&conn)
     })
     .await
@@ -719,7 +741,7 @@ struct CompleteImportResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct ListContactsQuery {
+struct ListPageQuery {
     #[serde(default)]
     q: Option<String>,
     #[serde(default)]
@@ -731,7 +753,7 @@ struct ListContactsQuery {
 async fn contacts_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListContactsQuery>,
+    Query(query): Query<ListPageQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
@@ -741,12 +763,10 @@ async fn contacts_list_handler(
         .limit
         .unwrap_or(crate::contacts_api::DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::contacts_api::list_contacts(&conn, &auth.account_id, &q, limit, offset)
+    let page = with_locked_conn(db, "contacts list task", move |conn| {
+        crate::contacts_api::list_contacts(conn, &auth.account_id, &q, limit, offset)
     })
-    .await
-    .join_blocking("contacts list task")?;
+    .await?;
     Ok(Json(serde_json::json!({
         "contacts": page.contacts,
         "total": page.total,
@@ -755,20 +775,10 @@ async fn contacts_list_handler(
     })))
 }
 
-#[derive(Debug, Deserialize)]
-struct ListConversationsQuery {
-    #[serde(default)]
-    q: Option<String>,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    offset: Option<usize>,
-}
-
 async fn conversations_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<ListConversationsQuery>,
+    Query(query): Query<ListPageQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
@@ -778,12 +788,10 @@ async fn conversations_list_handler(
         .limit
         .unwrap_or(crate::conversations_api::DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::conversations_api::list_conversations(&conn, &auth.account_id, &q, limit, offset)
+    let page = with_locked_conn(db, "conversations list task", move |conn| {
+        crate::conversations_api::list_conversations(conn, &auth.account_id, &q, limit, offset)
     })
-    .await
-    .join_blocking("conversations list task")?;
+    .await?;
     Ok(Json(serde_json::json!({
         "conversations": page.conversations,
         "total": page.total,
@@ -800,16 +808,14 @@ async fn conversation_sources_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
-    let page = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
+    let page = with_locked_conn(db, "conversation sources task", move |conn| {
         crate::conversations_api::list_conversation_source_stats(
-            &conn,
+            conn,
             &auth.account_id,
             conversation_id,
         )
     })
-    .await
-    .join_blocking("conversation sources task")?;
+    .await?;
     match page {
         Some(p) => Ok(Json(serde_json::json!({ "sources": p.sources }))),
         None => Err(ApiError::NotFound("conversation not found".into())),
@@ -824,12 +830,10 @@ async fn contact_detail_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
-    let detail = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::contacts_api::get_contact_detail(&conn, &auth.account_id, contact_id)
+    let detail = with_locked_conn(db, "contact detail task", move |conn| {
+        crate::contacts_api::get_contact_detail(conn, &auth.account_id, contact_id)
     })
-    .await
-    .join_blocking("contact detail task")?;
+    .await?;
     match detail {
         Some(d) => Ok(Json(d)),
         None => Err(ApiError::NotFound("contact not found".into())),
@@ -846,26 +850,20 @@ async fn contact_mutate_handler(
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let account_id = auth.account_id.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
+    let detail = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
         match crate::contacts_api::mutate_contact(&conn, &account_id, contact_id, &body) {
-            Ok(false) => {
-                Ok::<_, anyhow::Error>(Err(ApiError::NotFound("contact not found".into())))
-            }
-            Err(e) => Ok(Err(ApiError::BadRequest(e.to_string()))),
-            Ok(true) => {
-                let detail =
-                    crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
-                        .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                        .ok_or_else(|| anyhow::anyhow!("contact missing after mutate"))?;
-                Ok(Ok(detail))
-            }
+            Ok(false) => Err(ApiError::NotFound("contact not found".into())),
+            Err(e) => Err(ApiError::BadRequest(e.to_string())),
+            Ok(true) => crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .ok_or_else(|| ApiError::Internal("contact missing after mutate".into())),
         }
     })
     .await
-    .join_blocking("contact mutate task")?;
+    .join_map("contact mutate task", |e| e)?;
 
-    outcome.map(Json)
+    Ok(Json(detail))
 }
 
 #[derive(Debug, Deserialize)]
@@ -885,12 +883,10 @@ async fn imports_list_handler(
         resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
 
     let db = Arc::clone(&state.db);
-    let imports = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::db::vault_imports::list_imports(&conn, &account)
+    let imports = with_locked_conn(db, "list imports task", move |conn| {
+        crate::db::vault_imports::list_imports(conn, &account)
     })
-    .await
-    .join_blocking("list imports task")?;
+    .await?;
 
     Ok(Json(serde_json::json!({ "imports": imports })))
 }
@@ -908,8 +904,7 @@ async fn imports_get_handler(
         crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("import detail task: {e}")))?
-    .map_err(|e| match e {
+    .join_map("import detail task", |e| match e {
         crate::db::vault_imports::ImportLookupError::NotFound { import_id } => {
             ApiError::NotFound(format!("import {import_id} not found for this account"))
         }
@@ -928,21 +923,19 @@ async fn account_storage_handler(
     require_full_access(&auth)?;
     let account_id = auth.account_id;
     let db = Arc::clone(&state.db);
-    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-        let conn = lock_conn(&db)?;
-        let total_bytes = crate::db::vault_imports::account_attachment_bytes(&conn, &account_id)?;
+    let result = with_locked_conn(db, "account storage task", move |conn| {
+        let total_bytes = crate::db::vault_imports::account_attachment_bytes(conn, &account_id)?;
         let attachment_count =
-            crate::db::vault_imports::account_attachment_count(&conn, &account_id)?;
+            crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
         let top_attachments =
-            crate::db::vault_imports::top_attachments_by_size(&conn, &account_id, 100)?;
-        Ok(serde_json::json!({
+            crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
+        Ok::<_, anyhow::Error>(serde_json::json!({
             "total_bytes": total_bytes,
             "attachment_count": attachment_count,
             "top_attachments": top_attachments,
         }))
     })
-    .await
-    .join_blocking("account storage task")?;
+    .await?;
 
     Ok(Json(result))
 }
@@ -1021,8 +1014,7 @@ async fn imports_complete_handler(
         crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("complete import task failed: {e}")))?
-    .map_err(|e| {
+    .join_map("complete import task failed", |e| {
         if let Some(crate::db::vault_imports::ImportLookupError::NotFound { import_id }) =
             e.downcast_ref::<crate::db::vault_imports::ImportLookupError>()
         {
@@ -1397,7 +1389,7 @@ async fn asset_put_handler(
     let sha = sha256.clone();
     let tmp_for_store = tmp_path.clone();
     let assets_dir_store = assets_dir.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let (stored, already_present) = tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&assets_dir_store)?;
         assets::store_verified(
             &tmp_for_store,
@@ -1409,12 +1401,10 @@ async fn asset_put_handler(
         )
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("asset upload task: {e}")))?;
+    .join_map("asset upload task", |e| ApiError::BadRequest(e.to_string()))?;
 
     // Rename consumes the temp file; remove leftovers after errors / already_present races.
     let _ = tokio::fs::remove_file(&tmp_path).await;
-
-    let (stored, already_present) = result.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetPutResponse {
         ok: true,
         sha256: stored.sha256,
@@ -1475,8 +1465,7 @@ async fn asset_upload_start_handler(
         asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload start task: {e}")))?
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .join_map("upload start task", |e| ApiError::BadRequest(e.to_string()))?;
 
     match result {
         (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
@@ -1521,8 +1510,7 @@ async fn asset_upload_part_handler(
         asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload part task: {e}")))?
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .join_map("upload part task", |e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadPartResponse {
         ok: true,
         part,
@@ -1572,8 +1560,9 @@ async fn asset_upload_complete_handler(
         asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("upload complete task: {e}")))?
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .join_map("upload complete task", |e| {
+        ApiError::BadRequest(e.to_string())
+    })?;
 
     let (stored, already_present) = result;
     Ok(Json(AssetPutResponse {
@@ -1597,8 +1586,7 @@ async fn asset_upload_abort_handler(
     let uid = upload_id.clone();
     tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
         .await
-        .map_err(|e| ApiError::Internal(format!("upload abort task: {e}")))?
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+        .join_map("upload abort task", |e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(AssetUploadAbortResponse { ok: true }))
 }
 
