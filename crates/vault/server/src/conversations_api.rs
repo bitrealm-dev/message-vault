@@ -224,14 +224,17 @@ pub fn list_conversations(
         );
     }
 
-    // Only show threads that have at least one message.
-    where_parts.push(
-        "EXISTS (
-           SELECT 1 FROM messages m0
-           WHERE m0.conversation_id = c.id AND m0.duplicate_of IS NULL
-         )"
-        .into(),
-    );
+    // Only show threads that have at least one non-duplicate message, except when
+    // filtering by import session (duplicate-only threads may still belong to that import).
+    if parsed.import_id.is_none() {
+        where_parts.push(
+            "EXISTS (
+               SELECT 1 FROM messages m0
+               WHERE m0.conversation_id = c.id AND m0.duplicate_of IS NULL
+             )"
+            .into(),
+        );
+    }
 
     if let Some(ref handle) = parsed.handle {
         if let Some(ref service) = parsed.service {
@@ -1300,6 +1303,100 @@ mod tests {
             .unwrap();
         let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
         assert_eq!(junk.total, all.total);
+    }
+
+    #[test]
+    fn list_conversations_import_id_includes_duplicate_only_thread() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        let account = "00000000-0000-4000-8000-0000000000c2".to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'alice', 0)",
+            params![&account],
+        )
+        .unwrap();
+
+        let import_a =
+            vault_imports::start_import(&conn, &account, "imessage-ios", "append", Some("test"))
+                .unwrap();
+
+        let peer = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550400",
+            HandleType::Phone,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (3, ?1, ?2, 'individual', 'dup-only.jsonl')",
+            params![&account, peer],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (3, ?1, 'Pat')",
+            params![peer],
+        )
+        .unwrap();
+
+        // Canonical message in another conversation (winner for dedupe).
+        let peer_other = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550401",
+            HandleType::Phone,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (4, ?1, ?2, 'individual', 'winner.jsonl')",
+            params![&account, peer_other],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (4, ?1, 'imessage', '2024-05-01T12:00:00Z', 0, 0, 'canonical')",
+            params![&account],
+        )
+        .unwrap();
+        let winner_id: i64 = conn
+            .query_row("SELECT id FROM messages WHERE conversation_id = 4", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+
+        // Only message in conversation 3 from import A is a duplicate.
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body,
+                import_id, duplicate_of
+             ) VALUES (3, ?1, 'imessage', '2024-06-01T12:00:00Z', 0, 0, 'dup', ?2, ?3)",
+            params![&account, import_a, winner_id],
+        )
+        .unwrap();
+
+        let by_import = list_conversations(
+            &conn,
+            &account,
+            &format!("import:{import_a}"),
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
+        assert_eq!(by_import.total, 1, "import filter should match duplicate-only thread");
+        assert_eq!(by_import.conversations[0].id, "3");
+
+        let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(
+            all.total, 1,
+            "default list still requires a non-duplicate message"
+        );
+        assert_eq!(all.conversations[0].id, "4");
     }
 
     #[test]
