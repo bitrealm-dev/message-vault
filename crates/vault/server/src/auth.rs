@@ -7,7 +7,6 @@ use anyhow::{Context, Result, bail};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::http::HeaderMap;
 use axum::{Json, extract::State};
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema, session_tokens};
@@ -134,8 +133,7 @@ pub async fn register_handler(
 
     let db = state.cfg.paths.db.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
 
         if account_profile::lookup_account_ref(&conn, &username)?.is_some() {
             bail!("username already taken: {username}");
@@ -163,8 +161,7 @@ pub async fn register_handler(
         })
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("register task: {e}")))?
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .join_map("register task", |e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -183,8 +180,7 @@ pub async fn login_handler(
     let db = state.cfg.paths.db.clone();
 
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
 
         let account_id = account_profile::lookup_account_ref(&conn, &username)?
             .ok_or_else(|| anyhow::anyhow!("account not found: {username}"))?;
@@ -206,8 +202,7 @@ pub async fn login_handler(
         })
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("login task: {e}")))?
-    .map_err(|e| ApiError::Unauthorized(e.to_string()))?;
+    .join_map("login task", |e| ApiError::Unauthorized(e.to_string()))?;
 
     Ok(Json(result))
 }
@@ -284,8 +279,7 @@ pub async fn hanko_session_handler(
             .filter(|s| !s.is_empty());
 
         // Open DB and find or create account
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
 
         let account_id = match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
             Some(id) => id,
@@ -339,8 +333,9 @@ pub async fn hanko_session_handler(
         })
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("hanko session task: {e}")))?
-    .map_err(|e| ApiError::Unauthorized(e.to_string()))?;
+    .join_map("hanko session task", |e| {
+        ApiError::Unauthorized(e.to_string())
+    })?;
 
     Ok(Json(result))
 }
@@ -394,8 +389,7 @@ pub async fn change_password_handler(
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
         let current_hash = account_profile::load_password_hash(&conn, &account_id)?;
         if !passwords_match(current_hash.as_deref(), &current_password) {
             bail!("current password is incorrect");
@@ -404,8 +398,7 @@ pub async fn change_password_handler(
         Ok(())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("change password task: {e}")))?
-    .map_err(|e| {
+    .join_map("change password task", |e| {
         if e.to_string().contains("current password is incorrect") {
             ApiError::BadRequest(e.to_string())
         } else {
@@ -439,8 +432,7 @@ pub async fn delete_account_handler(
     let account_root = state.cfg.paths.data_dir.join(&account_id);
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
         account_profile::delete_account(&conn, &account_id)?;
         if account_root.exists() {
             std::fs::remove_dir_all(&account_root)

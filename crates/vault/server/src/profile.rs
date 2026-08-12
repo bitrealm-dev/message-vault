@@ -51,8 +51,7 @@ pub async fn account_profile_handler(
 
     let db = state.cfg.paths.db.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<AccountProfileResponse> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
         load_response(&conn, &account_id)
     })
     .await
@@ -165,8 +164,7 @@ pub async fn account_profile_update_handler(
 
     let db = state.cfg.paths.db.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<AccountProfileResponse> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
+        let conn = schema::open_configured(&db)?;
         apply_profile_update(
             &conn,
             &account_id,
@@ -177,8 +175,7 @@ pub async fn account_profile_update_handler(
         load_response(&conn, &account_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("profile update task: {e}")))?
-    .map_err(|e| {
+    .join_map("profile update task", |e| {
         let msg = e.to_string();
         if msg.starts_with("unsupported handle service:") {
             ApiError::BadRequest(msg)
@@ -253,8 +250,7 @@ pub async fn delete_messages_handler(
 
     let stats =
         tokio::task::spawn_blocking(move || -> Result<account_profile::DeletedMessagesStats> {
-            let conn = Connection::open(&db)?;
-            schema::configure_connection(&conn)?;
+            let conn = schema::open_configured(&db)?;
             let stats = account_profile::delete_all_messages_for_account(&conn, &account_id)?;
             remove_account_asset_trees(&data_dir, &account_id, &assets_name, &converted_name)?;
             Ok(stats)

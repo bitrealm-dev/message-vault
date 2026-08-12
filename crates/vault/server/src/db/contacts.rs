@@ -18,6 +18,21 @@ pub fn touch_contact(conn: &Connection, account_id: &str, contact_id: i64) -> Re
     Ok(())
 }
 
+/// Contact linked to a handle via `contact_handles`, if any.
+pub fn contact_id_for_handle(
+    conn: &Connection,
+    account_id: &str,
+    handle_id: i64,
+) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
+            params![account_id, handle_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
     pub contacts: u64,
@@ -162,13 +177,7 @@ fn restore_email_handles(
             continue;
         };
         for (handle_id, email) in emails {
-            let owner: Option<i64> = conn
-                .query_row(
-                    "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
-                    params![account_id, handle_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
+            let owner = contact_id_for_handle(conn, account_id, *handle_id)?;
             if let Some(existing) = owner {
                 if existing != id {
                     eprintln!(

@@ -73,10 +73,6 @@ pub struct StartUpload {
     pub part_size: usize,
 }
 
-fn normalize_sha(sha: &str) -> Result<String> {
-    assets::require_sha256(sha)
-}
-
 fn new_upload_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -160,7 +156,7 @@ pub fn start_upload(
     mime: Option<&str>,
     limits: UploadLimits,
 ) -> Result<(Option<StoredAsset>, Option<StartUpload>)> {
-    let sha = normalize_sha(sha256)?;
+    let sha = assets::require_sha256(sha256)?;
     if bytes == 0 {
         bail!("bytes must be > 0");
     }
@@ -204,7 +200,7 @@ pub fn put_part(
     part: u32,
     body: &[u8],
 ) -> Result<u64> {
-    let sha = normalize_sha(sha256)?;
+    let sha = assets::require_sha256(sha256)?;
     if part == 0 {
         bail!("part number must be >= 1");
     }
@@ -253,7 +249,7 @@ pub fn complete_upload(
     upload_id: &str,
     limits: UploadLimits,
 ) -> Result<(StoredAsset, bool)> {
-    let sha = normalize_sha(sha256)?;
+    let sha = assets::require_sha256(sha256)?;
     let session = session_dir(assets_root, &sha, upload_id);
     if !session.is_dir() {
         bail!("upload session not found");
@@ -316,7 +312,7 @@ pub fn complete_upload(
 
 /// Abort and delete staging for an upload session.
 pub fn abort_upload(assets_root: &Path, sha256: &str, upload_id: &str) -> Result<()> {
-    let sha = normalize_sha(sha256)?;
+    let sha = assets::require_sha256(sha256)?;
     let session = session_dir(assets_root, &sha, upload_id);
     if session.exists() {
         fs::remove_dir_all(&session).with_context(|| format!("remove {}", session.display()))?;

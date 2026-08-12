@@ -72,9 +72,8 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
         bail!("database not found: {}", db_path.display());
     }
 
-    let mut conn = Connection::open(db_path)
+    let mut conn = schema::open_configured(db_path)
         .with_context(|| format!("open database {}", db_path.display()))?;
-    schema::configure_connection(&conn)?;
     schema::ensure_vault_schema(&conn)?;
 
     let account_ids = list_account_ids(&conn, &cfg.paths.data_dir)?;

@@ -13,9 +13,9 @@ use tempfile::TempDir;
 use crate::assets::{self, AssetStats, StoredAsset};
 use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
-use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, normalize_handle};
+use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, upsert_handle_row};
 use crate::db::schema;
-use crate::db::sql::SQLITE_IN_CHUNK;
+use crate::db::sql::{SQLITE_IN_CHUNK, pair_placeholders};
 use crate::db::vault_imports::{self, CompleteImportArgs};
 use crate::import_media::{self, MediaMode};
 use crate::jsonl;
@@ -211,9 +211,8 @@ pub fn import_export(
         .collect();
     paths.sort();
 
-    let mut conn = Connection::open(db_path)
+    let mut conn = schema::open_configured(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
-    schema::configure_connection(&conn)?;
     schema::ensure_vault_schema(&conn)?;
     crate::db::account_profile::ensure_account_row(&conn, account_id)?;
 
@@ -273,9 +272,8 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let mut conn = Connection::open(opts.db_path)
+    let mut conn = schema::open_configured(opts.db_path)
         .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
-    schema::configure_connection(&conn)?;
     println!("  sql:      opened {}", opts.db_path.display());
     let _ = io::stdout().flush();
     import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
@@ -333,7 +331,6 @@ pub fn import_jsonl_files_on_conn(
     if schema_mode == ImportSchemaMode::Ensure {
         println!("  sql:      ensuring schema + resetting staging for account…");
         let _ = io::stdout().flush();
-        schema::ensure_vault_schema(conn)?;
     } else {
         println!("  sql:      resetting staging for account…");
         let _ = io::stdout().flush();
@@ -619,63 +616,13 @@ fn resolve_incoming_sender_handle(
         return Ok(None);
     };
     let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged) = resolve_handle(tx, account_id, sender, handle_type, Some(platform))?;
+    let (handle_id, flagged) =
+        upsert_handle_row(tx, account_id, sender, handle_type, Some(platform))?;
     if flagged {
         stats.phones_needing_review += 1;
     }
     let _ = ensure_sibling_contact_link(tx, account_id, handle_id)?;
     Ok(Some(handle_id))
-}
-
-/// Resolve or create a handle row. Returns the handle id and whether this call
-/// newly inserted a flagged (review-note) row.
-///
-/// `service` is the platform identity (`phone` | `whatsapp`); transport strings
-/// like `sms`/`imessage`/`rcs` map to `phone` via [`HandleService::parse`].
-fn resolve_handle(
-    conn: &Connection,
-    account_id: &str,
-    raw: &str,
-    handle_type: HandleType,
-    service: Option<&str>,
-) -> Result<(i64, bool)> {
-    let (normalized, note) = normalize_handle(raw, handle_type);
-    let platform = HandleService::parse(service.unwrap_or(HandleService::Phone.as_str()));
-    let service_str = platform.as_str();
-    let inserted = conn.execute(
-        "INSERT OR IGNORE INTO handles (account_id, raw, normalized, normalized_note, handle_type, service)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            account_id,
-            raw,
-            normalized,
-            note,
-            handle_type.as_str(),
-            service_str
-        ],
-    )?;
-    let id: i64 = conn.query_row(
-        "SELECT id FROM handles
-         WHERE account_id = ?1 AND normalized = ?2 AND handle_type = ?3 AND service = ?4",
-        params![account_id, normalized, handle_type.as_str(), service_str],
-        |row| row.get(0),
-    )?;
-    Ok((id, inserted > 0 && note.is_some()))
-}
-
-/// Contact linked to a handle via `contact_handles`, if any.
-fn contact_id_for_handle(
-    conn: &Connection,
-    account_id: &str,
-    handle_id: i64,
-) -> Result<Option<i64>> {
-    Ok(conn
-        .query_row(
-            "SELECT contact_id FROM contact_handles WHERE account_id = ?1 AND handle_id = ?2",
-            params![account_id, handle_id],
-            |row| row.get(0),
-        )
-        .optional()?)
 }
 
 /// If this handle has no contact but a sibling handle (same normalized + type,
@@ -685,7 +632,7 @@ fn ensure_sibling_contact_link(
     account_id: &str,
     handle_id: i64,
 ) -> Result<Option<i64>> {
-    if let Some(existing) = contact_id_for_handle(conn, account_id, handle_id)? {
+    if let Some(existing) = contacts::contact_id_for_handle(conn, account_id, handle_id)? {
         return Ok(Some(existing));
     }
     let sibling_contact: Option<i64> = conn
@@ -1064,7 +1011,7 @@ fn import_conversation_to_staging(
 
     // Conversation identity: the chat handle, typed from its shape (Phone for
     // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let (chat_handle_id, flagged) = resolve_handle(
+    let (chat_handle_id, flagged) = upsert_handle_row(
         tx,
         &stmts.account_id,
         &chat_identifier,
@@ -1090,7 +1037,7 @@ fn import_conversation_to_staging(
     for (handle, name_alias, handle_type) in kept_participants {
         // Prefer the source-provided type; fall back to shape inference.
         let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let (handle_id, flagged) = resolve_handle(
+        let (handle_id, flagged) = upsert_handle_row(
             tx,
             &stmts.account_id,
             &handle,
@@ -1840,7 +1787,7 @@ fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Re
     for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
         let sql = format!(
             "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
-            vec!["(?, ?)"; chunk.len()].join(",")
+            pair_placeholders(chunk.len())
         );
         let mut stmt = tx.prepare(&sql)?;
         let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
