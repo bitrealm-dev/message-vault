@@ -758,7 +758,7 @@ pub fn run_dedupe(
     let mut conn = Connection::open(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    crate::db::schema::ensure_messages_schema(&conn)?;
+    crate::db::schema::ensure_vault_schema(&conn)?;
     dedupe_cross_source(&mut conn, account_id, None, near_window_secs)
 }
 
@@ -837,7 +837,7 @@ mod tests {
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        schema::ensure_messages_schema(&conn).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username, read_only) VALUES (?1, 'test', 0)",
             params![TEST_ACCOUNT_ID],

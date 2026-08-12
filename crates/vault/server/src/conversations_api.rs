@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
 use crate::export_api::ExportQueryError;
-use crate::search_query::{CountComparator, CountComparison};
+use crate::search_query::{CountComparator, CountComparison, parse_count_comparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
@@ -85,29 +85,10 @@ fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
     if t.is_empty() {
         return None;
     }
-    let (comparator, digits) = if let Some(rest) = t.strip_prefix(">=") {
-        (CountComparator::Gte, rest)
-    } else if let Some(rest) = t.strip_prefix("<=") {
-        (CountComparator::Lte, rest)
-    } else if let Some(rest) = t.strip_prefix('>') {
-        (CountComparator::Gt, rest)
-    } else if let Some(rest) = t.strip_prefix('<') {
-        (CountComparator::Lt, rest)
-    } else if let Some(rest) = t.strip_prefix('=') {
-        (CountComparator::Eq, rest)
-    } else if t.bytes().all(|b| b.is_ascii_digit()) {
-        (CountComparator::Eq, t)
-    } else {
-        return None;
-    };
-    let digits = digits.trim();
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    if t.bytes().all(|b| b.is_ascii_digit()) {
+        return parse_count_comparison(&format!("={t}"));
     }
-    Some(CountComparison {
-        comparator,
-        value: digits.parse().ok()?,
-    })
+    parse_count_comparison(t)
 }
 
 /// Parse space-separated tokens from `q`.
@@ -208,20 +189,8 @@ pub fn list_conversations(
             .into(),
         );
     } else {
-        where_parts.push(
-            "NOT EXISTS (
-               SELECT 1 FROM trashed_conversations tc
-               WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-             )"
-            .into(),
-        );
-        where_parts.push(
-            "NOT EXISTS (
-               SELECT 1 FROM trashed_handles th
-               WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-             )"
-            .into(),
-        );
+        where_parts.push(crate::contacts_api::NOT_TRASHED_CONVERSATION_SQL.into());
+        where_parts.push(crate::contacts_api::NOT_TRASHED_CHAT_HANDLE_SQL.into());
     }
 
     // Only show threads that have at least one non-duplicate message, except when

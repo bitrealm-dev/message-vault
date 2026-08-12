@@ -577,7 +577,7 @@ fn parse_date_bounds(raw: &str) -> DateBounds {
     }
 }
 
-fn parse_count_comparison(raw: &str) -> Option<CountComparison> {
+pub(crate) fn parse_count_comparison(raw: &str) -> Option<CountComparison> {
     let t = raw.trim();
     let (comparator, digits) = if let Some(rest) = t.strip_prefix(">=") {
         (CountComparator::Gte, rest)

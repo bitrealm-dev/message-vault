@@ -148,7 +148,7 @@ pub fn hash_and_store(
     Ok(Some(stored))
 }
 
-fn normalize_sha256(sha: &str) -> Option<String> {
+pub(crate) fn normalize_sha256(sha: &str) -> Option<String> {
     let s = sha.trim().to_ascii_lowercase();
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;

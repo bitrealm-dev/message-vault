@@ -69,11 +69,6 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Ensure the complete current vault schema exists.
-pub fn ensure_messages_schema(conn: &Connection) -> Result<()> {
-    ensure_vault_schema(conn)
-}
-
 /// Marker that current FTS sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
@@ -245,29 +240,14 @@ pub fn delete_messages_for_source(
     Ok(n as u64)
 }
 
-/// Ensure the complete current vault schema exists, including staging tables.
-pub fn ensure_staging_schema(conn: &Connection) -> Result<()> {
-    ensure_vault_schema(conn)
-}
-
 /// Clear one account's staging rows (CASCADE removes children). Other accounts are untouched.
 pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<()> {
-    ensure_staging_schema(conn)?;
+    ensure_vault_schema(conn)?;
     conn.execute(
         "DELETE FROM staging_conversations WHERE account_id = ?1",
         params![account_id],
     )?;
     Ok(())
-}
-
-/// Clear one account's staging after a successful promote.
-pub fn clear_staging_for_account(conn: &Connection, account_id: &str) -> Result<()> {
-    reset_staging_for_account(conn, account_id)
-}
-
-/// Ensure the complete current vault schema exists, including contacts tables.
-pub fn ensure_contacts_schema(conn: &Connection) -> Result<()> {
-    ensure_vault_schema(conn)
 }
 
 /// Create current account and vault metadata tables.
