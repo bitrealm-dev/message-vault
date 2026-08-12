@@ -129,7 +129,6 @@ export default function ImportScreen() {
   const [conversationFilter, setConversationFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [continueOnError, setContinueOnError] = useState(true);
   const [force, setForce] = useState(false);
   const [obfuscate, setObfuscate] = useState(false);
 
@@ -322,7 +321,7 @@ export default function ImportScreen() {
             input_dir: outputDir,
             mode: "append",
             force,
-            continue_on_error: continueOnError,
+            continue_on_error: true,
             skip_attachments: false,
             trust_export: false,
             contact_name_mode: contactNameMode,
@@ -587,14 +586,6 @@ export default function ImportScreen() {
             open={processingOpen}
             onToggle={() => setProcessingOpen((o) => !o)}
           >
-            <label className="mb-3 flex items-center gap-2 text-[0.875rem]">
-              <input
-                type="checkbox"
-                checked={continueOnError}
-                onChange={(e) => setContinueOnError(e.target.checked)}
-              />
-              Continue importing after failed message conversion (default)
-            </label>
             <label className="mb-3 flex items-center gap-2 text-[0.875rem]">
               <input
                 type="checkbox"
