@@ -17,6 +17,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Prefer // @vitest-environment jsdom in *.test.tsx when globs are unavailable.
+    environmentMatchGlobs: [
+      ["**/*.test.tsx", "jsdom"],
+      ["**/*.spec.tsx", "jsdom"],
+    ],
+    setupFiles: ["src/test/setup.ts"],
   },
 });
