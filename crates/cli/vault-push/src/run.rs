@@ -589,11 +589,13 @@ fn resolve_attachment_digest(
 ) -> Result<String> {
     // Fast path: another conversation already hashed this absolute path
     // during this run. Always trust the cache — it was computed from disk.
+    if let Some(digest) = cache
+        .lock()
+        .expect("digest cache mutex poisoned")
+        .get(abs)
+        .cloned()
     {
-        let guard = cache.lock().expect("digest cache mutex poisoned");
-        if let Some(digest) = guard.get(abs) {
-            return Ok(digest.clone());
-        }
+        return Ok(digest);
     }
 
     // Normalize the claimed sha256 from JSONL (may be absent or malformed).
@@ -613,47 +615,48 @@ fn resolve_attachment_digest(
         .len();
 
     // trust_export fast path: skip hash when JSONL size matches disk.
-    if trust_export && !verify_digests {
-        if let (Some(ref dig), Some(cl_size)) = (claimed.as_ref(), claimed_size) {
-            if cl_size == disk_size {
-                let digest = dig.to_string();
-                cache
-                    .lock()
-                    .expect("digest cache mutex poisoned")
-                    .insert(abs.to_path_buf(), digest.clone());
-                return Ok(digest);
-            }
-        }
+    if trust_export
+        && !verify_digests
+        && let (Some(claimed_digest), Some(claimed_size)) = (claimed.as_deref(), claimed_size)
+        && claimed_size == disk_size
+    {
+        remember_digest(cache, abs, claimed_digest);
+        return Ok(claimed_digest.to_string());
     }
 
     // Hash from disk — the default path.
     let disk_digest = hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
 
     // Compare against JSONL claim.
-    if let Some(ref claimed_digest) = claimed {
-        if claimed_digest != &disk_digest {
-            let size_note = match claimed_size {
-                Some(cs) if cs != disk_size => {
-                    format!(", size changed from {cs} to {disk_size} bytes")
-                }
-                _ => String::new(),
-            };
-            let msg = format!(
-                "{name}: sha256 mismatch for {rel}: \
-                 claimed {claimed_digest}, got {disk_digest}{size_note}"
-            );
-            if verify_digests {
-                bail!("{msg}");
+    if let Some(claimed_digest) = claimed.as_deref()
+        && claimed_digest != disk_digest
+    {
+        let size_note = match claimed_size {
+            Some(cs) if cs != disk_size => {
+                format!(", size changed from {cs} to {disk_size} bytes")
             }
-            warn(msg);
+            _ => String::new(),
+        };
+        let msg = format!(
+            "{name}: sha256 mismatch for {rel}: \
+             claimed {claimed_digest}, got {disk_digest}{size_note}"
+        );
+        if verify_digests {
+            bail!("{msg}");
         }
+        warn(msg);
     }
 
+    remember_digest(cache, abs, &disk_digest);
+    Ok(disk_digest)
+}
+
+/// Store one file's sha256 so other conversations sharing the file skip hashing.
+fn remember_digest(cache: &DigestCache, abs: &Path, digest: &str) {
     cache
         .lock()
         .expect("digest cache mutex poisoned")
-        .insert(abs.to_path_buf(), disk_digest.clone());
-    Ok(disk_digest)
+        .insert(abs.to_path_buf(), digest.to_string());
 }
 
 /// Turn an attachment path from JSONL into a real file path under the export folder.
@@ -1072,6 +1075,37 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
         assets_in_flight: HashSet::new(),
     }));
 
+    // Send the queued message batch. Every call site passes the same borrows and
+    // differs only in whether it waits for the HTTP request to finish, so this is
+    // a macro rather than a closure: a closure would have to hold `trackers`,
+    // `results`, and `log` borrowed for the whole loop, which the surrounding
+    // code also needs to touch between flushes. Evaluates to `Result<bool>`,
+    // where `false` means the request failed.
+    macro_rules! flush_imports {
+        (wait: $wait:expr) => {{
+            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
+            flush_import_pipeline(FlushImportPipeline {
+                cfg,
+                http: &http,
+                url: &url,
+                username: &username,
+                pending: &mut pending,
+                inflight: &mut inflight,
+                first_import: &mut first_import,
+                trackers: &mut trackers,
+                journal: &mut guard.state,
+                journal_path: &journal_path,
+                log: &mut log,
+                progress: &mut progress,
+                results: &mut results,
+                batcher: &mut batcher,
+                message_accounting: &mut message_accounting,
+                import_id,
+                wait: $wait,
+            })
+        }};
+    }
+
     // Bounded queue: at most `prepare_ahead` jobs waiting/running so we do not
     // prepare hundreds of chats (and hold their data) before the import loop catches up.
     let prepare_ahead = DEFAULT_PREPARE_AHEAD.max(1);
@@ -1143,28 +1177,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 batch.messages.len() >= OVERLAP_FLUSH_MIN_MESSAGES
                     || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
             }) {
-                let request_ok = {
-                    let mut guard = shared_journal.lock().expect("journal mutex poisoned");
-                    flush_import_pipeline(FlushImportPipeline {
-                        cfg,
-                        http: &http,
-                        url: &url,
-                        username: &username,
-                        pending: &mut pending,
-                        inflight: &mut inflight,
-                        first_import: &mut first_import,
-                        trackers: &mut trackers,
-                        journal: &mut guard.state,
-                        journal_path: &journal_path,
-                        log: &mut log,
-                        progress: &mut progress,
-                        results: &mut results,
-                        batcher: &mut batcher,
-                        message_accounting: &mut message_accounting,
-                        import_id,
-                        wait: false,
-                    })?
-                };
+                let request_ok = flush_imports!(wait: false)?;
                 if !request_ok && !cfg.continue_on_error {
                     aborted = true;
                     stop_submitting = true;
@@ -1278,29 +1291,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     Ok(prepared) => prepared,
                     Err(e) => {
                         if !cfg.continue_on_error && (pending.is_some() || inflight.is_some()) {
-                            let request_ok = {
-                                let mut guard =
-                                    shared_journal.lock().expect("journal mutex poisoned");
-                                flush_import_pipeline(FlushImportPipeline {
-                                    cfg,
-                                    http: &http,
-                                    url: &url,
-                                    username: &username,
-                                    pending: &mut pending,
-                                    inflight: &mut inflight,
-                                    first_import: &mut first_import,
-                                    trackers: &mut trackers,
-                                    journal: &mut guard.state,
-                                    journal_path: &journal_path,
-                                    log: &mut log,
-                                    progress: &mut progress,
-                                    results: &mut results,
-                                    batcher: &mut batcher,
-                                    message_accounting: &mut message_accounting,
-                                    import_id,
-                                    wait: true,
-                                })?
-                            };
+                            let request_ok = flush_imports!(wait: true)?;
                             if !request_ok {
                                 aborted = true;
                                 stop_submitting = true;
@@ -1343,28 +1334,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     .as_ref()
                     .is_some_and(|batch| batch.source != prepared.source)
                 {
-                    let request_ok = {
-                        let mut guard = shared_journal.lock().expect("journal mutex poisoned");
-                        flush_import_pipeline(FlushImportPipeline {
-                            cfg,
-                            http: &http,
-                            url: &url,
-                            username: &username,
-                            pending: &mut pending,
-                            inflight: &mut inflight,
-                            first_import: &mut first_import,
-                            trackers: &mut trackers,
-                            journal: &mut guard.state,
-                            journal_path: &journal_path,
-                            log: &mut log,
-                            progress: &mut progress,
-                            results: &mut results,
-                            batcher: &mut batcher,
-                            message_accounting: &mut message_accounting,
-                            import_id,
-                            wait: !cfg.continue_on_error,
-                        })?
-                    };
+                    let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
                     if !request_ok && !cfg.continue_on_error {
                         aborted = true;
                         stop_submitting = true;
@@ -1395,28 +1365,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         should_flush_before_chunk(batch, &chunk, batch_size, MAX_IMPORT_BODY_BYTES)
                     });
                     if must_flush {
-                        let request_ok = {
-                            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
-                            flush_import_pipeline(FlushImportPipeline {
-                                cfg,
-                                http: &http,
-                                url: &url,
-                                username: &username,
-                                pending: &mut pending,
-                                inflight: &mut inflight,
-                                first_import: &mut first_import,
-                                trackers: &mut trackers,
-                                journal: &mut guard.state,
-                                journal_path: &journal_path,
-                                log: &mut log,
-                                progress: &mut progress,
-                                results: &mut results,
-                                batcher: &mut batcher,
-                                message_accounting: &mut message_accounting,
-                                import_id,
-                                wait: !cfg.continue_on_error,
-                            })?
-                        };
+                        let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
                         if !request_ok && !cfg.continue_on_error {
                             aborted = true;
                             stop_submitting = true;
@@ -1435,28 +1384,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     if batch.messages.len() >= batch_size
                         || batch.body.len() >= MAX_IMPORT_BODY_BYTES
                     {
-                        let request_ok = {
-                            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
-                            flush_import_pipeline(FlushImportPipeline {
-                                cfg,
-                                http: &http,
-                                url: &url,
-                                username: &username,
-                                pending: &mut pending,
-                                inflight: &mut inflight,
-                                first_import: &mut first_import,
-                                trackers: &mut trackers,
-                                journal: &mut guard.state,
-                                journal_path: &journal_path,
-                                log: &mut log,
-                                progress: &mut progress,
-                                results: &mut results,
-                                batcher: &mut batcher,
-                                message_accounting: &mut message_accounting,
-                                import_id,
-                                wait: !cfg.continue_on_error,
-                            })?
-                        };
+                        let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
                         if !request_ok && !cfg.continue_on_error {
                             aborted = true;
                             stop_submitting = true;
@@ -1506,9 +1434,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             let _ = job_tx.send(None);
         }
         // Pull any leftover prepare results so workers are not stuck sending.
-        // We still count their asset stats even if we aborted the import loop.
+        // Their asset stats still count even if the import loop aborted.
         while let Ok(job) = result_rx.recv() {
-            inflight_prepares = inflight_prepares.saturating_sub(1);
             if let Ok(prepared) = job.outcome {
                 assets_uploaded += prepared.assets_uploaded;
                 assets_skipped += prepared.assets_skipped;
@@ -1519,34 +1446,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 emit_attachment_skips(&mut log, &mut progress, &prepared.attachment_skips);
             }
         }
-        let _ = inflight_prepares;
         Ok(())
     })?;
 
     if !aborted {
         // End of run: send any leftover pending batch and wait for the last import.
-        let request_ok = {
-            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
-            flush_import_pipeline(FlushImportPipeline {
-                cfg,
-                http: &http,
-                url: &url,
-                username: &username,
-                pending: &mut pending,
-                inflight: &mut inflight,
-                first_import: &mut first_import,
-                trackers: &mut trackers,
-                journal: &mut guard.state,
-                journal_path: &journal_path,
-                log: &mut log,
-                progress: &mut progress,
-                results: &mut results,
-                batcher: &mut batcher,
-                message_accounting: &mut message_accounting,
-                import_id,
-                wait: true,
-            })?
-        };
+        let request_ok = flush_imports!(wait: true)?;
         if !request_ok && !cfg.continue_on_error {
             aborted = true;
         }
@@ -1994,6 +1899,11 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
     } = args;
     let mut jobs = Vec::with_capacity(unique.len());
     let mut stats = AssetUploadStats::default();
+    // Give up a claim without marking the digest uploaded, so a retry (or another
+    // conversation sharing the file) is free to try again.
+    let release_claim = |digest: &str| {
+        let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+    };
     // Build the work list: skip digests already in the journal / claimed by another worker.
     for (digest, (rel, mime)) in unique {
         check_cancel(cfg.cancel.as_ref()).map_err(|_| anyhow::anyhow!("cancelled"))?;
@@ -2001,39 +1911,19 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
             stats.skipped += 1;
             continue;
         }
-        let path = match resolve_attachment(input, rel) {
-            Some(path) => path,
-            None => {
-                let _ = finish_asset_upload(
-                    journal,
-                    journal_path,
-                    url,
-                    username,
-                    source,
-                    digest,
-                    false,
-                );
-                bail!("{name}: missing attachment {rel}");
-            }
+        let Some(path) = resolve_attachment(input, rel) else {
+            release_claim(digest);
+            bail!("{name}: missing attachment {rel}");
         };
         let file_len = match fs::metadata(&path) {
             Ok(meta) => meta.len(),
             Err(error) => {
-                let _ = finish_asset_upload(
-                    journal,
-                    journal_path,
-                    url,
-                    username,
-                    source,
-                    digest,
-                    false,
-                );
+                release_claim(digest);
                 return Err(error).with_context(|| format!("stat {}", path.display()));
             }
         };
         if file_len > cfg.asset_max_bytes {
-            let _ =
-                finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+            release_claim(digest);
             bail!(
                 "{name}: attachment {rel} is {} bytes ({} MiB), over the configured \
                  asset max of {} MiB. Raise vault [server] asset_max_bytes (and \
@@ -2122,33 +2012,21 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                     &uploaded.digest,
                     true,
                 )?;
-                if uploaded.response.already_present {
+                let outcome = if uploaded.response.already_present {
                     stats.skipped += 1;
+                    "skip"
                 } else {
                     stats.uploaded += 1;
-                }
-                stats.log_lines.push(format!(
-                    "asset {} {}",
-                    if uploaded.response.already_present {
-                        "skip"
-                    } else {
-                        "ok"
-                    },
-                    uploaded.digest
-                ));
+                    "ok"
+                };
+                stats
+                    .log_lines
+                    .push(format!("asset {outcome} {}", uploaded.digest));
             }
             Err(error) => {
                 // Release every in-flight claim so a retry is not stuck forever.
                 for job in &jobs {
-                    let _ = finish_asset_upload(
-                        journal,
-                        journal_path,
-                        url,
-                        username,
-                        source,
-                        &job.digest,
-                        false,
-                    );
+                    release_claim(&job.digest);
                 }
                 bail!("{name}: {error}");
             }
@@ -2601,6 +2479,12 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
         .message_accounting
         .attempted
         .saturating_add(message_count as u64);
+    // One HTTP request may cover several conversations, so split the duration
+    // instead of charging the full request time to each one. The first
+    // conversation absorbs the remainder.
+    let conversation_count = represented.len().max(1) as u64;
+    let share_ms = request_ms / conversation_count;
+    let remainder_ms = request_ms % conversation_count;
 
     match response {
         Ok(response) => {
@@ -2613,18 +2497,17 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 .deduped
                 .saturating_add(response.messages_deduped);
             *args.first_import = false;
-            let journal_messages: Vec<JournalMessage> = batch
-                .messages
-                .iter()
-                .map(|message| message.journal.clone())
-                .collect();
             journal::append(
                 args.journal_path,
                 &JournalEvent::MessageBatchOk {
                     url: args.url.to_string(),
                     username: args.username.to_string(),
                     source: batch.source.clone(),
-                    messages: journal_messages.clone(),
+                    messages: batch
+                        .messages
+                        .iter()
+                        .map(|message| message.journal.clone())
+                        .collect(),
                 },
             )?;
             for message in &batch.messages {
@@ -2647,14 +2530,9 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 response.messages.max(response.messages_appended),
             );
             args.log.line(&request_line);
-            let n = represented.len().max(1) as u64;
-            let share = request_ms / n;
-            let rem = request_ms % n;
-            for (i, index) in represented.into_iter().enumerate() {
+            for (position, index) in represented.into_iter().enumerate() {
                 if let Some(tracker) = args.trackers[index].as_mut() {
-                    // One HTTP request may cover several conversations; split the
-                    // duration so progress "import time" is not multiplied by N.
-                    let add = share + if i == 0 { rem } else { 0 };
+                    let add = share_ms + if position == 0 { remainder_ms } else { 0 };
                     tracker.profile.message_import_ms =
                         tracker.profile.message_import_ms.saturating_add(add);
                 }
@@ -2686,14 +2564,11 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
                 batch.source, batch.conversations, message_count,
             );
             args.log.line(&request_line);
-            let n = represented.len().max(1) as u64;
-            let share = request_ms / n;
-            let rem = request_ms % n;
-            for (i, index) in represented.into_iter().enumerate() {
+            for (position, index) in represented.into_iter().enumerate() {
                 let Some(tracker) = args.trackers[index].as_mut() else {
                     continue;
                 };
-                let add = share + if i == 0 { rem } else { 0 };
+                let add = share_ms + if position == 0 { remainder_ms } else { 0 };
                 tracker.profile.message_import_ms =
                     tracker.profile.message_import_ms.saturating_add(add);
                 if tracker.failed.is_none() {

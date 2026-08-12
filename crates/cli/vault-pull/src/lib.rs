@@ -7,7 +7,7 @@
 mod http;
 pub mod journal;
 mod project;
-mod run; // new
+mod run;
 
 pub use http::ExportMessage;
 pub use journal::{PULL_JOURNAL_NAME, PullJournalEvent, PullJournalState, journal_path};
