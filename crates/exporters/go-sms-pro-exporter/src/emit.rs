@@ -126,7 +126,7 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (Str
     };
     let slug = others
         .iter()
-        .map(|d| d.as_str())
+        .map(|d| format!("{}:{}", d.len(), d))
         .collect::<Vec<_>>()
         .join("_");
     let id = if slug.is_empty() {
@@ -956,6 +956,16 @@ fn write_skipped_no_party_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_chat_ids_do_not_collide_on_digit_boundaries() {
+        let owners = OwnerHandleSet::from_phones(&["+15555550100".into()]).unwrap();
+        let (a, _) = chat_id_group(&["12".into(), "34".into()], &owners);
+        let (b, _) = chat_id_group(&["123".into(), "4".into()], &owners);
+        assert_ne!(a, b);
+        assert!(a.contains("2:12"));
+        assert!(b.contains("3:123"));
+    }
 
     fn test_msg(key: &str, attachments: usize) -> PendingMessage {
         PendingMessage {
