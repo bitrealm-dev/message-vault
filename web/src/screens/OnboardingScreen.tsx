@@ -9,6 +9,7 @@ import {
   authTitle,
   pageCenter,
 } from "../lib/uiStyles";
+import AuthErrorFooter from "../components/AuthErrorFooter";
 import AuthSubmitButton from "../components/AuthSubmitButton";
 import Select, { ListBoxItem, selectItemClassName } from "../components/Select";
 import TextField from "../components/TextField";
@@ -156,13 +157,7 @@ export default function OnboardingScreen() {
           ← Back to login
         </button>
 
-        <div
-          className="mt-5 min-h-10 text-[0.813rem] leading-[1.35]"
-          style={{ color: error ? "var(--danger)" : "transparent" }}
-          aria-live="polite"
-        >
-          {error || " "}
-        </div>
+        <AuthErrorFooter error={error} />
       </div>
     </div>
   );

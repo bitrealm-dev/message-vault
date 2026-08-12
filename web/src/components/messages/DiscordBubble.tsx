@@ -1,54 +1,22 @@
-import type { ReactNode } from "react";
-import type { Message, MessageAttachment } from "../../lib/types";
 import MessageAttachments from "../MessageAttachments";
-import { senderName } from "./chatBubbleShared";
-
-function highlightText(text: string, term: string): ReactNode[] {
-  const t = term.trim().toLowerCase();
-  if (!t) return [text];
-  const out: ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-  while (true) {
-    const idx = rest.toLowerCase().indexOf(t);
-    if (idx === -1) {
-      out.push(rest);
-      break;
-    }
-    if (idx > 0) out.push(rest.slice(0, idx));
-    out.push(
-      <mark key={key++} className="rounded-sm bg-search-mark px-px">
-        {rest.slice(idx, idx + t.length)}
-      </mark>,
-    );
-    rest = rest.slice(idx + t.length);
-  }
-  return out;
-}
+import {
+  formatMessageTime,
+  senderName,
+  ServiceMessageText,
+  ServiceRow,
+  type MessageBubbleProps,
+} from "./chatBubbleShared";
 
 export default function DiscordBubble({
   message,
   highlight,
   isActive,
   onAttachmentClick,
-}: {
-  message: Message;
-  highlight?: string;
-  isActive?: boolean;
-  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
-}) {
-  const time = new Date(message.timestamp).toLocaleString([], {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  });
+}: MessageBubbleProps) {
   const mine = message.is_from_me;
 
   return (
-    <div
-      id={`msg-${message.id}`}
-      className={`border-b border-border px-6 py-2 ${
-        isActive ? "bg-search-active" : "bg-transparent"
-      }`}
-    >
+    <ServiceRow messageId={message.id} isActive={isActive}>
       <div
         className={`mb-1 flex items-center gap-2 ${
           mine ? "justify-end" : "justify-start"
@@ -60,16 +28,16 @@ export default function DiscordBubble({
         >
           {senderName(message)}
         </span>
-        <span className="text-[0.688rem] text-muted">{time}</span>
+        <span className="text-[0.688rem] text-muted">
+          {formatMessageTime(message.timestamp)}
+        </span>
       </div>
 
-      <div
-        className={`whitespace-pre-wrap text-[0.875rem] leading-[1.5] text-text ${
-          mine ? "text-right" : "text-left"
-        }`}
-      >
-        {highlight ? highlightText(message.text || "", highlight) : message.text || ""}
-      </div>
+      <ServiceMessageText
+        text={message.text || ""}
+        highlight={highlight}
+        mine={mine}
+      />
 
       <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
 
@@ -101,6 +69,6 @@ export default function DiscordBubble({
           ))}
         </div>
       )}
-    </div>
+    </ServiceRow>
   );
 }

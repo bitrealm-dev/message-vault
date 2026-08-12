@@ -1,10 +1,11 @@
-import type { Message, MessageAttachment } from "../../lib/types";
 import MessageAttachments from "../MessageAttachments";
 import {
+  bubbleBody,
   ChatBubbleRow,
-  highlightText,
+  formatMessageTime,
   isGroupConversation,
   senderName,
+  type MessageBubbleProps,
 } from "./chatBubbleShared";
 
 /** SMS / MMS / RCS / Android Messages — green sent bubbles. */
@@ -13,19 +14,8 @@ export default function SmsBubble({
   highlight,
   isActive,
   onAttachmentClick,
-}: {
-  message: Message;
-  highlight?: string;
-  isActive?: boolean;
-  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
-}) {
-  const time = new Date(message.timestamp).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+}: MessageBubbleProps) {
+  const time = formatMessageTime(message.timestamp, true);
   const mine = message.is_from_me;
   const group = isGroupConversation(message);
   const body = (message.text || "").trim();
@@ -52,7 +42,7 @@ export default function SmsBubble({
         ) : undefined
       }
     >
-      {body ? (highlight ? highlightText(body, highlight) : body) : undefined}
+      {bubbleBody(body, highlight)}
     </ChatBubbleRow>
   );
 }

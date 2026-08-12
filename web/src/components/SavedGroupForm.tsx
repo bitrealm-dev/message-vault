@@ -9,7 +9,6 @@ interface SavedGroupFormProps {
 }
 
 export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroupFormProps) {
-  const [open, setOpen] = useState(true);
   const [name, setName] = useState(initial?.name || "");
   const [query, setQuery] = useState(initial?.query || "");
 
@@ -20,7 +19,7 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
 
   return (
     <ModalShell
-      open={open}
+      open
       onOpenChange={(o) => {
         if (!o) onCancel();
       }}

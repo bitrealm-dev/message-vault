@@ -1,30 +1,36 @@
 import type { ReactNode } from "react";
-import type { Message } from "../../lib/types";
+import type { Message, MessageAttachment } from "../../lib/types";
 import { personDisplayLabel, readUseNameAliases } from "../../lib/nameAliases";
+import { highlightText } from "../../lib/highlightText";
 
-export type BubblePalette = "imessage" | "sms";
+type BubblePalette = "imessage" | "sms";
 
-export function highlightText(text: string, term: string): ReactNode[] {
-  const t = term.trim().toLowerCase();
-  if (!t) return [text];
-  const out: ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-  while (true) {
-    const idx = rest.toLowerCase().indexOf(t);
-    if (idx === -1) {
-      out.push(rest);
-      break;
-    }
-    if (idx > 0) out.push(rest.slice(0, idx));
-    out.push(
-      <mark key={key++} className="rounded-sm bg-search-mark px-px">
-        {rest.slice(idx, idx + t.length)}
-      </mark>,
-    );
-    rest = rest.slice(idx + t.length);
-  }
-  return out;
+/** Props every per-service message renderer accepts. */
+export type MessageBubbleProps = {
+  message: Message;
+  highlight?: string;
+  isActive?: boolean;
+  onAttachmentClick?: (attachment: MessageAttachment, source: string) => void;
+};
+
+/** Timestamp shown under a bubble or beside a flat-row sender. */
+export function formatMessageTime(timestamp: string, withYear = false): string {
+  return new Date(timestamp).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    ...(withYear ? { year: "numeric" as const } : {}),
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Message text with search matches marked, or nothing when the body is empty. */
+export function bubbleBody(
+  body: string,
+  highlight: string | undefined,
+): ReactNode | undefined {
+  if (!body) return undefined;
+  return highlight ? highlightText(body, highlight) : body;
 }
 
 export function senderName(m: Message): string {
@@ -143,6 +149,49 @@ export function ChatBubbleRow({
         <span>{timeLabel}</span>
         {meta}
       </div>
+    </div>
+  );
+}
+
+/** Full-width row chrome for services rendered as flat rows rather than bubbles. */
+export function ServiceRow({
+  messageId,
+  isActive,
+  children,
+}: {
+  messageId: string;
+  isActive?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      id={`msg-${messageId}`}
+      className={`border-b border-border px-6 py-2 ${
+        isActive ? "bg-search-active" : "bg-transparent"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Body text of a flat service row, aligned by author and search-highlighted. */
+export function ServiceMessageText({
+  text,
+  highlight,
+  mine,
+}: {
+  text: string;
+  highlight?: string;
+  mine: boolean;
+}) {
+  return (
+    <div
+      className={`whitespace-pre-wrap text-[0.875rem] leading-[1.5] text-text ${
+        mine ? "text-right" : "text-left"
+      }`}
+    >
+      {highlight ? highlightText(text, highlight) : text}
     </div>
   );
 }

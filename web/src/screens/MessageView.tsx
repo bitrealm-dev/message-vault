@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation, Message, MessageAttachment } from "../lib/types";
 import { personDisplayLabel } from "../lib/nameAliases";
@@ -37,6 +37,23 @@ function displaySourceLabel(source: string): string {
   if (token === "sms-backup-restore") return "SMS/MMS";
   if (token === "whatsapp") return "WhatsApp";
   return source.trim() || "unknown";
+}
+
+/**
+ * Footer count line. A year filter loads that year in full, so it always shows
+ * the whole range; unfiltered browsing shows the current page window.
+ */
+function buildFooterLabel(
+  activeYear: number | null,
+  total: number,
+  offset: number,
+): string {
+  if (activeYear !== null) {
+    if (total === 0) return `${activeYear}: 0 of 0`;
+    return `${activeYear}: 1–${total} of ${total}`;
+  }
+  if (total === 0) return "Messages 0 of 0";
+  return `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
 }
 
 async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[]; total: number }> {
@@ -84,7 +101,6 @@ export default function MessageView({
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showSources, setShowSources] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(true);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const years = useMemo(
     () => conversationYears(conversation.date_range_start, conversation.date_range_end),
@@ -225,13 +241,7 @@ export default function MessageView({
   }, [activeMatch, matchIds]);
 
   const yearMode = activeYear !== null;
-  const footerLabel = yearMode
-    ? total === 0
-      ? `${activeYear}: 0 of 0`
-      : `${activeYear}: 1–${total} of ${total}`
-    : total === 0
-      ? "Messages 0 of 0"
-      : `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
+  const footerLabel = buildFooterLabel(activeYear, total, offset);
 
   const chipClass = (active: boolean) =>
     `cursor-pointer rounded border px-1.5 py-0.5 text-[0.688rem] ${
@@ -384,7 +394,7 @@ export default function MessageView({
       </div>
 
       {/* Messages */}
-      <div ref={listRef} className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="p-4 text-[0.813rem] text-muted">Loading…</div>
         ) : (
