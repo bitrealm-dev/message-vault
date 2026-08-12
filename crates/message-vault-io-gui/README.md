@@ -1,4 +1,6 @@
-# Message Vault GUI
+# DEPRECATED Message Vault GUI - NO LONGER SUPPORTED
+
+This slint based gui is deprecated and exists for reference only. It should not be modified, changed, updated, documented, or considered in any features. It compiles and runs as a standalone.
 
 Desktop GUI built with [Slint](https://slint.dev). Same exporter libraries and
 `export.ini` as the rest of the workspace.
