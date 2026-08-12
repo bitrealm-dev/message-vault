@@ -30,9 +30,6 @@ docs/node_modules
 docs/.astro
 docs/dist
 
-# Misc
-**/.DS_Store
-**/__pycache__
-**/*.pyc
-sources
-staging
+# Local export working trees at repo root (not the committed demo-seed bundle)
+/staging
+/sources

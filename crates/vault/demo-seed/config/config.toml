@@ -1,5 +1,5 @@
 # Instance config restored by `reset-demo`.
-# Demo account identity lives in demo/config/seed.toml.
+# Demo account identity lives in crates/vault/demo-seed/config/seed.toml.
 
 [paths]
 db = "data/vault.db"

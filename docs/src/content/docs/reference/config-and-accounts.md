@@ -55,7 +55,7 @@ Rows are scoped by `account_id` in a shared `vault.db`.
   (stored hashed; shown once when created). GUI sessions use a separate rotating
   token.
 - New accounts start with browsing edits enabled.
-- Demo seed identity: username `demo` (`demo/config/seed.toml`), always
+- Demo seed identity: username `demo` (`crates/vault/demo-seed/config/seed.toml`), always
   no-password and read-only by default.
 
 See [Settings](/browse/settings/).

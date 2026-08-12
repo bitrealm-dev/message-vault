@@ -1,8 +1,8 @@
 # demo-seed generator config.
-# Regenerate: cargo run -p demo-seed -- --config crates/demo-seed/demo_seed.toml
+# Regenerate: cargo run -p demo-seed -- --config crates/vault/demo-seed/demo_seed.toml
 
 seed = 42
-out = "demo"
+out = "crates/vault/demo-seed"
 
 [contacts]
 count = 200

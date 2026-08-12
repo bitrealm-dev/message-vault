@@ -184,7 +184,7 @@ fn run_reset_demo_for_account(
 }
 
 /// Regenerate from `demo_seed.toml` when present (dev checkout).
-/// Release images only ship the committed `demo/` tree — skip regen there.
+/// Release images only ship the committed staging/config tree — skip regen there.
 fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     let seed_toml = demo_seed::SeedConfig::default_path();
     if seed_toml.is_file() {
@@ -336,7 +336,7 @@ mod tests {
     /// release images that skip bundle regeneration.
     #[test]
     fn committed_demo_seed_toml_parses() {
-        let text = include_str!("../../../../demo/config/seed.toml");
+        let text = include_str!("../../demo-seed/config/seed.toml");
         let seed: DemoSeed = toml::from_str(text).expect("committed demo seed.toml must parse");
         assert_eq!(seed.owner.display_name, "Demo User");
         assert_eq!(seed.owner.handle_specs.len(), 1);

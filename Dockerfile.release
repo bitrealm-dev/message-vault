@@ -49,7 +49,9 @@ WORKDIR /app
 COPY --from=rust-builder /src/target/release/message-vault-server /usr/local/bin/message-vault-server
 
 # Demo bundle (seeded on first start when DEMO_DATA is truthy)
-COPY demo ./demo
+COPY crates/vault/demo-seed/staging ./crates/vault/demo-seed/staging
+COPY crates/vault/demo-seed/config ./crates/vault/demo-seed/config
+COPY crates/vault/demo-seed/README.md ./crates/vault/demo-seed/README.md
 
 # Container config template
 COPY config/config.docker.toml ./config/config.docker.toml
