@@ -174,6 +174,11 @@ pub fn start_import(
     Ok(conn.last_insert_rowid())
 }
 
+/// Column list for `vault_imports`, in the order [`map_vault_import_row`] reads them.
+const VAULT_IMPORT_COLUMNS: &str = "id, account_id, source, tool, mode, status, started_at, \
+     finished_at, message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms, \
+     convert_ms, upload_ms, summary_json";
+
 fn map_vault_import_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultImportRow> {
     Ok(VaultImportRow {
         id: row.get(0)?,
@@ -203,13 +208,11 @@ pub fn get_owned_import(
 ) -> std::result::Result<VaultImportRow, ImportLookupError> {
     match conn
         .query_row(
-            r#"
-            SELECT id, account_id, source, tool, mode, status, started_at, finished_at,
-                   message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms,
-                   convert_ms, upload_ms, summary_json
-            FROM vault_imports
-            WHERE id = ?1 AND account_id = ?2
-            "#,
+            &format!(
+                "SELECT {VAULT_IMPORT_COLUMNS}
+                 FROM vault_imports
+                 WHERE id = ?1 AND account_id = ?2"
+            ),
             params![import_id, account_id],
             map_vault_import_row,
         )
@@ -401,17 +404,13 @@ pub fn list_imports_for_account(
     account_id: &str,
     limit: i64,
 ) -> Result<Vec<VaultImportRow>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, account_id, source, tool, mode, status, started_at, finished_at,
-               message_count, attachment_count, bytes_uploaded, duration_ms, parse_ms,
-               convert_ms, upload_ms, summary_json
-        FROM vault_imports
-        WHERE account_id = ?1
-        ORDER BY started_at DESC, id DESC
-        LIMIT ?2
-        "#,
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {VAULT_IMPORT_COLUMNS}
+         FROM vault_imports
+         WHERE account_id = ?1
+         ORDER BY started_at DESC, id DESC
+         LIMIT ?2"
+    ))?;
     let rows = stmt
         .query_map(params![account_id, limit], map_vault_import_row)?
         .collect::<Result<Vec<_>, _>>()?;

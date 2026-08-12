@@ -804,6 +804,7 @@ pub fn metadata_exclude_terms(q: &ParsedSearchQuery) -> Vec<&str> {
     q.exclude.iter().map(String::as_str).collect()
 }
 
+#[cfg(test)]
 pub fn has_metadata_text_criteria(q: &ParsedSearchQuery) -> bool {
     !q.terms.is_empty() || !q.phrases.is_empty() || !q.exclude.is_empty() || q.fts_ast.is_some()
 }

@@ -50,15 +50,6 @@ impl ContactNameMode {
             ),
         }
     }
-
-    #[allow(dead_code)]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::FillMissing => "fill_missing",
-            Self::Overwrite => "overwrite",
-            Self::AsIs => "as_is",
-        }
-    }
 }
 
 impl ImportMode {
@@ -199,17 +190,7 @@ pub fn import_export(
         bail!("export directory does not exist: {}", export_dir.display());
     }
 
-    let mut paths: Vec<PathBuf> = fs::read_dir(export_dir)
-        .with_context(|| format!("failed to read {}", export_dir.display()))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-        })
-        .collect();
-    paths.sort();
+    let paths = crate::import_cli::list_jsonl_files(export_dir)?;
 
     let mut conn = schema::open_configured(db_path)
         .with_context(|| format!("failed to open database {}", db_path.display()))?;
@@ -837,6 +818,14 @@ fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathB
     }
 }
 
+/// Messages with no conversation of their own live in `orphaned.jsonl`
+/// (older bundles used `orphaned.json`), so they may omit a conversation header.
+pub fn is_orphaned_export(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("orphaned"))
+}
+
 fn import_file_to_staging(
     tx: &Transaction<'_>,
     stmts: &mut StagingInserts<'_>,
@@ -850,11 +839,7 @@ fn import_file_to_staging(
         .and_then(|name| name.to_str())
         .unwrap_or("unknown.jsonl")
         .to_string();
-    // Demo (and docs) use orphaned.jsonl; older bundles used orphaned.json.
-    let is_orphaned = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("orphaned"));
+    let is_orphaned = is_orphaned_export(path);
 
     let records = jsonl::read_records(path)?;
     let mut stats = ImportStats::default();
@@ -1217,8 +1202,9 @@ fn promote_append(
         params![account_id],
         |r| r.get(0),
     )?;
-    println!("  sql:      promote: {staging_conv_count} staging conversations → production…");
-    let _ = io::stdout().flush();
+    promote_log(format_args!(
+        "{staging_conv_count} staging conversations → production…"
+    ));
 
     let max_conv_before: i64 =
         tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| {
@@ -1261,11 +1247,11 @@ fn promote_append(
         |r| r.get(0),
     )?;
     stats.conversations = u64::try_from(new_conversations).unwrap_or(0);
-    println!(
-        "  sql:      promote: conversations done (new={})  ({:.1}s)",
+    promote_log(format_args!(
+        "conversations done (new={})  ({:.1}s)",
         stats.conversations,
         started.elapsed().as_secs_f64()
-    );
+    ));
 
     let staging_part_count: i64 = tx.query_row(
         r#"
@@ -1277,8 +1263,9 @@ fn promote_append(
         params![account_id],
         |r| r.get(0),
     )?;
-    println!("  sql:      promote: {staging_part_count} staging participants → production…");
-    let _ = io::stdout().flush();
+    promote_log(format_args!(
+        "{staging_part_count} staging participants → production…"
+    ));
     stats.participants = u64::try_from(tx.execute(
         r#"
         INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_alias)
@@ -1289,11 +1276,11 @@ fn promote_append(
         [],
     )?)
     .unwrap_or(0);
-    println!(
-        "  sql:      promote: participants done (new={})  ({:.1}s)",
+    promote_log(format_args!(
+        "participants done (new={})  ({:.1}s)",
         stats.participants,
         started.elapsed().as_secs_f64()
-    );
+    ));
 
     let total_msgs: i64 = tx.query_row(
         r#"
@@ -1305,16 +1292,14 @@ fn promote_append(
         params![account_id],
         |r| r.get(0),
     )?;
-    println!(
-        "  sql:      promote: {total_msgs} staging messages → production ({})…",
+    promote_log(format_args!(
+        "{total_msgs} staging messages → production ({})…",
         mode.as_str()
-    );
-    let _ = io::stdout().flush();
+    ));
 
     // Skip per-row FTS trigger work during bulk message/attachment inserts; index once after.
     let phase = Instant::now();
-    println!("  sql:      promote: pausing FTS triggers…");
-    let _ = io::stdout().flush();
+    promote_log("pausing FTS triggers…");
     schema::drop_messages_fts_triggers(&tx)?;
     promote_phase_done(started, phase, "FTS triggers paused");
 
@@ -1322,25 +1307,22 @@ fn promote_append(
     let drop_secondary = should_drop_messages_secondary_indexes(total_msgs, existing_msgs);
     if drop_secondary {
         let phase = Instant::now();
-        println!(
-            "  sql:      promote: dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
-        );
-        let _ = io::stdout().flush();
+        promote_log(format_args!(
+            "dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
+        ));
         schema::drop_messages_secondary_indexes(&tx)?;
         promote_phase_done(started, phase, "secondary indexes dropped");
     } else {
-        println!(
-            "  sql:      promote: keeping secondary message indexes (staging={total_msgs} existing={existing_msgs})"
-        );
-        let _ = io::stdout().flush();
+        promote_log(format_args!(
+            "keeping secondary message indexes (staging={total_msgs} existing={existing_msgs})"
+        ));
     }
 
     let msg_map = promote_messages_chunked(&tx, mode, account_id, total_msgs, &mut stats, started)?;
 
     if drop_secondary {
         let phase = Instant::now();
-        println!("  sql:      promote: rebuilding secondary message indexes…");
-        let _ = io::stdout().flush();
+        promote_log("rebuilding secondary message indexes…");
         schema::create_messages_secondary_indexes(&tx)?;
         promote_phase_done(
             started,
@@ -1351,27 +1333,24 @@ fn promote_append(
             ),
         );
     } else {
-        println!(
-            "  sql:      promote: messages done (inserted={} skipped={})  (total {:.1}s)",
+        promote_log(format_args!(
+            "messages done (inserted={} skipped={})  (total {:.1}s)",
             stats.messages,
             stats.messages_deduped,
             started.elapsed().as_secs_f64()
-        );
-        let _ = io::stdout().flush();
+        ));
     }
 
     let phase = Instant::now();
-    println!(
-        "  sql:      promote: writing message id map ({} pairs)…",
+    promote_log(format_args!(
+        "writing message id map ({} pairs)…",
         msg_map.len()
-    );
-    let _ = io::stdout().flush();
+    ));
     fill_promote_msg_map(&tx, &msg_map)?;
     promote_phase_done(started, phase, "message id map written");
 
     let phase = Instant::now();
-    println!("  sql:      promote: bulk-inserting attachments…");
-    let _ = io::stdout().flush();
+    promote_log("bulk-inserting attachments…");
     let att_inserted = tx.execute(
         r#"
         INSERT INTO attachments (
@@ -1394,8 +1373,7 @@ fn promote_append(
     );
 
     let phase = Instant::now();
-    println!("  sql:      promote: bulk-inserting tapbacks…");
-    let _ = io::stdout().flush();
+    promote_log("bulk-inserting tapbacks…");
     let tap_inserted = tx.execute(
         r#"
         INSERT INTO tapbacks (
@@ -1416,8 +1394,7 @@ fn promote_append(
     );
 
     let phase = Instant::now();
-    println!("  sql:      promote: bulk-indexing FTS for new messages…");
-    let _ = io::stdout().flush();
+    promote_log("bulk-indexing FTS for new messages…");
     let fts_indexed = schema::index_messages_fts_from_promote_map(&tx)?;
     schema::install_messages_fts_triggers(&tx)?;
     promote_phase_done(
@@ -1428,15 +1405,13 @@ fn promote_append(
 
     if fill_content_keys {
         let phase = Instant::now();
-        println!("  sql:      promote: filling content keys…");
-        let _ = io::stdout().flush();
+        promote_log("filling content keys…");
         let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
         promote_phase_done(started, phase, format!("content keys filled={keys}"));
     }
 
     let phase = Instant::now();
-    println!("  sql:      promote: committing transaction…");
-    let _ = io::stdout().flush();
+    promote_log("committing transaction…");
     tx.commit()?;
     promote_phase_done(
         started,
@@ -1460,13 +1435,18 @@ const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
 /// Drop secondary indexes only for large promotes relative to the existing table.
 const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
 
+/// Announce a promote phase. Flushed so piped output streams during long imports.
+fn promote_log(msg: impl std::fmt::Display) {
+    println!("  sql:      promote: {msg}");
+    let _ = io::stdout().flush();
+}
+
 fn promote_phase_done(total: Instant, phase: Instant, msg: impl std::fmt::Display) {
-    println!(
-        "  sql:      promote: {msg}  (phase {:.1}s, total {:.1}s)",
+    promote_log(format_args!(
+        "{msg}  (phase {:.1}s, total {:.1}s)",
         phase.elapsed().as_secs_f64(),
         total.elapsed().as_secs_f64()
-    );
-    let _ = io::stdout().flush();
+    ));
 }
 
 fn should_drop_messages_secondary_indexes(staging_count: i64, existing_count: i64) -> bool {
@@ -1526,12 +1506,11 @@ fn promote_messages_replace_chunked(
         chunk_idx += 1;
         let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
         let phase = Instant::now();
-        println!(
-            "  sql:      promote: inserting messages chunk {chunk_idx} (staging id {}..{}, replace)…",
+        promote_log(format_args!(
+            "inserting messages chunk {chunk_idx} (staging id {}..{}, replace)…",
             lo + 1,
             hi
-        );
-        let _ = io::stdout().flush();
+        ));
 
         let inserted = tx.execute(
             r#"
@@ -1613,12 +1592,11 @@ fn promote_messages_append_chunked(
         chunk_idx += 1;
         let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
         let phase = Instant::now();
-        println!(
-            "  sql:      promote: inserting messages chunk {chunk_idx} (staging id {}..{}, append)…",
+        promote_log(format_args!(
+            "inserting messages chunk {chunk_idx} (staging id {}..{}, append)…",
             lo + 1,
             hi
-        );
-        let _ = io::stdout().flush();
+        ));
 
         let inserted = tx.execute(
             r#"
@@ -1683,8 +1661,7 @@ fn promote_messages_append_chunked(
 
     // Null/empty guids are outside the partial unique index — always insert.
     let phase = Instant::now();
-    println!("  sql:      promote: inserting messages with empty guids…");
-    let _ = io::stdout().flush();
+    promote_log("inserting messages with empty guids…");
     let empty_max_before = max_before;
     let inserted_empty = tx.execute(
         r#"

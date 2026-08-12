@@ -182,6 +182,11 @@ pub(crate) fn index_messages_fts_from_promote_map(conn: &Connection) -> Result<u
     Ok(u64::try_from(n).unwrap_or(0))
 }
 
+/// Message ids for one source within one account, bound as `?1` = source, `?2` = account.
+const MESSAGE_IDS_FOR_SOURCE: &str = "SELECT m.id FROM messages m \
+     JOIN conversations c ON c.id = m.conversation_id \
+     WHERE m.source = ?1 AND c.account_id = ?2";
+
 /// Delete all production messages (and cascaded rows) for one import source within one account.
 pub fn delete_messages_for_source(
     conn: &Connection,
@@ -189,37 +194,18 @@ pub fn delete_messages_for_source(
     source: &str,
 ) -> Result<u64> {
     conn.execute(
-        r#"
-        DELETE FROM attachments
-        WHERE message_id IN (
-            SELECT m.id FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.source = ?1 AND c.account_id = ?2
-        )
-        "#,
+        &format!("DELETE FROM attachments WHERE message_id IN ({MESSAGE_IDS_FOR_SOURCE})"),
         params![source, account_id],
     )?;
     conn.execute(
-        r#"
-        DELETE FROM tapbacks
-        WHERE message_id IN (
-            SELECT m.id FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.source = ?1 AND c.account_id = ?2
-        )
-        "#,
+        &format!("DELETE FROM tapbacks WHERE message_id IN ({MESSAGE_IDS_FOR_SOURCE})"),
         params![source, account_id],
     )?;
     conn.execute(
-        r#"
-        UPDATE messages
-        SET duplicate_of = NULL
-        WHERE duplicate_of IN (
-            SELECT m.id FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.source = ?1 AND c.account_id = ?2
-        )
-        "#,
+        &format!(
+            "UPDATE messages SET duplicate_of = NULL
+             WHERE duplicate_of IN ({MESSAGE_IDS_FOR_SOURCE})"
+        ),
         params![source, account_id],
     )?;
     let n = conn.execute(
