@@ -82,6 +82,26 @@ jobs:
           npm ci
           npm run lint
 
+  # ── Always: web Vitest ────────────────────────────────────────────────
+  web-test:
+    name: Test (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Test web frontend
+        run: |
+          cd web
+          npm ci
+          npm test
+
   # ── Tag only: Docker image → DockerHub ────────────────────────────────
   docker:
     name: Docker image
