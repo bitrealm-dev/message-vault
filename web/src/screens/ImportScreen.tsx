@@ -23,6 +23,7 @@ import type {
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../lib/types";
+import { parseSelectKey } from "../lib/selectKey";
 import PathPicker from "../components/PathPicker";
 import PasswordField from "../components/PasswordField";
 import StepProgress from "../components/StepProgress";
@@ -470,7 +471,10 @@ export default function ImportScreen() {
                 <StackedField label="Attachments">
                   <Select
                     selectedKey={attachmentMedia}
-                    onSelectionChange={(k) => setAttachmentMedia(k as AttachmentMediaMode)}
+                    onSelectionChange={(k) => {
+                      const mode = parseSelectKey(k, ["copy", "convert", "compress", "skip"] as const);
+                      if (mode) setAttachmentMedia(mode);
+                    }}
                     aria-label="Attachments"
                     triggerClassName="!bg-bg"
                   >
@@ -528,7 +532,10 @@ export default function ImportScreen() {
                 <StackedField label="Contacts">
                   <Select
                     selectedKey={contactNameMode}
-                    onSelectionChange={(k) => setContactNameMode(k as ContactNameMode)}
+                    onSelectionChange={(k) => {
+                      const mode = parseSelectKey(k, ["fill_missing", "overwrite", "as_is"] as const);
+                      if (mode) setContactNameMode(mode);
+                    }}
                     aria-label="Contacts"
                     triggerClassName="!bg-bg"
                   >

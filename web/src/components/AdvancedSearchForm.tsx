@@ -12,6 +12,7 @@ import Button from "./Button";
 import DateField from "./DateField";
 import Select, { ListBoxItem as SelectListBoxItem, selectItemClassName } from "./Select";
 import { popupShadow } from "../lib/uiStyles";
+import { parseSelectKey } from "../lib/selectKey";
 
 export type AdvancedSearchMode = "messages" | "contacts";
 
@@ -234,7 +235,10 @@ export default function AdvancedSearchForm({
             <label className={labelClass}>Conversation type</label>
             <Select
               selectedKey={msgType}
-              onSelectionChange={(k) => setMsgType(k as "all" | "direct" | "group")}
+              onSelectionChange={(k) => {
+                const next = parseSelectKey(k, ["all", "direct", "group"] as const);
+                if (next) setMsgType(next);
+              }}
               aria-label="Conversation type"
               triggerClassName={selectTriggerClass}
             >
@@ -349,7 +353,10 @@ export default function AdvancedSearchForm({
             <label className={labelClass}>Activity</label>
             <Select
               selectedKey={activity}
-              onSelectionChange={(k) => setActivity(k as ActivityFilter)}
+              onSelectionChange={(k) => {
+                const next = parseSelectKey(k, ["any", "messages", "no-messages"] as const);
+                if (next) setActivity(next);
+              }}
               aria-label="Activity"
               className="w-full min-w-0"
               triggerClassName={compactFieldTriggerClass}
@@ -463,7 +470,10 @@ function DateBoundField({
       <label className={labelClass}>{label}</label>
       <Select
         selectedKey={value.op}
-        onSelectionChange={(k) => setOp(k as DateBoundOp)}
+        onSelectionChange={(k) => {
+          const op = parseSelectKey(k, ["any", "after", "before", "between"] as const);
+          if (op) setOp(op);
+        }}
         aria-label={`${label} comparison`}
         className="w-full min-w-0"
         triggerClassName={compactFieldTriggerClass}
@@ -625,7 +635,8 @@ function CountField({
           aria-label={`${label} comparison`}
           triggerClassName={selectTriggerClass}
           onSelectionChange={(k) => {
-            const comparator = k as CountComparator | "any";
+            const comparator = parseSelectKey(k, ["any", "=", ">", "<"] as const);
+            if (!comparator) return;
             onChange({
               comparator,
               value: comparator === "any" ? "" : value.value,

@@ -11,6 +11,7 @@ import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 import { AppearanceSection } from "./settings/AppearanceSection";
+import { parseSelectKey } from "../lib/selectKey";
 
 type SettingsTab = "account" | "profile" | "storage" | "system" | "appearance";
 
@@ -40,7 +41,13 @@ export default function SettingsScreen() {
         </p>
       </header>
 
-      <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(key as SettingsTab)}>
+      <Tabs
+        selectedKey={tab}
+        onSelectionChange={(key) => {
+          const next = parseSelectKey(key, ["account", "profile", "storage", "system", "appearance"] as const);
+          if (next) setTab(next);
+        }}
+      >
         <TabList
           aria-label="Settings sections"
           className="relative mt-5 flex gap-1 border-b border-border"

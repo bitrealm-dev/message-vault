@@ -16,8 +16,7 @@ import {
 } from "../lib/uiStyles";
 import ExtractScreen from "./Extract";
 import FormatScreen from "./Format";
-
-type AuthMode = "hanko" | "local" | null;
+import { isAuthMode, type AuthMode } from "../lib/authGuards";
 
 interface AuthModeResponse {
   mode: string;
@@ -31,7 +30,7 @@ export default function LoginScreen() {
     if (typeof savedUrl === "string" && savedUrl.length > 0) return savedUrl;
     return isTauri() ? "http://localhost:8080" : "";
   });
-  const [authMode, setAuthMode] = useState<AuthMode>(null);
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -50,7 +49,7 @@ export default function LoginScreen() {
       const url = serverUrl.trim();
       setBaseUrl(url);
       const res = await apiClient.get<AuthModeResponse>("/v1/auth/mode");
-      setAuthMode(res.mode as AuthMode);
+      setAuthMode(isAuthMode(res.mode) ? res.mode : null);
       setHankoApiUrl(res.hanko_api_url || null);
       setAuthServer(url);
     } catch {

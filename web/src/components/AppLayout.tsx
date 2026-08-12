@@ -9,6 +9,7 @@ import ContactDrawer, {
 } from "./ContactDrawer";
 import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
+import { asMessagesLocationState } from "../lib/messagesLocationState";
 
 function contactBrowseQuery(
   contactId: string,
@@ -116,10 +117,7 @@ export default function AppLayout() {
 
   const closeContactDrawer = () => {
     setSelectedContact(null);
-    const state = location.state as {
-      conversation?: Conversation;
-      openContactId?: string;
-    } | null;
+    const state = asMessagesLocationState(location.state);
     if (!state?.openContactId) return;
     const { openContactId: _closed, ...rest } = state;
     navigate(`${location.pathname}${location.search}`, {
@@ -150,8 +148,7 @@ export default function AppLayout() {
   const isTrash = mode === "trash";
 
   // Contact drawer: read openContactId from location state (set by MessageRoute)
-  const locationState = location.state as { openContactId?: string } | null;
-  const openContactId = locationState?.openContactId ?? null;
+  const openContactId = asMessagesLocationState(location.state)?.openContactId ?? null;
 
   return (
     <div className="flex h-screen bg-bg font-sans text-text">

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { setBaseUrl, setToken, apiClient } from "./api";
 import { clearContactDetailCache } from "./contactDetailCache";
+import { parsePersistedAuth } from "./authGuards";
 
 interface AuthState {
   serverUrl: string;
@@ -45,7 +46,14 @@ function loadPersisted(): Partial<AuthState> | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as Partial<AuthState>;
+    const parsed = parsePersistedAuth(raw);
+    if (!parsed) return null;
+    return {
+      serverUrl: parsed.serverUrl,
+      token: parsed.token,
+      accountId: parsed.accountId,
+      needsOnboarding: parsed.needsOnboarding,
+    };
   } catch {
     return null;
   }

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
+import { parseSelectKey } from "../../lib/selectKey";
 import {
   type AccountProfile,
   inputClassName,
@@ -176,7 +177,10 @@ export function ProfileSettingsPanel() {
       <div className="mb-[0.35rem] flex flex-wrap items-center gap-2">
         <Select
           selectedKey={newHandleService}
-          onSelectionChange={(k) => setNewHandleService(k as "phone" | "email" | "whatsapp")}
+          onSelectionChange={(k) => {
+            const service = parseSelectKey(k, ["phone", "email", "whatsapp"] as const);
+            if (service) setNewHandleService(service);
+          }}
           aria-label="Handle service"
           className="shrink-0 min-w-[7rem]"
         >
