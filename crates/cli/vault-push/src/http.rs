@@ -247,41 +247,31 @@ impl HttpSession {
             .send()
             .with_context(|| format!("HEAD {url}"))?;
         let status = response.status();
-        if status.as_u16() == 404 {
-            return Ok(None);
-        }
-        if status.as_u16() == 401 {
-            bail!("invalid vault key");
-        }
-        if status.as_u16() == 403 {
-            bail!("username does not match vault key");
+        match status.as_u16() {
+            404 => return Ok(None),
+            401 => bail!("invalid vault key"),
+            403 => bail!("username does not match vault key"),
+            _ => {}
         }
         if !status.is_success() {
             let text = response.text().unwrap_or_default();
             bail!("asset HEAD failed (HTTP {status}): {text}");
         }
-        // Prefer JSON body when present; some servers omit HEAD bodies.
+        // A 2xx without a usable JSON body means the asset is there: plain HEAD
+        // responders and proxies often send no body at all.
+        let assumed_present = AssetPutResponse {
+            ok: true,
+            already_present: true,
+            error: None,
+        };
         let text = response.text().unwrap_or_default();
         if text.trim().is_empty() {
-            // No body — treat as present (common for simple HEAD responders).
-            return Ok(Some(AssetPutResponse {
-                ok: true,
-                already_present: true,
-                error: None,
-            }));
+            return Ok(Some(assumed_present));
         }
-        let parsed: AssetPutResponse = match serde_json::from_str(&text) {
-            Ok(p) => p,
-            Err(_) => {
-                // Non-JSON body from a 2xx — treat as present.
-                return Ok(Some(AssetPutResponse {
-                    ok: true,
-                    already_present: true,
-                    error: None,
-                }));
-            }
+        let Ok(parsed) = serde_json::from_str::<AssetPutResponse>(&text) else {
+            return Ok(Some(assumed_present));
         };
-        // Only treat as present when the server confirms it.
+        // With a JSON body, only treat the asset as present when the server says so.
         if !parsed.ok || !parsed.already_present {
             return Ok(None);
         }
@@ -305,18 +295,19 @@ impl HttpSession {
         );
         let bytes = std::fs::read(request.file)
             .with_context(|| format!("read {}", request.file.display()))?;
-        let mut req = self
+        let content_type = request
+            .mime
+            .filter(|mime| !mime.is_empty())
+            .unwrap_or("application/octet-stream");
+        let response = self
             .client
             .put(&url)
             .timeout(Duration::from_secs(600))
             .header("Authorization", format!("Bearer {}", request.key.trim()))
-            .body(bytes);
-        if let Some(mime) = request.mime.filter(|m| !m.is_empty()) {
-            req = req.header("Content-Type", mime);
-        } else {
-            req = req.header("Content-Type", "application/octet-stream");
-        }
-        let response = req.send().with_context(|| format!("PUT {url}"))?;
+            .header("Content-Type", content_type)
+            .body(bytes)
+            .send()
+            .with_context(|| format!("PUT {url}"))?;
         let status = response.status();
         let text = response.text().context("read asset response")?;
         if looks_like_payload_too_large(status, &text) {
@@ -681,27 +672,16 @@ fn classify_unauthorized(
 }
 
 fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError {
+    let url = url.to_string();
     let detail = error.to_string();
     if error.is_timeout() {
-        AuthError::Timeout {
-            url: url.to_string(),
-            detail,
-        }
+        AuthError::Timeout { url, detail }
     } else if error.is_builder() {
-        AuthError::InvalidUrl {
-            url: url.to_string(),
-            detail,
-        }
-    } else if error.is_connect() || error.is_request() {
-        AuthError::Network {
-            url: url.to_string(),
-            detail,
-        }
+        AuthError::InvalidUrl { url, detail }
     } else {
-        AuthError::Network {
-            url: url.to_string(),
-            detail,
-        }
+        // Connection refused, DNS failure, and anything else unrecognized all
+        // mean "could not reach the vault".
+        AuthError::Network { url, detail }
     }
 }
 
@@ -743,21 +723,11 @@ fn is_transient_error(error: &anyhow::Error) -> bool {
         return false;
     }
     // Never retry path-not-found or missing-file errors.
-    if msg.contains("no such file") || msg.contains("not found") && msg.contains("404") {
+    if msg.contains("no such file") || (msg.contains("not found") && msg.contains("404")) {
         return false;
     }
-    // Connection, timeout, and transient errors are worth retrying.
-    if error
-        .downcast_ref::<reqwest::Error>()
-        .is_some_and(|e| e.is_timeout() || e.is_connect() || e.is_request())
-    {
-        return true;
-    }
-    // Server errors (5xx) are transient.
-    if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") {
-        return true;
-    }
-    // Default: retry once for unknown errors, but not aggressively.
+    // Everything else is worth retrying: connection resets, timeouts, server
+    // errors (5xx), and failures this code does not recognize.
     true
 }
 

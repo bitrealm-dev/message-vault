@@ -1,7 +1,7 @@
 //! Map vault export API messages into message-ir conversation documents.
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime};
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
     IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
@@ -92,28 +92,33 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
             .collect::<Vec<_>>()
     };
 
-    let mut imessage = IrImessage {
+    let imessage = IrImessage {
         is_reply: msg.is_reply,
         in_reply_to_guid: msg.thread_originator_guid.clone(),
         thread_originator_part: msg
             .thread_originator_part
             .and_then(|n| u32::try_from(n).ok()),
         num_replies: u32::try_from(msg.num_replies).ok().filter(|&n| n > 0),
+        // An announcement with no text carries no information, so drop it.
         announcement: msg
             .is_announcement
-            .then(|| msg.text.clone().unwrap_or_default()),
+            .then(|| msg.text.clone().unwrap_or_default())
+            .filter(|text| !text.is_empty()),
         tapbacks: tapbacks_json(&msg.tapbacks),
         ..Default::default()
     };
-    if imessage.announcement.as_deref().is_some_and(str::is_empty) {
-        imessage.announcement = None;
-    }
 
     let guid = msg
         .guid
         .clone()
         .filter(|g| !g.trim().is_empty())
         .unwrap_or_else(|| format!("vault:{}", msg.id));
+
+    // Keep the vault row id and vault source name so a later push can trace
+    // each message back to the vault it came from.
+    let mut source_fields = serde_json::Map::new();
+    source_fields.insert("vault_message_id".into(), json!(msg.id));
+    source_fields.insert("vault_source".into(), json!(msg.source));
 
     Ok(IrMessage {
         guid,
@@ -127,16 +132,11 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
         text: msg.text.clone().unwrap_or_default(),
         attachments,
         imessage: imessage.into_option(),
-        source: Some(IrSource {
+        source: IrSource {
             android_type: None,
-            fields: {
-                let mut map = serde_json::Map::new();
-                map.insert("vault_message_id".into(), json!(msg.id));
-                map.insert("vault_source".into(), json!(msg.source));
-                map
-            },
-        })
-        .and_then(|s| s.into_option()),
+            fields: source_fields,
+        }
+        .into_option(),
     })
 }
 
@@ -188,12 +188,12 @@ fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
     }
     match service {
         IrService::IMessage => IrMessageKind::IMessage,
-        IrService::Sms => IrMessageKind::Sms,
-        IrService::Rcs => IrMessageKind::Sms,
-        IrService::Whatsapp => IrMessageKind::Unknown,
-        IrService::Discord | IrService::Signal | IrService::Telegram | IrService::Slack => {
-            IrMessageKind::Unknown
-        }
+        IrService::Sms | IrService::Rcs => IrMessageKind::Sms,
+        IrService::Whatsapp
+        | IrService::Discord
+        | IrService::Signal
+        | IrService::Telegram
+        | IrService::Slack => IrMessageKind::Unknown,
         IrService::Unknown => {
             if msg.attachments.is_empty() {
                 IrMessageKind::Sms
@@ -235,7 +235,6 @@ fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
     if let Ok(dt) = DateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S %z") {
         return Ok(dt.timestamp_millis());
     }
-    let _ = Utc::now();
     bail!("unrecognized timestamp: {t}");
 }
 

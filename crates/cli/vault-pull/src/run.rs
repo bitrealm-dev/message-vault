@@ -80,6 +80,21 @@ pub enum ProgressEvent {
 
 pub type ProgressFn<'a> = dyn FnMut(ProgressEvent) + 'a;
 
+/// Send one event to the caller's progress callback when it supplied one.
+fn emit(on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent) {
+    if let Some(callback) = on_progress.as_mut() {
+        callback(event);
+    }
+}
+
+/// The one-line result summary shown after a query finishes.
+fn query_result_log(stats: &QueryStats) -> String {
+    format!(
+        "Query result: {} message(s), {} attachment(s), {} byte(s)",
+        stats.messages, stats.attachments, stats.total_bytes
+    )
+}
+
 /// Compose `after:` / `before:` operators onto a base query string.
 pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> String {
     let mut parts = Vec::new();
@@ -103,12 +118,6 @@ pub fn query_stats(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
 ) -> Result<QueryStats> {
-    let emit = |on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent| {
-        if let Some(cb) = on_progress.as_mut() {
-            cb(event);
-        }
-    };
-
     if cfg.key.trim().is_empty() {
         bail!("vault key is required");
     }
@@ -140,38 +149,31 @@ pub fn query_stats(
     );
 
     let session = HttpSession::new()?;
-    match session.export_message_count(
+    if let Some(count) = session.export_message_count(
         &cfg.base_url,
         &cfg.key,
         &q,
         &account,
         cfg.source.as_deref(),
     )? {
-        Some(count) => {
-            let stats = QueryStats {
-                messages: count.messages,
-                attachments: count.attachments,
-                total_bytes: count.total_bytes,
-            };
-            emit(
-                &mut on_progress,
-                ProgressEvent::Log(format!(
-                    "Query result: {} message(s), {} attachment(s), {} byte(s)",
-                    stats.messages, stats.attachments, stats.total_bytes
-                )),
-            );
-            return Ok(stats);
-        }
-        None => {
-            emit(
-                &mut on_progress,
-                ProgressEvent::Log(
-                    "Count endpoint not available; paging export messages for stats…".into(),
-                ),
-            );
-        }
+        let stats = QueryStats {
+            messages: count.messages,
+            attachments: count.attachments,
+            total_bytes: count.total_bytes,
+        };
+        emit(
+            &mut on_progress,
+            ProgressEvent::Log(query_result_log(&stats)),
+        );
+        return Ok(stats);
     }
 
+    emit(
+        &mut on_progress,
+        ProgressEvent::Log(
+            "Count endpoint not available; paging export messages for stats…".into(),
+        ),
+    );
     query_stats_by_paging(cfg, &session, &account, &q, &mut on_progress)
 }
 
@@ -182,12 +184,6 @@ fn query_stats_by_paging(
     q: &str,
     on_progress: &mut Option<&mut ProgressFn<'_>>,
 ) -> Result<QueryStats> {
-    let emit = |on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent| {
-        if let Some(cb) = on_progress.as_mut() {
-            cb(event);
-        }
-    };
-
     let mut cursor: Option<String> = None;
     let mut total_messages = 0u64;
     // sha256 -> size_bytes (None if unknown / older imports)
@@ -247,20 +243,12 @@ fn query_stats_by_paging(
         }
     }
 
-    let attachments = unique_assets.len() as u64;
-    let total_bytes = unique_assets.values().filter_map(|s| *s).sum();
     let stats = QueryStats {
         messages: total_messages,
-        attachments,
-        total_bytes,
+        attachments: unique_assets.len() as u64,
+        total_bytes: unique_assets.values().filter_map(|size| *size).sum(),
     };
-    emit(
-        on_progress,
-        ProgressEvent::Log(format!(
-            "Query result: {} message(s), {} attachment(s), {} byte(s)",
-            stats.messages, stats.attachments, stats.total_bytes
-        )),
-    );
+    emit(on_progress, ProgressEvent::Log(query_result_log(&stats)));
     Ok(stats)
 }
 
@@ -268,12 +256,6 @@ pub fn run(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
 ) -> Result<PullReport> {
-    let emit = |on_progress: &mut Option<&mut ProgressFn<'_>>, event: ProgressEvent| {
-        if let Some(cb) = on_progress.as_mut() {
-            cb(event);
-        }
-    };
-
     if cfg.key.trim().is_empty() {
         bail!("vault key is required");
     }
@@ -417,30 +399,22 @@ pub fn run(
     let mut attachments_skipped = 0u64;
 
     if !cfg.skip_attachments {
-        // Filter out assets already in the journal that exist on disk.
-        let total_assets = assets.len() as u64;
+        // Leave out assets a previous run recorded that are still on disk.
         let to_download: HashMap<String, (String, String)> = assets
             .iter()
             .filter(|(sha, (_source, rel))| {
-                if journal_state.assets.contains(*sha) {
-                    let dest = cfg.out_dir.join(rel);
-                    if dest.is_file() {
-                        return false; // skip: journaled + on disk
-                    }
-                }
-                true
+                !(journal_state.assets.contains(*sha) && cfg.out_dir.join(rel).is_file())
             })
-            .map(|(sha, tuple)| (sha.clone(), tuple.clone()))
+            .map(|(sha, entry)| (sha.clone(), entry.clone()))
             .collect();
-        let skipped_by_journal = total_assets - to_download.len() as u64;
-        let assets = to_download;
+        let skipped_by_journal = assets.len() as u64 - to_download.len() as u64;
 
-        if !assets.is_empty() {
+        if !to_download.is_empty() {
             emit(
                 &mut on_progress,
                 ProgressEvent::Log(format!(
                     "Downloading {} unique asset(s) with {} worker(s) ({} skipped from journal)…",
-                    assets.len(),
+                    to_download.len(),
                     cfg.asset_download_workers,
                     skipped_by_journal
                 )),
@@ -450,7 +424,7 @@ pub fn run(
                 &cfg.base_url,
                 &cfg.key,
                 &account,
-                &assets,
+                &to_download,
                 &cfg.out_dir,
                 cfg.asset_download_workers,
                 cfg.cancel.as_ref(),
@@ -460,7 +434,7 @@ pub fn run(
 
             // Journal each successfully present asset (downloaded or already on disk)
             // so a resume skips it.
-            for (sha, (_source, _rel)) in &assets {
+            for sha in to_download.keys() {
                 if !journal_state.assets.contains(sha) {
                     let event = crate::journal::PullJournalEvent::AssetOk {
                         url: cfg.base_url.clone(),
@@ -504,13 +478,13 @@ pub fn run(
         assets: attachments_downloaded + attachments_skipped,
     };
     crate::journal::append(&journal_path, &event)?;
-    // Compact after clean run
+    // Rewrite the journal in its shortest form now that the run finished cleanly.
+    // Every asset this run saw is on disk: it was downloaded above, or an earlier
+    // run had already fetched it.
+    let mut recorded_assets = journal_state.assets;
+    recorded_assets.extend(assets.into_keys());
     let final_state = crate::journal::PullJournalState {
-        assets: {
-            let mut s = journal_state.assets.clone();
-            s.extend(assets.keys().cloned());
-            s
-        },
+        assets: recorded_assets,
         backup_complete: true,
     };
     let _ = crate::journal::compact(&journal_path, &cfg.base_url, &username, &final_state);

@@ -126,6 +126,48 @@ pub struct HttpSession {
     client: Client,
 }
 
+struct ExportUrl<'a> {
+    base_url: &'a str,
+    /// Route path starting with a slash, for example `/v1/export/messages`.
+    path: &'a str,
+    /// Fastmail-style search query. Sent even when empty.
+    q: &'a str,
+    /// Page size. Only the paging route accepts it.
+    limit: Option<usize>,
+    /// Continuation token from a previous page.
+    cursor: Option<&'a str>,
+    /// Vault account name. Left out when blank.
+    account: &'a str,
+    /// Restrict the results to one vault source id.
+    source: Option<&'a str>,
+}
+
+/// Build the request URL for an export route, leaving out parameters that are
+/// absent or blank so the vault sees the same query string it did before.
+fn export_url(request: ExportUrl<'_>) -> Result<reqwest::Url> {
+    let base = request.base_url.trim().trim_end_matches('/');
+    let mut url = reqwest::Url::parse(&format!("{base}{}", request.path))
+        .with_context(|| format!("invalid vault URL {base}"))?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("q", request.q);
+        if let Some(limit) = request.limit {
+            pairs.append_pair("limit", &limit.to_string());
+        }
+        if let Some(cursor) = request.cursor.filter(|s| !s.is_empty()) {
+            pairs.append_pair("cursor", cursor);
+        }
+        let account = request.account.trim();
+        if !account.is_empty() {
+            pairs.append_pair("account", account);
+        }
+        if let Some(source) = request.source.map(str::trim).filter(|s| !s.is_empty()) {
+            pairs.append_pair("source", source);
+        }
+    }
+    Ok(url)
+}
+
 impl HttpSession {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
@@ -145,24 +187,15 @@ impl HttpSession {
         account: &str,
         source: Option<&str>,
     ) -> Result<ExportMessagesResponse> {
-        let base = base_url.trim().trim_end_matches('/');
-        let mut url = reqwest::Url::parse(&format!("{base}/v1/export/messages"))
-            .with_context(|| format!("invalid vault URL {base}"))?;
-        {
-            let mut qp = url.query_pairs_mut();
-            qp.append_pair("q", q);
-            qp.append_pair("limit", &limit.to_string());
-            if let Some(c) = cursor.filter(|s| !s.is_empty()) {
-                qp.append_pair("cursor", c);
-            }
-            let account = account.trim();
-            if !account.is_empty() {
-                qp.append_pair("account", account);
-            }
-            if let Some(s) = source.map(str::trim).filter(|s| !s.is_empty()) {
-                qp.append_pair("source", s);
-            }
-        }
+        let url = export_url(ExportUrl {
+            base_url,
+            path: "/v1/export/messages",
+            q,
+            limit: Some(limit),
+            cursor,
+            account,
+            source,
+        })?;
 
         let response = self
             .client
@@ -175,10 +208,11 @@ impl HttpSession {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
-            if let Ok(err) = serde_json::from_str::<ExportMessagesResponse>(&body) {
-                if let Some(msg) = err.error {
-                    bail!("export messages failed ({status}): {msg}");
-                }
+            // Prefer the vault's own error text; fall back to the raw body.
+            if let Ok(parsed) = serde_json::from_str::<ExportMessagesResponse>(&body)
+                && let Some(message) = parsed.error
+            {
+                bail!("export messages failed ({status}): {message}");
             }
             bail!(
                 "export messages failed ({status}): {}",
@@ -206,20 +240,15 @@ impl HttpSession {
         account: &str,
         source: Option<&str>,
     ) -> Result<Option<ExportCountResponse>> {
-        let base = base_url.trim().trim_end_matches('/');
-        let mut url = reqwest::Url::parse(&format!("{base}/v1/export/messages/count"))
-            .with_context(|| format!("invalid vault URL {base}"))?;
-        {
-            let mut qp = url.query_pairs_mut();
-            qp.append_pair("q", q);
-            let account = account.trim();
-            if !account.is_empty() {
-                qp.append_pair("account", account);
-            }
-            if let Some(s) = source.map(str::trim).filter(|s| !s.is_empty()) {
-                qp.append_pair("source", s);
-            }
-        }
+        let url = export_url(ExportUrl {
+            base_url,
+            path: "/v1/export/messages/count",
+            q,
+            limit: None,
+            cursor: None,
+            account,
+            source,
+        })?;
 
         let response = self
             .client
@@ -235,10 +264,11 @@ impl HttpSession {
             return Ok(None);
         }
         if !status.is_success() {
-            if let Ok(err) = serde_json::from_str::<ExportCountResponse>(&body) {
-                if let Some(msg) = err.error {
-                    bail!("export message count failed ({status}): {msg}");
-                }
+            // Prefer the vault's own error text; fall back to the raw body.
+            if let Ok(parsed) = serde_json::from_str::<ExportCountResponse>(&body)
+                && let Some(message) = parsed.error
+            {
+                bail!("export message count failed ({status}): {message}");
             }
             bail!(
                 "export message count failed ({status}): {}",
