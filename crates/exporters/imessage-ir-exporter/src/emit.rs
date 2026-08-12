@@ -388,6 +388,31 @@ mod tests {
             DEFAULT_MESSAGE_PROGRESS_EVERY
         );
     }
+
+    #[test]
+    fn persist_attachment_uses_temp_then_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = b"hello-attachment-bytes";
+        let (rel, digest, len) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(len, bytes.len() as u64);
+        assert_eq!(digest, hex::encode(Sha256::digest(bytes)));
+        let name = rel.strip_prefix("attachments/").expect("rel path prefix");
+        let dest = dir.path().join(name);
+        assert!(dest.is_file());
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+
+        // Incomplete dest (wrong length) must be rewritten.
+        fs::write(&dest, b"x").unwrap();
+        assert_ne!(fs::metadata(&dest).unwrap().len(), bytes.len() as u64);
+        let (rel2, digest2, _) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(rel2, rel);
+        assert_eq!(digest2, digest);
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+    }
 }
 
 /// Build typed [`IrImessage`] from `MailMessage` extension fields.
@@ -447,10 +472,9 @@ fn imessage_bag(mail: &MailMessage) -> Option<IrImessage> {
 /// Destination file name for a persisted attachment: `<local-date>-<digest16><ext>`.
 fn attachment_dest_name(
     timestamp_unix_ms: i64,
-    bytes: &[u8],
+    digest_hex: &str,
     original_name: Option<&str>,
 ) -> String {
-    let digest_hex = hex::encode(Sha256::digest(bytes));
     let digest_prefix = &digest_hex[..16.min(digest_hex.len())];
     let secs = timestamp_unix_ms.div_euclid(1000);
     let date_prefix = Local
@@ -468,6 +492,9 @@ fn attachment_dest_name(
 
 /// Write attachment bytes under `attachments_dir` (idempotent by digest name).
 ///
+/// Writes via `{name}.tmp` then renames into place so a crash mid-write cannot
+/// leave a short final file that later runs treat as complete. Hashes once.
+///
 /// Returns the export-relative path (`attachments/<name>`), the sha256 digest,
 /// and the byte length of the persisted file.
 fn persist_attachment(
@@ -476,17 +503,20 @@ fn persist_attachment(
     bytes: &[u8],
     original_name: Option<&str>,
 ) -> Result<(String, String, u64), RuntimeError> {
-    let name = attachment_dest_name(timestamp_unix_ms, bytes, original_name);
+    let digest_hex = hex::encode(Sha256::digest(bytes));
+    let name = attachment_dest_name(timestamp_unix_ms, &digest_hex, original_name);
     let dest = attachments_dir.join(&name);
-    if !dest.is_file() {
-        fs::write(&dest, bytes)?;
-    }
     let byte_len = bytes.len() as u64;
-    Ok((
-        format!("attachments/{name}"),
-        hex::encode(Sha256::digest(bytes)),
-        byte_len,
-    ))
+    let needs_write = match fs::metadata(&dest) {
+        Ok(meta) => meta.len() != byte_len,
+        Err(_) => true,
+    };
+    if needs_write {
+        let tmp = attachments_dir.join(format!("{name}.tmp"));
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, &dest)?;
+    }
+    Ok((format!("attachments/{name}"), digest_hex, byte_len))
 }
 
 fn timestamp_unix_ms(message: &Message, offset: i64) -> i64 {
