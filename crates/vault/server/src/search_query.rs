@@ -1,9 +1,11 @@
 //! Vault search query parser.
 //!
-//! Behavior reference: `web/src/lib/searchQuery.ts`.
+//! Behavior reference: `web-next/src/lib/searchQuery.ts` (deprecated UI).
 //! Contract: both sides must match `tests/fixtures/search/parse-cases.json`.
-//! After changing the TypeScript grammar, run `node scripts/regen-search-goldens.mjs`
-//! and update this module until Rust golden tests pass.
+//! After changing the TypeScript grammar, run
+//! `node scripts/deprecated/regen-search-goldens.mjs` and update this module
+//! until Rust golden tests pass. Once web-next is gone, this parser stands
+//! alone and the goldens become a plain Rust regression fixture.
 
 use chrono::{Datelike, Local};
 use serde::Serialize;

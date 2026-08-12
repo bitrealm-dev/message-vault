@@ -38,7 +38,7 @@ export function getDb(): Database.Database {
   if (!g.__mvReadonlyDb) {
     if (!identity) {
       throw new Error(
-        `Vault database not found at ${file}. From the repo root run: ./scripts/setup-demo.sh (or create an account at /login).`,
+        `Vault database not found at ${file}. Start the vault with docker compose up, or create an account at /login.`,
       );
     }
     g.__mvReadonlyDb = new Database(file, {

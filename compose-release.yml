@@ -3,8 +3,7 @@
 #
 #   docker compose -f compose-release.yml up --build
 #
-# Build the Vite SPA first:  cd web && npm run build
-# Then copy:  cp -r web/dist ./static
+# Dockerfile.release builds the Vite SPA in its own stage — no host build needed.
 #
 # Blank vault (no demo seed): DEMO_DATA=false docker compose -f compose-release.yml up --build
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).

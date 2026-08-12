@@ -140,4 +140,4 @@ Prefer the web **Import VCF** preview when you want to import only message-match
 contacts and map categories to vault labels interactively. The web **Export
 contacts CSV** action downloads the vault projection from SQLite.
 
-Helper: `./scripts/setup-demo.sh`.
+Helper (deprecated, non-Docker): `./scripts/deprecated/setup-demo.sh`.

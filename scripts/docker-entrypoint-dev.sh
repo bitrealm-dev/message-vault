@@ -46,12 +46,14 @@ seed_if_needed() {
 }
 
 # Link Vite build output if available (built externally via npm run dev or npm run build)
+# Not created when missing: /app is the bind-mounted repo, so mkdir here would
+# leave a root-owned directory behind. Without it the server just 404s GET /,
+# which is what you want when browsing the Vite dev server instead.
 if [[ -d /app/static ]]; then
   echo "Static files found at /app/static"
 else
   echo "Note: no /app/static directory — create a symlink to your Vite build:"
   echo "  ln -s /path/to/web/dist /app/static"
-  mkdir -p /app/static
 fi
 
 seed_if_needed

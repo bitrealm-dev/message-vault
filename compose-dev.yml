@@ -9,6 +9,10 @@
 # Blank vault (no demo seed): DEMO_DATA=false docker compose -f compose-dev.yml up
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
 #
+# This image builds no frontend. Run Vite on the host (cd web && npm run dev,
+# port 5173, proxies /v1 here), or to browse the built UI at :8080 instead run
+# ./scripts/build-static.sh (or ln -s web/dist static).
+#
 # SQLite browser (plain HTTP on loopback): http://127.0.0.1:8081
 #
 # TLS / nginx for production lives in the private message-vault-ops repo.

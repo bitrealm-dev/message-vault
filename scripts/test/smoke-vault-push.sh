@@ -2,7 +2,7 @@
 # Multipart JSONL import + per-user API token auth checks.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 ACCOUNT="00000000-0000-0000-0000-00000000s001"
@@ -16,8 +16,8 @@ trap 'kill ${SERVER_PID:-} 2>/dev/null || true; rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/config" "$TMP/data" "$TMP/client/media"
 
 printf '\xff\xd8\xff\xd9' >"$TMP/client/media/photo.jpg"
-cp "$ROOT/scripts/fixtures/smoke-sms-attachment.jsonl" "$TMP/client/chat-a.jsonl"
-cp "$ROOT/scripts/fixtures/smoke-sms-text.jsonl" "$TMP/client/chat-b.jsonl"
+cp "$ROOT/scripts/test/fixtures/smoke-sms-attachment.jsonl" "$TMP/client/chat-a.jsonl"
+cp "$ROOT/scripts/test/fixtures/smoke-sms-text.jsonl" "$TMP/client/chat-b.jsonl"
 
 cat >"$TMP/config/config.toml" <<EOF
 [paths]

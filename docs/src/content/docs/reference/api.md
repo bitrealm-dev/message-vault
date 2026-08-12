@@ -152,9 +152,9 @@ curl -sS "http://127.0.0.1:8080/v1/auth/check" \
 ## Smoke tests
 
 ```bash
-./scripts/smoke-import-api.sh
-./scripts/smoke-vault-push.sh
-./scripts/smoke-export-api.sh
+./scripts/test/smoke-import-api.sh
+./scripts/test/smoke-vault-push.sh
+./scripts/test/smoke-export-api.sh
 ```
 
 Health check: <http://127.0.0.1:8080/health>
