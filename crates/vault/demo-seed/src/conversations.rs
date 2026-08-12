@@ -278,7 +278,13 @@ fn write_individual(
         source,
     )?;
 
-    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
+    let timestamps = bursty_timestamps(
+        msg_count,
+        span_years,
+        cfg.reference_time,
+        sample_direct_day_burst,
+        rng,
+    );
     let mut origin_guid: Option<String> = None;
     for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 3 != 0;
@@ -356,7 +362,13 @@ fn write_overlap_individual(
         }]
     };
 
-    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
+    let timestamps = bursty_timestamps(
+        msg_count,
+        span_years,
+        cfg.reference_time,
+        sample_direct_day_burst,
+        rng,
+    );
     let mut shared: Vec<(i64, bool, String)> = Vec::with_capacity(shared_n);
     for i in 0..shared_n {
         let ts = timestamps[i];
@@ -475,7 +487,7 @@ fn write_overlap_individual(
             .last()
             .map(|(ts, _, _)| *ts)
             .or_else(|| timestamps.last().copied())
-            .unwrap_or_else(|| Utc::now().timestamp_millis());
+            .unwrap_or_else(|| cfg.reference_time.timestamp_millis());
         for j in 0..extra_n {
             let ts = base_ts + ((j as i64) + 1) * 60_000;
             let from_me = j % 4 == 0;
@@ -550,7 +562,13 @@ fn write_unassigned(
     )?;
 
     let span_years = 1.5;
-    let timestamps = bursty_timestamps(msg_count, span_years, sample_direct_day_burst, rng);
+    let timestamps = bursty_timestamps(
+        msg_count,
+        span_years,
+        cfg.reference_time,
+        sample_direct_day_burst,
+        rng,
+    );
     for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 4 == 0;
         let guid = format!("unassigned-{chat_id}-{i}");
@@ -619,7 +637,13 @@ fn write_group(
 
     let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
     let msg_count = ((group.msgs_per_year * group.span_years).round() as isize).max(1) as usize;
-    let timestamps = bursty_timestamps(msg_count, group.span_years, sample_group_day_burst, rng);
+    let timestamps = bursty_timestamps(
+        msg_count,
+        group.span_years,
+        cfg.reference_time,
+        sample_group_day_burst,
+        rng,
+    );
     let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -637,7 +661,7 @@ fn write_group(
         let ann_ts = timestamps
             .first()
             .copied()
-            .unwrap_or_else(|| Utc::now().timestamp_millis())
+            .unwrap_or_else(|| cfg.reference_time.timestamp_millis())
             - 60_000;
         let mut ann = text_message(
             "grp-0-rename",
@@ -734,7 +758,7 @@ fn write_orphaned(
         n,
         IMESSAGE_SOURCE,
     )?;
-    let timestamps = bursty_timestamps(n, 2.0, sample_direct_day_burst, rng);
+    let timestamps = bursty_timestamps(n, 2.0, cfg.reference_time, sample_direct_day_burst, rng);
     for (i, &ts) in timestamps.iter().enumerate() {
         let guid = format!("orphan-{i}");
         let mut msg = text_message(
@@ -958,15 +982,15 @@ fn decorate_android_message(
 fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
     total: usize,
     span_years: f64,
+    reference_time: chrono::DateTime<Utc>,
     mut sample_burst: F,
     rng: &mut R,
 ) -> Vec<i64> {
     if total == 0 {
         return Vec::new();
     }
-    let now = Utc::now();
     let span_days = ((span_years * 365.25).round() as i64).max(1);
-    let start = now - Duration::days(span_days);
+    let start = reference_time - Duration::days(span_days);
     let offset = FixedOffset::west_opt(4 * 3600).unwrap();
 
     let mut per_day: HashMap<i64, usize> = HashMap::new();
@@ -997,7 +1021,10 @@ fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
             if let Some(&prev) = out.last()
                 && dt.timestamp_millis() <= prev
             {
-                dt = Utc.timestamp_millis_opt(prev).single().unwrap_or(now)
+                dt = Utc
+                    .timestamp_millis_opt(prev)
+                    .single()
+                    .unwrap_or(reference_time)
                     + Duration::seconds(rng.random_range(12..90));
             }
             let local = offset.from_utc_datetime(&dt.naive_utc());
@@ -1164,4 +1191,43 @@ fn sanitize_filename(s: &str) -> String {
             _ => '_',
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    #[test]
+    fn fixed_reference_time_makes_timestamps_reproducible() {
+        let first = SeedConfig::load(&SeedConfig::default_path()).expect("load first config");
+        let second = SeedConfig::load(&SeedConfig::default_path()).expect("load second config");
+        assert_eq!(
+            first.reference_time,
+            Utc.with_ymd_and_hms(2026, 8, 1, 12, 0, 0)
+                .single()
+                .expect("valid expected reference time")
+        );
+        assert_eq!(first.reference_time, second.reference_time);
+
+        let mut first_rng = ChaCha8Rng::seed_from_u64(first.seed);
+        let mut second_rng = ChaCha8Rng::seed_from_u64(second.seed);
+        let first_timestamps = bursty_timestamps(
+            50,
+            2.0,
+            first.reference_time,
+            sample_direct_day_burst,
+            &mut first_rng,
+        );
+        let second_timestamps = bursty_timestamps(
+            50,
+            2.0,
+            second.reference_time,
+            sample_direct_day_burst,
+            &mut second_rng,
+        );
+
+        assert_eq!(first_timestamps, second_timestamps);
+    }
 }

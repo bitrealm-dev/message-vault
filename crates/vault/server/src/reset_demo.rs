@@ -1,7 +1,9 @@
 //! Regenerate the demo bundle, clear the demo account's data, re-import, and process media.
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use message_ir::HandleType;
@@ -52,6 +54,20 @@ struct DemoAccount {
     read_only: bool,
 }
 
+struct PreparedBundle {
+    seed: DemoSeed,
+    imessage_dir: PathBuf,
+    sbr_dir: PathBuf,
+    whatsapp_dir: PathBuf,
+    contacts_vcf: PathBuf,
+}
+
+struct ResetPreparedStats {
+    import: import::ImportStats,
+    dedupe_keys_filled: u64,
+    process_assets: process_assets::ProcessAssetsStats,
+}
+
 pub fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
     run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID)
 }
@@ -69,74 +85,129 @@ fn run_reset_demo_for_account(
 
     println!("  bundle:       {}", bundle.display());
     let seed_stats = maybe_regenerate_bundle(&bundle)?;
+    let reset_stats = prepare_config_and_reset(&bundle, config_dest, account_id)?;
 
+    Ok(ResetDemoStats {
+        seed: seed_stats,
+        import: reset_stats.import,
+        dedupe_keys_filled: reset_stats.dedupe_keys_filled,
+        process_assets: reset_stats.process_assets,
+    })
+}
+
+fn prepare_config_and_reset(
+    bundle: &Path,
+    config_dest: &Path,
+    account_id: &str,
+) -> Result<ResetPreparedStats> {
+    validate_prepared_bundle(bundle)?;
     let demo_config = bundle.join("config/config.toml");
-    let demo_seed = bundle.join("config/seed.toml");
-    let imessage_dir = bundle.join("staging").join(IMESSAGE_SOURCE);
-    let sbr_dir = bundle.join("staging").join(SBR_SOURCE);
-    let whatsapp_dir = bundle.join("staging").join(WHATSAPP_SOURCE);
-    let contacts_vcf = bundle.join("config/contacts.vcf");
-    if !demo_config.is_file()
-        || !demo_seed.is_file()
-        || !imessage_dir.is_dir()
-        || !sbr_dir.is_dir()
-        || !whatsapp_dir.is_dir()
-        || !contacts_vcf.is_file()
-    {
+    if !demo_config.is_file() {
         bail!(
-            "incomplete demo bundle under {} (need config/config.toml, config/seed.toml, \
-             staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, staging/{WHATSAPP_SOURCE}/, config/contacts.vcf)",
+            "incomplete demo bundle under {} (need config/config.toml)",
             bundle.display()
         );
     }
+    let config_parent = config_dest
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(config_parent)
+        .with_context(|| format!("create config directory {}", config_parent.display()))?;
+    let temporary_config = tempfile::Builder::new()
+        .prefix(".reset-demo-config-")
+        .tempfile_in(config_parent)
+        .context("create temporary demo config")?;
+    fs::copy(&demo_config, temporary_config.path()).with_context(|| {
+        format!(
+            "copy prepared config {} to {}",
+            demo_config.display(),
+            temporary_config.path().display()
+        )
+    })?;
+    let cfg = Config::load(temporary_config.path())?;
+    let temporary_config = temporary_config.into_temp_path();
+    reset_prepared_bundle(
+        &cfg,
+        bundle,
+        account_id,
+        config_dest,
+        temporary_config.as_ref(),
+    )
+}
 
-    fs::create_dir_all(
-        config_dest
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("config")),
-    )?;
-    fs::copy(&demo_config, config_dest)
-        .with_context(|| format!("copy {} → {}", demo_config.display(), config_dest.display()))?;
+fn reset_prepared_bundle(
+    cfg: &Config,
+    bundle: &Path,
+    account_id: &str,
+    config_dest: &Path,
+    prepared_config: &Path,
+) -> Result<ResetPreparedStats> {
+    let prepared = validate_prepared_bundle(bundle)?;
+    let _operation_lock = crate::operation_lock::acquire_for_reset(&cfg.paths.db)?;
+    let db_parent = cfg
+        .paths
+        .db
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let data_parent = cfg
+        .paths
+        .data_dir
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(db_parent)
+        .with_context(|| format!("create database parent {}", db_parent.display()))?;
+    fs::create_dir_all(data_parent)
+        .with_context(|| format!("create data parent {}", data_parent.display()))?;
+    let db_work = tempfile::Builder::new()
+        .prefix(".reset-demo-db-")
+        .tempdir_in(db_parent)
+        .context("create temporary demo database directory")?;
+    let data_work = tempfile::Builder::new()
+        .prefix(".reset-demo-data-")
+        .tempdir_in(data_parent)
+        .context("create temporary demo account directory")?;
+    let prepared_db = db_work.path().join("vault.db");
+    checkpoint_and_clean_sidecars(&cfg.paths.db, "before creating the reset snapshot")?;
+    prepare_database_snapshot(&cfg.paths.db, &prepared_db)?;
 
-    let cfg = Config::load(config_dest)?;
-    let seed = load_demo_seed(&demo_seed)?;
+    let mut temporary_cfg = cfg.clone();
+    temporary_cfg.paths.db = prepared_db.clone();
+    temporary_cfg.paths.data_dir = data_work.path().to_path_buf();
+    wipe_demo_account(&temporary_cfg, account_id)?;
 
-    wipe_demo_account(&cfg, account_id)?;
+    println!("Reset demo — preparing replacement");
+    println!("  account:      {account_id}");
+    println!("  imessage:     {}", prepared.imessage_dir.display());
+    println!("  android:      {}", prepared.sbr_dir.display());
+    println!("  whatsapp:     {}", prepared.whatsapp_dir.display());
+    println!("  db:           {}", cfg.paths.db.display());
 
-    let imessage_assets = cfg
+    seed_demo_account(&prepared_db, account_id, &prepared.seed)?;
+    let imessage_assets = temporary_cfg
         .paths
         .assets_dir_for_account(account_id, IMESSAGE_SOURCE);
-    let sbr_assets = cfg.paths.assets_dir_for_account(account_id, SBR_SOURCE);
-    let whatsapp_assets = cfg
+    let sbr_assets = temporary_cfg
+        .paths
+        .assets_dir_for_account(account_id, SBR_SOURCE);
+    let whatsapp_assets = temporary_cfg
         .paths
         .assets_dir_for_account(account_id, WHATSAPP_SOURCE);
-    let db = cfg.paths.db.clone();
-
-    println!("Reset demo — importing");
-    println!("  config:       {}", config_dest.display());
-    println!("  account:      {}", account_id);
-    println!("  imessage:     {}", imessage_dir.display());
-    println!("  android:      {}", sbr_dir.display());
-    println!("  whatsapp:     {}", whatsapp_dir.display());
-    println!("  db:           {}", db.display());
-
-    seed_demo_account(&db, account_id, &seed)?;
-
     let mut import_stats = import::import_export(
-        &imessage_dir,
-        &db,
+        &prepared.imessage_dir,
+        &prepared_db,
         &imessage_assets,
-        Some(&contacts_vcf),
+        Some(&prepared.contacts_vcf),
         true,
         ImportMode::Replace,
         IMESSAGE_SOURCE,
         account_id,
     )?;
-
     let sbr_stats = import::import_export(
-        &sbr_dir,
-        &db,
+        &prepared.sbr_dir,
+        &prepared_db,
         &sbr_assets,
         None,
         false,
@@ -145,10 +216,9 @@ fn run_reset_demo_for_account(
         account_id,
     )?;
     merge_import_stats(&mut import_stats, &sbr_stats);
-
-    let wa_stats = import::import_export(
-        &whatsapp_dir,
-        &db,
+    let whatsapp_stats = import::import_export(
+        &prepared.whatsapp_dir,
+        &prepared_db,
         &whatsapp_assets,
         None,
         false,
@@ -156,13 +226,12 @@ fn run_reset_demo_for_account(
         WHATSAPP_SOURCE,
         account_id,
     )?;
-    merge_import_stats(&mut import_stats, &wa_stats);
+    merge_import_stats(&mut import_stats, &whatsapp_stats);
 
-    let dedupe_stats = dedupe::run_dedupe(&db, account_id, 2)?;
-
-    println!("Reset demo — processing assets");
+    let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2)?;
+    println!("Reset demo — processing prepared assets");
     let process_stats = process_assets::run(
-        &cfg,
+        &temporary_cfg,
         &ProcessAssetsOptions {
             force: false,
             dry_run: false,
@@ -173,14 +242,412 @@ fn run_reset_demo_for_account(
             source: None,
         },
     )
-    .context("process-assets after demo import")?;
+    .context("process-assets after prepared demo import")?;
+    if process_stats.errors > 0 {
+        bail!(
+            "prepared demo asset processing reported {} conversion failures",
+            process_stats.errors
+        );
+    }
 
-    Ok(ResetDemoStats {
-        seed: seed_stats,
+    verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id)?;
+    let replacement = install_reset_state(
+        &cfg.paths.db,
+        &prepared_db,
+        &cfg.paths.data_dir.join(account_id),
+        &temporary_cfg.paths.data_dir.join(account_id),
+        config_dest,
+        prepared_config,
+    );
+    if let Err(error) = replacement {
+        let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
+        let rollback_incomplete = db_work.path().join("previous-vault.db").exists()
+            || data_work.path().join("previous-account").exists()
+            || config_backup.exists();
+        if rollback_incomplete {
+            let db_work = db_work.keep();
+            let data_work = data_work.keep();
+            return Err(error.context(format!(
+                "reset-demo rollback was incomplete; temporary database and account state were kept at {} and {}",
+                db_work.display(),
+                data_work.display()
+            )));
+        }
+        return Err(error);
+    }
+
+    Ok(ResetPreparedStats {
         import: import_stats,
         dedupe_keys_filled: dedupe_stats.keys_filled,
         process_assets: process_stats,
     })
+}
+
+fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
+    let demo_seed = bundle.join("config/seed.toml");
+    let imessage_dir = bundle.join("staging").join(IMESSAGE_SOURCE);
+    let sbr_dir = bundle.join("staging").join(SBR_SOURCE);
+    let whatsapp_dir = bundle.join("staging").join(WHATSAPP_SOURCE);
+    let contacts_vcf = bundle.join("config/contacts.vcf");
+    if !demo_seed.is_file()
+        || !imessage_dir.is_dir()
+        || !sbr_dir.is_dir()
+        || !whatsapp_dir.is_dir()
+        || !contacts_vcf.is_file()
+    {
+        bail!(
+            "incomplete demo bundle under {} (need config/seed.toml, \
+             staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, staging/{WHATSAPP_SOURCE}/, config/contacts.vcf)",
+            bundle.display()
+        );
+    }
+    Ok(PreparedBundle {
+        seed: load_demo_seed(&demo_seed)?,
+        imessage_dir,
+        sbr_dir,
+        whatsapp_dir,
+        contacts_vcf,
+    })
+}
+
+fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
+    if active.is_file() {
+        let conn = rusqlite::Connection::open(active)
+            .with_context(|| format!("open {} for reset snapshot", active.display()))?;
+        conn.execute(
+            "VACUUM INTO ?1",
+            params![prepared.to_string_lossy().as_ref()],
+        )
+        .with_context(|| {
+            format!(
+                "copy database snapshot {} to {}",
+                active.display(),
+                prepared.display()
+            )
+        })?;
+    } else {
+        let conn = schema::open_configured(prepared)
+            .with_context(|| format!("create prepared database {}", prepared.display()))?;
+        schema::ensure_vault_schema(&conn)?;
+    }
+    Ok(())
+}
+
+fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()> {
+    if !db.is_file() {
+        return Ok(());
+    }
+    let conn = rusqlite::Connection::open(db)
+        .with_context(|| format!("open {} {operation}", db.display()))?;
+    let (busy, _, _): (i64, i64, i64) = conn
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .with_context(|| format!("checkpoint SQLite WAL for {} {operation}", db.display()))?;
+    conn.close()
+        .map_err(|(_, error)| error)
+        .with_context(|| format!("close {} {operation}", db.display()))?;
+    if busy != 0 {
+        bail!(
+            "cannot replace {} because its WAL could not be checkpointed; stop every process using the vault and run reset-demo offline",
+            db.display()
+        );
+    }
+
+    let wal = sqlite_sidecar(db, "-wal");
+    if wal.exists() {
+        let length = fs::metadata(&wal)
+            .with_context(|| format!("inspect SQLite WAL {}", wal.display()))?
+            .len();
+        if length != 0 {
+            bail!(
+                "cannot replace {} because {} still contains {length} bytes after WAL checkpoint; stop every process using the vault and run reset-demo offline",
+                db.display(),
+                wal.display()
+            );
+        }
+        fs::remove_file(&wal).with_context(|| {
+            format!(
+                "remove empty SQLite WAL {}; reset-demo requires offline database access",
+                wal.display()
+            )
+        })?;
+    }
+    let shm = sqlite_sidecar(db, "-shm");
+    if shm.exists() {
+        fs::remove_file(&shm).with_context(|| {
+            format!(
+                "remove SQLite shared-memory sidecar {}; stop every process using the vault and run reset-demo offline",
+                shm.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn sqlite_sidecar(db: &Path, suffix: &str) -> PathBuf {
+    let mut path: OsString = db.as_os_str().to_owned();
+    path.push(suffix);
+    PathBuf::from(path)
+}
+
+fn verify_non_demo_state_preserved(active: &Path, prepared: &Path, demo_id: &str) -> Result<()> {
+    if !active.is_file() {
+        return Ok(());
+    }
+    let active_state = non_demo_state(active, demo_id)?;
+    let prepared_state = non_demo_state(prepared, demo_id)?;
+    if active_state != prepared_state {
+        bail!(
+            "prepared reset database changed non-demo account state; active={active_state:?}, prepared={prepared_state:?}"
+        );
+    }
+    Ok(())
+}
+
+fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
+    let conn = rusqlite::Connection::open(db)
+        .with_context(|| format!("open {} to verify non-demo accounts", db.display()))?;
+    let mut statement = conn.prepare(
+        "SELECT a.id, COUNT(m.id)
+         FROM accounts a
+         LEFT JOIN messages m ON m.account_id = a.id
+         WHERE a.id != ?1
+         GROUP BY a.id
+         ORDER BY a.id",
+    )?;
+    let rows = statement.query_map(params![demo_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut state = BTreeMap::new();
+    for row in rows {
+        let (account_id, message_count) = row?;
+        state.insert(account_id, message_count);
+    }
+    Ok(state)
+}
+
+fn install_reset_state(
+    active_db: &Path,
+    prepared_db: &Path,
+    active_account: &Path,
+    prepared_account: &Path,
+    active_config: &Path,
+    prepared_config: &Path,
+) -> Result<()> {
+    install_reset_state_with(
+        active_db,
+        prepared_db,
+        active_account,
+        prepared_account,
+        active_config,
+        prepared_config,
+        |source, destination| {
+            fs::rename(source, destination).with_context(|| {
+                format!("rename {} to {}", source.display(), destination.display())
+            })
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn install_reset_state_with<F>(
+    active_db: &Path,
+    prepared_db: &Path,
+    active_account: &Path,
+    prepared_account: &Path,
+    active_config: &Path,
+    prepared_config: &Path,
+    rename: F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    checkpoint_and_clean_sidecars(prepared_db, "before installing the prepared database")?;
+    checkpoint_and_clean_sidecars(
+        active_db,
+        "immediately before replacing the active database",
+    )?;
+    replace_reset_state_with(
+        active_db,
+        prepared_db,
+        active_account,
+        prepared_account,
+        active_config,
+        prepared_config,
+        rename,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replace_reset_state_with<F>(
+    active_db: &Path,
+    prepared_db: &Path,
+    active_account: &Path,
+    prepared_account: &Path,
+    active_config: &Path,
+    prepared_config: &Path,
+    mut rename: F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    if !prepared_db.is_file() || !prepared_account.is_dir() || !prepared_config.is_file() {
+        bail!("prepared reset state is incomplete");
+    }
+    if let Some(parent) = active_account.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create account data parent {}", parent.display()))?;
+    }
+    let db_backup = prepared_db
+        .parent()
+        .context("prepared database has no parent")?
+        .join("previous-vault.db");
+    let account_backup = prepared_account
+        .parent()
+        .context("prepared account has no parent")?
+        .join("previous-account");
+    let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
+    let had_db = active_db.exists();
+    let had_account = active_account.exists();
+    let had_config = active_config.exists();
+    let mut installed_db = false;
+    let mut installed_account = false;
+    let mut installed_config = false;
+
+    let replacement = (|| -> Result<()> {
+        if had_db {
+            rename(active_db, &db_backup).with_context(|| {
+                format!("move existing database {} into backup", active_db.display())
+            })?;
+        }
+        if had_account {
+            rename(active_account, &account_backup).with_context(|| {
+                format!(
+                    "move existing account directory {} into backup",
+                    active_account.display()
+                )
+            })?;
+        }
+        if had_config {
+            rename(active_config, &config_backup).with_context(|| {
+                format!(
+                    "move existing config {} into backup",
+                    active_config.display()
+                )
+            })?;
+        }
+        rename(prepared_db, active_db).with_context(|| {
+            format!(
+                "install prepared database {} at {}",
+                prepared_db.display(),
+                active_db.display()
+            )
+        })?;
+        installed_db = true;
+        rename(prepared_account, active_account).with_context(|| {
+            format!(
+                "install prepared account directory {} at {}",
+                prepared_account.display(),
+                active_account.display()
+            )
+        })?;
+        installed_account = true;
+        rename(prepared_config, active_config).with_context(|| {
+            format!(
+                "install prepared config {} at {}",
+                prepared_config.display(),
+                active_config.display()
+            )
+        })?;
+        installed_config = true;
+        Ok(())
+    })();
+
+    if let Err(error) = replacement {
+        let mut rollback_errors = Vec::new();
+        if installed_config && let Err(rollback_error) = remove_any_if_exists(active_config) {
+            rollback_errors.push(format!(
+                "remove installed config {}: {rollback_error:#}",
+                active_config.display()
+            ));
+        }
+        if installed_account {
+            if let Err(rollback_error) = remove_any_if_exists(active_account) {
+                rollback_errors.push(format!(
+                    "remove installed account directory {}: {rollback_error:#}",
+                    active_account.display()
+                ));
+            }
+        }
+        if installed_db && active_db.exists() {
+            if let Err(rollback_error) = remove_any_if_exists(active_db) {
+                rollback_errors.push(format!(
+                    "remove installed database {}: {rollback_error:#}",
+                    active_db.display()
+                ));
+            }
+        }
+        if had_config
+            && config_backup.exists()
+            && let Err(rollback_error) = rename(&config_backup, active_config)
+        {
+            rollback_errors.push(format!(
+                "restore previous config {}: {rollback_error:#}",
+                active_config.display()
+            ));
+        }
+        if had_account && account_backup.exists() {
+            if let Err(rollback_error) = rename(&account_backup, active_account) {
+                rollback_errors.push(format!(
+                    "restore previous account directory {}: {rollback_error:#}",
+                    active_account.display()
+                ));
+            }
+        }
+        if had_db && db_backup.exists() {
+            if let Err(rollback_error) = rename(&db_backup, active_db) {
+                rollback_errors.push(format!(
+                    "restore previous database {}: {rollback_error:#}",
+                    active_db.display()
+                ));
+            }
+        }
+        if rollback_errors.is_empty() {
+            cleanup_reset_backups(&db_backup, &account_backup, &config_backup);
+            return Err(error.context("replace demo account state"));
+        }
+        return Err(anyhow::anyhow!(
+            "replace demo account state: {error:#}; rollback incomplete; backups kept at {}, {}, and {}: {}",
+            db_backup.display(),
+            account_backup.display(),
+            config_backup.display(),
+            rollback_errors.join("; ")
+        ));
+    }
+
+    cleanup_reset_backups(&db_backup, &account_backup, &config_backup);
+    Ok(())
+}
+
+fn cleanup_reset_backups(db: &Path, account: &Path, config: &Path) {
+    for backup in [db, account, config] {
+        if let Err(error) = remove_any_if_exists(backup) {
+            eprintln!(
+                "warning: reset-demo installed or restored active state but could not remove backup {}: {error:#}",
+                backup.display()
+            );
+        }
+    }
+}
+
+fn remove_any_if_exists(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
+    } else if path.exists() {
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Regenerate from `demo_seed.toml` when present (dev checkout).
@@ -330,6 +797,7 @@ fn remove_tree_if_exists(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PathsConfig;
 
     /// The committed demo bundle ships a `seed.toml`; it must parse with the
     /// current `DemoOwner` (handle_specs) format or `reset-demo` fails on
@@ -346,5 +814,445 @@ mod tests {
         assert_eq!(seed.owner.emails, vec!["demo.ingest@example.com"]);
         assert_eq!(seed.account.username, "demo");
         assert!(seed.account.read_only);
+    }
+
+    #[test]
+    fn failed_reset_preserves_existing_demo_account() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let db = temp.path().join("vault.db");
+        let data_dir = temp.path().join("data");
+        let account_root = data_dir.join(DEMO_ACCOUNT_ID);
+        fs::create_dir_all(&account_root).expect("create account data directory");
+        let sentinel = account_root.join("existing.bin");
+        let original_data = b"existing account data\n";
+        fs::write(&sentinel, original_data).expect("write account data sentinel");
+
+        let conn = schema::open_configured(&db).expect("open test database");
+        schema::ensure_vault_schema(&conn).expect("create vault schema");
+        account_profile::ensure_account_row(&conn, DEMO_ACCOUNT_ID).expect("seed account");
+        conn.execute(
+            "INSERT INTO handles (
+                account_id, raw, normalized, handle_type, service
+             ) VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
+            params![DEMO_ACCOUNT_ID],
+        )
+        .expect("insert handle");
+        let handle_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (?1, ?2, 'individual', 'existing.jsonl')",
+            params![DEMO_ACCOUNT_ID, handle_id],
+        )
+        .expect("insert conversation");
+        let conversation_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, body, sort_order
+             ) VALUES (?1, ?2, 'imessage', 'existing-message',
+                       '2026-01-01T00:00:00Z', 0, 'keep me', 0)",
+            params![conversation_id, DEMO_ACCOUNT_ID],
+        )
+        .expect("insert message");
+        drop(conn);
+
+        let cfg = Config {
+            paths: PathsConfig {
+                db: db.clone(),
+                data_dir,
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: None,
+        };
+        let invalid_bundle = temp.path().join("invalid-bundle");
+        fs::create_dir_all(invalid_bundle.join("staging").join(IMESSAGE_SOURCE))
+            .expect("create iMessage tree");
+        fs::create_dir_all(invalid_bundle.join("staging").join(SBR_SOURCE))
+            .expect("create Android tree");
+
+        let result = reset_prepared_bundle(
+            &cfg,
+            &invalid_bundle,
+            DEMO_ACCOUNT_ID,
+            &temp.path().join("config/config.toml"),
+            &temp.path().join("prepared-config.toml"),
+        );
+
+        assert!(result.is_err());
+        let conn = schema::open_configured(&db).expect("reopen test database");
+        let account_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts WHERE id = ?1",
+                params![DEMO_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("count account");
+        let message_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE guid = 'existing-message'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count message");
+        assert_eq!(account_count, 1);
+        assert_eq!(message_count, 1);
+        assert_eq!(
+            fs::read(&sentinel).expect("read account sentinel"),
+            original_data
+        );
+    }
+
+    #[test]
+    fn failed_preparation_preserves_active_config() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let config_dest = temp.path().join("config/config.toml");
+        fs::create_dir_all(config_dest.parent().expect("config parent"))
+            .expect("create config parent");
+        let original = b"active configuration\n";
+        fs::write(&config_dest, original).expect("write active config");
+        let invalid_bundle = temp.path().join("invalid-bundle");
+        fs::create_dir_all(&invalid_bundle).expect("create invalid bundle");
+
+        let result = prepare_config_and_reset(&invalid_bundle, &config_dest, DEMO_ACCOUNT_ID);
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(&config_dest).expect("read active config"),
+            original
+        );
+    }
+
+    #[test]
+    fn reset_refuses_while_server_holds_database_lock() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let db = temp.path().join("vault.db");
+        let _serve_lock =
+            crate::operation_lock::acquire_for_serve(&db).expect("acquire server lock");
+
+        let error = crate::operation_lock::acquire_for_reset(&db)
+            .expect_err("reset lock must conflict with active server")
+            .to_string();
+
+        assert!(error.contains("serve is active"), "{error}");
+        assert!(error.contains("offline"), "{error}");
+    }
+
+    #[test]
+    fn failures_after_database_and_account_install_restore_all_active_state() {
+        for failure_point in [
+            ResetInstallFailure::AfterDatabase,
+            ResetInstallFailure::AfterAccount,
+        ] {
+            let temp = tempfile::tempdir().expect("create test directory");
+            let active_db = temp.path().join("active/vault.db");
+            fs::create_dir_all(active_db.parent().expect("database parent"))
+                .expect("create database parent");
+            seed_reset_test_database(&active_db);
+            let prepared_db = temp.path().join("prepared/vault.db");
+            fs::create_dir_all(prepared_db.parent().expect("prepared database parent"))
+                .expect("create prepared database parent");
+            fs::copy(&active_db, &prepared_db).expect("copy prepared database");
+            make_prepared_reset_database_observably_different(&prepared_db);
+
+            let active_account = temp.path().join("data").join(DEMO_ACCOUNT_ID);
+            let prepared_account = temp.path().join("prepared-data").join(DEMO_ACCOUNT_ID);
+            fs::create_dir_all(&active_account).expect("create active account");
+            fs::create_dir_all(&prepared_account).expect("create prepared account");
+            fs::write(active_account.join("sentinel"), b"old data").expect("write old data");
+            fs::write(prepared_account.join("sentinel"), b"new data").expect("write new data");
+
+            let active_config = temp.path().join("config/config.toml");
+            let prepared_config = temp.path().join("prepared-config/config.toml");
+            fs::create_dir_all(active_config.parent().expect("active config parent"))
+                .expect("create active config parent");
+            fs::create_dir_all(prepared_config.parent().expect("prepared config parent"))
+                .expect("create prepared config parent");
+            fs::write(&active_config, b"old config").expect("write old config");
+            fs::write(&prepared_config, b"new config").expect("write new config");
+
+            let result = replace_reset_state_with(
+                &active_db,
+                &prepared_db,
+                &active_account,
+                &prepared_account,
+                &active_config,
+                &prepared_config,
+                |source, destination| {
+                    if failure_point == ResetInstallFailure::AfterDatabase
+                        && source == prepared_account
+                    {
+                        bail!("injected failure after database rename");
+                    }
+                    if failure_point == ResetInstallFailure::AfterAccount
+                        && source == prepared_config
+                    {
+                        bail!("injected failure after account-directory rename");
+                    }
+                    fs::rename(source, destination).map_err(Into::into)
+                },
+            );
+
+            assert!(result.is_err());
+            assert_reset_test_database(&active_db);
+            assert_eq!(
+                fs::read(active_account.join("sentinel")).expect("read data sentinel"),
+                b"old data"
+            );
+            assert_eq!(
+                fs::read(&active_config).expect("read active config"),
+                b"old config"
+            );
+        }
+    }
+
+    #[test]
+    fn active_sidecars_are_cleaned_immediately_before_database_rename() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let active_db = temp.path().join("active/vault.db");
+        fs::create_dir_all(active_db.parent().expect("database parent"))
+            .expect("create database parent");
+        seed_reset_test_database(&active_db);
+        let prepared_db = temp.path().join("prepared/vault.db");
+        fs::create_dir_all(prepared_db.parent().expect("prepared database parent"))
+            .expect("create prepared database parent");
+        fs::copy(&active_db, &prepared_db).expect("copy prepared database");
+
+        let active_account = temp.path().join("data").join(DEMO_ACCOUNT_ID);
+        let prepared_account = temp.path().join("prepared-data").join(DEMO_ACCOUNT_ID);
+        fs::create_dir_all(&active_account).expect("create active account");
+        fs::create_dir_all(&prepared_account).expect("create prepared account");
+        let active_config = temp.path().join("config/config.toml");
+        let prepared_config = temp.path().join("prepared-config/config.toml");
+        fs::create_dir_all(active_config.parent().expect("active config parent"))
+            .expect("create active config parent");
+        fs::create_dir_all(prepared_config.parent().expect("prepared config parent"))
+            .expect("create prepared config parent");
+        fs::write(&active_config, b"old config").expect("write active config");
+        fs::write(&prepared_config, b"new config").expect("write prepared config");
+
+        {
+            let conn = schema::open_configured(&active_db).expect("reopen active database");
+            conn.execute(
+                "UPDATE accounts SET preferred_name = 'reopened' WHERE id = ?1",
+                params![DEMO_ACCOUNT_ID],
+            )
+            .expect("write through reopened active database");
+        }
+        let active_wal = sqlite_sidecar(&active_db, "-wal");
+        let active_shm = sqlite_sidecar(&active_db, "-shm");
+        fs::write(&active_wal, b"").expect("create empty WAL sidecar");
+        fs::write(&active_shm, b"").expect("create empty shared-memory sidecar");
+        let mut observed_clean_boundary = false;
+
+        let result = install_reset_state_with(
+            &active_db,
+            &prepared_db,
+            &active_account,
+            &prepared_account,
+            &active_config,
+            &prepared_config,
+            |source, destination| {
+                if source == active_db {
+                    observed_clean_boundary = !active_wal.exists() && !active_shm.exists();
+                }
+                if source == prepared_db {
+                    bail!("stop after observing active database rename boundary");
+                }
+                fs::rename(source, destination).map_err(Into::into)
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(
+            observed_clean_boundary,
+            "active WAL and shared-memory sidecars must be absent at rename"
+        );
+    }
+
+    #[test]
+    fn reset_rollback_attempts_remaining_restorations_after_one_fails() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let active_db = temp.path().join("active/vault.db");
+        let prepared_db = temp.path().join("prepared/vault.db");
+        let active_account = temp.path().join("data/demo");
+        let prepared_account = temp.path().join("prepared-data/demo");
+        let active_config = temp.path().join("config/config.toml");
+        let prepared_config = temp.path().join("prepared-config/config.toml");
+        for parent in [
+            active_db.parent().expect("active db parent"),
+            prepared_db.parent().expect("prepared db parent"),
+            &active_account,
+            &prepared_account,
+            active_config.parent().expect("active config parent"),
+            prepared_config.parent().expect("prepared config parent"),
+        ] {
+            fs::create_dir_all(parent).expect("create replacement fixture directory");
+        }
+        fs::write(&active_db, b"old db").expect("write active db");
+        fs::write(&prepared_db, b"new db").expect("write prepared db");
+        fs::write(active_account.join("sentinel"), b"old").expect("write active account");
+        fs::write(prepared_account.join("sentinel"), b"new").expect("write prepared account");
+        fs::write(&active_config, b"old config").expect("write active config");
+        fs::write(&prepared_config, b"new config").expect("write prepared config");
+        let mut database_restore_attempted = false;
+
+        let result = replace_reset_state_with(
+            &active_db,
+            &prepared_db,
+            &active_account,
+            &prepared_account,
+            &active_config,
+            &prepared_config,
+            |source, destination| {
+                if source == prepared_config {
+                    bail!("injected config install failure");
+                }
+                if source.ends_with("previous-account") {
+                    bail!("injected account restore failure");
+                }
+                if source.ends_with("previous-vault.db") {
+                    database_restore_attempted = true;
+                }
+                fs::rename(source, destination).map_err(Into::into)
+            },
+        );
+
+        let error = result.expect_err("replacement must fail").to_string();
+        assert!(
+            database_restore_attempted,
+            "database restoration must be attempted after account restoration fails"
+        );
+        assert!(error.contains("injected account restore failure"));
+        assert!(
+            prepared_account
+                .parent()
+                .unwrap()
+                .join("previous-account")
+                .exists()
+        );
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ResetInstallFailure {
+        AfterDatabase,
+        AfterAccount,
+    }
+
+    fn seed_reset_test_database(path: &Path) {
+        let conn = schema::open_configured(path).expect("open reset test database");
+        schema::ensure_vault_schema(&conn).expect("create reset test schema");
+        seed_reset_test_account(&conn, DEMO_ACCOUNT_ID, "demo-existing");
+        seed_reset_test_account(&conn, "non-demo-account", "non-demo-existing");
+    }
+
+    fn make_prepared_reset_database_observably_different(path: &Path) {
+        let conn = schema::open_configured(path).expect("open prepared reset test database");
+        conn.execute(
+            "UPDATE accounts SET username = 'prepared-demo' WHERE id = ?1",
+            params![DEMO_ACCOUNT_ID],
+        )
+        .expect("change prepared demo account");
+        conn.execute(
+            "DELETE FROM messages WHERE account_id = ?1",
+            params![DEMO_ACCOUNT_ID],
+        )
+        .expect("delete prepared demo message");
+        conn.execute("DELETE FROM accounts WHERE id = 'non-demo-account'", [])
+            .expect("delete prepared non-demo marker");
+        drop(conn);
+        checkpoint_and_clean_sidecars(path, "while preparing reset test database")
+            .expect("checkpoint prepared reset test database");
+
+        let conn = schema::open_configured(path).expect("verify prepared reset test database");
+        let demo_username: String = conn
+            .query_row(
+                "SELECT username FROM accounts WHERE id = ?1",
+                params![DEMO_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("read changed prepared demo account");
+        let demo_messages: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE account_id = ?1",
+                params![DEMO_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("count prepared demo messages");
+        let non_demo_accounts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts WHERE id = 'non-demo-account'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count prepared non-demo marker");
+        assert_eq!(demo_username, "prepared-demo");
+        assert_eq!(demo_messages, 0);
+        assert_eq!(non_demo_accounts, 0);
+    }
+
+    fn seed_reset_test_account(conn: &rusqlite::Connection, account_id: &str, guid: &str) {
+        account_profile::ensure_account_row(conn, account_id).expect("seed reset test account");
+        conn.execute(
+            "INSERT INTO handles (
+                account_id, raw, normalized, handle_type, service
+             ) VALUES (?1, ?2, ?2, 'username', 'phone')",
+            params![account_id, format!("{account_id}-handle")],
+        )
+        .expect("insert reset test handle");
+        let handle_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (?1, ?2, 'individual', 'existing.jsonl')",
+            params![account_id, handle_id],
+        )
+        .expect("insert reset test conversation");
+        let conversation_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp,
+                is_from_me, body, sort_order
+             ) VALUES (?1, ?2, 'imessage', ?3,
+                       '2026-01-01T00:00:00Z', 0, 'keep me', 0)",
+            params![conversation_id, account_id, guid],
+        )
+        .expect("insert reset test message");
+    }
+
+    fn assert_reset_test_database(path: &Path) {
+        let conn = schema::open_configured(path).expect("open restored reset test database");
+        for (account_id, guid) in [
+            (DEMO_ACCOUNT_ID, "demo-existing"),
+            ("non-demo-account", "non-demo-existing"),
+        ] {
+            let account_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM accounts WHERE id = ?1",
+                    params![account_id],
+                    |row| row.get(0),
+                )
+                .expect("count restored account");
+            let username: String = conn
+                .query_row(
+                    "SELECT username FROM accounts WHERE id = ?1",
+                    params![account_id],
+                    |row| row.get(0),
+                )
+                .expect("read restored username");
+            let (message_count, body): (i64, String) = conn
+                .query_row(
+                    "SELECT COUNT(*), MIN(body)
+                     FROM messages WHERE account_id = ?1 AND guid = ?2",
+                    params![account_id, guid],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("count restored message");
+            assert_eq!(account_count, 1, "account {account_id}");
+            assert_eq!(username, account_id, "username {account_id}");
+            assert_eq!(message_count, 1, "message {guid}");
+            assert_eq!(body, "keep me", "message body {guid}");
+        }
     }
 }

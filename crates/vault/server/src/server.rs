@@ -20,7 +20,7 @@ use rusqlite::Connection;
 
 use crate::asset_uploads;
 use crate::assets;
-use crate::config::{Config, validate_source_id};
+use crate::config::{AuthMode, Config, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::schema;
@@ -291,6 +291,22 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
 }
 
+fn auth_public_router(mode: AuthMode) -> Router<AppState> {
+    let router = Router::new().route(
+        "/v1/auth/hanko/session",
+        post(crate::auth::hanko_session_handler),
+    );
+    let router = match mode {
+        AuthMode::Hanko => router,
+        AuthMode::Local => router
+            .route("/v1/auth/register", post(crate::auth::register_handler))
+            .route("/v1/auth/login", post(crate::auth::login_handler)),
+    };
+    router
+        // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
+        .layer(RequestBodyLimitLayer::new(32 * 1024))
+}
+
 pub(crate) async fn with_configured_db<T, F>(
     db_path: &Path,
     task: &str,
@@ -346,6 +362,7 @@ where
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
+    let _operation_lock = crate::operation_lock::acquire_for_serve(&cfg.paths.db)?;
     let upload_limits = asset_uploads::UploadLimits::resolve(
         server.asset_part_size,
         server.asset_max_bytes,
@@ -377,15 +394,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         max_body_bytes,
     };
 
-    let auth_public = Router::new()
-        .route("/v1/auth/register", post(crate::auth::register_handler))
-        .route("/v1/auth/login", post(crate::auth::login_handler))
-        .route(
-            "/v1/auth/hanko/session",
-            post(crate::auth::hanko_session_handler),
-        )
-        // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
-        .layer(RequestBodyLimitLayer::new(32 * 1024));
+    let auth_public = auth_public_router(AuthMode::from_env());
 
     let app = Router::new()
         .merge(auth_public)
@@ -1197,11 +1206,23 @@ async fn resolve_asset_lookup(
     access: AssetAccess,
 ) -> Result<(String, String, Option<assets::StoredAsset>), ApiError> {
     let auth = resolve_auth(headers, state).await?;
-    match access {
-        AssetAccess::Read => require_export_access(&auth)?,
-        AssetAccess::Write => require_import_access(&auth)?,
-        AssetAccess::Probe => require_import_or_export_access(&auth)?,
-    }
+    // A download streams the file itself, so hashing it during lookup would read
+    // every byte twice. Probe and write lookups decide whether a client may skip
+    // sending bytes, so those keep verifying the stored blob.
+    let verify_stored_bytes = match access {
+        AssetAccess::Read => {
+            require_export_access(&auth)?;
+            false
+        }
+        AssetAccess::Write => {
+            require_import_access(&auth)?;
+            true
+        }
+        AssetAccess::Probe => {
+            require_import_or_export_access(&auth)?;
+            true
+        }
+    };
     if query.source.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "query param source is required".into(),
@@ -1220,7 +1241,11 @@ async fn resolve_asset_lookup(
         let assets_dir = cfg
             .paths
             .assets_dir_for_account(&account_lookup, &source_lookup);
-        assets::lookup_by_sha256(&assets_dir, &sha_lookup)
+        if verify_stored_bytes {
+            assets::lookup_by_sha256(&assets_dir, &sha_lookup)
+        } else {
+            assets::lookup_by_sha256_unverified(&assets_dir, &sha_lookup)
+        }
     })
     .await
     .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
@@ -1977,6 +2002,42 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         headers
+    }
+
+    async fn auth_route_status(mode: AuthMode, path: &str) -> StatusCode {
+        let (_tmp, state, _token, _import_id) = test_state();
+        let app = auth_public_router(mode).with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}{path}"))
+            .send()
+            .await
+            .unwrap();
+        server.abort();
+        response.status()
+    }
+
+    #[tokio::test]
+    async fn hanko_router_excludes_local_auth_routes() {
+        for path in ["/v1/auth/register", "/v1/auth/login"] {
+            assert_ne!(
+                auth_route_status(AuthMode::Local, path).await,
+                StatusCode::NOT_FOUND
+            );
+            assert_eq!(
+                auth_route_status(AuthMode::Hanko, path).await,
+                StatusCode::NOT_FOUND
+            );
+        }
+        assert_ne!(
+            auth_route_status(AuthMode::Hanko, "/v1/auth/hanko/session").await,
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]

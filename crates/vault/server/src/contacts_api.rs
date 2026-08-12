@@ -362,6 +362,7 @@ pub fn list_contacts(
         )));
     }
 
+    crate::search_query::validate_list_search_query(q)?;
     let filters = parse_contact_list_filters(q);
     let involves = involves_ct_sql();
     let has_messages_sql = contact_has_messages_sql();
@@ -765,7 +766,13 @@ fn ensure_handle_row(
 fn contact_exists(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
     let found: Option<i64> = conn
         .query_row(
-            "SELECT id FROM contacts WHERE id = ?1 AND account_id = ?2",
+            &format!(
+                "SELECT ct.id
+                 FROM contacts ct
+                 WHERE ct.id = ?1 AND ct.account_id = ?2
+                   AND {not_trashed}",
+                not_trashed = NOT_TRASHED_CONTACT_SQL,
+            ),
             params![contact_id, account_id],
             |row| row.get(0),
         )
@@ -1265,6 +1272,40 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(empty.handles.is_empty());
+    }
+
+    #[test]
+    fn mutate_contact_rejects_trashed_contact() {
+        let (conn, account) = setup();
+        let contact_id = insert_contact_with_handle(&conn, &account, "Trashed", "+15555550100");
+        conn.execute(
+            "INSERT INTO trashed_contacts (account_id, contact_id) VALUES (?1, ?2)",
+            params![&account, contact_id],
+        )
+        .unwrap();
+
+        let changed = mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: Some("Changed".into()),
+                add_handle: None,
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap();
+
+        assert!(!changed);
+        let name: String = conn
+            .query_row(
+                "SELECT preferred_name FROM contacts WHERE id = ?1 AND account_id = ?2",
+                params![contact_id, &account],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Trashed");
     }
 
     fn contact_last_modified(conn: &Connection, account: &str, contact_id: i64) -> String {

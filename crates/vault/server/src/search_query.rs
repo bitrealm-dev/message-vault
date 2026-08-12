@@ -11,8 +11,19 @@ use chrono::{Datelike, Local};
 use serde::Serialize;
 use std::fmt;
 
+use crate::export_api::ExportQueryError;
+
+/// Reject pathological search strings before parsing or SQL construction.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 2_048;
+pub const MAX_SEARCH_TEXT_TERMS: usize = 32;
 /// Hard cap on FTS AST nodes (guards nested OR/AND DoS).
 pub const MAX_FTS_NODES: usize = 64;
+/// Hard cap on parenthesis / negation nesting depth.
+///
+/// The node cap can only be applied to a tree that already parsed, and
+/// parentheses do not add nodes, so the recursive-descent parser needs its own
+/// limit to keep a query like `((((…alpha…))))` from exhausting the stack.
+pub const MAX_FTS_DEPTH: usize = 32;
 /// Relative `after:`/`before:` windows larger than this many days are rejected.
 pub const MAX_RELATIVE_LOOKBACK_DAYS: i64 = 3_650;
 
@@ -349,103 +360,152 @@ fn append_fts_lexemes(token: &str, out: &mut Vec<FtsLex>) {
     }
 }
 
-fn parse_fts_lexemes(lexemes: &[FtsLex]) -> Option<FtsNode> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FtsParseError {
+    IncompleteOperand,
+    UnmatchedOpeningParenthesis,
+    UnmatchedClosingParenthesis,
+    UnconsumedTokens,
+    TooDeeplyNested,
+}
+
+impl fmt::Display for FtsParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncompleteOperand => f.write_str("boolean operator is missing an operand"),
+            Self::UnmatchedOpeningParenthesis => f.write_str("unmatched opening parenthesis"),
+            Self::UnmatchedClosingParenthesis => f.write_str("unmatched closing parenthesis"),
+            Self::UnconsumedTokens => f.write_str("unconsumed boolean expression tokens"),
+            Self::TooDeeplyNested => f.write_fmt(format_args!(
+                "expression nests deeper than {MAX_FTS_DEPTH} levels"
+            )),
+        }
+    }
+}
+
+impl std::error::Error for FtsParseError {}
+
+fn parse_fts_lexemes(lexemes: &[FtsLex]) -> Result<Option<FtsNode>, FtsParseError> {
+    if lexemes.is_empty() {
+        return Ok(None);
+    }
     let mut i = 0usize;
 
     fn peek(lexemes: &[FtsLex], i: usize) -> Option<&FtsLex> {
         lexemes.get(i)
     }
 
-    fn parse_primary(lexemes: &[FtsLex], i: &mut usize) -> Option<FtsNode> {
-        match peek(lexemes, *i)? {
-            FtsLex::LParen => {
-                *i += 1;
-                let inner = parse_or(lexemes, i);
-                if matches!(peek(lexemes, *i), Some(FtsLex::RParen)) {
-                    *i += 1;
+    fn parse_primary(
+        lexemes: &[FtsLex],
+        i: &mut usize,
+        depth: usize,
+    ) -> Result<FtsNode, FtsParseError> {
+        match peek(lexemes, *i) {
+            Some(FtsLex::LParen) => {
+                if depth >= MAX_FTS_DEPTH {
+                    return Err(FtsParseError::TooDeeplyNested);
                 }
-                inner
+                *i += 1;
+                let inner = parse_or(lexemes, i, depth + 1)?;
+                if !matches!(peek(lexemes, *i), Some(FtsLex::RParen)) {
+                    return Err(FtsParseError::UnmatchedOpeningParenthesis);
+                }
+                *i += 1;
+                Ok(inner)
             }
-            FtsLex::Term { value, prefix } => {
+            Some(FtsLex::Term { value, prefix }) => {
                 let node = FtsNode::Term {
                     value: value.clone(),
                     prefix: if *prefix { Some(true) } else { None },
                 };
                 *i += 1;
-                Some(node)
+                Ok(node)
             }
-            FtsLex::Phrase { value } => {
+            Some(FtsLex::Phrase { value }) => {
                 let node = FtsNode::Phrase {
                     value: value.clone(),
                 };
                 *i += 1;
-                Some(node)
+                Ok(node)
             }
-            _ => None,
+            Some(FtsLex::RParen) => Err(FtsParseError::UnmatchedClosingParenthesis),
+            Some(FtsLex::Or | FtsLex::And | FtsLex::Not) | None => {
+                Err(FtsParseError::IncompleteOperand)
+            }
         }
     }
 
-    fn parse_unary(lexemes: &[FtsLex], i: &mut usize) -> Option<FtsNode> {
+    fn parse_unary(
+        lexemes: &[FtsLex],
+        i: &mut usize,
+        depth: usize,
+    ) -> Result<FtsNode, FtsParseError> {
         if matches!(peek(lexemes, *i), Some(FtsLex::Not)) {
+            if depth >= MAX_FTS_DEPTH {
+                return Err(FtsParseError::TooDeeplyNested);
+            }
             *i += 1;
-            let child = parse_unary(lexemes, i)?;
-            return Some(FtsNode::Not {
+            let child = parse_unary(lexemes, i, depth + 1)?;
+            return Ok(FtsNode::Not {
                 child: Box::new(child),
             });
         }
-        parse_primary(lexemes, i)
+        parse_primary(lexemes, i, depth)
     }
 
-    fn parse_and(lexemes: &[FtsLex], i: &mut usize) -> Option<FtsNode> {
+    fn parse_and(
+        lexemes: &[FtsLex],
+        i: &mut usize,
+        depth: usize,
+    ) -> Result<FtsNode, FtsParseError> {
         let mut nodes = Vec::new();
-        let first = parse_unary(lexemes, i)?;
+        let first = parse_unary(lexemes, i, depth)?;
         nodes.push(first);
         loop {
             match peek(lexemes, *i) {
                 None | Some(FtsLex::Or) | Some(FtsLex::RParen) => break,
                 Some(FtsLex::And) => {
                     *i += 1;
-                    let Some(next) = parse_unary(lexemes, i) else {
-                        break;
-                    };
-                    nodes.push(next);
+                    nodes.push(parse_unary(lexemes, i, depth)?);
                 }
                 Some(
                     FtsLex::Not | FtsLex::LParen | FtsLex::Term { .. } | FtsLex::Phrase { .. },
                 ) => {
-                    let Some(next) = parse_unary(lexemes, i) else {
-                        break;
-                    };
-                    nodes.push(next);
+                    nodes.push(parse_unary(lexemes, i, depth)?);
                 }
             }
         }
         if nodes.len() == 1 {
-            Some(nodes.remove(0))
+            Ok(nodes.remove(0))
         } else {
-            Some(FtsNode::And { children: nodes })
+            Ok(FtsNode::And { children: nodes })
         }
     }
 
-    fn parse_or(lexemes: &[FtsLex], i: &mut usize) -> Option<FtsNode> {
+    fn parse_or(lexemes: &[FtsLex], i: &mut usize, depth: usize) -> Result<FtsNode, FtsParseError> {
         let mut nodes = Vec::new();
-        let first = parse_and(lexemes, i)?;
+        let first = parse_and(lexemes, i, depth)?;
         nodes.push(first);
         while matches!(peek(lexemes, *i), Some(FtsLex::Or)) {
             *i += 1;
-            let Some(next) = parse_and(lexemes, i) else {
-                break;
-            };
-            nodes.push(next);
+            nodes.push(parse_and(lexemes, i, depth)?);
         }
         if nodes.len() == 1 {
-            Some(nodes.remove(0))
+            Ok(nodes.remove(0))
         } else {
-            Some(FtsNode::Or { children: nodes })
+            Ok(FtsNode::Or { children: nodes })
         }
     }
 
-    parse_or(lexemes, &mut i)
+    let node = parse_or(lexemes, &mut i, 0)?;
+    if i != lexemes.len() {
+        return Err(if matches!(peek(lexemes, i), Some(FtsLex::RParen)) {
+            FtsParseError::UnmatchedClosingParenthesis
+        } else {
+            FtsParseError::UnconsumedTokens
+        });
+    }
+    Ok(Some(node))
 }
 
 fn flatten_fts_leaves(
@@ -490,6 +550,54 @@ pub fn count_fts_nodes(node: &FtsNode) -> usize {
             1 + children.iter().map(count_fts_nodes).sum::<usize>()
         }
     }
+}
+
+fn validate_search_query_bytes(input: &str) -> Result<(), ExportQueryError> {
+    if input.len() > MAX_SEARCH_QUERY_BYTES {
+        return Err(ExportQueryError::bad(format!(
+            "search query exceeds {MAX_SEARCH_QUERY_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_search_query_complexity(
+    text_term_count: usize,
+    node_count: usize,
+) -> Result<(), ExportQueryError> {
+    if text_term_count > MAX_SEARCH_TEXT_TERMS {
+        return Err(ExportQueryError::bad(format!(
+            "search query has too many text terms (max {MAX_SEARCH_TEXT_TERMS})"
+        )));
+    }
+    if node_count > MAX_FTS_NODES {
+        return Err(ExportQueryError::bad(format!(
+            "search query is too complex (max {MAX_FTS_NODES} expression nodes)"
+        )));
+    }
+    Ok(())
+}
+
+/// Enforce resource limits without interpreting list-search text as boolean syntax.
+pub fn validate_list_search_query(input: &str) -> Result<(), ExportQueryError> {
+    validate_search_query_bytes(input)?;
+    let tokens = tokenize(input);
+    let text_term_count = tokens
+        .iter()
+        .filter(|token| token.as_str() != "(" && token.as_str() != ")")
+        .count();
+    validate_search_query_complexity(text_term_count, tokens.len())
+}
+
+/// Parse a boolean search query and enforce resource limits.
+pub fn validate_search_query(input: &str) -> Result<ParsedSearchQuery, ExportQueryError> {
+    validate_search_query_bytes(input)?;
+    let parsed = parse_search_query(input)
+        .map_err(|error| ExportQueryError::bad(format!("invalid search expression: {error}")))?;
+    let text_term_count = parsed.terms.len() + parsed.phrases.len() + parsed.exclude.len();
+    let node_count = parsed.fts_ast.as_ref().map(count_fts_nodes).unwrap_or(0);
+    validate_search_query_complexity(text_term_count, node_count)?;
+    Ok(parsed)
 }
 
 fn normalize_date(raw: &str) -> Option<String> {
@@ -701,10 +809,10 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
 }
 
 /// Parse a vault search string into structured filters.
-pub fn parse_search_query(input: &str) -> ParsedSearchQuery {
+pub fn parse_search_query(input: &str) -> Result<ParsedSearchQuery, FtsParseError> {
     let mut out = ParsedSearchQuery::default();
     if input.trim().is_empty() {
-        return out;
+        return Ok(out);
     }
 
     let mut fts_lexemes = Vec::new();
@@ -807,7 +915,7 @@ pub fn parse_search_query(input: &str) -> ParsedSearchQuery {
         append_fts_lexemes(&raw, &mut fts_lexemes);
     }
 
-    out.fts_ast = parse_fts_lexemes(&fts_lexemes);
+    out.fts_ast = parse_fts_lexemes(&fts_lexemes)?;
     if let Some(ast) = &out.fts_ast {
         flatten_fts_leaves(
             ast,
@@ -817,19 +925,7 @@ pub fn parse_search_query(input: &str) -> ParsedSearchQuery {
             false,
         );
     }
-    out
-}
-
-pub fn metadata_include_terms(q: &ParsedSearchQuery) -> Vec<&str> {
-    q.terms
-        .iter()
-        .chain(q.phrases.iter())
-        .map(String::as_str)
-        .collect()
-}
-
-pub fn metadata_exclude_terms(q: &ParsedSearchQuery) -> Vec<&str> {
-    q.exclude.iter().map(String::as_str).collect()
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -892,7 +988,7 @@ mod tests {
             let name = case["name"].as_str().unwrap();
             let input = case["input"].as_str().unwrap();
             let expected = case.get("expected").expect("golden expected missing");
-            let parsed = parse_search_query(input);
+            let parsed = parse_search_query(input).unwrap();
             let actual = serde_json::to_value(&parsed).unwrap();
             assert_eq!(
                 actual,
@@ -906,7 +1002,7 @@ mod tests {
 
     #[test]
     fn relative_after_produces_ymd() {
-        let q = parse_search_query("after:7d");
+        let q = parse_search_query("after:7d").unwrap();
         let after = q.after.expect("after");
         assert!(
             after.len() == 10 && after.as_bytes().get(4) == Some(&b'-'),
@@ -916,12 +1012,105 @@ mod tests {
 
     #[test]
     fn relative_after_rejects_extreme_lookback() {
-        let q = parse_search_query("after:99999d");
+        let q = parse_search_query("after:99999d").unwrap();
         assert!(q.after.is_none(), "extreme relative date should be dropped");
     }
 
     #[test]
     fn show_contact_is_not_criteria() {
-        assert!(!has_search_criteria(&parse_search_query("show:contact")));
+        assert!(!has_search_criteria(
+            &parse_search_query("show:contact").unwrap()
+        ));
+    }
+
+    #[test]
+    fn malformed_boolean_queries_are_rejected() {
+        for query in [
+            "foo OR",
+            "foo AND",
+            "NOT",
+            "(foo OR bar",
+            "foo OR bar)",
+            "foo ) bar",
+        ] {
+            let error = validate_search_query(query).unwrap_err();
+            assert!(
+                matches!(error, ExportQueryError::BadRequest(_)),
+                "query should be rejected: {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn deeply_nested_boolean_query_is_rejected() {
+        let depth = MAX_FTS_DEPTH + 8;
+        let nested = format!("{}alpha{}", "(".repeat(depth), ")".repeat(depth));
+        let negations = format!("{}alpha", "NOT ".repeat(depth));
+        for query in [nested, negations] {
+            let error = validate_search_query(&query).unwrap_err();
+            assert!(
+                matches!(error, ExportQueryError::BadRequest(_)),
+                "deeply nested query should be rejected: {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_within_the_depth_limit_still_parses() {
+        let depth = 8;
+        let query = format!("{}alpha OR beta{}", "(".repeat(depth), ")".repeat(depth));
+        let parsed = validate_search_query(&query).unwrap();
+        assert_eq!(parsed.terms, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn boolean_parser_preserves_nested_precedence() {
+        let parsed = parse_search_query("foo OR (bar AND baz)").unwrap();
+        assert_eq!(
+            parsed.fts_ast,
+            Some(FtsNode::Or {
+                children: vec![
+                    FtsNode::Term {
+                        value: "foo".into(),
+                        prefix: None,
+                    },
+                    FtsNode::And {
+                        children: vec![
+                            FtsNode::Term {
+                                value: "bar".into(),
+                                prefix: None,
+                            },
+                            FtsNode::Term {
+                                value: "baz".into(),
+                                prefix: None,
+                            },
+                        ],
+                    },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn boolean_parser_preserves_phrases_prefixes_and_double_negation() {
+        let parsed = parse_search_query(r#"NOT NOT "hello world" AND report*"#).unwrap();
+        assert_eq!(
+            parsed.fts_ast,
+            Some(FtsNode::And {
+                children: vec![
+                    FtsNode::Not {
+                        child: Box::new(FtsNode::Not {
+                            child: Box::new(FtsNode::Phrase {
+                                value: "hello world".into(),
+                            }),
+                        }),
+                    },
+                    FtsNode::Term {
+                        value: "report".into(),
+                        prefix: Some(true),
+                    },
+                ],
+            })
+        );
     }
 }

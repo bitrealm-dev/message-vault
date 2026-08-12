@@ -182,6 +182,7 @@ pub fn list_conversations(
         )));
     }
 
+    crate::search_query::validate_list_search_query(q)?;
     let parsed = parse_conversation_list_query(q.trim());
 
     let mut where_parts = vec!["c.account_id = ?1".to_string()];
@@ -838,6 +839,77 @@ mod tests {
         let clamped = list_conversations(&conn, &account, "", MAX_LIST_LIMIT + 50, 0).unwrap();
         assert_eq!(clamped.limit, MAX_LIST_LIMIT);
         assert_eq!(clamped.total, 2);
+    }
+
+    #[test]
+    fn list_queries_enforce_search_limits() {
+        let (conn, account) = setup();
+        let oversized = "x".repeat(2_049);
+        let too_many_terms = (0..33)
+            .map(|index| format!("term{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let too_many_nodes = "(".repeat(65);
+
+        for query in [&oversized, &too_many_terms, &too_many_nodes] {
+            let contact_error = crate::contacts_api::list_contacts(
+                &conn,
+                &account,
+                query,
+                crate::contacts_api::DEFAULT_LIST_LIMIT,
+                0,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(contact_error, ExportQueryError::BadRequest(_)),
+                "contact query should be rejected: {query}"
+            );
+
+            let conversation_error =
+                list_conversations(&conn, &account, query, DEFAULT_LIST_LIMIT, 0).unwrap_err();
+            assert!(
+                matches!(conversation_error, ExportQueryError::BadRequest(_)),
+                "conversation query should be rejected: {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_queries_accept_literal_boolean_words_and_parentheses() {
+        let (conn, account) = setup();
+
+        for query in [
+            "OR", "AND", "NOT", "foo OR", "foo AND", "foo NOT", "(", ")", "(foo", "foo)",
+        ] {
+            crate::contacts_api::list_contacts(
+                &conn,
+                &account,
+                query,
+                crate::contacts_api::DEFAULT_LIST_LIMIT,
+                0,
+            )
+            .unwrap();
+
+            list_conversations(&conn, &account, query, DEFAULT_LIST_LIMIT, 0).unwrap();
+        }
+    }
+
+    #[test]
+    fn malformed_boolean_queries_are_bad_requests_for_export() {
+        let (conn, account) = setup();
+
+        for query in ["foo OR", "(foo OR bar", "foo OR bar)"] {
+            let export_error = crate::export_api::export_message_count(
+                &conn,
+                crate::export_api::ExportCountOpts {
+                    account_id: &account,
+                    query,
+                    source_override: None,
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(export_error, ExportQueryError::BadRequest(_)));
+        }
     }
 
     #[test]

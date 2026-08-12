@@ -32,25 +32,45 @@ pub fn shard_rel_path(sha256: &str, ext: &str) -> String {
     format!("{}/{}{}", &sha256[..2], sha256, ext)
 }
 
-/// Look up an already-stored blob by lowercase hex SHA-256.
+/// Look up an already-stored blob by lowercase hex SHA-256, verifying its bytes.
+///
+/// Every caller that decides something on behalf of a client — "the blob is
+/// already present, skip the upload" (HEAD, PUT, multipart start/complete) or
+/// "reuse this blob for a claimed digest" (import) — must use this function, so
+/// a truncated or replaced file is never treated as the real content.
 pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
+    let stored = lookup_by_sha256_unverified(assets_root, sha256)?;
+    let path = assets_root.join(&stored.assets_path);
+    if hash_file(&path).ok()? != stored.sha256 {
+        return None;
+    }
+    Some(stored)
+}
+
+/// Resolve the stored path and MIME for a digest without reading the bytes.
+///
+/// Only for streaming an authenticated download: the response body is the file
+/// itself, the URL is the digest, and the client can verify what it received.
+/// Hashing the whole file first would double the read cost of every download.
+pub fn lookup_by_sha256_unverified(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
     let sha = normalize_sha256(sha256)?;
     let existing = find_existing(assets_root, &sha)?;
     let assets_path = path_relative_to(assets_root, &existing).ok()?;
+    let mime_type = resolve_mime(None, &existing).or_else(|| read_mime_metadata(assets_root, &sha));
     Some(StoredAsset {
         sha256: sha,
         assets_path,
-        mime_type: resolve_mime(None, &existing),
+        mime_type,
     })
 }
 
 /// Store `source` under `assets_root` using a caller-claimed SHA-256 (verified).
 ///
-/// When `consume_source` is true (HTTP upload temps), prefers `rename` into place.
-/// When false (export/import sources), always copies so the original file remains.
+/// When `consume_source` is true (HTTP upload temps), removes the source after
+/// the verified temporary copy is installed.
 ///
-/// When `skip_hash` is true, the claimed sha256 is trusted without hashing.
-/// Callers should pass `false`; the flag remains only for API stability.
+/// `skip_hash` remains only for API stability; sources are always hashed before
+/// deduplication so an invalid upload cannot be accepted because a blob exists.
 ///
 /// Returns `(stored, already_present)`.
 pub fn store_verified(
@@ -59,116 +79,201 @@ pub fn store_verified(
     assets_root: &Path,
     export_mime: Option<&str>,
     consume_source: bool,
-    skip_hash: bool,
+    _skip_hash: bool,
+) -> Result<(StoredAsset, bool)> {
+    store_verified_inner(
+        source,
+        claimed_sha256,
+        assets_root,
+        export_mime,
+        consume_source,
+        || {},
+        || {},
+    )
+}
+
+fn store_verified_inner(
+    source: &Path,
+    claimed_sha256: &str,
+    assets_root: &Path,
+    export_mime: Option<&str>,
+    consume_source: bool,
+    copy_ready: impl FnOnce(),
+    selection_ready: impl FnOnce(),
 ) -> Result<(StoredAsset, bool)> {
     let claimed = require_sha256(claimed_sha256)?;
     ensure_regular_file(source)?;
-
-    // Prefer existence check before hashing — duplicate PUTs skip a full SHA pass.
-    if let Some(existing) = lookup_by_sha256(assets_root, &claimed) {
-        return Ok((
-            StoredAsset {
-                mime_type: resolve_mime(export_mime, source).or(existing.mime_type),
-                ..existing
-            },
-            true,
-        ));
-    }
-
-    if skip_hash {
-        // Trust the claimed sha256 — caller verified the assembled file size
-        // matches the declared size. For large files this avoids an expensive
-        // full-file SHA-256 pass on the server.
+    let source_mime = resolve_mime(export_mime, source);
+    let (dest, already) = install_blob(
+        source,
+        assets_root,
+        &claimed,
+        consume_source,
+        copy_ready,
+        selection_ready,
+    )?;
+    let rel = path_relative_to(assets_root, &dest)?;
+    let mime_type = if already {
+        export_mime
+            .filter(|mime| !mime.is_empty())
+            .map(str::to_owned)
+            .or_else(|| resolve_mime(None, &dest))
+            .or(source_mime)
     } else {
-        let actual =
-            hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
-        if actual != claimed {
-            anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
-        }
+        source_mime
+    };
+    if let Some(mime) = mime_type.as_deref() {
+        store_mime_metadata(assets_root, &claimed, mime)?;
     }
-
-    let ext = normalize_ext(source.extension().and_then(|e| e.to_str()));
-    let rel = shard_rel_path(&claimed, &ext);
-    let dest = assets_root.join(&rel);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let already = install_blob(source, &dest, consume_source)?;
     Ok((
         StoredAsset {
             sha256: claimed,
             assets_path: rel,
-            mime_type: resolve_mime(export_mime, source),
+            mime_type,
         },
         already,
     ))
 }
 
-/// Install `source` at `dest` without following symlinks. Returns `true` when
-/// `dest` already existed as a regular file. Uses create-new semantics so a
-/// concurrent install cannot silently overwrite.
-fn install_blob(source: &Path, dest: &Path, consume_source: bool) -> Result<bool> {
-    if let Ok(meta) = fs::symlink_metadata(dest) {
+/// Install `source` at `dest` through a synced temporary file in the same
+/// directory. Returns `true` only when a concurrent or prior valid blob wins.
+///
+/// Order of work matters for both safety and cost:
+/// 1. verify an existing destination first. On a hit the source is hashed (a
+///    wrong claimed digest must never be accepted because a valid blob exists)
+///    and the call returns without a copy, an `fsync`, or a rename — this is the
+///    common repeat-import and repeat-upload case.
+/// 2. otherwise copy into a temporary file in the destination shard, hashing
+///    while writing, and refuse to persist unless the written bytes match the
+///    claimed digest. The bytes that land on disk are therefore always bytes
+///    this call verified, even if the source changed underneath.
+fn install_blob(
+    source: &Path,
+    assets_root: &Path,
+    claimed_sha256: &str,
+    consume_source: bool,
+    copy_ready: impl FnOnce(),
+    selection_ready: impl FnOnce(),
+) -> Result<(PathBuf, bool)> {
+    let shard = assets_root.join(&claimed_sha256[..2]);
+    fs::create_dir_all(&shard).with_context(|| format!("failed to create {}", shard.display()))?;
+
+    // New blobs use a single extensionless path derived only from the digest.
+    // `find_existing` keeps old extension-bearing paths readable and reusable.
+    let desired = assets_root.join(shard_rel_path(claimed_sha256, ""));
+    let dest = if let Some(existing) = find_existing(assets_root, claimed_sha256) {
+        if hash_file(&existing).is_ok_and(|actual| actual == claimed_sha256) {
+            verify_source_digest(source, claimed_sha256)?;
+            if consume_source {
+                let _ = fs::remove_file(source);
+            }
+            return Ok((existing, true));
+        }
+        existing
+    } else {
+        desired
+    };
+    selection_ready();
+
+    if let Ok(meta) = fs::symlink_metadata(&dest) {
         if meta.file_type().is_symlink() {
             bail!("refusing to install over symlink {}", dest.display());
         }
-        if meta.is_file() {
-            return Ok(true);
+        if !meta.is_file() {
+            bail!(
+                "asset destination exists and is not a regular file: {}",
+                dest.display()
+            );
         }
-        bail!(
-            "asset destination exists and is not a regular file: {}",
-            dest.display()
-        );
-    }
-
-    if consume_source {
-        match fs::rename(source, dest) {
-            Ok(()) => return Ok(false),
-            Err(err) => {
-                if let Ok(meta) = fs::symlink_metadata(dest) {
-                    if meta.file_type().is_symlink() {
-                        bail!("refusing to install over symlink {}", dest.display());
-                    }
-                    if meta.is_file() {
-                        let _ = fs::remove_file(source);
-                        return Ok(true);
-                    }
-                }
-                // Cross-device rename: fall through to create_new copy.
-                let _ = err;
+        if hash_file(&dest).is_ok_and(|actual| actual == claimed_sha256) {
+            verify_source_digest(source, claimed_sha256)?;
+            if consume_source {
+                let _ = fs::remove_file(source);
             }
+            return Ok((dest, true));
         }
-    }
-
-    ensure_regular_file(source)?;
-    let mut src =
-        open_nofollow_read(source).with_context(|| format!("open source {}", source.display()))?;
-    let mut dest_file = match OpenOptions::new().write(true).create_new(true).open(dest) {
-        Ok(f) => f,
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            if let Ok(meta) = fs::symlink_metadata(dest) {
-                if meta.file_type().is_symlink() {
-                    bail!("refusing to install over symlink {}", dest.display());
-                }
-                if meta.is_file() {
+        let temporary = copy_to_verified_temp(source, &shard, claimed_sha256)?;
+        copy_ready();
+        temporary
+            .persist(&dest)
+            .map_err(|err| err.error)
+            .with_context(|| format!("replace corrupt asset {}", dest.display()))?;
+    } else {
+        let temporary = copy_to_verified_temp(source, &shard, claimed_sha256)?;
+        copy_ready();
+        match temporary.persist_noclobber(&dest) {
+            Ok(_) => {}
+            Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The copy above already verified the source bytes.
+                if hash_file(&dest).is_ok_and(|actual| actual == claimed_sha256) {
                     if consume_source {
                         let _ = fs::remove_file(source);
                     }
-                    return Ok(true);
+                    return Ok((dest, true));
                 }
+                err.file
+                    .persist(&dest)
+                    .map_err(|persist_err| persist_err.error)
+                    .with_context(|| format!("replace corrupt asset {}", dest.display()))?;
             }
-            return Err(err).with_context(|| format!("create {}", dest.display()));
+            Err(err) => {
+                return Err(err.error).with_context(|| format!("install {}", dest.display()));
+            }
         }
-        Err(err) => return Err(err).with_context(|| format!("create {}", dest.display())),
-    };
-    std::io::copy(&mut src, &mut dest_file)
-        .with_context(|| format!("failed to copy {} → {}", source.display(), dest.display()))?;
-    dest_file.flush()?;
+    }
     if consume_source {
         let _ = fs::remove_file(source);
     }
-    Ok(false)
+    Ok((dest, false))
+}
+
+/// Reject a claimed digest that the source bytes do not produce.
+///
+/// Used on the deduplication path, where no copy happens and the claim would
+/// otherwise be accepted purely because a matching blob is already stored.
+fn verify_source_digest(source: &Path, claimed_sha256: &str) -> Result<()> {
+    let actual = hash_file(source).with_context(|| format!("read source {}", source.display()))?;
+    if actual != claimed_sha256 {
+        bail!("sha256 mismatch: claimed {claimed_sha256}, got {actual}");
+    }
+    Ok(())
+}
+
+/// Copy `source` into a synced temporary file inside `shard`, hashing as it
+/// writes, and fail unless the written bytes hash to `claimed_sha256`.
+///
+/// Re-hashing here (rather than trusting the earlier source hash) is what keeps
+/// a source that changes mid-install from being persisted.
+fn copy_to_verified_temp(
+    source: &Path,
+    shard: &Path,
+    claimed_sha256: &str,
+) -> Result<tempfile::NamedTempFile> {
+    let mut temporary = tempfile::NamedTempFile::new_in(shard)
+        .with_context(|| format!("create temporary asset in {}", shard.display()))?;
+    let mut src =
+        open_nofollow_read(source).with_context(|| format!("open source {}", source.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = src
+            .read(&mut buf)
+            .with_context(|| format!("read source {}", source.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        temporary
+            .write_all(&buf[..n])
+            .with_context(|| format!("write temporary asset for {}", source.display()))?;
+    }
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    let actual = hex_encode(&hasher.finalize());
+    if actual != claimed_sha256 {
+        bail!("sha256 mismatch: claimed {claimed_sha256}, got {actual}");
+    }
+    Ok(temporary)
 }
 
 /// Hash `source` and store under `assets_root/<sha[0:2]>/<sha><ext>`.
@@ -269,15 +374,6 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
     Ok(hex_encode(&hasher.finalize()))
 }
 
-fn normalize_ext(ext: Option<&str>) -> String {
-    let Some(ext) = ext else {
-        return String::new();
-    };
-    let ext = ext.to_ascii_lowercase();
-    let ext = if ext == "jpeg" { "jpg" } else { &ext };
-    format!(".{ext}")
-}
-
 fn find_existing(assets_root: &Path, sha: &str) -> Option<PathBuf> {
     let shard = assets_root.join(&sha[..2]);
     if !shard.is_dir() {
@@ -296,6 +392,42 @@ fn find_existing(assets_root: &Path, sha: &str) -> Option<PathBuf> {
         .collect();
     matches.sort();
     matches.into_iter().next()
+}
+
+fn mime_metadata_path(assets_root: &Path, sha: &str) -> PathBuf {
+    assets_root.join(&sha[..2]).join(format!(".{sha}.mime"))
+}
+
+fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
+    let file = open_nofollow_read(&mime_metadata_path(assets_root, sha)).ok()?;
+    let mut mime = String::new();
+    file.take(1024).read_to_string(&mut mime).ok()?;
+    let mime = mime.trim();
+    (!mime.is_empty()).then(|| mime.to_owned())
+}
+
+fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> {
+    let mime = mime.trim();
+    if mime.is_empty() {
+        return Ok(());
+    }
+    let path = mime_metadata_path(assets_root, sha);
+    if read_mime_metadata(assets_root, sha).is_some() {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("asset MIME metadata has no parent"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("create MIME metadata in {}", parent.display()))?;
+    temporary.write_all(mime.as_bytes())?;
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    match temporary.persist_noclobber(&path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(err) => Err(err.error).with_context(|| format!("install {}", path.display())),
+    }
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> Result<String> {
@@ -319,6 +451,13 @@ fn resolve_mime(export_mime: Option<&str>, source: &Path) -> Option<String> {
     guess_mime(source.extension().and_then(|e| e.to_str()))
 }
 
+/// Map a file extension to a MIME type.
+///
+/// Canonical blob paths carry only a digest, so this is the only chance to
+/// record what a file is: the result is stored in the MIME sidecar, returned to
+/// download callers, and written to `attachments.mime_type`, which is what
+/// derived-media processing classifies on. Extensions common in phone backups
+/// (voice notes, camera video, scans) therefore need to be listed here.
 fn guess_mime(ext: Option<&str>) -> Option<String> {
     let ext = ext?.to_ascii_lowercase();
     let mime = match ext.as_str() {
@@ -327,11 +466,21 @@ fn guess_mime(ext: Option<&str>) -> Option<String> {
         "gif" => "image/gif",
         "heic" | "heif" => "image/heic",
         "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
         "mp4" | "m4v" => "video/mp4",
         "mov" => "video/quicktime",
+        "3gp" | "3gpp" | "3g2" => "video/3gpp",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mpeg" | "mpg" => "video/mpeg",
+        "avi" => "video/x-msvideo",
         "mp3" => "audio/mpeg",
         "m4a" | "aac" => "audio/mp4",
         "caf" => "audio/x-caf",
+        "amr" => "audio/amr",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
         "pdf" => "application/pdf",
         "vcf" => "text/vcard",
         _ => return None,
@@ -377,10 +526,320 @@ fn open_nofollow_read(path: &Path) -> Result<File> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::process::Command;
+    use std::sync::{Arc, Barrier};
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     #[test]
-    fn store_verified_skips_hash_when_already_present() {
+    fn store_verified_replaces_corrupt_destination() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("source.bin");
+        fs::write(&source, b"valid-asset").unwrap();
+        let sha = hash_file(&source).unwrap();
+        let destination = root.join(shard_rel_path(&sha, ".bin"));
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"corrupt").unwrap();
+
+        let (stored, already_present) =
+            store_verified(&source, &sha, root, None, false, false).unwrap();
+
+        assert!(!already_present);
+        assert_eq!(
+            fs::read(root.join(stored.assets_path)).unwrap(),
+            b"valid-asset"
+        );
+    }
+
+    #[test]
+    fn store_verified_concurrent_installers_leave_valid_destination() {
+        let dir = tempdir().unwrap();
+        let root = Arc::new(dir.path().to_path_buf());
+        let source_a = root.join("source-a.bin");
+        let source_b = root.join("source-b.dat");
+        fs::write(&source_a, b"shared-asset").unwrap();
+        fs::write(&source_b, b"shared-asset").unwrap();
+        let sha = hash_file(&source_a).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let canonical = root.join(shard_rel_path(&sha, ""));
+        let installers: Vec<_> = [source_a, source_b]
+            .into_iter()
+            .enumerate()
+            .map(|(index, source)| {
+                let root = Arc::clone(&root);
+                let sha = sha.clone();
+                let barrier = Arc::clone(&barrier);
+                let canonical = canonical.clone();
+                std::thread::spawn(move || {
+                    store_verified_inner(
+                        &source,
+                        &sha,
+                        &root,
+                        None,
+                        false,
+                        || {},
+                        || {
+                            barrier.wait();
+                            if index == 1 {
+                                let deadline = Instant::now() + Duration::from_secs(5);
+                                while !canonical.is_file() {
+                                    assert!(
+                                        Instant::now() < deadline,
+                                        "timed out waiting for winning installer"
+                                    );
+                                    std::thread::sleep(Duration::from_millis(1));
+                                }
+                            }
+                        },
+                    )
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = installers
+            .into_iter()
+            .map(|installer| installer.join().unwrap().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|(_, present)| !present).count(), 1);
+        assert_eq!(results[0].0.assets_path, results[1].0.assets_path);
+        let shard = root.join(&sha[..2]);
+        let installed: Vec<_> = fs::read_dir(shard)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&sha))
+            })
+            .collect();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(
+            fs::read(root.join(&results[0].0.assets_path)).unwrap(),
+            b"shared-asset"
+        );
+    }
+
+    #[test]
+    fn store_verified_processes_share_one_mixed_extension_path() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let source_a = root.join("process-a.bin");
+        let source_b = root.join("process-b.dat");
+        fs::write(&source_a, b"cross-process-asset").unwrap();
+        fs::write(&source_b, b"cross-process-asset").unwrap();
+        let sha = hash_file(&source_a).unwrap();
+        let test_binary = std::env::current_exe().unwrap();
+
+        let children: Vec<_> = [("a", source_a), ("b", source_b)]
+            .into_iter()
+            .map(|(worker, source)| {
+                Command::new(&test_binary)
+                    .args([
+                        "--ignored",
+                        "--exact",
+                        "assets::tests::filesystem_install_worker",
+                        "--nocapture",
+                    ])
+                    .env("ASSET_TEST_ROOT", root)
+                    .env("ASSET_TEST_SOURCE", source)
+                    .env("ASSET_TEST_SHA", &sha)
+                    .env("ASSET_TEST_WORKER", worker)
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+
+        let result_a = fs::read_to_string(root.join("result-a")).unwrap();
+        let result_b = fs::read_to_string(root.join("result-b")).unwrap();
+        assert_eq!(result_a, result_b);
+        assert!(Path::new(&result_a).extension().is_none());
+        let installed: Vec<_> = fs::read_dir(root.join(&sha[..2]))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&sha))
+            })
+            .collect();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(
+            fs::read(root.join(result_a)).unwrap(),
+            b"cross-process-asset"
+        );
+    }
+
+    #[test]
+    fn lookup_by_sha256_keeps_legacy_extension_paths_compatible() {
+        let dir = tempdir().unwrap();
+        let sha = sha256_hex(b"legacy-jpeg");
+        let legacy = dir.path().join(shard_rel_path(&sha, ".jpg"));
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"legacy-jpeg").unwrap();
+
+        let stored = lookup_by_sha256(dir.path(), &sha).unwrap();
+
+        assert_eq!(stored.assets_path, shard_rel_path(&sha, ".jpg"));
+        assert_eq!(stored.mime_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn guess_mime_covers_phone_media_extensions() {
+        for (ext, expected) in [
+            ("amr", "audio/amr"),
+            ("wav", "audio/wav"),
+            ("ogg", "audio/ogg"),
+            ("3gp", "video/3gpp"),
+            ("3gpp", "video/3gpp"),
+            ("webm", "video/webm"),
+            ("mkv", "video/x-matroska"),
+            ("avi", "video/x-msvideo"),
+            ("mpg", "video/mpeg"),
+            ("tiff", "image/tiff"),
+            ("tif", "image/tiff"),
+            ("bmp", "image/bmp"),
+        ] {
+            assert_eq!(
+                guess_mime(Some(ext)).as_deref(),
+                Some(expected),
+                "unexpected MIME for .{ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn store_verified_records_mime_for_extensionless_media_blobs() {
+        let dir = tempdir().unwrap();
+        for (name, expected) in [
+            ("voice.amr", "audio/amr"),
+            ("memo.wav", "audio/wav"),
+            ("clip.3gp", "video/3gpp"),
+            ("scan.tiff", "image/tiff"),
+        ] {
+            let source = dir.path().join(name);
+            fs::write(&source, name.as_bytes()).unwrap();
+            let sha = sha256_hex(name.as_bytes());
+
+            let (stored, _) =
+                store_verified(&source, &sha, dir.path(), None, false, false).unwrap();
+
+            assert!(Path::new(&stored.assets_path).extension().is_none());
+            assert_eq!(stored.mime_type.as_deref(), Some(expected));
+            // The digest-only path carries no extension, so serving relies on the
+            // MIME sidecar written next to the blob.
+            assert_eq!(
+                lookup_by_sha256(dir.path(), &sha)
+                    .unwrap()
+                    .mime_type
+                    .as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                lookup_by_sha256_unverified(dir.path(), &sha)
+                    .unwrap()
+                    .mime_type
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_by_sha256_preserves_mime_for_extensionless_assets() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jpg");
+        fs::write(&source, b"new-jpeg").unwrap();
+        let sha = sha256_hex(b"new-jpeg");
+
+        let (stored, _) = store_verified(&source, &sha, dir.path(), None, false, false).unwrap();
+        let looked_up = lookup_by_sha256(dir.path(), &sha).unwrap();
+
+        assert!(Path::new(&stored.assets_path).extension().is_none());
+        assert_eq!(looked_up.mime_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[test]
+    #[ignore = "helper launched by store_verified_processes_share_one_mixed_extension_path"]
+    fn filesystem_install_worker() {
+        let root = PathBuf::from(std::env::var_os("ASSET_TEST_ROOT").unwrap());
+        let source = PathBuf::from(std::env::var_os("ASSET_TEST_SOURCE").unwrap());
+        let sha = std::env::var("ASSET_TEST_SHA").unwrap();
+        let worker = std::env::var("ASSET_TEST_WORKER").unwrap();
+
+        let (stored, _) = store_verified_inner(
+            &source,
+            &sha,
+            &root,
+            None,
+            false,
+            || {},
+            || {
+                fs::write(root.join(format!("ready-{worker}")), b"ready").unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !(root.join("ready-a").is_file() && root.join("ready-b").is_file()) {
+                    assert!(
+                        Instant::now() < deadline,
+                        "timed out waiting for peer installer"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        )
+        .unwrap();
+        fs::write(root.join(format!("result-{worker}")), stored.assets_path).unwrap();
+    }
+
+    #[test]
+    fn store_verified_skips_temp_copy_on_valid_dedup() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("dedup.bin");
+        fs::write(&source, b"dedup-asset").unwrap();
+        let sha = sha256_hex(b"dedup-asset");
+
+        let (first, present) = store_verified(&source, &sha, root, None, false, false).unwrap();
+        assert!(!present);
+
+        let copied = std::cell::Cell::new(false);
+        let (second, present) =
+            store_verified_inner(&source, &sha, root, None, false, || copied.set(true), || {})
+                .unwrap();
+
+        assert!(present);
+        assert_eq!(second.assets_path, first.assets_path);
+        assert!(
+            !copied.get(),
+            "storing over a valid destination must not copy the source into a temporary blob"
+        );
+    }
+
+    #[test]
+    fn unverified_lookup_reads_no_content_while_verified_lookup_rejects_corruption() {
+        let dir = tempdir().unwrap();
+        let sha = sha256_hex(b"expected-bytes");
+        let canonical = dir.path().join(shard_rel_path(&sha, ""));
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::write(&canonical, b"corrupt-bytes").unwrap();
+
+        let unverified = lookup_by_sha256_unverified(dir.path(), &sha)
+            .expect("path lookup must not depend on file contents");
+        assert_eq!(unverified.assets_path, shard_rel_path(&sha, ""));
+        assert!(
+            lookup_by_sha256(dir.path(), &sha).is_none(),
+            "a blob whose bytes do not match its digest must not be reported as present"
+        );
+    }
+
+    #[test]
+    fn store_verified_hashes_source_before_deduplication() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         let mut src = tempfile::NamedTempFile::new().unwrap();
@@ -394,17 +853,46 @@ mod tests {
         assert_eq!(first.sha256, sha);
         assert!(src.path().is_file(), "non-consuming store must keep source");
 
-        // Second store with a throwaway source file: existence short-circuit must win
-        // without requiring the new bytes to match (lookup is by claimed SHA).
+        // A duplicate claim with different bytes must fail even when the valid
+        // destination already exists.
         let mut other = tempfile::NamedTempFile::new().unwrap();
         other.write_all(b"different-bytes").unwrap();
         other.flush().unwrap();
-        let (second, present_again) =
-            store_verified(other.path(), &sha, root, Some("text/plain"), false, false).unwrap();
-        assert!(present_again);
-        assert_eq!(second.sha256, sha);
-        assert_eq!(second.assets_path, first.assets_path);
+        let err =
+            store_verified(other.path(), &sha, root, Some("text/plain"), false, false).unwrap_err();
+        assert!(err.to_string().contains("sha256 mismatch"));
+        assert_eq!(
+            fs::read(root.join(first.assets_path)).unwrap(),
+            b"hello-asset"
+        );
         assert!(lookup_by_sha256(root, &sha).is_some());
+    }
+
+    #[test]
+    fn store_verified_persists_the_bytes_that_were_hashed() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let source = root.join("mutable.bin");
+        fs::write(&source, b"verified-bytes").unwrap();
+        let sha = sha256_hex(b"verified-bytes");
+
+        let (stored, present) = store_verified_inner(
+            &source,
+            &sha,
+            root,
+            None,
+            false,
+            || fs::write(&source, b"mutated-after-copy").unwrap(),
+            || {},
+        )
+        .unwrap();
+
+        assert!(!present);
+        assert_eq!(
+            fs::read(root.join(stored.assets_path)).unwrap(),
+            b"verified-bytes"
+        );
+        assert_eq!(fs::read(source).unwrap(), b"mutated-after-copy");
     }
 
     #[test]

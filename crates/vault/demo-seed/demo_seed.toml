@@ -3,6 +3,7 @@
 
 seed = 42
 out = "crates/vault/demo-seed"
+reference_time = "2026-08-01T12:00:00Z"
 
 [contacts]
 count = 200

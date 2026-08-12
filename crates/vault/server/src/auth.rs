@@ -13,7 +13,7 @@ use axum::http::HeaderMap;
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{account_profile, schema, session_tokens};
+use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::server::{ApiError, AppState, JoinBlocking};
 
 /// Max password bytes accepted before hashing (registration / login / change).
@@ -507,6 +507,24 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+fn change_password_on_conn(
+    conn: &mut rusqlite::Connection,
+    account_id: &str,
+    current_password: &str,
+    new_hash: &str,
+) -> Result<String> {
+    let tx = conn.transaction()?;
+    let current_hash = account_profile::load_password_hash(&tx, account_id)?;
+    if !passwords_match(current_hash.as_deref(), current_password) {
+        bail!("current password is incorrect");
+    }
+    account_profile::update_password_hash(&tx, account_id, new_hash)?;
+    api_tokens::delete_all_api_tokens(&tx, account_id)?;
+    let token = session_tokens::rotate_account_session_token(&tx, account_id)?;
+    tx.commit()?;
+    Ok(token)
+}
+
 // ---------------------------------------------------------------------------
 // Change-password / delete-account / logout handlers
 // ---------------------------------------------------------------------------
@@ -548,14 +566,8 @@ pub async fn change_password_handler(
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let token = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-        let conn = schema::open_configured(&db)?;
-        let current_hash = account_profile::load_password_hash(&conn, &account_id)?;
-        if !passwords_match(current_hash.as_deref(), &current_password) {
-            bail!("current password is incorrect");
-        }
-        account_profile::update_password_hash(&conn, &account_id, &new_hash)?;
-        // Revoke any prior session and issue a fresh one for this client.
-        session_tokens::rotate_account_session_token(&conn, &account_id)
+        let mut conn = schema::open_configured(&db)?;
+        change_password_on_conn(&mut conn, &account_id, &current_password, &new_hash)
     })
     .await
     .join_map("change password task", |e| {
@@ -626,6 +638,70 @@ pub async fn delete_account_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::api_tokens::ApiTokenScopes;
+    use rusqlite::Connection;
+
+    const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const OTHER_ACCOUNT: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+    fn password_change_setup() -> (Connection, String, Vec<String>, String) {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        let old_hash = hash_password("old-password").unwrap();
+        account_profile::insert_account(
+            &conn,
+            TEST_ACCOUNT,
+            "alice",
+            Some(&old_hash),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        account_profile::insert_account(
+            &conn,
+            OTHER_ACCOUNT,
+            "bob",
+            Some(&old_hash),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let old_session =
+            session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
+        let (_, _, _, _, _, first_api_token) = api_tokens::create_api_token(
+            &conn,
+            TEST_ACCOUNT,
+            "backup client",
+            ApiTokenScopes::Both,
+            None,
+        )
+        .unwrap();
+        let (_, _, _, _, _, second_api_token) = api_tokens::create_api_token(
+            &conn,
+            TEST_ACCOUNT,
+            "export client",
+            ApiTokenScopes::Export,
+            None,
+        )
+        .unwrap();
+        let (_, _, _, _, _, other_account_token) = api_tokens::create_api_token(
+            &conn,
+            OTHER_ACCOUNT,
+            "other account client",
+            ApiTokenScopes::Both,
+            None,
+        )
+        .unwrap();
+        (
+            conn,
+            old_session,
+            vec![first_api_token, second_api_token],
+            other_account_token,
+        )
+    }
 
     #[test]
     fn auth_rate_limit_trips_after_max() {
@@ -640,5 +716,87 @@ mod tests {
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
         reset_auth_rate_limits_for_test();
+    }
+
+    #[test]
+    fn change_password_transaction_updates_all_credentials() {
+        let (mut conn, old_session, api_tokens, other_account_token) = password_change_setup();
+        let new_hash = hash_password("new-password").unwrap();
+
+        let new_session =
+            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash).unwrap();
+
+        let stored_hash = account_profile::load_password_hash(&conn, TEST_ACCOUNT)
+            .unwrap()
+            .unwrap();
+        assert!(passwords_match(Some(&stored_hash), "new-password"));
+        assert!(
+            session_tokens::lookup_account_for_token(&conn, &old_session)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            session_tokens::lookup_account_for_token(&conn, &new_session)
+                .unwrap()
+                .as_deref(),
+            Some(TEST_ACCOUNT)
+        );
+        for api_token in api_tokens {
+            assert!(
+                crate::db::api_tokens::lookup_account_for_api_token(&conn, &api_token)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            crate::db::api_tokens::lookup_account_for_api_token(&conn, &other_account_token)
+                .unwrap()
+                .unwrap()
+                .account_id,
+            OTHER_ACCOUNT
+        );
+    }
+
+    #[test]
+    fn change_password_transaction_rolls_back_every_credential() {
+        let (mut conn, old_session, api_tokens, other_account_token) = password_change_setup();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_session_rotation
+             BEFORE UPDATE ON account_session_tokens
+             BEGIN
+                 SELECT RAISE(FAIL, 'injected session rotation failure');
+             END;",
+        )
+        .unwrap();
+        let new_hash = hash_password("new-password").unwrap();
+
+        assert!(
+            change_password_on_conn(&mut conn, TEST_ACCOUNT, "old-password", &new_hash).is_err()
+        );
+
+        let stored_hash = account_profile::load_password_hash(&conn, TEST_ACCOUNT)
+            .unwrap()
+            .unwrap();
+        assert!(passwords_match(Some(&stored_hash), "old-password"));
+        assert_eq!(
+            session_tokens::lookup_account_for_token(&conn, &old_session)
+                .unwrap()
+                .as_deref(),
+            Some(TEST_ACCOUNT)
+        );
+        for api_token in api_tokens {
+            assert!(
+                crate::db::api_tokens::lookup_account_for_api_token(&conn, &api_token)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert_eq!(
+            crate::db::api_tokens::lookup_account_for_api_token(&conn, &other_account_token)
+                .unwrap()
+                .unwrap()
+                .account_id,
+            OTHER_ACCOUNT
+        );
     }
 }

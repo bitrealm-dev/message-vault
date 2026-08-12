@@ -249,6 +249,17 @@ pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result
     Ok(n > 0)
 }
 
+/// Delete every named API token belonging to an account.
+pub fn delete_all_api_tokens(conn: &Connection, account_id: &str) -> Result<u64> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM account_api_tokens WHERE account_id = ?1",
+            params![account_id],
+        )
+        .with_context(|| format!("delete all API tokens for {account_id}"))?;
+    Ok(deleted as u64)
+}
+
 /// Rename an API token label if it belongs to the account.
 pub fn update_api_token_label(
     conn: &Connection,

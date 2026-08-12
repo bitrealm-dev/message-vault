@@ -146,6 +146,23 @@ fn apply_profile_update(
     Ok(())
 }
 
+fn update_profile_on_conn(
+    conn: &mut Connection,
+    account_id: &str,
+    req: &AccountProfileUpdateRequest,
+) -> Result<AccountProfileResponse> {
+    let tx = conn.transaction()?;
+    apply_profile_update(
+        &tx,
+        account_id,
+        req.preferred_name.as_deref(),
+        &req.handles,
+        &req.remove_handles,
+    )?;
+    tx.commit()?;
+    load_response(conn, account_id)
+}
+
 enum ProfileHandleKind {
     Phone,
     Email,
@@ -173,15 +190,8 @@ pub async fn account_profile_update_handler(
 
     let db = state.cfg.paths.db.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<AccountProfileResponse> {
-        let conn = schema::open_configured(&db)?;
-        apply_profile_update(
-            &conn,
-            &account_id,
-            req.preferred_name.as_deref(),
-            &req.handles,
-            &req.remove_handles,
-        )?;
-        load_response(&conn, &account_id)
+        let mut conn = schema::open_configured(&db)?;
+        update_profile_on_conn(&mut conn, &account_id, &req)
     })
     .await
     .join_map("profile update task", |e| {
@@ -375,5 +385,29 @@ mod tests {
         let loaded = load_response(&conn, &account_id).unwrap();
         assert!(loaded.phones.is_empty());
         assert!(loaded.emails.is_empty());
+    }
+
+    #[test]
+    fn profile_update_rolls_back_when_a_handle_service_is_unsupported() {
+        let (mut conn, account_id) = setup();
+
+        let result = update_profile_on_conn(
+            &mut conn,
+            &account_id,
+            &AccountProfileUpdateRequest {
+                preferred_name: Some("Changed Name".into()),
+                handles: vec![ProfileHandleInput {
+                    handle: "alice@example.com".into(),
+                    service: "unsupported".into(),
+                }],
+                remove_handles: vec![],
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            account_profile::load_preferred_name(&conn, &account_id).unwrap(),
+            None
+        );
     }
 }
