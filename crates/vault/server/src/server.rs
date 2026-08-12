@@ -194,6 +194,30 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Map a `spawn_blocking` join + inner `anyhow` error to `ApiError::Internal`.
+pub(crate) trait JoinBlocking<T> {
+    fn join_blocking(self, task: &str) -> Result<T, ApiError>;
+}
+
+impl<T, E: ToString> JoinBlocking<T> for Result<Result<T, E>, tokio::task::JoinError> {
+    fn join_blocking(self, task: &str) -> Result<T, ApiError> {
+        self.map_err(|e| ApiError::Internal(format!("{task}: {e}")))?
+            .map_err(|e| ApiError::Internal(e.to_string()))
+    }
+}
+
+fn lock_conn(db: &StdMutex<Connection>) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+    db.lock()
+        .map_err(|_| anyhow::anyhow!("database mutex poisoned"))
+}
+
+fn lock_import_conn(
+    db: &StdMutex<Connection>,
+) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+    db.lock()
+        .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))
+}
+
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
@@ -437,8 +461,7 @@ async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<St
         dedupe::source_priority_from_db(&conn, &account_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("sources list task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))
+    .join_blocking("sources list task")
 }
 
 async fn lookup_or_resolve_query(
@@ -453,8 +476,7 @@ async fn lookup_or_resolve_query(
         account_profile::lookup_account_ref(&conn, &account_ref)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("account lookup task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))
+    .join_blocking("account lookup task")
 }
 
 async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
@@ -466,8 +488,7 @@ async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String
         account_profile::username_for_account(&conn, &account_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("username lookup task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))
+    .join_blocking("username lookup task")
 }
 
 async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
@@ -525,8 +546,7 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
         Ok(None)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("auth lookup task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("auth lookup task")?;
 
     match resolved {
         Some(identity) => Ok(identity),
@@ -699,14 +719,11 @@ async fn contacts_list_handler(
         .unwrap_or(crate::contacts_api::DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let page = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::contacts_api::list_contacts(&conn, &auth.account_id, &q, limit, offset)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("contacts list task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("contacts list task")?;
     Ok(Json(serde_json::json!({
         "contacts": page.contacts,
         "total": page.total,
@@ -739,14 +756,11 @@ async fn conversations_list_handler(
         .unwrap_or(crate::conversations_api::DEFAULT_LIST_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let page = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::conversations_api::list_conversations(&conn, &auth.account_id, &q, limit, offset)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("conversations list task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("conversations list task")?;
     Ok(Json(serde_json::json!({
         "conversations": page.conversations,
         "total": page.total,
@@ -764,9 +778,7 @@ async fn conversation_sources_handler(
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let page = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::conversations_api::list_conversation_source_stats(
             &conn,
             &auth.account_id,
@@ -774,8 +786,7 @@ async fn conversation_sources_handler(
         )
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("conversation sources task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("conversation sources task")?;
     match page {
         Some(p) => Ok(Json(serde_json::json!({ "sources": p.sources }))),
         None => Err(ApiError::NotFound("conversation not found".into())),
@@ -791,14 +802,11 @@ async fn contact_detail_handler(
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
     let detail = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::contacts_api::get_contact_detail(&conn, &auth.account_id, contact_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("contact detail task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("contact detail task")?;
     match detail {
         Some(d) => Ok(Json(d)),
         None => Err(ApiError::NotFound("contact not found".into())),
@@ -816,9 +824,7 @@ async fn contact_mutate_handler(
     let db = Arc::clone(&state.db);
     let account_id = auth.account_id.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         match crate::contacts_api::mutate_contact(&conn, &account_id, contact_id, &body) {
             Ok(false) => {
                 Ok::<_, anyhow::Error>(Err(ApiError::NotFound("contact not found".into())))
@@ -834,8 +840,7 @@ async fn contact_mutate_handler(
         }
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("contact mutate task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("contact mutate task")?;
 
     outcome.map(Json)
 }
@@ -858,14 +863,11 @@ async fn imports_list_handler(
 
     let db = Arc::clone(&state.db);
     let imports = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::db::vault_imports::list_imports(&conn, &account)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("list imports task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("list imports task")?;
 
     Ok(Json(serde_json::json!({ "imports": imports })))
 }
@@ -879,9 +881,7 @@ async fn imports_get_handler(
     require_import_access(&auth)?;
     let db = Arc::clone(&state.db);
     let detail = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
     })
     .await
@@ -906,9 +906,7 @@ async fn account_storage_handler(
     let account_id = auth.account_id;
     let db = Arc::clone(&state.db);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
+        let conn = lock_conn(&db)?;
         let total_bytes = crate::db::vault_imports::account_attachment_bytes(&conn, &account_id)?;
         let attachment_count =
             crate::db::vault_imports::account_attachment_count(&conn, &account_id)?;
@@ -921,8 +919,7 @@ async fn account_storage_handler(
         }))
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("account storage task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("account storage task")?;
 
     Ok(Json(result))
 }
@@ -947,15 +944,12 @@ async fn imports_create_handler(
     let mode = body.mode.clone();
     let tool = body.tool.clone();
     let id = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        let conn = lock_import_conn(&db)?;
         crate::db::account_profile::ensure_account_row(&conn, &account)?;
         crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("create import task failed: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("create import task failed")?;
 
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
@@ -1000,9 +994,7 @@ async fn imports_complete_handler(
             .collect(),
     };
     let row = tokio::task::spawn_blocking(move || {
-        let conn = db
-            .lock()
-            .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+        let conn = lock_import_conn(&db)?;
         crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
     })
     .await
@@ -1790,17 +1782,13 @@ async fn run_import_path(
         // Client session (vault-push): verify ownership. Otherwise start a one-shot
         // vault_imports row so Storage history works for curl / single POSTs.
         let (import_id, owns_session) = if let Some(id) = query_import_id {
-            let conn = db
-                .lock()
-                .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+            let conn = lock_import_conn(&db)?;
             crate::db::vault_imports::get_owned_import(&conn, &account, id)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             drop(conn);
             (Some(id), false)
         } else {
-            let conn = db
-                .lock()
-                .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
+            let conn = lock_import_conn(&db)?;
             crate::db::account_profile::ensure_account_row(&conn, &account)?;
             let id = crate::db::vault_imports::start_import(
                 &conn,
@@ -1840,26 +1828,13 @@ async fn run_import_path(
 
         if owns_session && let Some(id) = import_id {
             let complete_args = match &import_result {
-                Ok(stats) => crate::db::vault_imports::CompleteImportArgs {
-                    ok: true,
-                    message_count: Some(stats.messages as i64),
-                    attachment_count: Some(stats.attachments as i64),
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
-                Err(_) => crate::db::vault_imports::CompleteImportArgs {
-                    ok: false,
-                    message_count: None,
-                    attachment_count: None,
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
+                Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
+                    stats.messages,
+                    stats.attachments,
+                ),
+                Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
             };
-            if let Err(e) =
-                crate::db::vault_imports::complete_import(&conn, &account, id, &complete_args)
-            {
-                eprintln!("warning: complete_import({id}) failed: {e}");
-            }
+            crate::db::vault_imports::complete_import_or_warn(&conn, &account, id, &complete_args);
         }
         let stats = import_result?;
         drop(conn);
@@ -1871,8 +1846,7 @@ async fn run_import_path(
         Ok::<_, anyhow::Error>((stats, dedupe_stats, source_id, account))
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("import task failed: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("import task failed")?;
 
     let (stats, dedupe_stats, source_id, account) = result;
     Ok(Json(ImportResponse {

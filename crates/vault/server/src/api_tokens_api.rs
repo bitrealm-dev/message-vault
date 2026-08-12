@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens::{self, ApiTokenScopes};
 use crate::db::schema;
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
 
 #[derive(Debug, Serialize)]
 pub struct ApiTokenItem {
@@ -37,6 +37,13 @@ pub struct CreateApiTokenRequest {
 
 fn default_scopes() -> String {
     "both".into()
+}
+
+fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
+    let conn = Connection::open(db)?;
+    schema::configure_connection(&conn)?;
+    schema::ensure_accounts_schema(&conn)?;
+    Ok(conn)
 }
 
 #[derive(Debug, Serialize)]
@@ -79,9 +86,7 @@ pub async fn list_api_tokens_handler(
     let db = state.cfg.paths.db.clone();
 
     let items = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ApiTokenItem>> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        schema::ensure_accounts_schema(&conn)?;
+        let conn = open_accounts_conn(&db)?;
         let rows = api_tokens::list_api_tokens(&conn, &account_id)?;
         Ok(rows
             .into_iter()
@@ -96,8 +101,7 @@ pub async fn list_api_tokens_handler(
             .collect())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("list API tokens task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("list API tokens task")?;
 
     Ok(Json(ListApiTokensResponse { items }))
 }
@@ -118,9 +122,7 @@ pub async fn create_api_token_handler(
 
     let created = tokio::task::spawn_blocking(
         move || -> anyhow::Result<(String, String, ApiTokenScopes, String, String)> {
-            let conn = Connection::open(&db)?;
-            schema::configure_connection(&conn)?;
-            schema::ensure_accounts_schema(&conn)?;
+            let conn = open_accounts_conn(&db)?;
             api_tokens::create_api_token(&conn, &account_id, &label, scopes)
         },
     )
@@ -160,14 +162,11 @@ pub async fn delete_api_token_handler(
     let db = state.cfg.paths.db.clone();
 
     let deleted = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        schema::ensure_accounts_schema(&conn)?;
+        let conn = open_accounts_conn(&db)?;
         api_tokens::delete_api_token(&conn, &account_id, &id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("delete API token task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("delete API token task")?;
 
     if !deleted {
         return Err(ApiError::NotFound("API token not found".into()));
@@ -190,9 +189,7 @@ pub async fn rename_api_token_handler(
     let id_for_resp = id.clone();
 
     let updated = tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, String)> {
-        let conn = Connection::open(&db)?;
-        schema::configure_connection(&conn)?;
-        schema::ensure_accounts_schema(&conn)?;
+        let conn = open_accounts_conn(&db)?;
         let trimmed = label.trim().to_string();
         let ok = api_tokens::update_api_token_label(&conn, &account_id, &id, &trimmed)?;
         Ok((ok, trimmed))

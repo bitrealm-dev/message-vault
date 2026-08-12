@@ -6,4 +6,5 @@ pub mod contacts;
 pub mod handles;
 pub mod schema;
 pub mod session_tokens;
+pub mod sql;
 pub mod vault_imports;

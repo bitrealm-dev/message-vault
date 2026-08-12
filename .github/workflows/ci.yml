@@ -13,6 +13,23 @@ permissions:
   packages: write
 
 jobs:
+  # ── Always: rustfmt ───────────────────────────────────────────────────
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
   # ── Always: build + test ──────────────────────────────────────────────
   test:
     name: Build & Test (Rust)
@@ -49,7 +66,7 @@ jobs:
   docker:
     name: Docker image
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [fmt, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +115,7 @@ jobs:
   release:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [fmt, test]
     strategy:
       fail-fast: false
       matrix:

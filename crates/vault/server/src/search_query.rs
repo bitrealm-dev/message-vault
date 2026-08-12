@@ -792,10 +792,6 @@ pub fn parse_search_query(input: &str) -> ParsedSearchQuery {
     out
 }
 
-pub fn has_date_bounds(bounds: &DateBounds) -> bool {
-    !bounds.is_empty()
-}
-
 pub fn metadata_include_terms(q: &ParsedSearchQuery) -> Vec<&str> {
     q.terms
         .iter()
@@ -812,6 +808,7 @@ pub fn has_metadata_text_criteria(q: &ParsedSearchQuery) -> bool {
     !q.terms.is_empty() || !q.phrases.is_empty() || !q.exclude.is_empty() || q.fts_ast.is_some()
 }
 
+#[cfg(test)]
 pub fn has_search_criteria(q: &ParsedSearchQuery) -> bool {
     q.fts_ast.is_some()
         || has_metadata_text_criteria(q)
@@ -840,8 +837,8 @@ pub fn has_search_criteria(q: &ParsedSearchQuery) -> bool {
         || q.no_last_name
         || q.group_count.is_some()
         || q.message_count.is_some()
-        || has_date_bounds(&q.last_contact)
-        || has_date_bounds(&q.first_contact)
+        || !q.last_contact.is_empty()
+        || !q.first_contact.is_empty()
 }
 
 impl fmt::Display for ConversationTypeFilter {

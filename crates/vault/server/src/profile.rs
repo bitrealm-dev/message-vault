@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema};
-use crate::server::{ApiError, AppState, require_full_access, resolve_auth};
+use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
 
 #[derive(Debug, Serialize)]
 pub struct AccountProfileResponse {
@@ -56,8 +56,7 @@ pub async fn account_profile_handler(
         load_response(&conn, &account_id)
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("profile load task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("profile load task")?;
 
     Ok(Json(result))
 }
@@ -261,8 +260,7 @@ pub async fn delete_messages_handler(
             Ok(stats)
         })
         .await
-        .map_err(|e| ApiError::Internal(format!("delete messages task: {e}")))?
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .join_blocking("delete messages task")?;
 
     Ok(Json(DeleteMessagesResponse {
         ok: true,

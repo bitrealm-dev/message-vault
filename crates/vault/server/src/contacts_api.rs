@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::account_profile;
 use crate::db::handles::infer_handle_type_from_shape;
+use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
@@ -424,12 +425,7 @@ pub fn list_contacts(
     }
 
     if !filters.services.is_empty() {
-        let placeholders = filters
-            .services
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = in_placeholders(filters.services.len());
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM conversations c
