@@ -3,11 +3,10 @@ import { useAuth } from "../lib/auth";
 import { apiClient, getBaseUrl } from "../lib/api";
 import {
   invokeExtract,
-  invokeCancel,
   invokePush,
-  awaitTauriJob,
   type TauriJobResult,
 } from "../lib/tauri";
+import { useTauriJob } from "../hooks/useTauriJob";
 import { isTauri } from "../lib/tauri-check";
 import { EXPORT_SOURCES } from "../lib/exportSources";
 import {
@@ -106,6 +105,7 @@ function stageDurations(
 
 export default function ImportScreen() {
   const { token } = useAuth();
+  const { run: runTauriJob, cancel } = useTauriJob();
   const [source, setSource] = useState(DEFAULT_SOURCE);
   const [backupPath, setBackupPath] = useState(() =>
     getRememberImporterPaths() ? getImporterPath(DEFAULT_SOURCE) : "",
@@ -250,7 +250,7 @@ export default function ImportScreen() {
       );
 
       timingRef.current.extractStartedAt = performance.now();
-      const extractResult = await awaitTauriJob(
+      const extractResult = await runTauriJob(
         () =>
           invokeExtract({
             source,
@@ -270,9 +270,7 @@ export default function ImportScreen() {
                 }
               : {}),
           }),
-        undefined,
-        applyProgress,
-        recordIssue,
+        { onProgress: applyProgress, onIssue: recordIssue },
       );
       if (extractResult.extraction) {
         countsRef.current.filesParsed = extractResult.extraction.files_parsed;
@@ -306,7 +304,7 @@ export default function ImportScreen() {
 
       activeStepRef.current = "upload";
       const uploadStartedAt = performance.now();
-      pushResult = await awaitTauriJob(
+      pushResult = await runTauriJob(
         () =>
           invokePush({
             base_url: baseUrl,
@@ -321,9 +319,7 @@ export default function ImportScreen() {
             contact_name_mode: contactNameMode,
             import_id: importSession.id,
           }),
-        undefined,
-        applyProgress,
-        recordIssue,
+        { onProgress: applyProgress, onIssue: recordIssue },
       );
       uploadMs = performance.now() - uploadStartedAt;
       importCompleted = true;
@@ -637,7 +633,7 @@ export default function ImportScreen() {
           />
           <div className="mt-4 flex items-center gap-3">
             {running ? (
-              <Button onClick={() => invokeCancel()}>Cancel</Button>
+              <Button onClick={() => void cancel()}>Cancel</Button>
             ) : (
               <Button
                 variant="ghost"
