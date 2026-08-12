@@ -3,6 +3,10 @@
 //! All three return a Bearer API token the rest of the API already accepts.
 //! No new session layer — just new ways to *get* a token.
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result, bail};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::http::HeaderMap;
@@ -11,6 +15,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema, session_tokens};
 use crate::server::{ApiError, AppState, JoinBlocking};
+
+/// Max password bytes accepted before hashing (registration / login / change).
+const MAX_PASSWORD_BYTES: usize = 1024;
+const MIN_PASSWORD_CHARS: usize = 8;
+/// Max Hanko JWT string length accepted for exchange.
+const MAX_HANKO_JWT_BYTES: usize = 16 * 1024;
+/// Sliding window for unauthenticated auth endpoints.
+const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
+const AUTH_RATE_MAX: usize = 20;
+const JWKS_CACHE_TTL: Duration = Duration::from_secs(300);
+const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
+static AUTH_RATE_LIMITS: Mutex<Option<HashMap<String, VecDeque<Instant>>>> = Mutex::new(None);
+static JWKS_CACHE: Mutex<Option<(String, Instant, serde_json::Value)>> = Mutex::new(None);
+static DUMMY_PASSWORD_HASH: OnceLock<String> = OnceLock::new();
+
+/// Reject when `bucket` has seen more than [`AUTH_RATE_MAX`] hits in [`AUTH_RATE_WINDOW`].
+fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
+    let mut guard = AUTH_RATE_LIMITS
+        .lock()
+        .map_err(|_| ApiError::Internal("auth rate limiter poisoned".into()))?;
+    let map = guard.get_or_insert_with(HashMap::new);
+    let now = Instant::now();
+    let entry = map.entry(bucket.to_string()).or_default();
+    while entry
+        .front()
+        .is_some_and(|t| now.duration_since(*t) > AUTH_RATE_WINDOW)
+    {
+        entry.pop_front();
+    }
+    if entry.len() >= AUTH_RATE_MAX {
+        return Err(ApiError::TooManyRequests(
+            "too many authentication attempts; try again shortly".into(),
+        ));
+    }
+    entry.push_back(now);
+    Ok(())
+}
+
+#[cfg(test)]
+fn reset_auth_rate_limits_for_test() {
+    if let Ok(mut guard) = AUTH_RATE_LIMITS.lock() {
+        *guard = None;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -97,6 +146,65 @@ fn passwords_match(password_hash: Option<&str>, password: &str) -> bool {
     }
 }
 
+fn dummy_password_hash() -> &'static str {
+    DUMMY_PASSWORD_HASH.get_or_init(|| {
+        hash_password("timing-equalization-dummy-password").expect("dummy password hash")
+    })
+}
+
+/// Always run Argon2 so missing accounts cost similar to wrong passwords.
+/// Passwordless accounts (NULL hash) still accept an empty password only.
+fn verify_login_password(password_hash: Option<&str>, password: &str) -> bool {
+    match password_hash {
+        None | Some("") => {
+            let _ = verify_password(dummy_password_hash(), password);
+            password.is_empty()
+        }
+        Some(hash) => verify_password(hash, password),
+    }
+}
+
+fn validate_password_policy(password: &str) -> Result<(), ApiError> {
+    if password.len() < MIN_PASSWORD_CHARS {
+        return Err(ApiError::BadRequest(format!(
+            "password must be at least {MIN_PASSWORD_CHARS} characters"
+        )));
+    }
+    if password.len() > MAX_PASSWORD_BYTES {
+        return Err(ApiError::BadRequest("password is too long".into()));
+    }
+    Ok(())
+}
+
+fn fetch_jwks_cached(jwk_url: &str) -> Result<serde_json::Value> {
+    let now = Instant::now();
+    if let Ok(guard) = JWKS_CACHE.lock()
+        && let Some((url, fetched_at, json)) = guard.as_ref()
+        && url == jwk_url
+        && now.duration_since(*fetched_at) < JWKS_CACHE_TTL
+    {
+        return Ok(json.clone());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(JWKS_HTTP_TIMEOUT)
+        .build()
+        .context("build JWKS HTTP client")?;
+    let jwks_json: serde_json::Value = client
+        .get(jwk_url)
+        .send()
+        .with_context(|| format!("failed to fetch JWKS from {jwk_url}"))?
+        .error_for_status()
+        .with_context(|| format!("JWKS HTTP error from {jwk_url}"))?
+        .json()
+        .with_context(|| "failed to parse JWKS")?;
+
+    if let Ok(mut guard) = JWKS_CACHE.lock() {
+        *guard = Some((jwk_url.to_string(), now, jwks_json.clone()));
+    }
+    Ok(jwks_json)
+}
+
 // ---------------------------------------------------------------------------
 // Username validation
 // ---------------------------------------------------------------------------
@@ -128,8 +236,12 @@ pub async fn register_handler(
             "username must be 1–128 chars (alphanumeric, _, -, .)".into(),
         ));
     }
+    check_auth_rate_limit(&format!("register:{username}"))?;
 
     let password_plain = req.password.as_deref().unwrap_or("").to_string();
+    if !password_plain.is_empty() {
+        validate_password_policy(&password_plain)?;
+    }
     let password_hash: Option<String> = if password_plain.is_empty() {
         None
     } else {
@@ -151,14 +263,15 @@ pub async fn register_handler(
 
     let db = state.cfg.paths.db.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let conn = schema::open_configured(&db)?;
+        let mut conn = schema::open_configured(&db)?;
+        let tx = conn.transaction()?;
 
-        if account_profile::lookup_account_ref(&conn, &username)?.is_some() {
+        if account_profile::lookup_account_ref(&tx, &username)?.is_some() {
             bail!("username already taken: {username}");
         }
 
         account_profile::insert_account(
-            &conn,
+            &tx,
             &account_id,
             &username,
             password_hash.as_deref(),
@@ -168,10 +281,11 @@ pub async fn register_handler(
         )?;
 
         if let Some(ref phone) = phone {
-            account_profile::upsert_account_phone(&conn, &account_id, phone)?;
+            account_profile::upsert_account_phone(&tx, &account_id, phone)?;
         }
 
-        let token = session_tokens::insert_account_session_token(&conn, &account_id)?;
+        let token = session_tokens::insert_account_session_token(&tx, &account_id)?;
+        tx.commit()?;
         Ok(AuthTokenResponse {
             token,
             account_id,
@@ -193,6 +307,10 @@ pub async fn login_handler(
     if username.is_empty() {
         return Err(ApiError::BadRequest("username is required".into()));
     }
+    check_auth_rate_limit(&format!("login:{username}"))?;
+    if req.password.len() > MAX_PASSWORD_BYTES {
+        return Err(ApiError::BadRequest("password is too long".into()));
+    }
 
     let password = req.password.clone();
     let db = state.cfg.paths.db.clone();
@@ -200,19 +318,22 @@ pub async fn login_handler(
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
         let conn = schema::open_configured(&db)?;
 
-        let account_id = account_profile::lookup_account_ref(&conn, &username)?
-            .ok_or_else(|| anyhow::anyhow!("account not found: {username}"))?;
+        let Some(account_id) = account_profile::lookup_account_ref(&conn, &username)? else {
+            let _ = verify_password(dummy_password_hash(), &password);
+            bail!("invalid username or password");
+        };
 
         let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
-
-        if !passwords_match(password_hash.as_deref(), &password) {
-            bail!("invalid password");
+        if !verify_login_password(password_hash.as_deref(), &password) {
+            bail!("invalid username or password");
         }
 
         AuthTokenResponse::for_existing_account(&conn, account_id)
     })
     .await
-    .join_map("login task", |e| ApiError::Unauthorized(e.to_string()))?;
+    .join_map("login task", |_| {
+        ApiError::Unauthorized("invalid username or password".into())
+    })?;
 
     Ok(Json(result))
 }
@@ -222,6 +343,11 @@ pub async fn hanko_session_handler(
     State(state): State<AppState>,
     Json(req): Json<HankoSessionRequest>,
 ) -> Result<Json<AuthTokenResponse>, ApiError> {
+    check_auth_rate_limit("hanko:session")?;
+    if req.hanko_jwt.len() > MAX_HANKO_JWT_BYTES {
+        return Err(ApiError::BadRequest("hanko_jwt is too long".into()));
+    }
+
     let hanko_api_url = std::env::var("HANKO_API_URL")
         .ok()
         .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok())
@@ -237,13 +363,10 @@ pub async fn hanko_session_handler(
     );
     let db = state.cfg.paths.db.clone();
     let jtw = req.hanko_jwt.clone();
+    let hanko_issuer = hanko_api_url.trim_end_matches('/').to_string();
 
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        // Fetch JWKS (blocking HTTP in spawn_blocking)
-        let jwks_json: serde_json::Value = reqwest::blocking::get(&jwk_url)
-            .with_context(|| format!("failed to fetch JWKS from {jwk_url}"))?
-            .json()
-            .with_context(|| "failed to parse JWKS")?;
+        let jwks_json = fetch_jwks_cached(&jwk_url)?;
 
         // Decode JWT header to get kid
         let header = jsonwebtoken::decode_header(&jtw)
@@ -260,7 +383,6 @@ pub async fn hanko_session_handler(
             .find(|k| k.get("kid").and_then(|v| v.as_str()) == Some(kid))
             .ok_or_else(|| anyhow::anyhow!("no JWK matching kid: {kid}"))?;
 
-        // from_rsa_components takes base64-encoded strings directly
         let n_b64 = key["n"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
@@ -272,19 +394,27 @@ pub async fn hanko_session_handler(
 
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.set_required_spec_claims(&["exp", "sub"]);
+        validation.set_issuer(&[hanko_issuer.as_str()]);
 
-        let token_data =
-            jsonwebtoken::decode::<serde_json::Value>(&jtw, &decoding_key, &validation)
-                .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
+        #[derive(Debug, Deserialize)]
+        struct HankoClaims {
+            sub: String,
+            #[serde(default)]
+            email: Option<String>,
+        }
 
-        let hanko_user_id = token_data.claims["sub"]
-            .as_str()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("invalid Hanko session: missing sub"))?;
+        let token_data = jsonwebtoken::decode::<HankoClaims>(&jtw, &decoding_key, &validation)
+            .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
 
-        let email: Option<String> = token_data.claims["email"]
-            .as_str()
+        let hanko_user_id = token_data.claims.sub.trim().to_string();
+        if hanko_user_id.is_empty() {
+            bail!("invalid Hanko session: missing sub");
+        }
+
+        let email: Option<String> = token_data
+            .claims
+            .email
+            .as_deref()
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty());
 
@@ -335,8 +465,8 @@ pub async fn hanko_session_handler(
         AuthTokenResponse::for_existing_account(&conn, account_id)
     })
     .await
-    .join_map("hanko session task", |e| {
-        ApiError::Unauthorized(e.to_string())
+    .join_map("hanko session task", |_| {
+        ApiError::Unauthorized("invalid or expired session".into())
     })?;
 
     Ok(Json(result))
@@ -355,11 +485,16 @@ pub struct ChangePasswordRequest {
 #[derive(Debug, Serialize)]
 pub struct ChangePasswordResponse {
     pub ok: bool,
+    /// Replacement session token after password change (previous sessions are revoked).
+    pub token: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteAccountRequest {
     pub confirm: bool,
+    /// Required when the account has a local password.
+    #[serde(default)]
+    pub current_password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -367,9 +502,32 @@ pub struct DeleteAccountResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct LogoutResponse {
+    pub ok: bool,
+}
+
 // ---------------------------------------------------------------------------
-// Change-password / delete-account handlers
+// Change-password / delete-account / logout handlers
 // ---------------------------------------------------------------------------
+
+/// `POST /v1/auth/logout` — revoke the presented session token.
+pub async fn logout_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<LogoutResponse>, ApiError> {
+    let token = crate::server::bearer_token(&headers)?;
+    let db = state.cfg.paths.db.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let conn = schema::open_configured(&db)?;
+        schema::ensure_accounts_schema(&conn)?;
+        let _ = session_tokens::revoke_session_token(&conn, &token)?;
+        Ok(())
+    })
+    .await
+    .join_blocking("logout task")?;
+    Ok(Json(LogoutResponse { ok: true }))
+}
 
 /// `POST /v1/auth/change-password` — verify the current password, set a new one.
 pub async fn change_password_handler(
@@ -378,10 +536,9 @@ pub async fn change_password_handler(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<ChangePasswordResponse>, ApiError> {
     let new_password = req.new_password.trim();
-    if new_password.len() < 8 {
-        return Err(ApiError::BadRequest(
-            "new password must be at least 8 characters".into(),
-        ));
+    validate_password_policy(new_password)?;
+    if req.current_password.len() > MAX_PASSWORD_BYTES {
+        return Err(ApiError::BadRequest("password is too long".into()));
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     crate::server::require_full_access(&auth)?;
@@ -390,14 +547,15 @@ pub async fn change_password_handler(
     let db = state.cfg.paths.db.clone();
     let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+    let token = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
         let conn = schema::open_configured(&db)?;
         let current_hash = account_profile::load_password_hash(&conn, &account_id)?;
         if !passwords_match(current_hash.as_deref(), &current_password) {
             bail!("current password is incorrect");
         }
         account_profile::update_password_hash(&conn, &account_id, &new_hash)?;
-        Ok(())
+        // Revoke any prior session and issue a fresh one for this client.
+        session_tokens::rotate_account_session_token(&conn, &account_id)
     })
     .await
     .join_map("change password task", |e| {
@@ -408,7 +566,7 @@ pub async fn change_password_handler(
         }
     })?;
 
-    Ok(Json(ChangePasswordResponse { ok: true }))
+    Ok(Json(ChangePasswordResponse { ok: true, token }))
 }
 
 /// `POST /v1/auth/delete-account` — permanently delete the account.
@@ -430,11 +588,21 @@ pub async fn delete_account_handler(
             "the demo account cannot be deleted; use reset-demo to restore it".into(),
         ));
     }
+    let current_password = req.current_password.clone();
     let db = state.cfg.paths.db.clone();
     let account_root = state.cfg.paths.data_dir.join(&account_id);
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = schema::open_configured(&db)?;
+        let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
+        if password_hash.as_deref().is_some_and(|h| !h.is_empty()) {
+            let Some(pw) = current_password.as_deref() else {
+                bail!("current password is required to delete this account");
+            };
+            if !passwords_match(password_hash.as_deref(), pw) {
+                bail!("current password is incorrect");
+            }
+        }
         account_profile::delete_account(&conn, &account_id)?;
         if account_root.exists() {
             std::fs::remove_dir_all(&account_root)
@@ -443,7 +611,34 @@ pub async fn delete_account_handler(
         Ok(())
     })
     .await
-    .join_blocking("delete account task")?;
+    .join_map("delete account task", |e| {
+        let msg = e.to_string();
+        if msg.contains("current password") {
+            ApiError::BadRequest(msg)
+        } else {
+            ApiError::Internal(msg)
+        }
+    })?;
 
     Ok(Json(DeleteAccountResponse { ok: true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_rate_limit_trips_after_max() {
+        reset_auth_rate_limits_for_test();
+        let bucket = "test:rate-limit-unique";
+        for _ in 0..AUTH_RATE_MAX {
+            check_auth_rate_limit(bucket).unwrap();
+        }
+        let err = check_auth_rate_limit(bucket).unwrap_err();
+        match err {
+            ApiError::TooManyRequests(_) => {}
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+        reset_auth_rate_limits_for_test();
+    }
 }

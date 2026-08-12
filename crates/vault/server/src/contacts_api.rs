@@ -14,6 +14,8 @@ use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 500;
+/// Cap expensive OFFSET skips on contact list pages.
+pub const MAX_LIST_OFFSET: usize = 50_000;
 
 #[derive(Debug, Serialize)]
 pub struct ContactListPage {
@@ -135,6 +137,12 @@ pub(crate) const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
 pub(crate) const NOT_TRASHED_CHAT_HANDLE_SQL: &str = "NOT EXISTS (
                SELECT 1 FROM trashed_handles th
                WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
+             )";
+
+/// Contact `ct` is not in `trashed_contacts`.
+pub(crate) const NOT_TRASHED_CONTACT_SQL: &str = "NOT EXISTS (
+               SELECT 1 FROM trashed_contacts tct
+               WHERE tct.account_id = ct.account_id AND tct.contact_id = ct.id
              )";
 
 /// Correlated: conversation `c` involves contact row `ct` (no bind params).
@@ -348,12 +356,20 @@ pub fn list_contacts(
     offset: usize,
 ) -> Result<ContactListPage, ExportQueryError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
+    if offset > MAX_LIST_OFFSET {
+        return Err(ExportQueryError::bad(format!(
+            "offset exceeds maximum of {MAX_LIST_OFFSET}"
+        )));
+    }
 
     let filters = parse_contact_list_filters(q);
     let involves = involves_ct_sql();
     let has_messages_sql = contact_has_messages_sql();
 
-    let mut where_parts = vec!["ct.account_id = ?1".to_string()];
+    let mut where_parts = vec![
+        "ct.account_id = ?1".to_string(),
+        NOT_TRASHED_CONTACT_SQL.to_string(),
+    ];
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
     if let Some(ref handle) = filters.handle {
@@ -576,9 +592,14 @@ pub fn get_contact_detail(
 ) -> Result<Option<ContactDetail>, ExportQueryError> {
     let name_and_modified: Option<(String, String)> = conn
         .query_row(
-            "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
-                    last_modified
-             FROM contacts WHERE id = ?1 AND account_id = ?2",
+            &format!(
+                "SELECT COALESCE(NULLIF(trim(preferred_name), ''), '(unknown)'),
+                        last_modified
+                 FROM contacts ct
+                 WHERE ct.id = ?1 AND ct.account_id = ?2
+                   AND {not_trashed}",
+                not_trashed = NOT_TRASHED_CONTACT_SQL,
+            ),
             rusqlite::params![contact_id, account_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -730,9 +751,8 @@ fn ensure_handle_row(
     service: Option<&str>,
 ) -> AnyResult<i64> {
     let handle_type = infer_handle_type(raw, service);
-    // Reuse account-profile helper so normalization matches import/profile paths.
-    // It also links account_handles (harmless for contact-owned numbers).
-    let id = account_profile::link_account_handle_with_service(
+    // Contact-owned handles must not be linked as account owner identities.
+    let (id, _) = crate::db::handles::upsert_handle_row(
         conn,
         account_id,
         raw.trim(),

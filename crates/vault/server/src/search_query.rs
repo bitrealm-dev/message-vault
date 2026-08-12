@@ -11,6 +11,11 @@ use chrono::{Datelike, Local};
 use serde::Serialize;
 use std::fmt;
 
+/// Hard cap on FTS AST nodes (guards nested OR/AND DoS).
+pub const MAX_FTS_NODES: usize = 64;
+/// Relative `after:`/`before:` windows larger than this many days are rejected.
+pub const MAX_RELATIVE_LOOKBACK_DAYS: i64 = 3_650;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DateBounds {
@@ -476,6 +481,17 @@ fn flatten_fts_leaves(
     }
 }
 
+/// Count nodes in an FTS expression tree (for DoS guards).
+pub fn count_fts_nodes(node: &FtsNode) -> usize {
+    match node {
+        FtsNode::Term { .. } | FtsNode::Phrase { .. } => 1,
+        FtsNode::Not { child } => 1 + count_fts_nodes(child),
+        FtsNode::And { children } | FtsNode::Or { children } => {
+            1 + children.iter().map(count_fts_nodes).sum::<usize>()
+        }
+    }
+}
+
 fn normalize_date(raw: &str) -> Option<String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -492,6 +508,16 @@ fn normalize_date(raw: &str) -> Option<String> {
                 && let Ok(n) = num.parse::<i64>()
                 && n >= 0
             {
+                let lookback_days = match unit {
+                    b'd' => n,
+                    b'w' => n.saturating_mul(7),
+                    b'm' => n.saturating_mul(31),
+                    b'y' => n.saturating_mul(365),
+                    _ => n,
+                };
+                if lookback_days > MAX_RELATIVE_LOOKBACK_DAYS {
+                    return None;
+                }
                 let today = Local::now().date_naive();
                 let d = match unit {
                     b'd' => today
@@ -886,6 +912,12 @@ mod tests {
             after.len() == 10 && after.as_bytes().get(4) == Some(&b'-'),
             "unexpected after: {after}"
         );
+    }
+
+    #[test]
+    fn relative_after_rejects_extreme_lookback() {
+        let q = parse_search_query("after:99999d");
+        assert!(q.after.is_none(), "extreme relative date should be dropped");
     }
 
     #[test]

@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS account_session_tokens (
     -- Hash of the session Bearer secret (never store the raw token).
     token_hash TEXT NOT NULL UNIQUE,
     -- Unix-seconds string for when this session token was issued.
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Unix-seconds string; session rejected after this time.
+    expires_at TEXT NOT NULL DEFAULT '0'
 );
 
 -- Named CLI API tokens (many per account). Prefix: mv-api-
@@ -66,7 +68,11 @@ CREATE TABLE IF NOT EXISTS account_api_tokens (
     -- Unix-seconds string for when this API token was created.
     created_at TEXT NOT NULL,
     -- Unix-seconds string; NULL until first successful Bearer use.
-    last_accessed_at TEXT
+    last_accessed_at TEXT,
+    -- Unix-seconds string; NULL means no expiry.
+    expires_at TEXT,
+    -- Soft-disable without deleting the row.
+    disabled INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS ix_account_api_tokens_account

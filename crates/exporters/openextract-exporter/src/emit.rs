@@ -51,8 +51,7 @@ pub(crate) fn convert_export(
     // checked on resolved paths. Cleaning the output before reading the input
     // would otherwise delete source CSVs when both paths are the same (or the
     // input file lives inside the output directory).
-    let input =
-        fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
+    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
     let output =
         fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
     if output == input || input.starts_with(&output) {

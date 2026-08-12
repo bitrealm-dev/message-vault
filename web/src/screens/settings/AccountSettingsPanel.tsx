@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { apiClient } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { useAccountProfile } from "../../lib/useAccountProfile";
 import Button from "../../components/Button";
 import { ProfileDangerZone } from "./ProfileDangerZone";
@@ -8,6 +9,7 @@ import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Account settings: username, password, API tokens, danger zone. */
 export function AccountSettingsPanel() {
+  const { updateToken } = useAuth();
   const { profile, loading, error: loadError } = useAccountProfile();
 
   const [currentPw, setCurrentPw] = useState("");
@@ -42,10 +44,14 @@ export function AccountSettingsPanel() {
       return;
     }
     try {
-      await apiClient.post("/v1/auth/change-password", {
-        current_password: currentPw,
-        new_password: newPw,
-      });
+      const res = await apiClient.post<{ ok: boolean; token: string }>(
+        "/v1/auth/change-password",
+        {
+          current_password: currentPw,
+          new_password: newPw,
+        },
+      );
+      if (res.token) updateToken(res.token);
       setPwOk(true);
       setPwMsg("Password changed.");
       setCurrentPw("");

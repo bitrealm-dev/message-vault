@@ -13,16 +13,21 @@ export default function DeleteAccountDialog({
   username: string;
   deleting?: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (currentPassword: string) => void;
 }) {
   const [typedUsername, setTypedUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
-    if (open) setTypedUsername("");
+    if (open) {
+      setTypedUsername("");
+      setPassword("");
+    }
   }, [open]);
 
   const expected = username.trim();
-  const matches = expected.length > 0 && typedUsername === expected;
+  const matches =
+    expected.length > 0 && typedUsername === expected && password.length > 0;
 
   return (
     <ModalShell
@@ -66,11 +71,23 @@ export default function DeleteAccountDialog({
         />
       </label>
 
+      <label className="mt-4 block">
+        <span className="text-[0.875rem] text-text">Current password</span>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={deleting}
+          autoComplete="current-password"
+          className="mt-2 box-border w-full rounded border border-border bg-elevated px-3 py-2 text-[0.875rem] text-text"
+        />
+      </label>
+
       <div className="mt-5 flex justify-end">
         <Button
           variant="danger"
           disabled={deleting || !matches}
-          onClick={onConfirm}
+          onClick={() => onConfirm(password)}
           className="!px-4 !py-2 !text-[0.813rem]"
         >
           {deleting ? "Deleting…" : "Permanently delete my account"}

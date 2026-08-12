@@ -20,6 +20,9 @@ pub struct ApiTokenItem {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_accessed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    pub disabled: bool,
 }
 
 impl From<api_tokens::ApiTokenRow> for ApiTokenItem {
@@ -31,6 +34,8 @@ impl From<api_tokens::ApiTokenRow> for ApiTokenItem {
             token_hint: row.token_hint,
             created_at: row.created_at,
             last_accessed_at: row.last_accessed_at,
+            expires_at: row.expires_at,
+            disabled: row.disabled,
         }
     }
 }
@@ -56,6 +61,9 @@ pub struct CreateApiTokenRequest {
     /// `import`, `export`, or `both` (default `both`).
     #[serde(default = "default_scopes")]
     pub scopes: String,
+    /// Days until expiry. Omit for the default (365 days). Pass `0` for no expiry.
+    #[serde(default)]
+    pub expires_in_days: Option<u64>,
 }
 
 fn default_scopes() -> String {
@@ -74,6 +82,8 @@ pub struct CreateApiTokenResponse {
     pub label: String,
     pub scopes: String,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
     /// Plaintext secret — returned once at creation.
     pub token: String,
     /// Masked form for the Settings list (also persisted).
@@ -130,12 +140,20 @@ pub async fn create_api_token_handler(
     let label = req.label;
     let scopes =
         ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let expires_in_days = req.expires_in_days;
     let db = state.cfg.paths.db.clone();
 
     let created = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(String, String, ApiTokenScopes, String, String)> {
+        move || -> anyhow::Result<(
+            String,
+            String,
+            ApiTokenScopes,
+            String,
+            Option<String>,
+            String,
+        )> {
             let conn = open_accounts_conn(&db)?;
-            api_tokens::create_api_token(&conn, &account_id, &label, scopes)
+            api_tokens::create_api_token(&conn, &account_id, &label, scopes, expires_in_days)
         },
     )
     .await
@@ -146,8 +164,9 @@ pub async fn create_api_token_handler(
         label: created.1,
         scopes: created.2.as_str().to_string(),
         created_at: created.3,
-        token_hint: api_tokens::mask_api_token(&created.4),
-        token: created.4,
+        expires_at: created.4,
+        token_hint: api_tokens::mask_api_token(&created.5),
+        token: created.5,
     }))
 }
 

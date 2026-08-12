@@ -51,7 +51,13 @@ pub struct ApiTokenRow {
     pub created_at: String,
     /// Unix-seconds string when the token was last used; `None` if never.
     pub last_accessed_at: Option<String>,
+    /// Unix-seconds expiry; `None` means no expiry.
+    pub expires_at: Option<String>,
+    pub disabled: bool,
 }
+
+/// Default API token lifetime when the client does not pass `expires_in_days` (365 days).
+pub const DEFAULT_API_TOKEN_TTL_SECS: u64 = 365 * 24 * 60 * 60;
 
 const API_TOKEN_PREFIX: &str = "mv-api-";
 const LEGACY_APP_PASSWORD_PREFIX: &str = "mv-app-";
@@ -84,26 +90,37 @@ pub struct ApiTokenAuth {
 }
 
 /// Generate a new API token (`mv-api-` + 32 alphanumeric characters).
-pub fn generate_api_token() -> String {
+pub fn generate_api_token() -> Result<String> {
     generate_prefixed_token("mv-api-")
 }
 
 /// Look up which account owns this API token Bearer value.
-/// On a successful match, updates `last_accessed_at`.
+/// On a successful match, updates `last_accessed_at`. Expired/disabled tokens are rejected.
 pub fn lookup_account_for_api_token(
     conn: &Connection,
     token: &str,
 ) -> Result<Option<ApiTokenAuth>> {
     let token_hash = hash_api_token(token);
-    let found: Option<(String, String)> = conn
+    let found: Option<(String, String, Option<String>, i64)> = conn
         .query_row(
-            "SELECT account_id, scopes FROM account_api_tokens WHERE token_hash = ?1",
+            "SELECT account_id, scopes, expires_at, disabled
+             FROM account_api_tokens WHERE token_hash = ?1",
             params![token_hash],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
     match found {
-        Some((account_id, scopes_raw)) => {
+        Some((account_id, scopes_raw, expires_at, disabled)) => {
+            if disabled != 0 {
+                return Ok(None);
+            }
+            if let Some(exp) = expires_at.as_deref() {
+                let exp_secs = exp.parse::<u64>().unwrap_or(0);
+                let now = unix_secs_string().parse::<u64>().unwrap_or(0);
+                if exp_secs == 0 || exp_secs <= now {
+                    return Ok(None);
+                }
+            }
             conn.execute(
                 "UPDATE account_api_tokens SET last_accessed_at = ?1 WHERE token_hash = ?2",
                 params![unix_secs_string(), token_hash],
@@ -118,25 +135,50 @@ pub fn lookup_account_for_api_token(
     }
 }
 
-/// Create a named API token. Returns `(id, label, scopes, created_at, plaintext_token)`.
+/// Create a named API token. Returns `(id, label, scopes, created_at, expires_at, plaintext_token)`.
 pub fn create_api_token(
     conn: &Connection,
     account_id: &str,
     label: &str,
     scopes: ApiTokenScopes,
-) -> Result<(String, String, ApiTokenScopes, String, String)> {
+    expires_in_days: Option<u64>,
+) -> Result<(
+    String,
+    String,
+    ApiTokenScopes,
+    String,
+    Option<String>,
+    String,
+)> {
     let label = validate_api_token_label(label)?;
     let id = uuid::Uuid::new_v4().to_string();
-    let token = generate_api_token();
+    let token = generate_api_token()?;
     let token_hash = hash_api_token(&token);
     let token_hint = mask_api_token(&token);
     let created_at = unix_secs_string();
+    let expires_at = match expires_in_days {
+        Some(0) => None, // explicit no-expiry
+        Some(days) => {
+            let now = created_at.parse::<u64>().unwrap_or(0);
+            Some(format!(
+                "{}",
+                now.saturating_add(days.saturating_mul(86_400))
+            ))
+        }
+        None => {
+            let now = created_at.parse::<u64>().unwrap_or(0);
+            Some(format!(
+                "{}",
+                now.saturating_add(DEFAULT_API_TOKEN_TTL_SECS)
+            ))
+        }
+    };
     let label_owned = label.to_string();
     conn.execute(
         r#"
         INSERT INTO account_api_tokens
-            (id, account_id, label, token_hash, scopes, token_hint, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            (id, account_id, label, token_hash, scopes, token_hint, created_at, expires_at, disabled)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
         "#,
         params![
             id,
@@ -145,18 +187,19 @@ pub fn create_api_token(
             token_hash,
             scopes.as_str(),
             token_hint,
-            created_at
+            created_at,
+            expires_at
         ],
     )
     .with_context(|| format!("insert API token for {account_id}"))?;
-    Ok((id, label_owned, scopes, created_at, token))
+    Ok((id, label_owned, scopes, created_at, expires_at, token))
 }
 
 /// List API tokens for an account (no secrets).
 pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTokenRow>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, label, scopes, token_hint, created_at, last_accessed_at
+        SELECT id, label, scopes, token_hint, created_at, last_accessed_at, expires_at, disabled
         FROM account_api_tokens
         WHERE account_id = ?1
         ORDER BY created_at DESC, label COLLATE NOCASE
@@ -172,11 +215,15 @@ pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTok
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, label, scopes_raw, token_hint, created_at, last_accessed_at) in rows {
+    for (id, label, scopes_raw, token_hint, created_at, last_accessed_at, expires_at, disabled) in
+        rows
+    {
         out.push(ApiTokenRow {
             id,
             label,
@@ -184,6 +231,8 @@ pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTok
             token_hint,
             created_at,
             last_accessed_at,
+            expires_at,
+            disabled: disabled != 0,
         });
     }
     Ok(out)
@@ -249,8 +298,14 @@ mod tests {
     #[test]
     fn create_list_lookup_delete() {
         let (conn, account_id) = setup();
-        let (id, _label, scopes, _created_at, token) =
-            create_api_token(&conn, &account_id, " laptop CLI ", ApiTokenScopes::Export).unwrap();
+        let (id, _label, scopes, _created_at, _expires_at, token) = create_api_token(
+            &conn,
+            &account_id,
+            " laptop CLI ",
+            ApiTokenScopes::Export,
+            None,
+        )
+        .unwrap();
         assert!(token.starts_with("mv-api-"));
         assert_eq!(scopes, ApiTokenScopes::Export);
         assert_eq!(
@@ -297,14 +352,14 @@ mod tests {
     #[test]
     fn empty_label_rejected() {
         let (conn, account_id) = setup();
-        assert!(create_api_token(&conn, &account_id, "  ", ApiTokenScopes::Both).is_err());
+        assert!(create_api_token(&conn, &account_id, "  ", ApiTokenScopes::Both, None).is_err());
     }
 
     #[test]
     fn rename_label() {
         let (conn, account_id) = setup();
-        let (id, _, _, _, _) =
-            create_api_token(&conn, &account_id, "old name", ApiTokenScopes::Both).unwrap();
+        let (id, _, _, _, _, _) =
+            create_api_token(&conn, &account_id, "old name", ApiTokenScopes::Both, None).unwrap();
         assert!(update_api_token_label(&conn, &account_id, &id, " new name ").unwrap());
         let listed = list_api_tokens(&conn, &account_id).unwrap();
         assert_eq!(listed[0].label, "new name");

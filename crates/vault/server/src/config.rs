@@ -25,11 +25,15 @@ pub struct ServerConfig {
     /// (under Cloudflare Free/Pro ~100 MB). Must be ≤ `asset_max_bytes`.
     #[serde(default = "default_asset_part_size")]
     pub asset_part_size: usize,
-    /// Attachments at or above this size (in bytes) skip server-side SHA-256
-    /// verification at upload completion. The server still verifies that the
-    /// assembled file size matches the declared size. Default 20 MiB.
+    /// Attachments at or above this size historically skipped SHA-256 at upload
+    /// completion. Multipart completion always verifies digests now; this field
+    /// remains for config compatibility.
     #[serde(default = "default_asset_hash_threshold_bytes")]
     pub asset_hash_threshold_bytes: u64,
+    /// Allowed CORS origins. Empty = same-origin only (no `Access-Control-Allow-Origin`).
+    /// Use `["*"]` only for local debugging. Example: `["https://app.example.com"]`.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
 }
 
 fn default_server_bind() -> String {
@@ -93,6 +97,39 @@ pub fn validate_source_id(source: &str) -> Result<()> {
         bail!("source id must not start with '-' or '_'");
     }
     Ok(())
+}
+
+/// Reject absolute paths and `..` so joins stay under an approved root.
+pub fn safe_rel_path(name: &str) -> Result<PathBuf> {
+    use std::path::{Component, Path};
+
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("empty attachment path");
+    }
+    let path = Path::new(name);
+    if path.is_absolute() {
+        bail!("attachment path must be relative: {name}");
+    }
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Normal(s) => out.push(s),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!("unsafe attachment path: {name}");
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        bail!("empty attachment path after normalize: {name}");
+    }
+    Ok(out)
+}
+
+/// Join `rel` under `root` after rejecting traversal. Does not follow the final path.
+pub fn resolve_under_root(root: &Path, rel: &str) -> Result<PathBuf> {
+    Ok(root.join(safe_rel_path(rel)?))
 }
 
 impl PathsConfig {
@@ -212,6 +249,23 @@ mod tests {
         assert!(validate_source_id("../x").is_err());
         assert!(validate_source_id("-bad").is_err());
         assert!(validate_source_id("has space").is_err());
+    }
+
+    #[test]
+    fn safe_rel_path_rejects_traversal() {
+        assert!(safe_rel_path("attachments/a.jpg").is_ok());
+        assert!(safe_rel_path("../etc/passwd").is_err());
+        assert!(safe_rel_path("/etc/passwd").is_err());
+        assert!(safe_rel_path("").is_err());
+        assert!(safe_rel_path("a/../../b").is_err());
+    }
+
+    #[test]
+    fn resolve_under_root_keeps_paths_inside() {
+        let root = PathBuf::from("/tmp/export");
+        let joined = resolve_under_root(&root, "attachments/a.jpg").unwrap();
+        assert_eq!(joined, root.join("attachments/a.jpg"));
+        assert!(resolve_under_root(&root, "../outside").is_err());
     }
 
     #[test]

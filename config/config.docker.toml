@@ -17,3 +17,7 @@ bind = "0.0.0.0:8080"
 # Attachments at or above this size (bytes) skip server-side SHA-256
 # verification at upload completion. 20 MiB default.
 asset_hash_threshold_bytes = 20971520
+
+# CORS: leave empty for same-origin (static UI on this server). List exact
+# origins if a separate web origin must call the API. Use ["*"] only locally.
+# cors_origins = ["https://app.example.com"]

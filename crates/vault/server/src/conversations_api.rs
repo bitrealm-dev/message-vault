@@ -11,6 +11,8 @@ use crate::search_query::{CountComparison, parse_count_comparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
+/// Cap expensive OFFSET skips on conversation list pages.
+pub const MAX_LIST_OFFSET: usize = 50_000;
 
 #[derive(Debug, Serialize)]
 pub struct ConversationListPage {
@@ -174,6 +176,11 @@ pub fn list_conversations(
     offset: usize,
 ) -> Result<ConversationListPage, ExportQueryError> {
     let limit = limit.clamp(1, MAX_LIST_LIMIT);
+    if offset > MAX_LIST_OFFSET {
+        return Err(ExportQueryError::bad(format!(
+            "offset exceeds maximum of {MAX_LIST_OFFSET}"
+        )));
+    }
 
     let parsed = parse_conversation_list_query(q.trim());
 
@@ -181,11 +188,16 @@ pub fn list_conversations(
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
     if parsed.trash_only {
+        // Match normal-list exclusion: conversation trash OR chat-handle trash.
         where_parts.push(
-            "EXISTS (
+            "(EXISTS (
                SELECT 1 FROM trashed_conversations tc
                WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-             )"
+             )
+             OR EXISTS (
+               SELECT 1 FROM trashed_handles th
+               WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
+             ))"
             .into(),
         );
     } else {
@@ -655,6 +667,33 @@ mod tests {
         assert!(!page.conversations[0].is_group);
         assert_eq!(page.conversations[0].participants.len(), 1);
         assert_eq!(page.conversations[0].participants[0].handle, "+15555550200");
+    }
+
+    #[test]
+    fn is_trash_includes_handle_trashed_conversations() {
+        let (conn, account) = setup();
+        let handle_id: i64 = conn
+            .query_row(
+                "SELECT chat_handle_id FROM conversations WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO trashed_handles (account_id, handle_id) VALUES (?1, ?2)",
+            params![&account, handle_id],
+        )
+        .unwrap();
+
+        let normal = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(normal.total, 0, "handle-trashed threads leave the inbox");
+
+        let trash = list_conversations(&conn, &account, "is:trash", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(
+            trash.total, 1,
+            "is:trash should include handle-trashed threads"
+        );
+        assert_eq!(trash.conversations[0].id, "1");
     }
 
     #[test]

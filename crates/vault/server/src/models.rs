@@ -91,11 +91,13 @@ pub fn clean_body(text: Option<&str>) -> Option<String> {
 ///
 /// Accepts one or more concatenated conversations (each: header line, then
 /// message lines). Remote push clients batch multiple conversations this way.
-pub fn parse_ir_lines(lines: impl IntoIterator<Item = String>) -> Result<Vec<ExportRecord>> {
+pub fn parse_ir_lines(
+    lines: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Result<Vec<ExportRecord>> {
     let mut out = Vec::new();
     let mut saw_header = false;
     for (i, line) in lines.into_iter().enumerate() {
-        let line = line.trim();
+        let line = line.as_ref().trim();
         if line.is_empty() {
             continue;
         }

@@ -41,13 +41,16 @@ pub fn chat_identity_for_content_key(
     }
 }
 
-/// Build a content key from chat + UTC epoch seconds + direction + normalized body + attachment hashes.
+/// Build a content key from chat + direction + sender + UTC epoch + body + attachment hashes.
 ///
 /// Prefers `timestamp_utc`; falls back to local `timestamp` (offsets are applied).
 /// For groups, pass the sorted-participant identity from [`chat_identity_for_content_key`].
+/// Incoming group messages include the normalized sender so two peers sending the same
+/// text at the same second do not collide; outgoing (`is_from_me`) uses an empty sender.
 pub fn compute_content_key(
     chat_identifier: &str,
     is_from_me: bool,
+    sender_normalized: Option<&str>,
     timestamp_utc: Option<&str>,
     timestamp: &str,
     body: Option<&str>,
@@ -71,10 +74,18 @@ pub fn compute_content_key(
     shas.sort_unstable();
     shas.dedup();
 
+    let sender = if is_from_me {
+        ""
+    } else {
+        sender_normalized.map(str::trim).unwrap_or("")
+    };
+
     let mut hasher = Sha256::new();
     hasher.update(chat_identifier.as_bytes());
     hasher.update(b"|");
     hasher.update(if is_from_me { b"1" } else { b"0" });
+    hasher.update(b"|");
+    hasher.update(sender.as_bytes());
     hasher.update(b"|");
     hasher.update(epoch.as_bytes());
     hasher.update(b"|");
@@ -224,10 +235,12 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
     let sql = format!(
         r#"
         SELECT m.id, m.conversation_id, h.normalized, c.conversation_type,
-               m.is_from_me, m.timestamp_utc, m.timestamp, m.body
+               m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+               hs.normalized
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
         JOIN handles h ON h.id = c.chat_handle_id
+        LEFT JOIN handles hs ON hs.id = m.sender_handle_id
         {filter}
         ORDER BY m.id
         "#
@@ -242,6 +255,7 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         Option<String>,
         String,
         Option<String>,
+        Option<String>,
     );
     let rows: Vec<ExactDedupeRow> = stmt
         .query_map(params![account_id], |row| {
@@ -254,6 +268,7 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
                 row.get(5)?,
                 row.get(6)?,
                 row.get(7)?,
+                row.get(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -289,21 +304,24 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         }
     }
 
-    // One scan for all attachment hashes instead of per-message queries.
+    // One scan for attachment hashes belonging to this account's message id range.
     let min_id = rows.first().map(|r| r.0).unwrap_or(0);
     let max_id = rows.last().map(|r| r.0).unwrap_or(0);
     let mut shas_by_msg: HashMap<i64, Vec<String>> = HashMap::new();
     {
         let mut att_stmt = conn.prepare(
             r#"
-            SELECT message_id, sha256
-            FROM attachments
-            WHERE message_id BETWEEN ?1 AND ?2
-              AND sha256 IS NOT NULL AND sha256 != ''
-            ORDER BY message_id
+            SELECT a.message_id, a.sha256
+            FROM attachments a
+            JOIN messages m ON m.id = a.message_id
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE c.account_id = ?1
+              AND a.message_id BETWEEN ?2 AND ?3
+              AND a.sha256 IS NOT NULL AND a.sha256 != ''
+            ORDER BY a.message_id
             "#,
         )?;
-        let att_rows = att_stmt.query_map(params![min_id, max_id], |row| {
+        let att_rows = att_stmt.query_map(params![account_id, min_id, max_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
         for row in att_rows {
@@ -314,7 +332,18 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
 
     let empty: Vec<String> = Vec::new();
     let mut keys: Vec<(i64, String)> = Vec::with_capacity(rows.len());
-    for (id, conversation_id, chat_id, conversation_type, is_from_me, ts_utc, ts, body) in rows {
+    for (
+        id,
+        conversation_id,
+        chat_id,
+        conversation_type,
+        is_from_me,
+        ts_utc,
+        ts,
+        body,
+        sender_norm,
+    ) in rows
+    {
         let shas = shas_by_msg.get(&id).unwrap_or(&empty);
         let identity = if conversation_type == "group" {
             chat_identity_for_content_key(
@@ -327,6 +356,7 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         let key = compute_content_key(
             &identity,
             is_from_me != 0,
+            sender_norm.as_deref(),
             ts_utc.as_deref(),
             &ts,
             body.as_deref(),
@@ -386,10 +416,13 @@ fn flag_exact_content_key_dupes(
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
         LEFT JOIN (
-            SELECT message_id, COUNT(*) AS n
-            FROM attachments
-            WHERE sha256 IS NOT NULL AND sha256 != ''
-            GROUP BY message_id
+            SELECT a.message_id, COUNT(*) AS n
+            FROM attachments a
+            JOIN messages m2 ON m2.id = a.message_id
+            JOIN conversations c2 ON c2.id = m2.conversation_id
+            WHERE c2.account_id = ?1
+              AND a.sha256 IS NOT NULL AND a.sha256 != ''
+            GROUP BY a.message_id
         ) ac ON ac.message_id = m.id
         WHERE c.account_id = ?1
           AND m.content_key IS NOT NULL AND m.content_key != ''
@@ -543,6 +576,7 @@ struct NearRow {
     id: i64,
     source: String,
     is_from_me: i64,
+    sender_norm: String,
     secs: i64,
     body_norm: String,
     att_fp: String,
@@ -559,9 +593,11 @@ fn flag_near_time_dupes(
     // Avoids per-message attachment queries and per-candidate duplicate_of SELECTs.
     let mut msg_stmt = conn.prepare(
         r#"
-        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body
+        SELECT m.id, m.conversation_id, m.source, m.is_from_me, m.timestamp_utc, m.timestamp, m.body,
+               COALESCE(hs.normalized, '')
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
+        LEFT JOIN handles hs ON hs.id = m.sender_handle_id
         WHERE c.account_id = ?1
           AND m.duplicate_of IS NULL
         "#,
@@ -574,6 +610,7 @@ fn flag_near_time_dupes(
         Option<String>,
         String,
         Option<String>,
+        String,
     );
     let msg_rows: Vec<NearDedupeRow> = msg_stmt
         .query_map(params![account_id], |row| {
@@ -585,6 +622,7 @@ fn flag_near_time_dupes(
                 row.get(4)?,
                 row.get(5)?,
                 row.get(6)?,
+                row.get(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -594,13 +632,16 @@ fn flag_near_time_dupes(
     {
         let mut att_stmt = conn.prepare(
             r#"
-            SELECT message_id, sha256
-            FROM attachments
-            WHERE sha256 IS NOT NULL AND sha256 != ''
-            ORDER BY message_id, sha256
+            SELECT a.message_id, a.sha256
+            FROM attachments a
+            JOIN messages m ON m.id = a.message_id
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE c.account_id = ?1
+              AND a.sha256 IS NOT NULL AND a.sha256 != ''
+            ORDER BY a.message_id, a.sha256
             "#,
         )?;
-        let att_rows = att_stmt.query_map([], |row| {
+        let att_rows = att_stmt.query_map(params![account_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
         for row in att_rows {
@@ -611,17 +652,23 @@ fn flag_near_time_dupes(
 
     let empty: Vec<String> = Vec::new();
     let mut by_conv: HashMap<i64, Vec<NearRow>> = HashMap::new();
-    for (id, conversation_id, source, is_from_me, ts_utc, ts, body) in msg_rows {
+    for (id, conversation_id, source, is_from_me, ts_utc, ts, body, sender_norm) in msg_rows {
         let Some(secs) = resolve_utc_secs(ts_utc.as_deref(), &ts) else {
             continue;
         };
         let shas = shas_by_msg.get(&id).unwrap_or(&empty);
         let att_count = shas.len() as i64;
         let att_fp = shas.join(",");
+        let sender = if is_from_me != 0 {
+            String::new()
+        } else {
+            sender_norm
+        };
         by_conv.entry(conversation_id).or_default().push(NearRow {
             id,
             source,
             is_from_me,
+            sender_norm: sender,
             secs,
             body_norm: normalize_body(body.as_deref()),
             att_fp,
@@ -651,6 +698,9 @@ fn flag_near_time_dupes(
                     break;
                 }
                 if rows[j].is_from_me != rows[i].is_from_me {
+                    continue;
+                }
+                if rows[j].sender_norm != rows[i].sender_norm {
                     continue;
                 }
                 if rows[j].source == rows[i].source {
@@ -766,6 +816,7 @@ mod tests {
         let a = compute_content_key(
             "+14075551212",
             true,
+            None,
             Some("2015-03-12T18:04:22Z"),
             "x",
             Some("Running late"),
@@ -774,6 +825,7 @@ mod tests {
         let b = compute_content_key(
             "+14075551212",
             true,
+            None,
             Some("2015-03-12T18:04:22+00:00"),
             "y",
             Some("  Running   late "),
@@ -783,12 +835,36 @@ mod tests {
             "+14075551212",
             true,
             None,
+            None,
             "2015-03-12T14:04:22-04:00",
             Some("Running late"),
             &[],
         );
         assert_eq!(a, b);
         assert_eq!(a, c);
+    }
+
+    #[test]
+    fn content_key_distinguishes_group_senders() {
+        let alice = compute_content_key(
+            "group:+1|+2",
+            false,
+            Some("+15555550001"),
+            Some("2015-03-12T18:04:22Z"),
+            "x",
+            Some("same text"),
+            &[],
+        );
+        let bob = compute_content_key(
+            "group:+1|+2",
+            false,
+            Some("+15555550002"),
+            Some("2015-03-12T18:04:22Z"),
+            "x",
+            Some("same text"),
+            &[],
+        );
+        assert_ne!(alice, bob);
     }
 
     #[test]

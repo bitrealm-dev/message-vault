@@ -3,7 +3,7 @@
 //! Staging layout: `{assets}/.incoming/{sha256}/{upload_id}/part-NNNN` + `manifest.json`.
 
 use std::collections::BTreeSet;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,14 +17,15 @@ use crate::assets::{self, StoredAsset};
 pub const DEFAULT_PART_SIZE: usize = 64 * 1024 * 1024;
 /// Default max object size for one asset (single PUT or multipart).
 pub const DEFAULT_MAX_BYTES: u64 = 512 * 1024 * 1024;
+/// Drop abandoned `.incoming` sessions older than this (24h).
+const STALE_INCOMING_SECS: u64 = 24 * 60 * 60;
 
 /// Limits for multipart sessions (from `[server]` config; optional env override).
 #[derive(Debug, Clone, Copy)]
 pub struct UploadLimits {
     pub part_size: usize,
     pub max_bytes: u64,
-    /// Attachments at or above this size skip server-side SHA-256.
-    /// Below this threshold the server hashes and verifies the digest.
+    /// Retained for config compatibility. Multipart completion always verifies SHA-256.
     pub hash_threshold_bytes: u64,
 }
 
@@ -81,6 +82,18 @@ fn new_upload_id() -> String {
     format!("{nanos:x}")
 }
 
+/// Reject path separators and non-hex ids before joining into `.incoming/…`.
+pub fn require_upload_id(upload_id: &str) -> Result<String> {
+    let id = upload_id.trim();
+    if id.is_empty() || id.len() > 64 {
+        bail!("invalid upload_id");
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid upload_id");
+    }
+    Ok(id.to_ascii_lowercase())
+}
+
 pub fn session_dir(assets_root: &Path, sha256: &str, upload_id: &str) -> PathBuf {
     assets_root.join(".incoming").join(sha256).join(upload_id)
 }
@@ -118,8 +131,36 @@ fn read_manifest(session: &Path) -> Result<UploadManifest> {
 
 fn write_manifest(session: &Path, manifest: &UploadManifest) -> Result<()> {
     let path = manifest_path(session);
+    let tmp = session.join("manifest.json.tmp");
     let text = serde_json::to_string_pretty(manifest)?;
-    fs::write(&path, text).with_context(|| format!("write {}", path.display()))
+    fs::write(&tmp, text).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Exclusive lock for manifest read-modify-write (concurrent part uploads).
+struct ManifestLock {
+    _file: File,
+}
+
+fn lock_session(session: &Path) -> Result<ManifestLock> {
+    let path = session.join("manifest.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if rc != 0 {
+            bail!("failed to lock {}", path.display());
+        }
+    }
+    Ok(ManifestLock { _file: file })
 }
 
 fn ext_for_mime(mime: Option<&str>) -> String {
@@ -167,6 +208,9 @@ pub fn start_upload(
             limits.max_bytes / (1024 * 1024)
         );
     }
+    // Best-effort: drop abandoned multipart staging so disk does not grow forever.
+    let _ = assets::gc_stale_incoming(assets_root, STALE_INCOMING_SECS);
+
     if let Some(existing) = assets::lookup_by_sha256(assets_root, &sha) {
         return Ok((Some(existing), None));
     }
@@ -201,13 +245,15 @@ pub fn put_part(
     body: &[u8],
 ) -> Result<u64> {
     let sha = assets::require_sha256(sha256)?;
+    let upload_id = require_upload_id(upload_id)?;
     if part == 0 {
         bail!("part number must be >= 1");
     }
-    let session = session_dir(assets_root, &sha, upload_id);
+    let session = session_dir(assets_root, &sha, &upload_id);
     if !session.is_dir() {
         bail!("upload session not found");
     }
+    let _lock = lock_session(&session)?;
     let mut manifest = read_manifest(&session)?;
     if manifest.sha256 != sha {
         bail!("upload session sha256 mismatch");
@@ -240,9 +286,8 @@ pub fn put_part(
 
 /// Concatenate parts, verify claimed SHA-256, install into the asset store.
 ///
-/// Assembles files at or above `limits.hash_threshold_bytes` are accepted on
-/// declared size match alone (no SHA-256 pass); smaller files are hashed and
-/// verified against the claimed digest.
+/// Always hashes the assembled object and rejects digest mismatches, regardless
+/// of `limits.hash_threshold_bytes` (kept for config compatibility only).
 pub fn complete_upload(
     assets_root: &Path,
     sha256: &str,
@@ -250,10 +295,12 @@ pub fn complete_upload(
     limits: UploadLimits,
 ) -> Result<(StoredAsset, bool)> {
     let sha = assets::require_sha256(sha256)?;
-    let session = session_dir(assets_root, &sha, upload_id);
+    let upload_id = require_upload_id(upload_id)?;
+    let session = session_dir(assets_root, &sha, &upload_id);
     if !session.is_dir() {
         bail!("upload session not found");
     }
+    let _lock = lock_session(&session)?;
     let manifest = read_manifest(&session)?;
     if manifest.sha256 != sha {
         bail!("upload session sha256 mismatch");
@@ -278,13 +325,18 @@ pub fn complete_upload(
     {
         let mut out =
             File::create(&assembled).with_context(|| format!("create {}", assembled.display()))?;
+        let mut buf = vec![0u8; 1024 * 1024];
         for n in 1..=count {
             let path = part_path(&session, n);
             let mut file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)?;
-            out.write_all(&buf)?;
-            total += buf.len() as u64;
+            loop {
+                let nread = file.read(&mut buf)?;
+                if nread == 0 {
+                    break;
+                }
+                out.write_all(&buf[..nread])?;
+                total += nread as u64;
+            }
         }
         out.flush()?;
         if total != manifest.bytes {
@@ -295,7 +347,7 @@ pub fn complete_upload(
             );
         }
     }
-    let skip_hash = total >= limits.hash_threshold_bytes;
+    let _ = limits.hash_threshold_bytes; // config compatibility; hashing is always on
 
     let result = assets::store_verified(
         &assembled,
@@ -303,9 +355,10 @@ pub fn complete_upload(
         assets_root,
         manifest.mime.as_deref(),
         true,
-        skip_hash,
+        false,
     );
     // Always drop the session directory after complete attempt.
+    drop(_lock);
     let _ = fs::remove_dir_all(&session);
     result
 }
@@ -313,7 +366,8 @@ pub fn complete_upload(
 /// Abort and delete staging for an upload session.
 pub fn abort_upload(assets_root: &Path, sha256: &str, upload_id: &str) -> Result<()> {
     let sha = assets::require_sha256(sha256)?;
-    let session = session_dir(assets_root, &sha, upload_id);
+    let upload_id = require_upload_id(upload_id)?;
+    let session = session_dir(assets_root, &sha, &upload_id);
     if session.exists() {
         fs::remove_dir_all(&session).with_context(|| format!("remove {}", session.display()))?;
     }
@@ -336,7 +390,7 @@ mod tests {
         let data = b"hello-multipart-asset-bytes!!";
         let sha = hash_bytes(data);
 
-        let upload_id = "testupload";
+        let upload_id = "aabb0011";
         let session = session_dir(root, &sha, upload_id);
         fs::create_dir_all(&session).unwrap();
         let part_size = 10usize;
@@ -375,7 +429,7 @@ mod tests {
         let root = dir.path();
         let data = b"abc123";
         let wrong_sha = hash_bytes(b"other");
-        let upload_id = "badhash";
+        let upload_id = "badc0de1";
         let session = session_dir(root, &wrong_sha, upload_id);
         fs::create_dir_all(&session).unwrap();
         let mut manifest = UploadManifest {
@@ -396,14 +450,13 @@ mod tests {
     }
 
     #[test]
-    fn complete_skips_hash_at_or_above_threshold() {
+    fn complete_rejects_hash_mismatch_even_above_threshold() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         let data = b"large-enough-to-skip";
-        // Claimed digest deliberately wrong: with hashing skipped, completion
-        // trusts the verified size and installs under the claimed sha.
+        // Claimed digest deliberately wrong: completion must still hash and reject.
         let claimed_sha = "a".repeat(64);
-        let upload_id = "skiphash";
+        let upload_id = "aabbccdd";
         let session = session_dir(root, &claimed_sha, upload_id);
         fs::create_dir_all(&session).unwrap();
         let mut manifest = UploadManifest {
@@ -417,17 +470,42 @@ mod tests {
         manifest.received.insert(1);
         write_manifest(&session, &manifest).unwrap();
 
-        // Threshold 0: every assembled file is at or above it, so hashing is skipped.
         let limits = UploadLimits {
             part_size: 64,
             max_bytes: DEFAULT_MAX_BYTES,
             hash_threshold_bytes: 0,
         };
-        let (stored, already) = complete_upload(root, &claimed_sha, upload_id, limits).unwrap();
-        assert!(!already);
-        assert_eq!(stored.sha256, claimed_sha);
-        assert!(root.join(&stored.assets_path).is_file());
+        let err = complete_upload(root, &claimed_sha, upload_id, limits).unwrap_err();
+        assert!(
+            err.to_string().contains("sha256 mismatch"),
+            "expected mismatch, got: {err}"
+        );
         assert!(!session.exists());
+    }
+
+    #[test]
+    fn require_upload_id_rejects_path_components() {
+        assert!(require_upload_id("..").is_err());
+        assert!(require_upload_id("../x").is_err());
+        assert!(require_upload_id("a/b").is_err());
+        assert!(require_upload_id("").is_err());
+        assert!(require_upload_id("deadbeef").is_ok());
+        assert!(require_upload_id(&"a".repeat(64)).is_ok());
+        assert!(require_upload_id(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn abort_rejects_parent_upload_id() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let sha = "b".repeat(64);
+        let parent = root.join(".incoming").join(&sha);
+        fs::create_dir_all(parent.join("keep")).unwrap();
+        fs::write(parent.join("keep").join("marker"), b"x").unwrap();
+
+        let err = abort_upload(root, &sha, "..").unwrap_err();
+        assert!(err.to_string().contains("upload_id"));
+        assert!(parent.join("keep").join("marker").is_file());
     }
 
     #[test]
@@ -436,7 +514,7 @@ mod tests {
         let root = dir.path();
         let data = b"0123456789abcdef";
         let sha = hash_bytes(data);
-        let upload_id = "missingpart";
+        let upload_id = "11112222";
         let session = session_dir(root, &sha, upload_id);
         fs::create_dir_all(&session).unwrap();
         let part_size = 8usize;
