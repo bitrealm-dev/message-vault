@@ -270,7 +270,7 @@ pub fn list_conversations(
     }
 
     if let Some(contact_id) = parsed.contact_id {
-        where_parts.push(crate::contacts_api::involves_contact_sql().into());
+        where_parts.push(crate::contacts_api::involves_contact_sql());
         params.push(contact_id.into());
     }
 
@@ -341,8 +341,7 @@ pub fn list_conversations(
             &count_sql,
             params_from_iter(params.iter().cloned()),
             |row| row.get(0),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     let total = total.max(0) as u64;
 
     let sql = format!(
@@ -369,8 +368,7 @@ pub fn list_conversations(
     page_params.push((offset as i64).into());
 
     let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             Ok(RawConversation {
@@ -382,10 +380,8 @@ pub fn list_conversations(
                 date_range_start: row.get(5)?,
                 date_range_end: row.get(6)?,
             })
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut participants = load_participants(conn, &ids)?;
@@ -450,8 +446,7 @@ fn chat_handle_as_participant(
             [conversation_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
-        .optional()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        .optional()?;
     Ok(match row {
         Some((handle, service, handle_type)) => vec![ConversationParticipant {
             name: None,
@@ -491,8 +486,7 @@ fn load_participants(
              ORDER BY p.conversation_id, p.id"
         );
         let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(chunk.iter().copied()), |row| {
                 let contact_id: Option<i64> = row.get(4)?;
@@ -506,10 +500,9 @@ fn load_participants(
                         contact_id: contact_id.map(|id| id.to_string()),
                     },
                 ))
-            })
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            })?;
         for row in rows {
-            let (cid, p) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            let (cid, p) = row?;
             map.entry(cid).or_insert_with(Vec::new).push(p);
         }
     }
@@ -540,8 +533,7 @@ fn enrich_participant_names(
                 rusqlite::params![cid, account_id, p.handle],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .optional()
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .optional()?;
         let Some((preferred, alias)) = row else {
             continue;
         };
@@ -597,15 +589,13 @@ fn load_conversation_sources(
              ORDER BY conversation_id, source"
         );
         let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            .prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(chunk.iter().copied()), |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            })?;
         for row in rows {
-            let (cid, source) = row.map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+            let (cid, source) = row?;
             if source.trim().is_empty() {
                 continue;
             }
@@ -639,8 +629,7 @@ pub fn list_conversation_source_stats(
             "SELECT COUNT(*) FROM conversations WHERE id = ?1 AND account_id = ?2",
             rusqlite::params![conversation_id, account_id],
             |row| row.get(0),
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     if owned == 0 {
         return Ok(None);
     }
@@ -654,15 +643,12 @@ pub fn list_conversation_source_stats(
              WHERE conversation_id = ?1
              GROUP BY source
              ORDER BY source",
-        )
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        )?;
     let rows: Vec<(String, i64, i64)> = stmt
         .query_map(rusqlite::params![conversation_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     let total_unique: i64 = rows.iter().map(|(_, _, u)| *u).sum();
     let sources = rows

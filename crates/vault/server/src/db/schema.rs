@@ -276,9 +276,7 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(ACCOUNTS_DDL)?;
     ensure_vault_imports_timing_columns(conn)?;
     ensure_vault_import_issues_table(conn)?;
-    ensure_named_api_token_scopes_column(conn)?;
-    ensure_named_api_token_hint_column(conn)?;
-    ensure_named_api_token_last_accessed_column(conn)?;
+    ensure_named_api_token_columns(conn)?;
     Ok(())
 }
 
@@ -392,8 +390,8 @@ fn migrate_session_and_api_token_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Older DBs may lack `scopes` on named API tokens.
-fn ensure_named_api_token_scopes_column(conn: &Connection) -> Result<()> {
+/// Older DBs may lack columns on named API tokens (session leftovers skipped via `label`).
+fn ensure_named_api_token_columns(conn: &Connection) -> Result<()> {
     if !table_exists(conn, "account_api_tokens")? {
         return Ok(());
     }
@@ -401,38 +399,23 @@ fn ensure_named_api_token_scopes_column(conn: &Connection) -> Result<()> {
     if !column_exists(conn, "account_api_tokens", "label")? {
         return Ok(());
     }
-    if !column_exists(conn, "account_api_tokens", "scopes")? {
-        conn.execute_batch(
+    for (column, ddl) in [
+        (
+            "scopes",
             "ALTER TABLE account_api_tokens ADD COLUMN scopes TEXT NOT NULL DEFAULT 'both';",
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_named_api_token_hint_column(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "account_api_tokens")? {
-        return Ok(());
-    }
-    if !column_exists(conn, "account_api_tokens", "label")? {
-        return Ok(());
-    }
-    if !column_exists(conn, "account_api_tokens", "token_hint")? {
-        conn.execute_batch(
+        ),
+        (
+            "token_hint",
             "ALTER TABLE account_api_tokens ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'mv-api-..';",
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_named_api_token_last_accessed_column(conn: &Connection) -> Result<()> {
-    if !table_exists(conn, "account_api_tokens")? {
-        return Ok(());
-    }
-    if !column_exists(conn, "account_api_tokens", "label")? {
-        return Ok(());
-    }
-    if !column_exists(conn, "account_api_tokens", "last_accessed_at")? {
-        conn.execute_batch("ALTER TABLE account_api_tokens ADD COLUMN last_accessed_at TEXT;")?;
+        ),
+        (
+            "last_accessed_at",
+            "ALTER TABLE account_api_tokens ADD COLUMN last_accessed_at TEXT;",
+        ),
+    ] {
+        if !column_exists(conn, "account_api_tokens", column)? {
+            conn.execute_batch(ddl)?;
+        }
     }
     Ok(())
 }
