@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema, session_tokens};
-use crate::server::{ApiError, AppState};
+use crate::server::{ApiError, AppState, JoinBlocking};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -449,8 +449,7 @@ pub async fn delete_account_handler(
         Ok(())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("delete account task: {e}")))?
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .join_blocking("delete account task")?;
 
     Ok(Json(DeleteAccountResponse { ok: true }))
 }

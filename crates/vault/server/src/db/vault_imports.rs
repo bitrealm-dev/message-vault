@@ -3,9 +3,9 @@
 use std::error::Error;
 use std::fmt;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,32 +43,50 @@ pub struct CompleteImportArgs {
     pub issues: Vec<ImportIssueInput>,
 }
 
-struct ImportTransaction<'conn> {
-    conn: &'conn Connection,
-    committed: bool,
-}
-
-impl<'conn> ImportTransaction<'conn> {
-    fn begin(conn: &'conn Connection) -> Result<Self> {
-        conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
-        Ok(Self {
-            conn,
-            committed: false,
-        })
-    }
-
-    fn commit(mut self) -> Result<()> {
-        self.conn.execute_batch("COMMIT;")?;
-        self.committed = true;
-        Ok(())
-    }
-}
-
-impl Drop for ImportTransaction<'_> {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = self.conn.execute_batch("ROLLBACK;");
+impl CompleteImportArgs {
+    pub fn succeeded(messages: u64, attachments: u64) -> Self {
+        Self {
+            ok: true,
+            message_count: Some(messages as i64),
+            attachment_count: Some(attachments as i64),
+            ..Default::default()
         }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            ok: false,
+            ..Default::default()
+        }
+    }
+}
+
+fn with_immediate_tx<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
+    match f() {
+        Ok(value) => {
+            if let Err(e) = conn.execute_batch("COMMIT;") {
+                let _ = conn.execute_batch("ROLLBACK;");
+                return Err(e.into());
+            }
+            Ok(value)
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK;");
+            Err(err)
+        }
+    }
+}
+
+/// Finish an import session, logging a warning if the row update fails.
+pub fn complete_import_or_warn(
+    conn: &Connection,
+    account_id: &str,
+    import_id: i64,
+    args: &CompleteImportArgs,
+) {
+    if let Err(e) = complete_import(conn, account_id, import_id, args) {
+        eprintln!("warning: complete_import({import_id}) failed: {e}");
     }
 }
 
@@ -241,46 +259,45 @@ pub fn complete_import(
     };
     let bytes_uploaded = args.bytes_uploaded.unwrap_or(existing.bytes_uploaded);
 
-    let tx = ImportTransaction::begin(conn)?;
-    conn.execute(
-        r#"
-        UPDATE vault_imports
-        SET status = ?1,
-            finished_at = ?2,
-            message_count = ?3,
-            attachment_count = ?4,
-            bytes_uploaded = ?5,
-            duration_ms = ?6,
-            parse_ms = ?7,
-            convert_ms = ?8,
-            upload_ms = ?9,
-            summary_json = ?10
-        WHERE id = ?11 AND account_id = ?12
-        "#,
-        params![
-            status,
-            finished_at,
-            message_count,
-            attachment_count,
-            bytes_uploaded,
-            args.duration_ms,
-            args.parse_ms,
-            args.convert_ms,
-            args.upload_ms,
-            args.summary_json.as_deref(),
-            import_id,
-            account_id
-        ],
-    )?;
-    insert_issues(conn, import_id, &args.issues)?;
-    tx.commit()?;
+    with_immediate_tx(conn, || {
+        conn.execute(
+            r#"
+            UPDATE vault_imports
+            SET status = ?1,
+                finished_at = ?2,
+                message_count = ?3,
+                attachment_count = ?4,
+                bytes_uploaded = ?5,
+                duration_ms = ?6,
+                parse_ms = ?7,
+                convert_ms = ?8,
+                upload_ms = ?9,
+                summary_json = ?10
+            WHERE id = ?11 AND account_id = ?12
+            "#,
+            params![
+                status,
+                finished_at,
+                message_count,
+                attachment_count,
+                bytes_uploaded,
+                args.duration_ms,
+                args.parse_ms,
+                args.convert_ms,
+                args.upload_ms,
+                args.summary_json.as_deref(),
+                import_id,
+                account_id
+            ],
+        )?;
+        insert_issues(conn, import_id, &args.issues)
+    })?;
 
     Ok(get_owned_import(conn, account_id, import_id)?)
 }
 
 fn insert_issues(conn: &Connection, import_id: i64, issues: &[ImportIssueInput]) -> Result<()> {
     for issue in issues {
-        validate_issue_kind(&issue.kind)?;
         conn.execute(
             r#"
             INSERT INTO vault_import_issues (

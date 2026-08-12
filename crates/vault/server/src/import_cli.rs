@@ -3,9 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
-use crate::config::{Config, validate_source_id};
+use crate::config::{validate_source_id, Config};
 use crate::db::account_profile;
 use crate::db::schema;
 use crate::db::vault_imports;
@@ -139,42 +139,14 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
         import::ImportSchemaMode::AssumeReady,
     );
 
-    let import_stats = match &result {
+    let complete_args = match &result {
         Ok(stats) => {
-            if let Err(e) = vault_imports::complete_import(
-                &conn,
-                &account_id,
-                import_id,
-                &vault_imports::CompleteImportArgs {
-                    ok: true,
-                    message_count: Some(stats.messages as i64),
-                    attachment_count: Some(stats.attachments as i64),
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
-            ) {
-                eprintln!("warning: complete_import({import_id}) failed: {e}");
-            }
-            stats.clone()
+            vault_imports::CompleteImportArgs::succeeded(stats.messages, stats.attachments)
         }
-        Err(_) => {
-            if let Err(e) = vault_imports::complete_import(
-                &conn,
-                &account_id,
-                import_id,
-                &vault_imports::CompleteImportArgs {
-                    ok: false,
-                    message_count: None,
-                    attachment_count: None,
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
-            ) {
-                eprintln!("warning: complete_import({import_id}) failed: {e}");
-            }
-            return result.map(|_| unreachable!());
-        }
+        Err(_) => vault_imports::CompleteImportArgs::failed(),
     };
+    vault_imports::complete_import_or_warn(&conn, &account_id, import_id, &complete_args);
+    let import_stats = result?;
     drop(conn);
 
     let dedupe = if opts.skip_dedupe {

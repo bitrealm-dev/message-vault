@@ -15,6 +15,8 @@ use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
 use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, normalize_handle};
 use crate::db::schema;
+use crate::db::sql::SQLITE_IN_CHUNK;
+use crate::db::vault_imports::{self, CompleteImportArgs};
 use crate::import_media::{self, MediaMode};
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
@@ -215,7 +217,7 @@ pub fn import_export(
     schema::ensure_vault_schema(&conn)?;
     crate::db::account_profile::ensure_account_row(&conn, account_id)?;
 
-    let import_id = crate::db::vault_imports::start_import(
+    let import_id = vault_imports::start_import(
         &conn,
         account_id,
         source,
@@ -241,40 +243,11 @@ pub fn import_export(
         ImportSchemaMode::AssumeReady,
     );
 
-    match &result {
-        Ok(stats) => {
-            if let Err(e) = crate::db::vault_imports::complete_import(
-                &conn,
-                account_id,
-                import_id,
-                &crate::db::vault_imports::CompleteImportArgs {
-                    ok: true,
-                    message_count: Some(stats.messages as i64),
-                    attachment_count: Some(stats.attachments as i64),
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
-            ) {
-                eprintln!("warning: complete_import({import_id}) failed: {e}");
-            }
-        }
-        Err(_) => {
-            if let Err(e) = crate::db::vault_imports::complete_import(
-                &conn,
-                account_id,
-                import_id,
-                &crate::db::vault_imports::CompleteImportArgs {
-                    ok: false,
-                    message_count: None,
-                    attachment_count: None,
-                    bytes_uploaded: None,
-                    ..Default::default()
-                },
-            ) {
-                eprintln!("warning: complete_import({import_id}) failed: {e}");
-            }
-        }
-    }
+    let complete_args = match &result {
+        Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
+        Err(_) => CompleteImportArgs::failed(),
+    };
+    vault_imports::complete_import_or_warn(&conn, account_id, import_id, &complete_args);
 
     result
 }
@@ -498,6 +471,105 @@ pub fn import_jsonl_files_on_conn(
     Ok(stats)
 }
 
+fn nonempty_rel(path: &Option<String>) -> Option<&str> {
+    path.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Convert/compress when requested; `None` means fall through to claimed-sha / path store.
+fn try_store_converted(
+    att: &mut AttachmentRecord,
+    export_dir: &Path,
+    assets_dir: &Path,
+    asset_stats: &mut AssetStats,
+    media: MediaMode,
+    media_work: &Path,
+) -> Result<Option<StoredAsset>> {
+    if !matches!(media, MediaMode::Convert | MediaMode::Compress) {
+        return Ok(None);
+    }
+    let Some(rel) = nonempty_rel(&att.path) else {
+        return Ok(None);
+    };
+    let source = export_dir.join(rel);
+    if !source.is_file() {
+        return Ok(None);
+    }
+    let Some(resolved) =
+        import_media::resolve_for_store(&source, att.mime_type.as_deref(), media, media_work)?
+    else {
+        return Ok(None);
+    };
+    // Bytes may have changed; drop any claimed digest from the export.
+    att.sha256 = None;
+    att.mime_type = resolved.mime_type.or(att.mime_type.take());
+    assets::hash_and_store(
+        &resolved.path,
+        assets_dir,
+        att.mime_type.as_deref(),
+        asset_stats,
+    )
+}
+
+fn store_claimed_or_path(
+    att: &AttachmentRecord,
+    export_dir: &Path,
+    assets_dir: &Path,
+    asset_stats: &mut AssetStats,
+) -> Result<Option<StoredAsset>> {
+    if let Some(sha) = att
+        .sha256
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
+            asset_stats.deduped += 1;
+            return Ok(Some(StoredAsset {
+                mime_type: att.mime_type.clone().or(found.mime_type),
+                ..found
+            }));
+        }
+        if let Some(rel) = nonempty_rel(&att.path) {
+            let source = export_dir.join(rel);
+            return match assets::store_verified(
+                &source,
+                sha,
+                assets_dir,
+                att.mime_type.as_deref(),
+                false,
+                false,
+            ) {
+                Ok((stored, already)) => {
+                    if already {
+                        asset_stats.deduped += 1;
+                    } else {
+                        asset_stats.copied += 1;
+                    }
+                    Ok(Some(stored))
+                }
+                Err(_) if !source.is_file() => {
+                    asset_stats.missing += 1;
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            };
+        }
+        asset_stats.missing += 1;
+        return Ok(None);
+    }
+
+    if let Some(rel) = att.path.as_deref() {
+        return assets::hash_and_store(
+            &export_dir.join(rel),
+            assets_dir,
+            att.mime_type.as_deref(),
+            asset_stats,
+        );
+    }
+    asset_stats.missing += 1;
+    Ok(None)
+}
+
 fn prepare_attachments(
     export_dir: &Path,
     assets_dir: &Path,
@@ -512,87 +584,16 @@ fn prepare_attachments(
 
     let mut prepared = Vec::with_capacity(attachments.len());
     for mut att in attachments {
-        // Import-time convert/compress: rewrite file before hash/store so digests match bytes.
-        if matches!(media, MediaMode::Convert | MediaMode::Compress)
-            && let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty())
-        {
-            let source = export_dir.join(rel);
-            if source.is_file()
-                && let Some(resolved) = import_media::resolve_for_store(
-                    &source,
-                    att.mime_type.as_deref(),
-                    media,
-                    media_work,
-                )?
-            {
-                // Store rewritten bytes; drop claimed sha (bytes may have changed).
-                att.sha256 = None;
-                att.mime_type = resolved.mime_type.or(att.mime_type.take());
-                let stored = assets::hash_and_store(
-                    &resolved.path,
-                    assets_dir,
-                    att.mime_type.as_deref(),
-                    asset_stats,
-                )?;
-                prepared.push(PreparedAttachment {
-                    record: att,
-                    stored,
-                });
-                continue;
-            }
-        }
-
-        let stored = if let Some(sha) = att
-            .sha256
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
-                asset_stats.deduped += 1;
-                Some(StoredAsset {
-                    mime_type: att.mime_type.clone().or(found.mime_type),
-                    ..found
-                })
-            } else if let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                // Digest claimed but not pre-uploaded: fall back to path under asset_root.
-                let source = export_dir.join(rel);
-                match assets::store_verified(
-                    &source,
-                    sha,
-                    assets_dir,
-                    att.mime_type.as_deref(),
-                    false,
-                    false,
-                ) {
-                    Ok((stored, already)) => {
-                        if already {
-                            asset_stats.deduped += 1;
-                        } else {
-                            asset_stats.copied += 1;
-                        }
-                        Some(stored)
-                    }
-                    Err(_) if !source.is_file() => {
-                        asset_stats.missing += 1;
-                        None
-                    }
-                    Err(e) => return Err(e),
-                }
-            } else {
-                asset_stats.missing += 1;
-                None
-            }
-        } else if let Some(rel) = att.path.as_deref() {
-            assets::hash_and_store(
-                &export_dir.join(rel),
-                assets_dir,
-                att.mime_type.as_deref(),
-                asset_stats,
-            )?
-        } else {
-            asset_stats.missing += 1;
-            None
+        let stored = match try_store_converted(
+            &mut att,
+            export_dir,
+            assets_dir,
+            asset_stats,
+            media,
+            media_work,
+        )? {
+            Some(stored) => Some(stored),
+            None => store_claimed_or_path(&att, export_dir, assets_dir, asset_stats)?,
         };
         prepared.push(PreparedAttachment {
             record: att,
@@ -600,6 +601,31 @@ fn prepare_attachments(
         });
     }
     Ok(prepared)
+}
+
+fn resolve_incoming_sender_handle(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    is_from_me: bool,
+    sender: Option<&str>,
+    handle_type: Option<HandleType>,
+    platform: &str,
+    stats: &mut ImportStats,
+) -> Result<Option<i64>> {
+    if is_from_me {
+        return Ok(None);
+    }
+    let Some(sender) = sender.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
+    let (handle_id, flagged) =
+        resolve_handle(tx, account_id, sender, handle_type, Some(platform))?;
+    if flagged {
+        stats.phones_needing_review += 1;
+    }
+    let _ = ensure_sibling_contact_link(tx, account_id, handle_id)?;
+    Ok(Some(handle_id))
 }
 
 /// Resolve or create a handle row. Returns the handle id and whether this call
@@ -1102,31 +1128,15 @@ fn import_conversation_to_staging(
             .as_deref()
             .map(HandleService::parse)
             .unwrap_or(platform);
-        let sender_handle_id = if !msg.is_from_me
-            && let Some(sender) = msg
-                .sender
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-        {
-            let handle_type = msg
-                .sender_handle_type
-                .unwrap_or_else(|| infer_handle_type(sender));
-            let (handle_id, flagged) = resolve_handle(
-                tx,
-                &stmts.account_id,
-                sender,
-                handle_type,
-                Some(sender_platform.as_str()),
-            )?;
-            if flagged {
-                stats.phones_needing_review += 1;
-            }
-            let _ = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
-            Some(handle_id)
-        } else {
-            None
-        };
+        let sender_handle_id = resolve_incoming_sender_handle(
+            tx,
+            &stmts.account_id,
+            msg.is_from_me,
+            msg.sender.as_deref(),
+            msg.sender_handle_type,
+            sender_platform.as_str(),
+            &mut stats,
+        )?;
 
         let inserted = stmts.msg.execute(params![
             conversation_id,
@@ -1199,28 +1209,15 @@ fn import_conversation_to_staging(
         for tap in msg.tapbacks {
             // Tapback sender: resolved to a handle row (NULL for own tapbacks,
             // matching the message `sender_handle_id` convention).
-            let sender_handle_id = if !tap.is_from_me
-                && let Some(sender) = tap
-                    .sender
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-            {
-                let (handle_id, flagged) = resolve_handle(
-                    tx,
-                    &stmts.account_id,
-                    sender,
-                    infer_handle_type(sender),
-                    Some(sender_platform.as_str()),
-                )?;
-                if flagged {
-                    stats.phones_needing_review += 1;
-                }
-                let _ = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
-                Some(handle_id)
-            } else {
-                None
-            };
+            let sender_handle_id = resolve_incoming_sender_handle(
+                tx,
+                &stmts.account_id,
+                tap.is_from_me,
+                tap.sender.as_deref(),
+                None,
+                sender_platform.as_str(),
+                &mut stats,
+            )?;
             stmts.tap.execute(params![
                 message_id,
                 tap.part_index,
@@ -1514,7 +1511,6 @@ fn promote_append(
 /// Staging rows per set-based insert window (progress + smaller WAL spikes).
 const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
 /// Pairs per multi-row INSERT into `_promote_msg_map` (SQLite default max variables is 999).
-const PROMOTE_MSG_MAP_VALUE_BATCH: usize = 400;
 /// Drop secondary indexes only for large promotes relative to the existing table.
 const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
 
@@ -1842,15 +1838,11 @@ fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Re
     }
 
     let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
-    for chunk in pairs.chunks(PROMOTE_MSG_MAP_VALUE_BATCH) {
-        let mut sql = String::from("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ");
-        for (i, _) in chunk.iter().enumerate() {
-            if i > 0 {
-                sql.push(',');
-            }
-            let base = i * 2;
-            sql.push_str(&format!("(?{}, ?{})", base + 1, base + 2));
-        }
+    for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
+        let sql = format!(
+            "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
+            vec!["(?, ?)"; chunk.len()].join(",")
+        );
         let mut stmt = tx.prepare(&sql)?;
         let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
         for &(staging_id, prod_id) in chunk {

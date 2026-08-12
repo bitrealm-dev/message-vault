@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, StoredAsset};
@@ -74,8 +74,7 @@ pub struct StartUpload {
 }
 
 fn normalize_sha(sha: &str) -> Result<String> {
-    assets::normalize_sha256(sha)
-        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))
+    assets::require_sha256(sha)
 }
 
 fn new_upload_id() -> String {

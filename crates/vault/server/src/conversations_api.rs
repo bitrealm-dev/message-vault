@@ -2,11 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
+use crate::db::sql::{in_placeholders, SQLITE_IN_CHUNK};
 use crate::export_api::ExportQueryError;
-use crate::search_query::{CountComparator, CountComparison, parse_count_comparison};
+use crate::search_query::{parse_count_comparison, CountComparator, CountComparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
@@ -436,8 +437,8 @@ fn load_participants(
     if conversation_ids.is_empty() {
         return Ok(map);
     }
-    for chunk in conversation_ids.chunks(400) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = in_placeholders(chunk.len());
         // Join contact preferred_name / name_alias here so the list path does not
         // issue one follow-up SELECT per participant. Contact fields apply only when
         // `p.contact_id` links the same handle; otherwise residue `p.name_alias` is
@@ -517,8 +518,8 @@ fn load_conversation_sources(
     if conversation_ids.is_empty() {
         return Ok(map);
     }
-    for chunk in conversation_ids.chunks(400) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT conversation_id, source
              FROM messages

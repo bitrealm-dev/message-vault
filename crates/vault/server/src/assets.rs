@@ -49,8 +49,7 @@ pub fn store_verified(
     consume_source: bool,
     skip_hash: bool,
 ) -> Result<(StoredAsset, bool)> {
-    let claimed = normalize_sha256(claimed_sha256)
-        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))?;
+    let claimed = require_sha256(claimed_sha256)?;
     if !source.is_file() {
         anyhow::bail!("asset source is not a file: {}", source.display());
     }
@@ -154,6 +153,11 @@ pub(crate) fn normalize_sha256(sha: &str) -> Option<String> {
         return None;
     }
     Some(s)
+}
+
+pub(crate) fn require_sha256(sha: &str) -> Result<String> {
+    normalize_sha256(sha)
+        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))
 }
 
 fn hash_file(path: &Path) -> Result<String> {

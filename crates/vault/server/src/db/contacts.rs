@@ -6,7 +6,7 @@ use contacts::{
     ContactsFormat, detect_contacts_format, extract_tags, parse_vcf, read_vcard_csv_rows,
     strip_tags,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 /// Bump `contacts.last_modified` after an address-book shape change.
 pub fn touch_contact(conn: &Connection, account_id: &str, contact_id: i64) -> Result<()> {

@@ -1,12 +1,13 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
-use rusqlite::{Connection, params_from_iter};
+use rusqlite::{params_from_iter, Connection};
 use serde::Serialize;
 
+use crate::db::sql::{in_placeholders, SQLITE_IN_CHUNK};
 use crate::search_query::{
-    ParsedSearchQuery, SearchMode, has_date_bounds, metadata_exclude_terms, metadata_include_terms,
-    parse_search_query,
+    metadata_exclude_terms, metadata_include_terms, parse_search_query, ParsedSearchQuery,
+    SearchMode,
 };
 
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
@@ -590,11 +591,11 @@ fn build_message_filters(
         where_parts.push(involves_contacts_sql(&ids));
     }
 
-    if has_date_bounds(&parsed.first_contact) {
+    if !parsed.first_contact.is_empty() {
         let ids = contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact)?;
         where_parts.push(involves_contacts_sql(&ids));
     }
-    if has_date_bounds(&parsed.last_contact) {
+    if !parsed.last_contact.is_empty() {
         let ids = contact_ids_within_day_bounds(conn, account_id, "last", &parsed.last_contact)?;
         where_parts.push(involves_contacts_sql(&ids));
     }
@@ -775,8 +776,8 @@ fn load_participants(
     if conversation_ids.is_empty() {
         return Ok(map);
     }
-    for chunk in conversation_ids.chunks(400) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for chunk in conversation_ids.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT p.conversation_id,
                     h.raw AS handle,
@@ -829,8 +830,8 @@ fn load_attachments(
     if message_ids.is_empty() {
         return Ok(map);
     }
-    for chunk in message_ids.chunks(400) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for chunk in message_ids.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription,
                     missing_reason
@@ -869,8 +870,8 @@ fn load_tapbacks(
     if message_ids.is_empty() {
         return Ok(map);
     }
-    for chunk in message_ids.chunks(400) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for chunk in message_ids.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = in_placeholders(chunk.len());
         let sql = format!(
             "SELECT t.message_id, t.part_index, t.kind, t.emoji, t.is_from_me,
                     hs.raw AS sender
@@ -903,7 +904,7 @@ fn load_tapbacks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::{Connection, params};
+    use rusqlite::{params, Connection};
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

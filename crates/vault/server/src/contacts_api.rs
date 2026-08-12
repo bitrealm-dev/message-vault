@@ -1,13 +1,14 @@
 //! Contact list/detail used by `GET /v1/export/contacts` and
 //! `GET|POST /v1/export/contacts/{id}`.
 
-use anyhow::{Result as AnyResult, bail};
+use anyhow::{bail, Result as AnyResult};
 use message_ir::HandleType;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::account_profile;
 use crate::db::handles::infer_handle_type_from_shape;
+use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
@@ -424,12 +425,7 @@ pub fn list_contacts(
     }
 
     if !filters.services.is_empty() {
-        let placeholders = filters
-            .services
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = in_placeholders(filters.services.len());
         where_parts.push(format!(
             "EXISTS (
                SELECT 1 FROM conversations c
@@ -1170,23 +1166,21 @@ mod tests {
             )
             .unwrap();
 
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: Some(ContactHandlePayload {
-                        handle: "+15555550200".into(),
-                        service: Some("phone".into()),
-                    }),
-                    update_handle: None,
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: Some(ContactHandlePayload {
+                    handle: "+15555550200".into(),
+                    service: Some("phone".into()),
+                }),
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
 
         let detail = get_contact_detail(&conn, &account, contact_id)
             .unwrap()
@@ -1194,66 +1188,60 @@ mod tests {
         assert_eq!(detail.handles.len(), 1);
         assert!(detail.handles[0].handle.contains("5555550200"));
 
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: Some("Samantha".into()),
-                    add_handle: None,
-                    update_handle: None,
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: Some("Samantha".into()),
+                add_handle: None,
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
         let renamed = get_contact_detail(&conn, &account, contact_id)
             .unwrap()
             .unwrap();
         assert_eq!(renamed.name, "Samantha");
 
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: None,
-                    update_handle: Some(ContactUpdateHandlePayload {
-                        previous_handle: detail.handles[0].handle.clone(),
-                        handle: "sam@example.com".into(),
-                        service: Some("email".into()),
-                    }),
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: None,
+                update_handle: Some(ContactUpdateHandlePayload {
+                    previous_handle: detail.handles[0].handle.clone(),
+                    handle: "sam@example.com".into(),
+                    service: Some("email".into()),
+                }),
+                remove_handle: None,
+            },
+        )
+        .unwrap());
         let updated = get_contact_detail(&conn, &account, contact_id)
             .unwrap()
             .unwrap();
         assert_eq!(updated.handles.len(), 1);
         assert_eq!(updated.handles[0].handle, "sam@example.com");
 
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: None,
-                    update_handle: None,
-                    remove_handle: Some(ContactRemoveHandlePayload {
-                        handle: "sam@example.com".into(),
-                        service: Some("phone".into()),
-                    }),
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: None,
+                update_handle: None,
+                remove_handle: Some(ContactRemoveHandlePayload {
+                    handle: "sam@example.com".into(),
+                    service: Some("phone".into()),
+                }),
+            },
+        )
+        .unwrap());
         let empty = get_contact_detail(&conn, &account, contact_id)
             .unwrap()
             .unwrap();
@@ -1302,83 +1290,75 @@ mod tests {
 
         const OLD: &str = "2000-01-01 00:00:00";
         set_contact_last_modified(&conn, &account, contact_id, OLD);
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: Some("Samantha".into()),
-                    add_handle: None,
-                    update_handle: None,
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: Some("Samantha".into()),
+                add_handle: None,
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
         let after_rename = contact_last_modified(&conn, &account, contact_id);
         assert_ne!(after_rename, OLD);
 
         set_contact_last_modified(&conn, &account, contact_id, OLD);
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: Some(ContactHandlePayload {
-                        handle: "+15555550200".into(),
-                        service: Some("phone".into()),
-                    }),
-                    update_handle: None,
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: Some(ContactHandlePayload {
+                    handle: "+15555550200".into(),
+                    service: Some("phone".into()),
+                }),
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
         let after_add = contact_last_modified(&conn, &account, contact_id);
         assert_ne!(after_add, OLD);
 
         // Re-adding the same handle is a no-op and must not bump.
         set_contact_last_modified(&conn, &account, contact_id, OLD);
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: Some(ContactHandlePayload {
-                        handle: "+15555550200".into(),
-                        service: Some("phone".into()),
-                    }),
-                    update_handle: None,
-                    remove_handle: None,
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: Some(ContactHandlePayload {
+                    handle: "+15555550200".into(),
+                    service: Some("phone".into()),
+                }),
+                update_handle: None,
+                remove_handle: None,
+            },
+        )
+        .unwrap());
         assert_eq!(contact_last_modified(&conn, &account, contact_id), OLD);
 
         set_contact_last_modified(&conn, &account, contact_id, OLD);
-        assert!(
-            mutate_contact(
-                &conn,
-                &account,
-                contact_id,
-                &ContactMutationBody {
-                    name: None,
-                    add_handle: None,
-                    update_handle: None,
-                    remove_handle: Some(ContactRemoveHandlePayload {
-                        handle: "+15555550200".into(),
-                        service: Some("phone".into()),
-                    }),
-                },
-            )
-            .unwrap()
-        );
+        assert!(mutate_contact(
+            &conn,
+            &account,
+            contact_id,
+            &ContactMutationBody {
+                name: None,
+                add_handle: None,
+                update_handle: None,
+                remove_handle: Some(ContactRemoveHandlePayload {
+                    handle: "+15555550200".into(),
+                    service: Some("phone".into()),
+                }),
+            },
+        )
+        .unwrap());
         assert_ne!(contact_last_modified(&conn, &account, contact_id), OLD);
     }
 
