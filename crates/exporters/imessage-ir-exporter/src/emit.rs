@@ -87,6 +87,14 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
         session.options.export_path.display(),
     ));
 
+    // Clean prior IR artifacts (including stale attachments/) before writing new
+    // media, matching WhatsApp / SMS Backup & Restore `open_prepared` behavior.
+    // Attachments are persisted during the message stream, so cleaning must
+    // happen before that pass — not when the sink opens afterward.
+    message_ir_format::clean_previous_ir_output(&session.options.export_path).map_err(|e| {
+        RuntimeError::InvalidOptions(format!("clean previous export output: {e:#}"))
+    })?;
+
     let copy_attachments = session.options.transforms.copies_attachments();
     let attachments_dir = session.options.export_path.join("attachments");
     if copy_attachments
@@ -308,6 +316,13 @@ fn mail_message_to_ir(
     let mut attachments = Vec::with_capacity(mail.attachments.len());
     for attachment in &mail.attachments {
         let has_bytes = embed == AttachmentEmbed::Embed && !attachment.bytes.is_empty();
+        let missing_reason = if has_bytes {
+            None
+        } else if embed == AttachmentEmbed::Disabled {
+            Some("embed_disabled".to_string())
+        } else {
+            Some("file_missing".to_string())
+        };
         let (path, digest_sha256, file_size, bytes) = if persist_to_disk {
             if has_bytes {
                 let (rel_path, digest, size) = persist_attachment(
@@ -334,7 +349,7 @@ fn mail_message_to_ir(
             transcription: attachment.transcription.clone(),
             sticker_effect: attachment.sticker_effect.clone(),
             size_bytes: file_size,
-            missing_reason: None,
+            missing_reason,
             bytes,
         });
     }

@@ -14,7 +14,7 @@ use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
 use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use phone::sanitize_number;
 use serde_json::{Map, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -69,6 +69,8 @@ pub(crate) fn convert_export(
     let files = discover_csv_files(&input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
+    // Dedupe duplicate CSV rows: same chat + second + direction + text.
+    let mut seen_keys: HashSet<String> = HashSet::new();
 
     // For per-chat files, infer peer once from all rows in that file.
     for path in &files {
@@ -122,6 +124,18 @@ pub(crate) fn convert_export(
             let is_from_me = resolve_is_from_me(&row);
             let (sender_handle, sender_display_name) =
                 resolve_sender(book, &row, is_from_me, &chat_id, &contact_name);
+
+            let dedupe_key = format!(
+                "{}|{}|{}|{}",
+                chat_id,
+                secs,
+                if is_from_me { "1" } else { "0" },
+                row.text
+            );
+            if !seen_keys.insert(dedupe_key) {
+                report.duplicates_dropped += 1;
+                continue;
+            }
 
             let convo =
                 conversations

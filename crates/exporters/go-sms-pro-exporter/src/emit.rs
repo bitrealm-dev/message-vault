@@ -283,16 +283,7 @@ fn add_pdu_message(
         return;
     }
 
-    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = if parsed.is_group {
-        let (id, title) = chat_id_group(&parsed.participants, owners);
-        let peers: Vec<String> = parsed
-            .participants
-            .iter()
-            .filter(|p| !p.is_empty() && !owners.is_owner(p, HandleType::Phone))
-            .map(|d| guarded_phone(d))
-            .collect();
-        vec![(id, true, Some(title), peers)]
-    } else {
+    let targets: Vec<(String, bool, Option<String>, Vec<String>)> = {
         let others: Vec<_> = parsed
             .participants
             .iter()
@@ -314,12 +305,19 @@ fn add_pdu_message(
             );
             return;
         }
-        let other = &others[0];
-        vec![(chat_id_individual(other), false, None, Vec::new())]
+        // Treat multi-peer MMS as a group even when the PDU flag is unset.
+        if parsed.is_group || others.len() >= 2 {
+            let (id, title) = chat_id_group(&parsed.participants, owners);
+            let peers: Vec<String> = others.iter().map(|d| guarded_phone(d)).collect();
+            vec![(id, true, Some(title), peers)]
+        } else {
+            let other = &others[0];
+            vec![(chat_id_individual(other), false, None, Vec::new())]
+        }
     };
 
     bump(report, "pdu_messages", 1);
-    if parsed.is_group {
+    if targets.iter().any(|(_, is_group, _, _)| *is_group) {
         bump(report, "pdu_group_messages", 1);
     }
 

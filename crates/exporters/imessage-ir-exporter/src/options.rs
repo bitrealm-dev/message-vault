@@ -76,6 +76,11 @@ impl MailOptions {
 }
 
 /// Validate export directory does not already contain mail-archive data for `format`.
+///
+/// Prefer [`message_ir_format::clean_previous_ir_output`] for re-runs (used by
+/// `run_export`). This stricter refuse-on-existing check remains available for
+/// callers that want to abort instead of cleaning.
+#[allow(dead_code)]
 pub(crate) fn validate_export_path(
     export_path: &Path,
     format: OutputFormat,
