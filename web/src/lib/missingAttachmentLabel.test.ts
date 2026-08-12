@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, expect } from "vitest";
 import { missingAttachmentChipLabel } from "./missingAttachmentLabel.ts";
 import type { MessageAttachment } from "./types.ts";
 
@@ -18,7 +17,7 @@ function att(partial: Partial<MessageAttachment>): MessageAttachment {
 
 describe("missingAttachmentChipLabel", () => {
   it("formats too_large with name and mime", () => {
-    assert.equal(
+    expect(
       missingAttachmentChipLabel(
         att({
           original_name: "video.mp4",
@@ -26,19 +25,17 @@ describe("missingAttachmentChipLabel", () => {
           missing_reason: "too_large",
         }),
       ),
-      "video.mp4 · video/mp4 (missing — too large)",
-    );
+    ).toBe("video.mp4 · video/mp4 (missing — too large)");
   });
 
   it("formats file_missing from path basename when name missing", () => {
-    assert.equal(
+    expect(
       missingAttachmentChipLabel(
         att({
           path: "attachments/gone.bin",
           missing_reason: "file_missing",
         }),
       ),
-      "gone.bin (missing — file not found)",
-    );
+    ).toBe("gone.bin (missing — file not found)");
   });
 });

@@ -1,24 +1,21 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, expect } from "vitest";
 import { buildAssetPath } from "./assetUrl.ts";
 
 describe("buildAssetPath", () => {
   it("includes sha and required source query", () => {
-    assert.equal(
-      buildAssetPath("abc123", "imessage"),
+    expect(buildAssetPath("abc123", "imessage")).toBe(
       "/v1/assets/abc123?source=imessage",
     );
   });
 
   it("encodes special characters", () => {
-    assert.equal(
-      buildAssetPath("deadbeef", "sms backup"),
+    expect(buildAssetPath("deadbeef", "sms backup")).toBe(
       "/v1/assets/deadbeef?source=sms%20backup",
     );
   });
 
   it("rejects empty sha or source", () => {
-    assert.throws(() => buildAssetPath("", "imessage"));
-    assert.throws(() => buildAssetPath("abc", ""));
+    expect(() => buildAssetPath("", "imessage")).toThrow();
+    expect(() => buildAssetPath("abc", "")).toThrow();
   });
 });

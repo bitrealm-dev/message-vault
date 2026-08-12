@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   listGroups,
   uniqueImportGroupName,
@@ -34,21 +33,18 @@ beforeEach(() => {
 
 describe("uniqueImportGroupName", () => {
   it("uses base name when free", () => {
-    assert.equal(
-      uniqueImportGroupName("imessage-ios", "2026-08-11", []),
+    expect(uniqueImportGroupName("imessage-ios", "2026-08-11", [])).toBe(
       "Import imessage-ios 2026-08-11",
     );
   });
 
   it("appends 2, 3 for collisions", () => {
     const names = ["Import imessage-ios 2026-08-11"];
-    assert.equal(
-      uniqueImportGroupName("imessage-ios", "2026-08-11", names),
+    expect(uniqueImportGroupName("imessage-ios", "2026-08-11", names)).toBe(
       "Import imessage-ios 2026-08-11 2",
     );
     names.push("Import imessage-ios 2026-08-11 2");
-    assert.equal(
-      uniqueImportGroupName("imessage-ios", "2026-08-11", names),
+    expect(uniqueImportGroupName("imessage-ios", "2026-08-11", names)).toBe(
       "Import imessage-ios 2026-08-11 3",
     );
   });
@@ -56,10 +52,10 @@ describe("uniqueImportGroupName", () => {
 
 describe("shouldSaveImportGroup", () => {
   it("requires session id and messages_inserted > 0", () => {
-    assert.equal(shouldSaveImportGroup(42, 1), true);
-    assert.equal(shouldSaveImportGroup(42, 0), false);
-    assert.equal(shouldSaveImportGroup(42, undefined), false);
-    assert.equal(shouldSaveImportGroup(null, 5), false);
+    expect(shouldSaveImportGroup(42, 1)).toBe(true);
+    expect(shouldSaveImportGroup(42, 0)).toBe(false);
+    expect(shouldSaveImportGroup(42, undefined)).toBe(false);
+    expect(shouldSaveImportGroup(null, 5)).toBe(false);
   });
 });
 
@@ -77,22 +73,21 @@ describe("saveImportSavedGroup", () => {
       now: new Date("2026-08-11T15:00:00"),
     });
     window.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, onChange);
-    assert.ok(g);
-    assert.equal(g!.name, "Import imessage-ios 2026-08-11");
-    assert.equal(g!.query, "import:7");
-    assert.equal(listGroups().length, 1);
-    assert.equal(notified, 1);
+    expect(g).toBeTruthy();
+    expect(g!.name).toBe("Import imessage-ios 2026-08-11");
+    expect(g!.query).toBe("import:7");
+    expect(listGroups()).toHaveLength(1);
+    expect(notified).toBe(1);
   });
 
   it("skips when no messages inserted", () => {
-    assert.equal(
+    expect(
       saveImportSavedGroup({
         importSessionId: 7,
         source: "imessage-ios",
         messagesInserted: 0,
       }),
-      null,
-    );
-    assert.equal(listGroups().length, 0);
+    ).toBeNull();
+    expect(listGroups()).toHaveLength(0);
   });
 });
