@@ -103,8 +103,8 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &PullJournalState)
             url: url.to_string(),
             username: username.to_string(),
             sha256: sha.clone(),
-            path: String::new(),   // path not needed for resume (uses attachments/{sha})
-            size_bytes: 0,         // size not needed for resume
+            path: String::new(), // path not needed for resume (uses attachments/{sha})
+            size_bytes: 0,       // size not needed for resume
         });
     }
     if state.backup_complete {

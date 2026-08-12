@@ -1,8 +1,8 @@
 use crate::emit::convert_export;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -269,7 +269,10 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     // Outgoing rows carry owner identity. The fixture includes an SMS type=2
     // (sent) and an MMS where the owner is a recipient; both must share the same
     // individual conversation after owner-filtered peer resolution.
-    assert_eq!(report.conversations, 1, "MMS must not fragment into a group chat");
+    assert_eq!(
+        report.conversations, 1,
+        "MMS must not fragment into a group chat"
+    );
     let has_outgoing = doc["messages"].as_array().unwrap().iter().any(|m| {
         m["direction"] == "outgoing" && m["sender_handle"].as_str() == Some("+15555550100")
     });

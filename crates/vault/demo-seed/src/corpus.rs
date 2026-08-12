@@ -13,14 +13,14 @@ pub struct Corpus {
 
 impl Corpus {
     pub fn load_pride_and_prejudice() -> Result<Self> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("data/corpus/pride-and-prejudice.txt");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/corpus/pride-and-prejudice.txt");
         Self::load(&path)
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("read corpus {}", path.display()))?;
+        let text =
+            fs::read_to_string(path).with_context(|| format!("read corpus {}", path.display()))?;
         let sentences = extract_sentences(&text);
         if sentences.len() < 100 {
             bail!(

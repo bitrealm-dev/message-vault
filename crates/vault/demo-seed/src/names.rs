@@ -32,10 +32,7 @@ impl NameBank {
     }
 
     pub fn pick_middle(&self, rng: &mut impl Rng) -> &str {
-        self.middle
-            .choose(rng)
-            .map(|s| s.as_str())
-            .unwrap_or("Lee")
+        self.middle.choose(rng).map(|s| s.as_str()).unwrap_or("Lee")
     }
 }
 

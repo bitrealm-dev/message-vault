@@ -25,9 +25,8 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let common = &cli.common;
-    let date_range =
-        parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
-            .map_err(anyhow::Error::msg)?;
+    let date_range = parse_date_range(common.start_date.as_deref(), common.end_date.as_deref())
+        .map_err(anyhow::Error::msg)?;
     let output_format = OutputFormat::parse(&common.format).map_err(anyhow::Error::msg)?;
     let compress = compress_options_from_cli(
         common.media_max_resolution,

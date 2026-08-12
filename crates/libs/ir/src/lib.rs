@@ -587,4 +587,3 @@ mod handle_service_tests {
         assert_eq!(HandleService::Whatsapp.as_str(), "whatsapp");
     }
 }
-

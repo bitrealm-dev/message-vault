@@ -5,8 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::session_tokens::hash_api_token;
 
-const API_TOKEN_ALPHANUM: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const API_TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 /// Access granted to a named API token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,22 +321,28 @@ mod tests {
         assert_eq!(listed[0].token_hint, mask_api_token(&token));
         assert!(listed[0].last_accessed_at.is_none());
 
-        let auth = lookup_account_for_api_token(&conn, &token).unwrap().unwrap();
+        let auth = lookup_account_for_api_token(&conn, &token)
+            .unwrap()
+            .unwrap();
         assert_eq!(auth.account_id, account_id);
         assert_eq!(auth.scopes, ApiTokenScopes::Export);
 
         let listed_after = list_api_tokens(&conn, &account_id).unwrap();
         assert!(listed_after[0].last_accessed_at.is_some());
 
-        assert!(lookup_account_for_api_token(&conn, "mv-api-nope")
-            .unwrap()
-            .is_none());
+        assert!(
+            lookup_account_for_api_token(&conn, "mv-api-nope")
+                .unwrap()
+                .is_none()
+        );
 
         assert!(delete_api_token(&conn, &account_id, &id).unwrap());
         assert!(list_api_tokens(&conn, &account_id).unwrap().is_empty());
-        assert!(lookup_account_for_api_token(&conn, &token)
-            .unwrap()
-            .is_none());
+        assert!(
+            lookup_account_for_api_token(&conn, &token)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -355,13 +360,13 @@ mod tests {
         let listed = list_api_tokens(&conn, &account_id).unwrap();
         assert_eq!(listed[0].label, "new name");
         assert!(update_api_token_label(&conn, &account_id, &id, "  ").is_err());
-        assert!(!update_api_token_label(
-            &conn,
-            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-            &id,
-            "stolen"
-        )
-        .unwrap());
-        assert_eq!(list_api_tokens(&conn, &account_id).unwrap()[0].label, "new name");
+        assert!(
+            !update_api_token_label(&conn, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", &id, "stolen")
+                .unwrap()
+        );
+        assert_eq!(
+            list_api_tokens(&conn, &account_id).unwrap()[0].label,
+            "new name"
+        );
     }
 }

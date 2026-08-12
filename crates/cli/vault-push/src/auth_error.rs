@@ -5,26 +5,61 @@ use std::fmt;
 /// Failure from `GET /v1/auth/check`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
-    InvalidUrl { url: String, detail: String },
-    Client { detail: String },
-    Network { url: String, detail: String },
-    Timeout { url: String, detail: String },
-    ReadResponse { detail: String },
-    WrongHostHtml { url: String, status: u16 },
+    InvalidUrl {
+        url: String,
+        detail: String,
+    },
+    Client {
+        detail: String,
+    },
+    Network {
+        url: String,
+        detail: String,
+    },
+    Timeout {
+        url: String,
+        detail: String,
+    },
+    ReadResponse {
+        detail: String,
+    },
+    WrongHostHtml {
+        url: String,
+        status: u16,
+    },
     /// Requested `http://…` but the vault redirected to `https://…` (auth header dropped).
-    HttpsRequired { url: String },
+    HttpsRequired {
+        url: String,
+    },
     InvalidKey,
-    Forbidden { status: u16, body: String },
-    ApiNotFound { status: u16, body: String },
-    RateLimited { status: u16, body: String },
-    ServerError { status: u16, body: String },
-    HttpStatus { status: u16, body: String },
+    Forbidden {
+        status: u16,
+        body: String,
+    },
+    ApiNotFound {
+        status: u16,
+        body: String,
+    },
+    RateLimited {
+        status: u16,
+        body: String,
+    },
+    ServerError {
+        status: u16,
+        body: String,
+    },
+    HttpStatus {
+        status: u16,
+        body: String,
+    },
     BadJson {
         url: String,
         status: u16,
         snippet: String,
     },
-    Rejected { message: String },
+    Rejected {
+        message: String,
+    },
     MissingAccountId,
 }
 

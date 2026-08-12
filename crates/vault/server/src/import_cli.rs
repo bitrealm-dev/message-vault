@@ -54,29 +54,28 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     let db_path = opts.db_path.clone().unwrap_or_else(|| cfg.paths.db.clone());
     let account_id = opts.account_id.clone();
 
-    let (sources, source_from_jsonl, wipe_sources) = if let Some(ref override_source) =
-        opts.source_override
-    {
-        validate_source_id(override_source)?;
-        (
-            vec![override_source.clone()],
-            false,
-            Some(vec![override_source.clone()]),
-        )
-    } else {
-        let discovered = discover_sources(&paths)?;
-        if discovered.is_empty() {
-            bail!(
-                "no conversation export.source found in {}; each conversation needs \
+    let (sources, source_from_jsonl, wipe_sources) =
+        if let Some(ref override_source) = opts.source_override {
+            validate_source_id(override_source)?;
+            (
+                vec![override_source.clone()],
+                false,
+                Some(vec![override_source.clone()]),
+            )
+        } else {
+            let discovered = discover_sources(&paths)?;
+            if discovered.is_empty() {
+                bail!(
+                    "no conversation export.source found in {}; each conversation needs \
                  export.source in the message-ir header (or pass --source)",
-                input.display()
-            );
-        }
-        for source in &discovered {
-            validate_source_id(source)?;
-        }
-        (discovered.clone(), true, Some(discovered))
-    };
+                    input.display()
+                );
+            }
+            for source in &discovered {
+                validate_source_id(source)?;
+            }
+            (discovered.clone(), true, Some(discovered))
+        };
 
     println!("Import");
     println!("  account:      {}", account_id);
@@ -280,6 +279,9 @@ mod tests {
         .unwrap();
         let paths = list_jsonl_files(tmp.path()).unwrap();
         let sources = discover_sources(&paths).unwrap();
-        assert_eq!(sources, vec!["go-sms-pro".to_string(), "imessage".to_string()]);
+        assert_eq!(
+            sources,
+            vec!["go-sms-pro".to_string(), "imessage".to_string()]
+        );
     }
 }

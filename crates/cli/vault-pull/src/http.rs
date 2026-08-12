@@ -306,8 +306,7 @@ impl HttpSession {
         // Write to a temp file then rename, so a partial download (crash, cancel,
         // network drop) never leaves a truncated file at the destination path.
         let tmp = dest.with_extension("part");
-        let mut file =
-            File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         std::io::copy(&mut response, &mut file)
             .with_context(|| format!("write {}", tmp.display()))?;
         file.flush()?;
@@ -324,4 +323,3 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}…", &s[..max])
     }
 }
-

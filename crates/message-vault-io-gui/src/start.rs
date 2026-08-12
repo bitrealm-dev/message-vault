@@ -102,10 +102,8 @@ fn start_library_job(
                 }
                 match rx.recv_timeout(remaining) {
                     Ok(more) => {
-                        let terminal = matches!(
-                            more,
-                            ProcessEvent::Finished(_) | ProcessEvent::Error { .. }
-                        );
+                        let terminal =
+                            matches!(more, ProcessEvent::Finished(_) | ProcessEvent::Error { .. });
                         batch.push(more);
                         if terminal {
                             break;
@@ -154,8 +152,7 @@ fn start_library_job(
             }
 
             // Always flush terminal events; otherwise only schedule if idle.
-            let schedule = finished
-                || !pending_ui.scheduled.swap(true, Ordering::AcqRel);
+            let schedule = finished || !pending_ui.scheduled.swap(true, Ordering::AcqRel);
             if schedule {
                 let state_clone = Arc::clone(&state_for_done);
                 let pending_ui = Arc::clone(&pending_ui);
@@ -205,8 +202,11 @@ fn start_library_job(
             let mut st = state_for_done.lock().expect("state lock");
             st.running = false;
             st.set_errors(
-                vec!["The job stopped unexpectedly (the worker may have panicked). \
-                      Check the session log for details.".into()],
+                vec![
+                    "The job stopped unexpectedly (the worker may have panicked). \
+                      Check the session log for details."
+                        .into(),
+                ],
                 source_screen,
             );
             sync::push_chrome(&ui, &st);
@@ -508,10 +508,12 @@ pub(crate) fn start_vault_export_query(
         let end = export.get_end_date().trim().to_string();
         let mut errors = Vec::new();
         if url.is_empty() {
-            errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
+            errors
+                .push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
         }
         if key.is_empty() {
-            errors.push("API token is required. Open Credentials or Vault Import and set it.".into());
+            errors
+                .push("API token is required. Open Credentials or Vault Import and set it.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -579,11 +581,7 @@ pub(crate) fn start_vault_export_query(
                 Err(e) => Err(JobError::detail(format!("{e:#}"))),
             }
         });
-        (
-            label,
-            job,
-            OnSuccess::VaultExportQuery(stats_slot),
-        )
+        (label, job, OnSuccess::VaultExportQuery(stats_slot))
     };
     start_library_job(ui_weak, state, label, job, on_success);
 }
@@ -617,18 +615,16 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         let skip_attachments = export.get_skip_attachments();
         let expected_messages = {
             let n = export.get_query_message_count();
-            if n > 0 {
-                Some(n as u64)
-            } else {
-                None
-            }
+            if n > 0 { Some(n as u64) } else { None }
         };
         let mut errors = Vec::new();
         if url.is_empty() {
-            errors.push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
+            errors
+                .push("Vault URL is required. Open Credentials or Vault Import and set it.".into());
         }
         if key.is_empty() {
-            errors.push("API token is required. Open Credentials or Vault Import and set it.".into());
+            errors
+                .push("API token is required. Open Credentials or Vault Import and set it.".into());
         }
         if !errors.is_empty() {
             report_errors(&ui, &mut st, errors);
@@ -654,10 +650,7 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
         );
         let label = "vault-pull (library)".to_string();
         let job: LibraryJob = Box::new(move |cancel, tx| {
-            let _ = tx.send(ProcessEvent::Log(format!(
-                "Exporting to {}",
-                out.display()
-            )));
+            let _ = tx.send(ProcessEvent::Log(format!("Exporting to {}", out.display())));
             let cfg = VaultPullConfig {
                 out_dir: out,
                 base_url: url,
@@ -692,12 +685,8 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
                     total_so_far,
                 } => {
                     let line = match expected_messages {
-                        Some(n) => format!(
-                            "Page: {messages} message(s) ({total_so_far} of {n})"
-                        ),
-                        None => format!(
-                            "Page: {messages} message(s) ({total_so_far} total)"
-                        ),
+                        Some(n) => format!("Page: {messages} message(s) ({total_so_far} of {n})"),
+                        None => format!("Page: {messages} message(s) ({total_so_far} total)"),
                     };
                     let _ = tx.send(ProcessEvent::Log(line));
                 }
@@ -725,10 +714,7 @@ pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<M
 }
 
 /// Download the entire account: no query filter, every message and attachment.
-pub(crate) fn start_account_backup(
-    ui_weak: &slint::Weak<AppWindow>,
-    state: &Arc<Mutex<AppState>>,
-) {
+pub(crate) fn start_account_backup(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
     };
@@ -952,8 +938,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             st.guided_import_format == crate::options::GuidedImportFormat::ExistingArchive;
         let archive = st.export_ini.vault.input.trim().to_string();
         let backup = st.form.db_path.trim().to_string();
-        let is_macos =
-            st.form.apple_platform == message_vault_io_core::ApplePlatform::MacOs;
+        let is_macos = st.form.apple_platform == message_vault_io_core::ApplePlatform::MacOs;
         let mut errors = Vec::new();
         if url.is_empty() {
             errors.push("Vault URL is required. Go back and verify credentials.".into());
@@ -1163,11 +1148,7 @@ fn run_vault_upload(
                 "Authenticated as {username} ({account_id})"
             )));
         }
-        VaultProgressEvent::FileStart {
-            index,
-            total,
-            file,
-        } => {
+        VaultProgressEvent::FileStart { index, total, file } => {
             // Sparse heartbeat so a long attachment upload doesn't look hung.
             if index == 1 || index == total || index.is_multiple_of(10) {
                 let _ = tx.send(ProcessEvent::Log(format!(
@@ -1177,10 +1158,7 @@ fn run_vault_upload(
         }
         VaultProgressEvent::FileDone { .. } => {}
         VaultProgressEvent::Issue {
-            kind,
-            item,
-            reason,
-            ..
+            kind, item, reason, ..
         } => {
             let _ = tx.send(ProcessEvent::Log(format!(
                 "{}: {item}: {reason}",

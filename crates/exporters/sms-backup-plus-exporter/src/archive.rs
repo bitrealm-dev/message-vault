@@ -41,10 +41,7 @@ fn clean_archive_contact_name(raw: &str) -> String {
     // `name[..5]` would panic when byte 5 lands mid-character in a multi-byte
     // UTF-8 name (e.g. `SMS archive 中文名`). "with " is 5 ASCII bytes, so a
     // match at a char boundary is always a real prefix.
-    if name.len() >= 5
-        && name.is_char_boundary(5)
-        && name[..5].eq_ignore_ascii_case("with ")
-    {
+    if name.len() >= 5 && name.is_char_boundary(5) && name[..5].eq_ignore_ascii_case("with ") {
         name = name[5..].trim();
     }
     static YEAR_RANGE: OnceLock<Regex> = OnceLock::new();

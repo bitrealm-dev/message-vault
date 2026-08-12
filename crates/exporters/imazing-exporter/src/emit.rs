@@ -6,28 +6,14 @@ use anyhow::{Context, Result, bail};
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, parse_utc_offset, stable_guid};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    PendingAttachment,
-    PendingConversation,
-    PendingMessage,
-    SCHEMA_VERSION,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use phone::sanitize_number;
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
@@ -91,7 +77,8 @@ pub(crate) fn convert_export(
     // Canonicalize so relative inputs resolve and `parent()` below is absolute,
     // and so output/input identity is checked on resolved paths.
     let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-    let output = fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
+    let output =
+        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
     if output == input || input.starts_with(&output) {
         bail!(
             "output {} must not be the same as, or contain, the input {}",
@@ -145,31 +132,33 @@ pub(crate) fn convert_export(
             if peer.unresolved_chat {
                 bump(&mut report, "unresolved_chat_phone", 1);
             }
-            bump(&mut report, "unresolved_group_participants", peer.unresolved_roster_labels);
+            bump(
+                &mut report,
+                "unresolved_group_participants",
+                peer.unresolved_roster_labels,
+            );
 
             let convo_key = format!("{}|{}", family.key_prefix(), peer.chat_id);
-            let convo = conversations
-                .entry(convo_key.clone())
-                .or_insert_with(|| PendingConversation {
-                    chat_id: peer.chat_id.clone(),
-                    display_name: if peer.group {
-                        Some(session.clone())
-                    } else {
-                        None
-                    },
-                    participant_e164s: Vec::new(),
-                    messages: Vec::new(),
-                    is_group: peer.group,
-                    has_attachments: false,
-                    extra: {
-                        let mut e = BTreeMap::new();
-                        e.insert(
-                            "source_kind".into(),
-                            discovered.kind.as_str().to_string(),
-                        );
-                        e
-                    },
-                });
+            let convo =
+                conversations
+                    .entry(convo_key.clone())
+                    .or_insert_with(|| PendingConversation {
+                        chat_id: peer.chat_id.clone(),
+                        display_name: if peer.group {
+                            Some(session.clone())
+                        } else {
+                            None
+                        },
+                        participant_e164s: Vec::new(),
+                        messages: Vec::new(),
+                        is_group: peer.group,
+                        has_attachments: false,
+                        extra: {
+                            let mut e = BTreeMap::new();
+                            e.insert("source_kind".into(), discovered.kind.as_str().to_string());
+                            e
+                        },
+                    });
 
             for row in session_rows {
                 let Some((secs, date_ms)) = parse_message_date(&row.message_date, &tz) else {
@@ -349,9 +338,8 @@ fn collect_peer_info(
         } else if sanitize_number(sid).is_some() {
             // Guarded policy on the raw id: E.164 when unambiguous (keeps the
             // `+` for +-prefixed values), else digits-as-is — never `+0…`.
-            handles.insert(
-                phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized,
-            );
+            handles
+                .insert(phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized);
         }
         for phone in phones_in_text(&row.chat_session) {
             handles.insert(phone);
@@ -498,7 +486,11 @@ fn resolve_chat_identifier(
             let title = session.trim().to_string();
             return (peer_handles.join(","), title, false);
         }
-        return (message_vault_io_core::name_stem(session), session.trim().to_string(), true);
+        return (
+            message_vault_io_core::name_stem(session),
+            session.trim().to_string(),
+            true,
+        );
     }
 
     if let Some(handle) = peer_handles.first() {
@@ -546,7 +538,11 @@ fn resolve_chat_identifier(
     if let Some((e164, _)) = book.lookup_handle_by_name(session) {
         return (e164, session.to_string(), false);
     }
-    (message_vault_io_core::name_stem(session), session.to_string(), true)
+    (
+        message_vault_io_core::name_stem(session),
+        session.to_string(),
+        true,
+    )
 }
 
 fn resolve_sender(
@@ -581,8 +577,9 @@ fn resolve_sender(
     } else if sanitize_number(&row.sender_id).is_some() {
         // Guarded policy on the raw id: E.164 when unambiguous (keeps the
         // `+`), else digits-as-is — never `+0…`.
-        handle = phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
-            .normalized;
+        handle =
+            phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
+                .normalized;
     } else if !chat_id.contains('@')
         && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
     {
@@ -713,11 +710,7 @@ fn pending_to_document(
         report.messages += 1;
 
         let (ts_local, _, _) = format_local_ts(msg.sort_key).expect("timestamp validated above");
-        let digests: Vec<String> = msg
-            .attachments
-            .iter()
-            .map(|a| a.rel_path.clone())
-            .collect();
+        let digests: Vec<String> = msg.attachments.iter().map(|a| a.rel_path.clone()).collect();
         let guid = stable_guid(chat_id, &ts_local, msg.is_from_me, &msg.text, &digests);
         let timestamp_unix_ms = msg
             .extra_str("date_ms")

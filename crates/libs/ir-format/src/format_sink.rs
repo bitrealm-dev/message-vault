@@ -2,12 +2,12 @@
 
 use crate::clean::clean_previous_ir_output;
 use crate::export_transforms::{ExportTransforms, apply_transforms};
-use crate::write_sbr::SbrBackupSession;
 use crate::write::write_format;
-use message_ir::ConversationDocument;
+use crate::write_sbr::SbrBackupSession;
 use anyhow::{Context, Result};
-use message_vault_io_core::OutputFormat;
 use media::MediaReport;
+use message_ir::ConversationDocument;
+use message_vault_io_core::OutputFormat;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -162,20 +162,11 @@ fn remove_staged_attachments(output_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use message_ir::{
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    SCHEMA_VERSION,
-};
     use media::MediaMode;
+    use message_ir::{
+        ConversationMeta, ConversationStats, ExportMeta, IrAttachment, IrConversationType,
+        IrDirection, IrMessage, IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
+    };
     use std::fs;
 
     fn tiny_doc(text: &str) -> ConversationDocument {

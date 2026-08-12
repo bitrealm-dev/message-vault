@@ -130,8 +130,7 @@ impl ContactsBook {
             // US-centric book (a trunk-zero `020 7946 0000` must never become
             // the invalid `+02079460000`). The review note is produced
             // server-side, where the handles table stores it.
-            let normalized =
-                phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
+            let normalized = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
             if !key.is_empty() {
                 self.by_name
                     .entry(key.clone())
@@ -154,17 +153,25 @@ impl ContactsBook {
 
     /// Look up display name for a (normalized handle, type).
     pub fn lookup_name_by_handle(&self, normalized: &str, handle_type: HandleType) -> Option<&str> {
-        self.by_handle.get(&(normalized.to_string(), handle_type)).map(String::as_str)
+        self.by_handle
+            .get(&(normalized.to_string(), handle_type))
+            .map(String::as_str)
     }
 
     /// If `name` is blank/unknown and `handle` is in the book, return the display name.
-    pub fn enrich_display_name(&self, handle: &str, handle_type: HandleType, name: &str) -> Option<String> {
+    pub fn enrich_display_name(
+        &self,
+        handle: &str,
+        handle_type: HandleType,
+        name: &str,
+    ) -> Option<String> {
         if !is_blank_or_unknown_name(name) {
             return None;
         }
         // Normalize handle based on type before lookup
         let normalized = normalize_handle(handle, handle_type);
-        self.lookup_name_by_handle(&normalized, handle_type).map(str::to_string)
+        self.lookup_name_by_handle(&normalized, handle_type)
+            .map(str::to_string)
     }
 
     pub fn len(&self) -> usize {
@@ -178,11 +185,9 @@ impl ContactsBook {
 
 fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
     match handle_type {
-        HandleType::Phone => {
-            sanitize_number(raw)
-                .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
-                .unwrap_or_else(|| raw.to_string())
-        }
+        HandleType::Phone => sanitize_number(raw)
+            .map(|d| phone::normalize_guarded(&d, phone::PhoneRegion::Usa).normalized)
+            .unwrap_or_else(|| raw.to_string()),
         HandleType::Email => raw.trim().to_lowercase(),
         HandleType::Username | HandleType::Other => raw.trim().to_string(),
     }
@@ -387,7 +392,8 @@ Ada,Lovelace,+15555550100\n",
         let mut book = ContactsBook::empty();
         book.insert_entry("Sam Example", &["5555550122".into()]);
         assert_eq!(
-            book.enrich_display_name("5555550122", HandleType::Phone, "").as_deref(),
+            book.enrich_display_name("5555550122", HandleType::Phone, "")
+                .as_deref(),
             Some("Sam Example")
         );
         assert_eq!(

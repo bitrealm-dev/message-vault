@@ -198,13 +198,12 @@ impl HttpSession {
         if !status.is_success() {
             return Err(classify_auth_http_status(status_code, text));
         }
-        let parsed: AuthCheckResponse = serde_json::from_str(&text).map_err(|_| {
-            AuthError::BadJson {
+        let parsed: AuthCheckResponse =
+            serde_json::from_str(&text).map_err(|_| AuthError::BadJson {
                 url: url.clone(),
                 status: status_code,
                 snippet: truncate(&text, 200),
-            }
-        })?;
+            })?;
         if !parsed.ok {
             return Err(AuthError::Rejected {
                 message: parsed.error.unwrap_or(text),
@@ -321,7 +320,10 @@ impl HttpSession {
         let status = response.status();
         let text = response.text().context("read asset response")?;
         if looks_like_payload_too_large(status, &text) {
-            bail!("{}", payload_too_large_message("asset upload", Some(file_len as usize)));
+            bail!(
+                "{}",
+                payload_too_large_message("asset upload", Some(file_len as usize))
+            );
         }
         let parsed: AssetPutResponse = serde_json::from_str(&text).unwrap_or(AssetPutResponse {
             ok: false,
@@ -499,10 +501,7 @@ impl HttpSession {
     ) -> Result<ImportResponse> {
         let body_len = ndjson.len();
         if body_len > crate::run::MAX_PROXY_BODY_BYTES {
-            bail!(
-                "{}",
-                payload_too_large_message("import", Some(body_len))
-            );
+            bail!("{}", payload_too_large_message("import", Some(body_len)));
         }
         let base = base_url.trim_end_matches('/');
         let mut url = format!(
@@ -778,8 +777,7 @@ where
                 // Exponential backoff with jitter.
                 let base_ms = 500u64 * 2u64.saturating_pow(attempt.saturating_sub(1));
                 let jitter_ms = (base_ms / 4).min(5000);
-                let wait_ms = base_ms + (jitter_ms / 2)
-                    + (jitter_ms as f64 * rand_factor()) as u64;
+                let wait_ms = base_ms + (jitter_ms / 2) + (jitter_ms as f64 * rand_factor()) as u64;
                 thread::sleep(Duration::from_millis(wait_ms.min(30_000)));
             }
         }

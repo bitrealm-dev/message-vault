@@ -166,7 +166,10 @@ pub struct GuardedNormalize {
 /// for review.
 pub fn normalize_guarded(raw: &str, region: PhoneRegion) -> GuardedNormalize {
     match normalize_certain(raw, region) {
-        Some(e164) => GuardedNormalize { normalized: e164, note: None },
+        Some(e164) => GuardedNormalize {
+            normalized: e164,
+            note: None,
+        },
         None => {
             let digits = sanitize_number(raw).unwrap_or_default();
             GuardedNormalize {
@@ -365,8 +368,14 @@ mod tests {
 
     #[test]
     fn guarded_region_for_raw() {
-        assert_eq!(PhoneRegion::for_raw("+15555550100"), PhoneRegion::International);
-        assert_eq!(PhoneRegion::for_raw("  +44 20 7183 8750 "), PhoneRegion::International);
+        assert_eq!(
+            PhoneRegion::for_raw("+15555550100"),
+            PhoneRegion::International
+        );
+        assert_eq!(
+            PhoneRegion::for_raw("  +44 20 7183 8750 "),
+            PhoneRegion::International
+        );
         assert_eq!(PhoneRegion::for_raw("5555550100"), PhoneRegion::Usa);
         assert_eq!(PhoneRegion::for_raw("020 7946 0000"), PhoneRegion::Usa);
         assert_eq!(PhoneRegion::for_raw(""), PhoneRegion::Usa);
@@ -415,13 +424,16 @@ mod tests {
         // that compare against sanitize_number output match consistently.
         let digits = owners.all_phone_digits();
         assert!(digits.contains("5555550100"));
-        assert!(!digits.contains("+15555550100"), "must be digits-only, not E.164");
+        assert!(
+            !digits.contains("+15555550100"),
+            "must be digits-only, not E.164"
+        );
     }
 
     #[test]
     fn owner_handle_set_guards_trunk_zero() {
-        let owners = OwnerHandleSet::new(&[("020 7946 0000".to_string(), HandleType::Phone)])
-            .unwrap();
+        let owners =
+            OwnerHandleSet::new(&[("020 7946 0000".to_string(), HandleType::Phone)]).unwrap();
         assert!(owners.is_owner("02079460000", HandleType::Phone));
         assert!(owners.is_owner("020 7946 0000", HandleType::Phone));
         // The digits-as-is identity is never fabricated into +02079460000, so

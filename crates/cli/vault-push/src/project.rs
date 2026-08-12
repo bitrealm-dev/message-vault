@@ -22,7 +22,8 @@ pub fn validate_header(header: &ConversationHeader) -> Result<String> {
 pub fn document_header_line(doc: &ConversationDocument) -> Result<Vec<u8>> {
     let header = ConversationHeader::from_document(doc);
     validate_header(&header)?;
-    let mut out = serde_json::to_vec(&header).context("serialize message-ir conversation header")?;
+    let mut out =
+        serde_json::to_vec(&header).context("serialize message-ir conversation header")?;
     out.push(b'\n');
     Ok(out)
 }

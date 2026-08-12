@@ -1,11 +1,11 @@
 use super::*;
 use mail::clean_previous_mail_output;
-use message_vault_io_core::OutputFormat;
 use message_ir::{
     ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
     IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
     IrService, IrSource, SCHEMA_VERSION,
 };
+use message_vault_io_core::OutputFormat;
 use serde_json::{Map, Value, json};
 use std::fs;
 

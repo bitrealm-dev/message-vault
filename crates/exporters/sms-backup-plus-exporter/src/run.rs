@@ -3,8 +3,8 @@
 use crate::emit::convert_export;
 use anyhow::{Context, Result, bail};
 use contacts::{NameMapping, resolve_contacts_cli};
-use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig};
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -148,4 +148,3 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     }
     Ok(RunResult { messages })
 }
-

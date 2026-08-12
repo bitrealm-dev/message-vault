@@ -5,12 +5,12 @@
 //! GUI Vault Export screen.
 
 mod http;
+pub mod journal;
 mod project;
-mod run;
-pub mod journal; // new
+mod run; // new
 
 pub use http::ExportMessage;
-pub use journal::{PullJournalState, PullJournalEvent, PULL_JOURNAL_NAME, journal_path};
+pub use journal::{PULL_JOURNAL_NAME, PullJournalEvent, PullJournalState, journal_path};
 pub use run::{
     DEFAULT_ASSET_DOWNLOAD_WORKERS, DEFAULT_PAGE_LIMIT, ProgressEvent, ProgressFn, PullReport,
     QueryStats, VaultPullConfig, compose_query, query_stats, run,

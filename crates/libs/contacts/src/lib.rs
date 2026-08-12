@@ -24,6 +24,4 @@ pub use vcard_csv::{
     ContactCsvRow, VCARD_CSV_PHONE_COLUMNS, VcardCsvColumns, is_phone_header,
     normalize_vcard_csv_header, read_vcard_csv_rows,
 };
-pub use vcf::{
-    VcfCard, extract_tags, parse_vcf, parse_vcf_str, split_categories, strip_tags,
-};
+pub use vcf::{VcfCard, extract_tags, parse_vcf, parse_vcf_str, split_categories, strip_tags};

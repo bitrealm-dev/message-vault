@@ -1,7 +1,7 @@
 //! Copy a contacts VCF/CSV and rewrite phones that [`normalize_certain`] accepts.
 
-use crate::vcard_csv::VcardCsvColumns;
 use crate::name::collapse_inner_whitespace;
+use crate::vcard_csv::VcardCsvColumns;
 use anyhow::{Context, Result, bail};
 use phone::{PhoneRegion, normalize_certain, normalize_uncertain_reason};
 use std::collections::HashMap;

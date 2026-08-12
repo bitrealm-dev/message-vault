@@ -84,9 +84,7 @@ pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
 pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
-        AuthCapability::ApiToken(scopes)
-            if scopes.allows_import() || scopes.allows_export() =>
-        {
+        AuthCapability::ApiToken(scopes) if scopes.allows_import() || scopes.allows_export() => {
             Ok(())
         }
         AuthCapability::ApiToken(_) => Err(ApiError::Forbidden(
@@ -236,7 +234,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route("/v1/auth/mode", get(auth_mode_handler))
         .route("/v1/auth/register", post(crate::auth::register_handler))
         .route("/v1/auth/login", post(crate::auth::login_handler))
-        .route("/v1/auth/hanko/session", post(crate::auth::hanko_session_handler))
+        .route(
+            "/v1/auth/hanko/session",
+            post(crate::auth::hanko_session_handler),
+        )
         .route("/v1/auth/check", get(auth_check))
         .route(
             "/v1/auth/change-password",
@@ -246,7 +247,11 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/auth/delete-account",
             post(crate::auth::delete_account_handler),
         )
-        .route("/v1/account/profile", get(crate::profile::account_profile_handler).post(crate::profile::account_profile_update_handler))
+        .route(
+            "/v1/account/profile",
+            get(crate::profile::account_profile_handler)
+                .post(crate::profile::account_profile_update_handler),
+        )
         .route(
             "/v1/account/delete-messages",
             post(crate::profile::delete_messages_handler),
@@ -272,10 +277,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/export/contacts/{id}",
             get(contact_detail_handler).post(contact_mutate_handler),
         )
-        .route(
-            "/v1/export/conversations",
-            get(conversations_list_handler),
-        )
+        .route("/v1/export/conversations", get(conversations_list_handler))
         .route(
             "/v1/export/conversations/{id}/sources",
             get(conversation_sources_handler),
@@ -818,14 +820,15 @@ async fn contact_mutate_handler(
             .lock()
             .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
         match crate::contacts_api::mutate_contact(&conn, &account_id, contact_id, &body) {
-            Ok(false) => Ok::<_, anyhow::Error>(Err(ApiError::NotFound(
-                "contact not found".into(),
-            ))),
+            Ok(false) => {
+                Ok::<_, anyhow::Error>(Err(ApiError::NotFound("contact not found".into())))
+            }
             Err(e) => Ok(Err(ApiError::BadRequest(e.to_string()))),
             Ok(true) => {
-                let detail = crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                    .ok_or_else(|| anyhow::anyhow!("contact missing after mutate"))?;
+                let detail =
+                    crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                        .ok_or_else(|| anyhow::anyhow!("contact missing after mutate"))?;
                 Ok(Ok(detail))
             }
         }
@@ -906,8 +909,7 @@ async fn account_storage_handler(
         let conn = db
             .lock()
             .map_err(|_| anyhow::anyhow!("database mutex poisoned"))?;
-        let total_bytes =
-            crate::db::vault_imports::account_attachment_bytes(&conn, &account_id)?;
+        let total_bytes = crate::db::vault_imports::account_attachment_bytes(&conn, &account_id)?;
         let attachment_count =
             crate::db::vault_imports::account_attachment_count(&conn, &account_id)?;
         let top_attachments =
@@ -933,9 +935,7 @@ async fn imports_create_handler(
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
     if body.source.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "body field source is required".into(),
-        ));
+        return Err(ApiError::BadRequest("body field source is required".into()));
     }
     validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -951,13 +951,7 @@ async fn imports_create_handler(
             .lock()
             .map_err(|_| anyhow::anyhow!("import database mutex poisoned"))?;
         crate::db::account_profile::ensure_account_row(&conn, &account)?;
-        crate::db::vault_imports::start_import(
-            &conn,
-            &account,
-            &source,
-            &mode,
-            tool.as_deref(),
-        )
+        crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
     })
     .await
     .map_err(|e| ApiError::Internal(format!("create import task failed: {e}")))?
@@ -978,9 +972,10 @@ async fn imports_complete_handler(
     validate_complete_import_issues(&body.issues)?;
     let db = Arc::clone(&state.db);
     let summary_json = match body.summary {
-        Some(summary) => Some(serde_json::to_string(&summary).map_err(|e| {
-            ApiError::Internal(format!("serialize import summary: {e}"))
-        })?),
+        Some(summary) => Some(
+            serde_json::to_string(&summary)
+                .map_err(|e| ApiError::Internal(format!("serialize import summary: {e}")))?,
+        ),
         None => None,
     };
     let args = crate::db::vault_imports::CompleteImportArgs {
@@ -1604,10 +1599,7 @@ async fn asset_upload_abort_handler(
     Ok(Json(AssetUploadAbortResponse { ok: true }))
 }
 
-async fn read_body_limited(
-    body: axum::body::Body,
-    max_bytes: usize,
-) -> Result<Vec<u8>, ApiError> {
+async fn read_body_limited(body: axum::body::Body, max_bytes: usize) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -1621,10 +1613,7 @@ async fn read_body_limited(
 }
 
 /// Drain request body without retaining it (used when asset already exists).
-async fn discard_body(
-    body: axum::body::Body,
-    max_body_bytes: usize,
-) -> Result<(), ApiError> {
+async fn discard_body(body: axum::body::Body, max_body_bytes: usize) -> Result<(), ApiError> {
     let mut stream = body.into_data_stream();
     let mut seen = 0usize;
     while let Some(chunk) = stream.next().await {
@@ -1849,33 +1838,29 @@ async fn run_import_path(
             import::ImportSchemaMode::AssumeReady,
         );
 
-        if owns_session
-            && let Some(id) = import_id {
-                let complete_args = match &import_result {
-                    Ok(stats) => crate::db::vault_imports::CompleteImportArgs {
-                        ok: true,
-                        message_count: Some(stats.messages as i64),
-                        attachment_count: Some(stats.attachments as i64),
-                        bytes_uploaded: None,
-                        ..Default::default()
-                    },
-                    Err(_) => crate::db::vault_imports::CompleteImportArgs {
-                        ok: false,
-                        message_count: None,
-                        attachment_count: None,
-                        bytes_uploaded: None,
-                        ..Default::default()
-                    },
-                };
-                if let Err(e) = crate::db::vault_imports::complete_import(
-                    &conn,
-                    &account,
-                    id,
-                    &complete_args,
-                ) {
-                    eprintln!("warning: complete_import({id}) failed: {e}");
-                }
+        if owns_session && let Some(id) = import_id {
+            let complete_args = match &import_result {
+                Ok(stats) => crate::db::vault_imports::CompleteImportArgs {
+                    ok: true,
+                    message_count: Some(stats.messages as i64),
+                    attachment_count: Some(stats.attachments as i64),
+                    bytes_uploaded: None,
+                    ..Default::default()
+                },
+                Err(_) => crate::db::vault_imports::CompleteImportArgs {
+                    ok: false,
+                    message_count: None,
+                    attachment_count: None,
+                    bytes_uploaded: None,
+                    ..Default::default()
+                },
+            };
+            if let Err(e) =
+                crate::db::vault_imports::complete_import(&conn, &account, id, &complete_args)
+            {
+                eprintln!("warning: complete_import({id}) failed: {e}");
             }
+        }
         let stats = import_result?;
         drop(conn);
         let dedupe_stats = if do_dedupe {
@@ -1922,8 +1907,8 @@ mod tests {
         schema::ensure_vault_schema(&conn).unwrap();
         schema::ensure_accounts_schema(&conn).unwrap();
         crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
-        let token = crate::db::session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT)
-            .unwrap();
+        let token =
+            crate::db::session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
         let import_id = crate::db::vault_imports::start_import(
             &conn,
             TEST_ACCOUNT,
@@ -2082,13 +2067,9 @@ mod tests {
     #[tokio::test]
     async fn imports_get_handler_returns_not_found_for_missing_import() {
         let (_tmp, state, token, import_id) = test_state();
-        let err = imports_get_handler(
-            State(state),
-            auth_headers(&token),
-            AxumPath(import_id + 1),
-        )
-        .await
-        .unwrap_err();
+        let err = imports_get_handler(State(state), auth_headers(&token), AxumPath(import_id + 1))
+            .await
+            .unwrap_err();
 
         match err {
             ApiError::NotFound(msg) => {

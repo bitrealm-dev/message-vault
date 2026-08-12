@@ -159,13 +159,8 @@ pub(crate) fn decrypt_file(backup: &Backup, from: &Path) -> Result<PathBuf, Runt
             // file_id may contain '/' (e.g. "2f/2fcab…") — replace path
             // separators to keep the temp filename flat, and strip any leading
             // path components from a malicious manifest.
-            let safe_id = file
-                .file_id
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file.file_id);
-            let temp_path =
-                temp_dir().join(format!("{safe_id}-{}.attachment", unique_suffix()));
+            let safe_id = file.file_id.rsplit('/').next().unwrap_or(&file.file_id);
+            let temp_path = temp_dir().join(format!("{safe_id}-{}.attachment", unique_suffix()));
             let mut temp_file = File::create(&temp_path)?;
             restrict_permissions(&temp_file)?;
 

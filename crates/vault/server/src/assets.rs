@@ -71,8 +71,8 @@ pub fn store_verified(
         // matches the declared size. For large files this avoids an expensive
         // full-file SHA-256 pass on the server.
     } else {
-        let actual = hash_file(source)
-            .with_context(|| format!("failed to hash {}", source.display()))?;
+        let actual =
+            hash_file(source).with_context(|| format!("failed to hash {}", source.display()))?;
         if actual != claimed {
             anyhow::bail!("sha256 mismatch: claimed {claimed}, got {actual}");
         }

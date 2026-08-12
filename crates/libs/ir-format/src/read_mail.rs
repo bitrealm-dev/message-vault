@@ -1,25 +1,14 @@
 //! Reverse projectors: EML folder / mboxrd → [`ConversationDocument`].
 
 use crate::normalize::{imessage_from_parts, source_from_parts};
-use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrImessage,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    SCHEMA_VERSION,
-    parse_android_type,
-};
 use anyhow::{Context, Result, bail};
 use mail::{
     Direction as MailDirection, MailMessage, mail_message_from_eml_bytes, mail_messages_from_mbox,
+};
+use message_ir::{
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, IrAttachment,
+    IrConversationType, IrDirection, IrImessage, IrMessage, IrMessageKind, IrParticipant,
+    IrService, SCHEMA_VERSION, parse_android_type,
 };
 use message_vault_io_core::discover_files;
 use std::fs;

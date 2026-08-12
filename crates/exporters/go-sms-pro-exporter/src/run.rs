@@ -3,8 +3,8 @@
 use crate::emit::convert_export;
 use anyhow::{Result, bail};
 use contacts::resolve_contacts_cli;
-use message_vault_io_core::{RunResult, ExporterConfig, SourceConfig};
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
 /// Resolve contacts, convert, apply media/obfuscate via FormatSink.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
@@ -37,4 +37,3 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     report.summary_lines(&config.output, &mut messages);
     Ok(RunResult { messages })
 }
-

@@ -1,8 +1,8 @@
 use crate::emit::convert_export;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs;
 use std::path::PathBuf;
 
@@ -32,7 +32,14 @@ fn convert_messages_with_vcard_csv_contacts() {
     assert_eq!(report.messages, 3);
     assert_eq!(report.extra.get("messages_files").copied().unwrap_or(0), 1);
     assert_eq!(report.extra.get("whatsapp_files").copied().unwrap_or(0), 0);
-    assert_eq!(report.extra.get("unresolved_chat_phone").copied().unwrap_or(0), 0);
+    assert_eq!(
+        report
+            .extra
+            .get("unresolved_chat_phone")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
 
     let out = tmp.path().join("+13212462167.csv");
     let body = fs::read_to_string(&out).expect("read csv");
@@ -108,5 +115,12 @@ fn convert_export_root_recursively_keeps_services_separate() {
     let body = fs::read_to_string(tmp.path().join(group)).unwrap();
     assert!(body.contains("group"));
     assert!(body.contains("Notification") || body.contains("notification"));
-    assert_eq!(report.extra.get("unresolved_group_participants").copied().unwrap_or(0), 0);
+    assert_eq!(
+        report
+            .extra
+            .get("unresolved_group_participants")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
 }

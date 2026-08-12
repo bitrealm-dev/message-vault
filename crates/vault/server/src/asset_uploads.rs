@@ -87,10 +87,7 @@ fn new_upload_id() -> String {
 }
 
 pub fn session_dir(assets_root: &Path, sha256: &str, upload_id: &str) -> PathBuf {
-    assets_root
-        .join(".incoming")
-        .join(sha256)
-        .join(upload_id)
+    assets_root.join(".incoming").join(sha256).join(upload_id)
 }
 
 fn manifest_path(session: &Path) -> PathBuf {
@@ -120,8 +117,7 @@ fn expected_part_len(bytes: u64, part_size: usize, part: u32) -> u64 {
 
 fn read_manifest(session: &Path) -> Result<UploadManifest> {
     let path = manifest_path(session);
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
@@ -285,12 +281,11 @@ pub fn complete_upload(
     let assembled = session.join(format!("assembled{ext}"));
     let mut total = 0u64;
     {
-        let mut out = File::create(&assembled)
-            .with_context(|| format!("create {}", assembled.display()))?;
+        let mut out =
+            File::create(&assembled).with_context(|| format!("create {}", assembled.display()))?;
         for n in 1..=count {
             let path = part_path(&session, n);
-            let mut file =
-                File::open(&path).with_context(|| format!("open {}", path.display()))?;
+            let mut file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)?;
             out.write_all(&buf)?;
@@ -325,8 +320,7 @@ pub fn abort_upload(assets_root: &Path, sha256: &str, upload_id: &str) -> Result
     let sha = normalize_sha(sha256)?;
     let session = session_dir(assets_root, &sha, upload_id);
     if session.exists() {
-        fs::remove_dir_all(&session)
-            .with_context(|| format!("remove {}", session.display()))?;
+        fs::remove_dir_all(&session).with_context(|| format!("remove {}", session.display()))?;
     }
     Ok(())
 }
@@ -484,8 +478,7 @@ mod tests {
         unsafe {
             std::env::set_var("VAULT_ASSET_PART_SIZE", "10");
         }
-        let limits =
-            UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES, 20 * 1024 * 1024);
+        let limits = UploadLimits::resolve(DEFAULT_PART_SIZE, DEFAULT_MAX_BYTES, 20 * 1024 * 1024);
         let (existing, start) =
             start_upload(root, &sha, data.len() as u64, Some("text/plain"), limits).unwrap();
         assert!(existing.is_none());
@@ -500,8 +493,7 @@ mod tests {
             offset = end;
             part += 1;
         }
-        let (stored, already) =
-            complete_upload(root, &sha, &start.upload_id, limits).unwrap();
+        let (stored, already) = complete_upload(root, &sha, &start.upload_id, limits).unwrap();
         assert!(!already);
         assert_eq!(stored.sha256, sha);
         unsafe {
@@ -519,14 +511,8 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, data).unwrap();
 
-        let (existing, start) = start_upload(
-            root,
-            &sha,
-            data.len() as u64,
-            None,
-            UploadLimits::default(),
-        )
-        .unwrap();
+        let (existing, start) =
+            start_upload(root, &sha, data.len() as u64, None, UploadLimits::default()).unwrap();
         assert!(existing.is_some());
         assert!(start.is_none());
     }

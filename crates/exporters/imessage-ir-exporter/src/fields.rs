@@ -224,7 +224,10 @@ pub(crate) fn build_part_records(message: &Message, attachments: &[Attachment]) 
 }
 
 /// Collect transcription text from body ranges matching an attachment GUID.
-pub(crate) fn transcription_for_attachment(message: &Message, attachment: &Attachment) -> Option<String> {
+pub(crate) fn transcription_for_attachment(
+    message: &Message,
+    attachment: &Attachment,
+) -> Option<String> {
     let guid = attachment.guid.as_deref()?;
     for component in &message.components {
         let BubbleComponent::Run(ranges) = component else {

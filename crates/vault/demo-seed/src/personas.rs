@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand_distr::{Distribution, Normal, Poisson};

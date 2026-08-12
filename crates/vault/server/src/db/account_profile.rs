@@ -331,7 +331,10 @@ pub fn load_preferred_name(conn: &Connection, account_id: &str) -> Result<Option
             |row| row.get(0),
         )
         .optional()?;
-    Ok(name.flatten().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+    Ok(name
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty()))
 }
 
 /// Insert a new account row. All fields except id and username are optional.
@@ -542,7 +545,8 @@ mod tests {
     fn link_account_handle_normalizes_and_dedupes() {
         let conn = setup();
         let account = "00000000-0000-4000-8000-000000000001";
-        let a = link_account_handle(&conn, account, "+1 (555) 555-0100", HandleType::Phone).unwrap();
+        let a =
+            link_account_handle(&conn, account, "+1 (555) 555-0100", HandleType::Phone).unwrap();
         // Same normalized value with a different raw form reuses the handle row.
         let b = link_account_handle(&conn, account, "+15555550100", HandleType::Phone).unwrap();
         assert_eq!(a, b);
@@ -563,7 +567,8 @@ mod tests {
             .unwrap();
         assert_eq!(linked, 1);
         // Email handles are lowercased and stored separately by type.
-        let email = link_account_handle(&conn, account, "ME@EXAMPLE.com", HandleType::Email).unwrap();
+        let email =
+            link_account_handle(&conn, account, "ME@EXAMPLE.com", HandleType::Email).unwrap();
         let loaded = load_account_profile(&conn, account).unwrap();
         assert_eq!(loaded.handle_ids.len(), 2);
         assert!(loaded.handle_ids.contains(&email));
@@ -581,9 +586,11 @@ mod tests {
         )
         .unwrap();
         let contact_id: i64 = conn
-            .query_row("SELECT id FROM contacts WHERE account_id = ?1", params![account], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1",
+                params![account],
+                |r| r.get(0),
+            )
             .unwrap();
         conn.execute(
             "INSERT INTO conversations (
@@ -600,9 +607,11 @@ mod tests {
         )
         .unwrap();
         let msg_id: i64 = conn
-            .query_row("SELECT id FROM messages WHERE account_id = ?1", params![account], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM messages WHERE account_id = ?1",
+                params![account],
+                |r| r.get(0),
+            )
             .unwrap();
         conn.execute(
             "INSERT INTO attachments (message_id, path, original_name, mime_type)

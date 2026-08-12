@@ -261,8 +261,7 @@ pub fn export_messages(
         params.push((fetch_limit as i64).into());
     }
 
-    let mut stmt = conn
-        .prepare(&sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(params.iter().cloned()), |row| {
             Ok(RawRow {
@@ -392,12 +391,11 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let messages: i64 = conn
-        .query_row(
-            &msg_sql,
-            params_from_iter(filters.params.iter().cloned()),
-            |row| row.get(0),
-        )?;
+    let messages: i64 = conn.query_row(
+        &msg_sql,
+        params_from_iter(filters.params.iter().cloned()),
+        |row| row.get(0),
+    )?;
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
@@ -407,12 +405,11 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let conversations: i64 = conn
-        .query_row(
-            &conv_sql,
-            params_from_iter(filters.params.iter().cloned()),
-            |row| row.get(0),
-        )?;
+    let conversations: i64 = conn.query_row(
+        &conv_sql,
+        params_from_iter(filters.params.iter().cloned()),
+        |row| row.get(0),
+    )?;
 
     let att_sql = format!(
         "SELECT COUNT(*), COALESCE(SUM(sz), 0)
@@ -430,12 +427,11 @@ pub fn export_message_count(
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
-    let (attachments, total_bytes): (i64, i64) = conn
-        .query_row(
-            &att_sql,
-            params_from_iter(filters.params.iter().cloned()),
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+    let (attachments, total_bytes): (i64, i64) = conn.query_row(
+        &att_sql,
+        params_from_iter(filters.params.iter().cloned()),
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
 
     Ok(ExportCountResponse {
         ok: true,
@@ -712,14 +708,13 @@ fn list_label_member_contact_ids(
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    let mut stmt = conn
-        .prepare(
-            "SELECT clm.contact_id
+    let mut stmt = conn.prepare(
+        "SELECT clm.contact_id
              FROM contact_label_members clm
              JOIN contact_labels cl ON cl.id = clm.label_id
              WHERE cl.name = ? COLLATE NOCASE AND cl.account_id = ?
              ORDER BY clm.contact_id",
-        )?;
+    )?;
     let rows = stmt
         .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))?
         .collect::<Result<Vec<i64>, _>>()?;
@@ -765,8 +760,7 @@ fn contact_ids_within_day_bounds(
          GROUP BY ch.contact_id
          HAVING {having_sql}"
     );
-    let mut stmt = conn
-        .prepare(&sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(params.iter().cloned()), |r| r.get(0))?
         .collect::<Result<Vec<i64>, _>>()?;
@@ -806,21 +800,19 @@ fn load_participants(
              WHERE p.conversation_id IN ({placeholders})
              ORDER BY p.conversation_id, p.id"
         );
-        let mut stmt = conn
-            .prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(chunk.iter().copied()), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    ExportParticipant {
-                        handle: row.get(1)?,
-                        name_alias: row.get(2)?,
-                        preferred_name: row.get(3)?,
-                        handle_type: row.get(4)?,
-                        contact_id: row.get(5)?,
-                    },
-                ))
-            })?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                ExportParticipant {
+                    handle: row.get(1)?,
+                    name_alias: row.get(2)?,
+                    preferred_name: row.get(3)?,
+                    handle_type: row.get(4)?,
+                    contact_id: row.get(5)?,
+                },
+            ))
+        })?;
         for row in rows {
             let (cid, p) = row?;
             map.entry(cid).or_insert_with(Vec::new).push(p);
@@ -846,23 +838,21 @@ fn load_attachments(
              WHERE message_id IN ({placeholders})
              ORDER BY message_id, id"
         );
-        let mut stmt = conn
-            .prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(chunk.iter().copied()), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    ExportAttachment {
-                        path: row.get(1)?,
-                        original_name: row.get(2)?,
-                        mime_type: row.get(3)?,
-                        sha256: row.get(4)?,
-                        is_sticker: row.get::<_, i64>(5)? != 0,
-                        transcription: row.get(6)?,
-                        missing_reason: row.get(7)?,
-                    },
-                ))
-            })?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                ExportAttachment {
+                    path: row.get(1)?,
+                    original_name: row.get(2)?,
+                    mime_type: row.get(3)?,
+                    sha256: row.get(4)?,
+                    is_sticker: row.get::<_, i64>(5)? != 0,
+                    transcription: row.get(6)?,
+                    missing_reason: row.get(7)?,
+                },
+            ))
+        })?;
         for row in rows {
             let (mid, att) = row?;
             map.entry(mid).or_insert_with(Vec::new).push(att);
@@ -889,21 +879,19 @@ fn load_tapbacks(
              WHERE t.message_id IN ({placeholders})
              ORDER BY t.message_id, t.id"
         );
-        let mut stmt = conn
-            .prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(chunk.iter().copied()), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    ExportTapback {
-                        part_index: row.get(1)?,
-                        kind: row.get(2)?,
-                        emoji: row.get(3)?,
-                        is_from_me: row.get::<_, i64>(4)? != 0,
-                        sender: row.get(5)?,
-                    },
-                ))
-            })?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                ExportTapback {
+                    part_index: row.get(1)?,
+                    kind: row.get(2)?,
+                    emoji: row.get(3)?,
+                    is_from_me: row.get::<_, i64>(4)? != 0,
+                    sender: row.get(5)?,
+                },
+            ))
+        })?;
         for row in rows {
             let (mid, t) = row?;
             map.entry(mid).or_insert_with(Vec::new).push(t);

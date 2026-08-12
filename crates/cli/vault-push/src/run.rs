@@ -37,19 +37,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use message_ir::{
-    ConversationHeader,
-};
-use message_ir_format::{
-    read_conversation_jsonl,
-};
+use message_ir::ConversationHeader;
+use message_ir_format::read_conversation_jsonl;
 use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -631,8 +627,7 @@ fn resolve_attachment_digest(
     }
 
     // Hash from disk — the default path.
-    let disk_digest =
-        hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
+    let disk_digest = hash_file(abs).with_context(|| format!("{name}: hash {rel}"))?;
 
     // Compare against JSONL claim.
     if let Some(ref claimed_digest) = claimed {
@@ -821,12 +816,13 @@ fn prepare_run_setup(
         );
     }
 
-    let source = detect_source(&input)?
-        .unwrap_or_else(|| "unknown".to_string());
+    let source = detect_source(&input)?.unwrap_or_else(|| "unknown".to_string());
     // Best-effort: tell the vault "a new import run is starting" unless the
     // caller already created a session and wants us to reuse it.
     let import_id = if let Some(import_id) = cfg.import_id {
-        log.line(&format!("using provided vault import session id={import_id}"));
+        log.line(&format!(
+            "using provided vault import session id={import_id}"
+        ));
         if let Some(cb) = progress.as_mut() {
             cb(ProgressEvent::Log(format!(
                 "Reusing import session {import_id} ({source})"
@@ -995,7 +991,9 @@ fn finish_run(
         serde_json::to_string_pretty(&report).context("serialize report")?,
     )
     .with_context(|| format!("write report {}", report_path.display()))?;
-    if cfg.import_id.is_none() && let Some(import_id) = import_id {
+    if cfg.import_id.is_none()
+        && let Some(import_id) = import_id
+    {
         match http.complete_import(
             &url,
             &cfg.key,
@@ -1262,9 +1260,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 if inflight_prepares == 0 && next_submit >= total {
                     break;
                 }
-                let job = result_rx
-                    .recv()
-                    .context("prepare worker disconnected")?;
+                let job = result_rx.recv().context("prepare worker disconnected")?;
                 inflight_prepares = inflight_prepares.saturating_sub(1);
                 prepared_buf.insert(job.idx, job);
             }
@@ -1400,8 +1396,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     });
                     if must_flush {
                         let request_ok = {
-                            let mut guard =
-                                shared_journal.lock().expect("journal mutex poisoned");
+                            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
                             flush_import_pipeline(FlushImportPipeline {
                                 cfg,
                                 http: &http,
@@ -1437,11 +1432,11 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
 
                     let batch = pending.get_or_insert_with(|| ImportBatch::new(&prepared.source));
                     batch.push(idx, chunk);
-                    if batch.messages.len() >= batch_size || batch.body.len() >= MAX_IMPORT_BODY_BYTES
+                    if batch.messages.len() >= batch_size
+                        || batch.body.len() >= MAX_IMPORT_BODY_BYTES
                     {
                         let request_ok = {
-                            let mut guard =
-                                shared_journal.lock().expect("journal mutex poisoned");
+                            let mut guard = shared_journal.lock().expect("journal mutex poisoned");
                             flush_import_pipeline(FlushImportPipeline {
                                 cfg,
                                 http: &http,
@@ -1943,9 +1938,7 @@ struct UploadAssets<'a> {
 /// already uploaded it or is uploading it (unless `force`).
 fn claim_asset_upload(journal: &Mutex<SharedJournal>, digest: &str, force: bool) -> bool {
     let mut guard = journal.lock().expect("journal mutex poisoned");
-    if !force
-        && (guard.state.assets.contains(digest) || guard.assets_in_flight.contains(digest))
-    {
+    if !force && (guard.state.assets.contains(digest) || guard.assets_in_flight.contains(digest)) {
         return false;
     }
     guard.assets_in_flight.insert(digest.to_string());
@@ -2011,19 +2004,36 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
         let path = match resolve_attachment(input, rel) {
             Some(path) => path,
             None => {
-                let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+                let _ = finish_asset_upload(
+                    journal,
+                    journal_path,
+                    url,
+                    username,
+                    source,
+                    digest,
+                    false,
+                );
                 bail!("{name}: missing attachment {rel}");
             }
         };
         let file_len = match fs::metadata(&path) {
             Ok(meta) => meta.len(),
             Err(error) => {
-                let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+                let _ = finish_asset_upload(
+                    journal,
+                    journal_path,
+                    url,
+                    username,
+                    source,
+                    digest,
+                    false,
+                );
                 return Err(error).with_context(|| format!("stat {}", path.display()));
             }
         };
         if file_len > cfg.asset_max_bytes {
-            let _ = finish_asset_upload(journal, journal_path, url, username, source, digest, false);
+            let _ =
+                finish_asset_upload(journal, journal_path, url, username, source, digest, false);
             bail!(
                 "{name}: attachment {rel} is {} bytes ({} MiB), over the configured \
                  asset max of {} MiB. Raise vault [server] asset_max_bytes (and \
@@ -2066,13 +2076,9 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
                         .and_then(|_| {
                             http::with_retries(cfg.max_retries, || {
                                 // Cheap existence check before sending file bytes.
-                                if let Some(existing) = http.head_asset(
-                                    url,
-                                    &cfg.key,
-                                    username,
-                                    source,
-                                    &job.digest,
-                                )? {
+                                if let Some(existing) =
+                                    http.head_asset(url, &cfg.key, username, source, &job.digest)?
+                                {
                                     return Ok(existing);
                                 }
                                 // PUT (or multipart for large files) sends the bytes.
@@ -2134,8 +2140,15 @@ fn upload_assets(args: UploadAssets<'_>) -> Result<AssetUploadStats> {
             Err(error) => {
                 // Release every in-flight claim so a retry is not stuck forever.
                 for job in &jobs {
-                    let _ =
-                        finish_asset_upload(journal, journal_path, url, username, source, &job.digest, false);
+                    let _ = finish_asset_upload(
+                        journal,
+                        journal_path,
+                        url,
+                        username,
+                        source,
+                        &job.digest,
+                        false,
+                    );
                 }
                 bail!("{name}: {error}");
             }
@@ -2316,13 +2329,7 @@ fn finish_file_if_ready(args: FinishFile<'_, '_, '_>) -> Result<()> {
             emit_progress_line(args.log, args.progress, line);
         }
         args.batcher.note_failed();
-        emit_file_failure_lines(
-            args.log,
-            args.progress,
-            &name,
-            error,
-            Some(&profile),
-        );
+        emit_file_failure_lines(args.log, args.progress, &name, error, Some(&profile));
     } else {
         // Keep quiet per-file detail in the on-disk log only.
         args.log.line(&format!(

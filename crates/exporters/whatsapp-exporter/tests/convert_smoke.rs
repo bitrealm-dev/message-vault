@@ -1,7 +1,7 @@
 use crate::emit::convert_json;
 use message_csv::DateRange;
-use message_vault_io_core::OutputFormat;
 use message_ir_format::ExportTransforms;
+use message_vault_io_core::OutputFormat;
 use std::fs;
 use std::path::PathBuf;
 
@@ -91,7 +91,14 @@ fn copies_ios_style_media_true_data_paths() {
     .expect("convert");
 
     assert_eq!(report.attachments_saved, 1);
-    assert_eq!(report.extra.get("attachments_missing").copied().unwrap_or(0), 0);
+    assert_eq!(
+        report
+            .extra
+            .get("attachments_missing")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
     let csv = out.path().join("+15555550999__whatsapp.csv");
     let body = fs::read_to_string(&csv).expect("csv");
     assert!(body.contains("look at this"));

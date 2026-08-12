@@ -6,9 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use message_ir::{HandleService, HandleType};
-use rusqlite::{
-    Connection, OptionalExtension, Statement, Transaction, params, params_from_iter,
-};
+use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params, params_from_iter};
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -296,10 +294,11 @@ pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result
     validate_import_options(opts)?;
 
     if let Some(parent) = opts.db_path.parent()
-        && !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
 
     let mut conn = Connection::open(opts.db_path)
         .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
@@ -470,12 +469,7 @@ pub fn import_jsonl_files_on_conn(
         started.elapsed().as_secs_f64()
     );
     let _ = io::stdout().flush();
-    let promote_stats = promote_append(
-        conn,
-        opts.mode,
-        opts.account_id,
-        opts.fill_content_keys,
-    )?;
+    let promote_stats = promote_append(conn, opts.mode, opts.account_id, opts.fill_content_keys)?;
     stats.messages_deduped += promote_stats.messages_deduped;
     stats.messages_appended = promote_stats.messages_appended;
     if opts.mode == ImportMode::Append {
@@ -520,31 +514,33 @@ fn prepare_attachments(
     for mut att in attachments {
         // Import-time convert/compress: rewrite file before hash/store so digests match bytes.
         if matches!(media, MediaMode::Convert | MediaMode::Compress)
-            && let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                let source = export_dir.join(rel);
-                if source.is_file()
-                    && let Some(resolved) = import_media::resolve_for_store(
-                        &source,
-                        att.mime_type.as_deref(),
-                        media,
-                        media_work,
-                    )? {
-                        // Store rewritten bytes; drop claimed sha (bytes may have changed).
-                        att.sha256 = None;
-                        att.mime_type = resolved.mime_type.or(att.mime_type.take());
-                        let stored = assets::hash_and_store(
-                            &resolved.path,
-                            assets_dir,
-                            att.mime_type.as_deref(),
-                            asset_stats,
-                        )?;
-                        prepared.push(PreparedAttachment {
-                            record: att,
-                            stored,
-                        });
-                        continue;
-                    }
+            && let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        {
+            let source = export_dir.join(rel);
+            if source.is_file()
+                && let Some(resolved) = import_media::resolve_for_store(
+                    &source,
+                    att.mime_type.as_deref(),
+                    media,
+                    media_work,
+                )?
+            {
+                // Store rewritten bytes; drop claimed sha (bytes may have changed).
+                att.sha256 = None;
+                att.mime_type = resolved.mime_type.or(att.mime_type.take());
+                let stored = assets::hash_and_store(
+                    &resolved.path,
+                    assets_dir,
+                    att.mime_type.as_deref(),
+                    asset_stats,
+                )?;
+                prepared.push(PreparedAttachment {
+                    record: att,
+                    stored,
+                });
+                continue;
             }
+        }
 
         let stored = if let Some(sha) = att
             .sha256
@@ -862,8 +858,7 @@ fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathB
             .paths
             .ok_or_else(|| anyhow::anyhow!("source_from_jsonl requires config paths"))?;
         let dir = paths.assets_dir_for_account(opts.account_id, source);
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create {}", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
         Ok(dir)
     } else {
         Ok(opts.assets_dir.to_path_buf())
@@ -1082,12 +1077,7 @@ fn import_conversation_to_staging(
         }
         let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
         // Seed contact identity alias from the import display name (first wins).
-        seed_contact_handle_alias(
-            tx,
-            &stmts.account_id,
-            handle_id,
-            name_alias.as_deref(),
-        )?;
+        seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref())?;
         let vault_name = match contact_id {
             Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
             None => None,
@@ -1385,8 +1375,7 @@ fn promote_append(
     schema::drop_messages_fts_triggers(&tx)?;
     promote_phase_done(started, phase, "FTS triggers paused");
 
-    let existing_msgs: i64 =
-        tx.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
+    let existing_msgs: i64 = tx.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
     let drop_secondary = should_drop_messages_secondary_indexes(total_msgs, existing_msgs);
     if drop_secondary {
         let phase = Instant::now();
@@ -1660,9 +1649,7 @@ fn promote_messages_replace_chunked(
         promote_phase_done(
             started,
             phase,
-            format!(
-                "chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"
-            ),
+            format!("chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"),
         );
         lo = hi;
     }
@@ -1769,9 +1756,7 @@ fn promote_messages_append_chunked(
         promote_phase_done(
             started,
             phase,
-            format!(
-                "chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"
-            ),
+            format!("chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"),
         );
         lo = hi;
     }
@@ -1858,8 +1843,7 @@ fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Re
 
     let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
     for chunk in pairs.chunks(PROMOTE_MSG_MAP_VALUE_BATCH) {
-        let mut sql =
-            String::from("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ");
+        let mut sql = String::from("INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES ");
         for (i, _) in chunk.iter().enumerate() {
             if i > 0 {
                 sql.push(',');
@@ -2108,8 +2092,8 @@ mod tests {
         assert_eq!(row.status, "completed");
         assert_eq!(row.message_count, 1);
 
-        let listed = crate::db::vault_imports::list_imports_for_account(&conn, TEST_ACCOUNT, 10)
-            .unwrap();
+        let listed =
+            crate::db::vault_imports::list_imports_for_account(&conn, TEST_ACCOUNT, 10).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].source, "imessage");
         assert!(!listed[0].started_at.is_empty());
@@ -2330,11 +2314,9 @@ mod tests {
 
     fn contact_handle_name_alias(db: &Path) -> Option<String> {
         let conn = Connection::open(db).unwrap();
-        conn.query_row(
-            "SELECT name_alias FROM contact_handles LIMIT 1",
-            [],
-            |r| r.get::<_, Option<String>>(0),
-        )
+        conn.query_row("SELECT name_alias FROM contact_handles LIMIT 1", [], |r| {
+            r.get::<_, Option<String>>(0)
+        })
         .optional()
         .unwrap()
         .flatten()
@@ -2569,7 +2551,10 @@ mod tests {
         );
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path1], &opts).unwrap();
-        assert_eq!(contact_handle_name_alias(&db).as_deref(), Some("Backup Bob"));
+        assert_eq!(
+            contact_handle_name_alias(&db).as_deref(),
+            Some("Backup Bob")
+        );
 
         let path2 = write_jsonl(
             tmp.path(),
@@ -2579,7 +2564,10 @@ mod tests {
 "#,
         );
         import_jsonl_files(&[path2], &opts).unwrap();
-        assert_eq!(contact_handle_name_alias(&db).as_deref(), Some("Backup Bob"));
+        assert_eq!(
+            contact_handle_name_alias(&db).as_deref(),
+            Some("Backup Bob")
+        );
     }
 
     #[test]

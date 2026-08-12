@@ -52,7 +52,11 @@ const INTL: &[IntlPattern] = &[
     },
 ];
 
-pub fn generate_phone(rng: &mut impl Rng, us_probability: f64, used: &mut HashSet<String>) -> String {
+pub fn generate_phone(
+    rng: &mut impl Rng,
+    us_probability: f64,
+    used: &mut HashSet<String>,
+) -> String {
     for _ in 0..64 {
         let phone = if rng.random_bool(us_probability) {
             us_phone(rng)

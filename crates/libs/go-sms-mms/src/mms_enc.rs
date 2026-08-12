@@ -1296,9 +1296,7 @@ fn text_part_payload_end(data: &[u8], start: usize) -> usize {
         let b = data[end];
         if b < 0x80 {
             end += 1;
-        } else if (0xc2..=0xdf).contains(&b)
-            && end + 1 < data.len()
-            && data[end + 1] & 0xc0 == 0x80
+        } else if (0xc2..=0xdf).contains(&b) && end + 1 < data.len() && data[end + 1] & 0xc0 == 0x80
         {
             end += 2;
         } else if (0xe0..=0xef).contains(&b)

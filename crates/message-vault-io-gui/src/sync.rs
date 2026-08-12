@@ -3,15 +3,14 @@
 
 use media::ffmpeg_available;
 use message_vault_io_core::{
-    AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform,
-    contacts_kind_from_path,
+    AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform, contacts_kind_from_path,
 };
 use slint::{ComponentHandle, SharedString};
 use vault_push::detect_source as vault_detect_source;
 
+use crate::BackupAccountAdapter;
 use crate::options;
 use crate::state::AppState;
-use crate::BackupAccountAdapter;
 use crate::{
     AppWindow, ContactsAdapter, CredentialsAdapter, ExtractAdapter, FormatAdapter, HomeAdapter,
     ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
@@ -134,7 +133,9 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &state.form;
 
-    import.set_format_index(options::guided_import_format_index(state.guided_import_format));
+    import.set_format_index(options::guided_import_format_index(
+        state.guided_import_format,
+    ));
     import.set_backup_path(SharedString::from(form.db_path.as_str()));
     import.set_archive_path(SharedString::from(state.export_ini.vault.input.as_str()));
     import.set_backup_password(SharedString::from(form.backup_password.as_str()));
@@ -440,10 +441,7 @@ fn trim_ui_log(text: &str) -> String {
         return text.to_string();
     }
     let cut = text.len() - UI_LOG_MAX_CHARS;
-    let cut = text[cut..]
-        .find('\n')
-        .map(|i| cut + i + 1)
-        .unwrap_or(cut);
+    let cut = text[cut..].find('\n').map(|i| cut + i + 1).unwrap_or(cut);
     format!("… (earlier log truncated)\n{}", &text[cut..])
 }
 

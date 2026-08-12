@@ -140,7 +140,10 @@ fn find_tool_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
 
 pub fn probe_ffmpeg_tools(dir: Option<&Path>) -> FfmpegToolsProbe {
     let (ffmpeg, ffprobe) = match dir {
-        Some(d) => (find_tool_in_dir(d, "ffmpeg"), find_tool_in_dir(d, "ffprobe")),
+        Some(d) => (
+            find_tool_in_dir(d, "ffmpeg"),
+            find_tool_in_dir(d, "ffprobe"),
+        ),
         None => (resolve_tool("ffmpeg"), resolve_tool("ffprobe")),
     };
     match (ffmpeg, ffprobe) {

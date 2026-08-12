@@ -3,19 +3,12 @@
 use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
-use message_ir::{
-    ConversationDocument,
-    HandleType,
-};
+use message_ir::{ConversationDocument, HandleType};
 use message_ir_format::{
-    ExportTransforms,
-    FormatSink,
-    FormatSinkResult,
-    SbrReadOptions,
-    SbrReadReport,
+    ExportTransforms, FormatSink, FormatSinkResult, SbrReadOptions, SbrReadReport,
     read_sbr_documents,
 };
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use std::path::Path;
 
 /// Map the ir-format read report onto the shared [`ExportReport`] shape,
@@ -33,18 +26,24 @@ fn to_core_report(report: SbrReadReport) -> ExportReport {
     };
     out.extra.insert("sms_seen".into(), report.sms_seen);
     out.extra.insert("mms_seen".into(), report.mms_seen);
-    out.extra
-        .insert("skipped_unknown_address".into(), report.skipped_unknown_address);
+    out.extra.insert(
+        "skipped_unknown_address".into(),
+        report.skipped_unknown_address,
+    );
     out.extra
         .insert("skipped_unknown_type".into(), report.skipped_unknown_type);
-    out.extra
-        .insert("skipped_draft_or_outbox".into(), report.skipped_draft_or_outbox);
+    out.extra.insert(
+        "skipped_draft_or_outbox".into(),
+        report.skipped_draft_or_outbox,
+    );
     out.extra.insert(
         "skipped_empty_participants".into(),
         report.skipped_empty_participants,
     );
-    out.extra
-        .insert("skipped_bad_attachment".into(), report.skipped_bad_attachment);
+    out.extra.insert(
+        "skipped_bad_attachment".into(),
+        report.skipped_bad_attachment,
+    );
     out
 }
 
@@ -52,7 +51,8 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
     for document in documents {
         for participant in &mut document.conversation.participants {
             let current = participant.display_name.as_deref().unwrap_or("");
-            if let Some(name) = book.enrich_display_name(&participant.handle, HandleType::Phone, current)
+            if let Some(name) =
+                book.enrich_display_name(&participant.handle, HandleType::Phone, current)
             {
                 participant.display_name = Some(name);
             }

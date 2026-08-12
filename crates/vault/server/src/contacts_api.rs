@@ -459,12 +459,11 @@ pub fn list_contacts(
 
     let where_sql = where_parts.join(" AND ");
     let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
-    let total: i64 = conn
-        .query_row(
-            &count_sql,
-            params_from_iter(params.iter().cloned()),
-            |row| row.get(0),
-        )?;
+    let total: i64 = conn.query_row(
+        &count_sql,
+        params_from_iter(params.iter().cloned()),
+        |row| row.get(0),
+    )?;
     let total = total.max(0) as u64;
 
     let sql = format!(
@@ -498,8 +497,7 @@ pub fn list_contacts(
     page_params.push((limit as i64).into());
     page_params.push((offset as i64).into());
 
-    let mut stmt = conn
-        .prepare(&sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             let handles_blob: Option<String> = row.get(3)?;
@@ -595,9 +593,8 @@ pub fn get_contact_detail(
 
     // One row per handle. Date range and message counts cover direct + group
     // conversations that include the handle (excluding trashed conversations).
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT h.raw,
+    let mut stmt = conn.prepare(&format!(
+        "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
                     NULLIF(trim(ch.name_alias), '') AS name_alias,
                     MIN(m.timestamp) AS first_ts,
@@ -620,33 +617,31 @@ pub fn get_contact_detail(
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
              GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
              ORDER BY h.raw",
-            not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
-            not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
-        ))?;
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
+    ))?;
     let mut handles = Vec::new();
-    let rows = stmt
-        .query_map(rusqlite::params![account_id, contact_id], |row| {
-            Ok(ContactHandleInfo {
-                handle: row.get(0)?,
-                service: row.get(1)?,
-                name_alias: row.get(2)?,
-                start_date: row.get(3)?,
-                end_date: row.get(4)?,
-                individual_conversations: row.get::<_, i64>(5)?.max(0) as u64,
-                group_conversations: row.get::<_, i64>(6)?.max(0) as u64,
-                individual_message_count: row.get::<_, i64>(7)?.max(0) as u64,
-                group_message_count: row.get::<_, i64>(8)?.max(0) as u64,
-            })
-        })?;
+    let rows = stmt.query_map(rusqlite::params![account_id, contact_id], |row| {
+        Ok(ContactHandleInfo {
+            handle: row.get(0)?,
+            service: row.get(1)?,
+            name_alias: row.get(2)?,
+            start_date: row.get(3)?,
+            end_date: row.get(4)?,
+            individual_conversations: row.get::<_, i64>(5)?.max(0) as u64,
+            group_conversations: row.get::<_, i64>(6)?.max(0) as u64,
+            individual_message_count: row.get::<_, i64>(7)?.max(0) as u64,
+            group_message_count: row.get::<_, i64>(8)?.max(0) as u64,
+        })
+    })?;
     for row in rows {
         handles.push(row?);
     }
 
     // Conversation + message stats across handles of this contact only.
     // Do not GROUP BY the entire account messages table — that dominated drawer latency.
-    let mut stats_stmt = conn
-        .prepare(&format!(
-            "WITH involved AS (
+    let mut stats_stmt = conn.prepare(&format!(
+        "WITH involved AS (
                SELECT c.id, c.conversation_type
                FROM conversations c
                WHERE c.account_id = ?1
@@ -660,10 +655,10 @@ pub fn get_contact_detail(
                (SELECT COUNT(*) FROM messages m
                 WHERE m.duplicate_of IS NULL
                   AND m.conversation_id IN (SELECT id FROM involved))",
-            involves_contact_sql = involves_contact_sql(),
-            not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
-            not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
-        ))?;
+        involves_contact_sql = involves_contact_sql(),
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
+    ))?;
     let (direct, groups, total): (i64, i64, i64) = stats_stmt
         .query_row(rusqlite::params![account_id, contact_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -1274,12 +1269,7 @@ mod tests {
         .unwrap()
     }
 
-    fn set_contact_last_modified(
-        conn: &Connection,
-        account: &str,
-        contact_id: i64,
-        value: &str,
-    ) {
+    fn set_contact_last_modified(conn: &Connection, account: &str, contact_id: i64, value: &str) {
         conn.execute(
             "UPDATE contacts SET last_modified = ?1 WHERE id = ?2 AND account_id = ?3",
             params![value, contact_id, account],

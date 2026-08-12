@@ -6,28 +6,14 @@ use crate::parse::{
 };
 use anyhow::{Context, Result};
 use message_csv::{DateRange, format_local_ts, json_cell, stable_guid};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use message_ir::{
-    ConversationDocument,
-    ConversationMeta,
-    ConversationStats,
-    ExportMeta,
-    HandleType,
-    IrAttachment,
-    IrConversationType,
-    IrDirection,
-    IrMessage,
-    IrMessageKind,
-    IrParticipant,
-    IrService,
-    IrSource,
-    PendingAttachment,
-    PendingConversation,
-    PendingMessage,
-    SCHEMA_VERSION,
+    ConversationDocument, ConversationMeta, ConversationStats, ExportMeta, HandleType,
+    IrAttachment, IrConversationType, IrDirection, IrMessage, IrMessageKind, IrParticipant,
+    IrService, IrSource, PendingAttachment, PendingConversation, PendingMessage, SCHEMA_VERSION,
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
 use serde_json::Map;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -567,7 +553,10 @@ fn pending_to_document(
         }
         let key_id = msg.extra_str("key_id");
         if !key_id.is_empty() {
-            fields.insert("key_id".into(), serde_json::Value::String(key_id.to_string()));
+            fields.insert(
+                "key_id".into(),
+                serde_json::Value::String(key_id.to_string()),
+            );
         }
         let reply_json = msg.extra_str("reply_json");
         if !reply_json.is_empty() {
@@ -684,12 +673,8 @@ mod tests {
         let secret = outside.path().join("secret.bin");
         fs::write(&secret, b"secret").unwrap();
         assert!(
-            resolve_media_file(
-                secret.to_str().unwrap(),
-                None,
-                &[root.path().to_path_buf()],
-            )
-            .is_none()
+            resolve_media_file(secret.to_str().unwrap(), None, &[root.path().to_path_buf()],)
+                .is_none()
         );
     }
 

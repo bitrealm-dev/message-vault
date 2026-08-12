@@ -4,12 +4,9 @@
 //! No new session layer — just new ways to *get* a token.
 
 use anyhow::{Context, Result, bail};
-use argon2::{
-    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::SaltString,
-};
-use axum::{Json, extract::State};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::http::HeaderMap;
+use axum::{Json, extract::State};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -226,9 +223,7 @@ pub async fn hanko_session_handler(
         .unwrap_or_default();
 
     if hanko_api_url.is_empty() {
-        return Err(ApiError::Internal(
-            "HANKO_API_URL is not configured".into(),
-        ));
+        return Err(ApiError::Internal("HANKO_API_URL is not configured".into()));
     }
 
     let jwk_url = format!(
@@ -261,21 +256,21 @@ pub async fn hanko_session_handler(
             .ok_or_else(|| anyhow::anyhow!("no JWK matching kid: {kid}"))?;
 
         // from_rsa_components takes base64-encoded strings directly
-        let n_b64 = key["n"].as_str().ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
-        let e_b64 = key["e"].as_str().ok_or_else(|| anyhow::anyhow!("JWK missing e"))?;
-        let decoding_key =
-            jsonwebtoken::DecodingKey::from_rsa_components(n_b64, e_b64)
-                .map_err(|e| anyhow::anyhow!("decoding key: {e}"))?;
+        let n_b64 = key["n"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("JWK missing n"))?;
+        let e_b64 = key["e"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("JWK missing e"))?;
+        let decoding_key = jsonwebtoken::DecodingKey::from_rsa_components(n_b64, e_b64)
+            .map_err(|e| anyhow::anyhow!("decoding key: {e}"))?;
 
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.set_required_spec_claims(&["exp", "sub"]);
 
-        let token_data = jsonwebtoken::decode::<serde_json::Value>(
-            &jtw,
-            &decoding_key,
-            &validation,
-        )
-        .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
+        let token_data =
+            jsonwebtoken::decode::<serde_json::Value>(&jtw, &decoding_key, &validation)
+                .map_err(|e| anyhow::anyhow!("JWT verification: {e}"))?;
 
         let hanko_user_id = token_data.claims["sub"]
             .as_str()
@@ -292,51 +287,46 @@ pub async fn hanko_session_handler(
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
 
-        let account_id =
-            match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
-                Some(id) => id,
-                None => {
-                    // Auto-provision a new account
-                    let account_id = uuid::Uuid::new_v4().to_string();
-                    let username = email
-                        .as_ref()
-                        .and_then(|e| e.split('@').next())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            format!(
-                                "user_{}",
-                                &hanko_user_id.chars().take(8).collect::<String>()
-                            )
-                        });
+        let account_id = match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
+            Some(id) => id,
+            None => {
+                // Auto-provision a new account
+                let account_id = uuid::Uuid::new_v4().to_string();
+                let username = email
+                    .as_ref()
+                    .and_then(|e| e.split('@').next())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "user_{}",
+                            &hanko_user_id.chars().take(8).collect::<String>()
+                        )
+                    });
 
-                    // Ensure username is unique
-                    let username =
-                        if account_profile::lookup_account_ref(&conn, &username)?.is_some()
-                        {
-                            format!("{}_{}", username, &account_id[..8])
-                        } else {
-                            username
-                        };
+                // Ensure username is unique
+                let username = if account_profile::lookup_account_ref(&conn, &username)?.is_some() {
+                    format!("{}_{}", username, &account_id[..8])
+                } else {
+                    username
+                };
 
-                    account_profile::insert_account(
-                        &conn,
-                        &account_id,
-                        &username,
-                        None, // no password for hanko accounts
-                        None, // preferred_name (set during onboarding)
-                        Some(&hanko_user_id),
-                        false,
-                    )?;
+                account_profile::insert_account(
+                    &conn,
+                    &account_id,
+                    &username,
+                    None, // no password for hanko accounts
+                    None, // preferred_name (set during onboarding)
+                    Some(&hanko_user_id),
+                    false,
+                )?;
 
-                    if let Some(email) = &email {
-                        let _ = account_profile::upsert_account_email(
-                            &conn, &account_id, email, true,
-                        );
-                    }
-
-                    account_id
+                if let Some(email) = &email {
+                    let _ = account_profile::upsert_account_email(&conn, &account_id, email, true);
                 }
-            };
+
+                account_id
+            }
+        };
 
         let token = session_tokens::get_or_create_session_token(&conn, &account_id)?;
         let username = account_profile::username_for_account(&conn, &account_id)?
@@ -401,8 +391,7 @@ pub async fn change_password_handler(
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
     let db = state.cfg.paths.db.clone();
-    let new_hash = hash_password(new_password)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let new_hash = hash_password(new_password).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = Connection::open(&db)?;
@@ -434,7 +423,9 @@ pub async fn delete_account_handler(
     Json(req): Json<DeleteAccountRequest>,
 ) -> Result<Json<DeleteAccountResponse>, ApiError> {
     if !req.confirm {
-        return Err(ApiError::BadRequest("confirmation flag must be true".into()));
+        return Err(ApiError::BadRequest(
+            "confirmation flag must be true".into(),
+        ));
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     crate::server::require_full_access(&auth)?;
@@ -452,9 +443,8 @@ pub async fn delete_account_handler(
         schema::configure_connection(&conn)?;
         account_profile::delete_account(&conn, &account_id)?;
         if account_root.exists() {
-            std::fs::remove_dir_all(&account_root).with_context(|| {
-                format!("remove account data dir {}", account_root.display())
-            })?;
+            std::fs::remove_dir_all(&account_root)
+                .with_context(|| format!("remove account data dir {}", account_root.display()))?;
         }
         Ok(())
     })

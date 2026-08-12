@@ -112,7 +112,8 @@ pub async fn create_api_token_handler(
     require_full_access(&auth)?;
     let account_id = auth.account_id;
     let label = req.label;
-    let scopes = ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let scopes =
+        ApiTokenScopes::parse(&req.scopes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let db = state.cfg.paths.db.clone();
 
     let created = tokio::task::spawn_blocking(

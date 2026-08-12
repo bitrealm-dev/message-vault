@@ -305,12 +305,11 @@ pub fn list_conversations(
          JOIN handles hc ON hc.id = c.chat_handle_id
          WHERE {where_sql}"
     );
-    let total: i64 = conn
-        .query_row(
-            &count_sql,
-            params_from_iter(params.iter().cloned()),
-            |row| row.get(0),
-        )?;
+    let total: i64 = conn.query_row(
+        &count_sql,
+        params_from_iter(params.iter().cloned()),
+        |row| row.get(0),
+    )?;
     let total = total.max(0) as u64;
 
     let sql = format!(
@@ -336,8 +335,7 @@ pub fn list_conversations(
     page_params.push((limit as i64).into());
     page_params.push((offset as i64).into());
 
-    let mut stmt = conn
-        .prepare(&sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map(params_from_iter(page_params.iter().cloned()), |row| {
             Ok(RawConversation {
@@ -529,12 +527,10 @@ fn load_conversation_sources(
              GROUP BY conversation_id, source
              ORDER BY conversation_id, source"
         );
-        let mut stmt = conn
-            .prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(chunk.iter().copied()), |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(chunk.iter().copied()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
         for row in rows {
             let (cid, source) = row?;
             if source.trim().is_empty() {
@@ -565,26 +561,24 @@ pub fn list_conversation_source_stats(
     account_id: &str,
     conversation_id: i64,
 ) -> Result<Option<ConversationSourcesPage>, ExportQueryError> {
-    let owned: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM conversations WHERE id = ?1 AND account_id = ?2",
-            rusqlite::params![conversation_id, account_id],
-            |row| row.get(0),
-        )?;
+    let owned: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM conversations WHERE id = ?1 AND account_id = ?2",
+        rusqlite::params![conversation_id, account_id],
+        |row| row.get(0),
+    )?;
     if owned == 0 {
         return Ok(None);
     }
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT source,
+    let mut stmt = conn.prepare(
+        "SELECT source,
                     COUNT(*) AS message_count,
                     SUM(CASE WHEN duplicate_of IS NULL THEN 1 ELSE 0 END) AS unique_count
              FROM messages
              WHERE conversation_id = ?1
              GROUP BY source
              ORDER BY source",
-        )?;
+    )?;
     let rows: Vec<(String, i64, i64)> = stmt
         .query_map(rusqlite::params![conversation_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -762,14 +756,8 @@ mod tests {
         assert_eq!(wa_only.total, 1);
         assert_eq!(wa_only.conversations[0].id, "10");
 
-        let lone_service = list_conversations(
-            &conn,
-            &account,
-            "service:whatsapp",
-            DEFAULT_LIST_LIMIT,
-            0,
-        )
-        .unwrap();
+        let lone_service =
+            list_conversations(&conn, &account, "service:whatsapp", DEFAULT_LIST_LIMIT, 0).unwrap();
         let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
         assert_eq!(lone_service.total, all.total);
     }
@@ -1317,12 +1305,18 @@ mod tests {
         assert_eq!(b.total, 1);
         assert_eq!(b.conversations[0].id, "2");
 
-        let missing = list_conversations(&conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0)
-            .unwrap();
+        let missing =
+            list_conversations(&conn, &account, "import:999999", DEFAULT_LIST_LIMIT, 0).unwrap();
         assert_eq!(missing.total, 0);
 
-        let junk = list_conversations(&conn, &account, "import:not-a-number", DEFAULT_LIST_LIMIT, 0)
-            .unwrap();
+        let junk = list_conversations(
+            &conn,
+            &account,
+            "import:not-a-number",
+            DEFAULT_LIST_LIMIT,
+            0,
+        )
+        .unwrap();
         let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
         assert_eq!(junk.total, all.total);
     }
@@ -1387,9 +1381,11 @@ mod tests {
         )
         .unwrap();
         let winner_id: i64 = conn
-            .query_row("SELECT id FROM messages WHERE conversation_id = 4", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM messages WHERE conversation_id = 4",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
 
         // Only message in conversation 3 from import A is a duplicate.
@@ -1410,7 +1406,10 @@ mod tests {
             0,
         )
         .unwrap();
-        assert_eq!(by_import.total, 1, "import filter should match duplicate-only thread");
+        assert_eq!(
+            by_import.total, 1,
+            "import filter should match duplicate-only thread"
+        );
         assert_eq!(by_import.conversations[0].id, "3");
 
         let all = list_conversations(&conn, &account, "", DEFAULT_LIST_LIMIT, 0).unwrap();
