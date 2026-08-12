@@ -206,9 +206,7 @@ impl<T, E: ToString> JoinBlocking<T> for Result<Result<T, E>, tokio::task::JoinE
     }
 }
 
-fn lock_conn(
-    db: &StdMutex<Connection>,
-) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+fn lock_conn(db: &StdMutex<Connection>) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
     db.lock()
         .map_err(|_| anyhow::anyhow!("database mutex poisoned"))
 }

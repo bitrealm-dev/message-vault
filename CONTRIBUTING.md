@@ -193,7 +193,7 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 
 1. **Keep changes focused.** Prefer small PRs that do one job over mixed refactors and features.
 2. **Match existing style.** Follow patterns already used in nearby crates; do not add drive-by renames or unrelated cleanup.
-3. **Verify before you open a PR.** At minimum: `cargo build --workspace` and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there.
+3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there.
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
 5. **Respect licenses.** Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls it into new binaries.
 6. **Document CLI changes in the crate manpage** (`crates/<name>/docs/MANPAGE.md`), then sync the docs site as above.

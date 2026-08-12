@@ -619,8 +619,7 @@ fn resolve_incoming_sender_handle(
         return Ok(None);
     };
     let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged) =
-        resolve_handle(tx, account_id, sender, handle_type, Some(platform))?;
+    let (handle_id, flagged) = resolve_handle(tx, account_id, sender, handle_type, Some(platform))?;
     if flagged {
         stats.phones_needing_review += 1;
     }

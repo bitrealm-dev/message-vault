@@ -1,7 +1,7 @@
 //! GUI session Bearer tokens (`mv-user-…`); one per account, rotates on login.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
 const SESSION_TOKEN_ALPHANUM: &[u8] =

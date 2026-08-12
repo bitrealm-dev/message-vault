@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{in_placeholders, SQLITE_IN_CHUNK};
+use crate::db::sql::{SQLITE_IN_CHUNK, in_placeholders};
 use crate::export_api::ExportQueryError;
-use crate::search_query::{parse_count_comparison, CountComparator, CountComparison};
+use crate::search_query::{CountComparator, CountComparison, parse_count_comparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;

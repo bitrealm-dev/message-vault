@@ -1,13 +1,13 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
-use rusqlite::{params_from_iter, Connection};
+use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
-use crate::db::sql::{in_placeholders, SQLITE_IN_CHUNK};
+use crate::db::sql::{SQLITE_IN_CHUNK, in_placeholders};
 use crate::search_query::{
-    metadata_exclude_terms, metadata_include_terms, parse_search_query, ParsedSearchQuery,
-    SearchMode,
+    ParsedSearchQuery, SearchMode, metadata_exclude_terms, metadata_include_terms,
+    parse_search_query,
 };
 
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
@@ -904,7 +904,7 @@ fn load_tapbacks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::{params, Connection};
+    use rusqlite::{Connection, params};
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

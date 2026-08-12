@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
 ///
@@ -374,23 +374,31 @@ mod tests {
                 "service"
             ]
         );
-        assert!(columns("conversations")
-            .iter()
-            .any(|c| c == "chat_handle_id"));
+        assert!(
+            columns("conversations")
+                .iter()
+                .any(|c| c == "chat_handle_id")
+        );
         for column in ["account_id", "source", "content_key", "duplicate_of"] {
             assert!(columns("messages").iter().any(|c| c == column));
         }
-        assert!(columns("staging_messages")
-            .iter()
-            .any(|c| c == "account_id"));
+        assert!(
+            columns("staging_messages")
+                .iter()
+                .any(|c| c == "account_id")
+        );
         assert!(columns("attachments").iter().any(|c| c == "size_bytes"));
         assert!(columns("attachments").iter().any(|c| c == "missing_reason"));
-        assert!(columns("staging_attachments")
-            .iter()
-            .any(|c| c == "size_bytes"));
-        assert!(columns("staging_attachments")
-            .iter()
-            .any(|c| c == "missing_reason"));
+        assert!(
+            columns("staging_attachments")
+                .iter()
+                .any(|c| c == "size_bytes")
+        );
+        assert!(
+            columns("staging_attachments")
+                .iter()
+                .any(|c| c == "missing_reason")
+        );
 
         ensure_vault_schema(&conn).unwrap();
     }
