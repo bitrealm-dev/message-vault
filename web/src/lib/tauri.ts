@@ -58,16 +58,34 @@ export interface PushConfig {
 
 export interface PushFinishedReport {
   ok: boolean;
+  /** Legacy count of messages in successful HTTP requests. */
   messages: number;
+  messages_attempted: number;
+  messages_inserted: number;
+  messages_deduped: number;
+  messages_failed: number;
   assets_uploaded: number;
   assets_bytes: number;
   conversations_ok: number;
   conversations_total: number;
+  conversations_failed: number;
+  conversations_skipped: number;
+  results: Array<{
+    file: string;
+    status: string;
+    error?: string;
+    messages: number;
+    attachments: number;
+  }>;
 }
 
 export interface TauriJobResult {
   summary: string;
   report?: PushFinishedReport;
+  extraction?: {
+    files_parsed: number;
+    messages_parsed: number;
+  };
 }
 
 export async function invokePush(config: PushConfig): Promise<void> {
@@ -195,10 +213,31 @@ export async function awaitTauriJob(
 
 function parseTauriJobResult(summary: string): TauriJobResult {
   try {
-    const report = JSON.parse(summary) as Partial<PushFinishedReport> & { summary?: unknown };
+    const report = JSON.parse(summary) as Partial<PushFinishedReport> & {
+      summary?: unknown;
+      files_parsed?: unknown;
+      messages_parsed?: unknown;
+    };
+    if (
+      typeof report.summary === "string" &&
+      typeof report.files_parsed === "number" &&
+      typeof report.messages_parsed === "number"
+    ) {
+      return {
+        summary: report.summary,
+        extraction: {
+          files_parsed: report.files_parsed,
+          messages_parsed: report.messages_parsed,
+        },
+      };
+    }
     if (
       typeof report.ok === "boolean" &&
       typeof report.messages === "number" &&
+      typeof report.messages_attempted === "number" &&
+      typeof report.messages_inserted === "number" &&
+      typeof report.messages_deduped === "number" &&
+      typeof report.messages_failed === "number" &&
       typeof report.assets_uploaded === "number" &&
       typeof report.assets_bytes === "number" &&
       typeof report.conversations_ok === "number" &&

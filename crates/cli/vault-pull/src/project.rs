@@ -151,6 +151,7 @@ fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
         transcription: att.transcription.clone(),
         sticker_effect: None,
         size_bytes: att.size_bytes,
+        missing_reason: att.missing_reason.clone(),
         bytes: None,
     }
 }

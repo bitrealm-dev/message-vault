@@ -1,4 +1,5 @@
 import type { MessageAttachment } from "../lib/types";
+import { missingAttachmentChipLabel } from "../lib/missingAttachmentLabel";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
 
 export default function AttachmentThumbnail({
@@ -10,13 +11,23 @@ export default function AttachmentThumbnail({
   source: string;
   onClick: () => void;
 }) {
+  const isMissing = Boolean(attachment.missing_reason);
   const isVideo = attachment.mime_type?.startsWith("video/");
   const isImage = attachment.mime_type?.startsWith("image/");
-  const wantsMedia = Boolean(attachment.sha256 && (isImage || isVideo));
+  const wantsMedia = Boolean(!isMissing && attachment.sha256 && (isImage || isVideo));
   const { url, loading, error } = useAssetObjectUrl(
     wantsMedia ? attachment.sha256 : null,
     wantsMedia ? source : null,
   );
+
+  if (isMissing) {
+    return (
+      <div className="mt-1.5 flex items-center gap-2 rounded bg-elevated px-2 py-2 text-[0.813rem] text-muted">
+        <span>📎</span>
+        <span>{missingAttachmentChipLabel(attachment)}</span>
+      </div>
+    );
+  }
 
   // No renderable asset (missing digest) or an unknown file type — show a file chip
   if (!attachment.sha256 || (!isImage && !isVideo)) {

@@ -341,6 +341,7 @@ fn to_document(
                     transcription: None,
                     sticker_effect: None,
                     size_bytes: None,
+                    missing_reason: None,
                     bytes: a.bytes.as_ref().map(|b| b.as_ref().to_vec()),
                 })
                 .collect(),

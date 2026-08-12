@@ -186,6 +186,7 @@ fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
             transcription: a.transcription.clone(),
             sticker_effect: a.sticker_effect.clone(),
             size_bytes: None,
+            missing_reason: None,
             bytes: if a.bytes.is_empty() {
                 None
             } else {

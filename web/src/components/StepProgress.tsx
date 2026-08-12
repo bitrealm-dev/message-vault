@@ -1,44 +1,144 @@
-interface Step {
+import type { ReactNode } from "react";
+import OpenPathButton from "./OpenPathButton";
+
+export type StepStatus = "pending" | "active" | "done" | "error";
+
+export type Step = {
   label: string;
-  status: "pending" | "active" | "done" | "error";
+  status: StepStatus;
+  /** Status line under the label (e.g. "Extraction complete"). */
   detail?: string;
+  /** Staging/output directory shown under the label; opens in the OS file explorer. */
+  pathLink?: string;
+  /** Wall-clock duration for a finished step, shown beside the label. */
+  durationMs?: number | null;
+};
+
+type StepProgressProps = {
+  steps: Step[];
+  /** Status line shown under the list once every step has finished. */
+  completionText?: ReactNode;
+};
+
+function formatStepDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes > 0) return `${minutes}m ${remainingSeconds}s`;
+  return `${remainingSeconds}s`;
+}
+
+function stepLabelClass(status: StepStatus): string {
+  if (status === "active") return "font-semibold text-text";
+  if (status === "pending") return "text-muted";
+  return "text-text";
+}
+
+function StepGlyph({ status, index }: { status: StepStatus; index: number }) {
+  const slot = "flex h-6 w-6 shrink-0 items-center justify-center";
+
+  if (status === "active") {
+    return (
+      <span className={slot} aria-hidden>
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+      </span>
+    );
+  }
+  if (status === "done") {
+    return (
+      <span className={`${slot} text-[1rem] font-semibold text-ok`} aria-hidden>
+        ✓
+      </span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span className={`${slot} text-[1rem] font-semibold text-danger`} aria-hidden>
+        !
+      </span>
+    );
+  }
+  return (
+    <span className={`${slot} text-[0.75rem] font-semibold text-muted`} aria-hidden>
+      {index + 1}
+    </span>
+  );
+}
+
+type CompletionKind = "ok" | "error" | "muted";
+
+function completionKind(text: ReactNode): CompletionKind {
+  if (text === "Import complete") return "ok";
+  if (text === "Import failed") return "error";
+  return "muted";
+}
+
+function completionBadgeClass(kind: CompletionKind): string {
+  if (kind === "ok") return "bg-ok text-sent-text";
+  if (kind === "error") return "bg-danger text-sent-text";
+  return "bg-border text-muted";
+}
+
+function completionBadgeMark(kind: CompletionKind): string {
+  if (kind === "ok") return "✓";
+  if (kind === "error") return "!";
+  return "–";
 }
 
 /**
  * Ordered list of import steps. Each step is an <li>; the active step carries
  * aria-current="step" so assistive tech announces where the job is.
  */
-export default function StepProgress({ steps }: { steps: Step[] }) {
+export default function StepProgress({ steps, completionText }: StepProgressProps) {
+  const kind = completionText == null ? null : completionKind(completionText);
+
   return (
-    <ol className="mt-6">
-      {steps.map((step, i) => (
-        <li
-          key={i}
-          aria-current={step.status === "active" ? "step" : undefined}
-          className="mb-3 flex items-start gap-3"
-        >
-          <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.75rem] font-semibold ${
-              step.status === "done" ? "bg-ok text-sent-text" :
-              step.status === "active" ? "bg-accent text-sent-text" :
-              step.status === "error" ? "bg-danger text-sent-text" : "bg-border text-muted"
-            }`}
+    <div className="mt-6">
+      <ol className="m-0 grid w-fit max-w-full grid-cols-[1.5rem_minmax(0,max-content)_max-content] gap-x-2 gap-y-3 p-0">
+        {steps.map((step, i) => (
+          <li
+            key={i}
+            aria-current={step.status === "active" ? "step" : undefined}
+            className="col-span-3 grid grid-cols-subgrid items-start"
           >
-            {step.status === "done" ? "✓" : step.status === "error" ? "!" : i + 1}
-          </span>
-          <div>
-            <div
-              className={`text-[0.875rem] ${
-                step.status === "active" ? "font-semibold text-text" :
-                step.status === "pending" ? "text-muted" : "text-text"
-              }`}
-            >
-              {step.label}
+            <StepGlyph status={step.status} index={i} />
+            <div className="min-w-0 max-w-[min(36rem,70vw)]">
+              <div className={`text-[0.875rem] ${stepLabelClass(step.status)}`}>
+                {step.label}
+              </div>
+              {step.pathLink ? (
+                <OpenPathButton
+                  path={step.pathLink}
+                  className="mt-0.5 block max-w-full truncate border-0 bg-transparent p-0 text-left text-[0.75rem] text-accent underline-offset-2 hover:underline"
+                >
+                  {step.pathLink}
+                </OpenPathButton>
+              ) : null}
+              {step.detail ? (
+                <div className="mt-0.5 text-[0.75rem] text-muted">{step.detail}</div>
+              ) : null}
             </div>
-            {step.detail && <div className="mt-0.5 text-[0.75rem] text-muted">{step.detail}</div>}
-          </div>
-        </li>
-      ))}
-    </ol>
+            {step.durationMs != null ? (
+              <span className="pt-0.5 text-[0.813rem] tabular-nums text-muted">
+                {formatStepDuration(step.durationMs)}
+              </span>
+            ) : (
+              <span />
+            )}
+          </li>
+        ))}
+      </ol>
+      {completionText != null && kind != null ? (
+        <div className="mt-5 flex items-center gap-2">
+          <span
+            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.75rem] font-semibold ${completionBadgeClass(kind)}`}
+            aria-hidden
+          >
+            {completionBadgeMark(kind)}
+          </span>
+          <p className="mb-0 text-[0.875rem] font-medium text-text">{completionText}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }

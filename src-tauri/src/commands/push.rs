@@ -27,15 +27,28 @@ fn finished_push_events(
         },
         serde_json::json!({
             "summary": format!(
-                "Push complete: {} messages, {}/{} conversations ok, {} assets uploaded",
-                report.messages, report.conversations_ok, report.conversations_total, report.assets_uploaded
+                "Push complete: {} new, {} deduped, {} failed of {} attempted; {}/{} conversations ok; {} assets uploaded",
+                report.messages_inserted,
+                report.messages_deduped,
+                report.messages_failed,
+                report.messages_attempted,
+                report.conversations_ok,
+                report.conversations_total,
+                report.assets_uploaded
             ),
             "ok": report.ok,
             "messages": report.messages,
+            "messages_attempted": report.messages_attempted,
+            "messages_inserted": report.messages_inserted,
+            "messages_deduped": report.messages_deduped,
+            "messages_failed": report.messages_failed,
             "assets_uploaded": report.assets_uploaded,
             "assets_bytes": report.assets_bytes,
             "conversations_ok": report.conversations_ok,
             "conversations_total": report.conversations_total,
+            "conversations_failed": report.conversations_failed,
+            "conversations_skipped": report.conversations_skipped,
+            "results": report.results,
         }),
     )
 }
@@ -103,19 +116,50 @@ pub async fn push(
             }
             ProgressEvent::FileDone { file, status } => {
                 let _ = app_handle.emit("extract:log", format!("Done: {file} ({status})"));
-                if status.as_str() != "ok" && status.as_str() != "skipped" {
-                    let _ = app_handle.emit(
-                        "extract:issue",
-                        serde_json::json!({
-                            "kind": "error",
-                            "step": "upload",
-                            "item": file,
-                            "reason": status,
-                        }),
-                    );
-                }
+            }
+            ProgressEvent::Issue {
+                kind,
+                step,
+                item,
+                reason,
+            } => {
+                let _ = app_handle.emit(
+                    "extract:issue",
+                    serde_json::json!({
+                        "kind": kind,
+                        "step": step,
+                        "item": item,
+                        "reason": reason,
+                    }),
+                );
             }
             ProgressEvent::Finished(report) => {
+                for result in &report.results {
+                    if result.status == "failed" {
+                        let _ = app_handle.emit(
+                            "extract:issue",
+                            serde_json::json!({
+                                "kind": "error",
+                                "step": "upload",
+                                "item": result.file,
+                                "reason": result.error.as_deref().unwrap_or("upload failed"),
+                            }),
+                        );
+                    } else if result.status == "skipped" {
+                        let _ = app_handle.emit(
+                            "extract:issue",
+                            serde_json::json!({
+                                "kind": "skip",
+                                "step": "upload",
+                                "item": result.file,
+                                "reason": result
+                                    .error
+                                    .as_deref()
+                                    .unwrap_or("already imported or skipped"),
+                            }),
+                        );
+                    }
+                }
                 let (progress, summary) = finished_push_events(&report);
                 let _ = app_handle.emit("extract:progress", progress);
                 let _ = app_handle.emit("extract:finished", summary.to_string());
@@ -142,7 +186,7 @@ pub async fn push(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vault_push::PushReport;
+    use vault_push::{FileResult, PushReport};
 
     #[test]
     fn finished_push_event_reports_complete_upload_and_totals() {
@@ -158,11 +202,22 @@ mod tests {
             conversations_ok: 2,
             conversations_failed: 0,
             conversations_skipped: 1,
+            messages_attempted: 45,
+            messages_inserted: 42,
+            messages_deduped: 2,
+            messages_failed: 1,
             messages: 42,
             assets_uploaded: 4,
             assets_skipped: 1,
             assets_bytes: 12_345,
-            results: vec![],
+            results: vec![FileResult {
+                file: "failed.jsonl".into(),
+                status: "failed".into(),
+                error: Some("attachment exceeds limit".into()),
+                messages: 0,
+                attachments: 0,
+                profile: None,
+            }],
         };
 
         let (progress, summary) = finished_push_events(&report);
@@ -171,9 +226,16 @@ mod tests {
         assert_eq!(progress.done, 3);
         assert_eq!(progress.total, 3);
         assert_eq!(summary["messages"], 42);
+        assert_eq!(summary["messages_attempted"], 45);
+        assert_eq!(summary["messages_inserted"], 42);
+        assert_eq!(summary["messages_deduped"], 2);
+        assert_eq!(summary["messages_failed"], 1);
+        assert_eq!(summary["conversations_failed"], 0);
+        assert_eq!(summary["conversations_skipped"], 1);
+        assert_eq!(summary["results"][0]["error"], "attachment exceeds limit");
         assert_eq!(
             summary["summary"],
-            "Push complete: 42 messages, 2/3 conversations ok, 4 assets uploaded"
+            "Push complete: 42 new, 2 deduped, 1 failed of 45 attempted; 2/3 conversations ok; 4 assets uploaded"
         );
         assert_eq!(summary["assets_bytes"], 12_345);
         assert_eq!(summary["conversations_ok"], 2);

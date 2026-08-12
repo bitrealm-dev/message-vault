@@ -1,7 +1,7 @@
 # Import progress summary and stage timings
 
 **Date:** 2026-08-11  
-**Status:** Approved for planning  
+**Status:** Approved for implementation
 **Scope:** Import Messages UI (`web/src/screens/ImportScreen.tsx`), Tauri extract/push progress events, vault import session API and SQLite (`vault_imports`, new issues table)
 
 ## Problem
@@ -12,7 +12,7 @@ During Import Messages, the step list mostly shows vague status text such as “
 
 - Show live per-step counts (`done / total`) on the Import Messages step list while a run is in progress.
 - Show one overall elapsed wall clock during the run, plus per-active-step elapsed when useful.
-- After finish (or failure), show a Summary on the same screen: step totals, **per-stage and total timings**, and an **Errors & skips** list only (no full success file list).
+- After finish (or failure), show exact file and message accounting, **per-stage and total timings**, and an **Import Errors** table only (no full success file list).
 - Persist that summary, stage timings, total duration, and error/skip rows in the vault database so Import history can reopen the same view later.
 - Start the vault import session at the beginning of the GUI import so one `vault_imports` row covers parse, convert, and upload.
 - Link every message (and thus attachments via messages) written by that run to that same session via `messages.import_id`.
@@ -31,6 +31,7 @@ During Import Messages, the step list mostly shows vague status text such as “
 |--------|--------|
 | Primary UI | Step list with live counts; Summary after run (not the raw log as the main surface) |
 | Per-file detail | Totals + **errors/skips only** |
+| Message accounting | `parsed = attempted + not attempted`; `attempted = new + deduped + failed` |
 | Persistence | Light: summary + timings + issue rows in DB; live counters in memory only |
 | Architecture | Extend `vault_imports` + child `vault_import_issues`; structured progress events from extract/push |
 | Timings | Store **parse_ms**, **convert_ms**, **upload_ms**, and **duration_ms** (total) in the database with the session |
@@ -60,7 +61,35 @@ While running:
 - Cancel remains available.
 - Do not treat the free-text log as the primary progress surface (optional “details” may remain for debugging later; not required for v1).
 
-When finished or failed: switch to **Summary** on the same screen — status, step totals, stage timings + total time, Errors & skips (item + reason). Successful paths are not listed.
+When finished or failed: keep the same step list on screen. Put Parse, Convert, and Upload
+wall-clock times next to each finished step. Show plain status text under Upload to vault
+(`Import complete`, `Import failed`, or `Import canceled`). Do not put those three stage times
+in a separate summary banner.
+
+The completed accounting tables store and display:
+
+The final parse count must come from the generated JSONL output rather than the last progress
+notification. Progress notifications may stop at a coarse interval such as 86,000 even when the
+output contains 86,572 records.
+
+- Conversation file totals remain available from the push report and persisted summary JSON, but
+  the Import summary UI shows only the Messages table plus Import Errors.
+- Messages parsed from the generated JSONL files.
+- Messages attempted in HTTP import requests.
+- Messages inserted as new rows, reported by the server.
+- Messages rejected as duplicates, reported by the server.
+- Messages in HTTP requests that failed after retries.
+- Messages skipped, derived as parsed minus attempted.
+
+The UI displays both equations so missing messages always have an explicit category:
+
+`parsed = attempted + skipped`
+
+`attempted = new uploaded + duplicate + failed`
+
+Skipped messages are listed under Import Errors (skip and error issue rows). New uploaded,
+duplicate, and failed counts are indented under Attempted. The Messages table stays at half
+width; Import Errors grows with the remaining panel width.
 
 ## Timing model
 
@@ -125,7 +154,27 @@ CLI/single-POST import paths that already create a `vault_imports` row should le
 
 ## Import history UI
 
-Settings → Storage → Import history keeps the existing table. Make each row openable to a detail view that reuses the Summary layout (step totals, stage + total timings, Errors & skips) from `GET /v1/imports/{id}`.
+Settings → Storage → Import history uses five columns: Date, Import type, Messages,
+Attachments, and Uploaded size. Uploaded size comes from `vault_imports.bytes_uploaded`. It
+describes bytes newly uploaded during that import, which helps the user understand how each import
+contributed to current account storage and quota use. It is not the total original size of every
+attachment referenced by the import.
+
+Each history row is clickable and keyboard-accessible. Activating a row fetches its detail and
+inserts one expanded detail row immediately below it. Activating the selected row again collapses
+the detail. Opening another row moves the detail to that row.
+
+The expanded row reuses the import summary layout. Parse, Convert, and Upload times appear next
+to the three step labels, with plain completion text under Upload. Duration is not a separate
+summary banner and does not appear as a history-table column.
+
+The Import Errors section uses the existing `@tanstack/react-virtual` dependency. It renders a
+sticky three-column header (`Parse File`, `Step`, `Error Message`) and only the visible error rows.
+The table fills the available panel width so it does not need a horizontal scrollbar. Collapsed rows
+truncate long text; clicking a row expands it in place so the full file path and error message are
+readable. Its fixed scroll viewport shows approximately 15–20 collapsed entries at once, with a
+small overscan buffer for smooth scrolling. A short list uses only the height it needs and does not
+show an unnecessary empty scroll area.
 
 ## Progress events (desktop)
 
@@ -149,4 +198,9 @@ Parse already reports message progress at a finer grain (for example every 1,000
 - Server: complete import persists timings and issues; get-by-id returns them; list still works for rows without timings.
 - Server/push: with a pre-created `import_id`, imported messages have that `import_id`; no second `vault_imports` row is created for the same GUI run.
 - GUI (manual or automated where practical): live counts update per step; Summary shows stage + total times; history detail matches what was just imported; failed convert/upload appears under Errors & skips only; Import history shows one row whose message/attachment counts match the linked messages.
+- Verify exact message equations for an all-new import, a server-deduped import, and a failed HTTP request.
+- Verify the generated JSONL record count replaces the last coarse parse progress value.
+- Verify a history row expands directly beneath itself, a second activation collapses it, and Enter/Space behave like a click.
+- Verify Import Errors renders a scrollable virtual viewport for more than 20 issues and remains compact for short issue lists.
+- Verify Import history labels `bytes_uploaded` as Uploaded size and shows duration only inside the expanded detail.
 - Confirm push chunk `total time` is not stored as `duration_ms`.

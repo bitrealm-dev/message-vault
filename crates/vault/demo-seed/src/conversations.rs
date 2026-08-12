@@ -1091,6 +1091,7 @@ fn add_jpg_attachment(
         sticker_effect: None,
         bytes: None,
         size_bytes: if has_sha { Some(size) } else { None },
+        missing_reason: None,
     });
     stats.attachment_refs += 1;
 }
@@ -1123,6 +1124,7 @@ fn add_attachment(
         sticker_effect: None,
         bytes: None,
         size_bytes: if has_sha { Some(size) } else { None },
+        missing_reason: None,
     });
     stats.attachment_refs += 1;
 }

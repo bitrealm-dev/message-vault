@@ -104,6 +104,8 @@ pub struct ExportAttachment {
     /// Asset length in bytes when the vault echoes import metadata.
     #[serde(default, alias = "size", alias = "bytes")]
     pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub missing_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

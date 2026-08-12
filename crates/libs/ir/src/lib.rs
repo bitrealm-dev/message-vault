@@ -290,6 +290,9 @@ pub struct IrAttachment {
     /// On-disk / vault asset length in bytes (not file contents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
+    /// Why bytes were not imported (`too_large`, `file_missing`). Absent when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_reason: Option<String>,
     /// In-memory bytes for EML embedding; never written to JSON.
     #[serde(skip)]
     pub bytes: Option<Vec<u8>>,

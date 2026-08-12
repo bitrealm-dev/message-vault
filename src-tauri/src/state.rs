@@ -1,6 +1,6 @@
 use message_vault_io_core::CancelFlag;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 pub struct AppState {
     pub cancel_flag: CancelFlag,

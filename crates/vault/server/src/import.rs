@@ -848,8 +848,8 @@ impl<'conn> StagingInserts<'conn> {
                 r#"
                 INSERT INTO staging_attachments (
                     message_id, path, original_name, mime_type, is_sticker, transcription,
-                    sha256, assets_path, size_bytes
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    sha256, assets_path, size_bytes, missing_reason
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 "#,
             )?,
             tap: tx.prepare(
@@ -1223,7 +1223,15 @@ fn import_conversation_to_staging(
             let size_bytes = assets_path
                 .as_deref()
                 .and_then(|rel| std::fs::metadata(assets_dir.join(rel)).ok())
-                .map(|meta| meta.len() as i64);
+                .map(|meta| meta.len() as i64)
+                .or_else(|| att.size_bytes.map(|n| n as i64));
+
+            // Bytes absent and reason set: keep metadata-only placeholder rows.
+            let missing_reason = if sha256.is_none() {
+                att.missing_reason
+            } else {
+                None
+            };
 
             stmts.att.execute(params![
                 message_id,
@@ -1235,6 +1243,7 @@ fn import_conversation_to_staging(
                 sha256,
                 assets_path,
                 size_bytes,
+                missing_reason,
             ])?;
             stats.attachments += 1;
         }
@@ -1477,11 +1486,11 @@ fn promote_append(
         r#"
         INSERT INTO attachments (
             message_id, path, original_name, mime_type, is_sticker, transcription,
-            sha256, assets_path, size_bytes
+            sha256, assets_path, size_bytes, missing_reason
         )
         SELECT
             mm.prod_id, sa.path, sa.original_name, sa.mime_type, sa.is_sticker, sa.transcription,
-            sa.sha256, sa.assets_path, sa.size_bytes
+            sa.sha256, sa.assets_path, sa.size_bytes, sa.missing_reason
         FROM staging_attachments sa
         JOIN _promote_msg_map mm ON mm.staging_id = sa.message_id
         "#,
@@ -2687,5 +2696,57 @@ mod tests {
             )
             .unwrap();
         assert_eq!(after_noop, OLD);
+    }
+
+    #[test]
+    fn persists_missing_reason_with_null_sha256() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        fs::create_dir_all(&assets).unwrap();
+
+        let path = write_jsonl(
+            tmp.path(),
+            "missing-att.jsonl",
+            r#"{"schema_version":3,"export":{"source":"sms-backup-restore","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-missing","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"mms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"see attached","attachments":[{"path":"attachments/gone.bin","original_name":"gone.bin","mime_type":"application/octet-stream","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null,"size_bytes":999,"missing_reason":"too_large"}],"imessage":null,"source":null}
+"#,
+        );
+        let stats = import_jsonl_files(
+            &[path],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "sms-backup-restore",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+        )
+        .unwrap();
+        assert_eq!(stats.messages, 1);
+        assert_eq!(stats.attachments, 1);
+
+        let conn = Connection::open(&db).unwrap();
+        let (sha256, missing_reason, size_bytes, original_name): (
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT sha256, missing_reason, size_bytes, original_name FROM attachments LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!(sha256.is_none());
+        assert_eq!(missing_reason.as_deref(), Some("too_large"));
+        assert_eq!(size_bytes, Some(999));
+        assert_eq!(original_name.as_deref(), Some("gone.bin"));
     }
 }

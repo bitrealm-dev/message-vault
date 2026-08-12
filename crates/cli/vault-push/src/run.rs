@@ -175,11 +175,32 @@ pub struct PushReport {
     pub conversations_ok: u64,
     pub conversations_failed: u64,
     pub conversations_skipped: u64,
+    /// Messages placed in HTTP import request bodies.
+    #[serde(default)]
+    pub messages_attempted: u64,
+    /// Messages the server inserted as new rows.
+    #[serde(default)]
+    pub messages_inserted: u64,
+    /// Attempted messages the server reported as already present.
+    #[serde(default)]
+    pub messages_deduped: u64,
+    /// Messages in HTTP requests that failed after all retries.
+    #[serde(default)]
+    pub messages_failed: u64,
+    /// Legacy successful-request count. Equal to attempted minus failed.
     pub messages: u64,
     pub assets_uploaded: u64,
     pub assets_skipped: u64,
     pub assets_bytes: u64,
     pub results: Vec<FileResult>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct MessageAccounting {
+    attempted: u64,
+    inserted: u64,
+    deduped: u64,
+    failed: u64,
 }
 
 /// Events the GUI/CLI can show while a push is running.
@@ -198,6 +219,13 @@ pub enum ProgressEvent {
     FileDone {
         file: String,
         status: String,
+    },
+    /// Structured skip/error for Import Errors (e.g. oversized attachment).
+    Issue {
+        kind: String,
+        step: String,
+        item: String,
+        reason: String,
     },
     Finished(PushReport),
 }
@@ -273,6 +301,7 @@ pub fn format_push_summary(report: &PushReport) -> String {
 Import {status}\n\
 Conversations: {} ok, {} failed, {} skipped ({} total)\n\
 Messages: {}\n\
+Message accounting: {} attempted = {} new + {} deduped + {} failed\n\
 Assets: {} uploaded, {} skipped\n\
 Elapsed: {} ({} ms)",
         report.conversations_ok,
@@ -280,6 +309,10 @@ Elapsed: {} ({} ms)",
         report.conversations_skipped,
         report.conversations_total,
         report.messages,
+        report.messages_attempted,
+        report.messages_inserted,
+        report.messages_deduped,
+        report.messages_failed,
         report.assets_uploaded,
         report.assets_skipped,
         format_duration_ms(report.elapsed_ms),
@@ -420,6 +453,27 @@ fn emit_progress_line(
     log.line(&line);
     if let Some(cb) = progress.as_mut() {
         cb(ProgressEvent::Log(line));
+    }
+}
+
+/// Emit Import Errors skip rows for attachments that were not uploaded.
+fn emit_attachment_skips(
+    log: &mut LogWriter,
+    progress: &mut Option<&mut ProgressFn<'_>>,
+    skips: &[AttachmentSkipIssue],
+) {
+    for skip in skips {
+        let line = format!("skip {}: {}", skip.item, skip.reason);
+        log.line(&line);
+        if let Some(cb) = progress.as_mut() {
+            cb(ProgressEvent::Log(line));
+            cb(ProgressEvent::Issue {
+                kind: "skip".into(),
+                step: "upload".into(),
+                item: skip.item.clone(),
+                reason: skip.reason.clone(),
+            });
+        }
     }
 }
 
@@ -849,6 +903,7 @@ struct FinishRunArgs<'a> {
     assets_uploaded: u64,
     assets_skipped: u64,
     assets_bytes: u64,
+    message_accounting: MessageAccounting,
     aborted: bool,
     http: &'a HttpSession,
     import_id: Option<i64>,
@@ -875,6 +930,7 @@ fn finish_run(
         assets_uploaded,
         assets_skipped,
         assets_bytes,
+        message_accounting,
         aborted,
         http,
         import_id,
@@ -921,6 +977,10 @@ fn finish_run(
         conversations_ok: ok_n,
         conversations_failed: fail_n,
         conversations_skipped: skip_n,
+        messages_attempted: message_accounting.attempted,
+        messages_inserted: message_accounting.inserted,
+        messages_deduped: message_accounting.deduped,
+        messages_failed: message_accounting.failed,
         messages,
         assets_uploaded,
         assets_skipped,
@@ -996,6 +1056,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     let mut assets_uploaded = 0u64;
     let mut assets_skipped = 0u64;
     let mut assets_bytes = 0u64;
+    let mut message_accounting = MessageAccounting::default();
     // First import in replace mode may use mode=replace; later ones use append.
     let mut first_import = true;
     let mut aborted = false;
@@ -1101,6 +1162,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         progress: &mut progress,
                         results: &mut results,
                         batcher: &mut batcher,
+                        message_accounting: &mut message_accounting,
                         import_id,
                         wait: false,
                     })?
@@ -1176,6 +1238,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                                 assets_skipped: 0,
                                 assets_bytes: 0,
                                 log_lines: Vec::new(),
+                                attachment_skips: Vec::new(),
                             }),
                         },
                     );
@@ -1237,6 +1300,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                                     progress: &mut progress,
                                     results: &mut results,
                                     batcher: &mut batcher,
+                                    message_accounting: &mut message_accounting,
                                     import_id,
                                     wait: true,
                                 })?
@@ -1277,6 +1341,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 for line in &prepared.log_lines {
                     log.line(line);
                 }
+                emit_attachment_skips(&mut log, &mut progress, &prepared.attachment_skips);
 
                 if pending
                     .as_ref()
@@ -1299,6 +1364,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                             progress: &mut progress,
                             results: &mut results,
                             batcher: &mut batcher,
+                            message_accounting: &mut message_accounting,
                             import_id,
                             wait: !cfg.continue_on_error,
                         })?
@@ -1351,6 +1417,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                                 progress: &mut progress,
                                 results: &mut results,
                                 batcher: &mut batcher,
+                                message_accounting: &mut message_accounting,
                                 import_id,
                                 wait: !cfg.continue_on_error,
                             })?
@@ -1390,6 +1457,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                                 progress: &mut progress,
                                 results: &mut results,
                                 batcher: &mut batcher,
+                                message_accounting: &mut message_accounting,
                                 import_id,
                                 wait: !cfg.continue_on_error,
                             })?
@@ -1453,6 +1521,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 for line in &prepared.log_lines {
                     log.line(line);
                 }
+                emit_attachment_skips(&mut log, &mut progress, &prepared.attachment_skips);
             }
         }
         let _ = inflight_prepares;
@@ -1478,6 +1547,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                 progress: &mut progress,
                 results: &mut results,
                 batcher: &mut batcher,
+                message_accounting: &mut message_accounting,
                 import_id,
                 wait: true,
             })?
@@ -1500,6 +1570,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             progress: &mut progress,
             results: &mut results,
             batcher: &mut batcher,
+            message_accounting: &mut message_accounting,
         });
     }
 
@@ -1529,6 +1600,7 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             assets_uploaded,
             assets_skipped,
             assets_bytes,
+            message_accounting,
             aborted,
             http: &http,
             import_id,
@@ -1566,6 +1638,13 @@ struct PrepareFileArgs<'a> {
     digest_cache: &'a DigestCache,
 }
 
+/// One attachment omitted from upload but kept as metadata on the message.
+#[derive(Debug, Clone)]
+struct AttachmentSkipIssue {
+    item: String,
+    reason: String,
+}
+
 /// Output of preparing one conversation: uploaded media + message chunks ready to import.
 struct PreparedFile {
     source: String,
@@ -1577,6 +1656,7 @@ struct PreparedFile {
     assets_skipped: u64,
     assets_bytes: u64,
     log_lines: Vec<String>,
+    attachment_skips: Vec<AttachmentSkipIssue>,
 }
 
 /// One piece of an import request: NDJSON body bytes plus the message ids in it.
@@ -1625,14 +1705,15 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
     let source = project::validate_header(&header)?;
     let messages = &doc.messages;
 
-    // For each message: list of (attachment index, sha256, file size).
-    let mut per_message_digests: Vec<Vec<(usize, String, u64)>> =
+    // For each message: how to project attachments onto the import JSONL line.
+    let mut per_message_projections: Vec<Vec<project::AttachmentProjection>> =
         Vec::with_capacity(messages.len());
     let mut attachment_count = 0u64;
     let mut assets_uploaded = 0u64;
     let mut assets_skipped = 0u64;
     let mut assets_bytes = 0u64;
     let mut log_lines = Vec::new();
+    let mut attachment_skips: Vec<AttachmentSkipIssue> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
     let mut profile = UploadProfile {
         read_ms,
@@ -1646,26 +1727,56 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
             let n = msg.attachments.len() as u64;
             attachment_count += n;
             assets_skipped += n;
-            per_message_digests.push(Vec::new());
+            per_message_projections.push(Vec::new());
         }
         profile.attachment_scan_hash_ms = elapsed_ms(attachment_scan_hash_started);
     } else {
         // Map: sha256 → (relative path, mime). BTreeMap keeps a stable upload order.
         let mut unique: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+        let mut scan_skipped = 0u64;
 
         for msg in messages {
-            let mut digests = Vec::new();
+            let mut projections = Vec::new();
             for (att_i, att) in msg.attachments.iter().enumerate() {
                 attachment_count += 1;
                 let Some(rel) = att.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     bail!("{name}: attachment {att_i} has no path");
                 };
                 safe_rel(rel)?;
-                let abs = resolve_attachment(input, rel)
-                    .ok_or_else(|| anyhow::anyhow!("{name}: missing attachment {rel}"))?;
+                let Some(abs) = resolve_attachment(input, rel) else {
+                    scan_skipped += 1;
+                    attachment_skips.push(AttachmentSkipIssue {
+                        item: format!("{name}:{rel}"),
+                        reason: "attachment file not found on disk".into(),
+                    });
+                    projections.push(project::AttachmentProjection::Missing {
+                        index: att_i,
+                        reason: "file_missing".into(),
+                        size: att.size_bytes,
+                    });
+                    continue;
+                };
                 let file_len = std::fs::metadata(&abs)
                     .with_context(|| format!("{name}: stat attachment {rel}"))?
                     .len();
+                if file_len > cfg.asset_max_bytes {
+                    scan_skipped += 1;
+                    attachment_skips.push(AttachmentSkipIssue {
+                        item: format!("{name}:{rel}"),
+                        reason: format!(
+                            "attachment is {} bytes ({} MiB), over the configured asset max of {} MiB",
+                            file_len,
+                            file_len / (1024 * 1024),
+                            cfg.asset_max_bytes / (1024 * 1024)
+                        ),
+                    });
+                    projections.push(project::AttachmentProjection::Missing {
+                        index: att_i,
+                        reason: "too_large".into(),
+                        size: Some(file_len),
+                    });
+                    continue;
+                }
                 let claimed = att
                     .digest_sha256
                     .as_deref()
@@ -1685,9 +1796,13 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                 unique
                     .entry(digest.clone())
                     .or_insert_with(|| (rel.to_string(), att.mime_type.clone()));
-                digests.push((att_i, digest, file_len));
+                projections.push(project::AttachmentProjection::Digested {
+                    index: att_i,
+                    digest,
+                    size: file_len,
+                });
             }
-            per_message_digests.push(digests);
+            per_message_projections.push(projections);
         }
 
         profile.attachment_scan_hash_ms = elapsed_ms(attachment_scan_hash_started);
@@ -1714,9 +1829,9 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         profile.asset_upload_ms = elapsed_ms(asset_upload_started);
         profile.asset_bytes = upload_stats.bytes;
         assets_uploaded = upload_stats.uploaded;
-        assets_skipped = upload_stats.skipped;
+        assets_skipped = upload_stats.skipped.saturating_add(scan_skipped);
         assets_bytes = upload_stats.bytes;
-        log_lines = upload_stats.log_lines;
+        log_lines.extend(upload_stats.log_lines);
     }
 
     // Build import chunks: each chunk is "header line + many message lines" as NDJSON bytes.
@@ -1730,8 +1845,8 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         let (line, guid) = if cfg.skip_attachments {
             project::message_line_without_attachments(msg)?
         } else {
-            // Rewrite attachment fields to the digests we just uploaded.
-            project::message_line(msg, &per_message_digests[i])?
+            // Rewrite attachment fields to uploaded digests or missing placeholders.
+            project::message_line(msg, &per_message_projections[i])?
         };
         if !cfg.force {
             let key = JournalState::message_key(name, &guid);
@@ -1788,6 +1903,7 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
         assets_skipped,
         assets_bytes,
         log_lines,
+        attachment_skips,
     })
 }
 
@@ -2265,6 +2381,7 @@ struct FlushImportPipeline<'a, 'p, 'f> {
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
     batcher: &'a mut ProgressBatcher,
+    message_accounting: &'a mut MessageAccounting,
     /// When true, wait for the newly spawned import (also used at end-of-run).
     wait: bool,
     import_id: Option<i64>,
@@ -2282,6 +2399,7 @@ struct JoinInflightImport<'a, 'p, 'f> {
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
     batcher: &'a mut ProgressBatcher,
+    message_accounting: &'a mut MessageAccounting,
 }
 
 /// Finish the current in-flight import (if any), then start the pending batch (if any).
@@ -2305,6 +2423,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
         progress: args.progress,
         results: args.results,
         batcher: args.batcher,
+        message_accounting: args.message_accounting,
     })?;
     if !ok && !args.cfg.continue_on_error {
         *args.pending = None;
@@ -2344,6 +2463,7 @@ fn flush_import_pipeline(args: FlushImportPipeline<'_, '_, '_>) -> Result<bool> 
             progress: args.progress,
             results: args.results,
             batcher: args.batcher,
+            message_accounting: args.message_accounting,
         })?;
     }
     Ok(ok)
@@ -2431,6 +2551,7 @@ fn join_inflight_import(args: JoinInflightImport<'_, '_, '_>) -> Result<bool> {
         progress: args.progress,
         results: args.results,
         batcher: args.batcher,
+        message_accounting: args.message_accounting,
     })
 }
 
@@ -2446,6 +2567,7 @@ struct ApplyImportOutcome<'a, 'p, 'f> {
     progress: &'a mut Option<&'p mut ProgressFn<'f>>,
     results: &'a mut [Option<FileResult>],
     batcher: &'a mut ProgressBatcher,
+    message_accounting: &'a mut MessageAccounting,
 }
 
 /// Update journal + per-file trackers after one import HTTP request finishes.
@@ -2468,9 +2590,21 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
         .iter()
         .map(|message| message.file_index)
         .collect();
+    args.message_accounting.attempted = args
+        .message_accounting
+        .attempted
+        .saturating_add(message_count as u64);
 
     match response {
         Ok(response) => {
+            args.message_accounting.inserted = args
+                .message_accounting
+                .inserted
+                .saturating_add(response.messages_appended);
+            args.message_accounting.deduped = args
+                .message_accounting
+                .deduped
+                .saturating_add(response.messages_deduped);
             *args.first_import = false;
             let journal_messages: Vec<JournalMessage> = batch
                 .messages
@@ -2533,6 +2667,10 @@ fn apply_import_outcome(args: ApplyImportOutcome<'_, '_, '_>) -> Result<bool> {
             Ok(true)
         }
         Err(error) => {
+            args.message_accounting.failed = args
+                .message_accounting
+                .failed
+                .saturating_add(message_count as u64);
             let request_line = format!(
                 "IMPORT_REQUEST fail source={} mode={mode} conversations={} messages={} \
                  bytes={body_bytes} elapsed_ms={request_ms} \
@@ -2679,6 +2817,10 @@ mod tests {
             conversations_ok: 8,
             conversations_failed: 1,
             conversations_skipped: 1,
+            messages_attempted: 100,
+            messages_inserted: 90,
+            messages_deduped: 10,
+            messages_failed: 0,
             messages: 100,
             assets_uploaded: 4,
             assets_skipped: 2,
@@ -2690,6 +2832,9 @@ mod tests {
         assert!(summary.contains("Import success"));
         assert!(summary.contains("Conversations: 8 ok, 1 failed, 1 skipped (10 total)"));
         assert!(summary.contains("Messages: 100"));
+        assert!(
+            summary.contains("Message accounting: 100 attempted = 90 new + 10 deduped + 0 failed")
+        );
         assert!(summary.contains("Assets: 4 uploaded, 2 skipped"));
         assert!(summary.contains("Elapsed: 12s (12000 ms)"));
         assert!(

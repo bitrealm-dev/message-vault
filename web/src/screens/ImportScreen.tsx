@@ -42,18 +42,72 @@ import {
   DateField,
 } from "./import/ImportFormUi";
 
-interface ImportStep {
+type ImportStep = {
   label: string;
   status: "pending" | "active" | "done" | "error";
   detail?: string;
-}
+  pathLink?: string;
+  durationMs?: number | null;
+};
+
+type ImportPhase = "form" | "progress" | "done";
 
 const DEFAULT_SOURCE = "imessage-ios";
+const PUSH_LOG_NAME = "vault-push.log";
 
-function formatDuration(milliseconds: number): string {
-  const seconds = Math.max(0, Math.round(milliseconds / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+const EMPTY_TIMING = {
+  extractStartedAt: null as number | null,
+  parseStartedAt: null as number | null,
+  parseEndedAt: null as number | null,
+  convertStartedAt: null as number | null,
+  convertEndedAt: null as number | null,
+};
+
+function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
+  return [
+    { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
+    { label: "Convert attachments", status: "pending" },
+    { label: "Upload to vault", status: "pending" },
+  ];
+}
+
+function stepIndexFor(step: ImportProgressEvent["step"]): number {
+  if (step === "parse") return 0;
+  if (step === "convert") return 1;
+  return 2;
+}
+
+function progressVerb(step: ImportProgressEvent["step"]): string {
+  if (step === "upload") return "Uploading";
+  if (step === "convert") return "Converting";
+  return "Parsing";
+}
+
+function completionTextFor(
+  status: ImportSummaryView["status"] | undefined,
+): string | undefined {
+  if (status === "completed") return "Import complete";
+  if (status === "canceled") return "Import canceled";
+  if (status === "failed") return "Import failed";
+  return undefined;
+}
+
+function stageDurations(
+  timing: typeof EMPTY_TIMING,
+  extractFinishedAt: number,
+): { parseMs: number; convertMs: number } {
+  const parseStart =
+    timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
+  if (timing.convertStartedAt != null) {
+    return {
+      parseMs: Math.max(0, (timing.parseEndedAt ?? timing.convertStartedAt) - parseStart),
+      convertMs: Math.max(0, extractFinishedAt - timing.convertStartedAt),
+    };
+  }
+  return {
+    parseMs: Math.max(0, extractFinishedAt - (timing.extractStartedAt ?? parseStart)),
+    convertMs: 0,
+  };
 }
 
 export default function ImportScreen() {
@@ -80,51 +134,28 @@ export default function ImportScreen() {
   const [obfuscate, setObfuscate] = useState(false);
 
   const [running, setRunning] = useState(false);
-  const [steps, setSteps] = useState<ImportStep[]>([
-    { label: "Parse backup", status: "pending" },
-    { label: "Convert attachments", status: "pending" },
-    { label: "Upload to vault", status: "pending" },
-  ]);
-  const [showDetails, setShowDetails] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const [phase, setPhase] = useState<"form" | "progress" | "done">("form");
-  const [elapsedMs, setElapsedMs] = useState(0);
+  const [steps, setSteps] = useState<ImportStep[]>(() => initialSteps());
+  const [phase, setPhase] = useState<ImportPhase>("form");
   const [summaryView, setSummaryView] = useState<ImportSummaryView | null>(null);
-  const startedAtRef = useRef<number | null>(null);
+  const [stagingDir, setStagingDir] = useState<string | null>(null);
   const activeStepRef = useRef<ImportIssue["step"]>("parse");
   const issuesRef = useRef<ImportIssue[]>([]);
   const countsRef = useRef<{
-    parseMessages?: number;
-    convertDetail?: string;
-    uploadFiles?: number;
+    filesParsed?: number;
+    messagesParsed?: number;
   }>({});
-  const timingRef = useRef<{
-    extractStartedAt: number | null;
-    parseStartedAt: number | null;
-    parseEndedAt: number | null;
-    convertStartedAt: number | null;
-    convertEndedAt: number | null;
-  }>({
-    extractStartedAt: null,
-    parseStartedAt: null,
-    parseEndedAt: null,
-    convertStartedAt: null,
-    convertEndedAt: null,
-  });
+  const timingRef = useRef({ ...EMPTY_TIMING });
+
+  function returnToForm(): void {
+    setPhase("form");
+    setSummaryView(null);
+    setStagingDir(null);
+  }
 
   useEffect(() => {
     if (!getRememberImporterPaths()) return;
     setBackupPath(getImporterPath(source));
   }, [source]);
-
-  useEffect(() => {
-    if (!running || startedAtRef.current == null) return;
-
-    const timer = window.setInterval(() => {
-      setElapsedMs(performance.now() - (startedAtRef.current ?? performance.now()));
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, [running]);
 
   const updateBackupPath = (path: string) => {
     setBackupPath(path);
@@ -140,87 +171,64 @@ export default function ImportScreen() {
     skip: "Do not copy files",
   };
 
-  const appendLog = (line: string) => {
-    setLog((prev) => [...prev, line]);
-  };
-
-  const applyProgress = (event: ImportProgressEvent) => {
+  function applyProgress(event: ImportProgressEvent): void {
     const now = performance.now();
+    activeStepRef.current = event.step;
+
     if (event.step === "parse") {
-      activeStepRef.current = "parse";
       timingRef.current.parseStartedAt ??= now;
-      countsRef.current.parseMessages =
+      countsRef.current.messagesParsed =
         event.total > 0 && event.done >= event.total ? event.total : event.done;
-    } else if (event.step === "convert") {
-      activeStepRef.current = "convert";
-      countsRef.current.convertDetail = "Included in extract";
-    } else {
-      activeStepRef.current = "upload";
-      countsRef.current.uploadFiles =
-        event.total > 0 && event.done >= event.total - 1 ? event.total : event.done;
+    } else if (event.step === "convert" && timingRef.current.convertStartedAt == null) {
+      timingRef.current.parseEndedAt ??= now;
+      timingRef.current.convertStartedAt = now;
     }
 
-    const stepIndex = event.step === "parse" ? 0 : event.step === "convert" ? 1 : 2;
-    const rawDetail =
-      event.status === "included_in_extract"
-        ? "Included in extract"
-        : event.status
-          ? `${event.done}/${event.total} (${event.status})`
-          : `${event.done}/${event.total}`;
+    const stepIndex = stepIndexFor(event.step);
+    let rawDetail = `${event.done}/${event.total}`;
+    if (event.status === "included_in_extract") {
+      rawDetail = "Included in extract";
+    } else if (event.status) {
+      rawDetail = `${event.done}/${event.total} (${event.status})`;
+    }
+
+    const detail =
+      event.status === "included_in_extract" && event.step === "convert"
+        ? rawDetail
+        : `${progressVerb(event.step)} ${rawDetail}`;
+    const done = event.total > 0 && event.done >= event.total;
 
     setSteps((current) =>
       current.map((step, index) => {
         if (index < stepIndex) {
-          return { ...step, status: "done", detail: step.detail ?? undefined };
+          return { ...step, status: "done" };
         }
-        if (index > stepIndex) {
-          return step;
-        }
-        const done = event.total > 0 && event.done >= event.total;
-        const verb =
-          event.step === "upload" ? "Uploading" : event.step === "convert" ? "Converting" : "Parsing";
+        if (index > stepIndex) return step;
         return {
           ...step,
           status: done ? "done" : "active",
-          detail:
-            event.status === "included_in_extract" && event.step === "convert"
-              ? rawDetail
-              : `${verb} ${rawDetail}`,
+          detail,
         };
       }),
     );
-  };
+  }
 
-  const recordIssue = (issue: ImportIssueEvent) => {
+  function recordIssue(issue: ImportIssueEvent): void {
     issuesRef.current = [...issuesRef.current, issue];
-    appendLog(`${issue.kind === "skip" ? "Skipped" : "Error"}: ${issue.item}: ${issue.reason}`);
-  };
+  }
 
-  const startImport = async () => {
+  async function startImport(): Promise<void> {
     if (!isTauri()) return;
     const importStartedAt = performance.now();
-    startedAtRef.current = importStartedAt;
     activeStepRef.current = "parse";
     issuesRef.current = [];
     countsRef.current = {};
-    timingRef.current = {
-      extractStartedAt: null,
-      parseStartedAt: null,
-      parseEndedAt: null,
-      convertStartedAt: null,
-      convertEndedAt: null,
-    };
+    timingRef.current = { ...EMPTY_TIMING };
     setRunning(true);
     setPhase("progress");
-    setElapsedMs(0);
-    setLog([]);
     setSummaryView(null);
-    setShowDetails(true);
-    setSteps([
-      { label: "Parse backup", status: "active", detail: "Parsing backup…" },
-      { label: "Convert attachments", status: "pending" },
-      { label: "Upload to vault", status: "pending" },
-    ]);
+    setStagingDir(null);
+    setSteps(initialSteps("active"));
 
     let importSessionId: number | null = null;
     let importCompleted = false;
@@ -228,6 +236,7 @@ export default function ImportScreen() {
     let convertMs: number | null = null;
     let uploadMs: number | null = null;
     let pushResult: TauriJobResult | null = null;
+    let outputDir = "";
     try {
       const baseUrl = getBaseUrl();
       if (!token) throw new Error("Not authenticated");
@@ -239,8 +248,14 @@ export default function ImportScreen() {
       });
       importSessionId = importSession.id;
 
-      const outputDir = await resolveImportStagingDir(backupPath, source);
-      // extract/push return when the background thread starts — wait for events.
+      outputDir = await resolveImportStagingDir(backupPath, source);
+      setStagingDir(outputDir);
+      setSteps((current) =>
+        current.map((step, i) =>
+          i === 0 ? { ...step, pathLink: outputDir, detail: "Extracting…" } : step,
+        ),
+      );
+
       timingRef.current.extractStartedAt = performance.now();
       const extractResult = await awaitTauriJob(
         () =>
@@ -262,24 +277,39 @@ export default function ImportScreen() {
                 }
               : {}),
           }),
-        appendLog,
+        undefined,
         applyProgress,
         recordIssue,
       );
-      appendLog(extractResult.summary);
-      const extractFinishedAt = performance.now();
-      const timing = timingRef.current;
-      parseMs = extractFinishedAt - (timing.extractStartedAt ?? extractFinishedAt);
+      if (extractResult.extraction) {
+        countsRef.current.filesParsed = extractResult.extraction.files_parsed;
+        countsRef.current.messagesParsed = extractResult.extraction.messages_parsed;
+      }
 
-      setSteps((s) =>
-        s.map((step, i) =>
-          i === 0
-            ? { ...step, status: "done", detail: "Extraction complete" }
-            : i === 1
-              ? { ...step, status: "done", detail: "Attachments processed" }
-              : { ...step, status: "active", detail: "Uploading to vault…" },
-        ),
-      );
+      const extractFinishedAt = performance.now();
+      timingRef.current.convertEndedAt = extractFinishedAt;
+      ({ parseMs, convertMs } = stageDurations(timingRef.current, extractFinishedAt));
+
+      setSteps([
+        {
+          label: "Parse backup",
+          status: "done",
+          pathLink: outputDir,
+          detail: "Extraction complete",
+          durationMs: parseMs,
+        },
+        {
+          label: "Convert attachments",
+          status: "done",
+          detail: "Attachments processed",
+          durationMs: convertMs,
+        },
+        {
+          label: "Upload to vault",
+          status: "active",
+          detail: "Uploading to vault…",
+        },
+      ]);
 
       activeStepRef.current = "upload";
       const uploadStartedAt = performance.now();
@@ -298,20 +328,18 @@ export default function ImportScreen() {
             contact_name_mode: contactNameMode,
             import_id: importSession.id,
           }),
-        appendLog,
+        undefined,
         applyProgress,
         recordIssue,
       );
       uploadMs = performance.now() - uploadStartedAt;
-      appendLog(pushResult.summary);
-      if (pushResult.report) {
-        countsRef.current.uploadFiles = pushResult.report.conversations_total;
-      }
       importCompleted = true;
 
-      setSteps((s) =>
-        s.map((step, i) =>
-          i === 2 ? { ...step, status: "done", detail: "Upload complete" } : step,
+      setSteps((current) =>
+        current.map((step, i) =>
+          i === 2
+            ? { ...step, status: "done", detail: "Upload complete", durationMs: uploadMs }
+            : step,
         ),
       );
     } catch (e) {
@@ -320,56 +348,75 @@ export default function ImportScreen() {
         ...issuesRef.current,
         { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
       ];
-      setSteps((s) =>
-        s.map((step) =>
+      setSteps((current) =>
+        current.map((step) =>
           step.status === "active" ? { ...step, status: "error" as const } : step,
         ),
       );
-      setLog((l) => [...l, `Error: ${msg}`]);
     } finally {
       const durationMs = performance.now() - importStartedAt;
+      const pushReport = pushResult?.report;
       const finalSummary: ImportSummaryView = {
         status: importCompleted ? "completed" : "failed",
         ...countsRef.current,
+        filesTotal: pushReport?.conversations_total ?? countsRef.current.filesParsed,
+        filesSucceeded: pushReport?.conversations_ok,
+        filesFailed: pushReport?.conversations_failed,
+        filesSkipped: pushReport?.conversations_skipped,
+        messagesAttempted: pushReport?.messages_attempted,
+        messagesInserted: pushReport?.messages_inserted,
+        messagesDeduped: pushReport?.messages_deduped,
+        messagesFailed: pushReport?.messages_failed,
         parseMs,
         convertMs,
         uploadMs,
         durationMs,
         issues: issuesRef.current,
       };
+      const durations = [parseMs, convertMs, uploadMs];
+      setSteps((current) =>
+        current.map((step, index) => {
+          const duration = durations[index];
+          if (duration == null) return step;
+          return { ...step, durationMs: duration };
+        }),
+      );
       if (importSessionId) {
         try {
           await apiClient.post(`/v1/imports/${String(importSessionId)}/complete`, {
             ok: importCompleted,
-            message_count: pushResult?.report?.messages,
-            attachment_count: pushResult?.report?.assets_uploaded,
-            bytes_uploaded: pushResult?.report?.assets_bytes,
+            message_count: pushReport?.messages_inserted,
+            attachment_count: pushReport?.assets_uploaded,
+            bytes_uploaded: pushReport?.assets_bytes,
             parse_ms: parseMs,
             convert_ms: convertMs,
             upload_ms: uploadMs,
             duration_ms: durationMs,
             summary: {
-              parse_messages: finalSummary.parseMessages,
-              convert_detail: finalSummary.convertDetail,
-              upload_files: finalSummary.uploadFiles,
+              files_total: finalSummary.filesTotal,
+              files_succeeded: finalSummary.filesSucceeded,
+              files_failed: finalSummary.filesFailed,
+              files_skipped: finalSummary.filesSkipped,
+              messages_parsed: finalSummary.messagesParsed,
+              messages_attempted: finalSummary.messagesAttempted,
+              messages_inserted: finalSummary.messagesInserted,
+              messages_deduped: finalSummary.messagesDeduped,
+              messages_failed: finalSummary.messagesFailed,
             },
             issues: finalSummary.issues,
           });
-        } catch (completeError) {
-          const msg =
-            completeError instanceof Error ? completeError.message : String(completeError);
-          appendLog(`Warning: could not complete vault import session ${importSessionId}: ${msg}`);
+        } catch {
+          // Session complete is best-effort; summary UI still shows local results.
         }
       }
-      setElapsedMs(durationMs);
       setSummaryView(finalSummary);
       setPhase("done");
       setRunning(false);
     }
-  };
+  }
 
   return (
-    <div className="max-w-[640px] p-6">
+    <div className={`min-w-0 p-6 ${phase === "form" ? "max-w-[640px]" : "max-w-5xl"}`}>
       {phase === "form" && (
         <>
           <h1 className="m-0 mb-1 text-2xl font-bold">
@@ -583,68 +630,47 @@ export default function ImportScreen() {
 
       {(phase === "progress" || phase === "done") && (
         <>
-          <h1 className="m-0 mb-4 text-2xl font-bold">
-            Import Messages
-          </h1>
-          <p className="m-0 text-[0.875rem] text-muted">
-            Elapsed {formatDuration(elapsedMs)}
-          </p>
-          <StepProgress steps={steps} />
+          <h1 className="m-0 mb-4 text-2xl font-bold">Import Messages</h1>
+          <StepProgress
+            steps={steps}
+            completionText={
+              phase === "done" ? completionTextFor(summaryView?.status) : undefined
+            }
+          />
           <div className="mt-4 flex items-center gap-3">
-            {running && (
-              <Button onClick={() => invokeCancel()}>
-                Cancel
-              </Button>
-            )}
-            {!running && (
+            {running ? (
+              <Button onClick={() => invokeCancel()}>Cancel</Button>
+            ) : (
               <Button
                 variant="ghost"
-                onClick={() => {
-                  setPhase("form");
-                  setSummaryView(null);
-                  setLog([]);
-                  setShowDetails(false);
-                }}
+                onClick={returnToForm}
                 className="!px-3 !py-[0.35rem] !text-[0.875rem]"
               >
                 ← Back
               </Button>
             )}
-            <Button
-              variant="ghost"
-              onClick={() => setShowDetails(!showDetails)}
-              className="!px-2 !py-1 !text-[0.813rem]"
-            >
-              {showDetails ? "Hide details" : "Show details"}
-            </Button>
           </div>
-          {showDetails && (
-            <pre className="max-h-[300px] overflow-auto whitespace-pre-wrap break-words rounded bg-hover p-2 text-[0.75rem]">
-              {log.length === 0
-                ? "No log entries"
-                : log.map((line, i) => <div key={i}>{line}</div>)}
-            </pre>
-          )}
         </>
       )}
 
-      {phase === "done" && (
+      {phase === "done" && summaryView ? (
         <>
-          {summaryView ? <ImportSummaryPanel summary={summaryView} /> : null}
+          <ImportSummaryPanel
+            summary={summaryView}
+            embedStepTimings={false}
+            logPath={stagingDir ? `${stagingDir}/${PUSH_LOG_NAME}` : null}
+          />
           <div className="mt-4">
             <Button
               variant="primary"
-              onClick={() => {
-                setPhase("form");
-                setSummaryView(null);
-              }}
+              onClick={returnToForm}
               className="!px-6 !py-2"
             >
               Import another
             </Button>
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

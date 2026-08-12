@@ -263,8 +263,9 @@ fn aggregates_multiple_conversations_into_one_import_request() {
             .body_contains("+15555550102");
         then.status(200).json_body(json!({
             "ok": true,
-            "messages": 2,
-            "messages_appended": 2,
+            "messages": 1,
+            "messages_appended": 1,
+            "messages_deduped": 1,
             "conversations": 2
         }));
     });
@@ -280,6 +281,14 @@ fn aggregates_multiple_conversations_into_one_import_request() {
     assert!(report.ok);
     assert_eq!(report.conversations_ok, 2);
     assert_eq!(report.messages, 2);
+    assert_eq!(report.messages_attempted, 2);
+    assert_eq!(report.messages_inserted, 1);
+    assert_eq!(report.messages_deduped, 1);
+    assert_eq!(report.messages_failed, 0);
+    assert_eq!(
+        report.messages_attempted,
+        report.messages_inserted + report.messages_deduped + report.messages_failed
+    );
     assert_eq!(import.hits(), 1);
     let log = fs::read_to_string(dir.path().join("vault-push.log")).unwrap();
     assert!(log.contains("IMPORT_REQUEST ok"));
@@ -386,6 +395,14 @@ fn failed_combined_request_only_fails_its_files() {
     assert!(!report.ok);
     assert_eq!(report.conversations_failed, 2);
     assert_eq!(report.conversations_ok, 1);
+    assert_eq!(report.messages_attempted, 3);
+    assert_eq!(report.messages_inserted, 1);
+    assert_eq!(report.messages_deduped, 0);
+    assert_eq!(report.messages_failed, 2);
+    assert_eq!(
+        report.messages_attempted,
+        report.messages_inserted + report.messages_deduped + report.messages_failed
+    );
     assert_eq!(failed.hits(), 1);
     assert_eq!(succeeded.hits(), 1);
     assert_eq!(
@@ -496,6 +513,7 @@ fn profiles_attachment_upload_phases() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -614,6 +632,7 @@ fn skips_put_when_head_reports_asset_present() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -712,6 +731,7 @@ fn multipart_upload_when_over_proxy_threshold() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -791,6 +811,7 @@ fn multipart_aborts_on_hash_mismatch_complete() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -885,6 +906,7 @@ fn verify_digests_fails_on_mismatch() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc);
@@ -946,6 +968,7 @@ fn shared_attachment_uploaded_once_across_conversations() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     let mut doc_b = sample_doc_for("+15555550102", "guid-b");
@@ -958,6 +981,7 @@ fn shared_attachment_uploaded_once_across_conversations() {
         transcription: None,
         sticker_effect: None,
         size_bytes: None,
+        missing_reason: None,
         bytes: None,
     });
     write_jsonl(dir.path(), &doc_a);
@@ -971,4 +995,231 @@ fn shared_attachment_uploaded_once_across_conversations() {
     assert!(head.hits() >= 1);
     import.assert();
     assert_eq!(report.assets_uploaded, 1);
+}
+
+#[test]
+fn skips_oversized_attachment_keeps_conversation_ok() {
+    const SMALL: &[u8] = b"ok-bytes";
+    const BIG: &[u8] = b"this-file-is-too-large-for-the-test-limit!!";
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let small_digest = hex::encode(Sha256::digest(SMALL));
+    let big_digest = hex::encode(Sha256::digest(BIG));
+    let _small_head = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{small_digest}"));
+        then.status(404);
+    });
+    let small_put = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{small_digest}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": false
+        }));
+    });
+    let big_put = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{big_digest}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": false
+        }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/import")
+            .body_contains(r#""missing_reason":"too_large""#)
+            .body_contains("big.bin")
+            .body_contains(&small_digest);
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    let attachment_dir = dir.path().join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    fs::write(attachment_dir.join("small.txt"), SMALL).unwrap();
+    fs::write(attachment_dir.join("big.bin"), BIG).unwrap();
+
+    let mut doc = sample_doc();
+    doc.messages[0].attachments = vec![
+        IrAttachment {
+            path: Some("attachments/big.bin".into()),
+            original_name: Some("big.bin".into()),
+            mime_type: Some("application/octet-stream".into()),
+            digest_sha256: Some(big_digest),
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(BIG.len() as u64),
+            missing_reason: None,
+            bytes: None,
+        },
+        IrAttachment {
+            path: Some("attachments/small.txt".into()),
+            original_name: Some("small.txt".into()),
+            mime_type: Some("text/plain".into()),
+            digest_sha256: Some(small_digest),
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(SMALL.len() as u64),
+            missing_reason: None,
+            bytes: None,
+        },
+    ];
+    write_jsonl(dir.path(), &doc);
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+    cfg.asset_max_bytes = 16; // BIG exceeds; SMALL does not
+
+    let mut issues = Vec::new();
+    let report = {
+        let mut progress = |event: ProgressEvent| {
+            if let ProgressEvent::Issue {
+                kind,
+                item,
+                reason,
+                ..
+            } = event
+            {
+                issues.push((kind, item, reason));
+            }
+        };
+        run(&cfg, Some(&mut progress)).unwrap()
+    };
+
+    assert!(report.ok, "oversized attachment must not fail the conversation");
+    assert_eq!(report.conversations_ok, 1);
+    assert_eq!(report.conversations_failed, 0);
+    assert_eq!(report.messages_attempted, 1);
+    assert_eq!(small_put.hits(), 1, "normal attachment must still upload");
+    assert_eq!(big_put.hits(), 0, "oversized attachment must not be PUT");
+    import.assert();
+    assert!(
+        issues.iter().any(|(kind, item, reason)| {
+            kind == "skip"
+                && item.contains("big.bin")
+                && reason.contains("over the configured asset max")
+        }),
+        "expected skip issue for oversized attachment, got {issues:?}"
+    );
+}
+
+#[test]
+fn skips_missing_attachment_file_keeps_conversation_ok() {
+    const SMALL: &[u8] = b"present-bytes";
+
+    let server = MockServer::start();
+    let _auth = server.mock(|when, then| {
+        when.method(GET).path("/v1/auth/check");
+        then.status(200).json_body(json!({
+            "ok": true,
+            "account_id": "acct-1",
+            "username": "alice",
+            "account_ok": true,
+            "sources": ["sms-backup-restore"]
+        }));
+    });
+    let small_digest = hex::encode(Sha256::digest(SMALL));
+    let _small_head = server.mock(|when, then| {
+        when.method("HEAD").path(format!("/v1/assets/{small_digest}"));
+        then.status(404);
+    });
+    let small_put = server.mock(|when, then| {
+        when.method(PUT).path(format!("/v1/assets/{small_digest}"));
+        then.status(200).json_body(json!({
+            "ok": true,
+            "already_present": false
+        }));
+    });
+    let import = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/import")
+            .body_contains(r#""missing_reason":"file_missing""#)
+            .body_contains("gone.bin")
+            .body_contains(&small_digest);
+        then.status(200).json_body(json!({
+            "ok": true,
+            "messages": 1,
+            "messages_appended": 1
+        }));
+    });
+
+    let dir = tempdir().unwrap();
+    let attachment_dir = dir.path().join("attachments");
+    fs::create_dir(&attachment_dir).unwrap();
+    fs::write(attachment_dir.join("small.txt"), SMALL).unwrap();
+    // Intentionally do not write gone.bin
+
+    let mut doc = sample_doc();
+    doc.messages[0].attachments = vec![
+        IrAttachment {
+            path: Some("attachments/gone.bin".into()),
+            original_name: Some("gone.bin".into()),
+            mime_type: Some("application/octet-stream".into()),
+            digest_sha256: None,
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(1234),
+            missing_reason: None,
+            bytes: None,
+        },
+        IrAttachment {
+            path: Some("attachments/small.txt".into()),
+            original_name: Some("small.txt".into()),
+            mime_type: Some("text/plain".into()),
+            digest_sha256: Some(small_digest),
+            is_sticker: false,
+            transcription: None,
+            sticker_effect: None,
+            size_bytes: Some(SMALL.len() as u64),
+            missing_reason: None,
+            bytes: None,
+        },
+    ];
+    write_jsonl(dir.path(), &doc);
+
+    let mut cfg = text_only_config(dir.path(), server.base_url());
+    cfg.force = true;
+
+    let mut issues = Vec::new();
+    let report = {
+        let mut progress = |event: ProgressEvent| {
+            if let ProgressEvent::Issue {
+                kind,
+                item,
+                reason,
+                ..
+            } = event
+            {
+                issues.push((kind, item, reason));
+            }
+        };
+        run(&cfg, Some(&mut progress)).unwrap()
+    };
+
+    assert!(report.ok);
+    assert_eq!(report.conversations_ok, 1);
+    assert_eq!(small_put.hits(), 1);
+    import.assert();
+    assert!(
+        issues.iter().any(|(kind, item, reason)| {
+            kind == "skip" && item.contains("gone.bin") && reason.contains("not found")
+        }),
+        "expected skip issue for missing file, got {issues:?}"
+    );
 }

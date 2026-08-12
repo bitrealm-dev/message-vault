@@ -9,7 +9,9 @@
 //! (`Arc<AtomicBool>`): `cancel` flips it, `extract` resets it at job start,
 //! and the exporter polls it cooperatively via `ExporterConfig.cancel`.
 
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -40,6 +42,54 @@ pub async fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(),
     let state = state.lock().map_err(|e| e.to_string())?;
     state.cancel_flag.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JsonlOutputCounts {
+    files: usize,
+    messages: usize,
+}
+
+fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
+    let mut counts = JsonlOutputCounts {
+        files: 0,
+        messages: 0,
+    };
+    let mut directories = vec![root.to_path_buf()];
+
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                directories.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file()
+                || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
+            {
+                continue;
+            }
+
+            let mut reader = BufReader::new(File::open(entry.path())?);
+            let mut line = String::new();
+            let mut nonempty_lines = 0usize;
+            while reader.read_line(&mut line)? != 0 {
+                if !line.trim().is_empty() {
+                    nonempty_lines = nonempty_lines.saturating_add(1);
+                }
+                line.clear();
+            }
+            if nonempty_lines > 0 {
+                counts.files = counts.files.saturating_add(1);
+                counts.messages = counts
+                    .messages
+                    .saturating_add(nonempty_lines.saturating_sub(1));
+            }
+        }
+    }
+
+    Ok(counts)
 }
 
 /// Start an extraction job. Returns immediately; progress is emitted as
@@ -115,7 +165,30 @@ pub async fn extract(
                 for line in run_result.messages {
                     let _ = app_handle.emit("extract:log", line);
                 }
-                let _ = app_handle.emit("extract:finished", summary);
+                match count_jsonl_output(Path::new(&output_dir)) {
+                    Ok(counts) => {
+                        let payload = serde_json::json!({
+                            "summary": summary,
+                            "files_parsed": counts.files,
+                            "messages_parsed": counts.messages,
+                        });
+                        let _ = app_handle.emit("extract:finished", payload.to_string());
+                    }
+                    Err(err) => {
+                        let _ = app_handle.emit(
+                            "extract:error",
+                            ExtractErrorEvent {
+                                detail: format!(
+                                    "count extracted JSONL records in {output_dir}: {err:#}"
+                                ),
+                                user_message: Some(
+                                    "Extraction completed, but the generated message count could not be verified."
+                                        .into(),
+                                ),
+                            },
+                        );
+                    }
+                }
             }
             Err(err) => {
                 let _ = app_handle.emit(
@@ -163,8 +236,9 @@ fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(MaxResolution::default());
     };
-    MaxResolution::parse(raw)
-        .ok_or_else(|| format!("invalid media_max_resolution '{raw}' (expected 720p, 1080p, or 4k)"))
+    MaxResolution::parse(raw).ok_or_else(|| {
+        format!("invalid media_max_resolution '{raw}' (expected 720p, 1080p, or 4k)")
+    })
 }
 
 fn build_exporter_config(
@@ -225,18 +299,15 @@ fn build_exporter_config(
                 _ => return Err(format!("unsupported source '{source}'")),
             };
 
-            let date_range = parse_date_range(
-                nonempty(&options.start_date),
-                nonempty(&options.end_date),
-            )?;
+            let date_range =
+                parse_date_range(nonempty(&options.start_date), nonempty(&options.end_date))?;
 
             let compress = if matches!(options.attachment_media, AttachmentMedia::Compress) {
                 media::compress_options_from_cli(
                     options.media_max_resolution,
-                    options
-                        .media_max_fps
-                        .parse::<f32>()
-                        .map_err(|_| format!("invalid media_max_fps '{}'", options.media_max_fps))?,
+                    options.media_max_fps.parse::<f32>().map_err(|_| {
+                        format!("invalid media_max_fps '{}'", options.media_max_fps)
+                    })?,
                     &options.media_min_size,
                     true,
                 )
@@ -390,6 +461,35 @@ fn leading_usize(text: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn counts_exact_messages_written_to_jsonl_output() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("message-vault-extract-count-{unique}"));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(
+            root.join("one.jsonl"),
+            "{\"conversation\":{}}\n{\"guid\":\"one\"}\n{\"guid\":\"two\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("nested/two.jsonl"),
+            "{\"conversation\":{}}\n{\"guid\":\"three\"}\n",
+        )
+        .unwrap();
+        fs::write(root.join("ignored.txt"), "not jsonl\n").unwrap();
+
+        let counts = count_jsonl_output(&root).unwrap();
+
+        assert_eq!(counts.files, 2);
+        assert_eq!(counts.messages, 3);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn extract_progress_parser_tracks_parse_and_convert() {
@@ -401,7 +501,8 @@ mod tests {
         assert_eq!(parse.total, 12345);
         assert_eq!(parse.status, None);
 
-        let banner = extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
+        let banner =
+            extract_progress_from_log("Writing 3 conversation file(s)...", &stage).unwrap();
         assert_eq!(banner.step, "convert");
         assert_eq!(banner.done, 0);
         assert_eq!(banner.total, 0);
@@ -410,8 +511,7 @@ mod tests {
         let ignored = extract_progress_from_log("[1/5] Deriving backup keys...", &stage);
         assert!(ignored.is_none());
 
-        let backup_step =
-            extract_progress_from_log("[2/5] Resolving messages database...", &stage);
+        let backup_step = extract_progress_from_log("[2/5] Resolving messages database...", &stage);
         assert!(backup_step.is_none());
 
         let convert = extract_progress_from_log("  wrote 2/3 messages", &stage).unwrap();

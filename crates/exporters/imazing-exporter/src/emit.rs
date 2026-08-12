@@ -735,6 +735,7 @@ fn pending_to_document(
                 transcription: msg.extra_opt("transcription"),
                 sticker_effect: msg.extra_opt("sticker_effect"),
                 size_bytes: None,
+                missing_reason: None,
                 bytes: None,
             })
             .collect();

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { apiClient } from "../../lib/api";
 import Button from "../../components/Button";
 import ImportSummaryPanel, {
@@ -32,15 +32,6 @@ function formatImportDate(iso: string | null | undefined): string {
   });
 }
 
-function formatDuration(milliseconds: number | null | undefined): string {
-  if (milliseconds == null) return "—";
-
-  const seconds = Math.max(0, Math.round(milliseconds / 1000));
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
-}
-
 const ATTACHMENT_PAGE_SIZE = 20;
 
 const sectionTitle = "m-0 text-[0.938rem] font-semibold text-text";
@@ -61,7 +52,7 @@ interface ImportRow {
   finished_at: string | null;
   message_count: number;
   attachment_count: number;
-  duration_ms: number | null;
+  bytes_uploaded: number;
 }
 
 interface TopAttachment {
@@ -96,10 +87,6 @@ function toNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function toString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
   const summary =
     detail.summary && typeof detail.summary === "object"
@@ -115,12 +102,26 @@ function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
     status:
       detail.status === "completed"
         ? "completed"
+        : detail.status === "canceled"
+          ? "canceled"
         : detail.status === "running"
           ? "running"
           : "failed",
-    parseMessages: toNumber(summary.parse_messages ?? summary.parseMessages),
-    convertDetail: toString(summary.convert_detail ?? summary.convertDetail),
-    uploadFiles: toNumber(summary.upload_files ?? summary.uploadFiles),
+    filesTotal: toNumber(summary.files_total ?? summary.filesTotal),
+    filesSucceeded: toNumber(summary.files_succeeded ?? summary.filesSucceeded),
+    filesFailed: toNumber(summary.files_failed ?? summary.filesFailed),
+    filesSkipped: toNumber(summary.files_skipped ?? summary.filesSkipped),
+    messagesParsed: toNumber(
+      summary.messages_parsed ??
+        summary.messagesParsed ??
+        summary.parse_messages ??
+        summary.parseMessages,
+    ),
+    messagesAttempted: toNumber(summary.messages_attempted ?? summary.messagesAttempted),
+    messagesInserted:
+      toNumber(summary.messages_inserted ?? summary.messagesInserted) ?? detail.message_count,
+    messagesDeduped: toNumber(summary.messages_deduped ?? summary.messagesDeduped),
+    messagesFailed: toNumber(summary.messages_failed ?? summary.messagesFailed),
     parseMs: detail.parse_ms,
     convertMs: detail.convert_ms,
     uploadMs: detail.upload_ms,
@@ -205,10 +206,20 @@ export function StorageSection() {
     page * ATTACHMENT_PAGE_SIZE,
     page * ATTACHMENT_PAGE_SIZE + ATTACHMENT_PAGE_SIZE,
   );
-  const showDurationColumn = imports.some((row) => row.duration_ms != null);
   const selectedImportSummary = selectedImport ? toImportSummaryView(selectedImport) : null;
 
-  const openImportDetail = (importId: number) => {
+  const closeImportDetail = () => {
+    setSelectedImportId(null);
+    setSelectedImport(null);
+    setSelectedImportLoading(false);
+    setSelectedImportError("");
+  };
+
+  const toggleImportDetail = (importId: number) => {
+    if (selectedImportId === importId) {
+      closeImportDetail();
+      return;
+    }
     setSelectedImportId(importId);
     setSelectedImport(null);
     setSelectedImportError("");
@@ -249,118 +260,141 @@ export function StorageSection() {
                   <th className={thStyle}>Import type</th>
                   <th className={`${thStyle} text-right`}>Messages</th>
                   <th className={`${thStyle} text-right`}>Attachments</th>
-                  {showDurationColumn ? (
-                    <th className={`${thStyle} text-right`}>Duration</th>
-                  ) : null}
+                  <th className={`${thStyle} text-right`}>Uploaded size</th>
                 </tr>
               </thead>
               <tbody>
-                {imports.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={`cursor-pointer ${
-                      selectedImportId === row.id ? "bg-hover" : "hover:bg-hover"
-                    }`}
-                    onClick={() => openImportDetail(row.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        openImportDetail(row.id);
-                      }
-                    }}
-                    tabIndex={0}
-                  >
-                    <td className={tdStyle}>
-                      {formatImportDate(row.finished_at ?? row.started_at)}
-                    </td>
-                    <td className={tdStyle}>
-                      {row.source}
-                    </td>
-                    <td className={`${tdStyle} text-right tabular-nums`}>
-                      {row.message_count.toLocaleString()}
-                    </td>
-                    <td className={`${tdStyle} text-right tabular-nums`}>
-                      {row.attachment_count.toLocaleString()}
-                    </td>
-                    {showDurationColumn ? (
-                      <td className={`${tdStyle} text-right tabular-nums`}>
-                        {formatDuration(row.duration_ms)}
-                      </td>
-                    ) : null}
-                  </tr>
-                ))}
+                {imports.map((row) => {
+                  const isSelected = selectedImportId === row.id;
+                  const detailId = `import-detail-${row.id}`;
+                  return (
+                    <Fragment key={row.id}>
+                      <tr
+                        className={`cursor-pointer ${
+                          isSelected ? "bg-hover" : "hover:bg-hover"
+                        }`}
+                        onClick={() => toggleImportDetail(row.id)}
+                      >
+                        <td className={tdStyle}>
+                          <button
+                            type="button"
+                            aria-expanded={isSelected}
+                            aria-controls={detailId}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleImportDetail(row.id);
+                            }}
+                            className="w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                          >
+                            {formatImportDate(row.finished_at ?? row.started_at)}
+                          </button>
+                        </td>
+                        <td className={tdStyle}>{row.source}</td>
+                        <td className={`${tdStyle} text-right tabular-nums`}>
+                          {row.message_count.toLocaleString()}
+                        </td>
+                        <td className={`${tdStyle} text-right tabular-nums`}>
+                          {row.attachment_count.toLocaleString()}
+                        </td>
+                        <td className={`${tdStyle} text-right tabular-nums`}>
+                          {formatBytes(row.bytes_uploaded)}
+                        </td>
+                      </tr>
+                      {isSelected ? (
+                        <tr>
+                          <td colSpan={5} className="border-b border-border p-0">
+                            <div id={detailId} className="bg-surface p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <h3 className={sectionTitle}>Import details</h3>
+                                  {selectedImport ? (
+                                    <div className="mt-2 flex flex-wrap gap-2 text-[0.75rem]">
+                                      <span className="rounded-full border border-border bg-elevated px-2.5 py-1 text-text">
+                                        Type: {selectedImport.source}
+                                      </span>
+                                      <span className="rounded-full border border-border bg-elevated px-2.5 py-1 capitalize text-text">
+                                        Mode: {selectedImport.mode}
+                                      </span>
+                                      <span className="rounded-full border border-border bg-elevated px-2.5 py-1 capitalize text-text">
+                                        Status: {selectedImport.status}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <p className={sectionHint}>Loading import details…</p>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  aria-label="Close import details"
+                                  title="Close import details"
+                                  onClick={closeImportDetail}
+                                  className="flex size-8 items-center justify-center rounded-md text-xl leading-none text-muted hover:bg-hover hover:text-text"
+                                >
+                                  ×
+                                </button>
+                              </div>
+
+                              {selectedImportLoading ? (
+                                <p className="mt-4 text-[0.813rem] text-muted">
+                                  Loading import summary…
+                                </p>
+                              ) : null}
+
+                              {selectedImportError ? (
+                                <div className="mt-4 rounded-md border border-danger-soft-border bg-danger-soft-bg p-2 px-3 text-[0.813rem] text-danger">
+                                  {selectedImportError}
+                                </div>
+                              ) : null}
+
+                              {selectedImport && selectedImportSummary ? (
+                                <>
+                                  <dl className="mt-4 grid gap-3 text-[0.813rem] text-text sm:grid-cols-2 lg:grid-cols-3">
+                                    <div>
+                                      <dt className="text-muted">Started</dt>
+                                      <dd className="mt-1">
+                                        {formatImportDate(selectedImport.started_at)}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-muted">Finished</dt>
+                                      <dd className="mt-1">
+                                        {formatImportDate(
+                                          selectedImport.finished_at ??
+                                            selectedImport.started_at,
+                                        )}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-muted">Messages</dt>
+                                      <dd className="mt-1">
+                                        {selectedImport.message_count.toLocaleString()}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-muted">Attachments</dt>
+                                      <dd className="mt-1">
+                                        {selectedImport.attachment_count.toLocaleString()}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-muted">Bytes uploaded</dt>
+                                      <dd className="mt-1">
+                                        {formatBytes(selectedImport.bytes_uploaded)}
+                                      </dd>
+                                    </div>
+                                  </dl>
+                                  <ImportSummaryPanel summary={selectedImportSummary} />
+                                </>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
-          </div>
-        )}
-        {selectedImportId != null && (
-          <div className="rounded-lg border border-border bg-elevated p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className={sectionTitle}>Import details</h3>
-                <p className={sectionHint}>
-                  {selectedImport
-                    ? `${selectedImport.source} · ${selectedImport.mode} · ${selectedImport.status}`
-                    : "Loading import details…"}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setSelectedImportId(null);
-                  setSelectedImport(null);
-                  setSelectedImportLoading(false);
-                  setSelectedImportError("");
-                }}
-                className="!px-3 !py-1.5 !text-[0.813rem]"
-              >
-                Back to history
-              </Button>
-            </div>
-
-            {selectedImportLoading && (
-              <p className="mt-4 text-[0.813rem] text-muted">Loading import summary…</p>
-            )}
-
-            {selectedImportError && (
-              <div className="mt-4 rounded-md border border-danger-soft-border bg-danger-soft-bg p-2 px-3 text-[0.813rem] text-danger">
-                {selectedImportError}
-              </div>
-            )}
-
-            {selectedImport && selectedImportSummary ? (
-              <>
-                <dl className="mt-4 grid gap-3 text-[0.813rem] text-text sm:grid-cols-2 lg:grid-cols-3">
-                  <div>
-                    <dt className="text-muted">Started</dt>
-                    <dd className="mt-1">{formatImportDate(selectedImport.started_at)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Finished</dt>
-                    <dd className="mt-1">
-                      {formatImportDate(selectedImport.finished_at ?? selectedImport.started_at)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Duration</dt>
-                    <dd className="mt-1">{formatDuration(selectedImportSummary.durationMs)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Messages</dt>
-                    <dd className="mt-1">{selectedImport.message_count.toLocaleString()}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Attachments</dt>
-                    <dd className="mt-1">{selectedImport.attachment_count.toLocaleString()}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted">Bytes uploaded</dt>
-                    <dd className="mt-1">{formatBytes(selectedImport.bytes_uploaded)}</dd>
-                  </div>
-                </dl>
-                <ImportSummaryPanel summary={selectedImportSummary} />
-              </>
-            ) : null}
           </div>
         )}
       </section>

@@ -27,17 +27,55 @@ pub fn document_header_line(doc: &ConversationDocument) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Message line with attachment digests and sizes filled from upload scan.
-/// Each entry is `(attachment_index, sha256_hex, size_bytes)`.
+/// How to rewrite one attachment when building an import message line.
+#[derive(Debug, Clone)]
+pub enum AttachmentProjection {
+    /// Bytes were (or will be) uploaded under this digest.
+    Digested {
+        index: usize,
+        digest: String,
+        size: u64,
+    },
+    /// Bytes are absent; keep metadata and set `missing_reason`.
+    Missing {
+        index: usize,
+        reason: String,
+        size: Option<u64>,
+    },
+}
+
+/// Message line with attachment digests / missing placeholders applied.
 pub fn message_line(
     msg: &IrMessage,
-    digests: &[(usize, String, u64)],
+    projections: &[AttachmentProjection],
 ) -> Result<(Vec<u8>, String)> {
     let mut msg = msg.clone();
-    for (i, digest, size) in digests {
-        if let Some(att) = msg.attachments.get_mut(*i) {
-            att.digest_sha256 = Some(digest.clone());
-            att.size_bytes = Some(*size);
+    for proj in projections {
+        match proj {
+            AttachmentProjection::Digested {
+                index,
+                digest,
+                size,
+            } => {
+                if let Some(att) = msg.attachments.get_mut(*index) {
+                    att.digest_sha256 = Some(digest.clone());
+                    att.size_bytes = Some(*size);
+                    att.missing_reason = None;
+                }
+            }
+            AttachmentProjection::Missing {
+                index,
+                reason,
+                size,
+            } => {
+                if let Some(att) = msg.attachments.get_mut(*index) {
+                    att.digest_sha256 = None;
+                    att.missing_reason = Some(reason.clone());
+                    if let Some(size) = size {
+                        att.size_bytes = Some(*size);
+                    }
+                }
+            }
         }
     }
     serialize_message(&msg)
@@ -65,8 +103,8 @@ fn serialize_message(msg: &IrMessage) -> Result<(Vec<u8>, String)> {
 mod tests {
     use super::*;
     use message_ir::{
-        ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrDirection,
-        IrMessageKind, IrParticipant, IrService,
+        ConversationMeta, ConversationStats, ExportMeta, IrAttachment, IrConversationType,
+        IrDirection, IrMessageKind, IrParticipant, IrService,
     };
 
     #[test]
@@ -118,5 +156,54 @@ mod tests {
         let s = String::from_utf8(line).unwrap();
         assert!(s.contains(r#""direction":"incoming""#));
         assert!(!s.contains(r#""record":"message""#));
+    }
+
+    #[test]
+    fn projects_missing_reason_and_clears_digest() {
+        let msg = IrMessage {
+            guid: "g1".into(),
+            timestamp_unix_ms: 1,
+            direction: IrDirection::Incoming,
+            service: IrService::Sms,
+            message_kind: IrMessageKind::Sms,
+            sender_handle: None,
+            sender_display_name: None,
+            subject: None,
+            text: "with attachment".into(),
+            attachments: vec![IrAttachment {
+                path: Some("attachments/big.bin".into()),
+                original_name: Some("big.bin".into()),
+                mime_type: Some("application/octet-stream".into()),
+                digest_sha256: Some("deadbeef".into()),
+                is_sticker: false,
+                transcription: None,
+                sticker_effect: None,
+                size_bytes: Some(99),
+                missing_reason: None,
+                bytes: None,
+            }],
+            imessage: None,
+            source: None,
+        };
+        let (line, _) = message_line(
+            &msg,
+            &[AttachmentProjection::Missing {
+                index: 0,
+                reason: "too_large".into(),
+                size: Some(5_000_000),
+            }],
+        )
+        .unwrap();
+        let parsed: IrMessage = serde_json::from_slice(&line).unwrap();
+        assert!(parsed.attachments[0].digest_sha256.is_none());
+        assert_eq!(
+            parsed.attachments[0].missing_reason.as_deref(),
+            Some("too_large")
+        );
+        assert_eq!(parsed.attachments[0].size_bytes, Some(5_000_000));
+        assert_eq!(
+            parsed.attachments[0].original_name.as_deref(),
+            Some("big.bin")
+        );
     }
 }

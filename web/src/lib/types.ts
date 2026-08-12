@@ -40,6 +40,8 @@ export interface MessageAttachment {
   sha256: string | null;
   is_sticker: boolean;
   transcription: string | null;
+  /** Why bytes are absent (`too_large` / `file_missing`); null when asset exists. */
+  missing_reason?: string | null;
 }
 
 export interface MessageTapback {

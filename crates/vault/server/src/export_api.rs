@@ -112,6 +112,8 @@ pub struct ExportAttachment {
     pub is_sticker: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -882,7 +884,8 @@ fn load_attachments(
     for chunk in message_ids.chunks(400) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription
+            "SELECT message_id, path, original_name, mime_type, sha256, is_sticker, transcription,
+                    missing_reason
              FROM attachments
              WHERE message_id IN ({placeholders})
              ORDER BY message_id, id"
@@ -901,6 +904,7 @@ fn load_attachments(
                         sha256: row.get(4)?,
                         is_sticker: row.get::<_, i64>(5)? != 0,
                         transcription: row.get(6)?,
+                        missing_reason: row.get(7)?,
                     },
                 ))
             })
@@ -1033,6 +1037,39 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    fn export_includes_attachment_missing_reason() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO attachments (
+                message_id, path, original_name, mime_type, sha256, is_sticker,
+                size_bytes, missing_reason
+             ) VALUES (1, 'attachments/gone.bin', 'gone.bin', 'image/png', NULL, 0, 2048, 'file_missing')",
+            [],
+        )
+        .unwrap();
+
+        let res = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "in:1",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(res.messages.len(), 1);
+        assert_eq!(res.messages[0].attachments.len(), 1);
+        let att = &res.messages[0].attachments[0];
+        assert!(att.sha256.is_none());
+        assert_eq!(att.missing_reason.as_deref(), Some("file_missing"));
+        assert_eq!(att.original_name.as_deref(), Some("gone.bin"));
+        assert_eq!(att.mime_type.as_deref(), Some("image/png"));
     }
 
     #[test]

@@ -350,6 +350,7 @@ fn mail_message_to_ir(
             transcription: attachment.transcription.clone(),
             sticker_effect: attachment.sticker_effect.clone(),
             size_bytes: file_size,
+            missing_reason: None,
             bytes,
         });
     }

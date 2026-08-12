@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS attachments (
     sha256 TEXT,
     assets_path TEXT,
     size_bytes INTEGER,
+    missing_reason TEXT,
     derived_sha256 TEXT,
     derived_assets_path TEXT,
     derived_mime_type TEXT

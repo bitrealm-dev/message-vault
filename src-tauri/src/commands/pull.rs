@@ -63,8 +63,10 @@ pub async fn pull(
                 messages,
                 total_so_far,
             } => {
-                let _ = app_handle
-                    .emit("extract:log", format!("{messages} messages (total: {total_so_far})"));
+                let _ = app_handle.emit(
+                    "extract:log",
+                    format!("{messages} messages (total: {total_so_far})"),
+                );
             }
             ProgressEvent::Done(_) => {}
         };

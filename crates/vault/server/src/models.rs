@@ -68,6 +68,8 @@ pub struct AttachmentRecord {
     pub sha256: Option<String>,
     pub is_sticker: bool,
     pub transcription: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub missing_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +281,8 @@ fn attachment_from_ir(a: &IrAttachment) -> AttachmentRecord {
         sha256: a.digest_sha256.clone(),
         is_sticker: a.is_sticker,
         transcription: a.transcription.clone(),
+        size_bytes: a.size_bytes,
+        missing_reason: a.missing_reason.clone(),
     }
 }
 

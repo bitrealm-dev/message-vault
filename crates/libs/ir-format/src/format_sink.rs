@@ -265,6 +265,7 @@ mod tests {
             transcription: None,
             sticker_effect: None,
             size_bytes: None,
+            missing_reason: None,
             bytes: None,
         }];
 

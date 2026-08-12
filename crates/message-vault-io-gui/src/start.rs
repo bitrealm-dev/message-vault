@@ -1176,6 +1176,17 @@ fn run_vault_upload(
             }
         }
         VaultProgressEvent::FileDone { .. } => {}
+        VaultProgressEvent::Issue {
+            kind,
+            item,
+            reason,
+            ..
+        } => {
+            let _ = tx.send(ProcessEvent::Log(format!(
+                "{}: {item}: {reason}",
+                if kind == "skip" { "Skipped" } else { "Error" }
+            )));
+        }
         VaultProgressEvent::Finished(report) => {
             for line in vault_push::format_push_summary(&report).lines() {
                 let _ = tx.send(ProcessEvent::Log(line.to_string()));

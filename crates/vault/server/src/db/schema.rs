@@ -64,6 +64,7 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(CONTACTS_TABLES_DDL)?;
     conn.execute_batch(MESSAGE_TABLES_DDL)?;
     conn.execute_batch(STAGING_TABLES_DDL)?;
+    ensure_attachment_missing_reason_columns(conn)?;
     ensure_messages_fts(conn)?;
     Ok(())
 }
@@ -294,6 +295,10 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
             "SELECT COUNT(*) > 0 FROM pragma_table_info('account_app_passwords') WHERE name = ?1"
         }
         "vault_imports" => "SELECT COUNT(*) > 0 FROM pragma_table_info('vault_imports') WHERE name = ?1",
+        "attachments" => "SELECT COUNT(*) > 0 FROM pragma_table_info('attachments') WHERE name = ?1",
+        "staging_attachments" => {
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('staging_attachments') WHERE name = ?1"
+        }
         other => bail!("column_exists: unsupported table {other}"),
     };
     let exists: bool = conn.query_row(sql, params![column], |row| row.get(0))?;
@@ -317,6 +322,24 @@ fn ensure_vault_imports_timing_columns(conn: &Connection) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn ensure_attachment_missing_reason_columns(conn: &Connection) -> Result<()> {
+    for (table, ddl) in [
+        (
+            "attachments",
+            "ALTER TABLE attachments ADD COLUMN missing_reason TEXT",
+        ),
+        (
+            "staging_attachments",
+            "ALTER TABLE staging_attachments ADD COLUMN missing_reason TEXT",
+        ),
+    ] {
+        if table_exists(conn, table)? && !column_exists(conn, table, "missing_reason")? {
+            conn.execute_batch(ddl)?;
+        }
+    }
     Ok(())
 }
 
@@ -550,10 +573,16 @@ mod tests {
                 .any(|c| c == "account_id")
         );
         assert!(columns("attachments").iter().any(|c| c == "size_bytes"));
+        assert!(columns("attachments").iter().any(|c| c == "missing_reason"));
         assert!(
             columns("staging_attachments")
                 .iter()
                 .any(|c| c == "size_bytes")
+        );
+        assert!(
+            columns("staging_attachments")
+                .iter()
+                .any(|c| c == "missing_reason")
         );
 
         ensure_vault_schema(&conn).unwrap();
