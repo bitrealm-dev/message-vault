@@ -990,9 +990,9 @@ mod tests {
         let mut report = ExportReport::default();
         let mut skips = SkipDetails::default();
         add_pdu_message(
+            &mut conversations,
             parsed,
             Vec::new(),
-            &mut conversations,
             &owners,
             &mut report,
             &mut skips,
