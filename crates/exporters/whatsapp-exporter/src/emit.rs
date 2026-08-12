@@ -199,14 +199,16 @@ fn ingest_chat(
                 }
             }
             Some(src) => {
+                // Media is not copied: keep basename metadata only. Do not store
+                // host paths as IR `path` or hash path strings as content digests.
                 let name = Path::new(src)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned());
                 vec![PendingAttachment {
-                    rel_path: src.to_string(),
+                    rel_path: String::new(),
                     content_type: msg.mime.clone().unwrap_or_default(),
                     extension: name.as_deref().map(ext_of).unwrap_or_default(),
-                    digest_sha256: Some(digest_path_label(src)),
+                    digest_sha256: None,
                     name_hint: name,
                 }]
             }
@@ -430,12 +432,6 @@ fn file_sha256(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn digest_path_label(src: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(src.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 fn key_id_string(msg: &MessageJson) -> String {
     match &msg.key_id {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -525,7 +521,7 @@ fn pending_to_document(
             .attachments
             .iter()
             .map(|a| IrAttachment {
-                path: Some(a.rel_path.clone()),
+                path: (!a.rel_path.is_empty()).then(|| a.rel_path.clone()),
                 original_name: a.name_hint.clone(),
                 mime_type: a.mime_type(),
                 digest_sha256: a.digest_sha256.clone(),
