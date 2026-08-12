@@ -201,7 +201,7 @@ pub fn load_contacts_if_needed(
     overwrite: bool,
     account_id: &str,
 ) -> Result<ContactLoadStats> {
-    crate::db::schema::ensure_contacts_schema(conn)?;
+    crate::db::schema::ensure_vault_schema(conn)?;
     crate::db::account_profile::ensure_account_row(conn, account_id)?;
 
     let Some(path) = contacts_path else {

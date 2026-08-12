@@ -492,6 +492,25 @@ fn conversation_join_sql() -> String {
         .into()
 }
 
+fn push_participant_handle_or_alias_like(
+    where_parts: &mut Vec<String>,
+    params: &mut Vec<rusqlite::types::Value>,
+    needle: &str,
+) {
+    where_parts.push(
+        "EXISTS (
+                 SELECT 1 FROM participants p
+                 JOIN handles ph ON ph.id = p.handle_id
+                 WHERE p.conversation_id = c.id
+                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
+               )"
+        .into(),
+    );
+    let like = format!("%{needle}%");
+    params.push(like.clone().into());
+    params.push(like.into());
+}
+
 fn build_message_filters(
     conn: &Connection,
     account_id: &str,
@@ -533,33 +552,10 @@ fn build_message_filters(
     }
 
     if let Some(to) = &parsed.to {
-        where_parts.push(
-            "EXISTS (
-                 SELECT 1 FROM participants p
-                 JOIN handles ph ON ph.id = p.handle_id
-                 WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
-               )"
-            .into(),
-        );
-        let like = format!("%{to}%");
-        params.push(like.clone().into());
-        params.push(like.into());
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, to);
     }
-
     if let Some(with_person) = &parsed.with_person {
-        where_parts.push(
-            "EXISTS (
-                 SELECT 1 FROM participants p
-                 JOIN handles ph ON ph.id = p.handle_id
-                 WHERE p.conversation_id = c.id
-                   AND (ph.raw LIKE ? OR coalesce(p.name_alias, '') LIKE ?)
-               )"
-            .into(),
-        );
-        let like = format!("%{with_person}%");
-        params.push(like.clone().into());
-        params.push(like.into());
+        push_participant_handle_or_alias_like(&mut where_parts, &mut params, with_person);
     }
 
     if let Some(subject) = &parsed.subject {
@@ -613,20 +609,8 @@ fn build_message_filters(
         where_parts.push(involves_contacts_sql(&ids));
     }
 
-    where_parts.push(
-        "NOT EXISTS (
-           SELECT 1 FROM trashed_conversations tc
-           WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-         )"
-        .into(),
-    );
-    where_parts.push(
-        "NOT EXISTS (
-           SELECT 1 FROM trashed_handles th
-           WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-         )"
-        .into(),
-    );
+    where_parts.push(crate::contacts_api::NOT_TRASHED_CONVERSATION_SQL.into());
+    where_parts.push(crate::contacts_api::NOT_TRASHED_CHAT_HANDLE_SQL.into());
 
     let dedupe_sql = if source_filter.is_some() {
         String::new()

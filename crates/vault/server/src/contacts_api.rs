@@ -123,6 +123,18 @@ pub(crate) fn involves_contact_sql() -> String {
     involves_contact_expr("?")
 }
 
+/// Conversation `c` is not in `trashed_conversations`.
+pub(crate) const NOT_TRASHED_CONVERSATION_SQL: &str = "NOT EXISTS (
+               SELECT 1 FROM trashed_conversations tc
+               WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
+             )";
+
+/// Conversation `c`'s chat handle is not in `trashed_handles`.
+pub(crate) const NOT_TRASHED_CHAT_HANDLE_SQL: &str = "NOT EXISTS (
+               SELECT 1 FROM trashed_handles th
+               WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
+             )";
+
 /// Correlated: conversation `c` involves contact row `ct` (no bind params).
 fn involves_ct_sql() -> String {
     involves_contact_expr("ct.id")
@@ -157,6 +169,38 @@ enum DateBoundOp {
 struct DateBound {
     op: DateBoundOp,
     ymd: String,
+}
+
+fn date_bound_cmp(op: DateBoundOp) -> &'static str {
+    match op {
+        DateBoundOp::OnOrAfter => ">=",
+        DateBoundOp::Before => "<",
+        DateBoundOp::OnOrBefore => "<=",
+    }
+}
+
+fn involved_message_date_agg(involves: &str, min_or_max: &str) -> String {
+    format!(
+        "date((
+           SELECT {min_or_max}(m.timestamp)
+           FROM conversations c
+           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
+           WHERE c.account_id = ct.account_id
+             AND {involves}
+         ))"
+    )
+}
+
+fn push_contact_date_bounds(
+    where_parts: &mut Vec<String>,
+    params: &mut Vec<rusqlite::types::Value>,
+    bounds: &[DateBound],
+    agg: &str,
+) {
+    for bound in bounds {
+        where_parts.push(format!("{agg} {} date(?)", date_bound_cmp(bound.op)));
+        params.push(bound.ymd.clone().into());
+    }
 }
 
 #[derive(Debug, Default)]
@@ -400,43 +444,18 @@ pub fn list_contacts(
         }
     }
 
-    let first_agg = format!(
-        "date((
-           SELECT MIN(m.timestamp)
-           FROM conversations c
-           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-           WHERE c.account_id = ct.account_id
-             AND {involves}
-         ))"
+    push_contact_date_bounds(
+        &mut where_parts,
+        &mut params,
+        &filters.first_contact,
+        &involved_message_date_agg(&involves, "MIN"),
     );
-    for bound in &filters.first_contact {
-        let cmp = match bound.op {
-            DateBoundOp::OnOrAfter => ">=",
-            DateBoundOp::Before => "<",
-            DateBoundOp::OnOrBefore => "<=",
-        };
-        where_parts.push(format!("{first_agg} {cmp} date(?)"));
-        params.push(bound.ymd.clone().into());
-    }
-
-    let last_agg = format!(
-        "date((
-           SELECT MAX(m.timestamp)
-           FROM conversations c
-           JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
-           WHERE c.account_id = ct.account_id
-             AND {involves}
-         ))"
+    push_contact_date_bounds(
+        &mut where_parts,
+        &mut params,
+        &filters.last_contact,
+        &involved_message_date_agg(&involves, "MAX"),
     );
-    for bound in &filters.last_contact {
-        let cmp = match bound.op {
-            DateBoundOp::OnOrAfter => ">=",
-            DateBoundOp::Before => "<",
-            DateBoundOp::OnOrBefore => "<=",
-        };
-        where_parts.push(format!("{last_agg} {cmp} date(?)"));
-        params.push(bound.ymd.clone().into());
-    }
 
     let where_sql = where_parts.join(" AND ");
     let count_sql = format!("SELECT COUNT(*) FROM contacts ct WHERE {where_sql}");
@@ -577,7 +596,7 @@ pub fn get_contact_detail(
     // One row per handle. Date range and message counts cover direct + group
     // conversations that include the handle (excluding trashed conversations).
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT h.raw,
                     NULLIF(trim(h.service), '') AS service,
                     NULLIF(trim(ch.name_alias), '') AS name_alias,
@@ -595,19 +614,15 @@ pub fn get_contact_detail(
                       SELECT 1 FROM participants p
                       WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
                     ))
-               AND NOT EXISTS (
-                 SELECT 1 FROM trashed_conversations tc
-                 WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM trashed_handles th
-                 WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-               )
+               AND {not_trashed_conversation}
+               AND {not_trashed_handle}
              LEFT JOIN messages m ON m.conversation_id = c.id AND m.duplicate_of IS NULL
              WHERE ch.account_id = ?1 AND ch.contact_id = ?2
              GROUP BY ch.handle_id, h.raw, h.service, ch.name_alias
              ORDER BY h.raw",
-        )?;
+            not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+            not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
+        ))?;
     let mut handles = Vec::new();
     let rows = stmt
         .query_map(rusqlite::params![account_id, contact_id], |row| {
@@ -636,14 +651,8 @@ pub fn get_contact_detail(
                FROM conversations c
                WHERE c.account_id = ?1
                  AND {involves_contact_sql}
-                 AND NOT EXISTS (
-                   SELECT 1 FROM trashed_conversations tc
-                   WHERE tc.account_id = c.account_id AND tc.conversation_id = c.id
-                 )
-                 AND NOT EXISTS (
-                   SELECT 1 FROM trashed_handles th
-                   WHERE th.account_id = c.account_id AND th.handle_id = c.chat_handle_id
-                 )
+                 AND {not_trashed_conversation}
+                 AND {not_trashed_handle}
              )
              SELECT
                (SELECT COUNT(*) FROM involved WHERE conversation_type = 'individual'),
@@ -652,6 +661,8 @@ pub fn get_contact_detail(
                 WHERE m.duplicate_of IS NULL
                   AND m.conversation_id IN (SELECT id FROM involved))",
             involves_contact_sql = involves_contact_sql(),
+            not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+            not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
         ))?;
     let (direct, groups, total): (i64, i64, i64) = stats_stmt
         .query_row(rusqlite::params![account_id, contact_id], |row| {

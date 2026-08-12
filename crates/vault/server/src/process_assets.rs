@@ -924,7 +924,6 @@ mod tests {
         let db_path = dir.path().join("vault.db");
         let conn = Connection::open(&db_path).unwrap();
         schema::ensure_vault_schema(&conn).unwrap();
-        schema::ensure_messages_schema(&conn).unwrap();
         conn.execute(
             "INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0)",
             [],

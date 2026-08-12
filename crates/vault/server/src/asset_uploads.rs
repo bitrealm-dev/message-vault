@@ -74,11 +74,8 @@ pub struct StartUpload {
 }
 
 fn normalize_sha(sha: &str) -> Result<String> {
-    let s = sha.trim().to_ascii_lowercase();
-    if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("invalid sha256 (expected 64 lowercase hex digits)");
-    }
-    Ok(s)
+    assets::normalize_sha256(sha)
+        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))
 }
 
 fn new_upload_id() -> String {

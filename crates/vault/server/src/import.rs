@@ -361,7 +361,7 @@ pub fn import_jsonl_files_on_conn(
     if schema_mode == ImportSchemaMode::Ensure {
         println!("  sql:      ensuring schema + resetting staging for account…");
         let _ = io::stdout().flush();
-        schema::ensure_messages_schema(conn)?;
+        schema::ensure_vault_schema(conn)?;
     } else {
         println!("  sql:      resetting staging for account…");
         let _ = io::stdout().flush();
@@ -486,7 +486,7 @@ pub fn import_jsonl_files_on_conn(
         stats.tapbacks = promote_stats.tapbacks;
     }
 
-    schema::clear_staging_for_account(conn, opts.account_id)?;
+    schema::reset_staging_for_account(conn, opts.account_id)?;
 
     stats.assets_copied = asset_stats.copied;
     stats.assets_deduped = asset_stats.deduped;

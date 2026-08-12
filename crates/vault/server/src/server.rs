@@ -431,7 +431,7 @@ async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<St
     tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db)?;
         schema::configure_connection(&conn)?;
-        // Read-only: do not run ensure_messages_schema (avoids write locks on auth).
+        // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
         dedupe::source_priority_from_db(&conn, &account_id)
     })
     .await

@@ -400,15 +400,16 @@ pub fn list_imports_for_account(
     Ok(rows)
 }
 
-/// Total attachment bytes for an account (original size_bytes).
-pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i64> {
-    let n: i64 = conn.query_row(
-        r#"
-        SELECT COALESCE(SUM(a.size_bytes), 0)
+const ACCOUNT_ATTACHMENTS_FROM: &str = r#"
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE m.account_id = ?1
-        "#,
+        "#;
+
+/// Total attachment bytes for an account (original size_bytes).
+pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        &format!("SELECT COALESCE(SUM(a.size_bytes), 0) {ACCOUNT_ATTACHMENTS_FROM}"),
         params![account_id],
         |r| r.get(0),
     )?;
@@ -418,12 +419,7 @@ pub fn account_attachment_bytes(conn: &Connection, account_id: &str) -> Result<i
 /// Attachment row count for an account.
 pub fn account_attachment_count(conn: &Connection, account_id: &str) -> Result<i64> {
     let n: i64 = conn.query_row(
-        r#"
-        SELECT COUNT(*)
-        FROM attachments a
-        JOIN messages m ON m.id = a.message_id
-        WHERE m.account_id = ?1
-        "#,
+        &format!("SELECT COUNT(*) {ACCOUNT_ATTACHMENTS_FROM}"),
         params![account_id],
         |r| r.get(0),
     )?;
