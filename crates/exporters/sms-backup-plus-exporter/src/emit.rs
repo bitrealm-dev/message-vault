@@ -677,9 +677,30 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     );
     vlog(verbose, log, format!("output: {}", output_dir.display()));
 
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("create {}", output_dir.display()))?;
+    // Canonicalize so relative paths resolve and so output/input identity is
+    // checked on resolved paths. Cleaning the output before reading the input
+    // would otherwise delete leftover export CSVs/JSON inside a backup tree
+    // when output points at (or contains) an input root.
+    let output_dir = fs::canonicalize(output_dir)
+        .with_context(|| format!("resolve {}", output_dir.display()))?;
+    for input in inputs {
+        let input = input.as_ref();
+        let input = fs::canonicalize(input)
+            .with_context(|| format!("resolve {}", input.display()))?;
+        if output_dir == input || input.starts_with(&output_dir) {
+            bail!(
+                "output {} must not be the same as, or contain, the input {}",
+                output_dir.display(),
+                input.display()
+            );
+        }
+    }
+
     let copy_attachments = transforms.copies_attachments();
     let (mut sink, attachments_dir) =
-        FormatSink::open_prepared(output_dir, output_format, transforms)?;
+        FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
     let input_roots: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let file_inputs: HashSet<PathBuf> = input_roots

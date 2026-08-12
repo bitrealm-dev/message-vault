@@ -20,6 +20,43 @@ fn empty_mapping() -> NameMapping {
 }
 
 #[test]
+fn output_equals_input_bails_before_cleaning() {
+    let input = fixtures();
+    let sample = input.join("flat_smssync_276_sam.eml");
+    assert!(
+        sample.is_file() || input.is_dir(),
+        "missing fixtures under {}",
+        input.display()
+    );
+    let err = convert_export(
+        &[input.as_path()],
+        input.as_path(),
+        &["+15555550100".into()],
+        &["owner@example.com".into()],
+        &empty_book(),
+        &empty_mapping(),
+        &DateRange::default(),
+        false,
+        ExportTransforms::none(),
+        OutputFormat::Csv,
+        None,
+        None,
+    )
+    .expect_err("output == input must fail");
+    assert!(
+        err.to_string()
+            .contains("must not be the same as, or contain"),
+        "unexpected error: {err}"
+    );
+    // Fixture EMLs must still be present after the refused run.
+    let eml_still_there = fs::read_dir(&input)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("eml"));
+    assert!(eml_still_there, "fixture .eml files must survive");
+}
+
+#[test]
 fn convert_smoke_writes_csv_not_json() {
     let input = fixtures();
     let tmp = tempfile::tempdir().unwrap();
