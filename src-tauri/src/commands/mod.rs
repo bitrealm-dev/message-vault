@@ -1,3 +1,14 @@
+//! Commands the Vite UI calls through Tauri's `invoke`.
+//!
+//! Each `#[tauri::command]` function runs in this desktop process, not in the
+//! WebView. That is how the UI starts exporters, finds ffmpeg, and reads the
+//! user's home directory. Native file dialogs come from the dialog plugin
+//! registered in `main.rs`.
+//!
+//! Long jobs return as soon as the background thread starts. Progress, log
+//! lines, and errors are sent as Tauri events (`extract:log`,
+//! `extract:progress`, `extract:finished`, `extract:error`).
+
 pub mod events;
 pub mod extract;
 pub mod ffmpeg;
@@ -5,3 +16,17 @@ pub mod format;
 pub mod paths;
 pub mod pull;
 pub mod push;
+
+/// Treat missing, blank, and whitespace-only strings as absent.
+pub(crate) fn optional_trimmed(value: Option<&str>) -> Option<&str> {
+    let value = value?.trim();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// Last log line from a job, or `fallback` when the job wrote none.
+pub(crate) fn last_log_line_or(messages: &[String], fallback: &str) -> String {
+    match messages.last() {
+        Some(line) => line.clone(),
+        None => fallback.to_string(),
+    }
+}

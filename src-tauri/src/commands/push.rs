@@ -1,5 +1,4 @@
-//! `push` Tauri command — wraps `vault_push::run()` to import message-ir
-//! exports into a Message Vault server.
+//! `push` command — upload an extract folder to a Message Vault server.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -11,48 +10,58 @@ use vault_push::{ProgressEvent, VaultPushConfig, run as run_push};
 use super::events::{ExtractErrorEvent, ExtractProgressEvent};
 use crate::state::AppState;
 
+/// Convert a report count to the `usize` the progress event uses.
 fn as_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
+/// Progress bar update and finished JSON payload after a push completes.
 fn finished_push_events(
     report: &vault_push::PushReport,
 ) -> (ExtractProgressEvent, serde_json::Value) {
-    (
-        ExtractProgressEvent {
-            step: "upload".into(),
-            done: as_usize(report.conversations_total),
-            total: as_usize(report.conversations_total),
-            status: None,
-        },
-        serde_json::json!({
-            "summary": format!(
-                "Push complete: {} new, {} deduped, {} failed of {} attempted; {}/{} conversations ok; {} assets uploaded",
-                report.messages_inserted,
-                report.messages_deduped,
-                report.messages_failed,
-                report.messages_attempted,
-                report.conversations_ok,
-                report.conversations_total,
-                report.assets_uploaded
-            ),
-            "ok": report.ok,
-            "messages": report.messages,
-            "messages_attempted": report.messages_attempted,
-            "messages_inserted": report.messages_inserted,
-            "messages_deduped": report.messages_deduped,
-            "messages_failed": report.messages_failed,
-            "assets_uploaded": report.assets_uploaded,
-            "assets_bytes": report.assets_bytes,
-            "conversations_ok": report.conversations_ok,
-            "conversations_total": report.conversations_total,
-            "conversations_failed": report.conversations_failed,
-            "conversations_skipped": report.conversations_skipped,
-            "results": report.results,
-        }),
-    )
+    let progress = ExtractProgressEvent {
+        step: "upload".into(),
+        done: as_usize(report.conversations_total),
+        total: as_usize(report.conversations_total),
+        status: None,
+    };
+    let summary = serde_json::json!({
+        "summary": format!(
+            "Push complete: {} new, {} deduped, {} failed of {} attempted; {}/{} conversations ok; {} assets uploaded",
+            report.messages_inserted,
+            report.messages_deduped,
+            report.messages_failed,
+            report.messages_attempted,
+            report.conversations_ok,
+            report.conversations_total,
+            report.assets_uploaded
+        ),
+        "ok": report.ok,
+        "messages": report.messages,
+        "messages_attempted": report.messages_attempted,
+        "messages_inserted": report.messages_inserted,
+        "messages_deduped": report.messages_deduped,
+        "messages_failed": report.messages_failed,
+        "assets_uploaded": report.assets_uploaded,
+        "assets_bytes": report.assets_bytes,
+        "conversations_ok": report.conversations_ok,
+        "conversations_total": report.conversations_total,
+        "conversations_failed": report.conversations_failed,
+        "conversations_skipped": report.conversations_skipped,
+        "results": report.results,
+    });
+    (progress, summary)
 }
 
+/// Ask this process to upload extracted conversations to a vault server.
+///
+/// Returns as soon as the background thread starts. Upload progress uses the
+/// same `extract:*` events as Extract so the UI can reuse one progress view.
+///
+/// # Errors
+///
+/// This command always returns `Ok` after the thread starts. Failures during
+/// the upload are sent as `extract:error`.
 #[tauri::command]
 pub async fn push(
     _state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -136,26 +145,31 @@ pub async fn push(
             ProgressEvent::Finished(report) => {
                 for result in &report.results {
                     if result.status == "failed" {
+                        let reason = match result.error.as_deref() {
+                            Some(error) => error,
+                            None => "upload failed",
+                        };
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
                                 "kind": "error",
                                 "step": "upload",
                                 "item": result.file,
-                                "reason": result.error.as_deref().unwrap_or("upload failed"),
+                                "reason": reason,
                             }),
                         );
                     } else if result.status == "skipped" {
+                        let reason = match result.error.as_deref() {
+                            Some(error) => error,
+                            None => "already imported or skipped",
+                        };
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
                                 "kind": "skip",
                                 "step": "upload",
                                 "item": result.file,
-                                "reason": result
-                                    .error
-                                    .as_deref()
-                                    .unwrap_or("already imported or skipped"),
+                                "reason": reason,
                             }),
                         );
                     }

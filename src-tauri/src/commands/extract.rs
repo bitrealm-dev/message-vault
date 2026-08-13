@@ -1,13 +1,13 @@
-//! `extract` / `cancel` Tauri commands.
+//! `extract` and `cancel` commands.
 //!
 //! `extract` starts the selected exporter on a background thread and returns
-//! immediately. Progress streams back as Tauri events:
-//! `extract:log` (String line), `extract:finished` (String summary), and
-//! `extract:error` (`ExtractErrorEvent`).
+//! immediately. Progress is sent back as Tauri events:
+//! `extract:log` (one log line), `extract:finished` (a summary string or JSON
+//! object), and `extract:error` ([`ExtractErrorEvent`]).
 //!
-//! The shared cancel flag lives in `AppState` as `CancelFlag`
-//! (`Arc<AtomicBool>`): `cancel` flips it, `extract` resets it at job start,
-//! and the exporter polls it cooperatively via `ExporterConfig.cancel`.
+//! The shared cancel flag lives in [`AppState`]. `cancel` sets it to true.
+//! `extract` turns it off at the start of a job. The exporter checks it
+//! between steps through `ExporterConfig.cancel`.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -25,7 +25,7 @@ use message_vault_io_core::{
 };
 use tauri::Emitter;
 
-// Exporter run functions — aliased to keep the dispatch match legible.
+// Short names so the match in `run_exporter` stays easy to read.
 use go_sms_pro_exporter::run as run_go_sms_pro;
 use imazing_exporter::run as run_imazing;
 use imessage_ir_exporter::run as run_imessage;
@@ -35,8 +35,18 @@ use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
 use super::events::{ExtractErrorEvent, ExtractProgressEvent};
+use super::{last_log_line_or, optional_trimmed};
 use crate::state::AppState;
 
+/// Ask this process to stop the export that is currently running.
+///
+/// Sets the shared cancel flag. The exporter checks the flag between steps
+/// and exits on its own. There is no hard kill.
+///
+/// # Errors
+///
+/// Returns an error if another thread panicked while holding the shared
+/// state lock.
 #[tauri::command]
 pub async fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let state = state.lock().map_err(|e| e.to_string())?;
@@ -44,12 +54,35 @@ pub async fn cancel(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<(),
     Ok(())
 }
 
+/// How many conversation files and messages an extract wrote.
+///
+/// Each JSON Lines file (one JSON object per line) starts with a conversation
+/// header. That header is not counted as a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct JsonlOutputCounts {
     files: usize,
     messages: usize,
 }
 
+/// True when `path` looks like a JSON Lines file (one JSON object per line).
+fn is_json_lines_file(path: &Path) -> bool {
+    let Some(extension) = path.extension() else {
+        return false;
+    };
+    let Some(extension) = extension.to_str() else {
+        return false;
+    };
+    extension == "jsonl"
+}
+
+/// Walk `root` and count JSON Lines conversation files and the messages in them.
+///
+/// The first non-empty line of each file is the conversation header, so it is
+/// subtracted from the message total.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be listed or a file cannot be opened.
 fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
     let mut counts = JsonlOutputCounts {
         files: 0,
@@ -65,9 +98,10 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
                 directories.push(entry.path());
                 continue;
             }
-            if !file_type.is_file()
-                || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
-            {
+            if !file_type.is_file() {
+                continue;
+            }
+            if !is_json_lines_file(&entry.path()) {
                 continue;
             }
 
@@ -82,9 +116,8 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
             }
             if nonempty_lines > 0 {
                 counts.files = counts.files.saturating_add(1);
-                counts.messages = counts
-                    .messages
-                    .saturating_add(nonempty_lines.saturating_sub(1));
+                let message_lines = nonempty_lines.saturating_sub(1);
+                counts.messages = counts.messages.saturating_add(message_lines);
             }
         }
     }
@@ -92,8 +125,18 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
     Ok(counts)
 }
 
-/// Start an extraction job. Returns immediately; progress is emitted as
-/// `extract:log` / `extract:finished` / `extract:error` events.
+/// Ask this process to parse a phone backup and write conversation files.
+///
+/// Returns as soon as the background thread starts. Log lines, progress, and
+/// the final summary are sent as `extract:log`, `extract:progress`,
+/// `extract:finished`, and `extract:error`. Output is JSON Lines (one JSON
+/// object per line) so the Import and Push screens can read it later.
+///
+/// # Errors
+///
+/// Returns an error if a form field is invalid, the source is unknown, or
+/// another thread panicked while holding the shared state lock. Failures
+/// during the export itself are sent as `extract:error`, not returned here.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn extract(
@@ -126,15 +169,15 @@ pub async fn extract(
 
     let mut config = build_exporter_config(&source, &path, &output_dir, &options)?;
 
-    // Reset the shared cancel flag so a previous run's cancel doesn't abort
-    // this one. The job below polls this flag during the export.
+    // Clear a leftover cancel from a previous job. Otherwise this new export
+    // would stop immediately.
     {
         let st = state.lock().map_err(|e| e.to_string())?;
         st.cancel_flag.store(false, Ordering::SeqCst);
     }
 
-    // Cloning the flag shares the atomic — the cancel command flips it, the
-    // exporter polls it.
+    // Share the same cancel flag with the background thread. The cancel
+    // command sets it; the exporter reads it.
     let cancel: CancelFlag = {
         let st = state.lock().map_err(|e| e.to_string())?;
         st.cancel_flag.clone()
@@ -157,11 +200,7 @@ pub async fn extract(
 
         match result {
             Ok(run_result) => {
-                let summary = run_result
-                    .messages
-                    .last()
-                    .cloned()
-                    .unwrap_or_else(|| "Export complete.".to_string());
+                let summary = last_log_line_or(&run_result.messages, "Export complete.");
                 for line in run_result.messages {
                     let _ = app_handle.emit("extract:log", line);
                 }
@@ -179,7 +218,7 @@ pub async fn extract(
                             "extract:error",
                             ExtractErrorEvent {
                                 detail: format!(
-                                    "count extracted JSONL records in {output_dir}: {err:#}"
+                                    "count extracted JSON Lines records in {output_dir}: {err:#}"
                                 ),
                                 user_message: Some(
                                     "Extraction completed, but the generated message count could not be verified."
@@ -205,6 +244,7 @@ pub async fn extract(
     Ok(())
 }
 
+/// Form fields from the Extract screen after defaults are filled in.
 struct ExtractOptions {
     backup_password: String,
     attachment_media: AttachmentMedia,
@@ -217,8 +257,16 @@ struct ExtractOptions {
     obfuscate: bool,
 }
 
+/// Parse the attachment handling choice from the Extract form.
+///
+/// The UI says "copy" and "skip". The exporter config uses "clone" and
+/// "disabled" for those same choices.
+///
+/// # Errors
+///
+/// Returns an error if the string is not copy, convert, compress, or skip.
 fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> {
-    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(raw) = optional_trimmed(raw) else {
         return Ok(AttachmentMedia::default());
     };
     let lowered = raw.to_ascii_lowercase();
@@ -232,8 +280,13 @@ fn parse_attachment_media(raw: Option<&str>) -> Result<AttachmentMedia, String> 
     })
 }
 
+/// Parse the max video/image size from the Extract form.
+///
+/// # Errors
+///
+/// Returns an error if the string is not 720p, 1080p, or 4k.
 fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
-    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(raw) = optional_trimmed(raw) else {
         return Ok(MaxResolution::default());
     };
     MaxResolution::parse(raw).ok_or_else(|| {
@@ -241,6 +294,15 @@ fn parse_max_resolution(raw: Option<&str>) -> Result<MaxResolution, String> {
     })
 }
 
+/// Build the exporter config the background thread will run.
+///
+/// iMessage uses the shared form helper. Other sources fill `ExporterConfig`
+/// directly. Every path writes JSON Lines (one JSON object per line).
+///
+/// # Errors
+///
+/// Returns an error if the source is unknown, a date cannot be parsed, or
+/// compress options are invalid.
 fn build_exporter_config(
     source: &str,
     path: &str,
@@ -266,7 +328,8 @@ fn build_exporter_config(
             form.start_date = options.start_date.clone();
             form.end_date = options.end_date.clone();
             form.obfuscate = options.obfuscate;
-            // Import / push pipeline reads JSONL conversation files.
+            // Import and Push read conversation files as JSON Lines (one JSON
+            // object per line).
             form.output_format = OutputFormat::Jsonl;
             form.to_config(Exporter::Imessage)
                 .map_err(|errors| errors.join("; "))
@@ -299,15 +362,18 @@ fn build_exporter_config(
                 _ => return Err(format!("unsupported source '{source}'")),
             };
 
-            let date_range =
-                parse_date_range(nonempty(&options.start_date), nonempty(&options.end_date))?;
+            let start_date = nonempty(&options.start_date);
+            let end_date = nonempty(&options.end_date);
+            let date_range = parse_date_range(start_date, end_date)?;
 
             let compress = if matches!(options.attachment_media, AttachmentMedia::Compress) {
+                let fps = options
+                    .media_max_fps
+                    .parse::<f32>()
+                    .map_err(|_| format!("invalid media_max_fps '{}'", options.media_max_fps))?;
                 media::compress_options_from_cli(
                     options.media_max_resolution,
-                    options.media_max_fps.parse::<f32>().map_err(|_| {
-                        format!("invalid media_max_fps '{}'", options.media_max_fps)
-                    })?,
+                    fps,
                     &options.media_min_size,
                     true,
                 )
@@ -339,13 +405,17 @@ fn build_exporter_config(
     }
 }
 
+/// Return `s` trimmed, or `None` when it is empty.
 fn nonempty(s: &str) -> Option<&str> {
-    let t = s.trim();
-    if t.is_empty() { None } else { Some(t) }
+    optional_trimmed(Some(s))
 }
 
-/// Dispatch to the correct exporter's `run()` function based on the source
-/// config. Mirrors `message-vault-io-gui::jobs::run_exporter()`.
+/// Call the exporter that matches `config.source`.
+///
+/// # Errors
+///
+/// Returns an error if the exporter fails, or if the source is format
+/// conversion (that job uses the `format` command instead).
 fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core::RunResult> {
     match &config.source {
         SourceConfig::GoSmsPro(_) => run_go_sms_pro(config),
@@ -359,17 +429,20 @@ fn run_exporter(config: &ExporterConfig) -> anyhow::Result<message_vault_io_core
     }
 }
 
+/// Whether log lines are still about reading the backup, or already about
+/// writing conversation files.
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ExtractProgressStage {
     Parse,
     Convert,
 }
 
+/// Turn an exporter log line into a progress event, if the line has counts.
 fn extract_progress_from_log(
     line: &str,
     stage: &Arc<Mutex<ExtractProgressStage>>,
 ) -> Option<ExtractProgressEvent> {
-    if line.contains("Writing ") && line.contains("conversation file(s)") {
+    if is_writing_conversation_files_banner(line) {
         if let Ok(mut current_stage) = stage.lock() {
             *current_stage = ExtractProgressStage::Convert;
         }
@@ -385,11 +458,11 @@ fn extract_progress_from_log(
         return None;
     };
 
-    let step = match stage
-        .lock()
-        .map(|current_stage| *current_stage)
-        .unwrap_or(ExtractProgressStage::Parse)
-    {
+    let current_stage = match stage.lock() {
+        Ok(guard) => *guard,
+        Err(_) => ExtractProgressStage::Parse,
+    };
+    let step = match current_stage {
         ExtractProgressStage::Parse => "parse",
         ExtractProgressStage::Convert => "convert",
     };
@@ -402,6 +475,15 @@ fn extract_progress_from_log(
     })
 }
 
+/// True for the log line that means "finished reading, now writing files".
+fn is_writing_conversation_files_banner(line: &str) -> bool {
+    line.contains("Writing ") && line.contains("conversation file(s)")
+}
+
+/// True for backup-setup lines like `[1/5] Deriving backup keys...`.
+///
+/// Those counts are setup steps, not message progress, so they must not
+/// move the progress bar.
 fn has_bracketed_step_ratio(line: &str) -> bool {
     let mut rest = line;
     while let Some(open) = rest.find('[') {
@@ -409,13 +491,13 @@ fn has_bracketed_step_ratio(line: &str) -> bool {
         let Some((left, after_left)) = rest.split_once('/') else {
             continue;
         };
-        if !left.chars().all(|c| c.is_ascii_digit()) || left.is_empty() {
+        if left.is_empty() || !left.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
         let Some((right, after_right)) = after_left.split_once(']') else {
             continue;
         };
-        if right.chars().all(|c| c.is_ascii_digit()) && !right.is_empty() {
+        if !right.is_empty() && right.chars().all(|c| c.is_ascii_digit()) {
             return true;
         }
         rest = after_right;
@@ -423,12 +505,14 @@ fn has_bracketed_step_ratio(line: &str) -> bool {
     false
 }
 
+/// Read `done/total` from a message-progress log line.
 fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
     if has_bracketed_step_ratio(line) {
         return None;
     }
 
-    if !(line.contains('…') || line.contains("wrote")) {
+    let looks_like_message_progress = line.contains('…') || line.contains("wrote");
+    if !looks_like_message_progress {
         return None;
     }
 
@@ -438,20 +522,31 @@ fn extract_progress_ratio(line: &str) -> Option<(usize, usize)> {
     Some((done, total))
 }
 
+/// Parse the integer at the end of `text`, if any.
 fn trailing_usize(text: &str) -> Option<usize> {
-    let digits: String = text
-        .chars()
-        .rev()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    if digits.is_empty() {
+    let mut reversed_digits = String::new();
+    for ch in text.chars().rev() {
+        if !ch.is_ascii_digit() {
+            break;
+        }
+        reversed_digits.push(ch);
+    }
+    if reversed_digits.is_empty() {
         return None;
     }
-    digits.chars().rev().collect::<String>().parse().ok()
+    let digits: String = reversed_digits.chars().rev().collect();
+    digits.parse().ok()
 }
 
+/// Parse the integer at the start of `text`, if any.
 fn leading_usize(text: &str) -> Option<usize> {
-    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let mut digits = String::new();
+    for ch in text.chars() {
+        if !ch.is_ascii_digit() {
+            break;
+        }
+        digits.push(ch);
+    }
     if digits.is_empty() {
         return None;
     }
