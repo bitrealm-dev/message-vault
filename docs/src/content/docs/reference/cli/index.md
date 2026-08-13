@@ -17,4 +17,4 @@ Each source has its own command:
 
 Most converters accept `--format json|jsonl|csv|eml|mbox|xml`, an input path, an output directory, date filters, media settings, and obfuscation settings. Source-specific commands also require identity, passwords, keys, contacts, or platform values where applicable.
 
-Keep input and output separate. Use `--help` on the installed command for its exact options. Detailed generated pages for each tool are provided separately from this landing page.
+Keep input and output separate. Use `--help` on the installed command for its exact options. Open a command in the sidebar for its flags.

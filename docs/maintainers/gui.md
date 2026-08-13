@@ -140,7 +140,7 @@ cargo run -p message-vault-io-gui
 
 ### Contacts
 
-Runs [`contacts::validate_contacts_file`](../../crates/message/contacts)
+Runs [`contacts::validate_contacts_file`](../../crates/libs/contacts)
 in-process via the `message-contacts` library.
 
 - **Check**: dry run — no files written; the run log shows the same UNCERTAIN /
@@ -165,7 +165,7 @@ output folder to another packaging format (via the common message).
 
 Persists under `[format]` in `export.ini` (loads legacy `[message-reexport]` if
 present). Mixed or unrecognized input dirs fail with a clear error. See
-[`crates/message/reexport/docs/MESSAGE_REEXPORTER.md`](../../crates/message/reexport/docs/MESSAGE_REEXPORTER.md).
+[`message-reexporter` CLI](https://bitrealm.dev/reference/cli/message-reexporter/).
 
 ### Guided Import Messages
 
@@ -235,7 +235,7 @@ from disk, or media omitted by skip-attachments / text-only import.
 End-user write-up: [Import to Message Vault](../src/content/docs/use-the-desktop-app/import-into-vault.md).
 
 Persists under `[vault]` in `export.ini`. See
-[`crates/vault-push/docs/MANPAGE.md`](../../crates/vault-push/docs/MANPAGE.md).
+[`vault-push` CLI reference](https://bitrealm.dev/reference/cli/vault-push/).
 
 ## Shared / global controls
 
@@ -371,7 +371,7 @@ Product: [iMazing](https://imazing.com/)
 
 Media modes and obfuscate apply through FormatSink for every format. WhatsApp
 chats use the `__whatsapp` stem suffix. See
-[`crates/exporters/imazing-exporter/docs/DESIGN.md`](../../crates/exporters/imazing-exporter/docs/DESIGN.md).
+[`iMazing importer design`](https://bitrealm.dev/formats/imazing/design/).
 
 ### WhatsApp — `whatsapp-exporter`
 

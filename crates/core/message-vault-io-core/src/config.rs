@@ -17,7 +17,7 @@ use crate::process::{CancelFlag, LogSink, emit_log};
 pub enum OutputFormat {
     /// Per-conversation CSV.
     Csv,
-    /// Per-conversation folder of `.eml` files (see docs/maintainers/formats/mail-archive.md).
+    /// Per-conversation folder of `.eml` files (see https://bitrealm.dev/formats/mail-archive/).
     Eml,
     /// Per-conversation `.mbox` (mboxrd) mailbox file.
     Mbox,

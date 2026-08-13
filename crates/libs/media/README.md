@@ -1,18 +1,21 @@
-# message-media
+# media
 
-Post-process attachment media under a converter export directory (`attachments/` + CSV `attachments_json` paths).
+FFmpeg wrapper used when an export copies, converts, or compresses attachment files. Convert/compress runs inside format packaging (`message-ir-format`), not as a separate CSV post-step.
 
-## Modes
+Converters and the desktop app use this crate. `ffmpeg` and `ffprobe` must be beside the binary, in `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
 
-| Mode | Behavior |
-|------|----------|
-| `disabled` | Do not write attachment files (exporter flag; post-process no-op) |
-| `clone` | Leave files as exported (post-process no-op) |
-| `convert` | Standardize images→`.jpg`, videos→`.mp4`, audio→`.mp3` (`.gif` left unchanged) |
-| `compress` | Size-oriented re-encode; video options for max resolution / fps / min size / skip-efficient (`.gif` left unchanged) |
+## Build and test
 
-Intermediate `*.msgmedia.tmp.*` files are deleted after each file and swept from `attachments/` at the start and end of a run.
+```bash
+cargo test -p media
+```
 
-Requires **ffmpeg** and **ffprobe** for convert/compress (beside the running binary, in `MESSAGE_VAULT_IO_BIN`, or on `PATH`). Release ZIPs bundle both.
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
-Used by `go-sms-pro-exporter`, `sms-backup-restore-exporter`, `sms-backup-plus-exporter`, and the GUI (iPhone convert/compress post-step).
+## Docs
+
+This crate is a library. User options: https://bitrealm.dev/use-the-desktop-app/media-and-privacy/
+
+## License
+
+MIT.

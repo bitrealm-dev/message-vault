@@ -1,7 +1,22 @@
 # whatsapp-exporter
 
-Convert WhatsApp Android/iOS databases via **wtsexporter** and the common message to JSON, CSV, EML, MBOX, JSONL, or XML.
+Extract WhatsApp backups with `wtsexporter`, then convert the result into JSON Lines, JSON, CSV, EML, MBOX, or XML.
 
-**CLI:** [docs/MANPAGE.md](docs/MANPAGE.md)
+The desktop app Extract Messages screen uses this crate as a library. The `whatsapp-exporter` command is the same converter from a terminal.
 
-License: MIT
+## Build and test
+
+```bash
+cargo test -p whatsapp-exporter
+cargo run -p whatsapp-exporter -- --help
+```
+
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+Command-line options: https://bitrealm.dev/reference/cli/whatsapp-exporter/
+
+## License
+
+MIT.

@@ -1,6 +1,6 @@
 //! Per-conversation `.eml` / `.mbox` archive writer.
 //!
-//! Layout and headers follow the [mail archive format](../../../docs/maintainers/formats/mail-archive.md).
+//! Layout and headers follow the [mail archive format](https://bitrealm.dev/formats/mail-archive/).
 //! The usual layout is one folder of `.eml` files per conversation.
 //! [`append_message_mbox`] writes **mboxrd** mailboxes for clients that prefer
 //! a single file. SMS/MMS fill the core fields. iMessage also sets reply,
