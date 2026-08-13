@@ -34,14 +34,23 @@ export type ImportPhase = "form" | "progress" | "done";
 
 export const PUSH_LOG_NAME = "vault-push.log";
 
-const EMPTY_TIMING = {
-  extractStartedAt: null as number | null,
-  parseStartedAt: null as number | null,
-  parseEndedAt: null as number | null,
-  convertStartedAt: null as number | null,
-  convertEndedAt: null as number | null,
+type StageTiming = {
+  extractStartedAt: number | null;
+  parseStartedAt: number | null;
+  parseEndedAt: number | null;
+  convertStartedAt: number | null;
+  convertEndedAt: number | null;
 };
 
+const EMPTY_TIMING: StageTiming = {
+  extractStartedAt: null,
+  parseStartedAt: null,
+  parseEndedAt: null,
+  convertStartedAt: null,
+  convertEndedAt: null,
+};
+
+/** Three import steps shown in the progress view. */
 function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
   return [
     { label: "Parse backup", status, detail: status === "active" ? "Parsing backup…" : undefined },
@@ -50,20 +59,23 @@ function initialSteps(status: ImportStep["status"] = "pending"): ImportStep[] {
   ];
 }
 
+/** Index of the progress step that matches this server event. */
 function stepIndexFor(step: ImportProgressEvent["step"]): number {
   if (step === "parse") return 0;
   if (step === "convert") return 1;
   return 2;
 }
 
+/** Present-tense verb shown while a step is running. */
 function progressVerb(step: ImportProgressEvent["step"]): string {
   if (step === "upload") return "Uploading";
   if (step === "convert") return "Converting";
   return "Parsing";
 }
 
+/** Parse and convert durations from timestamps recorded during extract. */
 function stageDurations(
-  timing: typeof EMPTY_TIMING,
+  timing: StageTiming,
   extractFinishedAt: number,
 ): { parseMs: number; convertMs: number } {
   const parseStart =
@@ -97,6 +109,7 @@ export type ImportJobFormValues = {
   isIos: boolean;
 };
 
+/** Run extract then upload for one import, and keep step progress for the UI. */
 export function useImportJob() {
   const { token } = useAuth();
   const { run: runTauriJob, cancel } = useTauriJob();
@@ -286,7 +299,7 @@ export function useImportJob() {
             : step,
         ),
       );
-    } catch (e) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       issuesRef.current = [
         ...issuesRef.current,
@@ -294,7 +307,7 @@ export function useImportJob() {
       ];
       setSteps((current) =>
         current.map((step) =>
-          step.status === "active" ? { ...step, status: "error" as const } : step,
+          step.status === "active" ? { ...step, status: "error" } : step,
         ),
       );
     } finally {
@@ -350,7 +363,7 @@ export function useImportJob() {
             issues: finalSummary.issues,
           });
         } catch {
-          // Session complete is best-effort; summary UI still shows local results.
+          // Completing the session on the server is optional. The summary still shows local results.
         }
       }
       if (importSessionId != null) {

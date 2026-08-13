@@ -28,8 +28,7 @@ export default function Button({
     <RACButton
       {...rest}
       ref={(el) => {
-        // React Aria's filterDOMProps drops `title`; set it directly so
-        // hover tooltips keep working.
+        // The menu library strips `title`. Set it on the element so hover text still works.
         if (el && el.title !== title) el.title = title ?? "";
       }}
       isDisabled={disabled}

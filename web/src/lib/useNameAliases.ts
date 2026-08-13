@@ -23,12 +23,13 @@ function emit(): void {
   for (const l of listeners) l();
 }
 
+/** Write the "use name aliases" toggle and tell listeners it changed. */
 export function setUseNameAliases(on: boolean): void {
   writeUseNameAliases(on);
   emit();
 }
 
-/** Reactive read of the Appearance “Use name aliases” toggle (default off). */
+/** Current value of the Appearance "Use name aliases" toggle (off by default). */
 export function useNameAliases(): boolean {
   return useSyncExternalStore(subscribe, readUseNameAliases, () => false);
 }

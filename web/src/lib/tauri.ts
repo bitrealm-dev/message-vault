@@ -7,6 +7,7 @@ import type {
   ImportProgressEvent,
 } from "./types";
 
+/** Start extracting a phone backup on the desktop backend. */
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
   return invoke("extract", {
     source: config.source,
@@ -24,6 +25,7 @@ export async function invokeExtract(config: ExtractConfig): Promise<void> {
   });
 }
 
+/** Ask the desktop backend to stop the job that is currently running. */
 export async function invokeCancel(): Promise<void> {
   return invoke("cancel");
 }
@@ -34,6 +36,7 @@ export interface FormatConfig {
   output_format: string;
 }
 
+/** Convert an extracted folder into another file format. */
 export async function invokeFormat(config: FormatConfig): Promise<void> {
   return invoke("format", {
     inputDir: config.input_dir,
@@ -58,7 +61,7 @@ export interface PushConfig {
 
 interface PushFinishedReport {
   ok: boolean;
-  /** Legacy count of messages in successful HTTP requests. */
+  /** Older field: messages counted in successful HTTP requests. */
   messages: number;
   messages_attempted: number;
   messages_inserted: number;
@@ -88,6 +91,7 @@ export interface TauriJobResult {
   };
 }
 
+/** Upload extracted conversations to a vault server. */
 export async function invokePush(config: PushConfig): Promise<void> {
   return invoke("push", {
     baseUrl: config.base_url,
@@ -113,6 +117,7 @@ export interface PullConfig {
   skip_attachments: boolean;
 }
 
+/** Download conversations from a vault server into a folder. */
 export async function invokePull(config: PullConfig): Promise<void> {
   return invoke("pull", {
     baseUrl: config.base_url,
@@ -131,10 +136,12 @@ export interface FfmpegToolsProbe {
   error: string | null;
 }
 
+/** Check whether ffmpeg and ffprobe are available at this folder. */
 export async function probeFfmpegTools(dir: string | null): Promise<FfmpegToolsProbe> {
   return invoke("probe_ffmpeg_tools", { dir });
 }
 
+/** Save the ffmpeg tools folder and check that the tools are there. */
 export async function setFfmpegToolsDir(dir: string | null): Promise<FfmpegToolsProbe> {
   return invoke("set_ffmpeg_tools_dir", { dir });
 }
@@ -144,16 +151,14 @@ export interface HomeDirInfo {
   os: string;
 }
 
+/** User home folder and operating system name from the desktop backend. */
 export async function invokeHomeDir(): Promise<HomeDirInfo> {
   return invoke("home_dir");
 }
 
 /**
- * Subscribes to the extraction events emitted by the Rust backend:
- * `extract:log` (String log line), `extract:progress` (structured progress),
- * `extract:issue` (structured error or skip), `extract:finished` (String summary),
- * `extract:error` ({ detail, user_message? }).
- * Returns a single unlisten function that tears down all listeners.
+ * Listen for job events from the desktop backend (log lines, progress, errors).
+ * Returns one function that removes every listener.
  */
 export function onExtractEvents(callbacks: {
   onLog: (line: string) => void;
@@ -176,10 +181,9 @@ export function onExtractEvents(callbacks: {
 }
 
 /**
- * Run a Tauri job that streams `extract:*` events. Subscribes before invoke,
- * resolves on `extract:finished`, rejects on `extract:error` or invoke failure.
- * Extract/push commands return as soon as the background thread starts, so
- * callers must use this (not bare `await invoke…`) to wait for completion.
+ * Run a desktop job and wait until it finishes.
+ * Extract and push return as soon as the background thread starts, so callers
+ * must use this instead of awaiting the invoke call alone.
  */
 export async function awaitTauriJob(
   invokeFn: () => Promise<void>,
@@ -201,7 +205,7 @@ export async function awaitTauriJob(
               reject(new Error(err.user_message ?? err.detail)),
           });
           await invokeFn();
-        } catch (e) {
+        } catch (e: unknown) {
           reject(e instanceof Error ? e : new Error(String(e)));
         }
       })();
@@ -211,45 +215,56 @@ export async function awaitTauriJob(
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPushFinishedReport(value: unknown): value is PushFinishedReport {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.ok === "boolean" &&
+    typeof value.messages === "number" &&
+    typeof value.messages_attempted === "number" &&
+    typeof value.messages_inserted === "number" &&
+    typeof value.messages_deduped === "number" &&
+    typeof value.messages_failed === "number" &&
+    typeof value.assets_uploaded === "number" &&
+    typeof value.assets_bytes === "number" &&
+    typeof value.conversations_ok === "number" &&
+    typeof value.conversations_total === "number"
+  );
+}
+
+/** Turn a finished-job summary string into a structured result when it is JSON. */
 function parseTauriJobResult(summary: string): TauriJobResult {
   try {
-    const report = JSON.parse(summary) as Partial<PushFinishedReport> & {
-      summary?: unknown;
-      files_parsed?: unknown;
-      messages_parsed?: unknown;
-    };
+    const parsed: unknown = JSON.parse(summary);
+    if (!isRecord(parsed)) return { summary };
+
     if (
-      typeof report.summary === "string" &&
-      typeof report.files_parsed === "number" &&
-      typeof report.messages_parsed === "number"
+      typeof parsed.summary === "string" &&
+      typeof parsed.files_parsed === "number" &&
+      typeof parsed.messages_parsed === "number"
     ) {
       return {
-        summary: report.summary,
+        summary: parsed.summary,
         extraction: {
-          files_parsed: report.files_parsed,
-          messages_parsed: report.messages_parsed,
+          files_parsed: parsed.files_parsed,
+          messages_parsed: parsed.messages_parsed,
         },
       };
     }
-    if (
-      typeof report.ok === "boolean" &&
-      typeof report.messages === "number" &&
-      typeof report.messages_attempted === "number" &&
-      typeof report.messages_inserted === "number" &&
-      typeof report.messages_deduped === "number" &&
-      typeof report.messages_failed === "number" &&
-      typeof report.assets_uploaded === "number" &&
-      typeof report.assets_bytes === "number" &&
-      typeof report.conversations_ok === "number" &&
-      typeof report.conversations_total === "number"
-    ) {
+
+    const summaryText = typeof parsed.summary === "string" ? parsed.summary : summary;
+
+    if (isPushFinishedReport(parsed)) {
       return {
-        summary: typeof report.summary === "string" ? report.summary : summary,
-        report: report as PushFinishedReport,
+        summary: summaryText,
+        report: parsed,
       };
     }
   } catch {
-    // Extract jobs emit their human-readable summary directly.
+    // Extract jobs send a plain sentence, not JSON.
   }
   return { summary };
 }

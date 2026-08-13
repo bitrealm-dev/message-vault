@@ -1,4 +1,4 @@
-/** Normalize stored hints (old `**********` or new `..`) to `mv-api-xx..yy`. */
+/** Show a stored API-key hint as `mv-api-xx..yy`, including older starred forms. */
 import { formatUnixDate } from "../../lib/formatDate";
 
 export function displayKeyHint(hint: string | null | undefined): string {
@@ -10,10 +10,12 @@ export function displayKeyHint(hint: string | null | undefined): string {
   return raw;
 }
 
+/** Date a token was created or last used. */
 export function formatTokenDate(secs: string | null | undefined): string {
   return formatUnixDate(secs);
 }
 
+/** Short label for an API token's allowed operations. */
 export function scopesLabel(scopes: string): string {
   switch (scopes) {
     case "import":

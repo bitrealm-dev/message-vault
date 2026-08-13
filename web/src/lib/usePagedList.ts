@@ -21,7 +21,7 @@ type UsePagedListResult<T> = {
   total: number;
   loading: boolean;
   refreshing: boolean;
-  /** True while a scroll-triggered follow-up page is in flight. */
+  /** True while a later page is loading because the user scrolled near the end. */
   filling: boolean;
   error: string;
   hasMore: boolean;
@@ -34,8 +34,9 @@ type UsePagedListOptions = {
 };
 
 /**
- * Loads the first page for `queryKey`, then loads more only via `loadMore`
- * (typically when the virtual list nears the end). Aborts when `queryKey` changes.
+ * Load a list in pages. The first page loads when `queryKey` changes.
+ * Call `loadMore` when the user scrolls near the end. A new `queryKey`
+ * cancels any request that is still running.
  */
 export function usePagedList<T>(
   queryKey: string,
@@ -90,7 +91,7 @@ export function usePagedList<T>(
         setItems(first.items);
         setTotal(first.total);
         hasLoadedRef.current = true;
-      } catch (e) {
+      } catch (e: unknown) {
         if (ac.signal.aborted) return;
         setItems([]);
         setTotal(0);
@@ -140,7 +141,7 @@ export function usePagedList<T>(
         offsetRef.current += page.items.length;
         setItems((prev) => [...prev, ...page.items]);
       } catch {
-        /* keep what loaded; scroll can retry */
+        // Keep rows that already loaded. Scrolling to the end can try again.
       } finally {
         loadingMoreRef.current = false;
         if (!ac.signal.aborted) setFilling(false);
@@ -162,7 +163,10 @@ export function usePagedList<T>(
   };
 }
 
-/** Format a 1-based inclusive visible window against a known total. */
+/**
+ * Build a "1–20 of 100" label for the rows currently on screen.
+ * Uses 1-based start and end indexes. Shows "… of N" until the list reports a window.
+ */
 export function formatVisibleRange(
   visibleStart: number,
   visibleEnd: number,
@@ -171,7 +175,6 @@ export function formatVisibleRange(
 ): string {
   if (total === 0 && itemCount === 0) return "0 of 0";
   if (itemCount === 0) return `0 of ${total}`;
-  // Viewport not measured yet — show total only until VirtualList reports a window.
   if (visibleStart < 1 || visibleEnd < 1) return `… of ${total}`;
   const start = Math.min(visibleStart, itemCount);
   const end = Math.max(start, Math.min(visibleEnd, itemCount));

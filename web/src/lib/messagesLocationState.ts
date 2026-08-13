@@ -5,16 +5,18 @@ export type MessagesLocationState = {
   openContactId?: string;
 };
 
+/** True when the value is a plain object (not null or an array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** True when the value looks like a conversation with a non-empty id. */
 function isConversation(value: unknown): value is Conversation {
   if (!isRecord(value)) return false;
   return typeof value.id === "string" && value.id.length > 0;
 }
 
-/** Narrow React Router location state for message routes. */
+/** Read conversation and contact-drawer fields from React Router location state. */
 export function asMessagesLocationState(state: unknown): MessagesLocationState | null {
   if (!isRecord(state)) return null;
 

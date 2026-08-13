@@ -25,6 +25,7 @@ interface Profile {
   emails?: string[];
 }
 
+/** True when the profile has no name, phone, or email yet — the user still needs setup. */
 function profileNeedsOnboarding(profile: Profile): boolean {
   const hasName = !!profile.preferred_name?.trim();
   const hasPhone = (profile.phones?.length ?? 0) > 0;
@@ -34,7 +35,7 @@ function profileNeedsOnboarding(profile: Profile): boolean {
 
 interface AuthContextValue extends AuthState {
   login: (serverUrl: string, token: string, accountId: string) => Promise<void>;
-  /** Persist a rotated session token (e.g. after change-password). */
+  /** Save a new session token after the user changes their password. */
   updateToken: (token: string) => void;
   logout: () => void;
   setServer: (url: string) => void;
@@ -44,6 +45,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "message-vault-auth";
 
+/** Read the last saved login from browser storage. */
 function loadPersisted(): Partial<AuthState> | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -61,6 +63,7 @@ function loadPersisted(): Partial<AuthState> | null {
   }
 }
 
+/** Write the current login to browser storage. Passwords are never stored. */
 function persistState(state: AuthState) {
   try {
     localStorage.setItem(
@@ -73,25 +76,27 @@ function persistState(state: AuthState) {
       }),
     );
   } catch {
-    // Storage full or unavailable — not critical
+    // Full or blocked storage should not break login.
   }
 }
 
+/** Remove the saved login from browser storage. */
 function clearPersisted() {
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
-    // ignore
+    // Full or blocked storage should not break logout.
   }
 }
 
+/** Holds login state for the app and restores a saved session on startup. */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [restored, setRestored] = useState(false);
-  // Bumped on every login/logout so stale async profile checks are discarded
+  // Incremented on login and logout so an older profile request is ignored.
   const authEpoch = useRef(0);
   const [state, setState] = useState<AuthState>(() => {
     const persisted = loadPersisted();
-    // Allow empty serverUrl (same-origin) when token + accountId are present.
+    // An empty server URL is allowed: it means "same host as this page".
     if (
       persisted?.token &&
       persisted?.accountId &&
@@ -114,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   });
 
-  // Validate restored token on mount
+  // Check that the restored token still works.
   useEffect(() => {
     if (!state.isAuthenticated || restored) return;
 
@@ -126,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await apiClient.get("/v1/auth/check");
         if (cancelled) return;
 
-        // Refresh onboarding need from the profile — self-heals a stale flag
+        // Re-read the profile so a stale "needs setup" flag can correct itself.
         try {
           const profile = await apiClient.get<Profile>("/v1/account/profile");
           if (!cancelled) {
@@ -139,12 +144,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
           }
         } catch {
-          // Profile fetch failed — keep the persisted flag
+          // Profile request failed. Keep the saved "needs setup" flag.
         }
 
         if (!cancelled) setRestored(true);
       } catch {
-        // Token invalid — clear and show login
+        // Token is no longer valid. Clear it and show the login screen.
         if (!cancelled) {
           authEpoch.current++;
           setToken(null);
@@ -178,16 +183,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBaseUrl(serverUrl);
       setToken(token);
 
-      // New accounts have no profile yet — flag them for onboarding
+      // New accounts have no profile yet, so send them through setup.
       let needsOnboarding = false;
       try {
         const profile = await apiClient.get<Profile>("/v1/account/profile");
         needsOnboarding = profileNeedsOnboarding(profile);
       } catch {
-        // Profile check failed — assume a profile exists so access is never blocked
+        // Profile request failed. Assume a profile exists so the user is not locked out.
       }
 
-      if (authEpoch.current !== epoch) return; // superseded by logout/login
+      if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
 
       const newState: AuthState = {
         serverUrl,
@@ -215,7 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     authEpoch.current++;
-    // Revoke while the bearer token is still configured on the API client.
+    // Tell the server to end the session while the token is still set on the API client.
     void apiClient.post("/v1/auth/logout", {}).catch(() => {});
     setToken(null);
     clearContactDetailCache();
@@ -236,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Current login state. Must be called under AuthProvider. */
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");

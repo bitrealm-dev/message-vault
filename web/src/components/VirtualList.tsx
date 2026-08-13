@@ -86,10 +86,10 @@ export default function VirtualList({
   const pendingRef = useRef<VisibleRange | null>(null);
   const throttleTimerRef = useRef<number | null>(null);
   const lastScrollHeightRef = useRef<number | null>(null);
-  // Bump after layout/resize so scrollport metrics are re-read once the DOM has size.
+  // After layout or resize, re-read scroll size once the DOM has a height.
   const [layoutTick, setLayoutTick] = useState(0);
 
-  // Column drag: freeze dynamic row measurement so width changes don't remasure every frame.
+  // While the user drags the column width, skip per-row measurement so the list does not jump.
   const columnResizing = useListColumnResizing();
   const measureRows = dynamicSize && !columnResizing;
   const wasResizingRef = useRef(false);
@@ -101,7 +101,7 @@ export default function VirtualList({
     overscan,
   });
 
-  // After column drag ends: wait for wrap layout + measureElement refs, then remasure once.
+  // After a column-width drag ends, wait for wrap layout, then measure rows once.
   useEffect(() => {
     if (columnResizing) {
       wasResizingRef.current = true;
@@ -176,8 +176,8 @@ export default function VirtualList({
       if (last.start === pending.start && last.end === pending.end) return;
       publish(pending);
     }, RANGE_REPORT_MS);
-    // Depend on start/end primitives, not `nextRange` object identity — a new
-    // range object each render would defeat the throttle and re-fire forever.
+    // Depend on start/end numbers, not the range object. A new object each
+    // render would restart the timer forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nextRange.start/end
   }, [nextRange.start, nextRange.end, count, nearEndThreshold]);
 
@@ -193,8 +193,8 @@ export default function VirtualList({
     const el = parentRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      // Width-only changes (list column drag) must not remasure/re-render every pixel —
-      // that is what made the conversation panel jitter. React only when height changes.
+      // Width-only changes (dragging the list column) must not remeasure every pixel.
+      // That is what made the conversation panel jitter. React only when height changes.
       const nextH = entries[0]?.contentRect.height ?? el.clientHeight;
       if (
         lastScrollHeightRef.current != null &&
@@ -208,7 +208,7 @@ export default function VirtualList({
       setLayoutTick((n) => n + 1);
     });
     ro.observe(el);
-    // First paint often has clientHeight 0 until flex layout settles.
+    // First paint often has height 0 until flex layout finishes.
     lastScrollHeightRef.current = el.clientHeight;
     setLayoutTick((n) => n + 1);
     return () => ro.disconnect();

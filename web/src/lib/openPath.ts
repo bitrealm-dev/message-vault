@@ -1,6 +1,6 @@
 import { isTauri } from "./tauri-check";
 
-/** Open a file or directory in the OS file manager / default handler. */
+/** Open a file or folder in the operating system's file manager. */
 export async function openPathInExplorer(path: string): Promise<void> {
   const trimmed = path.trim();
   if (!trimmed) return;

@@ -60,7 +60,7 @@ export function ProfileSettingsPanel() {
     if (service === "email") {
       return p.emails.some((e) => e.toLowerCase() === needle);
     }
-    // Phones/WhatsApp are E.164-normalized server-side; match by digit suffix.
+    // The server stores phones in a standard format. Match by the digit suffix.
     const digits = handle.replace(/\D/g, "");
     return p.phones.some((phone) => {
       const phoneDigits = phone.replace(/\D/g, "");

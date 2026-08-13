@@ -1,4 +1,4 @@
-/** Build the vault asset GET path (query required by the server). */
+/** Path used to download an attachment by its content hash. */
 export function buildAssetPath(sha256: string, source: string): string {
   const sha = sha256.trim();
   const src = source.trim();

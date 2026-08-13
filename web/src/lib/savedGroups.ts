@@ -12,14 +12,26 @@ function notifySavedGroupsChanged(): void {
   try {
     globalThis.dispatchEvent?.(new Event(SAVED_GROUPS_CHANGED_EVENT));
   } catch {
-    // Ignore unavailable or restricted browser event APIs.
+    // Some browsers block custom events. Listing groups still works.
   }
 }
 
+/** Saved conversation groups stored in the browser. */
 export function listGroups(): SavedGroup[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((g): g is SavedGroup => {
+      if (typeof g !== "object" || g === null) return false;
+      const row = g as Record<string, unknown>;
+      return (
+        typeof row.id === "string" &&
+        typeof row.name === "string" &&
+        typeof row.query === "string"
+      );
+    });
   } catch {
     return [];
   }
@@ -33,7 +45,7 @@ export function addGroup(name: string, query: string): SavedGroup {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
     notifySavedGroupsChanged();
   } catch {
-    // Keep storage failures from interrupting the caller.
+    // Full or blocked storage should not break adding a group.
   }
   return group;
 }
@@ -44,10 +56,11 @@ export function removeGroup(id: string): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
     notifySavedGroupsChanged();
   } catch {
-    // Keep storage failures from interrupting the caller.
+    // Full or blocked storage should not break removing a group.
   }
 }
 
+/** Unique name for an import group, adding " 2", " 3", … when the date is already used. */
 export function uniqueImportGroupName(
   source: string,
   dateYmd: string,
@@ -61,6 +74,7 @@ export function uniqueImportGroupName(
   return `${base} ${n}`;
 }
 
+/** True when this import added messages and should appear in Saved Groups. */
 export function shouldSaveImportGroup(
   importSessionId: number | null | undefined,
   messagesInserted: number | null | undefined,
@@ -72,6 +86,7 @@ export function shouldSaveImportGroup(
   );
 }
 
+/** Local calendar date as YYYY-MM-DD. */
 function localYmd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -79,6 +94,7 @@ function localYmd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Save a group that opens this import's conversations, or skip when nothing was inserted. */
 export function saveImportSavedGroup(args: {
   importSessionId: number;
   source: string;

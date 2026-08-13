@@ -24,6 +24,31 @@ interface Suggestion {
   insert: string;
 }
 
+/** Autocomplete rows for the conversation search box. */
+function buildSearchSuggestions(args: {
+  isFilter: boolean;
+  completingValue: boolean;
+  contactOps: boolean;
+  lastToken: string;
+  contacts: ContactName[];
+}): Suggestion[] {
+  if (args.isFilter) return [];
+  if (args.completingValue && args.contactOps) {
+    return args.contacts.slice(0, 6).map((c) => ({
+      id: c.id,
+      label: c.name,
+      // Use contact:<id> so names with spaces do not break the query.
+      insert: `contact:${c.id}`,
+    }));
+  }
+  if (!args.completingValue && args.lastToken.length > 0) {
+    return OPERATORS.filter((op) => op.startsWith(args.lastToken.toLowerCase())).map(
+      (op) => ({ id: op, label: op, insert: `${op} ` }),
+    );
+  }
+  return [];
+}
+
 export default function GlobalSearch({
   value,
   onChange,
@@ -33,15 +58,13 @@ export default function GlobalSearch({
   value: string;
   onChange: (v: string) => void;
   onSubmit: (q: string) => void;
-  /** `filter` = live contact list filter (no vault operators). */
+  /** `filter` = live contact list filter (no vault search operators). */
   mode?: "search" | "filter";
 }) {
   const isFilter = mode === "filter";
   const [contacts, setContacts] = useState<ContactName[]>([]);
-  // True between React Aria selecting a suggestion and the end of the keydown
-  // that did it. Lets the Enter handler tell "selected a suggestion" apart from
-  // "submit the query". Reset on every keydown (capture phase) so a selection
-  // made by an earlier event (e.g. a click) never suppresses a later Enter.
+  // True from the moment a suggestion is chosen until the next keydown.
+  // Lets Enter tell "chose a suggestion" apart from "run the search".
   const selectedRef = useRef(false);
 
   const lastToken = value.split(/\s+/).pop() || "";
@@ -54,7 +77,7 @@ export default function GlobalSearch({
     : "";
 
   useEffect(() => {
-    // Only contact-complete for handle:/contact: — not participants:/is:.
+    // Suggest contact names only for handle: and contact:, not for is: or participants:.
     const contactOps = opLower === "handle:" || opLower === "contact:";
     if (isFilter || !completingValue || !contactOps) {
       setContacts([]);
@@ -89,25 +112,16 @@ export default function GlobalSearch({
     };
   }, [isFilter, completingValue, valuePart, opLower]);
 
-  // Empty lastToken must not match every operator via startsWith("") — that made Enter
-  // insert an operator after a trailing space instead of running the search.
+  // An empty last token must not match every operator. That used to insert
+  // an operator after a trailing space instead of running the search.
   const contactOps = opLower === "handle:" || opLower === "contact:";
-  const suggestions: Suggestion[] = isFilter
-    ? []
-    : completingValue && contactOps
-      ? contacts
-          .slice(0, 6)
-          .map((c) => ({
-            id: c.id,
-            label: c.name,
-            // Prefer contact:<id> so names with spaces do not break token parsing.
-            insert: `contact:${c.id}`,
-          }))
-      : !completingValue && lastToken.length > 0
-        ? OPERATORS.filter((op) => op.startsWith(lastToken.toLowerCase())).map(
-            (op) => ({ id: op, label: op, insert: `${op} ` }),
-          )
-        : [];
+  const suggestions = buildSearchSuggestions({
+    isFilter,
+    completingValue,
+    contactOps,
+    lastToken,
+    contacts,
+  });
 
   const applySuggestion = (s: Suggestion) => {
     const tokens = value.split(/\s+/);
@@ -116,7 +130,7 @@ export default function GlobalSearch({
   };
 
   const handleSelection = (key: Key | null) => {
-    // Null = Escape / blur / Enter without a highlighted item — nothing to insert.
+    // Escape, blur, or Enter with nothing highlighted: do not insert text.
     if (key == null) return;
     selectedRef.current = true;
     const s = suggestions.find((s) => s.id === key);
@@ -126,7 +140,7 @@ export default function GlobalSearch({
   return (
     <ComboBox
       allowsCustomValue
-      defaultFilter={() => true} // Server-side filtering only.
+      defaultFilter={() => true} // Filtering happens on the server.
       inputValue={value}
       onInputChange={onChange}
       selectedKey={null}
@@ -134,8 +148,7 @@ export default function GlobalSearch({
       onKeyDown={(e) => {
         if (e.key !== "Enter") return;
         e.preventDefault();
-        // Enter selected a suggestion — React Aria already applied it above,
-        // so submitting the raw query here would double-apply.
+        // Enter already applied a suggestion. Submitting the raw query would apply it twice.
         if (selectedRef.current) return;
         onSubmit(value);
       }}

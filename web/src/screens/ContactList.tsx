@@ -30,16 +30,17 @@ type ContactsPage = {
 
 type FilterNeedles = { text: string; handle: string | null };
 
-/** Tokens that require server-side filtering (not applied in the client match). */
+/** Search words that the client cannot apply locally; those go to the server. */
 const ADVANCED_TOKEN_RE =
   /\b(search:contacts|has:(?:messages|no-messages|no-name)|(?:first-contact|last-contact|message-count|group-count|service):\S+)\b/gi;
 
+/** True when the filter uses search words the client cannot apply on its own. */
 function hasAdvancedContactTokens(raw: string): boolean {
   ADVANCED_TOKEN_RE.lastIndex = 0;
   return ADVANCED_TOKEN_RE.test(raw);
 }
 
-/** Strip advanced tokens; keep plain text + handle:"…" for subtitle matching. */
+/** Pull plain name text and a handle:"…" value out of the filter for local matching. */
 function filterNeedles(raw: string): FilterNeedles {
   let q = raw.trim();
   if (!q) return { text: "", handle: null };
@@ -63,12 +64,14 @@ function filterNeedles(raw: string): FilterNeedles {
   return { text: q, handle };
 }
 
+/** True when this handle contains the search text. */
 function handleMatchesNeedle(handle: string, needle: string): boolean {
   const n = needle.trim().toLowerCase();
   if (!n) return false;
   return handle.toLowerCase().includes(n);
 }
 
+/** Handles on this contact that match the current filter. */
 function matchingHandles(handles: string[] | undefined, filter: string): string[] {
   const { text, handle } = filterNeedles(filter);
   if (!text && !handle) return [];
@@ -79,12 +82,13 @@ function matchingHandles(handles: string[] | undefined, filter: string): string[
   });
 }
 
+/** Text to highlight in handle subtitles. */
 function highlightNeedle(filter: string): string {
   const { text, handle } = filterNeedles(filter);
   return handle || text;
 }
 
-/** Client-side match so the list can shrink/expand as the user types without waiting on the API. */
+/** True when this contact matches the typed filter, so the list can shrink as the user types. */
 function contactMatchesFilter(c: Contact, filter: string): boolean {
   const { text, handle } = filterNeedles(filter);
   if (!text && !handle) return true;
@@ -92,6 +96,7 @@ function contactMatchesFilter(c: Contact, filter: string): boolean {
   return matchingHandles(c.handles, filter).length > 0;
 }
 
+/** Make every contact id a string so list keys stay stable. */
 function normalizeContacts(
   rows: ContactsPage["contacts"] | undefined,
 ): Contact[] {
@@ -153,17 +158,17 @@ export default function ContactList({
   const advancedActive = hasAdvancedContactTokens(filter);
 
   useEffect(() => {
-    // Empty filter → catalog query.
+    // Empty filter: load the full catalog.
     if (!filter.trim()) {
       setServerQ("");
       return;
     }
-    // Advanced predicates always hit the API (client cannot apply them).
+    // Filters the client cannot apply always go to the server.
     if (advancedActive) {
       const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
       return () => window.clearTimeout(t);
     }
-    // Full catalog already in memory → client filter only (Next-like).
+    // The full catalog is already in memory, so filter it locally.
     if (catalogCompleteRef.current) return;
 
     const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
@@ -172,11 +177,12 @@ export default function ContactList({
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
-  /** Prefer plain text for names; fall back to handle needle when that is all the user typed. */
+  /** Prefer plain text for names. Fall back to the handle when that is all the user typed. */
   const nameMarkTerm = needles.text || needles.handle || "";
   const handleMarkTerm = highlightNeedle(filter);
 
-  // Live client filter for name/handle only. With advanced tokens, trust server results.
+  // Filter by name and handle in the browser. Server results are used when the
+  // filter has search words the client cannot apply.
   const displayContacts =
     filterActive && !advancedActive
       ? contacts.filter((c) => contactMatchesFilter(c, filter))

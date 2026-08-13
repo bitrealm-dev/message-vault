@@ -1,9 +1,9 @@
 /**
- * Selectors for React Aria menus/calendars portaled outside the panel root.
+ * CSS selectors for menus and calendars that render outside the search panel.
  *
- * Only match marked overlays and modal underlays — not every listbox/option on
- * the page. Contact/conversation lists also use role=listbox/option; treating
- * those as overlays prevented outside-click dismiss of the search popdown.
+ * Only marked overlays and modal backdrops match. Contact and conversation
+ * lists also use listbox roles; treating those as overlays stopped outside
+ * clicks from closing the search panel.
  */
 const PORTALED_OVERLAY_SELECTOR = [
   "[data-mv-overlay]",
@@ -11,11 +11,11 @@ const PORTALED_OVERLAY_SELECTOR = [
 ].join(", ");
 
 /**
- * True when an outside-click should leave a parent panel open.
+ * True when an outside click should leave the parent panel open.
  *
- * Use from a capture-phase listener so the Select/Date underlay is still in the
- * event path before React Aria removes it. Clicks on the panel root or on a
- * portaled menu/underlay keep the panel open; RAC closes the menu itself.
+ * Call this from a capture-phase listener so the menu backdrop is still in the
+ * click path. Clicks on the panel itself, or on a menu that rendered outside
+ * it, keep the panel open. The menu library closes the menu on its own.
  */
 export function shouldIgnoreOutsideDismiss(
   event: MouseEvent | PointerEvent,

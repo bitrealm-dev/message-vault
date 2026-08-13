@@ -2,6 +2,7 @@
 
 export const USE_NAME_ALIASES_KEY = "mv-use-name-aliases";
 
+/** Read the "use name aliases" toggle from browser storage. */
 export function readUseNameAliases(): boolean {
   try {
     return window.localStorage.getItem(USE_NAME_ALIASES_KEY) === "1";
@@ -10,16 +11,17 @@ export function readUseNameAliases(): boolean {
   }
 }
 
+/** Save the "use name aliases" toggle. */
 export function writeUseNameAliases(on: boolean): void {
   try {
     if (on) window.localStorage.setItem(USE_NAME_ALIASES_KEY, "1");
     else window.localStorage.removeItem(USE_NAME_ALIASES_KEY);
   } catch {
-    /* private mode / quota */
+    // Private browsing and full storage can throw.
   }
 }
 
-/** Resolve a person label from preferred name, alias, and raw identity. */
+/** Pick the name shown for a person: preferred name, alias, or the raw handle. */
 export function personDisplayLabel(
   opts: {
     preferredName?: string | null;

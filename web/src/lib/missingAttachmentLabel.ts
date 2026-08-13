@@ -1,5 +1,6 @@
 import type { MessageAttachment } from "./types";
 
+/** File name shown on a missing-attachment chip. */
 function attachmentDisplayName(attachment: MessageAttachment): string {
   if (attachment.original_name?.trim()) return attachment.original_name.trim();
   const path = attachment.path?.trim();
@@ -11,13 +12,14 @@ function attachmentDisplayName(attachment: MessageAttachment): string {
   return "attachment";
 }
 
+/** Short reason shown in parentheses on a missing-attachment chip. */
 function missingWhy(reason: string | null | undefined): string {
   if (reason === "too_large") return "missing — too large";
   if (reason === "file_missing") return "missing — file not found";
   return "missing";
 }
 
-/** Chip copy for attachments imported without bytes. */
+/** Label for an attachment that was imported without the file bytes. */
 export function missingAttachmentChipLabel(attachment: MessageAttachment): string {
   const name = attachmentDisplayName(attachment);
   const mime = attachment.mime_type?.trim();

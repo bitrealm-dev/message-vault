@@ -1,4 +1,4 @@
-/** Initials + stable avatar color for contact list chips. */
+/** Initials and a stable avatar color for contact list chips. */
 
 const AVATAR_COLORS = [
   "#c45c6a",
@@ -11,6 +11,7 @@ const AVATAR_COLORS = [
   "#b85c8a",
 ] as const;
 
+/** First letter of a name, or empty when there is no usable character. */
 function firstLetter(raw: string | null | undefined): string {
   if (!raw) return "";
   const t = raw.trim();
@@ -19,6 +20,7 @@ function firstLetter(raw: string | null | undefined): string {
   return /[A-Z0-9]/.test(ch) ? ch : "";
 }
 
+/** Two-letter initials from a contact's name fields. */
 export function contactInitials(c: {
   preferredName?: string | null;
   firstName?: string | null;
@@ -40,7 +42,7 @@ export function contactInitials(c: {
   if (first && last && first !== last) return `${first}${last}`;
   if (first && last) return first;
 
-  // Fallback: two letters from preferred/display name words / comma form
+  // Fall back to two letters from the preferred or display name.
   const name = preferred;
   if (name.includes(",")) {
     const [ln, fn] = name.split(",").map((s) => s.trim());
@@ -60,6 +62,7 @@ export function contactInitials(c: {
   return single || "?";
 }
 
+/** Number used to pick a color from the palette. Same string always gives the same number. */
 function hashString(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -68,12 +71,12 @@ function hashString(s: string): number {
   return n;
 }
 
-/** Normalize phone/email handle so the same number keeps the same color. */
+/** Strip a phone or email so the same person keeps the same avatar color. */
 function normalizeHandle(handle: string | null | undefined): string {
   const t = (handle ?? "").trim().toLowerCase();
   if (!t) return "";
   const digits = t.replace(/\D/g, "");
-  // Prefer digits for phone-like handles; otherwise keep normalized string (email).
+  // Use digits for phone-like handles. Keep the full string for emails.
   if (digits.length >= 7) return digits;
   return t;
 }
@@ -83,8 +86,8 @@ function normalizeName(name: string | null | undefined): string {
 }
 
 /**
- * Deterministic pastel from display name + preferred handle (phone/email).
- * Stable across contact id changes for the same person.
+ * Pick a palette color from the display name and preferred handle.
+ * The same person keeps the same color even if their contact id changes.
  */
 export function contactAvatarColor(input: {
   displayName?: string | null;

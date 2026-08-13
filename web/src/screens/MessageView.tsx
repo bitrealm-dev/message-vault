@@ -38,7 +38,7 @@ export default function MessageView({
   } = useConversationMessages(conversation.id);
 
   const [lightboxItems, setLightboxItems] = useState<LightboxItem[] | null>(null);
-  // The server derives this fallback from message sources before any page is loaded.
+  // Fallback source label from the first loaded message until the header has a better one.
   const sourceLabel = messages[0]
     ? displaySourceLabel(messages[0].source)
     : "unknown";
@@ -51,7 +51,7 @@ export default function MessageView({
     [conversation.date_range_start, conversation.date_range_end],
   );
 
-  // Open the lightbox at the clicked image; prev/next walks this page's images
+  // Open the image viewer at the clicked photo. Previous/next walks this page's images.
   const handleAttachmentClick = useCallback((att: MessageAttachment, source: string) => {
     const images = messages.flatMap((m) =>
       (m.attachments || [])
@@ -99,16 +99,16 @@ export default function MessageView({
     }));
   }, [conversation.participants, messages, useAliases]);
 
-  // Find bar: collect visible message IDs that match the find term
+  // Message ids on this page whose text contains the find-bar search.
   const matchIds = useMemo(() => {
     const t = findTerm.trim().toLowerCase();
-    if (!t) return [] as string[];
+    if (!t) return [];
     return messages
       .filter((m) => (m.text || "").toLowerCase().includes(t))
       .map((m) => m.id);
   }, [messages, findTerm]);
 
-  // Scroll active match into view
+  // Scroll the current find match into view.
   useEffect(() => {
     if (!matchIds.length) return;
     const el = document.getElementById(`msg-${matchIds[activeMatch]}`);
