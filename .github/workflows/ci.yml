@@ -225,9 +225,16 @@ jobs:
 
           case "${{ matrix.os }}" in
             ubuntu-latest)
-              cp "$BUNDLE_DIR"/deb/*.deb "dist/message-vault-io_${VERSION}_amd64.deb" 2>/dev/null || \
-              cp "$BUNDLE_DIR"/appimage/*.AppImage "dist/message-vault-io_${VERSION}_amd64.AppImage" 2>/dev/null || \
-              { echo "No Linux bundle found"; ls -R "$BUNDLE_DIR" || true; exit 1; }
+              shopt -s nullglob
+              debs=("$BUNDLE_DIR"/deb/*.deb)
+              appimages=("$BUNDLE_DIR"/appimage/*.AppImage)
+              if [[ ${#debs[@]} -eq 0 || ${#appimages[@]} -eq 0 ]]; then
+                echo "Linux build must produce both a .deb and an AppImage" >&2
+                ls -R "$BUNDLE_DIR" || true
+                exit 1
+              fi
+              cp "${debs[0]}" "dist/message-vault-io_${VERSION}_amd64.deb"
+              cp "${appimages[0]}" "dist/message-vault-io_${VERSION}_amd64.AppImage"
               ;;
             windows-latest)
               cp "$BUNDLE_DIR"/msi/*.msi "dist/message-vault-io_${VERSION}_x64.msi" 2>/dev/null || \
