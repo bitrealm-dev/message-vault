@@ -26,8 +26,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 # Required at compile time by crates/vault/server/src/db/schema.rs include_str!(…).
 COPY schema ./schema
-# Required at compile time by include_str! in search_query.rs.
-COPY fixtures ./fixtures
 
 RUN cargo build --release -p message-vault-server
 
