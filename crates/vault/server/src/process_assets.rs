@@ -53,6 +53,17 @@ struct AssetRow {
     assets_path: String,
     mime_type: Option<String>,
     derived_assets_path: Option<String>,
+    /// Attachment file name from the export (`attachments.original_name`).
+    original_name: Option<String>,
+    /// Attachment path inside the export (`attachments.path`).
+    source_path: Option<String>,
+}
+
+impl AssetRow {
+    /// Extension sources to fall back on when the stored blob has none.
+    fn name_hints(&self) -> [Option<&str>; 2] {
+        [self.original_name.as_deref(), self.source_path.as_deref()]
+    }
 }
 
 /// Run derived-media conversion for every account/source in the vault.
@@ -188,7 +199,11 @@ fn process_one(
         return Ok(Outcome::Skipped);
     }
 
-    let kind = kind_of(&row.assets_path, row.mime_type.as_deref());
+    let kind = kind_of(
+        &row.assets_path,
+        row.mime_type.as_deref(),
+        &row.name_hints(),
+    );
     match kind {
         MediaKind::Image if opts.skip_image => return Ok(Outcome::Skipped),
         MediaKind::Video if opts.skip_video => return Ok(Outcome::Skipped),
@@ -341,9 +356,18 @@ fn discover_source_ids(
 }
 
 fn list_attachments(conn: &Connection, account_id: &str, source_id: &str) -> Result<Vec<AssetRow>> {
+    // One row per stored blob. Several messages can share a blob under different
+    // names, and only one derived file per blob is ever produced, so collapse
+    // those rows and keep any name that could identify the media type.
     let mut stmt = conn.prepare(
         r#"
-        SELECT DISTINCT a.sha256, a.assets_path, a.mime_type, a.derived_assets_path
+        SELECT
+            a.sha256,
+            a.assets_path,
+            MAX(a.mime_type),
+            MAX(a.derived_assets_path),
+            MAX(a.original_name),
+            MAX(a.path)
         FROM attachments a
         JOIN messages m ON m.id = a.message_id
         JOIN conversations c ON c.id = m.conversation_id
@@ -351,6 +375,7 @@ fn list_attachments(conn: &Connection, account_id: &str, source_id: &str) -> Res
           AND c.account_id = ?2
           AND a.sha256 IS NOT NULL AND a.sha256 != ''
           AND a.assets_path IS NOT NULL AND a.assets_path != ''
+        GROUP BY a.sha256, a.assets_path
         ORDER BY a.sha256
         "#,
     )?;
@@ -360,6 +385,8 @@ fn list_attachments(conn: &Connection, account_id: &str, source_id: &str) -> Res
             assets_path: r.get(1)?,
             mime_type: r.get(2)?,
             derived_assets_path: r.get(3)?,
+            original_name: r.get(4)?,
+            source_path: r.get(5)?,
         })
     })?;
     let mut out = Vec::new();
@@ -490,11 +517,30 @@ fn upload_session_is_stale(session: &Path, now: std::time::SystemTime) -> Result
     Ok(age.as_secs() >= STALE_UPLOAD_SESSION_SECS)
 }
 
-fn kind_of(assets_path: &str, mime: Option<&str>) -> MediaKind {
+/// Classify a stored blob, falling back to the names the export supplied.
+///
+/// Canonical blob paths are `<shard>/<sha256>` with no extension, so a row whose
+/// `mime_type` is missing (older imports, or a source that declared nothing)
+/// would otherwise classify as `Other` and never be converted for the browser.
+/// `name_hints` are the attachment's `original_name` and original export `path`,
+/// used only when the stored path and the declared MIME say nothing.
+fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -> MediaKind {
     if is_part_path(assets_path) {
         return MediaKind::Other;
     }
-    media_tools::kind_of(Path::new(assets_path), mime)
+    let declared = mime.map(str::trim).filter(|m| !m.is_empty());
+    let kind = media_tools::kind_of(Path::new(assets_path), declared);
+    // A stored path that already identifies the file wins, and so does a
+    // declared MIME — including `image/gif` and `.gif`, which stay unconverted.
+    if kind != MediaKind::Other || declared.is_some() || ext_of(Path::new(assets_path)) == ".gif" {
+        return kind;
+    }
+    name_hints
+        .iter()
+        .flatten()
+        .map(|hint| media_tools::kind_of(Path::new(hint), None))
+        .find(|kind| *kind != MediaKind::Other)
+        .unwrap_or(MediaKind::Other)
 }
 
 fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {
@@ -679,13 +725,69 @@ mod tests {
         assert_eq!(derived_rel_path(sha, ".jpeg"), format!("ab/{sha}.jpg"));
     }
 
+    const SHA: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
     #[test]
     fn kind_classifies_and_skips_gif() {
-        assert_eq!(kind_of("x.jpg", None), MediaKind::Image);
-        assert_eq!(kind_of("x.mp4", None), MediaKind::Video);
-        assert_eq!(kind_of("x.m4a", None), MediaKind::Audio);
-        assert_eq!(kind_of("x.gif", None), MediaKind::Other);
-        assert_eq!(kind_of("x.bin", Some("image/png")), MediaKind::Image);
+        assert_eq!(kind_of("x.jpg", None, &[]), MediaKind::Image);
+        assert_eq!(kind_of("x.mp4", None, &[]), MediaKind::Video);
+        assert_eq!(kind_of("x.m4a", None, &[]), MediaKind::Audio);
+        assert_eq!(kind_of("x.gif", None, &[]), MediaKind::Other);
+        assert_eq!(kind_of("x.bin", Some("image/png"), &[]), MediaKind::Image);
+    }
+
+    #[test]
+    fn extensionless_blobs_classify_from_the_attachment_name() {
+        let canonical = format!("ab/{SHA}");
+        for (name, expected) in [
+            ("voice-note.amr", MediaKind::Audio),
+            ("memo.wav", MediaKind::Audio),
+            ("podcast.ogg", MediaKind::Audio),
+            ("clip.3gp", MediaKind::Video),
+            ("clip.webm", MediaKind::Video),
+            ("movie.mkv", MediaKind::Video),
+            ("scan.tiff", MediaKind::Image),
+            ("notes.txt", MediaKind::Other),
+        ] {
+            assert_eq!(
+                kind_of(&canonical, None, &[Some(name), None]),
+                expected,
+                "unexpected kind for {name}"
+            );
+            // The original export path is the second-choice hint.
+            assert_eq!(
+                kind_of(
+                    &canonical,
+                    Some("  "),
+                    &[None, Some(&format!("media/{name}"))]
+                ),
+                expected,
+                "unexpected kind for path hint media/{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn attachment_name_hints_never_override_declared_media_types() {
+        let canonical = format!("ab/{SHA}");
+        // A declared MIME is authoritative, including the deliberate GIF skip.
+        assert_eq!(
+            kind_of(&canonical, Some("image/gif"), &[Some("clip.mp4")]),
+            MediaKind::Other
+        );
+        assert_eq!(
+            kind_of(&canonical, Some("application/pdf"), &[Some("clip.mp4")]),
+            MediaKind::Other
+        );
+        assert_eq!(
+            kind_of("ab/photo.gif", None, &[Some("clip.mp4")]),
+            MediaKind::Other
+        );
+        // Incomplete transfers stay out of ffmpeg regardless of the hint.
+        assert_eq!(
+            kind_of("ab/upload.part", None, &[Some("clip.mp4")]),
+            MediaKind::Other
+        );
     }
 
     #[test]
@@ -765,7 +867,44 @@ mod tests {
         assert!(is_part_path("aa/aabbcc.part"));
         assert!(is_part_path("upload.PART"));
         assert!(!is_part_path("aa/aabbcc.mp4"));
-        assert_eq!(kind_of("aa/x.part", Some("video/mp4")), MediaKind::Other);
+        assert_eq!(
+            kind_of("aa/x.part", Some("video/mp4"), &[]),
+            MediaKind::Other
+        );
+    }
+
+    #[test]
+    fn listed_attachments_carry_name_hints_for_extensionless_blobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("vault.db")).unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        conn.execute_batch(
+            &format!(r#"
+            INSERT INTO accounts (id, username, read_only) VALUES ('acc', 'demo', 0);
+            INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+                VALUES ('acc', '+1', '+1', 'phone', 'phone');
+            INSERT INTO conversations (id, account_id, chat_handle_id, conversation_type, source_file)
+                VALUES (1, 'acc', 1, 'individual', 't');
+            INSERT INTO messages (id, conversation_id, account_id, source, timestamp, is_from_me, sort_order)
+                VALUES (1, 1, 'acc', 'imessage', '2020-01-01T00:00:00Z', 0, 0);
+            INSERT INTO attachments (id, message_id, sha256, assets_path, mime_type, original_name, path)
+                VALUES (1, 1, '{SHA}', 'ab/{SHA}', NULL, 'voice-note.amr', 'attachments/voice-note.amr');
+            "#),
+        )
+        .unwrap();
+
+        let rows = list_attachments(&conn, "acc", "imessage").unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(
+            kind_of(
+                &row.assets_path,
+                row.mime_type.as_deref(),
+                &row.name_hints()
+            ),
+            MediaKind::Audio,
+            "an extensionless blob with no declared MIME must classify from its attachment name"
+        );
     }
 
     #[test]

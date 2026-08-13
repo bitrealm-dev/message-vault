@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Deserializer, de};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeedConfig {
@@ -12,6 +13,8 @@ pub struct SeedConfig {
     pub seed: u64,
     #[serde(default = "default_out")]
     pub out: String,
+    #[serde(deserialize_with = "deserialize_reference_time")]
+    pub reference_time: DateTime<Utc>,
     pub contacts: ContactsConfig,
     pub labels: LabelsConfig,
     pub one_to_one: OneToOneConfig,
@@ -27,6 +30,16 @@ fn default_seed() -> u64 {
 }
 fn default_out() -> String {
     "crates/vault/demo-seed".into()
+}
+
+fn deserialize_reference_time<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    DateTime::parse_from_rfc3339(&value)
+        .map(|date_time| date_time.with_timezone(&Utc))
+        .map_err(de::Error::custom)
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1320,6 +1320,13 @@ fn promote_append(
         ));
     }
 
+    // Highest message id that exists before this promotion inserts anything
+    // (after the replace-mode wipe). Every row inserted below lands above it,
+    // which is how FTS indexing tells new rows apart from the already indexed
+    // rows that `_promote_msg_map` also targets for attachments and tapbacks.
+    let max_msg_id_before_promote: i64 =
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+
     let msg_map = promote_messages_chunked(&tx, mode, account_id, total_msgs, &mut stats, started)?;
 
     if drop_secondary {
@@ -1348,7 +1355,7 @@ fn promote_append(
         "writing message id map ({} pairs)…",
         msg_map.len()
     ));
-    fill_promote_msg_map(&tx, &msg_map)?;
+    fill_promote_msg_map(&tx, account_id, &msg_map)?;
     promote_phase_done(started, phase, "message id map written");
 
     let phase = Instant::now();
@@ -1364,6 +1371,20 @@ fn promote_append(
             sa.sha256, sa.assets_path, sa.size_bytes, sa.missing_reason
         FROM staging_attachments sa
         JOIN _promote_msg_map mm ON mm.staging_id = sa.message_id
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM attachments a
+            WHERE a.message_id = mm.prod_id
+              AND a.path IS sa.path
+              AND a.original_name IS sa.original_name
+              AND a.mime_type IS sa.mime_type
+              AND a.is_sticker = sa.is_sticker
+              AND a.transcription IS sa.transcription
+              AND a.sha256 IS sa.sha256
+              AND a.assets_path IS sa.assets_path
+              AND a.size_bytes IS sa.size_bytes
+              AND a.missing_reason IS sa.missing_reason
+        )
         "#,
         [],
     )?;
@@ -1385,6 +1406,16 @@ fn promote_append(
             mm.prod_id, st.part_index, st.kind, st.emoji, st.is_from_me, st.sender_handle_id
         FROM staging_tapbacks st
         JOIN _promote_msg_map mm ON mm.staging_id = st.message_id
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM tapbacks t
+            WHERE t.message_id = mm.prod_id
+              AND t.part_index = st.part_index
+              AND t.kind = st.kind
+              AND t.emoji IS st.emoji
+              AND t.is_from_me = st.is_from_me
+              AND t.sender_handle_id IS st.sender_handle_id
+        )
         "#,
         [],
     )?;
@@ -1397,7 +1428,7 @@ fn promote_append(
 
     let phase = Instant::now();
     promote_log("bulk-indexing FTS for new messages…");
-    let fts_indexed = schema::index_messages_fts_from_promote_map(&tx)?;
+    let fts_indexed = schema::index_messages_fts_from_promote_map(&tx, max_msg_id_before_promote)?;
     schema::install_messages_fts_triggers(&tx)?;
     promote_phase_done(
         started,
@@ -1551,12 +1582,19 @@ fn promote_messages_replace_chunked(
             )?
             .query_map(params![account_id, lo, hi], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        max_before = zip_new_message_ids(tx, &mut msg_map, staging_ids, max_before, |n, p| {
-            format!(
-                "promote replace message id map mismatch: staging={n} new_prod={p} (chunk staging id {}..{hi})",
-                lo + 1
-            )
-        })?;
+        max_before = zip_new_message_ids(
+            tx,
+            &mut msg_map,
+            staging_ids,
+            account_id,
+            max_before,
+            |n, p| {
+                format!(
+                    "promote replace message id map mismatch: staging={n} new_prod={p} (chunk staging id {}..{hi})",
+                    lo + 1
+                )
+            },
+        )?;
 
         promote_phase_done(
             started,
@@ -1584,8 +1622,6 @@ fn promote_messages_append_chunked(
     // INSERT OR IGNORE. Correlated NOT EXISTS / JOIN anti-joins mis-plan onto
     // ix_messages_source and scan the whole source (~10s+ at 50k+ rows).
     let mut msg_map = HashMap::new();
-    let mut max_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
     let mut inserted_total = 0u64;
     let mut lo = min_id - 1;
     let mut chunk_idx = 0u32;
@@ -1625,34 +1661,6 @@ fn promote_messages_append_chunked(
         )?;
         inserted_total += inserted as u64;
 
-        let staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM messages m
-                JOIN staging_messages sm
-                  ON sm.account_id = m.account_id
-                 AND sm.source = m.source
-                 AND sm.guid = m.guid
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE m.id > ?1
-                  AND m.account_id = ?2
-                  AND m.guid IS NOT NULL
-                  AND m.guid != ''
-                  AND sm.id > ?3
-                  AND sm.id <= ?4
-                ORDER BY m.id
-                "#,
-            )?
-            .query_map(params![max_before, account_id, lo, hi], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        max_before = zip_new_message_ids(tx, &mut msg_map, staging_ids, max_before, |n, p| {
-            format!(
-                "promote append message id map mismatch: staging_new={n} new_prod={p} (chunk staging id {}..{hi})",
-                lo + 1
-            )
-        })?;
-
         promote_phase_done(
             started,
             phase,
@@ -1664,7 +1672,8 @@ fn promote_messages_append_chunked(
     // Null/empty guids are outside the partial unique index — always insert.
     let phase = Instant::now();
     promote_log("inserting messages with empty guids…");
-    let empty_max_before = max_before;
+    let empty_max_before: i64 =
+        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
     let inserted_empty = tx.execute(
         r#"
         INSERT INTO messages (
@@ -1704,6 +1713,7 @@ fn promote_messages_append_chunked(
         tx,
         &mut msg_map,
         empty_staging_ids,
+        account_id,
         empty_max_before,
         |n, p| format!("promote append empty-guid id map mismatch: staging={n} new_prod={p}"),
     )?;
@@ -1723,12 +1733,13 @@ fn zip_new_message_ids(
     tx: &Transaction<'_>,
     msg_map: &mut HashMap<i64, i64>,
     staging_ids: Vec<i64>,
+    account_id: &str,
     max_before: i64,
     mismatch: impl FnOnce(usize, usize) -> String,
 ) -> Result<i64> {
     let prod_ids: Vec<i64> = tx
-        .prepare("SELECT id FROM messages WHERE id > ?1 ORDER BY id")?
-        .query_map(params![max_before], |row| row.get(0))?
+        .prepare("SELECT id FROM messages WHERE id > ?1 AND account_id = ?2 ORDER BY id")?
+        .query_map(params![max_before, account_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
     if staging_ids.len() != prod_ids.len() {
         bail!("{}", mismatch(staging_ids.len(), prod_ids.len()));
@@ -1739,7 +1750,11 @@ fn zip_new_message_ids(
     Ok(tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?)
 }
 
-fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Result<()> {
+fn fill_promote_msg_map(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    msg_map: &HashMap<i64, i64>,
+) -> Result<()> {
     tx.execute_batch(
         r#"
         CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
@@ -1749,24 +1764,39 @@ fn fill_promote_msg_map(tx: &Transaction<'_>, msg_map: &HashMap<i64, i64>) -> Re
         DELETE FROM _promote_msg_map;
         "#,
     )?;
-    if msg_map.is_empty() {
-        return Ok(());
+    if !msg_map.is_empty() {
+        let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
+        for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
+            let sql = format!(
+                "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
+                pair_placeholders(chunk.len())
+            );
+            let mut stmt = tx.prepare(&sql)?;
+            let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
+            for &(staging_id, prod_id) in chunk {
+                vals.push(staging_id.into());
+                vals.push(prod_id.into());
+            }
+            stmt.execute(params_from_iter(vals))?;
+        }
     }
 
-    let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
-    for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
-        let sql = format!(
-            "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
-            pair_placeholders(chunk.len())
-        );
-        let mut stmt = tx.prepare(&sql)?;
-        let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
-        for &(staging_id, prod_id) in chunk {
-            vals.push(staging_id.into());
-            vals.push(prod_id.into());
-        }
-        stmt.execute(params_from_iter(vals))?;
-    }
+    tx.execute(
+        r#"
+        INSERT OR REPLACE INTO _promote_msg_map (staging_id, prod_id)
+        SELECT sm.id, m.id
+        FROM staging_messages sm
+        JOIN messages m
+          ON m.account_id = sm.account_id
+         AND m.source = sm.source
+         AND m.guid = sm.guid
+        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
+        WHERE sm.account_id = ?1
+          AND sm.guid IS NOT NULL
+          AND sm.guid != ''
+        "#,
+        params![account_id],
+    )?;
     Ok(())
 }
 
@@ -1880,6 +1910,178 @@ mod tests {
             )
             .unwrap();
         assert_eq!(triggers, 6);
+    }
+
+    #[test]
+    fn append_existing_guid_adds_missing_children() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let header = r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null},{"handle":"+15555550999","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}"#;
+        let first = write_jsonl(
+            tmp.path(),
+            "children-first.jsonl",
+            &format!(
+                "{header}\n{}\n",
+                r#"{"guid":"g-children","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"original body","attachments":[],"imessage":null,"source":null}"#
+            ),
+        );
+        let options = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+        import_jsonl_files(&[first], &options).unwrap();
+
+        let second = write_jsonl(
+            tmp.path(),
+            "children-second.jsonl",
+            &format!(
+                "{header}\n{}\n",
+                r#"{"guid":"g-children","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"replacement body","attachments":[{"path":"attachments/missing.bin","original_name":"missing.bin","mime_type":"application/octet-stream","digest_sha256":null,"is_sticker":false,"transcription":null,"sticker_effect":null,"size_bytes":12,"missing_reason":"not_found"}],"imessage":{"is_reply":false,"in_reply_to_guid":null,"thread_originator_part":null,"num_replies":null,"is_deleted":false,"send_effect":null,"shared_location":null,"announcement":null,"read_receipt_rfc3339":null,"parts":null,"edits":null,"tapbacks":[{"emoji":null,"is_from_me":false,"kind":"liked","part_index":0,"sender":"+15555550999"}],"app":null,"balloon_bundle_id":null,"balloon_kind":null,"associated_guid":null,"associated_part":null,"tapback_kind":null,"tapback_emoji":null,"tapback_action":null},"source":null}"#
+            ),
+        );
+
+        for _ in 0..2 {
+            import_jsonl_files(&[second.clone()], &options).unwrap();
+        }
+
+        let conn = Connection::open(&db).unwrap();
+        let (body, attachments, tapbacks): (String, i64, i64) = conn
+            .query_row(
+                r#"
+                SELECT m.body, COUNT(DISTINCT a.id), COUNT(DISTINCT t.id)
+                FROM messages m
+                LEFT JOIN attachments a ON a.message_id = m.id
+                LEFT JOIN tapbacks t ON t.message_id = m.id
+                WHERE m.guid = 'g-children'
+                GROUP BY m.id
+                "#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(body, "original body");
+        assert_eq!(attachments, 1);
+        assert_eq!(tapbacks, 1);
+    }
+
+    #[test]
+    fn repeated_append_keeps_one_fts_posting_per_message() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let path = write_jsonl(
+            tmp.path(),
+            "fts-append.jsonl",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":0,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}
+{"guid":"g-fts","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"zzuniqueterm body","attachments":[],"imessage":null,"source":null}
+"#,
+        );
+        let options = ImportOptions::fixed(
+            &db,
+            &assets,
+            tmp.path(),
+            None,
+            false,
+            ImportMode::Append,
+            "imessage",
+            TEST_ACCOUNT,
+            false,
+            None,
+        );
+
+        import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+        // Rows of the FTS index storage: a redundant re-index writes a new
+        // segment even when the indexed text is unchanged.
+        let index_rows = || -> i64 {
+            Connection::open(&db)
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM messages_fts_data", [], |r| r.get(0))
+                .unwrap()
+        };
+        let after_first_import = index_rows();
+        for _ in 0..2 {
+            import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+        }
+        assert_eq!(
+            index_rows(),
+            after_first_import,
+            "repeated append must not write additional FTS index entries"
+        );
+
+        let conn = Connection::open(&db).unwrap();
+        let messages: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(messages, 1);
+
+        // `MATCH` collapses repeated postings for one rowid, so read the index
+        // itself: fts5vocab reports how many entries each term really has.
+        conn.execute_batch("CREATE VIRTUAL TABLE fts_vocab USING fts5vocab(messages_fts, row);")
+            .unwrap();
+        let term_entries = |conn: &Connection| -> (i64, i64) {
+            conn.query_row(
+                "SELECT IFNULL(SUM(doc), 0), IFNULL(SUM(cnt), 0) FROM fts_vocab WHERE term = 'zzuniqueterm'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            term_entries(&conn),
+            (1, 1),
+            "repeated append must not add extra index entries for an already indexed message"
+        );
+        let matches: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'zzuniqueterm'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(matches, 1);
+
+        conn.execute("DELETE FROM messages WHERE guid = 'g-fts'", [])
+            .unwrap();
+        assert_eq!(
+            term_entries(&conn),
+            (0, 0),
+            "deleting the message must not leave stale search terms behind"
+        );
+    }
+
+    #[test]
+    fn promote_message_map_ignores_other_accounts() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                account_id TEXT NOT NULL
+            );
+            INSERT INTO messages (id, account_id) VALUES
+                (1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+                (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+            "#,
+        )
+        .unwrap();
+        let tx = conn.transaction().unwrap();
+        let mut map = HashMap::new();
+
+        zip_new_message_ids(&tx, &mut map, vec![101], TEST_ACCOUNT, 0, |n, p| {
+            format!("unexpected mapping counts: staging={n} production={p}")
+        })
+        .unwrap();
+
+        assert_eq!(map, HashMap::from([(101, 1)]));
     }
 
     #[test]
@@ -2602,6 +2804,53 @@ mod tests {
         assert_eq!(missing_reason.as_deref(), Some("too_large"));
         assert_eq!(size_bytes, Some(999));
         assert_eq!(original_name.as_deref(), Some("gone.bin"));
+    }
+
+    #[test]
+    fn claimed_import_rejects_corrupt_existing_asset() {
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("vault.db");
+        let assets = tmp.path().join("assets");
+        let sha = assets::sha256_hex(b"expected-asset");
+        let corrupt = assets.join(assets::shard_rel_path(&sha, ".bin"));
+        fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+        fs::write(&corrupt, b"corrupt-asset").unwrap();
+
+        let jsonl = format!(
+            "{}\n{}\n",
+            r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}"#,
+            format!(
+                r#"{{"guid":"g-corrupt-asset","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"missing asset","attachments":[{{"path":"attachments/missing.bin","original_name":"missing.bin","mime_type":"application/octet-stream","digest_sha256":"{sha}","is_sticker":false,"transcription":null,"sticker_effect":null}}],"imessage":null,"source":null}}"#
+            )
+        );
+        let path = write_jsonl(tmp.path(), "corrupt-existing.jsonl", &jsonl);
+
+        let stats = import_jsonl_files(
+            &[path],
+            &ImportOptions::fixed(
+                &db,
+                &assets,
+                tmp.path(),
+                None,
+                false,
+                ImportMode::Append,
+                "imessage",
+                TEST_ACCOUNT,
+                false,
+                None,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(stats.assets_deduped, 0);
+        assert_eq!(stats.assets_missing, 1);
+        let conn = Connection::open(&db).unwrap();
+        let assets_path: Option<String> = conn
+            .query_row("SELECT assets_path FROM attachments LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(assets_path.is_none());
     }
 
     #[test]

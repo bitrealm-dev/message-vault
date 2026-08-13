@@ -14,6 +14,7 @@ mod import_media;
 mod jsonl;
 mod media_tools;
 mod models;
+mod operation_lock;
 mod process_assets;
 mod profile;
 mod reset_demo;

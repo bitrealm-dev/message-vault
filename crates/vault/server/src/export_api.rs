@@ -5,19 +5,14 @@ use rusqlite::{Connection, params_from_iter};
 use serde::Serialize;
 
 use crate::db::sql::group_rows_by_id;
-use crate::search_query::{
-    ParsedSearchQuery, SearchMode, metadata_exclude_terms, metadata_include_terms,
-    parse_search_query,
-};
+#[cfg(test)]
+use crate::search_query::MAX_SEARCH_QUERY_BYTES;
+use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
 
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
 pub const MAX_EXPORT_LIMIT: usize = 500;
 /// Cap expensive OFFSET skips (prefer cursor pagination for deep pages).
 pub const MAX_EXPORT_OFFSET: usize = 50_000;
-/// Reject pathological search strings before parsing / SQL build.
-pub const MAX_SEARCH_QUERY_BYTES: usize = 2_048;
-pub const MAX_SEARCH_TEXT_TERMS: usize = 32;
-
 #[derive(Debug, Clone)]
 pub struct ExportPageOpts<'a> {
     pub account_id: &'a str,
@@ -208,31 +203,11 @@ fn prepare_message_export(
     query: &str,
     source_override: Option<&str>,
 ) -> Result<BuiltFilters, ExportQueryError> {
-    if query.len() > MAX_SEARCH_QUERY_BYTES {
-        return Err(ExportQueryError::bad(format!(
-            "search query exceeds {MAX_SEARCH_QUERY_BYTES} bytes"
-        )));
-    }
-    let parsed = parse_search_query(query);
+    let parsed = validate_search_query(query)?;
     if parsed.mode == SearchMode::Contacts {
         return Err(ExportQueryError::bad(
             "contacts search mode is not supported on /v1/export/messages; omit search:contacts",
         ));
-    }
-    let text_term_count = parsed.terms.len() + parsed.phrases.len() + parsed.exclude.len();
-    if text_term_count > MAX_SEARCH_TEXT_TERMS {
-        return Err(ExportQueryError::bad(format!(
-            "search query has too many text terms (max {MAX_SEARCH_TEXT_TERMS})"
-        )));
-    }
-    if let Some(ast) = &parsed.fts_ast {
-        let nodes = crate::search_query::count_fts_nodes(ast);
-        if nodes > crate::search_query::MAX_FTS_NODES {
-            return Err(ExportQueryError::bad(format!(
-                "search query is too complex (max {} expression nodes)",
-                crate::search_query::MAX_FTS_NODES
-            )));
-        }
     }
     build_message_filters(conn, account_id, &parsed, source_override)
 }
@@ -431,9 +406,9 @@ pub fn export_message_count(
 
     let conv_sql = format!(
         "SELECT COUNT(DISTINCT c.id)
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
+         {messages_from_sql}
          WHERE {where_sql}{dedupe}",
+        messages_from_sql = messages_from_sql(),
         where_sql = filters.where_sql,
         dedupe = filters.dedupe_sql,
     );
@@ -581,7 +556,7 @@ fn build_message_filters(
     let mut where_parts = vec!["c.account_id = ?".to_string()];
     let mut params: Vec<rusqlite::types::Value> = vec![account_id.to_string().into()];
 
-    append_metadata_text_filters(parsed, &mut where_parts, &mut params);
+    append_metadata_text_filters(parsed, &mut where_parts, &mut params)?;
 
     if let Some(conv) = &parsed.in_conversation {
         match conv.parse::<i64>() {
@@ -690,22 +665,67 @@ fn append_metadata_text_filters(
     parsed: &ParsedSearchQuery,
     where_parts: &mut Vec<String>,
     params: &mut Vec<rusqlite::types::Value>,
-) {
-    for term in metadata_include_terms(parsed) {
-        where_parts.push(metadata_term_matches_sql(params, term));
+) -> Result<(), ExportQueryError> {
+    if let Some(ast) = &parsed.fts_ast {
+        where_parts.push(compile_metadata_fts_expr(ast, params)?);
     }
-    for term in metadata_exclude_terms(parsed) {
-        where_parts.push(format!("NOT {}", metadata_term_matches_sql(params, term)));
+    Ok(())
+}
+
+fn compile_metadata_fts_expr(
+    node: &FtsNode,
+    params: &mut Vec<rusqlite::types::Value>,
+) -> Result<String, ExportQueryError> {
+    match node {
+        FtsNode::Term { value, prefix } => {
+            let fts_query = if prefix == &Some(true) {
+                format!("{}*", fts5_literal_query(value))
+            } else {
+                fts5_literal_query(value)
+            };
+            Ok(metadata_term_matches_sql(params, value, &fts_query))
+        }
+        FtsNode::Phrase { value } => Ok(metadata_term_matches_sql(
+            params,
+            value,
+            &fts5_literal_query(value),
+        )),
+        FtsNode::And { children } => compile_metadata_fts_children("AND", children, params),
+        FtsNode::Or { children } => compile_metadata_fts_children("OR", children, params),
+        FtsNode::Not { child } => Ok(format!(
+            "(NOT ({}))",
+            compile_metadata_fts_expr(child, params)?
+        )),
     }
 }
 
-fn metadata_term_matches_sql(params: &mut Vec<rusqlite::types::Value>, term: &str) -> String {
+fn compile_metadata_fts_children(
+    operator: &str,
+    children: &[FtsNode],
+    params: &mut Vec<rusqlite::types::Value>,
+) -> Result<String, ExportQueryError> {
+    if children.is_empty() {
+        return Err(ExportQueryError::bad(format!(
+            "{operator} search expression has no operands"
+        )));
+    }
+    let compiled = children
+        .iter()
+        .map(|child| compile_metadata_fts_expr(child, params))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!("({})", compiled.join(&format!(" {operator} "))))
+}
+
+fn metadata_term_matches_sql(
+    params: &mut Vec<rusqlite::types::Value>,
+    term: &str,
+    fts_query: &str,
+) -> String {
     let like = format!("%{term}%");
     for _ in 0..8 {
         params.push(like.clone().into());
     }
-    // FTS5 MATCH for body/subject/attachment_text (quoted to treat the term literally).
-    params.push(fts5_literal_query(term).into());
+    params.push(fts_query.to_string().into());
     "(
     coalesce(hs.raw, '') LIKE ? COLLATE NOCASE
     OR EXISTS (
@@ -1080,6 +1100,51 @@ mod tests {
     }
 
     #[test]
+    fn export_message_count_supports_handle_filters() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ('a1', 'alice', 'alice', 'other', 'other')",
+            [],
+        )
+        .unwrap();
+        let sender_id = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE messages SET sender_handle_id = ?1 WHERE id = 1",
+            [sender_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE handles SET raw = 'alice-chat', normalized = 'alice-chat'
+             WHERE id = (SELECT chat_handle_id FROM conversations WHERE id = 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attachments (
+                message_id, path, original_name, mime_type, sha256, is_sticker, size_bytes
+             ) VALUES (1, 'attachments/a.txt', 'a.txt', 'text/plain', 'abc123', 0, 12)",
+            [],
+        )
+        .unwrap();
+
+        for query in ["from:alice", "in:alice-chat"] {
+            let counts = export_message_count(
+                &conn,
+                ExportCountOpts {
+                    account_id: "a1",
+                    query,
+                    source_override: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(counts.messages, 1, "query={query}");
+            assert_eq!(counts.conversations, 1, "query={query}");
+            assert_eq!(counts.attachments, 1, "query={query}");
+        }
+    }
+
+    #[test]
     fn free_text_matches_message_body_via_fts() {
         let conn = setup();
         let res = export_messages(
@@ -1103,6 +1168,145 @@ mod tests {
                 .unwrap_or("")
                 .contains("one")
         );
+    }
+
+    #[test]
+    fn export_boolean_query_preserves_or() {
+        let conn = setup();
+        conn.execute("UPDATE messages SET body = 'foo' WHERE id = 1", [])
+            .unwrap();
+        conn.execute("UPDATE messages SET body = 'bar' WHERE id = 2", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                id, conversation_id, account_id, source, service, timestamp,
+                is_from_me, sort_order, body
+             ) VALUES (
+                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                0, 0, 'foo bar'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let result = export_messages(
+            &conn,
+            ExportPageOpts {
+                account_id: "a1",
+                query: "foo OR bar",
+                limit: 100,
+                offset: None,
+                cursor: None,
+                source_override: None,
+            },
+        )
+        .unwrap();
+        let ids: Vec<i64> = result.messages.iter().map(|message| message.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn export_boolean_query_preserves_and_and_not() {
+        let conn = setup();
+        conn.execute("UPDATE messages SET body = 'foo' WHERE id = 1", [])
+            .unwrap();
+        conn.execute("UPDATE messages SET body = 'bar' WHERE id = 2", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                id, conversation_id, account_id, source, service, timestamp,
+                is_from_me, sort_order, body
+             ) VALUES (
+                3, 1, 'a1', 'sms', 'sms', '2020-01-03T00:00:00Z',
+                0, 0, 'foo bar'
+             )",
+            [],
+        )
+        .unwrap();
+
+        let matching_ids = |query| {
+            export_messages(
+                &conn,
+                ExportPageOpts {
+                    account_id: "a1",
+                    query,
+                    limit: 100,
+                    offset: None,
+                    cursor: None,
+                    source_override: None,
+                },
+            )
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(matching_ids("foo AND bar"), vec![3]);
+        assert_eq!(matching_ids("foo AND NOT bar"), vec![1]);
+    }
+
+    #[test]
+    fn export_boolean_query_combines_metadata_body_phrases_prefixes_and_nesting() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES ('a1', 'blocked', 'blocked', 'other', 'other')",
+            [],
+        )
+        .unwrap();
+        let blocked_sender = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE messages SET body = 'alpha phrase', sender_handle_id = ?1 WHERE id = 1",
+            [blocked_sender],
+        )
+        .unwrap();
+        conn.execute("UPDATE messages SET body = 'unrelated' WHERE id = 2", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO attachments (
+                message_id, path, original_name, mime_type, sha256, is_sticker
+             ) VALUES (
+                2, 'attachments/report-final.pdf', 'report-final.pdf',
+                'application/pdf', 'report-digest', 0
+             )",
+            [],
+        )
+        .unwrap();
+
+        let matching_ids = |query| {
+            export_messages(
+                &conn,
+                ExportPageOpts {
+                    account_id: "a1",
+                    query,
+                    limit: 100,
+                    offset: None,
+                    cursor: None,
+                    source_override: None,
+                },
+            )
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>()
+        };
+
+        assert_eq!(matching_ids(r#""alpha phrase" OR report*"#), vec![1, 2]);
+        assert_eq!(
+            matching_ids(r#"blocked AND ("alpha phrase" OR report*)"#),
+            vec![1]
+        );
+        assert_eq!(matching_ids("NOT NOT report*"), vec![2]);
+
+        conn.execute(
+            "INSERT INTO trashed_conversations (account_id, conversation_id)
+             VALUES ('a1', 2)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(matching_ids(r#""alpha phrase" OR report*"#), vec![1]);
     }
 
     #[test]

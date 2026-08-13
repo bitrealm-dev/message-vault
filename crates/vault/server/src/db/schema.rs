@@ -158,7 +158,18 @@ pub(crate) fn create_messages_secondary_indexes(conn: &Connection) -> Result<()>
 
 /// Bulk-index promoted messages (joined via temp `_promote_msg_map`) into `messages_fts`.
 /// Call after attachment rows exist so `attachment_text` is complete.
-pub(crate) fn index_messages_fts_from_promote_map(conn: &Connection) -> Result<u64> {
+///
+/// `_promote_msg_map` also targets messages that already existed before this
+/// promotion (so attachments and tapbacks can attach to them), and several
+/// staging rows can point at one production row. `messages_fts` is contentless,
+/// so re-indexing an already indexed row writes redundant index entries that a
+/// later delete does not fully retract. `min_new_message_id` is the highest
+/// `messages.id` that existed before this promotion inserted anything; only
+/// distinct production ids above it are indexed here.
+pub(crate) fn index_messages_fts_from_promote_map(
+    conn: &Connection,
+    min_new_message_id: i64,
+) -> Result<u64> {
     let n = conn.execute(
         r#"
         INSERT INTO messages_fts(rowid, body, subject, attachment_text)
@@ -174,10 +185,12 @@ pub(crate) fn index_messages_fts_from_promote_map(conn: &Connection) -> Result<u
                 FROM attachments a
                 WHERE a.message_id = m.id
             ), '')
-        FROM messages m
-        JOIN _promote_msg_map mm ON mm.prod_id = m.id
+        FROM (
+            SELECT DISTINCT prod_id FROM _promote_msg_map WHERE prod_id > ?1
+        ) mm
+        JOIN messages m ON m.id = mm.prod_id
         "#,
-        [],
+        params![min_new_message_id],
     )?;
     Ok(u64::try_from(n).unwrap_or(0))
 }
@@ -315,6 +328,63 @@ mod tests {
             .unwrap();
         }
         conn
+    }
+
+    #[test]
+    fn promote_fts_indexing_covers_only_rows_inserted_by_this_promotion() {
+        let conn = setup();
+        let insert_message = |id: i64, guid: &str, body: &str| {
+            conn.execute(
+                r#"
+                INSERT INTO messages (
+                    id, conversation_id, account_id, source, guid,
+                    timestamp, is_from_me, sort_order, body
+                ) VALUES (?1, 1, ?2, 'imessage', ?3, '2020-01-01T00:00:00Z', 0, 0, ?4)
+                "#,
+                params![id, A1, guid, body],
+            )
+            .unwrap();
+        };
+
+        // An earlier import already indexed this row through the insert trigger.
+        insert_message(10, "g-existing", "carriedover");
+        let max_id_before_promote: i64 = conn
+            .query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))
+            .unwrap();
+
+        drop_messages_fts_triggers(&conn).unwrap();
+        insert_message(11, "g-new", "freshbody");
+        // Append promotion maps existing GUIDs (so child rows find their parent)
+        // alongside newly inserted rows, and one production row can be the target
+        // of more than one staging row.
+        conn.execute_batch(
+            r#"
+            CREATE TEMP TABLE _promote_msg_map (
+                staging_id INTEGER PRIMARY KEY,
+                prod_id INTEGER NOT NULL
+            );
+            INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES (1, 10), (2, 11), (3, 11);
+            "#,
+        )
+        .unwrap();
+
+        let indexed = index_messages_fts_from_promote_map(&conn, max_id_before_promote).unwrap();
+        install_messages_fts_triggers(&conn).unwrap();
+
+        assert_eq!(
+            indexed, 1,
+            "only rows inserted by this promotion may be indexed"
+        );
+        for (term, expected) in [("carriedover", 1), ("freshbody", 1)] {
+            let hits: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                    params![term],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(hits, expected, "unexpected match count for {term}");
+        }
     }
 
     #[test]
