@@ -1,4 +1,4 @@
-/** In-memory contact detail cache (Next-like instant reopen). */
+/** In-memory cache of contact details so reopening a drawer is instant. */
 
 export type CachedContactHandle = {
   handle: string;
@@ -25,6 +25,7 @@ export type CachedContactDetail = {
 const cache = new Map<string, CachedContactDetail>();
 const inflight = new Map<string, Promise<CachedContactDetail>>();
 
+/** Return a cached contact detail, or null when this id has not been loaded. */
 export function getCachedContactDetail(id: string): CachedContactDetail | null {
   return cache.get(String(id)) ?? null;
 }
@@ -33,20 +34,22 @@ function setCachedContactDetail(detail: CachedContactDetail): void {
   cache.set(String(detail.id), detail);
 }
 
+/** Drop one contact from the cache so the next open loads a fresh copy. */
 export function invalidateContactDetail(id: string): void {
   const key = String(id);
   cache.delete(key);
   inflight.delete(key);
 }
 
+/** Drop every cached contact. Used on login and logout. */
 export function clearContactDetailCache(): void {
   cache.clear();
   inflight.clear();
 }
 
 /**
- * Cache-first fetch: returns cached detail immediately via callback path in the
- * drawer; this helper dedupes in-flight GETs and stores the result.
+ * Load one contact's details. Returns a cached copy when present.
+ * If the same id is requested twice at once, only one network request runs.
  */
 export async function fetchContactDetail(
   id: string,

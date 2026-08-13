@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** Wrap every case-insensitive occurrence of `term` in a <mark>. */
+/** Wrap every case-insensitive match of `term` in a highlight mark. */
 export function highlightText(text: string, term: string): ReactNode[] {
   const t = term.trim().toLowerCase();
   if (!t) return [text];

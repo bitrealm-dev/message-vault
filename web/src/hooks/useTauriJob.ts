@@ -15,12 +15,11 @@ export type TauriJobRunCallbacks = {
 };
 
 /**
- * Shared lifecycle for Tauri long-running jobs that emit extract:* events
- * (extract, format, push, and similar). Subscribes before invoke, tears down on
- * finish/error/unmount, and exposes cancel via the shared cancel command.
+ * Shared start/cancel/log state for long-running desktop jobs
+ * (extract, format, push, and similar).
  *
- * Use `start` for fire-and-forget UI (Extract/Format/Export). Use `run` when the
- * caller must await a parsed result and/or chain jobs (Import extract→push).
+ * Use `start` when the UI only needs a log (Extract, Format, Export).
+ * Use `run` when the caller must wait for a result (Import extract then push).
  */
 export function useTauriJob(options?: {
   onError?: (msg: string) => void;
@@ -28,15 +27,13 @@ export function useTauriJob(options?: {
   onIssue?: (event: ImportIssueEvent) => void;
 }): {
   running: boolean;
-  /** True after a successful `extract:finished` for the current run. */
+  /** True after the current job reports that it finished successfully. */
   finished: boolean;
   log: string[];
   start: (invokeFn: () => Promise<void>, startErrorLabel: string) => Promise<void>;
   /**
-   * Await one Tauri job to completion. Tears down any prior `start` listeners,
-   * then uses the same `awaitTauriJob` subscription path Import used to call
-   * directly. Rejects on `extract:error` or invoke failure (does not call
-   * `onError` — the caller handles the rejection).
+   * Wait for one desktop job to finish. Stops any listeners from a previous
+   * `start` call first. Throws if the job reports an error; the caller handles that.
    */
   run: (
     invokeFn: () => Promise<void>,
@@ -93,8 +90,8 @@ export function useTauriJob(options?: {
 
       try {
         await invokeFn();
-      } catch (err) {
-        setLog((prev) => [...prev, `${startErrorLabel}: ${err}`]);
+      } catch (err: unknown) {
+        setLog((prev) => [...prev, `${startErrorLabel}: ${err instanceof Error ? err.message : String(err)}`]);
         setRunning(false);
         setFinished(false);
         tearDown();
@@ -108,7 +105,7 @@ export function useTauriJob(options?: {
       invokeFn: () => Promise<void>,
       callbacks?: TauriJobRunCallbacks,
     ): Promise<TauriJobResult> => {
-      // Drop any fire-and-forget listeners so only one subscription is active.
+      // Stop fire-and-forget listeners so only one subscription is active.
       tearDown();
       setRunning(true);
       setFinished(false);
@@ -121,7 +118,7 @@ export function useTauriJob(options?: {
         );
         setFinished(true);
         return result;
-      } catch (err) {
+      } catch (err: unknown) {
         setFinished(false);
         throw err;
       } finally {

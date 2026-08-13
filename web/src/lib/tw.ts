@@ -1,4 +1,4 @@
-/** Shared theme-aware Tailwind class strings (tokens from theme.css). */
+/** Shared Tailwind class strings that follow the theme colors in theme.css. */
 
 /** Inset (~95% width) hairlines above and below a list row; adjacent rows share one line. */
 export const listRowDividers =

@@ -1,12 +1,5 @@
 export type AuthMode = "hanko" | "local";
 
-interface PersistedAuthFields {
-  serverUrl?: unknown;
-  token?: unknown;
-  accountId?: unknown;
-  needsOnboarding?: unknown;
-}
-
 export interface ParsedPersistedAuth {
   serverUrl: string;
   token: string;
@@ -14,11 +7,19 @@ export interface ParsedPersistedAuth {
   needsOnboarding: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** True when the value is one of the two login modes the app supports. */
 export function isAuthMode(value: unknown): value is AuthMode {
   return value === "hanko" || value === "local";
 }
 
-/** Parse persisted auth JSON; returns null when required fields are missing or invalid. */
+/**
+ * Read a saved login session from JSON.
+ * Returns null when the text is not valid JSON or required fields are missing.
+ */
 export function parsePersistedAuth(raw: string): ParsedPersistedAuth | null {
   let parsed: unknown;
   try {
@@ -27,20 +28,16 @@ export function parsePersistedAuth(raw: string): ParsedPersistedAuth | null {
     return null;
   }
 
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
+  if (!isRecord(parsed)) return null;
 
-  const data = parsed as PersistedAuthFields;
-
-  if (typeof data.serverUrl !== "string") return null;
-  if (typeof data.token !== "string" || !data.token) return null;
-  if (typeof data.accountId !== "string" || !data.accountId) return null;
+  if (typeof parsed.serverUrl !== "string") return null;
+  if (typeof parsed.token !== "string" || !parsed.token) return null;
+  if (typeof parsed.accountId !== "string" || !parsed.accountId) return null;
 
   return {
-    serverUrl: data.serverUrl,
-    token: data.token,
-    accountId: data.accountId,
-    needsOnboarding: data.needsOnboarding === true,
+    serverUrl: parsed.serverUrl,
+    token: parsed.token,
+    accountId: parsed.accountId,
+    needsOnboarding: parsed.needsOnboarding === true,
   };
 }

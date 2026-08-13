@@ -4,9 +4,10 @@ import type { Message } from "../../lib/types";
 
 /** Page size for full-conversation browsing. */
 export const PAGE_SIZE = 50;
-/** Server clamp in export_api (`MAX_EXPORT_LIMIT`). */
+/** Largest page the messages API will return in one request. */
 const YEAR_FETCH_LIMIT = 500;
 
+/** Calendar years covered by a conversation's first and last message dates. */
 export function conversationYears(
   startIso: string | null | undefined,
   endIso: string | null | undefined,
@@ -22,10 +23,12 @@ export function conversationYears(
   return years;
 }
 
+/** Search query that loads every message in one calendar year. */
 function yearQuery(conversationId: string, year: number): string {
   return `in:${conversationId} after:${year} before:${year + 1}`;
 }
 
+/** Short label for a backup source shown in the message footer. */
 export function displaySourceLabel(source: string): string {
   const token = source.trim().toLowerCase();
   if (token === "sms-backup-restore") return "SMS/MMS";
@@ -35,7 +38,7 @@ export function displaySourceLabel(source: string): string {
 
 /**
  * Footer count line. A year filter loads that year in full, so it always shows
- * the whole range; unfiltered browsing shows the current page window.
+ * the whole range. Unfiltered browsing shows the current page window.
  */
 export function buildFooterLabel(
   activeYear: number | null,
@@ -50,6 +53,7 @@ export function buildFooterLabel(
   return `Messages ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
 }
 
+/** Load every message matching this search, paging until the server has no more. */
 async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[]; total: number }> {
   const countRes = await apiClient.get<{ messages: number }>(
     `/v1/export/messages/count?q=${encodeURIComponent(q)}`,
@@ -72,6 +76,7 @@ async function fetchAllMessagesForQuery(q: string): Promise<{ messages: Message[
   return { messages: collected, total };
 }
 
+/** Load messages for one conversation, either a page at a time or a whole year. */
 export function useConversationMessages(conversationId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);

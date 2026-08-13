@@ -40,13 +40,13 @@ export type UseThemeResult = {
 
 const ThemeContext = createContext<UseThemeResult | null>(null);
 
-/** Single app-wide theme state; syncs CSS vars on `<html>`. LocalStorage only. */
+/** Shared theme state. Writes CSS variables on `<html>` and saves choices in the browser. */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(DEFAULT_MODE);
   const [seeds, setSeedsState] = useState<ThemeSeeds>(DEFAULT_SEEDS);
   const [prefersDark, setPrefersDark] = useState(true);
-  // Don't applyTheme until stored values load, so we never stomp the
-  // boot-script theme with defaults for a frame.
+  // Wait until saved values load so the first-paint script is not overwritten
+  // with defaults for a frame.
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -131,6 +131,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Current theme. Must be called under ThemeProvider. */
 export function useTheme(): UseThemeResult {
   const ctx = useContext(ThemeContext);
   if (!ctx) {

@@ -1,4 +1,4 @@
-/** Account profile returned by `GET /v1/account/profile`. */
+/** Account profile returned by GET /v1/account/profile. */
 export interface AccountProfile {
   account_id: string;
   username: string;

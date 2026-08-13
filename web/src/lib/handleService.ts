@@ -1,9 +1,9 @@
-/** Messaging / identity service ids used in profile, onboarding, and contacts. */
+/** Messaging service ids used on profiles, setup, and contacts. */
 export type HandleService = "phone" | "email" | "whatsapp";
 
 export const HANDLE_SERVICES = ["phone", "email", "whatsapp"] as const satisfies readonly HandleService[];
 
-/** Contact-drawer identity picker: phone + WhatsApp only. */
+/** Contact drawer identity picker: phone and WhatsApp only. */
 export type ContactIdentityService = "phone" | "whatsapp";
 
 export const CONTACT_IDENTITY_SERVICES = [
@@ -11,14 +11,14 @@ export const CONTACT_IDENTITY_SERVICES = [
   "whatsapp",
 ] as const satisfies readonly ContactIdentityService[];
 
-/** Full service list for onboarding and account profile handles. */
+/** Full service list for setup and account profile handles. */
 export const HANDLE_SERVICE_OPTIONS = [
   { value: "phone", label: "Phone" },
   { value: "email", label: "Email" },
   { value: "whatsapp", label: "WhatsApp" },
 ] as const satisfies ReadonlyArray<{ value: HandleService; label: string }>;
 
-/** Contact drawer Add-identity picker (labels match the handles table). */
+/** Contact drawer "Add identity" picker (labels match the handles table). */
 export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
   { value: "phone", label: "Text message" },
   { value: "whatsapp", label: "WhatsApp" },
@@ -27,6 +27,10 @@ export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
   label: string;
 }>;
 
+/**
+ * Guess the service for a handle when the stored service is empty.
+ * Emails contain `@`. Phone-like values are mostly digits.
+ */
 export function inferService(
   handle: string,
   service: string | null | undefined,
@@ -38,7 +42,7 @@ export function inferService(
   return "unknown";
 }
 
-/** User-facing service label for the handles table Service column. */
+/** Label shown in the handles table Service column. */
 export function formatHandleServiceLabel(
   handle: string,
   service: string | null | undefined,
@@ -61,7 +65,7 @@ export function formatHandleServiceLabel(
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
-/** Map an API/inferred service id onto a contact-identity option value. */
+/** Map a stored or guessed service onto the contact-identity picker (phone or WhatsApp). */
 export function handleServiceSelectValue(
   handle: string,
   service: string | null | undefined,

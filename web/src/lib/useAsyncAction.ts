@@ -1,5 +1,9 @@
 import { useCallback, useState } from "react";
 
+/**
+ * Run one async action at a time and keep a busy flag plus an error string.
+ * A new `run` call sets busy, clears the previous error, then stores any failure.
+ */
 export function useAsyncAction(): {
   busy: boolean;
   error: string;
@@ -16,8 +20,8 @@ export function useAsyncAction(): {
     setError("");
     try {
       await fn();
-    } catch (e) {
-      setError(String(e));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }

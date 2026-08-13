@@ -1,11 +1,17 @@
 import type { Key } from "react";
 
-/** Parse a React Aria selection key into one of the allowed string values. */
+/**
+ * Convert a React Aria selection key into one of the allowed strings.
+ * Returns null when the key is missing or not in the allowed list.
+ */
 export function parseSelectKey<T extends string>(
   key: Key | null,
   allowed: readonly T[],
 ): T | null {
   if (key == null) return null;
   const s = String(key);
-  return (allowed as readonly string[]).includes(s) ? (s as T) : null;
+  for (const value of allowed) {
+    if (value === s) return value;
+  }
+  return null;
 }

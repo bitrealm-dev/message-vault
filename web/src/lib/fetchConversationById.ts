@@ -10,7 +10,7 @@ type ConversationsPage = {
 
 const PAGE_SIZE = 100;
 
-/** Load one conversation summary by numeric id via the list API (paged scan). */
+/** Load one conversation summary by id, scanning list pages until it is found. */
 export async function fetchConversationById(
   conversationId: string,
   signal?: AbortSignal,

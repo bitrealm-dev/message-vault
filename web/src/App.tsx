@@ -15,7 +15,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
 
-  // Where an already-signed-in visitor to a public route belongs.
+  // Where a signed-in visitor to login/register should go next.
   const signedInDestination = (
     <Navigate to={needsOnboarding ? "/onboarding" : "/"} replace />
   );

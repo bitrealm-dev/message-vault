@@ -40,7 +40,7 @@ export interface MessageAttachment {
   sha256: string | null;
   is_sticker: boolean;
   transcription: string | null;
-  /** Why bytes are absent (`too_large` / `file_missing`); null when asset exists. */
+  /** Why the file bytes are missing (`too_large` / `file_missing`). Null when the file exists. */
   missing_reason?: string | null;
 }
 
@@ -92,7 +92,7 @@ export interface Message {
   attachments: MessageAttachment[];
   tapbacks: MessageTapback[];
 
-  // Service-specific data (optional — populated when available)
+  // Extra fields that only some messaging apps send.
   reactions?: Reaction[];        // iMessage tapbacks, Discord reactions
   reply_to_message?: MessageRef; // WhatsApp reply chains
   embeds?: Embed[];              // Discord embeds
@@ -106,7 +106,7 @@ export interface Message {
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";
 
-/** How vault contacts apply display names during import push. */
+/** How vault contacts fill in display names during import. */
 export type ContactNameMode = "fill_missing" | "overwrite" | "as_is";
 
 export interface ExtractConfig {

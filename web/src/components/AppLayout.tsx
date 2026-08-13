@@ -11,38 +11,20 @@ import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 
+/** Search query used when browsing a contact's conversations from the drawer. */
 function contactBrowseQuery(
   contactId: string,
   kind: ContactBrowseKind,
   handle?: string,
   service?: string,
 ): string {
-  const typeSuffix =
-    kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
+  let typeSuffix = "";
+  if (kind === "direct") typeSuffix = " is:direct";
+  else if (kind === "group") typeSuffix = " is:group";
+
   const h = handle?.trim();
   if (h) {
     const quoted = /\s/.test(h) ? `"${h}"` : h;
-    const platform = service?.trim().toLowerCase();
-    const serviceSuffix =
-      platform === "phone" || platform === "whatsapp" ? ` service:${platform}` : "";
-    return `handle:${quoted}${serviceSuffix}${typeSuffix}`;
-  }
-  if (kind === "direct") return `contact:${contactId} is:direct`;
-  if (kind === "group") return `contact:${contactId} is:group`;
-  return `contact:${contactId}`;
-}
-
-function visibleBrowseQuery(
-  kind: ContactBrowseKind,
-  contactId: string,
-  preferHandle?: string,
-  service?: string,
-): string {
-  const typeSuffix =
-    kind === "direct" ? " is:direct" : kind === "group" ? " is:group" : "";
-  const handle = preferHandle?.trim();
-  if (handle) {
-    const quoted = /\s/.test(handle) ? `"${handle}"` : handle;
     const platform = service?.trim().toLowerCase();
     const serviceSuffix =
       platform === "phone" || platform === "whatsapp" ? ` service:${platform}` : "";
@@ -53,6 +35,7 @@ function visibleBrowseQuery(
 
 type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" | "settings";
 
+/** Which left-column list to show for this URL. */
 function modeFromPathname(pathname: string): ColumnMode {
   if (pathname.startsWith("/messages/")) return "conversations";
   if (pathname === "/contacts") return "contacts";
@@ -138,16 +121,15 @@ export default function AppLayout() {
     service?: string;
     handles?: string[];
   }) => {
-    const visible = visibleBrowseQuery(kind, contactId, handle, service);
-    const apiQuery = contactBrowseQuery(contactId, kind, handle, service);
+    const query = contactBrowseQuery(contactId, kind, handle, service);
     setSelectedContact(null);
-    navigate(`/?q=${encodeURIComponent(visible)}&f=${encodeURIComponent(apiQuery)}`);
+    navigate(`/?q=${encodeURIComponent(query)}&f=${encodeURIComponent(query)}`);
   };
 
   const isFullScreen = mode === "import" || mode === "export" || mode === "settings";
   const isTrash = mode === "trash";
 
-  // Contact drawer: read openContactId from location state (set by MessageRoute)
+  // Contact drawer: MessageRoute stores the contact id on location state.
   const openContactId = asMessagesLocationState(location.state)?.openContactId ?? null;
 
   return (

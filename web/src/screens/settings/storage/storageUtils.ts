@@ -48,6 +48,7 @@ export interface ImportDetailResponse {
   issues: ImportIssue[];
 }
 
+/** Human-readable file size (for example "1.2 MB"). */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -61,6 +62,7 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
+/** Import start/finish time for table rows, or an em dash when missing. */
 export function formatImportDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -68,11 +70,12 @@ export function formatImportDate(iso: string | null | undefined): string {
   return formatDateTime(iso);
 }
 
+/** Finite number, or undefined for anything else. */
 function toNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Any status the server does not report as in-flight or successful counts as failed. */
+/** Map a server import status onto the summary panel's four statuses. */
 function toSummaryStatus(status: string): ImportSummaryView["status"] {
   switch (status) {
     case "completed":
@@ -86,6 +89,7 @@ function toSummaryStatus(status: string): ImportSummaryView["status"] {
   }
 }
 
+/** Build the import summary panel model from a server import-detail response. */
 export function toImportSummaryView(detail: ImportDetailResponse): ImportSummaryView {
   const summary =
     detail.summary && typeof detail.summary === "object"

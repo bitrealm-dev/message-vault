@@ -55,8 +55,8 @@ export default function ServiceMultiSelect({
       if (!(target instanceof Node)) return;
       if (selectRef.current?.contains(target)) return;
       if (popoverRef.current?.contains(target)) return;
-      // Close only the Service list; do not stopPropagation so the same click
-      // can activate Search, another field, or dismiss Advanced Search.
+      // Close only the Service list. Do not stop the click, so it can still
+      // activate Search, another field, or close Advanced Search.
       setIsOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);

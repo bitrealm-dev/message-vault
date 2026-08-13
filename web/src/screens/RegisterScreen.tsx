@@ -30,7 +30,7 @@ export default function RegisterScreen() {
       if (!username.trim()) {
         throw new Error("Username is required.");
       }
-      // Blank passwords are allowed; only reject when the two fields disagree.
+      // Empty passwords are allowed. Only reject when the two fields disagree.
       if (password !== confirmPassword) {
         throw new Error("Passwords do not match.");
       }

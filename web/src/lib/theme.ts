@@ -1,10 +1,10 @@
-/** Appearance mode. `system` follows OS prefers-color-scheme. */
+/** Light, dark, or follow the operating system color scheme. */
 export type ThemeMode = "light" | "dark" | "system";
 
-/** Resolved light/dark after applying system preference. */
+/** Light or dark after applying the system preference. */
 export type ResolvedTheme = "light" | "dark";
 
-/** Fastmail-style four-seed theme. */
+/** Four colors that define a theme: header and accent for light and dark. */
 export type ThemeSeeds = {
   lightHeader: string;
   lightAccent: string;
@@ -90,7 +90,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       lightHeader: "#d3d3d3",
       lightAccent: "#708090",
       darkHeader: "#36454f",
-      // Light Gray darkened so white sent-text stays readable
+      // Darken the gray so white text on sent bubbles stays readable.
       darkAccent: "#9aa8b5",
     },
   },
@@ -111,7 +111,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       lightHeader: "#fafafa",
       lightAccent: "#4a6fa5",
       darkHeader: "#4a6fa5",
-      // Ice Blue darkened toward Steel Blue for sent-text contrast
+      // Darken ice blue so white text on sent bubbles stays readable.
       darkAccent: "#5a7fb5",
     },
   },
@@ -132,7 +132,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       lightHeader: "#ffffff",
       lightAccent: "#0066ff",
       darkHeader: "#1e1e1e",
-      // Neon Cyan mixed toward Electric Blue for sent-text contrast
+      // Mix neon cyan toward blue so white text on sent bubbles stays readable.
       darkAccent: "#0088bb",
     },
   },
@@ -160,17 +160,19 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
+/** True when the value is a saved appearance choice, including "follow the system". */
 function isThemeMode(value: string | null | undefined): value is ThemeMode {
   return value === "light" || value === "dark" || value === "system";
 }
 
-/** Legacy: treat bare light/dark as mode (not system). */
+/** True when the value is only light or dark (older storage without "system"). */
 function isResolvedTheme(
   value: string | null | undefined,
 ): value is ResolvedTheme {
   return value === "light" || value === "dark";
 }
 
+/** Return a lowercase `#rrggbb` color, or null when the text is not a hex color. */
 export function normalizeHex(raw: string): string | null {
   const t = raw.trim();
   if (!HEX_RE.test(t)) return null;
@@ -181,6 +183,7 @@ export function normalizeHex(raw: string): string | null {
   return t.toLowerCase();
 }
 
+/** Join the four theme colors into a shareable comma-separated string. */
 export function formatThemeShare(seeds: ThemeSeeds): string {
   return [
     seeds.lightHeader,
@@ -192,20 +195,19 @@ export function formatThemeShare(seeds: ThemeSeeds): string {
     .join(",");
 }
 
+/** Parse four hex colors from a share string. Returns null when any color is invalid. */
 export function parseThemeShare(raw: string): ThemeSeeds | null {
   const parts = raw
     .split(/[,\s]+/)
     .map((p) => p.trim())
     .filter(Boolean);
   if (parts.length !== 4) return null;
-  const hexes = parts.map(normalizeHex);
-  if (hexes.some((h) => h == null)) return null;
-  return {
-    lightHeader: hexes[0]!,
-    lightAccent: hexes[1]!,
-    darkHeader: hexes[2]!,
-    darkAccent: hexes[3]!,
-  };
+  const lightHeader = normalizeHex(parts[0]);
+  const lightAccent = normalizeHex(parts[1]);
+  const darkHeader = normalizeHex(parts[2]);
+  const darkAccent = normalizeHex(parts[3]);
+  if (!lightHeader || !lightAccent || !darkHeader || !darkAccent) return null;
+  return { lightHeader, lightAccent, darkHeader, darkAccent };
 }
 
 function parseStoredSeeds(raw: string | null): ThemeSeeds | null {
@@ -213,22 +215,15 @@ function parseStoredSeeds(raw: string | null): ThemeSeeds | null {
   const asShare = parseThemeShare(raw);
   if (asShare) return asShare;
   try {
-    const obj = JSON.parse(raw) as Partial<ThemeSeeds>;
-    const seeds: ThemeSeeds = {
-      lightHeader: normalizeHex(obj.lightHeader ?? "") ?? "",
-      lightAccent: normalizeHex(obj.lightAccent ?? "") ?? "",
-      darkHeader: normalizeHex(obj.darkHeader ?? "") ?? "",
-      darkAccent: normalizeHex(obj.darkAccent ?? "") ?? "",
-    };
-    if (
-      !seeds.lightHeader ||
-      !seeds.lightAccent ||
-      !seeds.darkHeader ||
-      !seeds.darkAccent
-    ) {
-      return null;
-    }
-    return seeds;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const obj = parsed as Record<string, unknown>;
+    const lightHeader = typeof obj.lightHeader === "string" ? normalizeHex(obj.lightHeader) : null;
+    const lightAccent = typeof obj.lightAccent === "string" ? normalizeHex(obj.lightAccent) : null;
+    const darkHeader = typeof obj.darkHeader === "string" ? normalizeHex(obj.darkHeader) : null;
+    const darkAccent = typeof obj.darkAccent === "string" ? normalizeHex(obj.darkAccent) : null;
+    if (!lightHeader || !lightAccent || !darkHeader || !darkAccent) return null;
+    return { lightHeader, lightAccent, darkHeader, darkAccent };
   } catch {
     return null;
   }
@@ -239,6 +234,7 @@ function prefersDarkScheme(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+/** Pick light or dark from the saved mode and the system color-scheme setting. */
 export function resolveMode(
   mode: ThemeMode,
   prefersDark = prefersDarkScheme(),
@@ -256,7 +252,7 @@ function activeSeeds(
     : { header: seeds.lightHeader, accent: seeds.lightAccent };
 }
 
-/** Apply mode + seeds to `<html>` (`data-theme`, `--header`, `--accent`). */
+/** Write the chosen mode and colors onto `<html>` as `data-theme` and CSS variables. */
 export function applyTheme(mode: ThemeMode, seeds: ThemeSeeds): ResolvedTheme {
   const resolved = resolveMode(mode);
   const { header, accent } = activeSeeds(seeds, resolved);
@@ -267,18 +263,21 @@ export function applyTheme(mode: ThemeMode, seeds: ThemeSeeds): ResolvedTheme {
   return resolved;
 }
 
+/** Read the saved appearance mode, or the default when nothing is stored. */
 export function readStoredMode(): ThemeMode {
   if (typeof window === "undefined") return DEFAULT_MODE;
   const raw = window.localStorage.getItem(THEME_MODE_KEY);
   if (isThemeMode(raw)) return raw;
-  // Migrate legacy light/dark-only storage
+  // Older builds stored only "light" or "dark". Treat those as a mode, not "system".
   if (isResolvedTheme(raw)) return raw;
   return DEFAULT_MODE;
 }
 
+/** Read the saved theme colors, or the default palette when nothing is stored. */
 export function readStoredSeeds(): ThemeSeeds {
   if (typeof window === "undefined") return DEFAULT_SEEDS;
   return parseStoredSeeds(window.localStorage.getItem(THEME_SEEDS_KEY)) ?? DEFAULT_SEEDS;
 }
 
-// FOUC boot script lives in web/index.html (must run before first paint).
+// The first-paint theme script lives in web/index.html so the page is not
+// the wrong colors for a frame before React starts.

@@ -11,6 +11,7 @@ function readRaw(): unknown {
   }
 }
 
+/** Recent contact-search queries stored in the browser. */
 export function loadContactRecentSearches(): string[] {
   const parsed = readRaw();
   if (!Array.isArray(parsed)) return [];
@@ -28,18 +29,20 @@ function saveContactRecentSearches(queries: string[]): void {
       JSON.stringify(queries.slice(0, CONTACT_RECENT_SEARCHES_MAX)),
     );
   } catch {
-    /* private mode / quota */
+    // Private browsing and full storage can throw.
   }
 }
 
+/** Remove every saved contact-search query. */
 export function clearContactRecentSearches(): void {
   try {
     localStorage.removeItem(CONTACT_RECENT_SEARCHES_KEY);
   } catch {
-    /* ignore */
+    // Private browsing and full storage can throw.
   }
 }
 
+/** Put this query at the front of recent searches, dropping duplicates. */
 export function pushContactRecentSearch(query: string): string[] {
   const q = query.trim();
   if (!q) return loadContactRecentSearches();

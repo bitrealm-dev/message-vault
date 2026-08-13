@@ -82,9 +82,8 @@ export default function ThemeSettings() {
       </p>
 
       <RadioGroup
-        // Track the resolved mode so one card is always selected — a group
-        // value matching no radio ("system") would drop every radio's
-        // tabindex and make the picker unreachable by keyboard.
+        // Keep one card selected. A group value of "system" matches no radio
+        // and would make the picker unreachable from the keyboard.
         value={resolvedMode}
         onChange={(value) => {
           const mode = parseSelectKey(value, ["light", "dark"] as const);
@@ -241,8 +240,7 @@ export default function ThemeSettings() {
                 onChange={() => applyPreset(preset)}
                 aria-label={preset.label}
                 ref={(el) => {
-                  // React Aria's filterDOMProps drops `title`; set it
-                  // directly so hover tooltips keep working.
+                  // The menu library strips `title`. Set it on the element so hover text still works.
                   if (el && el.title !== preset.label) el.title = preset.label;
                 }}
                 className={({ isSelected }) =>

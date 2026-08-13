@@ -5,7 +5,7 @@ export const FFMPEG_TOOLS_STORAGE_KEY = "mv-ffmpeg-path";
 
 let initStarted = false;
 
-/** Apply saved ffmpeg tools folder once at app startup (Tauri only). */
+/** Apply the saved ffmpeg tools folder once when the desktop app starts. */
 export function initFfmpegToolsFromStorage(): void {
   if (initStarted || !isTauri()) return;
   initStarted = true;
@@ -14,6 +14,6 @@ export function initFfmpegToolsFromStorage(): void {
   if (!stored) return;
 
   void setFfmpegToolsDir(stored).catch(() => {
-    // Best-effort at startup; Settings shows detailed status on demand.
+    // Startup is best-effort. Settings shows a detailed status when the user opens it.
   });
 }

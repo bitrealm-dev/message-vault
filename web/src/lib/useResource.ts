@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Load one value for `key`. Pass `null` to skip the request and clear the result.
+ * Changing `key` or calling `reload` starts a new request and cancels the previous one.
+ */
 export function useResource<T>(
   key: string | null,
   fetcher: (signal: AbortSignal) => Promise<T>,

@@ -4,8 +4,8 @@ import type { AccountProfile } from "./account";
 import { useResource } from "./useResource";
 
 /**
- * Shared loader for `GET /v1/account/profile`.
- * `setProfile` lets settings panels apply POST responses without a second fetch.
+ * Load `GET /v1/account/profile` once and share it across settings screens.
+ * `setProfile` applies a POST response without requesting the profile again.
  */
 export function useAccountProfile(): {
   profile: AccountProfile | null;

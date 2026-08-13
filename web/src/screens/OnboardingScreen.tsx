@@ -70,7 +70,7 @@ export default function OnboardingScreen() {
             service: h.service,
           })),
       });
-      // Re-run login so needsOnboarding is recomputed from the saved profile
+      // Log in again so "needs setup" is recomputed from the saved profile.
       await login(serverUrl, token!, accountId!);
     });
   };

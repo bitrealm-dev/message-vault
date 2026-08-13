@@ -86,7 +86,7 @@ export default function LoginScreen() {
     setHankoError("");
   };
 
-  // Wire Hanko elements when in hanko mode
+  // Load Hanko sign-in when that login mode is selected.
   useEffect(() => {
     if (authMode !== "hanko" || !hankoApiUrl || !hankoRef.current) return;
 
@@ -97,14 +97,14 @@ export default function LoginScreen() {
         const mod = await import("@teamhanko/hanko-elements");
         if (cancelled) return;
 
-        // Register the Hanko auth web component
+        // Register the Hanko sign-in web component.
         mod.register(hankoApiUrl).catch(() => {
           if (!cancelled) {
             setHankoError("Failed to load Hanko sign-in.");
           }
         });
 
-        // Create Hanko API instance for session handling
+        // Listen for a successful Hanko session so the app can log in.
         const hanko = new mod.Hanko(hankoApiUrl);
 
         const remove = hanko.onSessionCreated(() => {

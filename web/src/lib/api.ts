@@ -3,11 +3,12 @@ import { buildAssetPath } from "./assetUrl";
 let baseUrl = "";
 let authToken: string | null = null;
 
+/** Set the vault server URL. An empty string means "same host as this page". */
 export function setBaseUrl(url: string) {
-  // Empty string = same-origin (Vite proxy or vault-hosted static UI).
   baseUrl = url.replace(/\/+$/, "");
 }
 
+/** Store the session token used on later API calls. Pass null to log out. */
 export function setToken(token: string | null) {
   authToken = token;
 }
@@ -22,7 +23,6 @@ async function request<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  // baseUrl "" is valid (same-origin). Absolute URLs required for remote vaults.
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -46,8 +46,8 @@ async function request<T>(
 }
 
 /**
- * Fetch a content-addressed asset with Bearer auth and return an object URL.
- * Caller must revoke the URL when done (`URL.revokeObjectURL`).
+ * Download an attachment by its content hash and return a temporary blob URL.
+ * The caller must call `URL.revokeObjectURL` when the URL is no longer needed.
  */
 export async function fetchAssetObjectUrl(
   sha256: string,
