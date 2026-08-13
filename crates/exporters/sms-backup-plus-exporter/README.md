@@ -1,9 +1,22 @@
 # sms-backup-plus-exporter
 
-Convert **SMS Backup+** `.eml` exports via the common message to JSON, CSV, EML, MBOX, JSONL, or XML.
+Rescue messages from an SMS Backup+ `.eml` mail archive into JSON Lines, JSON, CSV, EML, MBOX, or XML. This is a limited rescue import.
 
-**CLI:** [docs/MANPAGE.md](docs/MANPAGE.md)
+The desktop app Extract Messages screen uses this crate as a library. The `sms-backup-plus-exporter` command is the same converter from a terminal.
 
-**EML layouts:** [docs/FORMAT.md](docs/FORMAT.md) · **import mapping:** [docs/IMPORT_MAPPING.md](docs/IMPORT_MAPPING.md)
+## Build and test
 
-License: MIT
+```bash
+cargo test -p sms-backup-plus-exporter
+cargo run -p sms-backup-plus-exporter -- --help
+```
+
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+Command-line options: https://bitrealm.dev/reference/cli/sms-backup-plus-exporter/
+
+## License
+
+MIT.

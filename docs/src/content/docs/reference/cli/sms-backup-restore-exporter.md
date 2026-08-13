@@ -1,8 +1,16 @@
-# NAME
+---
+title: "SMS Backup & Restore"
+description: "Command-line options for converting an SMS Backup & Restore XML file."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 sms-backup-restore-exporter - convert SMS Backup & Restore XML via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 sms-backup-restore-exporter --input <PATH> --output <DIR> --owner-phone <PHONE>...
@@ -15,7 +23,7 @@ sms-backup-restore-exporter --input <PATH> --output <DIR> --owner-phone <PHONE>.
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Reads SyncTech **SMS Backup & Restore** XML (`sms-….xml`, targeted **10.26.003**) into a common message per conversation, then writes JSON (default), JSONL, CSV, EML, MBOX, or SyncTech XML (`--format`).
 
@@ -25,7 +33,7 @@ Reads SyncTech **SMS Backup & Restore** XML (`sms-….xml`, targeted **10.26.003
 
 MMS media lands under `attachments/` when media copy is enabled; EML/MBOX embed bytes instead. Media convert/compress need `ffmpeg`/`ffprobe`. Call logs are not supported. Drafts, failed, and queued messages are skipped.
 
-# OPTIONS
+## OPTIONS
 
 **--input** *PATH*
 : An `sms-*.xml` file, or a directory of `.xml` files.
@@ -72,11 +80,11 @@ MMS media lands under `attachments/` when media copy is enabled; EML/MBOX embed 
 **--obfuscate-seed** *8-hex*
 : Exactly eight hexadecimal characters; implies `--obfuscate`.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Exits non-zero on invalid arguments, missing input, convert failure, or total media-tool failure. Progress/warnings on stderr; summary on stdout.
 
-# FILES
+## FILES
 
 **Input**
 : SyncTech XML with SMS/MMS (and optional embedded MMS parts).
@@ -84,12 +92,12 @@ Exits non-zero on invalid arguments, missing input, convert failure, or total me
 **Output**
 : Per-conversation packaging for the chosen format; `attachments/` when media is copied.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **PATH**
 : Must include `ffmpeg` and `ffprobe` for `convert` / `compress`.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 cargo run --release -p sms-backup-restore-exporter -- \
@@ -99,12 +107,12 @@ cargo run --release -p sms-backup-restore-exporter -- \
   --contacts /path/to/contacts.csv
 ```
 
-# NOTES
+## NOTES
 
-Input XML reference: [INPUT_FORMAT.md](INPUT_FORMAT.md). Source → common-message mapping: [IMPORT_MAPPING.md](IMPORT_MAPPING.md).
+Input XML reference: [INPUT_FORMAT.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-restore-exporter/docs/INPUT_FORMAT.md). Source → common-message mapping: [IMPORT_MAPPING.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md).
 
-# SEE ALSO
+## SEE ALSO
 
 - [Android text-message user guide](https://bitrealm-dev.github.io/message-vault/android/text-messages/)
-- [Input format](INPUT_FORMAT.md)
-- [Import mapping](IMPORT_MAPPING.md)
+- [Input format](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-restore-exporter/docs/INPUT_FORMAT.md)
+- [Import mapping](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md)

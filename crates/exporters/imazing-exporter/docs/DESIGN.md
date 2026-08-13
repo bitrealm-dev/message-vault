@@ -66,7 +66,7 @@ Non-senders are invisible in the CSV.
 
 ## Related docs
 
-- CLI: [`MANPAGE.md`](MANPAGE.md)
+- CLI: [iMazing CLI page](https://bitrealm.dev/reference/cli/imazing-exporter/)
 - Input format and source limitations: [`INPUT_FORMAT.md`](INPUT_FORMAT.md)
 - Contacts helper: [`../../../libs/contacts/README.md`](../../../libs/contacts/README.md)
 - Shared model and output contracts: [message-ir architecture](../../../../docs/maintainers/architecture/message-ir.md), [export structure](../../../../docs/src/content/docs/reference/export-structure.md), [CSV columns](../../../../docs/src/content/docs/reference/csv-columns.md)

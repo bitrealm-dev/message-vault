@@ -1,8 +1,16 @@
-# NAME
+---
+title: "iMazing"
+description: "Command-line options for rescuing messages from an iMazing CSV export."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 imazing-exporter - convert iMazing Messages / WhatsApp CSV exports via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 imazing-exporter --input <PATH> --output <DIR>
@@ -15,13 +23,13 @@ imazing-exporter --input <PATH> --output <DIR>
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Normalizes **iMazing** Messages and/or WhatsApp CSV exports (targeted **3.5.5**) into a common message per conversation, then projects JSON (default) or another `--format`. WhatsApp chats use the `__whatsapp` filename suffix and stay separate from SMS/iMessage.
 
 `Chat Session` is often a name, not a phone — pass `--contacts` from the same backup so chat ids become E.164 when possible. Prefer iMazing’s **All backup** export when attachment filenames matter. Distinct from `imessage-ir-exporter`, which reads Apple `chat.db` directly.
 
-# OPTIONS
+## OPTIONS
 
 **--input** *PATH*
 : Messages/WhatsApp CSV, chat folder, `Messages/`, `WhatsApp/`, or a full device export root (recursive).
@@ -50,11 +58,11 @@ Normalizes **iMazing** Messages and/or WhatsApp CSV exports (targeted **3.5.5**)
 **--obfuscate**, **--obfuscate-seed** *8-hex*
 : Post-export obfuscation; seed must be exactly eight hex digits.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Non-zero on missing paths, convert failure, invalid timezone/dates, or total media-tool failure.
 
-# FILES
+## FILES
 
 **Input**
 : iMazing CSV export tree; optional Contacts CSV.
@@ -62,12 +70,12 @@ Non-zero on missing paths, convert failure, invalid timezone/dates, or total med
 **Output**
 : Output in the selected format. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. WhatsApp conversation stems include `__whatsapp`. Media can be written under `attachments/`.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **PATH**
 : Needs `ffmpeg` / `ffprobe` for `convert` / `compress`.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 imazing-exporter \
@@ -77,12 +85,12 @@ imazing-exporter \
   --timezone America/New_York
 ```
 
-# NOTES
+## NOTES
 
 Experimental in the GUI. Outgoing sender identity, WhatsApp group roster, and reaction/reply fidelity are limited by the upstream CSV.
 
-# SEE ALSO
+## SEE ALSO
 
 - [iMazing user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/imazing/)
-- [Input format and source limitations](INPUT_FORMAT.md)
-- [Importer design](DESIGN.md)
+- [Input format and source limitations](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imazing-exporter/docs/INPUT_FORMAT.md)
+- [Importer design](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imazing-exporter/docs/DESIGN.md)

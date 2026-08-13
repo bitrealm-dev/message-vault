@@ -1,8 +1,16 @@
-# vault-pull
+---
+title: "Pull from Message Vault"
+description: "Command-line options for downloading messages from Message Vault into a local JSONL folder."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## vault-pull
 
 Pull messages from a running Message Vault into a local **JSONL** export folder (`*.jsonl` + `attachments/`).
 
-## Synopsis
+### Synopsis
 
 ```bash
 vault-pull \
@@ -16,7 +24,7 @@ vault-pull \
 
 Prefer `VAULT_KEY` / `VAULT_URL` environment variables over putting the key on the command line.
 
-## Description
+### Description
 
 Uses the same Import API Bearer token as `vault-push`. Export HTTP routes are **read-only** (`GET /v1/export/messages`, `GET /v1/export/messages/count`, `GET /v1/assets/{sha256}`).
 
@@ -24,9 +32,9 @@ Authenticates with the vault, pages matching messages, writes per-conversation J
 
 Create a named API token under **Settings → Account** in the vault UI. The vault base URL is the same origin as the web UI (for example `http://127.0.0.1:8080`).
 
-Prefer the desktop app **Export** screen for a GUI. See the [Export from the vault](../../../../docs/src/content/docs/use-the-desktop-app/export-from-vault.md) user guide.
+Prefer the desktop app **Export** screen for a GUI. See the [Export from the vault](https://github.com/bitrealm-dev/message-vault/blob/main/docs/src/content/docs/use-the-desktop-app/export-from-vault.md) user guide.
 
-## Options
+### Options
 
 | Flag | Env | Meaning |
 |------|-----|---------|
@@ -43,6 +51,6 @@ Prefer the desktop app **Export** screen for a GUI. See the [Export from the vau
 
 Use `vault-pull --help` for the full flag list.
 
-## See also
+### See also
 
-The desktop app **Export** screen, or the [Export from the vault](https://bitrealm.dev/use-the-desktop-app/export-from-vault/) user guide. [`vault-push`](../vault-push/docs/MANPAGE.md) imports in the other direction.
+The desktop app **Export** screen, or the [Export from the vault](/use-the-desktop-app/export-from-vault/) user guide. [`vault-push`](/reference/cli/vault-push/) imports in the other direction.

@@ -1,8 +1,16 @@
-# NAME
+---
+title: "SMS Backup+"
+description: "Command-line options for rescuing messages from an SMS Backup+ mail archive."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 sms-backup-plus-exporter - convert SMS Backup+ EML exports via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 sms-backup-plus-exporter [-v|--verbose] [--no-summary] convert
@@ -18,7 +26,7 @@ sms-backup-plus-exporter [-v|--verbose] [--no-summary] convert
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Converts offline **SMS Backup+** `.eml` exports (targeted **1.5.11**) into a common message per conversation, then projects JSON (default) or another `--format`. This tool does **not** sign in to email or talk to IMAP — only files on disk.
 
@@ -26,9 +34,9 @@ Backups appear as **one file per message** or **archive emails** (many messages 
 
 Owner phone and email may come from flags or `config/owner.toml` (`phones`, `emails`, optional `source_dirs`). Optional `--name-mapping` defaults to `config/name-mapping.csv` when present. Contacts resolve name↔phone; without `--contacts`/`--vcf`, a warning is printed. The desktop app converts with verbose logging.
 
-# OPTIONS
+## OPTIONS
 
-## Global
+### Global
 
 **-v**, **--verbose**
 : Log progress to stderr.
@@ -36,7 +44,7 @@ Owner phone and email may come from flags or `config/owner.toml` (`phones`, `ema
 **--no-summary**
 : Skip the end-of-run summary on stdout.
 
-## convert
+### convert
 
 **--input** *PATH*
 : An `.eml` file or directory of EMLs. Repeatable. Default: `source_dirs` from `config/owner.toml` when set. The desktop app requires exactly one path.
@@ -74,11 +82,11 @@ Owner phone and email may come from flags or `config/owner.toml` (`phones`, `ema
 **--obfuscate**, **--obfuscate-seed** *8-hex*
 : Post-export obfuscation; seed must be exactly eight hex digits.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Non-zero on missing identity/input, convert errors, or total media-tool failure.
 
-# FILES
+## FILES
 
 **Input**
 : Offline EML export tree (not live IMAP).
@@ -89,12 +97,12 @@ Non-zero on missing identity/input, convert errors, or total media-tool failure.
 **config/owner.toml**
 : Optional defaults for phones, emails, and `source_dirs` (relative to the config directory).
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **PATH**
 : Needs `ffmpeg` / `ffprobe` for `convert` / `compress` media modes.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 sms-backup-plus-exporter -v convert \
@@ -105,12 +113,12 @@ sms-backup-plus-exporter -v convert \
   --contacts /path/to/contacts.csv
 ```
 
-# NOTES
+## NOTES
 
-Experimental in the GUI. Attachment→message pairing in archives is heuristic. EML layouts: [FORMAT.md](FORMAT.md). Field mapping: [IMPORT_MAPPING.md](IMPORT_MAPPING.md).
+Experimental in the GUI. Attachment→message pairing in archives is heuristic. EML layouts: [FORMAT.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md). Field mapping: [IMPORT_MAPPING.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-plus-exporter/docs/IMPORT_MAPPING.md).
 
-# SEE ALSO
+## SEE ALSO
 
 - [SMS Backup+ user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/sms-backup-plus/)
-- [Input EML format](FORMAT.md)
-- [Import mapping](IMPORT_MAPPING.md)
+- [Input EML format](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md)
+- [Import mapping](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/sms-backup-plus-exporter/docs/IMPORT_MAPPING.md)

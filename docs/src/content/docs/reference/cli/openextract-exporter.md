@@ -1,8 +1,16 @@
-# NAME
+---
+title: "OpenExtract"
+description: "Command-line options for rescuing messages from an OpenExtract export."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 openextract-exporter - convert OpenExtract conversation CSV (+ VCF) via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 openextract-exporter --input <PATH> --output <DIR>
@@ -12,13 +20,13 @@ openextract-exporter --input <PATH> --output <DIR>
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Reads **OpenExtract** conversation CSV (targeted **0.5.1**) — `all_conversations.csv` or `conversation_*.csv`, file or directory — into a common message per conversation, then projects JSON (default) or another `--format`. `*_attachments.csv` sidecars are ignored; this converter does not extract binary media.
 
 `Sender` may be a phone, a display name, or `me`. Pass `--vcf` or `--contacts` so phones and names resolve; without either, a warning is printed. Name-only chats still write (name-based filename) but may be weak for later ingest.
 
-# OPTIONS
+## OPTIONS
 
 **--input** *PATH*
 : Conversation CSV file or directory of OpenExtract CSVs.
@@ -47,11 +55,11 @@ Reads **OpenExtract** conversation CSV (targeted **0.5.1**) — `all_conversatio
 **--obfuscate-seed** *8-hex*
 : Exactly eight hexadecimal characters; implies `--obfuscate`.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Non-zero on invalid paths, parse/convert failure, or bad date/seed arguments.
 
-# FILES
+## FILES
 
 **Input**
 : OpenExtract conversation CSV(s); optional contacts VCF/CSV.
@@ -59,11 +67,11 @@ Non-zero on invalid paths, parse/convert failure, or bad date/seed arguments.
 **Output**
 : Output in the selected format. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. Name-only chat ids may remain unresolved for later tools that require phone identifiers. No output contains binary media because OpenExtract attachment sidecars are not imported.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 None required beyond a normal process environment.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 openextract-exporter \
@@ -72,10 +80,10 @@ openextract-exporter \
   --vcf /path/to/contacts.vcf
 ```
 
-# NOTES
+## NOTES
 
 Experimental in the GUI. Thin source format: no groups, no media extraction; contacts strongly recommended.
 
-# SEE ALSO
+## SEE ALSO
 
 - [OpenExtract user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/openextract/)

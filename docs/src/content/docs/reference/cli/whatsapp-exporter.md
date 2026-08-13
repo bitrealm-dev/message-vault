@@ -1,8 +1,16 @@
-# NAME
+---
+title: "WhatsApp"
+description: "Command-line options for extracting and converting Apple or Android WhatsApp backups."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 whatsapp-exporter - convert WhatsApp DB/backup (via wtsexporter) via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 whatsapp-exporter --output <DIR> --platform android|ios
@@ -17,7 +25,7 @@ whatsapp-exporter --output <DIR> --platform android|ios
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Shells out to KnugiHK **wtsexporter** ([WhatsApp-Chat-Exporter](https://github.com/KnugiHK/WhatsApp-Chat-Exporter) ≥ 0.13), then maps its JSON into the common message and projects JSON (default) or another `--format`. Conversation stems use the `__whatsapp` suffix.
 
@@ -25,7 +33,7 @@ Extraction runs in a temp directory under `--output` (removed afterward). `--pla
 
 Install the helper with `pip install 'whatsapp-chat-exporter[android_backup,crypt15]'`, use the release-bundled binary beside this tool, or set `WTSEXPORTER`. Prefer this over iMazing WhatsApp CSV when you have the native DB/backup.
 
-# OPTIONS
+## OPTIONS
 
 **--output** *DIR*
 : Destination for packaging output, `attachments/`, and `wtsexporter_result.json`.
@@ -72,11 +80,11 @@ Install the helper with `pip install 'whatsapp-chat-exporter[android_backup,cryp
 **--obfuscate**, **--obfuscate-seed** *8-hex*
 : Post-export obfuscation; seed must be exactly eight hex digits.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or media tools fail entirely.
 
-# FILES
+## FILES
 
 **Output**
 : Output in the selected format with `__whatsapp` in conversation stems. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. The output can also contain `attachments/` and `wtsexporter_result.json`. Scratch `wtsexporter-*` directories exist during extraction and are removed afterward.
@@ -84,7 +92,7 @@ Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or m
 **Upstream**
 : Requires `wtsexporter` on `PATH`, beside this binary, in `MESSAGE_VAULT_IO_BIN`, or via `WTSEXPORTER`.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **WTSEXPORTER**
 : Absolute path to the `wtsexporter` binary.
@@ -98,33 +106,33 @@ Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or m
 **PATH**
 : Needs `ffmpeg` / `ffprobe` for `convert` / `compress`; also used to find `wtsexporter`.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
-# Android crypt15
+## Android crypt15
 whatsapp-exporter \
   --platform android \
   --key /path/to/key-or-hex \
   --backup msgstore.db.crypt15 \
   --output ./staging/whatsapp
 
-# iOS backup
+## iOS backup
 whatsapp-exporter \
   --platform ios \
   --backup ~/Library/Application\ Support/MobileSync/Backup/DEVICE_ID \
   --output ./staging/whatsapp
 
-# Convert-only
+## Convert-only
 whatsapp-exporter \
   --json /path/to/result.json \
   --output ./staging/whatsapp
 ```
 
-# NOTES
+## NOTES
 
 Supported exporter. Android needs an already extracted / decryptable database or crypt backup; iOS uses a WhatsApp-capable iPhone backup path.
 
-# SEE ALSO
+## SEE ALSO
 
 - [Android WhatsApp user guide](https://bitrealm-dev.github.io/message-vault/android/whatsapp/)
 - [Apple WhatsApp user guide](https://bitrealm-dev.github.io/message-vault/apple/whatsapp/)

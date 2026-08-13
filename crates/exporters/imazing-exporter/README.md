@@ -1,11 +1,22 @@
 # imazing-exporter
 
-Convert **iMazing** Messages / WhatsApp CSV exports via the common message to JSON, CSV, EML, MBOX, JSONL, or XML.
+Rescue messages from an iMazing Messages or WhatsApp CSV export into JSON Lines, JSON, CSV, EML, MBOX, or XML. This is a limited rescue import.
 
-**CLI:** [docs/MANPAGE.md](docs/MANPAGE.md)
+The desktop app Extract Messages screen uses this crate as a library. The `imazing-exporter` command is the same converter from a terminal.
 
-**Input format and source limitations:** [docs/INPUT_FORMAT.md](docs/INPUT_FORMAT.md)
+## Build and test
 
-**Importer design:** [docs/DESIGN.md](docs/DESIGN.md)
+```bash
+cargo test -p imazing-exporter
+cargo run -p imazing-exporter -- --help
+```
 
-License: MIT
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+Command-line options: https://bitrealm.dev/reference/cli/imazing-exporter/
+
+## License
+
+MIT.

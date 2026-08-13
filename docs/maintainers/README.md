@@ -1,6 +1,6 @@
 # Maintainer documentation
 
-This directory contains implementation and release documentation for contributors. End-user guides live in the [Starlight source](../src/content/docs/) and are published at <https://bitrealm.dev/vault/>.
+This directory contains implementation and release documentation for contributors. End-user guides live in the [Starlight source](../src/content/docs/) and are published at <https://bitrealm.dev/>.
 
 ## Start here
 
@@ -18,19 +18,20 @@ This directory contains implementation and release documentation for contributor
 
 ## Crate-specific documentation
 
-Shared libraries live under `crates/message/<name>/` (`message-ir`, `contacts`, `media`, `go-sms-mms`, …). Exporter crates live under `crates/exporters/<name>/` and keep their command reference in `docs/MANPAGE.md`. Other binary crates use `crates/<name>/docs/MANPAGE.md`. Importers may also provide:
+Shared libraries live under `crates/libs/` (`message-ir`, `contacts`, `media`, `go-sms-mms`, …). Exporter crates live under `crates/exporters/<name>/`. Command-line reference pages are edited on the docs site:
+
+`docs/src/content/docs/reference/cli/<command>.md`
+
+Importers may also provide files under the crate `docs/` folder until those move onto the Format Reference topic:
 
 - `INPUT_FORMAT.md` for facts about the vendor or source format;
 - `IMPORT_MAPPING.md` for source fields, skip rules, and conversion into the shared message model;
 - `DESIGN.md` for parser algorithms, validation history, and implementation decisions.
 
-The Starlight build generates its command-line reference from the crate manpages. Edit the crate file, then run:
+After changing a CLI page:
 
 ```bash
 cd docs
-npm run sync:cli
 npm run check
 npm run build
 ```
-
-Generated pages under `docs/src/content/docs/reference/cli/` are not edited directly.

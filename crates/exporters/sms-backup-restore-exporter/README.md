@@ -1,9 +1,22 @@
 # sms-backup-restore-exporter
 
-Convert SyncTech **SMS Backup & Restore** XML via the common message to JSON, CSV, EML, MBOX, JSONL, or SyncTech XML.
+Convert an SMS Backup & Restore (SyncTech) XML backup into JSON Lines, JSON, CSV, EML, MBOX, or SMS Backup & Restore XML.
 
-**CLI:** [docs/MANPAGE.md](docs/MANPAGE.md)
+The desktop app Extract Messages screen uses this crate as a library. The `sms-backup-restore-exporter` command is the same converter from a terminal.
 
-**Input format:** [docs/INPUT_FORMAT.md](docs/INPUT_FORMAT.md) · **import mapping:** [docs/IMPORT_MAPPING.md](docs/IMPORT_MAPPING.md)
+## Build and test
 
-License: MIT
+```bash
+cargo test -p sms-backup-restore-exporter
+cargo run -p sms-backup-restore-exporter -- --help
+```
+
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+Command-line options: https://bitrealm.dev/reference/cli/sms-backup-restore-exporter/
+
+## License
+
+MIT.

@@ -1,8 +1,16 @@
-# NAME
+---
+title: "iPhone backup (imessage-ir-exporter)"
+description: "Command-line options for exporting Apple Messages from an iPhone backup or chat database."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 imessage-ir-exporter - export Apple Messages (chat.db / iOS backup) via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 imessage-ir-exporter --output <DIR>
@@ -15,7 +23,7 @@ imessage-ir-exporter --output <DIR>
     [--use-caller-id true|false]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Reads Apple Messages from a macOS `chat.db` or an iOS backup via [`imessage-database`](https://crates.io/crates/imessage-database), builds a common message per conversation, and projects JSON (default), JSONL, CSV, EML, MBOX, or SyncTech XML.
 
@@ -23,7 +31,7 @@ The desktop app's iPhone backup path uses this exporter for every output format.
 
 License: GPL-3.0-or-later (same as `imessage-database` / `crabapple`).
 
-# OPTIONS
+## OPTIONS
 
 **--input** *PATH*
 : `chat.db` (macOS) or iOS backup root (default: system Messages DB).
@@ -58,11 +66,11 @@ License: GPL-3.0-or-later (same as `imessage-database` / `crabapple`).
 **--use-caller-id** *true|false*
 : Outgoing From display name (default `true`).
 
-# EXIT STATUS
+## EXIT STATUS
 
 Exits non-zero when arguments are invalid, the Messages database or backup cannot be opened, an encrypted backup password is wrong, a requested conversation is missing, output conversion fails, or required media tools fail.
 
-# FILES
+## FILES
 
 **Input**
 : A macOS Messages `chat.db`, a macOS Messages data directory, or an iOS backup root. Encrypted iOS backups require `--backup-password`.
@@ -70,12 +78,12 @@ Exits non-zero when arguments are invalid, the Messages database or backup canno
 **Output**
 : Output in the selected format. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. Copied media can be written under `attachments/`.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **PATH**
 : Must include `ffmpeg` and `ffprobe` when attachment handling converts or compresses media.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 cargo run -p imessage-ir-exporter -- --output ./staging/imessage
@@ -87,10 +95,10 @@ imessage-ir-exporter --format eml --platform iOS \
   --output ./out
 ```
 
-# NOTES
+## NOTES
 
 This exporter uses the GPL-3.0-or-later `imessage-database` implementation. Android XML cannot preserve Apple-only fields such as tapbacks, edits, replies, and effects.
 
-# SEE ALSO
+## SEE ALSO
 
 - [Apple Messages user guide](https://bitrealm-dev.github.io/message-vault/apple/text-messages/)

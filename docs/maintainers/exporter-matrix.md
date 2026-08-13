@@ -64,10 +64,10 @@ Discord, Signal, Telegram, and Slack are recognized services in the shared model
 | GO SMS Pro | [`crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md`](../../crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md) |
 | SMS Backup & Restore | [`INPUT_FORMAT.md`](../../crates/exporters/sms-backup-restore-exporter/docs/INPUT_FORMAT.md) · [`IMPORT_MAPPING.md`](../../crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md) |
 | SMS Backup+ | [`FORMAT.md`](../../crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md) · [`IMPORT_MAPPING.md`](../../crates/exporters/sms-backup-plus-exporter/docs/IMPORT_MAPPING.md) |
-| OpenExtract | [`crates/exporters/openextract-exporter/docs/MANPAGE.md`](../../crates/exporters/openextract-exporter/docs/MANPAGE.md) |
+| OpenExtract | [CLI](https://bitrealm.dev/reference/cli/openextract-exporter/) |
 | iMazing | [`INPUT_FORMAT.md`](../../crates/exporters/imazing-exporter/docs/INPUT_FORMAT.md) · [`DESIGN.md`](../../crates/exporters/imazing-exporter/docs/DESIGN.md) |
-| WhatsApp | [`crates/exporters/whatsapp-exporter/docs/MANPAGE.md`](../../crates/exporters/whatsapp-exporter/docs/MANPAGE.md) |
-| iMessage | [`crates/exporters/imessage-ir-exporter/docs/MANPAGE.md`](../../crates/exporters/imessage-ir-exporter/docs/MANPAGE.md) |
+| WhatsApp | [CLI](https://bitrealm.dev/reference/cli/whatsapp-exporter/) |
+| iMessage | [CLI](https://bitrealm.dev/reference/cli/imessage-ir-exporter/) |
 
 **Common message:** end-user [export structure](../src/content/docs/reference/export-structure.md); schema [message-ir architecture](architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](formats/mail-archive.md) and [SMS Backup & Restore XML](formats/sms-backup-restore-xml.md). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
 

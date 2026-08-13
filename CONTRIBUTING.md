@@ -174,16 +174,13 @@ npm run dev
 
 Before publishing doc changes: `npm run check` and `npm run build`.
 
-CLI reference pages are generated from crate manpages. Edit `crates/<name>/docs/MANPAGE.md`, then:
+Command-line reference pages live under `docs/src/content/docs/reference/cli/`. Edit those files directly, then:
 
 ```bash
 cd docs
-npm run sync:cli
 npm run check
 npm run build
 ```
-
-Do not edit generated files under `docs/src/content/docs/reference/cli/` by hand.
 
 ### Publishing / custom domain
 
@@ -206,7 +203,7 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there. If you touched `web/`, also run `npm run lint` and `npm test` there.
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
 5. **Respect licenses.** Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls it into new binaries.
-6. **Document CLI changes in the crate manpage** (`crates/<name>/docs/MANPAGE.md`), then sync the docs site as above.
+6. **Document CLI changes** on the matching page under `docs/src/content/docs/reference/cli/`.
 7. **Put design depth in maintainer docs**, not in this file. Architecture, format contracts, GUI option matrices, releases, and signing stay under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Troubleshooting

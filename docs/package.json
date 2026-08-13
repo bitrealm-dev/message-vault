@@ -3,12 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync:cli": "node scripts/sync-cli-reference.mjs",
-    "predev": "npm run sync:cli",
     "dev": "astro dev",
-    "precheck": "npm run sync:cli",
     "check": "astro check",
-    "prebuild": "npm run sync:cli",
     "build": "astro build",
     "preview": "astro preview"
   },

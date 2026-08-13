@@ -31,12 +31,10 @@ config/export-to-vault.sh
 /data/*
 !/data/.gitkeep
 
-# Starlight documentation output and generated content
+# Starlight documentation output
 /docs/.astro/
 /docs/dist/
 /docs/node_modules/
-/docs/src/content/docs/reference/cli/*.md
-!/docs/src/content/docs/reference/cli/index.md
 
 # Local release packaging output
 /dist/

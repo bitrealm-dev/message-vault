@@ -235,7 +235,7 @@ from disk, or media omitted by skip-attachments / text-only import.
 End-user write-up: [Import to Message Vault](../src/content/docs/use-the-desktop-app/import-into-vault.md).
 
 Persists under `[vault]` in `export.ini`. See
-[`crates/vault-push/docs/MANPAGE.md`](../../crates/vault-push/docs/MANPAGE.md).
+[`vault-push` CLI reference](https://bitrealm.dev/reference/cli/vault-push/).
 
 ## Shared / global controls
 

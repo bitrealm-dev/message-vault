@@ -1,8 +1,16 @@
-# NAME
+---
+title: "GO SMS Pro"
+description: "Command-line options for rescuing messages from a GO SMS Pro XML export."
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 4
+---
+
+## NAME
 
 go-sms-pro-exporter - convert GO SMS Pro XML+PDU backups via common message to JSON/CSV/EML/MBOX/JSONL/XML
 
-# SYNOPSIS
+## SYNOPSIS
 
 ```text
 go-sms-pro-exporter --input <DIR> --output <DIR> --owner-phone <PHONE>...
@@ -15,7 +23,7 @@ go-sms-pro-exporter --input <DIR> --output <DIR> --owner-phone <PHONE>...
     [--obfuscate] [--obfuscate-seed <8-hex>]
 ```
 
-# DESCRIPTION
+## DESCRIPTION
 
 Reads a **GO SMS Pro** (GOMO / Jiubang) backup folder — `gosms_sys*.xml` for SMS and `I_*.pdu` for MMS — into a common message per conversation, then projects JSON (default) or another `--format`. Media lands under `attachments/` when enabled. Skip diagnostics may write `skipped_invalid_address.csv`, `skipped_empty_pdu.csv`, `skipped_no_party.csv`.
 
@@ -23,7 +31,7 @@ PDU decoding is heuristic (MMS Encapsulation / WSP-inspired); many stub PDUs are
 
 Thanks: [python-messaging](https://github.com/pmarti/python-messaging).
 
-# OPTIONS
+## OPTIONS
 
 **--input** *DIR*
 : Backup folder containing XML and PDU files.
@@ -70,11 +78,11 @@ Thanks: [python-messaging](https://github.com/pmarti/python-messaging).
 **--obfuscate-seed** *8-hex*
 : Exactly eight hexadecimal characters; implies `--obfuscate`.
 
-# EXIT STATUS
+## EXIT STATUS
 
 Exits non-zero on invalid arguments, missing paths, convert failure, or when media convert/compress fails for all candidates. Warnings (e.g. missing contacts) go to stderr; a summary is printed to stdout on success.
 
-# FILES
+## FILES
 
 **Input**
 : Directory with `gosms_sys*.xml` and matching `I_*.pdu` blobs.
@@ -82,12 +90,12 @@ Exits non-zero on invalid arguments, missing paths, convert failure, or when med
 **Output**
 : Output in the selected format. JSON, JSONL, CSV, EML, and MBOX are organized per conversation; XML writes one `smses.xml` backup. Media can be written under `attachments/`, and optional `skipped_*.csv` diagnostics explain rejected source records.
 
-# ENVIRONMENT
+## ENVIRONMENT
 
 **PATH**
 : Must include `ffmpeg` and `ffprobe` when `--media-mode` is `convert` or `compress`.
 
-# EXAMPLES
+## EXAMPLES
 
 ```bash
 go-sms-pro-exporter \
@@ -97,11 +105,11 @@ go-sms-pro-exporter \
   --contacts /path/to/contacts.csv
 ```
 
-# NOTES
+## NOTES
 
-Experimental in the desktop GUI. Field mapping and skip counters: [IMPORT_MAPPING.md](IMPORT_MAPPING.md).
+Experimental in the desktop GUI. Field mapping and skip counters: [IMPORT_MAPPING.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md).
 
-# SEE ALSO
+## SEE ALSO
 
 - [GO SMS Pro user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/go-sms-pro/)
-- [Import mapping](IMPORT_MAPPING.md)
+- [Import mapping](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md)

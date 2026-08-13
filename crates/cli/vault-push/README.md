@@ -1,9 +1,22 @@
 # vault-push
 
-Push a Message Vault **JSONL** export folder into a running Message Vault server.
+Import a Message Vault JSON Lines export folder into a running vault server.
 
-- Library: `vault_push::run`
-- CLI: `vault-push` (`--features cli`)
-- GUI: Message Vault → **Vault** tab
+The desktop app **Import** screen uses this crate as a library. The `vault-push` command is the same importer from a terminal. Create an API token under **Settings → Account** in the vault website.
 
-See [docs/MANPAGE.md](docs/MANPAGE.md).
+## Build and test
+
+```bash
+cargo test -p vault-push
+cargo run -p vault-push -- --help
+```
+
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+Command-line options: https://bitrealm.dev/reference/cli/vault-push/
+
+## License
+
+MIT.
