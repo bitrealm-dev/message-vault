@@ -88,7 +88,7 @@ docker run -d --name message-vault \
   -p 8080:8080 \
   -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
-  mbeisser1/message-vault:latest
+  bitrealm/message-vault:latest
 ```
 
 Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Quick start](https://bitrealm.dev/introduction/quick-start/).
