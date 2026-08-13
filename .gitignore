@@ -55,3 +55,7 @@ config/export-to-vault.sh
 .claude/
 .worktrees/
 .superpowers/
+
+# Local npm cache and scratch dirs
+/.npm-cache/
+/.tmp/
