@@ -47,7 +47,7 @@ pub const JPG_PHOTOS: &[JpgPhoto] = &[
     },
 ];
 
-/// Other non-JPEG attachment blobs for mixed-type coverage.
+/// Non-JPEG attachments so the demo includes more than photos.
 pub const OTHER_ATTACHMENTS: &[(&str, &str, bool)] = &[
     ("attachments/landscape.png", "image/png", false),
     ("attachments/sticker.gif", "image/gif", true),
@@ -58,8 +58,9 @@ pub const OTHER_ATTACHMENTS: &[(&str, &str, bool)] = &[
 
 /// Write colorful JPEGs large enough to show inline in the web UI.
 ///
-/// Returns a map of `"attachments/filename.ext"` → `(sha256_hex, byte_length)`
-/// so callers can populate `digest_sha256` and `size_bytes` in generated JSONL.
+/// Returns a map from attachment path to a short fingerprint of the file
+/// contents and the file size in bytes. Conversation files store those
+/// values next to each attachment.
 pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64)>> {
     let specs: &[(&str, [u8; 3])] = &[
         ("sunset.jpg", [255, 140, 60]),
@@ -76,44 +77,31 @@ pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64
         let path = dir.join(name);
         write_color_jpeg(&path, *rgb, 320, 240)?;
         let bytes = std::fs::read(&path)?;
-        let sha = hex::encode(Sha256::digest(&bytes));
-        digests.insert(format!("attachments/{name}"), (sha, bytes.len() as u64));
+        record_blob(&mut digests, &format!("attachments/{name}"), &bytes);
     }
 
-    // Non-JPEG blobs
     fs::write(dir.join("landscape.png"), MINI_PNG)?;
-    let sha_png = hex::encode(Sha256::digest(MINI_PNG));
-    digests.insert(
-        "attachments/landscape.png".into(),
-        (sha_png, MINI_PNG.len() as u64),
-    );
+    record_blob(&mut digests, "attachments/landscape.png", MINI_PNG);
 
     fs::write(dir.join("sticker.gif"), MINI_GIF)?;
-    let sha_gif = hex::encode(Sha256::digest(MINI_GIF));
-    digests.insert(
-        "attachments/sticker.gif".into(),
-        (sha_gif, MINI_GIF.len() as u64),
-    );
+    record_blob(&mut digests, "attachments/sticker.gif", MINI_GIF);
 
     fs::write(dir.join("voice.caf"), MINI_CAF)?;
-    let sha_caf = hex::encode(Sha256::digest(MINI_CAF));
-    digests.insert(
-        "attachments/voice.caf".into(),
-        (sha_caf, MINI_CAF.len() as u64),
-    );
+    record_blob(&mut digests, "attachments/voice.caf", MINI_CAF);
 
     fs::write(dir.join("notes.pdf"), MINI_PDF)?;
-    let sha_pdf = hex::encode(Sha256::digest(MINI_PDF));
-    digests.insert(
-        "attachments/notes.pdf".into(),
-        (sha_pdf, MINI_PDF.len() as u64),
-    );
+    record_blob(&mut digests, "attachments/notes.pdf", MINI_PDF);
 
-    // Note: attachments/missing-file.heic is intentionally absent from the map.
-    // The JSONL will reference it but the file won't exist on disk, exercising
-    // vault-push's missing-file warning path.
+    // attachments/missing-file.heic is left out of this map on purpose.
+    // Conversation JSONL still points at it, but the file is not on disk, so
+    // import can show its missing-file warning.
 
     Ok(digests)
+}
+
+fn record_blob(digests: &mut HashMap<String, (String, u64)>, relative_path: &str, bytes: &[u8]) {
+    let sha = hex::encode(Sha256::digest(bytes));
+    digests.insert(relative_path.into(), (sha, bytes.len() as u64));
 }
 
 fn write_color_jpeg(path: &Path, rgb: [u8; 3], width: u32, height: u32) -> Result<()> {
@@ -129,7 +117,7 @@ fn write_color_jpeg(path: &Path, rgb: [u8; 3], width: u32, height: u32) -> Resul
     Ok(())
 }
 
-// 1x1 PNG (red) — valid IHDR+IDAT+CRC
+// Tiny valid 1x1 red PNG.
 const MINI_PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,

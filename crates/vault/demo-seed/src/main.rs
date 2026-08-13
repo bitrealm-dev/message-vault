@@ -1,4 +1,4 @@
-//! CLI for regenerating the committed demo bundle.
+//! Command-line entry point that regenerates the committed demo files.
 
 use std::path::Path;
 
@@ -10,15 +10,15 @@ use demo_seed::SeedConfig;
 #[command(name = "demo-seed")]
 #[command(about = "Generate committed iMessage demo data for Message Vault")]
 struct Cli {
-    /// Path to demo_seed.toml
+    /// Path to the demo_seed.toml settings file
     #[arg(long, default_value_t = SeedConfig::default_path().display().to_string())]
     config: String,
 
-    /// Output directory (demo bundle root); overrides config
+    /// Output directory for the generated files. Overrides the path in the settings file.
     #[arg(long)]
     out: Option<String>,
 
-    /// PRNG seed; overrides config
+    /// Random seed. Overrides the seed in the settings file.
     #[arg(long)]
     seed: Option<u64>,
 }

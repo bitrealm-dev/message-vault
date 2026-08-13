@@ -1,4 +1,4 @@
-//! Write message-ir JSONL conversations for the demo bundle.
+//! Write JSONL conversation files for the demo bundle.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -94,19 +94,13 @@ pub fn write_all(
     clear_jsonl(sbr_staging)?;
     clear_jsonl(whatsapp_staging)?;
 
-    let mut one_to_one: Vec<&Contact> = roster
-        .contacts
-        .iter()
-        .filter(|c| !c.phones.is_empty() && c.has_one_to_one())
-        .collect();
+    let mut one_to_one = contacts_with_one_to_one(roster);
     one_to_one.shuffle(rng);
 
-    let overlap_n = cfg.sources.overlap_count.min(one_to_one.len());
-    let (overlap, rest) = one_to_one.split_at(overlap_n);
-    let android_n = ((rest.len() as f64) * cfg.sources.android_only_fraction)
-        .round()
-        .clamp(0.0, rest.len() as f64) as usize;
-    let (android_only, imessage_only) = rest.split_at(android_n);
+    let overlap_count = cfg.sources.overlap_count.min(one_to_one.len());
+    let (overlap, rest) = one_to_one.split_at(overlap_count);
+    let android_only_count = crate::rounded_fraction(rest.len(), cfg.sources.android_only_fraction);
+    let (android_only, imessage_only) = rest.split_at(android_only_count);
 
     for contact in imessage_only {
         write_individual(
@@ -203,8 +197,12 @@ pub fn write_all(
         stats.conversation_files += 1;
     }
 
-    // WhatsApp slice: same phone chat id, separate platform handle on import.
-    for contact in roster.contacts.iter().filter(|c| c.has_whatsapp) {
+    // WhatsApp threads reuse the contact's phone number. Import treats them as
+    // a separate platform on the same person.
+    for contact in &roster.contacts {
+        if !contact.has_whatsapp {
+            continue;
+        }
         let wa_count = contact.message_count().clamp(20, 80);
         write_individual(
             whatsapp_staging,
@@ -224,6 +222,20 @@ pub fn write_all(
     Ok(stats)
 }
 
+fn contacts_with_one_to_one(roster: &Roster) -> Vec<&Contact> {
+    let mut contacts = Vec::new();
+    for contact in &roster.contacts {
+        if contact.phones.is_empty() {
+            continue;
+        }
+        if !contact.has_one_to_one() {
+            continue;
+        }
+        contacts.push(contact);
+    }
+    contacts
+}
+
 fn clear_jsonl(staging: &Path) -> Result<()> {
     if !staging.is_dir() {
         return Ok(());
@@ -231,14 +243,18 @@ fn clear_jsonl(staging: &Path) -> Result<()> {
     for entry in fs::read_dir(staging)? {
         let entry = entry?;
         let path = entry.path();
-        if path
-            .extension()
-            .is_some_and(|e| e == "jsonl" || e == "json")
-        {
+        if is_json_conversation_file(&path) {
             fs::remove_file(&path)?;
         }
     }
     Ok(())
+}
+
+fn is_json_conversation_file(path: &Path) -> bool {
+    match path.extension() {
+        Some(extension) => extension == "jsonl" || extension == "json",
+        None => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -256,16 +272,8 @@ fn write_individual(
     attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let source = source_id(flavor);
-    let display_name = if display.is_empty() {
-        None
-    } else {
-        Some(display)
-    };
-    let participants = vec![IrParticipant {
-        handle: chat_id.into(),
-        display_name,
-        handle_type: None,
-    }];
+    let display_name = optional_display_name(display);
+    let participants = individual_participants(chat_id, display_name);
     let path = staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -317,7 +325,7 @@ fn write_individual(
                 );
             }
             SourceFlavor::Whatsapp => {
-                // Keep WhatsApp threads simple (no Apple decorations).
+                // WhatsApp threads skip iMessage-only fields such as tapbacks and replies.
             }
         }
         write_message(&mut file, msg)?;
@@ -339,28 +347,14 @@ fn write_overlap_individual(
     attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let chat_id = contact.primary_phone();
-    let display = contact.display_hint();
+    let display_name = optional_display_name(contact.display_hint());
     let msg_count = contact.message_count().max(1);
     let span_years = contact.span_years;
-    let shared_n = ((msg_count as f64) * cfg.sources.overlap_shared_fraction)
-        .round()
-        .clamp(1.0, msg_count as f64) as usize;
+    let shared_raw = (msg_count as f64) * cfg.sources.overlap_shared_fraction;
+    let shared_n = shared_raw.round().clamp(1.0, msg_count as f64) as usize;
     let extra_lo = cfg.sources.overlap_android_extra_min;
     let extra_hi = cfg.sources.overlap_android_extra_max.max(extra_lo + 1);
     let extra_n = rng.random_range(extra_lo..extra_hi);
-
-    let display_name = if display.is_empty() {
-        None
-    } else {
-        Some(display)
-    };
-    let participants = |dn: Option<String>| {
-        vec![IrParticipant {
-            handle: chat_id.into(),
-            display_name: dn,
-            handle_type: None,
-        }]
-    };
 
     let timestamps = bursty_timestamps(
         msg_count,
@@ -371,145 +365,239 @@ fn write_overlap_individual(
     );
     let mut shared: Vec<(i64, bool, String)> = Vec::with_capacity(shared_n);
     for i in 0..shared_n {
-        let ts = timestamps[i];
+        let timestamp = timestamps[i];
         let from_me = i % 3 != 0;
         let text = format!("Shared demo message {i} with {chat_id}");
-        shared.push((ts, from_me, text));
+        shared.push((timestamp, from_me, text));
     }
 
-    // --- iMessage tree: shared plain rows + remaining decorated rows ---
-    {
-        let path = imessage_staging.join(sanitize_filename(chat_id) + ".jsonl");
-        let mut file = open_jsonl(&path)?;
-        write_conversation_header(
-            &mut file,
-            chat_id,
-            IrConversationType::Individual,
-            None,
-            participants(display_name.clone()),
-            msg_count,
-            IMESSAGE_SOURCE,
-        )?;
-        let mut origin_guid: Option<String> = None;
-        for (i, (ts, from_me, text)) in shared.iter().enumerate() {
-            let guid = format!("1to1-{chat_id}-{i}");
-            let msg = IrMessage {
-                guid,
-                timestamp_unix_ms: *ts,
-                direction: if *from_me {
-                    IrDirection::Outgoing
-                } else {
-                    IrDirection::Incoming
-                },
-                service: IrService::IMessage,
-                message_kind: IrMessageKind::IMessage,
-                sender_handle: if *from_me { None } else { Some(chat_id.into()) },
-                sender_display_name: None,
-                subject: None,
-                text: text.clone(),
-                attachments: vec![],
-                imessage: None,
-                source: None,
-            };
-            write_message(&mut file, msg)?;
-            stats.messages += 1;
-        }
-        for i in shared_n..msg_count {
-            let ts = timestamps[i];
-            let from_me = i % 3 != 0;
-            let guid = format!("1to1-{chat_id}-{i}");
-            let mut msg = text_message(
-                &guid,
-                ts,
-                from_me,
-                chat_id,
-                cfg,
-                corpus,
-                rng,
-                SourceFlavor::IMessage,
-            );
-            decorate_message(
-                &mut msg,
-                i,
-                msg_count,
-                chat_id,
-                from_me,
-                cfg,
-                rng,
-                stats,
-                &mut origin_guid,
-                attachment_digests,
-            );
-            write_message(&mut file, msg)?;
-            stats.messages += 1;
-        }
-        stats.conversation_files += 1;
-    }
-
-    // --- Android tree: same shared rows + unique extras ---
-    {
-        let android_total = shared_n + extra_n;
-        let path = sbr_staging.join(sanitize_filename(chat_id) + ".jsonl");
-        let mut file = open_jsonl(&path)?;
-        write_conversation_header(
-            &mut file,
-            chat_id,
-            IrConversationType::Individual,
-            None,
-            participants(display_name),
-            android_total,
-            SBR_SOURCE,
-        )?;
-        for (i, (ts, from_me, text)) in shared.iter().enumerate() {
-            let guid = format!("sbr-shared-{chat_id}-{i}");
-            let msg = IrMessage {
-                guid,
-                timestamp_unix_ms: *ts,
-                direction: if *from_me {
-                    IrDirection::Outgoing
-                } else {
-                    IrDirection::Incoming
-                },
-                service: IrService::Sms,
-                message_kind: IrMessageKind::Sms,
-                sender_handle: if *from_me { None } else { Some(chat_id.into()) },
-                sender_display_name: None,
-                subject: None,
-                text: text.clone(),
-                attachments: vec![],
-                imessage: None,
-                source: None,
-            };
-            write_message(&mut file, msg)?;
-            stats.messages += 1;
-        }
-        let base_ts = shared
-            .last()
-            .map(|(ts, _, _)| *ts)
-            .or_else(|| timestamps.last().copied())
-            .unwrap_or_else(|| cfg.reference_time.timestamp_millis());
-        for j in 0..extra_n {
-            let ts = base_ts + ((j as i64) + 1) * 60_000;
-            let from_me = j % 4 == 0;
-            let guid = format!("sbr-extra-{chat_id}-{j}");
-            let mut msg = text_message(
-                &guid,
-                ts,
-                from_me,
-                chat_id,
-                cfg,
-                corpus,
-                rng,
-                SourceFlavor::SmsBackupRestore,
-            );
-            decorate_android_message(&mut msg, j, extra_n, cfg, rng, stats, attachment_digests);
-            write_message(&mut file, msg)?;
-            stats.messages += 1;
-        }
-        stats.conversation_files += 1;
-    }
+    write_overlap_imessage(
+        imessage_staging,
+        chat_id,
+        display_name.clone(),
+        msg_count,
+        &timestamps,
+        &shared,
+        shared_n,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    )?;
+    write_overlap_android(
+        sbr_staging,
+        chat_id,
+        display_name,
+        &timestamps,
+        &shared,
+        shared_n,
+        extra_n,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    )?;
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_overlap_imessage(
+    imessage_staging: &Path,
+    chat_id: &str,
+    display_name: Option<String>,
+    msg_count: usize,
+    timestamps: &[i64],
+    shared: &[(i64, bool, String)],
+    shared_n: usize,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
+) -> Result<()> {
+    let path = imessage_staging.join(sanitize_filename(chat_id) + ".jsonl");
+    let mut file = open_jsonl(&path)?;
+    write_conversation_header(
+        &mut file,
+        chat_id,
+        IrConversationType::Individual,
+        None,
+        individual_participants(chat_id, display_name),
+        msg_count,
+        IMESSAGE_SOURCE,
+    )?;
+    let mut origin_guid: Option<String> = None;
+    for (i, (timestamp, from_me, text)) in shared.iter().enumerate() {
+        let guid = format!("1to1-{chat_id}-{i}");
+        let msg = overlap_shared_message(
+            guid,
+            *timestamp,
+            *from_me,
+            chat_id,
+            text.clone(),
+            IrService::IMessage,
+            IrMessageKind::IMessage,
+        );
+        write_message(&mut file, msg)?;
+        stats.messages += 1;
+    }
+    for i in shared_n..msg_count {
+        let timestamp = timestamps[i];
+        let from_me = i % 3 != 0;
+        let guid = format!("1to1-{chat_id}-{i}");
+        let mut msg = text_message(
+            &guid,
+            timestamp,
+            from_me,
+            chat_id,
+            cfg,
+            corpus,
+            rng,
+            SourceFlavor::IMessage,
+        );
+        decorate_message(
+            &mut msg,
+            i,
+            msg_count,
+            chat_id,
+            from_me,
+            cfg,
+            rng,
+            stats,
+            &mut origin_guid,
+            attachment_digests,
+        );
+        write_message(&mut file, msg)?;
+        stats.messages += 1;
+    }
+    stats.conversation_files += 1;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_overlap_android(
+    sbr_staging: &Path,
+    chat_id: &str,
+    display_name: Option<String>,
+    timestamps: &[i64],
+    shared: &[(i64, bool, String)],
+    shared_n: usize,
+    extra_n: usize,
+    cfg: &SeedConfig,
+    corpus: &Corpus,
+    rng: &mut impl Rng,
+    stats: &mut GenStats,
+    attachment_digests: &HashMap<String, (String, u64)>,
+) -> Result<()> {
+    let android_total = shared_n + extra_n;
+    let path = sbr_staging.join(sanitize_filename(chat_id) + ".jsonl");
+    let mut file = open_jsonl(&path)?;
+    write_conversation_header(
+        &mut file,
+        chat_id,
+        IrConversationType::Individual,
+        None,
+        individual_participants(chat_id, display_name),
+        android_total,
+        SBR_SOURCE,
+    )?;
+    for (i, (timestamp, from_me, text)) in shared.iter().enumerate() {
+        let guid = format!("sbr-shared-{chat_id}-{i}");
+        let msg = overlap_shared_message(
+            guid,
+            *timestamp,
+            *from_me,
+            chat_id,
+            text.clone(),
+            IrService::Sms,
+            IrMessageKind::Sms,
+        );
+        write_message(&mut file, msg)?;
+        stats.messages += 1;
+    }
+    let base_ts = overlap_android_base_timestamp(shared, timestamps, cfg);
+    for j in 0..extra_n {
+        let timestamp = base_ts + ((j as i64) + 1) * 60_000;
+        let from_me = j % 4 == 0;
+        let guid = format!("sbr-extra-{chat_id}-{j}");
+        let mut msg = text_message(
+            &guid,
+            timestamp,
+            from_me,
+            chat_id,
+            cfg,
+            corpus,
+            rng,
+            SourceFlavor::SmsBackupRestore,
+        );
+        decorate_android_message(&mut msg, j, extra_n, cfg, rng, stats, attachment_digests);
+        write_message(&mut file, msg)?;
+        stats.messages += 1;
+    }
+    stats.conversation_files += 1;
+    Ok(())
+}
+
+fn overlap_android_base_timestamp(
+    shared: &[(i64, bool, String)],
+    timestamps: &[i64],
+    cfg: &SeedConfig,
+) -> i64 {
+    if let Some((timestamp, _, _)) = shared.last() {
+        return *timestamp;
+    }
+    if let Some(timestamp) = timestamps.last() {
+        return *timestamp;
+    }
+    cfg.reference_time.timestamp_millis()
+}
+
+fn overlap_shared_message(
+    guid: String,
+    timestamp_unix_ms: i64,
+    from_me: bool,
+    chat_id: &str,
+    text: String,
+    service: IrService,
+    message_kind: IrMessageKind,
+) -> IrMessage {
+    IrMessage {
+        guid,
+        timestamp_unix_ms,
+        direction: if from_me {
+            IrDirection::Outgoing
+        } else {
+            IrDirection::Incoming
+        },
+        service,
+        message_kind,
+        sender_handle: if from_me { None } else { Some(chat_id.into()) },
+        sender_display_name: None,
+        subject: None,
+        text,
+        attachments: vec![],
+        imessage: None,
+        source: None,
+    }
+}
+
+fn optional_display_name(display: String) -> Option<String> {
+    if display.is_empty() {
+        None
+    } else {
+        Some(display)
+    }
+}
+
+fn individual_participants(chat_id: &str, display_name: Option<String>) -> Vec<IrParticipant> {
+    vec![IrParticipant {
+        handle: chat_id.into(),
+        display_name,
+        handle_type: None,
+    }]
 }
 
 fn source_id(flavor: SourceFlavor) -> &'static str {
@@ -539,11 +627,7 @@ fn write_unassigned(
     attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let chat_id = &ua.handle;
-    let participants = vec![IrParticipant {
-        handle: chat_id.clone(),
-        display_name: ua.name_alias.clone(),
-        handle_type: None,
-    }];
+    let participants = individual_participants(chat_id, ua.name_alias.clone());
     let fname = if ua.email_only {
         format!("email-{}.jsonl", chat_id.replace('@', "_at_"))
     } else {
@@ -606,36 +690,15 @@ fn write_group(
     attachment_digests: &HashMap<String, (String, u64)>,
 ) -> Result<()> {
     let chat_id = group_chat_id(group.index);
-    let participants: Vec<IrParticipant> = if group.phone_only {
-        group
-            .phone_only_handles
-            .iter()
-            .map(|h| IrParticipant {
-                handle: h.clone(),
-                display_name: None,
-                handle_type: None,
-            })
-            .collect()
-    } else {
-        group
-            .member_idxs
-            .iter()
-            .filter_map(|&i| roster.contacts.get(i))
-            .map(|c| {
-                let hint = c.display_hint();
-                IrParticipant {
-                    handle: c.primary_phone().into(),
-                    display_name: if hint.is_empty() { None } else { Some(hint) },
-                    handle_type: None,
-                }
-            })
-            .collect()
-    };
+    let participants = group_participants(roster, group);
     if participants.len() < 2 && !group.phone_only {
         return Ok(());
     }
 
-    let handles: Vec<String> = participants.iter().map(|p| p.handle.clone()).collect();
+    let mut handles = Vec::with_capacity(participants.len());
+    for participant in &participants {
+        handles.push(participant.handle.clone());
+    }
     let msg_count = ((group.msgs_per_year * group.span_years).round() as isize).max(1) as usize;
     let timestamps = bursty_timestamps(
         msg_count,
@@ -646,26 +709,31 @@ fn write_group(
     );
     let path = staging.join(format!("group-{:03}.jsonl", group.index));
     let mut file = open_jsonl(&path)?;
+    let header_message_count = if group.index == 0 {
+        msg_count + 1
+    } else {
+        msg_count
+    };
     write_conversation_header(
         &mut file,
         &chat_id,
         IrConversationType::Group,
         group.title.clone(),
         participants,
-        msg_count + usize::from(group.index == 0),
+        header_message_count,
         IMESSAGE_SOURCE,
     )?;
 
-    // First group: synthetic rename announcement.
+    // The first group starts with a rename announcement so the UI has one to show.
     if group.index == 0 {
-        let ann_ts = timestamps
-            .first()
-            .copied()
-            .unwrap_or_else(|| cfg.reference_time.timestamp_millis())
-            - 60_000;
+        let first_message_ts = match timestamps.first() {
+            Some(timestamp) => *timestamp,
+            None => cfg.reference_time.timestamp_millis(),
+        };
+        let announcement_ts = first_message_ts - 60_000;
         let mut ann = text_message(
             "grp-0-rename",
-            ann_ts,
+            announcement_ts,
             true,
             OWNER_PHONE,
             cfg,
@@ -690,11 +758,15 @@ fn write_group(
             Some(handles[i % handles.len()].clone())
         };
         let guid = format!("grp-{}-{i}", group.index);
+        let peer = match sender.as_deref() {
+            Some(handle) => handle,
+            None => OWNER_PHONE,
+        };
         let mut msg = text_message(
             &guid,
             timestamps[i],
             from_me,
-            sender.as_deref().unwrap_or(OWNER_PHONE),
+            peer,
             cfg,
             corpus,
             rng,
@@ -713,11 +785,7 @@ fn write_group(
         {
             let reactor = &handles[(i + 1) % handles.len()];
             let kind = TAPBACK_KINDS.choose(rng).unwrap();
-            let emoji = if *kind == "emoji" && rng.random_bool(0.5) {
-                Some((*EMOJI_ONLY.choose(rng).unwrap()).to_string())
-            } else {
-                None
-            };
+            let emoji = tapback_emoji(kind, rng);
             push_tapback(&mut msg, kind, emoji, reactor, false);
         }
         if cfg.messages.reply_stride > 0
@@ -737,6 +805,42 @@ fn write_group(
     }
     stats.conversation_files += 1;
     Ok(())
+}
+
+fn group_participants(roster: &Roster, group: &crate::personas::GroupSpec) -> Vec<IrParticipant> {
+    if group.phone_only {
+        return phone_only_participants(&group.phone_only_handles);
+    }
+    named_group_participants(roster, &group.member_idxs)
+}
+
+fn phone_only_participants(handles: &[String]) -> Vec<IrParticipant> {
+    let mut participants = Vec::with_capacity(handles.len());
+    for handle in handles {
+        participants.push(IrParticipant {
+            handle: handle.clone(),
+            display_name: None,
+            handle_type: None,
+        });
+    }
+    participants
+}
+
+fn named_group_participants(roster: &Roster, member_idxs: &[usize]) -> Vec<IrParticipant> {
+    let mut participants = Vec::new();
+    for &index in member_idxs {
+        let Some(contact) = roster.contacts.get(index) else {
+            continue;
+        };
+        let hint = contact.display_hint();
+        let display_name = optional_display_name(hint);
+        participants.push(IrParticipant {
+            handle: contact.primary_phone().into(),
+            display_name,
+            handle_type: None,
+        });
+    }
+    participants
 }
 
 fn write_orphaned(
@@ -788,14 +892,14 @@ fn write_header_only(
 ) -> Result<()> {
     let path = staging.join(format!("empty-{}.jsonl", sanitize_filename(chat_id)));
     let mut file = open_jsonl(&path)?;
-    let participants: Vec<IrParticipant> = member_phones
-        .iter()
-        .map(|h| IrParticipant {
-            handle: (*h).into(),
+    let mut participants = Vec::with_capacity(member_phones.len());
+    for handle in member_phones {
+        participants.push(IrParticipant {
+            handle: (*handle).into(),
             display_name: None,
             handle_type: None,
-        })
-        .collect();
+        });
+    }
     write_conversation_header(&mut file, chat_id, conv_type, None, participants, 0, source)?;
     Ok(())
 }
@@ -846,30 +950,25 @@ fn decorate_message(
         let im = msg.imessage.get_or_insert_with(IrImessage::default);
         im.num_replies = Some(rng.random_range(1..4));
     }
-    // Mix SMS/RCS into Apple threads so per-message transport badges are visible.
-    if rng.random_bool(
-        cfg.messages
-            .apple_fallback_transport_fraction
-            .clamp(0.0, 1.0),
-    ) {
-        if rng.random_bool(0.5) {
-            msg.service = IrService::Sms;
-            if !matches!(
-                msg.message_kind,
-                IrMessageKind::Mms | IrMessageKind::Announcement
-            ) {
-                msg.message_kind = IrMessageKind::Sms;
-            }
-        } else {
-            msg.service = IrService::Rcs;
-            if !matches!(
-                msg.message_kind,
-                IrMessageKind::Mms | IrMessageKind::Announcement
-            ) {
-                msg.message_kind = IrMessageKind::Sms;
-            }
-        }
+    maybe_mark_as_sms_or_rcs(msg, cfg.messages.apple_fallback_transport_fraction, rng);
+}
+
+fn maybe_mark_as_sms_or_rcs(msg: &mut IrMessage, fraction: f64, rng: &mut impl Rng) {
+    if !rng.random_bool(fraction.clamp(0.0, 1.0)) {
+        return;
     }
+    if rng.random_bool(0.5) {
+        msg.service = IrService::Sms;
+    } else {
+        msg.service = IrService::Rcs;
+    }
+    if matches!(
+        msg.message_kind,
+        IrMessageKind::Mms | IrMessageKind::Announcement
+    ) {
+        return;
+    }
+    msg.message_kind = IrMessageKind::Sms;
 }
 
 fn open_jsonl(path: &Path) -> Result<BufWriter<File>> {
@@ -978,7 +1077,7 @@ fn decorate_android_message(
     }
 }
 
-/// Several messages on active days, quiet gaps, occasional floods.
+/// Spread messages across the date range with busy days, quiet gaps, and occasional floods.
 fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
     total: usize,
     span_years: f64,
@@ -993,58 +1092,80 @@ fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
     let start = reference_time - Duration::days(span_days);
     let offset = FixedOffset::west_opt(4 * 3600).unwrap();
 
-    let mut per_day: HashMap<i64, usize> = HashMap::new();
-    let mut left = total;
-    while left > 0 {
-        let burst = sample_burst(rng).min(left);
-        // Bias toward recent days; most calendar days stay empty.
-        let u: f64 = rng.random::<f64>().powf(0.65);
-        let day = ((span_days - 1) as f64 * u).round() as i64;
-        *per_day.entry(day.clamp(0, span_days - 1)).or_default() += burst;
-        left -= burst;
-    }
-
+    let per_day = assign_messages_to_days(total, span_days, &mut sample_burst, rng);
     let mut days: Vec<(i64, usize)> = per_day.into_iter().collect();
-    days.sort_by_key(|(d, _)| *d);
+    days.sort_by_key(|(day, _)| *day);
 
     let mut out = Vec::with_capacity(total);
     for (day, count) in days {
         let day_start = start + Duration::days(day);
-        let mut seconds: Vec<i64> = (0..count)
-            .map(|_| rng.random_range(8 * 3600..23 * 3600))
-            .collect();
-        seconds.sort_unstable();
-        for (i, secs) in seconds.into_iter().enumerate() {
-            // Spread collisions so bursts aren't identical timestamps.
-            let spaced = secs + (i as i64) * rng.random_range(8..45);
-            let mut dt = day_start + Duration::seconds(spaced.min(23 * 3600 + 3599));
-            if let Some(&prev) = out.last()
-                && dt.timestamp_millis() <= prev
-            {
-                dt = Utc
-                    .timestamp_millis_opt(prev)
-                    .single()
-                    .unwrap_or(reference_time)
-                    + Duration::seconds(rng.random_range(12..90));
-            }
-            let local = offset.from_utc_datetime(&dt.naive_utc());
-            out.push(local.timestamp_millis());
-        }
+        append_day_timestamps(&mut out, day_start, count, offset, reference_time, rng);
     }
     out.sort_unstable();
     out
 }
 
+fn assign_messages_to_days<R: Rng, F: FnMut(&mut R) -> usize>(
+    total: usize,
+    span_days: i64,
+    sample_burst: &mut F,
+    rng: &mut R,
+) -> HashMap<i64, usize> {
+    let mut per_day: HashMap<i64, usize> = HashMap::new();
+    let mut remaining = total;
+    while remaining > 0 {
+        let burst = sample_burst(rng).min(remaining);
+        // Prefer recent days. Most days in the span get no messages.
+        let unit: f64 = rng.random::<f64>().powf(0.65);
+        let day_index = ((span_days - 1) as f64 * unit).round() as i64;
+        let day = day_index.clamp(0, span_days - 1);
+        *per_day.entry(day).or_default() += burst;
+        remaining -= burst;
+    }
+    per_day
+}
+
+fn append_day_timestamps<R: Rng>(
+    out: &mut Vec<i64>,
+    day_start: chrono::DateTime<Utc>,
+    count: usize,
+    offset: FixedOffset,
+    reference_time: chrono::DateTime<Utc>,
+    rng: &mut R,
+) {
+    let mut seconds = Vec::with_capacity(count);
+    for _ in 0..count {
+        seconds.push(rng.random_range(8 * 3600..23 * 3600));
+    }
+    seconds.sort_unstable();
+    for (i, secs) in seconds.into_iter().enumerate() {
+        // Nudge messages a few seconds apart so a burst is not one identical timestamp.
+        let spacing = (i as i64) * rng.random_range(8..45);
+        let spaced = secs + spacing;
+        let latest_second = 23 * 3600 + 3599;
+        let mut dt = day_start + Duration::seconds(spaced.min(latest_second));
+        if let Some(&prev) = out.last()
+            && dt.timestamp_millis() <= prev
+        {
+            let prev_time = Utc
+                .timestamp_millis_opt(prev)
+                .single()
+                .unwrap_or(reference_time);
+            let gap = Duration::seconds(rng.random_range(12..90));
+            dt = prev_time + gap;
+        }
+        let local = offset.from_utc_datetime(&dt.naive_utc());
+        out.push(local.timestamp_millis());
+    }
+}
+
 fn sample_direct_day_burst(rng: &mut impl Rng) -> usize {
     let roll: f64 = rng.random();
     if roll < 0.08 {
-        // Heavy day — a lot.
         rng.random_range(12..=45)
     } else if roll < 0.20 {
-        // Light day.
         rng.random_range(1..=2)
     } else {
-        // Typical active day — several.
         rng.random_range(3..=10)
     }
 }
@@ -1052,13 +1173,10 @@ fn sample_direct_day_burst(rng: &mut impl Rng) -> usize {
 fn sample_group_day_burst(rng: &mut impl Rng) -> usize {
     let roll: f64 = rng.random();
     if roll < 0.10 {
-        // Heavy day — a lot.
         rng.random_range(16..=70)
     } else if roll < 0.22 {
-        // Light day.
         rng.random_range(1..=2)
     } else {
-        // Typical active day — several.
         rng.random_range(3..=12)
     }
 }
@@ -1104,21 +1222,17 @@ fn add_jpg_attachment(
     digests: &HashMap<String, (String, u64)>,
 ) {
     let photo = &JPG_PHOTOS[idx % JPG_PHOTOS.len()];
-    let (sha, size) = digests
-        .get(photo.path)
-        .map(|(s, z)| (s.clone(), *z))
-        .unwrap_or_default();
-    let has_sha = !sha.is_empty();
+    let (digest_sha256, size_bytes) = digest_fields(digests, photo.path);
     msg.attachments.push(IrAttachment {
         path: Some(photo.path.into()),
         original_name: Some(photo.original_name.into()),
         mime_type: Some("image/jpeg".into()),
-        digest_sha256: if has_sha { Some(sha) } else { None },
+        digest_sha256,
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
         bytes: None,
-        size_bytes: if has_sha { Some(size) } else { None },
+        size_bytes,
         missing_reason: None,
     });
     stats.attachment_refs += 1;
@@ -1132,11 +1246,7 @@ fn add_attachment(
     digests: &HashMap<String, (String, u64)>,
 ) {
     let (path, mime, is_sticker) = files[idx % files.len()];
-    let (sha, size) = digests
-        .get(path)
-        .map(|(s, z)| (s.clone(), *z))
-        .unwrap_or_default();
-    let has_sha = !sha.is_empty();
+    let (digest_sha256, size_bytes) = digest_fields(digests, path);
     let transcription = if mime.starts_with("audio/") {
         Some("Hey, just leaving a quick voice note.".into())
     } else {
@@ -1144,17 +1254,45 @@ fn add_attachment(
     };
     msg.attachments.push(IrAttachment {
         path: Some(path.into()),
-        original_name: Some(path.rsplit('/').next().unwrap_or(path).into()),
+        original_name: Some(filename_from_relative_path(path).into()),
         mime_type: Some(mime.into()),
-        digest_sha256: if has_sha { Some(sha) } else { None },
+        digest_sha256,
         is_sticker,
         transcription,
         sticker_effect: None,
         bytes: None,
-        size_bytes: if has_sha { Some(size) } else { None },
+        size_bytes,
         missing_reason: None,
     });
     stats.attachment_refs += 1;
+}
+
+fn digest_fields(
+    digests: &HashMap<String, (String, u64)>,
+    path: &str,
+) -> (Option<String>, Option<u64>) {
+    match digests.get(path) {
+        Some((digest, byte_len)) if !digest.is_empty() => (Some(digest.clone()), Some(*byte_len)),
+        _ => (None, None),
+    }
+}
+
+fn filename_from_relative_path(path: &str) -> &str {
+    match path.rsplit('/').next() {
+        Some(name) => name,
+        None => path,
+    }
+}
+
+fn tapback_emoji(kind: &str, rng: &mut impl Rng) -> Option<String> {
+    if kind != "emoji" {
+        return None;
+    }
+    if !rng.random_bool(0.5) {
+        return None;
+    }
+    let emoji = *EMOJI_ONLY.choose(rng).unwrap();
+    Some(emoji.to_string())
 }
 
 fn push_tapback(
@@ -1170,12 +1308,17 @@ fn push_tapback(
         Some(other) if !other.is_null() => vec![other],
         _ => Vec::new(),
     };
+    let sender_value = if from_me {
+        serde_json::Value::Null
+    } else {
+        json!(sender)
+    };
     taps.push(json!({
         "part_index": 0,
         "kind": kind,
         "emoji": emoji,
         "is_from_me": from_me,
-        "sender": if from_me { serde_json::Value::Null } else { json!(sender) },
+        "sender": sender_value,
     }));
     im.tapbacks = Some(serde_json::Value::Array(taps));
 }

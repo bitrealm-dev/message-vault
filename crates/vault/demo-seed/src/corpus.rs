@@ -1,4 +1,4 @@
-//! Public-domain sentence corpus loader.
+//! Loads public-domain sentences used as message bodies.
 
 use std::fs;
 use std::path::Path;
@@ -33,10 +33,10 @@ impl Corpus {
     }
 
     pub fn pick(&self, rng: &mut impl Rng) -> &str {
-        self.sentences
-            .choose(rng)
-            .map(|s| s.as_str())
-            .unwrap_or("Okay.")
+        match self.sentences.choose(rng) {
+            Some(sentence) => sentence.as_str(),
+            None => "Okay.",
+        }
     }
 
     /// One or two sentences joined for slightly longer messages.
@@ -72,7 +72,8 @@ fn extract_sentences(text: &str) -> Vec<String> {
         flat.push(' ');
     }
 
-    // Normalize curly quotes / dashes so splitters see plain prose.
+    // Replace curly quotes and dashes with plain ASCII so sentence splitting
+    // sees ordinary punctuation.
     let flat = flat
         .replace(['“', '”', '„'], "\"")
         .replace(['‘', '’'], "'")
@@ -102,24 +103,22 @@ fn is_heading(t: &str) -> bool {
 }
 
 fn normalize_sentence(raw: &str) -> Option<String> {
-    let s = raw
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed
         .trim()
-        .trim_matches(|c: char| matches!(c, '"' | '\'' | '*' | '_' | '-' | '[' | ']'))
-        .to_string();
-    if s.len() < 20 || s.len() > 180 {
+        .trim_matches(|c: char| matches!(c, '"' | '\'' | '*' | '_' | '-' | '[' | ']'));
+    if trimmed.len() < 20 || trimmed.len() > 180 {
         return None;
     }
-    if !s.chars().any(|c| c.is_ascii_lowercase()) {
+    if !trimmed.chars().any(|c| c.is_ascii_lowercase()) {
         return None;
     }
-    // Skip footnote-ish leftovers.
-    if s.chars().filter(|c| c.is_ascii_digit()).count() > s.len() / 3 {
+    // Skip leftover footnote fragments that are mostly digits.
+    let digit_count = trimmed.chars().filter(|c| c.is_ascii_digit()).count();
+    if digit_count > trimmed.len() / 3 {
         return None;
     }
-    Some(s)
+    Some(trimmed.to_string())
 }
 
 #[cfg(test)]
