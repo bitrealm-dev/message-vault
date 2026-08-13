@@ -1,4 +1,4 @@
-//! Name list loader and sampling.
+//! Loads first, last, and middle name lists and picks from them.
 
 use std::fs;
 use std::path::Path;
@@ -24,26 +24,37 @@ impl NameBank {
     }
 
     pub fn pick_first(&self, rng: &mut impl Rng) -> &str {
-        self.first.choose(rng).map(|s| s.as_str()).unwrap_or("Alex")
+        match self.first.choose(rng) {
+            Some(name) => name.as_str(),
+            None => "Alex",
+        }
     }
 
     pub fn pick_last(&self, rng: &mut impl Rng) -> &str {
-        self.last.choose(rng).map(|s| s.as_str()).unwrap_or("Lee")
+        match self.last.choose(rng) {
+            Some(name) => name.as_str(),
+            None => "Lee",
+        }
     }
 
     pub fn pick_middle(&self, rng: &mut impl Rng) -> &str {
-        self.middle.choose(rng).map(|s| s.as_str()).unwrap_or("Lee")
+        match self.middle.choose(rng) {
+            Some(name) => name.as_str(),
+            None => "Lee",
+        }
     }
 }
 
 fn load_lines(path: &Path) -> Result<Vec<String>> {
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let lines: Vec<String> = text
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .map(str::to_string)
-        .collect();
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
     if lines.is_empty() {
         bail!("{} is empty", path.display());
     }

@@ -1,4 +1,4 @@
-//! Generator configuration loaded from `demo_seed.toml`.
+//! Loads generator settings from `demo_seed.toml`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,7 +46,9 @@ where
 pub struct ContactsConfig {
     pub count: usize,
     pub no_name: f64,
-    #[allow(dead_code)] // residual / documentation; sampling uses first_only + first_middle_last
+    // The config file still has this field, so it must load. Names are chosen
+    // using first_only and first_middle_last. This value is unused.
+    #[allow(dead_code)]
     pub first_last: f64,
     pub first_middle_last: f64,
     pub first_only: f64,
@@ -88,8 +90,8 @@ pub struct GroupsConfig {
     pub participants_mean: f64,
     pub participants_min: u32,
     pub participants_max: u32,
-    /// Minimum number of named groups with size in
-    /// `[large_participants_min, large_participants_max]`.
+    /// At least this many groups must have a participant count between
+    /// `large_participants_min` and `large_participants_max`.
     #[serde(default = "default_large_min_count")]
     pub large_min_count: usize,
     #[serde(default = "default_large_participants_min")]
@@ -124,7 +126,8 @@ pub struct MessagesConfig {
     pub other_base_stride: usize,
     pub tapback_stride: usize,
     pub reply_stride: usize,
-    /// Fraction of iMessage-tree messages that use SMS or RCS transport (for badges).
+    /// Share of messages in the iMessage folder that are marked as SMS or RCS
+    /// so the conversation view can show those labels.
     #[serde(default = "default_apple_fallback_transport_fraction")]
     pub apple_fallback_transport_fraction: f64,
 }
@@ -142,23 +145,26 @@ pub struct EdgeCasesConfig {
     pub empty_group: bool,
 }
 
-/// How demo conversations are split across backup source trees.
+/// How demo conversations are split across the iMessage, Android, and WhatsApp folders.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourcesConfig {
-    /// Fraction of non-overlap 1:1 contacts that are Android-only.
+    /// Share of one-to-one contacts (excluding the ones that appear in both
+    /// backups) that only appear in the Android backup.
     #[serde(default = "default_android_only_fraction")]
     pub android_only_fraction: f64,
-    /// Contacts written into both `imessage` and `sms-backup-restore` staging.
+    /// How many contacts are written into both the iMessage and Android folders.
     #[serde(default = "default_overlap_count")]
     pub overlap_count: usize,
-    /// Fraction of overlap iMessage messages also present on Android (shared fingerprint).
+    /// Share of messages in those overlapping iMessage threads that also appear
+    /// in the Android backup with the same text and time.
     #[serde(default = "default_overlap_shared_fraction")]
     pub overlap_shared_fraction: f64,
     #[serde(default = "default_overlap_android_extra_min")]
     pub overlap_android_extra_min: usize,
     #[serde(default = "default_overlap_android_extra_max")]
     pub overlap_android_extra_max: usize,
-    /// Share of contacts that also get a WhatsApp 1:1 thread (same phone, platform whatsapp).
+    /// Share of contacts that also get a WhatsApp conversation. That conversation
+    /// uses the same phone number, marked as WhatsApp rather than iMessage or SMS.
     #[serde(default = "default_whatsapp_contact_fraction")]
     pub whatsapp_contact_fraction: f64,
 }

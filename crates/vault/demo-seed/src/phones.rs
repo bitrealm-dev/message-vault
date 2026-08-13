@@ -1,14 +1,14 @@
-//! Synthetic phone number generation (US + international).
+//! Builds phone numbers that look like US and international numbers.
 
 use std::collections::HashSet;
 
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-/// Stable demo owner / account phone (matches `crates/vault/demo-seed/config/seed.toml`).
+/// Demo owner phone number. Matches the value in `crates/vault/demo-seed/config/seed.toml`.
 pub const OWNER_PHONE: &str = "+14155559000";
 
-/// Valid-looking US NANP area codes (avoid 555 exchange for generated peers).
+/// US area codes that look real. Generated numbers skip the 555 exchange.
 const US_AREA: &[u16] = &[
     201, 202, 212, 213, 214, 215, 216, 301, 303, 305, 310, 312, 313, 314, 315, 404, 407, 408, 415,
     416, 503, 512, 516, 617, 619, 626, 650, 702, 703, 713, 718, 773, 786, 801, 818, 832, 858, 901,

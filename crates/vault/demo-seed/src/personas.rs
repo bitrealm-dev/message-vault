@@ -1,4 +1,4 @@
-//! Procedural demo contact roster.
+//! Builds a list of demo contacts, groups, and unassigned handles.
 
 use std::collections::HashSet;
 
@@ -30,7 +30,7 @@ pub struct Contact {
     pub message_scope: MessageScope,
     pub msgs_per_year: f64,
     pub span_years: f64,
-    /// Also generate a WhatsApp staging thread for this contact's primary phone.
+    /// Also write a WhatsApp conversation for this contact's primary phone.
     pub has_whatsapp: bool,
 }
 
@@ -91,20 +91,7 @@ pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> R
         contacts.push(make_contact(cfg, names, rng, &mut used_phones));
     }
 
-    // Seed-stable WhatsApp slice among contacts that have a 1:1 phone thread.
-    let mut whatsapp_idxs: Vec<usize> = contacts
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| !c.phones.is_empty() && c.has_one_to_one())
-        .map(|(i, _)| i)
-        .collect();
-    whatsapp_idxs.shuffle(rng);
-    let wa_n = ((whatsapp_idxs.len() as f64) * cfg.sources.whatsapp_contact_fraction)
-        .round()
-        .clamp(0.0, whatsapp_idxs.len() as f64) as usize;
-    for &idx in whatsapp_idxs.iter().take(wa_n) {
-        contacts[idx].has_whatsapp = true;
-    }
+    mark_whatsapp_contacts(&mut contacts, cfg.sources.whatsapp_contact_fraction, rng);
 
     let groups = build_groups(cfg, &contacts, rng, &mut used_phones)?;
     let unassigned = build_unassigned(cfg, rng, &mut used_phones);
@@ -114,6 +101,24 @@ pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> R
         unassigned,
         groups,
     })
+}
+
+fn mark_whatsapp_contacts(contacts: &mut [Contact], fraction: f64, rng: &mut impl Rng) {
+    let mut eligible = Vec::new();
+    for (index, contact) in contacts.iter().enumerate() {
+        if contact.phones.is_empty() {
+            continue;
+        }
+        if !contact.has_one_to_one() {
+            continue;
+        }
+        eligible.push(index);
+    }
+    eligible.shuffle(rng);
+    let count = crate::rounded_fraction(eligible.len(), fraction);
+    for &index in eligible.iter().take(count) {
+        contacts[index].has_whatsapp = true;
+    }
 }
 
 fn make_contact(
@@ -241,10 +246,10 @@ fn sample_skewed_msgs_per_year(
     if roll < low_tail {
         rng.random_range(min_per_year as f64..(typical_min as f64).max(min_per_year as f64 + 1.0))
     } else if roll < low_tail + high_tail {
-        let u: f64 = rng.random::<f64>().clamp(1e-6, 1.0);
-        let lo = (typical_max as f64).max(1.0).ln();
-        let hi = (max_per_year as f64).max(typical_max as f64 + 1.0).ln();
-        (lo + u * (hi - lo)).exp()
+        let unit = rng.random::<f64>().clamp(1e-6, 1.0);
+        let log_low = (typical_max as f64).max(1.0).ln();
+        let log_high = (max_per_year as f64).max(typical_max as f64 + 1.0).ln();
+        (log_low + unit * (log_high - log_low)).exp()
     } else {
         rng.random_range(typical_min as f64..=typical_max as f64)
     }
@@ -258,8 +263,11 @@ fn sample_span_years(
     rng: &mut impl Rng,
 ) -> f64 {
     let min_years = (newest_days as f64) / 365.25;
-    let normal =
-        Normal::new(mean, jitter.max(0.1)).unwrap_or_else(|_| Normal::new(4.0, 1.0).unwrap());
+    let std_dev = jitter.max(0.1);
+    let normal = match Normal::new(mean, std_dev) {
+        Ok(dist) => dist,
+        Err(_) => Normal::new(4.0, 1.0).unwrap(),
+    };
     let mut years = normal.sample(rng);
     if rng.random_bool(0.06) {
         years = rng.random_range((max_years * 0.7)..=max_years);
@@ -272,16 +280,20 @@ fn sample_span_years(
 
 fn sample_groups_per_contact(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     let g = &cfg.groups;
-    let poisson =
-        Poisson::new(g.per_contact_mean.max(0.1)).unwrap_or_else(|_| Poisson::new(5.0).unwrap());
+    let poisson = match Poisson::new(g.per_contact_mean.max(0.1)) {
+        Ok(dist) => dist,
+        Err(_) => Poisson::new(5.0).unwrap(),
+    };
     let n = poisson.sample(rng) as u32;
     n.clamp(g.per_contact_min, g.per_contact_max) as usize
 }
 
 fn sample_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     let g = &cfg.groups;
-    let normal =
-        Normal::new(g.participants_mean, 2.0).unwrap_or_else(|_| Normal::new(4.0, 2.0).unwrap());
+    let normal = match Normal::new(g.participants_mean, 2.0) {
+        Ok(dist) => dist,
+        Err(_) => Normal::new(4.0, 2.0).unwrap(),
+    };
     let n = normal.sample(rng).round() as i32;
     n.clamp(g.participants_min as i32, g.participants_max as i32) as usize
 }
@@ -293,27 +305,29 @@ fn sample_large_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
 }
 
 fn membership_budgets(cfg: &SeedConfig, contacts: &[Contact], rng: &mut impl Rng) -> Vec<usize> {
-    contacts
-        .iter()
-        .map(|c| {
-            if !c.has_messages || c.has_label("Inactive") {
-                0
-            } else if matches!(c.message_scope, MessageScope::OneToOne) {
-                // Mostly 1:1; rare group membership.
-                if rng.random_bool(0.15) {
-                    sample_groups_per_contact(cfg, rng).min(2)
-                } else {
-                    0
-                }
-            } else {
-                sample_groups_per_contact(cfg, rng)
-            }
-        })
-        .collect()
+    let mut budgets = Vec::with_capacity(contacts.len());
+    for contact in contacts {
+        budgets.push(group_membership_budget(cfg, contact, rng));
+    }
+    budgets
 }
 
-/// Prefer contacts with remaining membership budget; if that pool is too small,
-/// fill from other active contacts (same spirit as the tiny-group fallback).
+fn group_membership_budget(cfg: &SeedConfig, contact: &Contact, rng: &mut impl Rng) -> usize {
+    if !contact.has_messages || contact.has_label("Inactive") {
+        return 0;
+    }
+    if matches!(contact.message_scope, MessageScope::OneToOne) {
+        // One-to-one contacts rarely join groups.
+        if rng.random_bool(0.15) {
+            return sample_groups_per_contact(cfg, rng).min(2);
+        }
+        return 0;
+    }
+    sample_groups_per_contact(cfg, rng)
+}
+
+/// Prefer contacts who still have room in more groups. If that pool is too small,
+/// fill from other active contacts the same way small groups do.
 fn pick_group_members(
     target_size: usize,
     min_size: usize,
@@ -322,12 +336,12 @@ fn pick_group_members(
     rng: &mut impl Rng,
 ) -> Result<Vec<usize>> {
     let mut member_idxs = Vec::new();
-    let mut candidates: Vec<usize> = remaining
-        .iter()
-        .enumerate()
-        .filter(|&(_, &n)| n > 0)
-        .map(|(i, _)| i)
-        .collect();
+    let mut candidates = Vec::new();
+    for (index, &budget) in remaining.iter().enumerate() {
+        if budget > 0 {
+            candidates.push(index);
+        }
+    }
     candidates.shuffle(rng);
     for &idx in candidates.iter().take(target_size) {
         member_idxs.push(idx);
@@ -335,15 +349,18 @@ fn pick_group_members(
     }
 
     if member_idxs.len() < target_size {
-        let mut all: Vec<usize> = contacts
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.has_messages && !c.has_label("Inactive"))
-            .map(|(i, _)| i)
-            .filter(|i| !member_idxs.contains(i))
-            .collect();
-        all.shuffle(rng);
-        for idx in all {
+        let mut extras = Vec::new();
+        for (index, contact) in contacts.iter().enumerate() {
+            if !contact.has_messages || contact.has_label("Inactive") {
+                continue;
+            }
+            if member_idxs.contains(&index) {
+                continue;
+            }
+            extras.push(index);
+        }
+        extras.shuffle(rng);
+        for idx in extras {
             member_idxs.push(idx);
             if member_idxs.len() >= target_size {
                 break;
@@ -380,13 +397,12 @@ fn finish_group_spec(
     );
     let title = if rng.random_bool(0.55) {
         let base = GROUP_TITLES[title_index % GROUP_TITLES.len()];
-        Some(
-            if title_index >= GROUP_TITLES.len() && rng.random_bool(0.35) {
-                format!("{base} {}", (title_index / GROUP_TITLES.len()) + 1)
-            } else {
-                base.to_string()
-            },
-        )
+        let reuse_count = title_index / GROUP_TITLES.len();
+        if reuse_count > 0 && rng.random_bool(0.35) {
+            Some(format!("{base} {}", reuse_count + 1))
+        } else {
+            Some(base.to_string())
+        }
     } else {
         None
     };
@@ -414,7 +430,8 @@ fn build_groups(
     let mut groups: Vec<GroupSpec> = Vec::new();
     let max_groups = (contact_count * cfg.groups.per_contact_max as usize / 2).max(8);
 
-    // Reserve named large groups so UI filters like participants:>=8 always have hits.
+    // Create the large named groups first so searches for groups with many
+    // participants always have conversations to show.
     for _ in 0..cfg.groups.large_min_count {
         if groups.len() >= max_groups {
             bail!(
@@ -526,15 +543,17 @@ impl Contact {
     }
 
     pub fn display_hint(&self) -> String {
-        [
-            self.first_name.as_str(),
-            self.middle_name.as_str(),
-            self.last_name.as_str(),
-        ]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+        let mut parts = Vec::new();
+        if !self.first_name.is_empty() {
+            parts.push(self.first_name.as_str());
+        }
+        if !self.middle_name.is_empty() {
+            parts.push(self.middle_name.as_str());
+        }
+        if !self.last_name.is_empty() {
+            parts.push(self.last_name.as_str());
+        }
+        parts.join(" ")
     }
 
     pub fn has_one_to_one(&self) -> bool {
@@ -575,11 +594,15 @@ mod tests {
 
         let lo = cfg.groups.large_participants_min as usize;
         let hi = cfg.groups.large_participants_max as usize;
-        let large = roster
-            .groups
-            .iter()
-            .filter(|g| !g.phone_only && (lo..=hi).contains(&g.member_idxs.len()))
-            .count();
+        let mut large = 0;
+        for group in &roster.groups {
+            if group.phone_only {
+                continue;
+            }
+            if (lo..=hi).contains(&group.member_idxs.len()) {
+                large += 1;
+            }
+        }
         assert!(
             large >= cfg.groups.large_min_count,
             "expected >= {} groups sized {lo}..={hi}, got {large}",

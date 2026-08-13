@@ -14,7 +14,8 @@ pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
         writeln!(out, "BEGIN:VCARD")?;
         writeln!(out, "VERSION:3.0")?;
         if display_name.is_empty() {
-            // Phone-only card: FN falls back to primary phone for VCF validity.
+            // A card with no name still needs FN. Use the primary phone so the
+            // vCard stays valid.
             writeln!(out, "FN:{}", escape_vcf(c.primary_phone()))?;
             writeln!(out, "N:;;;;")?;
         } else {
@@ -31,15 +32,11 @@ pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
             writeln!(out, "TEL:{}", escape_vcf(phone))?;
         }
         if !c.labels.is_empty() {
-            writeln!(
-                out,
-                "CATEGORIES:{}",
-                c.labels
-                    .iter()
-                    .map(|label| escape_vcf(label))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )?;
+            let mut categories = Vec::with_capacity(c.labels.len());
+            for label in &c.labels {
+                categories.push(escape_vcf(label));
+            }
+            writeln!(out, "CATEGORIES:{}", categories.join(","))?;
         }
         writeln!(out, "END:VCARD")?;
     }

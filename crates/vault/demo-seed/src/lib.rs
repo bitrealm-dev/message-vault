@@ -1,4 +1,5 @@
-//! Synthetic multi-source JSONL demo dataset for Message Vault.
+//! Builds a demo message dataset with three backup sources, written as JSONL
+//! files for Message Vault.
 
 mod assets;
 mod config;
@@ -22,16 +23,25 @@ pub use conversations::GenStats;
 const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
 const WHATSAPP_SOURCE: &str = "whatsapp";
+const GENERATED_PATHS: [&str; 3] = ["staging", "config", "README.md"];
+
+/// Round `total * fraction` to a whole number that still fits in `0..=total`.
+fn rounded_fraction(total: usize, fraction: f64) -> usize {
+    let count = (total as f64) * fraction;
+    count.round().clamp(0.0, total as f64) as usize
+}
 
 /// Generate (or regenerate) a demo bundle under `cfg.out`.
 pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let out = Path::new(&cfg.out);
-    let parent = out
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let parent = output_parent_dir(out);
     fs::create_dir_all(parent)
         .with_context(|| format!("create demo output parent {}", parent.display()))?;
+
+    // Write the new bundle in a temporary directory next to the destination.
+    // After the new files look valid, they are moved into place. If that move
+    // fails partway through, the previous staging, config, and README files
+    // can be moved back.
     let prepared = tempfile::Builder::new()
         .prefix(".demo-seed-")
         .tempdir_in(parent)
@@ -39,14 +49,7 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let replacement = prepare_and_replace(out, prepared.path(), |root| generate_into(cfg, root));
     let stats = match replacement {
         Ok(stats) => stats,
-        Err(error) if prepared.path().join(".previous-active").exists() => {
-            let kept = prepared.keep();
-            return Err(error.context(format!(
-                "demo bundle rollback was incomplete; prepared output and backups were kept at {}",
-                kept.display()
-            )));
-        }
-        Err(error) => return Err(error),
+        Err(error) => return Err(keep_prepared_if_restore_failed(prepared, error)),
     };
 
     println!("demo-seed: wrote {}", out.display());
@@ -57,6 +60,32 @@ pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     println!("  messages:      {}", stats.messages);
     println!("  attachments:   {}", stats.attachment_refs);
     Ok(stats)
+}
+
+/// Parent directory of `out`, or `.` when `out` has no parent (for example `demo`).
+fn output_parent_dir(out: &Path) -> &Path {
+    match out.parent() {
+        Some(path) if !path.as_os_str().is_empty() => path,
+        _ => Path::new("."),
+    }
+}
+
+/// If putting the new files in place failed and the previous copies are still
+/// sitting in the temp directory, leave that directory on disk so nothing is
+/// lost. Otherwise let the temp directory be deleted as usual.
+fn keep_prepared_if_restore_failed(
+    prepared: tempfile::TempDir,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let previous_copies = prepared.path().join(".previous-active");
+    if !previous_copies.exists() {
+        return error;
+    }
+    let kept = prepared.keep();
+    error.context(format!(
+        "Could not restore the previous demo files. The prepared output and previous copies were left at {}",
+        kept.display()
+    ))
 }
 
 fn generate_into(cfg: &SeedConfig, out: &Path) -> Result<GenStats> {
@@ -83,7 +112,8 @@ fn generate_into(cfg: &SeedConfig, out: &Path) -> Result<GenStats> {
     let names = names::NameBank::load_default().context("load name lists")?;
 
     let attachment_digests = assets::write_attachment_blobs(&imessage_attachments)?;
-    // Same blobs under the Android/WhatsApp trees so relative attachment paths resolve on import.
+    // Copy the same attachment files into the Android and WhatsApp folders so
+    // those conversations can point at the same relative paths.
     copy_dir_files(&imessage_attachments, &sbr_attachments)?;
     copy_dir_files(&imessage_attachments, &whatsapp_attachments)?;
 
@@ -155,20 +185,25 @@ fn validate_tree_files(root: &Path) -> Result<()> {
             }
             let bytes = fs::read(&path)
                 .with_context(|| format!("read prepared demo file {}", path.display()))?;
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-            {
-                let text = std::str::from_utf8(&bytes)
-                    .with_context(|| format!("decode prepared JSONL {}", path.display()))?;
-                for (index, line) in text.lines().enumerate() {
-                    serde_json::from_str::<serde_json::Value>(line)
-                        .with_context(|| format!("parse {} line {}", path.display(), index + 1))?;
-                }
+            if !is_jsonl_file(&path) {
+                continue;
+            }
+            let text = std::str::from_utf8(&bytes)
+                .with_context(|| format!("decode prepared JSONL {}", path.display()))?;
+            for (index, line) in text.lines().enumerate() {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .with_context(|| format!("parse {} line {}", path.display(), index + 1))?;
             }
         }
     }
     Ok(())
+}
+
+fn is_jsonl_file(path: &Path) -> bool {
+    match path.extension() {
+        Some(extension) => extension == "jsonl",
+        None => false,
+    }
 }
 
 fn replace_generated_paths(active: &Path, prepared: &Path) -> Result<()> {
@@ -187,8 +222,6 @@ fn replace_generated_paths_with<F>(active: &Path, prepared: &Path, mut rename: F
 where
     F: FnMut(&Path, &Path) -> Result<()>,
 {
-    const GENERATED_PATHS: [&str; 3] = ["staging", "config", "README.md"];
-
     fs::create_dir_all(active)
         .with_context(|| format!("create active demo root {}", active.display()))?;
     let backup = prepared.join(".previous-active");
@@ -197,66 +230,17 @@ where
 
     let mut backed_up = Vec::<PathBuf>::new();
     let mut installed = Vec::<PathBuf>::new();
-    let replacement = (|| -> Result<()> {
-        for name in GENERATED_PATHS {
-            let destination = active.join(name);
-            if destination.exists() {
-                rename(&destination, &backup.join(name)).with_context(|| {
-                    format!(
-                        "move existing demo path {} into backup",
-                        destination.display()
-                    )
-                })?;
-                backed_up.push(PathBuf::from(name));
-            }
-        }
-        for name in GENERATED_PATHS {
-            let source = prepared.join(name);
-            let destination = active.join(name);
-            rename(&source, &destination).with_context(|| {
-                format!(
-                    "install prepared demo path {} at {}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-            installed.push(PathBuf::from(name));
-        }
-        Ok(())
-    })();
+    let replacement = install_generated_paths(
+        active,
+        prepared,
+        &backup,
+        &mut rename,
+        &mut backed_up,
+        &mut installed,
+    );
 
     if let Err(error) = replacement {
-        let mut rollback_errors = Vec::new();
-        for name in installed.iter().rev() {
-            if let Err(rollback_error) = remove_path_if_exists(&active.join(name)) {
-                rollback_errors.push(format!(
-                    "remove installed {}: {rollback_error:#}",
-                    active.join(name).display()
-                ));
-            }
-        }
-        for name in backed_up.iter().rev() {
-            if let Err(rollback_error) = rename(&backup.join(name), &active.join(name)) {
-                rollback_errors.push(format!(
-                    "restore previous demo path {}: {rollback_error:#}",
-                    active.join(name).display()
-                ));
-            }
-        }
-        if rollback_errors.is_empty() {
-            if let Err(cleanup_error) = fs::remove_dir_all(&backup) {
-                eprintln!(
-                    "warning: restored the previous demo bundle but could not remove backup {}: {cleanup_error}",
-                    backup.display()
-                );
-            }
-            return Err(error.context("replace generated demo bundle"));
-        }
-        return Err(anyhow::anyhow!(
-            "replace generated demo bundle: {error:#}; rollback incomplete; backups kept at {}: {}",
-            backup.display(),
-            rollback_errors.join("; ")
-        ));
+        return restore_previous_paths(active, &backup, &mut rename, &backed_up, &installed, error);
     }
 
     if let Err(cleanup_error) = fs::remove_dir_all(&backup) {
@@ -268,6 +252,94 @@ where
     Ok(())
 }
 
+fn install_generated_paths<F>(
+    active: &Path,
+    prepared: &Path,
+    backup: &Path,
+    rename: &mut F,
+    backed_up: &mut Vec<PathBuf>,
+    installed: &mut Vec<PathBuf>,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    for name in GENERATED_PATHS {
+        let destination = active.join(name);
+        if !destination.exists() {
+            continue;
+        }
+        let backup_path = backup.join(name);
+        rename(&destination, &backup_path).with_context(|| {
+            format!(
+                "move existing demo path {} into backup",
+                destination.display()
+            )
+        })?;
+        backed_up.push(PathBuf::from(name));
+    }
+
+    for name in GENERATED_PATHS {
+        let source = prepared.join(name);
+        let destination = active.join(name);
+        rename(&source, &destination).with_context(|| {
+            format!(
+                "install prepared demo path {} at {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        installed.push(PathBuf::from(name));
+    }
+    Ok(())
+}
+
+fn restore_previous_paths<F>(
+    active: &Path,
+    backup: &Path,
+    rename: &mut F,
+    backed_up: &[PathBuf],
+    installed: &[PathBuf],
+    error: anyhow::Error,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    let mut restore_errors = Vec::new();
+    for name in installed.iter().rev() {
+        let installed_path = active.join(name);
+        if let Err(restore_error) = remove_path_if_exists(&installed_path) {
+            restore_errors.push(format!(
+                "remove installed {}: {restore_error:#}",
+                installed_path.display()
+            ));
+        }
+    }
+    for name in backed_up.iter().rev() {
+        let previous_path = backup.join(name);
+        let restore_path = active.join(name);
+        if let Err(restore_error) = rename(&previous_path, &restore_path) {
+            restore_errors.push(format!(
+                "restore previous demo path {}: {restore_error:#}",
+                restore_path.display()
+            ));
+        }
+    }
+    if restore_errors.is_empty() {
+        if let Err(cleanup_error) = fs::remove_dir_all(backup) {
+            eprintln!(
+                "warning: restored the previous demo bundle but could not remove backup {}: {cleanup_error}",
+                backup.display()
+            );
+        }
+        return Err(error.context("replace generated demo bundle"));
+    }
+    Err(anyhow::anyhow!(
+        "replace generated demo bundle: {error:#}; could not fully restore the previous files; copies were kept at {}: {}",
+        backup.display(),
+        restore_errors.join("; ")
+    ))
+}
+
 fn remove_path_if_exists(path: &Path) -> Result<()> {
     if path.is_dir() {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
@@ -277,7 +349,8 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Load `demo_seed.toml` (defaults beside the crate), apply `out` / `seed` overrides, generate.
+/// Load `demo_seed.toml` from the crate directory, optionally override the
+/// output path and seed, then generate.
 pub fn generate_to(out: &Path, seed: Option<u64>) -> Result<GenStats> {
     let mut cfg = SeedConfig::load(&SeedConfig::default_path())?;
     cfg.out = out
@@ -388,14 +461,14 @@ mod tests {
         let temp = tempfile::tempdir().expect("create test directory");
         let active = temp.path().join("active");
         let prepared = temp.path().join("prepared");
-        let sentinel = active
+        let existing_file = active
             .join("staging")
             .join(IMESSAGE_SOURCE)
-            .join("sentinel.jsonl");
-        fs::create_dir_all(sentinel.parent().expect("sentinel parent"))
-            .expect("create active staging");
+            .join("existing.jsonl");
+        let existing_parent = existing_file.parent().expect("existing file parent");
+        fs::create_dir_all(existing_parent).expect("create active staging");
         let original = b"existing demo bytes\n";
-        fs::write(&sentinel, original).expect("write sentinel");
+        fs::write(&existing_file, original).expect("write existing file");
 
         let result = prepare_and_replace(&active, &prepared, |root| {
             fs::create_dir_all(root.join("staging").join(IMESSAGE_SOURCE))?;
@@ -405,11 +478,14 @@ mod tests {
                     .join("partial.jsonl"),
                 b"partial replacement\n",
             )?;
-            anyhow::bail!("injected preparation failure");
+            anyhow::bail!("preparation failed on purpose");
         });
 
         assert!(result.is_err());
-        assert_eq!(fs::read(&sentinel).expect("read sentinel"), original);
+        assert_eq!(
+            fs::read(&existing_file).expect("read existing file"),
+            original
+        );
     }
 
     #[test]
@@ -418,32 +494,32 @@ mod tests {
             let temp = tempfile::tempdir().expect("create test directory");
             let active = temp.path().join("active");
             let prepared = temp.path().join("prepared");
-            write_replacement_fixture(&active, b"old");
-            write_replacement_fixture(&prepared, b"new");
+            write_bundle_paths(&active, b"old");
+            write_bundle_paths(&prepared, b"new");
             let mut installs = 0;
 
             let result = replace_generated_paths_with(&active, &prepared, |source, destination| {
                 if source.starts_with(&prepared) && destination.starts_with(&active) {
                     installs += 1;
                     if installs == failing_install {
-                        anyhow::bail!("injected install failure {failing_install}");
+                        anyhow::bail!("install failed on purpose {failing_install}");
                     }
                 }
                 fs::rename(source, destination).map_err(Into::into)
             });
 
             assert!(result.is_err(), "install {failing_install} must fail");
-            assert_replacement_fixture(&active, b"old");
+            assert_bundle_paths(&active, b"old");
         }
     }
 
     #[test]
-    fn rollback_attempts_all_restorations_after_one_restore_fails() {
+    fn restore_attempts_all_paths_after_one_restore_fails() {
         let temp = tempfile::tempdir().expect("create test directory");
         let active = temp.path().join("active");
         let prepared = temp.path().join("prepared");
-        write_replacement_fixture(&active, b"old");
-        write_replacement_fixture(&prepared, b"new");
+        write_bundle_paths(&active, b"old");
+        write_bundle_paths(&prepared, b"new");
         let mut installs = 0;
         let mut restored_staging = false;
 
@@ -451,11 +527,11 @@ mod tests {
             if source.starts_with(&prepared) && destination.starts_with(&active) {
                 installs += 1;
                 if installs == 3 {
-                    anyhow::bail!("injected README install failure");
+                    anyhow::bail!("README install failed on purpose");
                 }
             }
             if source.ends_with(".previous-active/config") {
-                anyhow::bail!("injected config restore failure");
+                anyhow::bail!("config restore failed on purpose");
             }
             if source.ends_with(".previous-active/staging") {
                 restored_staging = true;
@@ -468,19 +544,19 @@ mod tests {
             restored_staging,
             "staging restoration must still be attempted"
         );
-        assert!(error.contains("injected config restore failure"));
+        assert!(error.contains("config restore failed on purpose"));
         assert!(prepared.join(".previous-active/config").exists());
     }
 
-    fn write_replacement_fixture(root: &Path, marker: &[u8]) {
-        fs::create_dir_all(root.join("staging")).expect("create staging fixture");
-        fs::create_dir_all(root.join("config")).expect("create config fixture");
-        fs::write(root.join("staging/marker"), marker).expect("write staging fixture");
-        fs::write(root.join("config/marker"), marker).expect("write config fixture");
-        fs::write(root.join("README.md"), marker).expect("write README fixture");
+    fn write_bundle_paths(root: &Path, marker: &[u8]) {
+        fs::create_dir_all(root.join("staging")).expect("create staging directory");
+        fs::create_dir_all(root.join("config")).expect("create config directory");
+        fs::write(root.join("staging/marker"), marker).expect("write staging marker");
+        fs::write(root.join("config/marker"), marker).expect("write config marker");
+        fs::write(root.join("README.md"), marker).expect("write README marker");
     }
 
-    fn assert_replacement_fixture(root: &Path, marker: &[u8]) {
+    fn assert_bundle_paths(root: &Path, marker: &[u8]) {
         assert_eq!(
             fs::read(root.join("staging/marker")).expect("staging"),
             marker
