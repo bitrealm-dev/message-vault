@@ -114,15 +114,19 @@ These files remain under `docs/maintainers/` and are not copied onto the public 
 - `architecture/message-ir.md` (shared message-model writeup for contributors)
 - `README.md` (maintainer index), updated so it no longer says crate manpages are the source for CLI pages
 
-### Stubs so old GitHub links still resolve
+### Delete the maintainer copies (no stubs)
 
-Replace the full text of:
+After the Format Reference pages exist, delete:
 
 - `docs/maintainers/exporter-matrix.md`
 - `docs/maintainers/formats/mail-archive.md`
 - `docs/maintainers/formats/sms-backup-restore-xml.md`
 
-with a short pointer to the matching `/formats/` URL.
+and the empty `docs/maintainers/formats/` directory.
+
+Retarget every in-repo link to the matching https://bitrealm.dev/formats/… URL. That includes `README.md`, `CONTRIBUTING.md`, `docs/maintainers/README.md`, `docs/maintainers/architecture/message-ir.md`, and rustdoc comments in `crates/libs/mail` and `crates/libs/sbr`.
+
+Do not leave pointer files at the old paths. GitHub blob URLs on `main` for those files will 404. That is accepted.
 
 ## Root front door
 
@@ -207,13 +211,13 @@ Package directory names follow `crates/libs/` and `crates/vault/server/` as in t
 
 Keep a deprecated banner: do not change this crate; the supported UI is the Tauri desktop app. Strip the Slint look-and-feel essay. Leave run commands for historical reference only.
 
-## Move, stub, and delete
+## Move and delete
 
 CLI and format text move once, then the old copies go away.
 
 1. Commit CLI pages; remove sync script, npm hooks, and gitignore exception; delete crate manpages (`MANPAGE.md`, `MESSAGE_REEXPORTER.md`) with the `docs/` folders that only held them.
-2. Copy format sources into `docs/src/content/docs/formats/` with Starlight frontmatter; stub the old GitHub maintainer paths; delete remaining crate `docs/` directories.
-3. Grep the repository for `docs/MANPAGE.md`, `docs/INPUT_FORMAT.md`, `sync:cli`, and `crates/message/` (the old library path). Every live instruction becomes a site URL or a current `crates/libs/` path.
+2. Copy format sources into `docs/src/content/docs/formats/` with Starlight frontmatter; delete remaining crate `docs/` directories; delete the three maintainer files listed above.
+3. Grep the repository for `docs/MANPAGE.md`, `docs/INPUT_FORMAT.md`, `sync:cli`, `exporter-matrix.md`, `maintainers/formats/`, and `crates/message/` (the old library path). Every live instruction becomes a site URL or a current `crates/libs/` path.
 
 `docs/maintainers/` architecture, developing, signing, GUI notes, and roadmap are not deleted.
 
@@ -227,7 +231,7 @@ cd docs && npm run check && npm run build
 
 After the CLI PR, that command must succeed without `sync:cli`.
 
-Grep for `docs/MANPAGE.md`, `sync:cli`, `message-vault-rs`, `message-vault-io` used as a current product name, and `crates/message/` as a live path. Those strings must not remain as instructions.
+Grep for `docs/MANPAGE.md`, `sync:cli`, `exporter-matrix.md`, `maintainers/formats/`, `message-vault-rs`, `message-vault-io` used as a current product name, and `crates/message/` as a live path. Those strings must not remain as instructions.
 
 Root and crate READMEs: the first screen of the file must answer what the thing is, how to build/test it (or where contributing lives), and where the long docs are.
 
@@ -239,11 +243,11 @@ No new Cargo tests. This overhaul does not change runtime behavior.
 
 2. **CLI on the site** — Commit per-command pages. Remove sync. Rewrite or add READMEs for crates that have a CLI (including `message-reexport`) so they point at `/reference/cli/...`. Delete those manpages. `npm run check` passes without `sync:cli`.
 
-3. **Format Reference** — Add `starlight-sidebar-topics`. Add `/formats/` pages. Stub old GitHub paths. Delete remaining crate `docs/` folders. Point the root README at `/formats/`.
+3. **Format Reference** — Add `starlight-sidebar-topics`. Add `/formats/` pages. Delete remaining crate `docs/` folders and the three maintainer format/matrix files. Retarget in-repo links (including rustdoc) to bitrealm.dev. Point the root README at `/formats/`.
 
 4. **Remaining crate READMEs** — Libraries, vault server, demo-seed, `message-vault-io-core`, deprecated Slint GUI. Fact-check against current code. No new public pages.
 
-Done means: a GitHub visitor can start from the root README or any crate folder without a dead manpage link; bitrealm.dev has working CLI pages and a Format topic; `cd docs && npm run check && npm run build` succeeds; crate `docs/` folders are gone.
+Done means: a GitHub visitor can start from the root README or any crate folder without a dead manpage link; bitrealm.dev has working CLI pages and a Format topic; `cd docs && npm run check && npm run build` succeeds; crate `docs/` folders and the three maintainer format/matrix files are gone.
 
 ## Relationship to the 2026-08-07 guidebook spec
 
