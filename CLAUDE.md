@@ -95,7 +95,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 7. **`crates/cli/vault-push/`** and **`crates/cli/vault-pull/`** — CLI/library crates for importing messages into / exporting from a Message Vault server. The GUI links them as libraries. `vault-pull` depends on `vault-push` for shared types. Each has a `cli` feature (default on) gating the standalone binary.
 
-8. **`crates/vault/server/`** (`message-vault-server`) — HTTP API server backed by SQLite. Provides import (`POST /v1/import`), export, contacts, search, auth, and asset endpoints. The server can also run CLI commands (`import`, `dedupe-cross-source`, `import-contacts`, `reset-demo`, `serve`, `process-assets`) via its `main.rs`. Built as a Docker image (`Dockerfile.release`); also usable directly via `cargo run --release -p message-vault-server -- serve`.
+8. **`crates/vault/server/`** (`message-vault-server`) — HTTP API server backed by SQLite. Provides import (`POST /v1/import`), export, contacts, search, auth, and asset endpoints. The server can also run CLI commands (`import`, `dedupe-cross-source`, `import-contacts`, `reset-demo`, `serve`, `process-assets`) via its `main.rs`. Built as a Docker image (`docker/Dockerfile`); also usable directly via `cargo run --release -p message-vault-server -- serve`.
 
 9. **`crates/vault/demo-seed/`** (`demo-seed`) — Generates synthetic conversation data for the demo vault (`staging/`, `config/`, README). Has both a library (`src/lib.rs`) and a CLI binary (`src/main.rs`). Used by `message-vault-server`'s `reset-demo` command.
 
@@ -138,8 +138,8 @@ The Push/Pull/Export/Import screens require a Message Vault server. The server i
 # Dev mode (bind-mounts repo for hot reload; includes SQLite browser on port 8081)
 docker compose up
 
-# Release mode (production-shaped image; build Vite SPA first: cd web && npm run build)
-docker compose -f compose-release.yml up --build
+# Release mode (production-shaped image from this checkout)
+docker compose -f docker/compose.release.yml up --build
 
 # Start with an empty vault instead of seeding demo data
 DEMO_DATA=false docker compose up

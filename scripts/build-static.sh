@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the Vite SPA into static/, which the server hands out at GET /.
 #
-# For the dev container (compose-dev.yml bind-mounts this repo at /app, and
-# Dockerfile.dev builds no frontend) and for running the server directly.
+# For the dev container (docker/compose.dev.yml bind-mounts this repo at /app, and
+# docker/Dockerfile.dev builds no frontend) and for running the server directly.
 # `ln -s web/dist static` works too. Not needed for the release image, which
 # builds web/ in its own stage, or for Tauri, which builds it via
 # beforeBuildCommand.

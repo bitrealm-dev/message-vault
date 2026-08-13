@@ -144,7 +144,7 @@ sessions.
 
 ### Build, deployment, and maintenance
 
-- Build and test `Dockerfile.release` in GitHub Actions and publish immutable
+- Build and test `docker/Dockerfile` in GitHub Actions and publish immutable
   commit-addressed images to GHCR.
 - Pin Message Vault, Hanko, PostgreSQL, and Caddy image versions in the private
   `message-vault-ops` repository.

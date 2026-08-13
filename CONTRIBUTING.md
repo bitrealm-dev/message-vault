@@ -98,13 +98,13 @@ Use a release build when testing real exports. Debug builds compile faster, but 
 
 ### Vault server
 
-The vault server (`message-vault-server`) is built from this repo and runs in Docker:
+The vault server (`message-vault-server`) is built from this repo and runs in Docker. From the repository root:
 
 ```bash
 docker compose up
 ```
 
-The website and the import API share **http://localhost:8080**. Create an account through the web UI. For CLI import and export, create an API token under **Settings → Account**.
+That uses `docker/compose.dev.yml` (set in `.env`). The website and the import API share **http://localhost:8080**. Create an account through the web UI. For CLI import and export, create an API token under **Settings → Account**. Published-image Compose (no clone): [Try the vault](https://bitrealm.dev/get-started/try-the-vault/). Checkout profiles: [Operator Docker](https://bitrealm.dev/developer/docker-compose/).
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
