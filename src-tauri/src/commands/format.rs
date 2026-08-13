@@ -1,5 +1,4 @@
-//! `format` Tauri command — wraps `message_reexport::run()` to convert an
-//! existing extract directory to a different output format.
+//! `format` command — convert an existing extract folder to another format.
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -12,8 +11,20 @@ use message_vault_io_core::{
 use tauri::Emitter;
 
 use super::events::ExtractErrorEvent;
+use super::last_log_line_or;
 use crate::state::AppState;
 
+/// Ask this process to rewrite an extract folder in a different file format.
+///
+/// Returns as soon as the background thread starts. Log lines and the final
+/// summary use the same `extract:log` / `extract:finished` / `extract:error`
+/// events as Extract, so the UI can reuse one progress view.
+///
+/// # Errors
+///
+/// Returns an error if `output_format` is not one of json, jsonl, csv, eml,
+/// mbox, or xml, or if another thread panicked while holding the shared
+/// state lock. Failures during conversion are sent as `extract:error`.
 #[tauri::command]
 pub async fn format(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -32,7 +43,7 @@ pub async fn format(
         _ => return Err(format!("unsupported output format '{output_format}'")),
     };
 
-    // Reset cancel flag
+    // Clear a leftover cancel from a previous job so this conversion can run.
     {
         let st = state.lock().map_err(|e| e.to_string())?;
         st.cancel_flag.store(false, Ordering::SeqCst);
@@ -65,11 +76,7 @@ pub async fn format(
 
         match message_reexport::run(&config) {
             Ok(run_result) => {
-                let summary = run_result
-                    .messages
-                    .last()
-                    .cloned()
-                    .unwrap_or_else(|| "Format conversion complete.".to_string());
+                let summary = last_log_line_or(&run_result.messages, "Format conversion complete.");
                 for line in run_result.messages {
                     let _ = app_handle.emit("extract:log", line);
                 }

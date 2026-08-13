@@ -1,13 +1,12 @@
-//! Serializable payloads for Tauri events emitted by the commands.
+//! JSON shapes sent to the UI as Tauri events.
 //!
-//! `ProcessEvent` in `message-vault-io-core` carries the same error fields but
-//! derives only `Debug, Clone` — not `Serialize` — so Tauri cannot emit it
-//! directly. These structs mirror the shapes the frontend subscribes to
-//! (`web/src/lib/types.ts`).
+//! The core library has a similar error type, but it cannot be sent through
+//! Tauri because it is not serializable. These structs match the TypeScript
+//! types in `web/src/lib/types.ts`.
 
 use serde::Serialize;
 
-/// Structured payload for `extract:progress`.
+/// Progress numbers the UI uses to update the progress bar.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtractProgressEvent {
     pub step: String,
@@ -17,11 +16,10 @@ pub struct ExtractProgressEvent {
     pub status: Option<String>,
 }
 
-/// Payload of the `extract:error` event.
+/// Failure details for the `extract:error` event.
 ///
-/// `user_message` is omitted from the JSON payload when absent
-/// (`skip_serializing_if`), matching the frontend's `ExtractErrorEvent`
-/// interface where it is optional.
+/// When `user_message` is missing, it is left out of the JSON so the
+/// TypeScript type can treat it as optional.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtractErrorEvent {
     pub detail: String,

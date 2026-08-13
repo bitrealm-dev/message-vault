@@ -1,5 +1,4 @@
-//! `pull` Tauri command — wraps `vault_pull::run()` to export messages from
-//! a Message Vault server.
+//! `pull` command — download messages from a Message Vault server.
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -12,6 +11,16 @@ use vault_pull::{ProgressEvent, VaultPullConfig, run as run_pull};
 use super::events::ExtractErrorEvent;
 use crate::state::AppState;
 
+/// Ask this process to download conversations from a vault server.
+///
+/// Returns as soon as the background thread starts. Log lines and the final
+/// summary use the same `extract:log` / `extract:finished` / `extract:error`
+/// events as Extract.
+///
+/// # Errors
+///
+/// Returns an error if another thread panicked while holding the shared
+/// state lock. Failures during the download are sent as `extract:error`.
 #[tauri::command]
 pub async fn pull(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
