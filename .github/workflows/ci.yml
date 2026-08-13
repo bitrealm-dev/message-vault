@@ -124,7 +124,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: mbeisser1/message-vault
+          images: bitrealm/message-vault
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -282,7 +282,7 @@ jobs:
 
           - Tauri v2 desktop app with all exporters included
           - Vault push/pull, format conversion, contacts preview
-          - Vault server Docker image: \`mbeisser1/message-vault:${TAG}\`
+          - Vault server Docker image: \`bitrealm/message-vault:${TAG}\`
           - User Guide and developer docs: https://bitrealm.dev/
 
           ## Installers
@@ -295,5 +295,5 @@ jobs:
           ## Docker
 
           \`\`\`bash
-          docker pull mbeisser1/message-vault:${TAG}
+          docker pull bitrealm/message-vault:${TAG}
           \`\`\`"

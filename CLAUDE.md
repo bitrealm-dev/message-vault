@@ -161,7 +161,7 @@ The web app communicates with the message-vault-server API through typed wrapper
 
 A single workflow (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 - **Always**: `cargo fmt --all -- --check` (plus `src-tauri`), then `cargo build --workspace && cargo test --workspace` on ubuntu-latest
-- **On tag `v*`**: additionally builds and pushes Docker image (`mbeisser1/message-vault`) and builds Tauri desktop app for Linux/Windows/macOS, creating a GitHub Release
+- **On tag `v*`**: additionally builds and pushes Docker image (`bitrealm/message-vault`) and builds Tauri desktop app for Linux/Windows/macOS, creating a GitHub Release
 
 ## Git workflow
 

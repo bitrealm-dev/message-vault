@@ -20,7 +20,7 @@ docker run -d --name message-vault \
   -p 8080:8080 \
   -e DEMO_DATA=true \
   -v message-vault-data:/app/data \
-  mbeisser1/message-vault:latest
+  bitrealm/message-vault:latest
 ```
 
 This starts the vault and, on an **empty** volume, seeds sample conversations. The website and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts.

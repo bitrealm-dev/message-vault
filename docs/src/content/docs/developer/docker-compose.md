@@ -41,7 +41,7 @@ Do not run both compose files at once. They share the default ports and the volu
 
 ## Published image
 
-The image `mbeisser1/message-vault:latest` is the User Guide path. Sample data seeds on first boot when `DEMO_DATA=true` and the volume is empty. Creating a second account on that instance is [Use your own messages](/get-started/your-own-messages/). Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
+The image `bitrealm/message-vault:latest` is the User Guide path. Sample data seeds on first boot when `DEMO_DATA=true` and the volume is empty. Creating a second account on that instance is [Use your own messages](/get-started/your-own-messages/). Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
 
 ## What is in the container
 
