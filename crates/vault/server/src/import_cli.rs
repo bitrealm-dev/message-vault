@@ -39,6 +39,13 @@ pub struct CliImportStats {
     pub dedupe: Option<DedupeStats>,
 }
 
+/// Import a folder of JSON Lines files into the vault, then optionally run
+/// cross-source duplicate hiding.
+///
+/// # Errors
+///
+/// Returns an error when the input directory is missing, has no `.jsonl`
+/// files, or import / duplicate detection fails.
 pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     let input = &opts.input_dir;
     if !input.is_dir() {
@@ -166,23 +173,36 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     })
 }
 
-/// Every `.jsonl` file directly inside `dir`, sorted by path.
+/// Every JSON Lines file (`.jsonl`, one JSON object per line) directly inside
+/// `dir`, sorted by path.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be read.
 pub fn list_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
-        .with_context(|| format!("failed to read {}", dir.display()))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-        })
-        .collect();
+    let entries = fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        if ext.eq_ignore_ascii_case("jsonl") {
+            paths.push(path);
+        }
+    }
     paths.sort();
     Ok(paths)
 }
 
 /// Collect distinct IR `export.source` values from conversation headers.
+///
+/// # Errors
+///
+/// Returns an error when a JSON Lines file cannot be read.
 pub fn discover_sources(paths: &[PathBuf]) -> Result<Vec<String>> {
     let mut set = std::collections::BTreeSet::new();
     for path in paths {

@@ -40,6 +40,11 @@ pub enum ContactNameMode {
 }
 
 impl ContactNameMode {
+    /// Parse `fill_missing`, `overwrite`, or `as_is` (including hyphenated spellings).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `s` is not one of those values.
     pub fn parse(s: &str) -> Result<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "fill_missing" | "fill-missing" => Ok(Self::FillMissing),
@@ -53,6 +58,11 @@ impl ContactNameMode {
 }
 
 impl ImportMode {
+    /// Parse `replace` or `append`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `s` is not one of those values.
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
             "replace" => Ok(Self::Replace),
@@ -174,7 +184,13 @@ struct PreparedAttachment {
     stored: Option<StoredAsset>,
 }
 
-/// Import every `*.jsonl` file under `export_dir` (CLI staging path).
+/// Import every JSON Lines file (`*.jsonl`, one JSON object per line) under
+/// `export_dir` (CLI staging path — the temporary import area).
+///
+/// # Errors
+///
+/// Returns an error when the export directory is missing, a file cannot be
+/// parsed, or a database write fails.
 #[allow(clippy::too_many_arguments)]
 pub fn import_export(
     export_dir: &Path,
@@ -241,7 +257,12 @@ pub enum ImportSchemaMode {
     AssumeReady,
 }
 
-/// Import one or more JSONL files. Attachment relative paths resolve against `opts.asset_root`.
+/// Import one or more JSON Lines files. Attachment relative paths resolve against `opts.asset_root`.
+///
+/// # Errors
+///
+/// Returns an error when options are invalid, the database cannot be opened, or
+/// import fails.
 #[allow(dead_code)] // CLI/tests; HTTP serve uses [`import_jsonl_files_on_conn`]
 pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
     validate_import_options(opts)?;
@@ -272,6 +293,10 @@ fn validate_import_options(opts: &ImportOptions<'_>) -> Result<()> {
 }
 
 /// Import onto an existing connection (warm serve path or tests).
+///
+/// # Errors
+///
+/// Returns an error when options are invalid or staging / promote fails.
 pub fn import_jsonl_files_on_conn(
     conn: &mut Connection,
     paths: &[PathBuf],
@@ -443,7 +468,31 @@ pub fn import_jsonl_files_on_conn(
 }
 
 fn nonempty_rel(path: &Option<String>) -> Option<&str> {
-    path.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    let Some(raw) = path.as_deref() else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn nonempty_str(value: Option<&str>) -> Option<&str> {
+    let raw = value?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn stored_size_bytes(assets_dir: &Path, assets_path: Option<&str>) -> Option<i64> {
+    let rel = assets_path?;
+    let meta = std::fs::metadata(assets_dir.join(rel)).ok()?;
+    Some(meta.len() as i64)
 }
 
 /// Convert/compress when requested; `None` means fall through to claimed-sha / path store.
@@ -470,7 +519,7 @@ fn try_store_converted(
     else {
         return Ok(None);
     };
-    // Bytes may have changed; drop any claimed digest from the export.
+    // Bytes may have changed; drop any claimed SHA-256 fingerprint from the export.
     att.sha256 = None;
     att.mime_type = resolved.mime_type.or(att.mime_type.take());
     assets::hash_and_store(
@@ -487,12 +536,7 @@ fn store_claimed_or_path(
     assets_dir: &Path,
     asset_stats: &mut AssetStats,
 ) -> Result<Option<StoredAsset>> {
-    if let Some(sha) = att
-        .sha256
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(sha) = nonempty_rel(&att.sha256) {
         if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
             asset_stats.deduped += 1;
             return Ok(Some(StoredAsset {
@@ -582,7 +626,7 @@ fn resolve_incoming_sender_handle(
     if is_from_me {
         return Ok(None);
     }
-    let Some(sender) = sender.map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(sender) = nonempty_str(sender) else {
         return Ok(None);
     };
     let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
@@ -644,7 +688,7 @@ fn seed_contact_handle_alias(
     handle_id: i64,
     import_display: Option<&str>,
 ) -> Result<()> {
-    let Some(alias) = import_display.map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(alias) = nonempty_str(import_display) else {
         return Ok(());
     };
     conn.execute(
@@ -663,15 +707,26 @@ fn contact_preferred_name(
     account_id: &str,
     contact_id: i64,
 ) -> Result<Option<String>> {
-    Ok(conn
+    let name: Option<String> = conn
         .query_row(
             "SELECT preferred_name FROM contacts WHERE account_id = ?1 AND id = ?2",
             params![account_id, contact_id],
             |row| row.get::<_, String>(0),
         )
-        .optional()?
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty()))
+        .optional()?;
+    Ok(trim_nonempty(name))
+}
+
+fn trim_nonempty(value: Option<String>) -> Option<String> {
+    let Some(raw) = value else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Merge an import display name with a vault contact name per [`ContactNameMode`].
@@ -680,10 +735,10 @@ pub fn apply_contact_name_mode(
     import_name: Option<String>,
     vault_name: Option<String>,
 ) -> Option<String> {
-    let import_empty = import_name
-        .as_ref()
-        .map(|s| s.trim().is_empty())
-        .unwrap_or(true);
+    let import_empty = match import_name.as_deref() {
+        Some(s) => s.trim().is_empty(),
+        None => true,
+    };
     match mode {
         ContactNameMode::FillMissing => {
             if import_empty {
@@ -779,7 +834,7 @@ fn resolve_conversation_source(
     export_source: Option<&str>,
 ) -> Result<String> {
     if opts.source_from_jsonl {
-        let Some(source) = export_source.map(str::trim).filter(|s| !s.is_empty()) else {
+        let Some(source) = nonempty_str(export_source) else {
             bail!(
                 "{}: conversation '{}' is missing export.source \
                  (required for CLI directory import)",
@@ -810,9 +865,10 @@ fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathB
 /// Messages with no conversation of their own live in `orphaned.jsonl`
 /// (older bundles used `orphaned.json`), so they may omit a conversation header.
 pub fn is_orphaned_export(path: &Path) -> bool {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("orphaned"))
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    stem.eq_ignore_ascii_case("orphaned")
 }
 
 fn import_file_to_staging(
@@ -823,11 +879,10 @@ fn import_file_to_staging(
     asset_stats: &mut AssetStats,
     media_work: &Path,
 ) -> Result<ImportStats> {
-    let source_file = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("unknown.jsonl")
-        .to_string();
+    let source_file = match path.file_name().and_then(|name| name.to_str()) {
+        Some(name) => name.to_string(),
+        None => "unknown.jsonl".to_string(),
+    };
     let is_orphaned = is_orphaned_export(path);
 
     let records = jsonl::read_records(path)?;
@@ -1098,10 +1153,7 @@ fn import_conversation_to_staging(
                 None => (None, None, att.mime_type),
             };
 
-            let size_bytes = assets_path
-                .as_deref()
-                .and_then(|rel| std::fs::metadata(assets_dir.join(rel)).ok())
-                .map(|meta| meta.len() as i64)
+            let size_bytes = stored_size_bytes(&assets_dir, assets_path.as_deref())
                 .or_else(|| att.size_bytes.map(|n| n as i64));
 
             // Bytes absent and reason set: keep metadata-only placeholder rows.
@@ -1299,7 +1351,8 @@ fn promote_append(
         mode.as_str()
     ));
 
-    // Skip per-row FTS trigger work during bulk message/attachment inserts; index once after.
+    // Skip per-row full-text search trigger work during bulk message/attachment
+    // inserts; index once after.
     let phase = Instant::now();
     promote_log("pausing FTS triggers…");
     schema::drop_messages_fts_triggers(&tx)?;
@@ -1322,7 +1375,7 @@ fn promote_append(
 
     // Highest message id that exists before this promotion inserts anything
     // (after the replace-mode wipe). Every row inserted below lands above it,
-    // which is how FTS indexing tells new rows apart from the already indexed
+    // which is how full-text search indexing tells new rows apart from the already indexed
     // rows that `_promote_msg_map` also targets for attachments and tapbacks.
     let max_msg_id_before_promote: i64 =
         tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
@@ -1462,7 +1515,8 @@ fn promote_append(
     Ok(stats)
 }
 
-/// Staging rows per set-based insert window (progress + smaller WAL spikes).
+/// Staging rows per set-based insert window (progress plus smaller write-ahead
+/// log spikes).
 const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
 /// Pairs per multi-row INSERT into `_promote_msg_map` (SQLite default max variables is 999).
 /// Drop secondary indexes only for large promotes relative to the existing table.
@@ -1885,7 +1939,8 @@ mod tests {
             .unwrap();
         assert_eq!(dup_body, "two");
 
-        // Deferred FTS during promote must still index new bodies and restore triggers.
+        // Deferred full-text search during promote must still index new bodies
+        // and restore triggers.
         let fts_three: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'three'",
@@ -1999,7 +2054,7 @@ mod tests {
         );
 
         import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
-        // Rows of the FTS index storage: a redundant re-index writes a new
+        // Rows of the full-text search index storage: a redundant re-index writes a new
         // segment even when the indexed text is unchanged.
         let index_rows = || -> i64 {
             Connection::open(&db)
@@ -2412,26 +2467,26 @@ mod tests {
 
     fn participant_name_alias(db: &Path) -> Option<String> {
         let conn = Connection::open(db).unwrap();
-        conn.query_row("SELECT name_alias FROM participants LIMIT 1", [], |r| {
-            r.get::<_, Option<String>>(0)
-        })
-        .optional()
-        .unwrap()
-        .flatten()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        let raw = conn
+            .query_row("SELECT name_alias FROM participants LIMIT 1", [], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()
+            .unwrap()
+            .flatten();
+        trim_nonempty(raw)
     }
 
     fn contact_handle_name_alias(db: &Path) -> Option<String> {
         let conn = Connection::open(db).unwrap();
-        conn.query_row("SELECT name_alias FROM contact_handles LIMIT 1", [], |r| {
-            r.get::<_, Option<String>>(0)
-        })
-        .optional()
-        .unwrap()
-        .flatten()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        let raw = conn
+            .query_row("SELECT name_alias FROM contact_handles LIMIT 1", [], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()
+            .unwrap()
+            .flatten();
+        trim_nonempty(raw)
     }
 
     #[test]

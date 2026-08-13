@@ -19,25 +19,31 @@ pub struct StoredAsset {
     pub mime_type: Option<String>,
 }
 
+/// Encode bytes as lowercase hex.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// SHA-256 fingerprint of `data` as 64 lowercase hex digits.
+///
+/// SHA-256 is a short fingerprint of the file contents.
 pub fn sha256_hex(data: &[u8]) -> String {
     hex_encode(&Sha256::digest(data))
 }
 
+/// Relative path under the assets root: first two hex digits as a folder, then
+/// the full fingerprint, then `ext`. `.jpeg` is stored as `.jpg`.
 pub fn shard_rel_path(sha256: &str, ext: &str) -> String {
     let ext = if ext == ".jpeg" { ".jpg" } else { ext };
     format!("{}/{}{}", &sha256[..2], sha256, ext)
 }
 
-/// Look up an already-stored blob by lowercase hex SHA-256, verifying its bytes.
+/// Find a stored attachment by SHA-256 (a short fingerprint of the file
+/// contents) and confirm the file on disk still matches that fingerprint.
 ///
-/// Every caller that decides something on behalf of a client — "the blob is
-/// already present, skip the upload" (HEAD, PUT, multipart start/complete) or
-/// "reuse this blob for a claimed digest" (import) — must use this function, so
-/// a truncated or replaced file is never treated as the real content.
+/// Upload and import paths that skip sending bytes because "the file is already
+/// here" must use this function. A truncated or replaced file is then never
+/// treated as the real content.
 pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
     let stored = lookup_by_sha256_unverified(assets_root, sha256)?;
     let path = assets_root.join(&stored.assets_path);
@@ -47,16 +53,17 @@ pub fn lookup_by_sha256(assets_root: &Path, sha256: &str) -> Option<StoredAsset>
     Some(stored)
 }
 
-/// Resolve the stored path and MIME for a digest without reading the bytes.
+/// Find the stored path and MIME type for a SHA-256 fingerprint without reading
+/// the file.
 ///
-/// Only for streaming an authenticated download: the response body is the file
-/// itself, the URL is the digest, and the client can verify what it received.
-/// Hashing the whole file first would double the read cost of every download.
+/// Used only when streaming an authenticated download. The response body is the
+/// file itself, the URL is the fingerprint, and the client can check what it
+/// received. Hashing the whole file first would read every download twice.
 pub fn lookup_by_sha256_unverified(assets_root: &Path, sha256: &str) -> Option<StoredAsset> {
     let sha = normalize_sha256(sha256)?;
     let existing = find_existing(assets_root, &sha)?;
     let assets_path = path_relative_to(assets_root, &existing).ok()?;
-    let mime_type = resolve_mime(None, &existing).or_else(|| read_mime_metadata(assets_root, &sha));
+    let mime_type = mime_for_path_or_sidecar(assets_root, &existing, &sha);
     Some(StoredAsset {
         sha256: sha,
         assets_path,
@@ -64,15 +71,23 @@ pub fn lookup_by_sha256_unverified(assets_root: &Path, sha256: &str) -> Option<S
     })
 }
 
-/// Store `source` under `assets_root` using a caller-claimed SHA-256 (verified).
+/// Store `source` under `assets_root` using a caller-claimed SHA-256 fingerprint,
+/// after checking that the file bytes match that claim.
 ///
-/// When `consume_source` is true (HTTP upload temps), removes the source after
-/// the verified temporary copy is installed.
+/// When `consume_source` is true (HTTP upload temps), the source is removed
+/// after the verified temporary copy is installed.
 ///
-/// `skip_hash` remains only for API stability; sources are always hashed before
-/// deduplication so an invalid upload cannot be accepted because a blob exists.
+/// `skip_hash` is kept only so the function signature stays stable. Sources are
+/// always hashed before reuse, so a wrong upload cannot be accepted just
+/// because a matching file already exists.
 ///
 /// Returns `(stored, already_present)`.
+///
+/// # Errors
+///
+/// Returns an error when the claimed fingerprint is invalid, the source is not
+/// a regular file, the bytes do not match the claim, or the file cannot be
+/// written under `assets_root`.
 pub fn store_verified(
     source: &Path,
     claimed_sha256: &str,
@@ -92,6 +107,7 @@ pub fn store_verified(
     )
 }
 
+/// Same as [`store_verified`], with hooks so tests can observe copy vs reuse.
 fn store_verified_inner(
     source: &Path,
     claimed_sha256: &str,
@@ -114,11 +130,7 @@ fn store_verified_inner(
     )?;
     let rel = path_relative_to(assets_root, &dest)?;
     let mime_type = if already {
-        export_mime
-            .filter(|mime| !mime.is_empty())
-            .map(str::to_owned)
-            .or_else(|| resolve_mime(None, &dest))
-            .or(source_mime)
+        mime_for_existing_file(export_mime, &dest, source_mime)
     } else {
         source_mime
     };
@@ -135,18 +147,19 @@ fn store_verified_inner(
     ))
 }
 
-/// Install `source` at `dest` through a synced temporary file in the same
-/// directory. Returns `true` only when a concurrent or prior valid blob wins.
+/// Copy `source` into place through a temporary file in the same folder, then
+/// rename. The second return value is `true` only when a concurrent or earlier
+/// valid file already won.
 ///
 /// Order of work matters for both safety and cost:
-/// 1. verify an existing destination first. On a hit the source is hashed (a
-///    wrong claimed digest must never be accepted because a valid blob exists)
-///    and the call returns without a copy, an `fsync`, or a rename — this is the
-///    common repeat-import and repeat-upload case.
-/// 2. otherwise copy into a temporary file in the destination shard, hashing
-///    while writing, and refuse to persist unless the written bytes match the
-///    claimed digest. The bytes that land on disk are therefore always bytes
-///    this call verified, even if the source changed underneath.
+/// 1. Check an existing destination first. On a hit the source is hashed (a
+///    wrong claimed fingerprint must never be accepted just because a valid
+///    file exists) and the call returns without a copy, a disk flush, or a
+///    rename. This is the common repeat-import and repeat-upload case.
+/// 2. Otherwise copy into a temporary file in the destination folder, hashing
+///    while writing, and refuse to keep the file unless the written bytes match
+///    the claimed fingerprint. The bytes that land on disk are therefore always
+///    bytes this call checked, even if the source changed underneath.
 fn install_blob(
     source: &Path,
     assets_root: &Path,
@@ -158,8 +171,9 @@ fn install_blob(
     let shard = assets_root.join(&claimed_sha256[..2]);
     fs::create_dir_all(&shard).with_context(|| format!("failed to create {}", shard.display()))?;
 
-    // New blobs use a single extensionless path derived only from the digest.
-    // `find_existing` keeps old extension-bearing paths readable and reusable.
+    // New files use a single path with no extension, named only from the
+    // fingerprint. `find_existing` still finds older files that kept an
+    // extension, so those remain readable and reusable.
     let desired = assets_root.join(shard_rel_path(claimed_sha256, ""));
     let dest = if let Some(existing) = find_existing(assets_root, claimed_sha256) {
         if hash_file(&existing).is_ok_and(|actual| actual == claimed_sha256) {
@@ -204,7 +218,8 @@ fn install_blob(
         match temporary.persist_noclobber(&dest) {
             Ok(_) => {}
             Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                // The copy above already verified the source bytes.
+                // The copy above already checked that the source bytes match
+                // the claimed fingerprint.
                 if hash_file(&dest).is_ok_and(|actual| actual == claimed_sha256) {
                     if consume_source {
                         let _ = fs::remove_file(source);
@@ -227,10 +242,10 @@ fn install_blob(
     Ok((dest, false))
 }
 
-/// Reject a claimed digest that the source bytes do not produce.
+/// Reject a claimed SHA-256 fingerprint that the source bytes do not produce.
 ///
-/// Used on the deduplication path, where no copy happens and the claim would
-/// otherwise be accepted purely because a matching blob is already stored.
+/// Used when skipping the copy because a matching file is already stored. Without
+/// this check, a wrong claim would be accepted just because that file exists.
 fn verify_source_digest(source: &Path, claimed_sha256: &str) -> Result<()> {
     let actual = hash_file(source).with_context(|| format!("read source {}", source.display()))?;
     if actual != claimed_sha256 {
@@ -239,11 +254,11 @@ fn verify_source_digest(source: &Path, claimed_sha256: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy `source` into a synced temporary file inside `shard`, hashing as it
+/// Copy `source` into a flushed temporary file inside `shard`, hashing as it
 /// writes, and fail unless the written bytes hash to `claimed_sha256`.
 ///
-/// Re-hashing here (rather than trusting the earlier source hash) is what keeps
-/// a source that changes mid-install from being persisted.
+/// Hashing the bytes as they are written (rather than trusting an earlier hash
+/// of the source path) keeps a source that changes mid-copy from being saved.
 fn copy_to_verified_temp(
     source: &Path,
     shard: &Path,
@@ -276,8 +291,12 @@ fn copy_to_verified_temp(
     Ok(temporary)
 }
 
-/// Hash `source` and store under `assets_root/<sha[0:2]>/<sha><ext>`.
-/// If the blob already exists, skip the copy and count as deduped.
+/// Hash `source` and store it under `assets_root/<sha[0:2]>/<sha><ext>`.
+/// If the file already exists, skip the copy and count it as reused.
+///
+/// # Errors
+///
+/// Returns an error when the source cannot be hashed or stored.
 pub fn hash_and_store(
     source: &Path,
     assets_root: &Path,
@@ -299,10 +318,15 @@ pub fn hash_and_store(
     Ok(Some(stored))
 }
 
-/// Delete orphaned multipart staging under `{assets}/.incoming` older than `max_age_secs`.
+/// Delete abandoned multipart upload folders under `{assets}/.incoming` older
+/// than `max_age_secs`.
 ///
-/// Completed uploads remove their session dirs; abandoned ones can linger forever
-/// without this sweep (called opportunistically from upload start).
+/// Finished uploads already remove their session folders. Abandoned ones can
+/// sit forever without this sweep, which runs from upload start.
+///
+/// # Errors
+///
+/// Returns an error when `{assets}/.incoming` cannot be read.
 pub fn gc_stale_incoming(assets_root: &Path, max_age_secs: u64) -> Result<u64> {
     let incoming = assets_root.join(".incoming");
     if !incoming.is_dir() {
@@ -338,7 +362,7 @@ pub fn gc_stale_incoming(assets_root: &Path, max_age_secs: u64) -> Result<u64> {
                 removed += 1;
             }
         }
-        // Drop empty sha shard dirs.
+        // Remove empty fingerprint folders left after the last session is gone.
         if fs::read_dir(&sha_path)?.next().is_none() {
             let _ = fs::remove_dir(&sha_path);
         }
@@ -346,6 +370,7 @@ pub fn gc_stale_incoming(assets_root: &Path, max_age_secs: u64) -> Result<u64> {
     Ok(removed)
 }
 
+/// Accept a 64-character lowercase hex SHA-256 fingerprint, or return `None`.
 pub(crate) fn normalize_sha256(sha: &str) -> Option<String> {
     let s = sha.trim().to_ascii_lowercase();
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -354,11 +379,25 @@ pub(crate) fn normalize_sha256(sha: &str) -> Option<String> {
     Some(s)
 }
 
+/// Same as [`normalize_sha256`], but as an error when the value is invalid.
+///
+/// # Errors
+///
+/// Returns an error when `sha` is not 64 lowercase hex digits.
 pub(crate) fn require_sha256(sha: &str) -> Result<String> {
-    normalize_sha256(sha)
-        .ok_or_else(|| anyhow::anyhow!("invalid sha256 (expected 64 lowercase hex digits)"))
+    match normalize_sha256(sha) {
+        Some(normalized) => Ok(normalized),
+        None => Err(anyhow::anyhow!(
+            "invalid sha256 (expected 64 lowercase hex digits)"
+        )),
+    }
 }
 
+/// SHA-256 fingerprint of the file at `path`, as 64 lowercase hex digits.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or read.
 pub(crate) fn hash_file(path: &Path) -> Result<String> {
     let file = open_nofollow_read(path)?;
     let mut reader = BufReader::new(file);
@@ -374,28 +413,56 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
     Ok(hex_encode(&hasher.finalize()))
 }
 
+/// Find a stored file whose name (without extension) is `sha`.
+///
+/// When more than one match exists, the lexicographically first path is used so
+/// the choice is stable across calls.
 fn find_existing(assets_root: &Path, sha: &str) -> Option<PathBuf> {
     let shard = assets_root.join(&sha[..2]);
     if !shard.is_dir() {
         return None;
     }
-    let mut matches: Vec<_> = fs::read_dir(&shard)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|stem| stem == sha)
-                && is_regular_file(p)
-        })
-        .collect();
+    let entries = fs::read_dir(&shard).ok()?;
+    let mut matches = Vec::new();
+    for entry in entries {
+        let path = entry.ok()?.path();
+        if file_stem_equals(&path, sha) && is_regular_file(&path) {
+            matches.push(path);
+        }
+    }
     matches.sort();
     matches.into_iter().next()
 }
 
+fn file_stem_equals(path: &Path, expected: &str) -> bool {
+    match path.file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => stem == expected,
+        None => false,
+    }
+}
+
 fn mime_metadata_path(assets_root: &Path, sha: &str) -> PathBuf {
     assets_root.join(&sha[..2]).join(format!(".{sha}.mime"))
+}
+
+fn mime_for_path_or_sidecar(assets_root: &Path, path: &Path, sha: &str) -> Option<String> {
+    match resolve_mime(None, path) {
+        Some(mime) => Some(mime),
+        None => read_mime_metadata(assets_root, sha),
+    }
+}
+
+fn mime_for_existing_file(
+    export_mime: Option<&str>,
+    dest: &Path,
+    source_mime: Option<String>,
+) -> Option<String> {
+    if let Some(mime) = export_mime
+        && !mime.is_empty()
+    {
+        return Some(mime.to_owned());
+    }
+    resolve_mime(None, dest).or(source_mime)
 }
 
 fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
@@ -403,7 +470,11 @@ fn read_mime_metadata(assets_root: &Path, sha: &str) -> Option<String> {
     let mut mime = String::new();
     file.take(1024).read_to_string(&mut mime).ok()?;
     let mime = mime.trim();
-    (!mime.is_empty()).then(|| mime.to_owned())
+    if mime.is_empty() {
+        None
+    } else {
+        Some(mime.to_owned())
+    }
 }
 
 fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> {
@@ -415,9 +486,9 @@ fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> 
     if read_mime_metadata(assets_root, sha).is_some() {
         return Ok(());
     }
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("asset MIME metadata has no parent"))?;
+    let Some(parent) = path.parent() else {
+        return Err(anyhow::anyhow!("asset MIME metadata has no parent"));
+    };
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("create MIME metadata in {}", parent.display()))?;
     temporary.write_all(mime.as_bytes())?;
@@ -431,33 +502,34 @@ fn store_mime_metadata(assets_root: &Path, sha: &str, mime: &str) -> Result<()> 
 }
 
 fn path_relative_to(root: &Path, path: &Path) -> Result<String> {
-    Ok(path
-        .strip_prefix(root)
-        .with_context(|| {
-            format!(
-                "asset path {} is not under {}",
-                path.display(),
-                root.display()
-            )
-        })?
-        .to_string_lossy()
-        .replace('\\', "/"))
+    let relative = path.strip_prefix(root).with_context(|| {
+        format!(
+            "asset path {} is not under {}",
+            path.display(),
+            root.display()
+        )
+    })?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
 fn resolve_mime(export_mime: Option<&str>, source: &Path) -> Option<String> {
-    if let Some(mime) = export_mime.filter(|m| !m.is_empty()) {
+    if let Some(mime) = export_mime
+        && !mime.is_empty()
+    {
         return Some(mime.to_string());
     }
-    guess_mime(source.extension().and_then(|e| e.to_str()))
+    let ext = source.extension().and_then(|e| e.to_str());
+    guess_mime(ext)
 }
 
 /// Map a file extension to a MIME type.
 ///
-/// Canonical blob paths carry only a digest, so this is the only chance to
-/// record what a file is: the result is stored in the MIME sidecar, returned to
-/// download callers, and written to `attachments.mime_type`, which is what
-/// derived-media processing classifies on. Extensions common in phone backups
-/// (voice notes, camera video, scans) therefore need to be listed here.
+/// Stored files are named only from their SHA-256 fingerprint, so they have no
+/// extension. This mapping is the only chance to record what a file is: the
+/// result is stored next to the file, returned to download callers, and written
+/// to `attachments.mime_type`, which is what derived-media processing classifies
+/// on. Extensions common in phone backups (voice notes, camera video, scans)
+/// therefore need to be listed here.
 fn guess_mime(ext: Option<&str>) -> Option<String> {
     let ext = ext?.to_ascii_lowercase();
     let mime = match ext.as_str() {
@@ -489,11 +561,13 @@ fn guess_mime(ext: Option<&str>) -> Option<String> {
 }
 
 fn is_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.is_file() && !m.file_type().is_symlink())
-        .unwrap_or(false)
+    match fs::symlink_metadata(path) {
+        Ok(meta) => meta.is_file() && !meta.file_type().is_symlink(),
+        Err(_) => false,
+    }
 }
 
+/// Fail unless `path` is a regular file, not a symlink.
 fn ensure_regular_file(path: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if meta.file_type().is_symlink() {
@@ -505,6 +579,7 @@ fn ensure_regular_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Open `path` for reading without following a symlink.
 fn open_nofollow_read(path: &Path) -> Result<File> {
     ensure_regular_file(path)?;
     #[cfg(unix)]
@@ -530,6 +605,21 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    fn files_named_with_sha(root: &Path, sha: &str) -> Vec<std::fs::DirEntry> {
+        let shard = root.join(&sha[..2]);
+        let mut installed = Vec::new();
+        for entry in fs::read_dir(shard).unwrap() {
+            let entry = entry.unwrap();
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if name.starts_with(sha) {
+                installed.push(entry);
+            }
+        }
+        installed
+    }
 
     #[test]
     fn store_verified_replaces_corrupt_destination() {
@@ -563,7 +653,7 @@ mod tests {
         let sha = hash_file(&source_a).unwrap();
         let barrier = Arc::new(Barrier::new(2));
 
-        let canonical = root.join(shard_rel_path(&sha, ""));
+        let desired_path = root.join(shard_rel_path(&sha, ""));
         let installers: Vec<_> = [source_a, source_b]
             .into_iter()
             .enumerate()
@@ -571,7 +661,7 @@ mod tests {
                 let root = Arc::clone(&root);
                 let sha = sha.clone();
                 let barrier = Arc::clone(&barrier);
-                let canonical = canonical.clone();
+                let desired_path = desired_path.clone();
                 std::thread::spawn(move || {
                     store_verified_inner(
                         &source,
@@ -584,7 +674,7 @@ mod tests {
                             barrier.wait();
                             if index == 1 {
                                 let deadline = Instant::now() + Duration::from_secs(5);
-                                while !canonical.is_file() {
+                                while !desired_path.is_file() {
                                     assert!(
                                         Instant::now() < deadline,
                                         "timed out waiting for winning installer"
@@ -598,23 +688,14 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<_> = installers
-            .into_iter()
-            .map(|installer| installer.join().unwrap().unwrap())
-            .collect();
-        assert_eq!(results.iter().filter(|(_, present)| !present).count(), 1);
+        let mut results = Vec::new();
+        for installer in installers {
+            results.push(installer.join().unwrap().unwrap());
+        }
+        let newly_stored = results.iter().filter(|(_, present)| !present).count();
+        assert_eq!(newly_stored, 1);
         assert_eq!(results[0].0.assets_path, results[1].0.assets_path);
-        let shard = root.join(&sha[..2]);
-        let installed: Vec<_> = fs::read_dir(shard)
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(&sha))
-            })
-            .collect();
+        let installed = files_named_with_sha(root.as_path(), &sha);
         assert_eq!(installed.len(), 1);
         assert_eq!(
             fs::read(root.join(&results[0].0.assets_path)).unwrap(),
@@ -660,16 +741,7 @@ mod tests {
         let result_b = fs::read_to_string(root.join("result-b")).unwrap();
         assert_eq!(result_a, result_b);
         assert!(Path::new(&result_a).extension().is_none());
-        let installed: Vec<_> = fs::read_dir(root.join(&sha[..2]))
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(&sha))
-            })
-            .collect();
+        let installed = files_named_with_sha(root, &sha);
         assert_eq!(installed.len(), 1);
         assert_eq!(
             fs::read(root.join(result_a)).unwrap(),
@@ -733,8 +805,8 @@ mod tests {
 
             assert!(Path::new(&stored.assets_path).extension().is_none());
             assert_eq!(stored.mime_type.as_deref(), Some(expected));
-            // The digest-only path carries no extension, so serving relies on the
-            // MIME sidecar written next to the blob.
+            // The fingerprint-only path has no extension, so serving relies on
+            // the MIME file written next to the stored attachment.
             assert_eq!(
                 lookup_by_sha256(dir.path(), &sha)
                     .unwrap()
@@ -825,16 +897,16 @@ mod tests {
     fn unverified_lookup_reads_no_content_while_verified_lookup_rejects_corruption() {
         let dir = tempdir().unwrap();
         let sha = sha256_hex(b"expected-bytes");
-        let canonical = dir.path().join(shard_rel_path(&sha, ""));
-        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        fs::write(&canonical, b"corrupt-bytes").unwrap();
+        let stored_path = dir.path().join(shard_rel_path(&sha, ""));
+        fs::create_dir_all(stored_path.parent().unwrap()).unwrap();
+        fs::write(&stored_path, b"corrupt-bytes").unwrap();
 
         let unverified = lookup_by_sha256_unverified(dir.path(), &sha)
             .expect("path lookup must not depend on file contents");
         assert_eq!(unverified.assets_path, shard_rel_path(&sha, ""));
         assert!(
             lookup_by_sha256(dir.path(), &sha).is_none(),
-            "a blob whose bytes do not match its digest must not be reported as present"
+            "a file whose bytes do not match its fingerprint must not be reported as present"
         );
     }
 

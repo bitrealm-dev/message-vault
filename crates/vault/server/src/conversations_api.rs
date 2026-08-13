@@ -168,6 +168,11 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 /// - `import:<id>`: conversations with at least one message from that import session
 /// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
+///
+/// # Errors
+///
+/// Returns a bad-request error for an invalid query, or an internal error when
+/// a database statement fails.
 pub fn list_conversations(
     conn: &Connection,
     account_id: &str,
@@ -559,6 +564,10 @@ pub struct ConversationSourcesPage {
 }
 
 /// Per-source message counts for the Sources panel.
+///
+/// # Errors
+///
+/// Returns an internal error when a database statement fails.
 pub fn list_conversation_source_stats(
     conn: &Connection,
     account_id: &str,

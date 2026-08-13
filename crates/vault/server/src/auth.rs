@@ -1,7 +1,10 @@
 //! Authentication handlers: register, login, and Hanko session exchange.
 //!
 //! All three return a Bearer API token the rest of the API already accepts.
-//! No new session layer — just new ways to *get* a token.
+//! There is no separate session layer — these are additional ways to get a
+//! token. Hanko is an external sign-in service. A Hanko session is a signed
+//! JSON Web Token (a signed claim of who the user is) that this server checks
+//! and then exchanges for a vault token.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
@@ -19,7 +22,7 @@ use crate::server::{ApiError, AppState, JoinBlocking};
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
 const MIN_PASSWORD_CHARS: usize = 8;
-/// Max Hanko JWT string length accepted for exchange.
+/// Max Hanko JSON Web Token string length accepted for exchange.
 const MAX_HANKO_JWT_BYTES: usize = 16 * 1024;
 /// Sliding window for unauthenticated auth endpoints.
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
@@ -39,10 +42,10 @@ fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
     let map = guard.get_or_insert_with(HashMap::new);
     let now = Instant::now();
     let entry = map.entry(bucket.to_string()).or_default();
-    while entry
-        .front()
-        .is_some_and(|t| now.duration_since(*t) > AUTH_RATE_WINDOW)
-    {
+    while let Some(oldest) = entry.front() {
+        if now.duration_since(*oldest) <= AUTH_RATE_WINDOW {
+            break;
+        }
         entry.pop_front();
     }
     if entry.len() >= AUTH_RATE_MAX {
@@ -85,7 +88,8 @@ pub struct LoginRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct HankoSessionRequest {
-    /// The raw Hanko session JWT from the client-side `onSessionCreated` callback.
+    /// The raw Hanko session JSON Web Token from the client-side
+    /// `onSessionCreated` callback.
     pub hanko_jwt: String,
 }
 
@@ -97,8 +101,8 @@ pub struct AuthTokenResponse {
 }
 
 impl AuthTokenResponse {
-    /// Issue (or reuse) the session token for an existing account. Falls back to
-    /// the account id when the row has no username.
+    /// Issue (or reuse) the session token for an existing account. Uses the
+    /// account id when the row has no username.
     fn for_existing_account(
         conn: &rusqlite::Connection,
         account_id: String,
@@ -119,6 +123,10 @@ impl AuthTokenResponse {
 // ---------------------------------------------------------------------------
 
 /// Hash a plaintext password with argon2id.
+///
+/// # Errors
+///
+/// Returns an error when the password cannot be hashed.
 fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut rand::thread_rng());
     let hash = Argon2::default()
@@ -137,8 +145,10 @@ fn verify_password(hash: &str, password: &str) -> bool {
         .is_ok()
 }
 
-/// Authenticate: null/empty hash → empty password accepted;
-/// otherwise argon2 verify.
+/// True when `password` matches the stored hash.
+///
+/// A missing or empty hash means the account has no password, so only an empty
+/// password is accepted. Otherwise argon2 is used.
 fn passwords_match(password_hash: Option<&str>, password: &str) -> bool {
     match password_hash {
         None | Some("") => password.is_empty(),
@@ -146,6 +156,7 @@ fn passwords_match(password_hash: Option<&str>, password: &str) -> bool {
     }
 }
 
+/// A real argon2 hash used only so missing-account logins take similar time.
 fn dummy_password_hash() -> &'static str {
     DUMMY_PASSWORD_HASH.get_or_init(|| {
         hash_password("timing-equalization-dummy-password").expect("dummy password hash")
@@ -164,6 +175,7 @@ fn verify_login_password(password_hash: Option<&str>, password: &str) -> bool {
     }
 }
 
+/// Reject passwords that are too short or too long.
 fn validate_password_policy(password: &str) -> Result<(), ApiError> {
     if password.len() < MIN_PASSWORD_CHARS {
         return Err(ApiError::BadRequest(format!(
@@ -176,6 +188,12 @@ fn validate_password_policy(password: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Fetch Hanko's public signing keys, reusing a cached copy for a few minutes.
+///
+/// # Errors
+///
+/// Returns an error when the HTTP client cannot be built, the keys cannot be
+/// fetched, or the response is not JSON.
 fn fetch_jwks_cached(jwk_url: &str) -> Result<serde_json::Value> {
     let now = Instant::now();
     if let Ok(guard) = JWKS_CACHE.lock()
@@ -215,10 +233,59 @@ fn normalize_username(raw: &str) -> String {
 
 fn is_valid_username(s: &str) -> bool {
     let s = s.trim();
-    !s.is_empty()
-        && s.len() <= 128
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+    if s.is_empty() || s.len() > 128 {
+        return false;
+    }
+    s.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+}
+
+fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
+    let Some(raw) = value else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn nonempty_trimmed_lower(value: Option<&str>) -> Option<String> {
+    nonempty_trimmed(value).map(|s| s.to_ascii_lowercase())
+}
+
+fn jwk_matching_kid<'a>(keys: &'a [serde_json::Value], kid: &str) -> Result<&'a serde_json::Value> {
+    for key in keys {
+        let key_id = key.get("kid").and_then(|v| v.as_str());
+        if key_id == Some(kid) {
+            return Ok(key);
+        }
+    }
+    Err(anyhow::anyhow!("no JWK matching kid: {kid}"))
+}
+
+fn username_from_hanko_email_or_id(email: Option<&str>, hanko_user_id: &str) -> String {
+    if let Some(email) = email
+        && let Some(local_part) = email.split('@').next()
+    {
+        return local_part.to_string();
+    }
+    let short_id: String = hanko_user_id.chars().take(8).collect();
+    format!("user_{short_id}")
+}
+
+fn unique_hanko_username(
+    conn: &rusqlite::Connection,
+    username: String,
+    account_id: &str,
+) -> Result<String> {
+    if account_profile::lookup_account_ref(conn, &username)?.is_some() {
+        Ok(format!("{}_{}", username, &account_id[..8]))
+    } else {
+        Ok(username)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,16 +315,8 @@ pub async fn register_handler(
         Some(hash_password(&password_plain).map_err(|e| ApiError::Internal(e.to_string()))?)
     };
 
-    let preferred_name = req
-        .preferred_name
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let phone: Option<String> = req
-        .phone
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let preferred_name = nonempty_trimmed(req.preferred_name.as_deref());
+    let phone = nonempty_trimmed(req.phone.as_deref());
 
     let account_id = uuid::Uuid::new_v4().to_string();
 
@@ -338,7 +397,8 @@ pub async fn login_handler(
     Ok(Json(result))
 }
 
-/// `POST /v1/auth/hanko/session` — verify a Hanko session JWT and return a vault API token.
+/// `POST /v1/auth/hanko/session` — check a Hanko session JSON Web Token and
+/// return a vault API token.
 pub async fn hanko_session_handler(
     State(state): State<AppState>,
     Json(req): Json<HankoSessionRequest>,
@@ -348,10 +408,10 @@ pub async fn hanko_session_handler(
         return Err(ApiError::BadRequest("hanko_jwt is too long".into()));
     }
 
-    let hanko_api_url = std::env::var("HANKO_API_URL")
-        .ok()
-        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok())
-        .unwrap_or_default();
+    let hanko_api_url = match std::env::var("HANKO_API_URL") {
+        Ok(url) => url,
+        Err(_) => std::env::var("NEXT_PUBLIC_HANKO_API_URL").unwrap_or_default(),
+    };
 
     if hanko_api_url.is_empty() {
         return Err(ApiError::Internal("HANKO_API_URL is not configured".into()));
@@ -368,20 +428,14 @@ pub async fn hanko_session_handler(
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
         let jwks_json = fetch_jwks_cached(&jwk_url)?;
 
-        // Decode JWT header to get kid
         let header = jsonwebtoken::decode_header(&jtw)
             .map_err(|e| anyhow::anyhow!("JWT header decode: {e}"))?;
         let kid = header.kid.as_deref().unwrap_or("");
 
-        // Find matching key in JWKS
         let keys = jwks_json["keys"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("JWKS has no keys array"))?;
-
-        let key = keys
-            .iter()
-            .find(|k| k.get("kid").and_then(|v| v.as_str()) == Some(kid))
-            .ok_or_else(|| anyhow::anyhow!("no JWK matching kid: {kid}"))?;
+        let key = jwk_matching_kid(keys, kid)?;
 
         let n_b64 = key["n"]
             .as_str()
@@ -411,45 +465,23 @@ pub async fn hanko_session_handler(
             bail!("invalid Hanko session: missing sub");
         }
 
-        let email: Option<String> = token_data
-            .claims
-            .email
-            .as_deref()
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty());
+        let email = nonempty_trimmed_lower(token_data.claims.email.as_deref());
 
-        // Open DB and find or create account
         let conn = schema::open_configured(&db)?;
 
         let account_id = match account_profile::lookup_account_by_hanko(&conn, &hanko_user_id)? {
             Some(id) => id,
             None => {
-                // Auto-provision a new account
                 let account_id = uuid::Uuid::new_v4().to_string();
-                let username = email
-                    .as_ref()
-                    .and_then(|e| e.split('@').next())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        format!(
-                            "user_{}",
-                            &hanko_user_id.chars().take(8).collect::<String>()
-                        )
-                    });
-
-                // Ensure username is unique
-                let username = if account_profile::lookup_account_ref(&conn, &username)?.is_some() {
-                    format!("{}_{}", username, &account_id[..8])
-                } else {
-                    username
-                };
+                let username = username_from_hanko_email_or_id(email.as_deref(), &hanko_user_id);
+                let username = unique_hanko_username(&conn, username, &account_id)?;
 
                 account_profile::insert_account(
                     &conn,
                     &account_id,
                     &username,
-                    None, // no password for hanko accounts
-                    None, // preferred_name (set during onboarding)
+                    None, // Hanko accounts have no local password
+                    None, // Display name is set later in onboarding
                     Some(&hanko_user_id),
                     false,
                 )?;
@@ -507,6 +539,13 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+/// Check the current password, store `new_hash`, drop named API tokens, and
+/// issue a fresh session token. All of that happens in one database transaction
+/// so a failure leaves the old credentials in place.
+///
+/// # Errors
+///
+/// Returns an error when the current password is wrong or a database write fails.
 fn change_password_on_conn(
     conn: &mut rusqlite::Connection,
     account_id: &str,
@@ -607,7 +646,11 @@ pub async fn delete_account_handler(
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = schema::open_configured(&db)?;
         let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
-        if password_hash.as_deref().is_some_and(|h| !h.is_empty()) {
+        let has_local_password = match password_hash.as_deref() {
+            Some(hash) if !hash.is_empty() => true,
+            _ => false,
+        };
+        if has_local_password {
             let Some(pw) = current_password.as_deref() else {
                 bail!("current password is required to delete this account");
             };

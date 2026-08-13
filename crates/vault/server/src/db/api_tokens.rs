@@ -14,6 +14,11 @@ pub enum ApiTokenScopes {
 }
 
 impl ApiTokenScopes {
+    /// Parse `import`, `export`, or `both` (including `import_export` spellings).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `raw` is not one of those values.
     pub fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "import" => Ok(Self::Import),
@@ -31,10 +36,12 @@ impl ApiTokenScopes {
         }
     }
 
+    /// True when this token may call import endpoints.
     pub fn allows_import(self) -> bool {
         matches!(self, Self::Import | Self::Both)
     }
 
+    /// True when this token may call export endpoints.
     pub fn allows_export(self) -> bool {
         matches!(self, Self::Export | Self::Both)
     }
@@ -90,12 +97,21 @@ pub struct ApiTokenAuth {
 }
 
 /// Generate a new API token (`mv-api-` + 32 alphanumeric characters).
+///
+/// # Errors
+///
+/// Returns an error when random bytes cannot be generated.
 pub fn generate_api_token() -> Result<String> {
     generate_prefixed_token("mv-api-")
 }
 
 /// Look up which account owns this API token Bearer value.
-/// On a successful match, updates `last_accessed_at`. Expired/disabled tokens are rejected.
+/// On a successful match, updates `last_accessed_at`. Expired or disabled
+/// tokens are rejected.
+///
+/// # Errors
+///
+/// Returns an error when the lookup or last-accessed update fails.
 pub fn lookup_account_for_api_token(
     conn: &Connection,
     token: &str,
@@ -117,7 +133,8 @@ pub fn lookup_account_for_api_token(
             if let Some(exp) = expires_at.as_deref() {
                 let exp_secs = exp.parse::<u64>().unwrap_or(0);
                 let now = unix_secs_string().parse::<u64>().unwrap_or(0);
-                if exp_secs == 0 || exp_secs <= now {
+                let expired = exp_secs == 0 || exp_secs <= now;
+                if expired {
                     return Ok(None);
                 }
             }
@@ -136,6 +153,10 @@ pub fn lookup_account_for_api_token(
 }
 
 /// Create a named API token. Returns `(id, label, scopes, created_at, expires_at, plaintext_token)`.
+///
+/// # Errors
+///
+/// Returns an error when the label is invalid or the insert fails.
 pub fn create_api_token(
     conn: &Connection,
     account_id: &str,
@@ -156,23 +177,7 @@ pub fn create_api_token(
     let token_hash = hash_api_token(&token);
     let token_hint = mask_api_token(&token);
     let created_at = unix_secs_string();
-    let expires_at = match expires_in_days {
-        Some(0) => None, // explicit no-expiry
-        Some(days) => {
-            let now = created_at.parse::<u64>().unwrap_or(0);
-            Some(format!(
-                "{}",
-                now.saturating_add(days.saturating_mul(86_400))
-            ))
-        }
-        None => {
-            let now = created_at.parse::<u64>().unwrap_or(0);
-            Some(format!(
-                "{}",
-                now.saturating_add(DEFAULT_API_TOKEN_TTL_SECS)
-            ))
-        }
-    };
+    let expires_at = api_token_expiry(expires_in_days, &created_at);
     let label_owned = label.to_string();
     conn.execute(
         r#"
@@ -196,6 +201,10 @@ pub fn create_api_token(
 }
 
 /// List API tokens for an account (no secrets).
+///
+/// # Errors
+///
+/// Returns an error when the query fails or a stored scope value is invalid.
 pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTokenRow>> {
     let mut stmt = conn.prepare(
         r#"
@@ -239,6 +248,10 @@ pub fn list_api_tokens(conn: &Connection, account_id: &str) -> Result<Vec<ApiTok
 }
 
 /// Delete one API token if it belongs to the account.
+///
+/// # Errors
+///
+/// Returns an error when the delete statement fails.
 pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result<bool> {
     let n = conn
         .execute(
@@ -250,6 +263,10 @@ pub fn delete_api_token(conn: &Connection, account_id: &str, id: &str) -> Result
 }
 
 /// Delete every named API token belonging to an account.
+///
+/// # Errors
+///
+/// Returns an error when the delete statement fails.
 pub fn delete_all_api_tokens(conn: &Connection, account_id: &str) -> Result<u64> {
     let deleted = conn
         .execute(
@@ -261,6 +278,10 @@ pub fn delete_all_api_tokens(conn: &Connection, account_id: &str) -> Result<u64>
 }
 
 /// Rename an API token label if it belongs to the account.
+///
+/// # Errors
+///
+/// Returns an error when the label is invalid or the update fails.
 pub fn update_api_token_label(
     conn: &Connection,
     account_id: &str,
@@ -275,6 +296,21 @@ pub fn update_api_token_label(
         )
         .with_context(|| format!("rename API token {id} for {account_id}"))?;
     Ok(n > 0)
+}
+
+fn api_token_expiry(expires_in_days: Option<u64>, created_at: &str) -> Option<String> {
+    let now = created_at.parse::<u64>().unwrap_or(0);
+    match expires_in_days {
+        Some(0) => None, // caller asked for no expiry
+        Some(days) => Some(format!(
+            "{}",
+            now.saturating_add(days.saturating_mul(86_400))
+        )),
+        None => Some(format!(
+            "{}",
+            now.saturating_add(DEFAULT_API_TOKEN_TTL_SECS)
+        )),
+    }
 }
 
 fn validate_api_token_label(label: &str) -> Result<&str> {

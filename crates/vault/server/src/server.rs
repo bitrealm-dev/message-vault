@@ -48,6 +48,10 @@ pub struct AuthIdentity {
 }
 
 /// Reject API tokens on routes that require a GUI session.
+///
+/// # Errors
+///
+/// Returns forbidden when the credential is a named API token.
 pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
@@ -59,6 +63,10 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
 }
 
 /// Allow session or an API token that includes import.
+///
+/// # Errors
+///
+/// Returns forbidden when the API token does not include import.
 pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
@@ -70,6 +78,10 @@ pub fn require_import_access(auth: &AuthIdentity) -> Result<(), ApiError> {
 }
 
 /// Allow session or an API token that includes export.
+///
+/// # Errors
+///
+/// Returns forbidden when the API token does not include export.
 pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
@@ -81,6 +93,10 @@ pub fn require_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
 }
 
 /// Allow session or any API token (import, export, or both) for asset probes.
+///
+/// # Errors
+///
+/// Returns forbidden when the API token cannot access assets.
 pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     match auth.capability {
         AuthCapability::Full => Ok(()),
@@ -101,11 +117,12 @@ pub struct AppState {
     /// export open their own connections so they do not hold this mutex.
     db: Arc<StdMutex<Connection>>,
     /// Per-account import mutex: same-account imports stay serialized so staging
-    /// rows for that tenant are not wiped mid-run. Different accounts may overlap
-    /// at the lock layer; SQLite WAL + busy_timeout serialize writers.
+    /// rows (the temporary import area) for that tenant are not wiped mid-run.
+    /// Different accounts may overlap at the lock layer; SQLite write-ahead
+    /// logging plus busy_timeout serialize writers.
     account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
-    /// race `store_verified` on the same digest.
+    /// race `store_verified` on the same SHA-256 fingerprint.
     asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Multipart / asset size limits from `[server]` (env may override part size).
     upload_limits: asset_uploads::UploadLimits,
@@ -263,7 +280,9 @@ fn lock_named<'a>(
         .map_err(|_| anyhow::anyhow!("{what} mutex poisoned"))
 }
 
-/// Build CORS from `[server].cors_origins`.
+/// Build the Cross-Origin Resource Sharing (CORS) layer from
+/// `[server].cors_origins`. CORS is the browser rule that decides which other
+/// websites may call this API.
 ///
 /// - empty → no cross-origin allow list (same-origin UI / API is fine)
 /// - `["*"]` → fully permissive (local debugging only)
@@ -275,13 +294,16 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
     if origins.is_empty() {
         return CorsLayer::new();
     }
-    let allowed: Vec<header::HeaderValue> = origins
-        .iter()
-        .filter_map(|o| {
-            let t = o.trim();
-            if t.is_empty() { None } else { t.parse().ok() }
-        })
-        .collect();
+    let mut allowed = Vec::new();
+    for origin in origins {
+        let trimmed = origin.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(value) = trimmed.parse() {
+            allowed.push(value);
+        }
+    }
     if allowed.is_empty() {
         return CorsLayer::new();
     }
@@ -307,6 +329,11 @@ fn auth_public_router(mode: AuthMode) -> Router<AppState> {
         .layer(RequestBodyLimitLayer::new(32 * 1024))
 }
 
+/// Open a configured connection, run `f`, and map join/task errors.
+///
+/// # Errors
+///
+/// Returns an API error when the blocking task fails or `f` returns an error.
 pub(crate) async fn with_configured_db<T, F>(
     db_path: &Path,
     task: &str,
@@ -359,6 +386,12 @@ where
     .join_blocking(task)
 }
 
+/// Start the HTTP server.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be opened, the operation lock
+/// cannot be taken, or the listener cannot bind.
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let server = cfg.require_server()?.clone();
     let bind = server.bind.clone();
@@ -561,12 +594,7 @@ async fn auth_check(
     let account_id = auth.account_id;
     let username = load_username(&state.cfg.paths.db, &account_id).await?;
 
-    if let Some(q) = query
-        .account
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(q) = nonempty_query_account(query.account.as_deref()) {
         let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
         let matches = match resolved {
             Some(resolved) => resolved == account_id,
@@ -628,6 +656,11 @@ async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<
         })
 }
 
+/// Read the Bearer token from `Authorization`.
+///
+/// # Errors
+///
+/// Returns unauthorized when the header is missing or not a Bearer value.
 pub fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     let Some(value) = headers.get(header::AUTHORIZATION) else {
         return Err(ApiError::Unauthorized(
@@ -649,6 +682,11 @@ pub fn bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_string())
 }
 
+/// Resolve a session token or named API token to an account.
+///
+/// # Errors
+///
+/// Returns unauthorized when the token is missing or invalid.
 pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthIdentity, ApiError> {
     let token = bearer_token(headers)?;
     // Always look up against SQLite so rotate/delete in Settings takes effect
@@ -682,7 +720,7 @@ async fn resolve_import_account(
     query_account: Option<&str>,
     db_path: &Path,
 ) -> Result<String, ApiError> {
-    let query = query_account.map(str::trim).filter(|s| !s.is_empty());
+    let query = nonempty_query_account(query_account);
     if let Some(q) = query {
         let resolved = resolve_account_ref_async(db_path, q).await?;
         if resolved != auth.account_id {
@@ -694,11 +732,35 @@ async fn resolve_import_account(
     Ok(auth.account_id.clone())
 }
 
+fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
+    let Some(raw) = value else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     let ct = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     Some(ct.split(';').next().unwrap_or(ct).trim())
 }
 
+fn upload_content_type(headers: &HeaderMap) -> Option<String> {
+    let Some(base) = content_type_base(headers) else {
+        return None;
+    };
+    if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+/// True when the request body is JSON Lines (one JSON object per line).
 fn is_jsonl_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("application/jsonl")
 }
@@ -1422,9 +1484,7 @@ async fn asset_put_handler(
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
 
-    let mime = content_type_base(&headers)
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("application/octet-stream"))
-        .map(str::to_string);
+    let mime = upload_content_type(&headers);
 
     if let Some(stored) = existing {
         discard_body(request.into_body(), state.max_body_bytes).await?;
@@ -1755,16 +1815,15 @@ async fn import_multipart(
                 have_jsonl = true;
             }
             "file" => {
-                let filename = field
-                    .file_name()
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        ApiError::BadRequest(
+                let filename = match field.file_name() {
+                    Some(name) if !name.is_empty() => name.to_string(),
+                    _ => {
+                        return Err(ApiError::BadRequest(
                             "file part missing filename (use relative path e.g. attachments/a.jpg)"
                                 .into(),
-                        )
-                    })?;
+                        ));
+                    }
+                };
                 let rel = safe_rel_path(&filename)?;
                 let dest = asset_root.join(&rel);
                 stream_field_to_file(field, &dest).await?;

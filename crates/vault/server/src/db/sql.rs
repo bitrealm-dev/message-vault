@@ -7,14 +7,21 @@ use rusqlite::{Connection, Row, params_from_iter};
 /// Max ids per `IN (...)` bind list (SQLite's default variable limit is 999).
 pub const SQLITE_IN_CHUNK: usize = 400;
 
+/// Comma-separated `?` placeholders for an `IN (...)` list of length `n`.
 pub fn in_placeholders(n: usize) -> String {
     vec!["?"; n].join(",")
 }
 
+/// Comma-separated `(?, ?)` placeholders for a VALUES list of length `n`.
 pub fn pair_placeholders(n: usize) -> String {
     vec!["(?, ?)"; n].join(",")
 }
 
+/// Run `query_chunk` on successive slices of `ids` and group the results by id.
+///
+/// # Errors
+///
+/// Returns whatever error `query_chunk` returns.
 pub fn fold_in_id_chunks<T, E>(
     ids: &[i64],
     mut query_chunk: impl FnMut(&[i64]) -> Result<Vec<(i64, T)>, E>,
@@ -35,6 +42,10 @@ pub fn fold_in_id_chunks<T, E>(
 ///
 /// `build_sql` receives the `IN (...)` placeholder list for the current chunk;
 /// `map_row` turns each row into its parent id and value.
+///
+/// # Errors
+///
+/// Returns a database error when a statement fails.
 pub fn group_rows_by_id<T, E>(
     conn: &Connection,
     ids: &[i64],

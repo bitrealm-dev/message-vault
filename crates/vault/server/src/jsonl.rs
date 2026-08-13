@@ -6,10 +6,16 @@ use anyhow::{Context, Result};
 
 use crate::models::{self, ExportRecord};
 
-/// Read a message-ir JSONL conversation file into import records.
+/// Read a message-ir JSON Lines conversation file (one JSON object per line)
+/// into import records.
 ///
 /// Parses line-by-line so the full file is not held as a second string buffer
 /// before deserialization (records still accumulate in memory).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened, a line cannot be read, or
+/// a line is not valid message-ir JSON.
 pub fn read_records(path: &Path) -> Result<Vec<ExportRecord>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let reader = BufReader::new(file);

@@ -26,11 +26,13 @@ pub struct ServerConfig {
     #[serde(default = "default_asset_part_size")]
     pub asset_part_size: usize,
     /// Attachments at or above this size historically skipped SHA-256 at upload
-    /// completion. Multipart completion always verifies digests now; this field
+    /// completion. Multipart completion always checks fingerprints now; this field
     /// remains for config compatibility.
     #[serde(default = "default_asset_hash_threshold_bytes")]
     pub asset_hash_threshold_bytes: u64,
-    /// Allowed CORS origins. Empty = same-origin only (no `Access-Control-Allow-Origin`).
+    /// Allowed Cross-Origin Resource Sharing (CORS) origins. Empty = same-origin
+    /// only (no `Access-Control-Allow-Origin`). CORS is the browser rule that
+    /// decides which other websites may call this API.
     /// Use `["*"]` only for local debugging. Example: `["https://app.example.com"]`.
     #[serde(default)]
     pub cors_origins: Vec<String>,
@@ -79,6 +81,10 @@ fn default_assets_converted_dir_name() -> String {
 }
 
 /// Safe source slug for path segments and `messages.source` values.
+///
+/// # Errors
+///
+/// Returns an error when the id is empty, too long, or uses disallowed characters.
 pub fn validate_source_id(source: &str) -> Result<()> {
     let s = source.trim();
     if s.is_empty() {
@@ -100,6 +106,10 @@ pub fn validate_source_id(source: &str) -> Result<()> {
 }
 
 /// Reject absolute paths and `..` so joins stay under an approved root.
+///
+/// # Errors
+///
+/// Returns an error when `name` is empty, absolute, or contains `..`.
 pub fn safe_rel_path(name: &str) -> Result<PathBuf> {
     use std::path::{Component, Path};
 
@@ -128,6 +138,10 @@ pub fn safe_rel_path(name: &str) -> Result<PathBuf> {
 }
 
 /// Join `rel` under `root` after rejecting traversal. Does not follow the final path.
+///
+/// # Errors
+///
+/// Returns an error when `rel` is not a safe relative path.
 pub fn resolve_under_root(root: &Path, rel: &str) -> Result<PathBuf> {
     Ok(root.join(safe_rel_path(rel)?))
 }
