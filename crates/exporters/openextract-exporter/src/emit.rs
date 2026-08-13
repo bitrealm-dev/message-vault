@@ -1,4 +1,5 @@
-//! Convert OpenExtract rows → common message → packaging via FormatSink.
+//! Convert OpenExtract rows into the shared conversation structure, then write
+//! the chosen output format via [`FormatSink`].
 
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
 use anyhow::{Context, Result, bail};
@@ -37,6 +38,11 @@ fn count(report: &ExportReport, key: &str) -> u64 {
 ///
 /// When `cancel` is set, cooperative cancellation is checked between CSV files
 /// and before writing. Cancelled runs return an error with message `cancelled`.
+///
+/// # Errors
+///
+/// Returns an error when output overlaps input, a CSV cannot be parsed, or the
+/// user cancels.
 pub(crate) fn convert_export(
     input: &Path,
     output: &Path,
@@ -47,10 +53,10 @@ pub(crate) fn convert_export(
     cancel: Option<&CancelFlag>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Canonicalize so relative paths resolve and so output/input identity is
-    // checked on resolved paths. Cleaning the output before reading the input
-    // would otherwise delete source CSVs when both paths are the same (or the
-    // input file lives inside the output directory).
+    // Resolve to absolute paths so relative inputs work and so the output/input
+    // overlap check uses the same path form. Cleaning the output before reading
+    // the input would otherwise delete source CSVs when both paths are the same
+    // (or the input file lives inside the output directory).
     let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
     let output =
         fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
@@ -235,8 +241,7 @@ fn resolve_chat(book: &ContactsBook, peer: &str) -> (String, String, bool) {
         return ("unknown".to_string(), String::new(), true);
     }
     if let Some(digits) = sanitize_number(peer) {
-        // Guarded policy on the raw peer: E.164 when unambiguous (keeps the
-        // `+` for +-prefixed values), else digits-as-is — never `+0…`.
+        // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
         let handle = phone::normalize_guarded(peer, phone::PhoneRegion::for_raw(peer)).normalized;
         // The contacts book keys entries by its own US-digit form; look up
         // with that form so +-prefixed raws still resolve names.
@@ -284,8 +289,8 @@ fn resolve_sender(
     // Prefer phone on chat_id when it looks like E.164.
     let handle = if chat_id.starts_with('+') || sanitize_number(chat_id).is_some() {
         if chat_id.starts_with('+') {
-            // Guarded: only unambiguous +-prefixed values pass through; a
-            // fabricated +0… stays digits-as-is so the vault can flag it.
+            // Only unambiguous +-prefixed values pass through. A fabricated
+            // `+0…` stays digits-as-is so the vault can flag it.
             phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized
         } else {
             sanitize_number(chat_id)
@@ -334,17 +339,25 @@ fn parse_timestamp(raw: &str) -> Option<(i64, String)> {
     None
 }
 
+/// First non-empty `contact_name` extra on a message in this conversation.
+fn first_contact_name(convo: &PendingConversation) -> Option<String> {
+    convo
+        .messages
+        .iter()
+        .map(|m| m.extra_str("contact_name").trim())
+        .find(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// Build a [`ConversationDocument`] from one pending conversation.
+///
+/// Currently always returns `Ok`. The `Result` matches the other exporters.
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
     report: &mut ExportReport,
 ) -> Result<ConversationDocument> {
-    let contact_name = convo
-        .messages
-        .iter()
-        .map(|m| m.extra_str("contact_name").trim())
-        .find(|n| !n.is_empty())
-        .map(str::to_string);
+    let contact_name = first_contact_name(convo);
     let participants = if chat_id.is_empty() || chat_id.eq_ignore_ascii_case("unknown") {
         Vec::new()
     } else {

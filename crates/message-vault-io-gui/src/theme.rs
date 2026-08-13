@@ -1,4 +1,8 @@
-//! Fastmail-style four-seed theme: mode + presets, derived palette for Slint.
+//! Color theme: light/dark/system mode plus named palettes.
+//!
+//! Each palette starts from four seed colors (light header, light accent,
+//! dark header, dark accent). The rest of the UI colors are mixed from those
+//! seeds and pushed into the Slint `Theme` global.
 
 use message_vault_io_core::AppearanceSection;
 use slint::{Brush, Color, ComponentHandle, ModelRc, SharedString, VecModel};
@@ -14,8 +18,10 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
+    /// Light, Dark, and System, in combo-box order.
     pub const ALL: [Self; 3] = [Self::Light, Self::Dark, Self::System];
 
+    /// Value stored in `export.ini` under `appearance.mode`.
     pub fn as_ini(self) -> &'static str {
         match self {
             Self::Light => "light",
@@ -24,6 +30,7 @@ impl ThemeMode {
         }
     }
 
+    /// Combo-box label for this mode.
     pub fn label(self) -> &'static str {
         match self {
             Self::Light => "Light",
@@ -32,6 +39,7 @@ impl ThemeMode {
         }
     }
 
+    /// Parse an `appearance.mode` string from `export.ini`.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "light" => Some(Self::Light),
@@ -41,6 +49,7 @@ impl ThemeMode {
         }
     }
 
+    /// Combo index: Light = 0, Dark = 1, System = 2.
     pub fn index(self) -> i32 {
         match self {
             Self::Light => 0,
@@ -49,6 +58,7 @@ impl ThemeMode {
         }
     }
 
+    /// Mode for a combo index. Unknown indexes map to Dark (index 1).
     pub fn from_index(index: i32) -> Self {
         match index {
             0 => Self::Light,
@@ -58,13 +68,14 @@ impl ThemeMode {
     }
 }
 
-/// Resolved light/dark after applying system preference.
+/// Light or dark after System mode has been resolved against the OS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedTheme {
     Light,
     Dark,
 }
 
+/// Four seed colors that define a named palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeSeeds {
     pub light_header: Rgb,
@@ -73,6 +84,7 @@ pub struct ThemeSeeds {
     pub dark_accent: Rgb,
 }
 
+/// Named palette shown in the Appearance combo box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemePreset {
     pub id: &'static str,
@@ -80,6 +92,7 @@ pub struct ThemePreset {
     pub seeds: ThemeSeeds,
 }
 
+/// 8-bit RGB color used while mixing the palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
     pub r: u8,
@@ -88,10 +101,12 @@ pub struct Rgb {
 }
 
 impl Rgb {
+    /// Build from separate red, green, and blue channels.
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
+    /// Build from a 0xRRGGBB integer.
     pub const fn from_hex(hex: u32) -> Self {
         Self {
             r: ((hex >> 16) & 0xff) as u8,
@@ -100,20 +115,23 @@ impl Rgb {
         }
     }
 
+    /// Convert to a Slint `Color`.
     pub fn color(self) -> Color {
         Color::from_rgb_u8(self.r, self.g, self.b)
     }
 
+    /// Solid Slint brush for this color.
     pub fn brush(self) -> Brush {
         Brush::SolidColor(self.color())
     }
 
+    /// Solid Slint brush with an explicit alpha channel.
     pub fn with_alpha(self, a: u8) -> Brush {
         Brush::SolidColor(Color::from_argb_u8(a, self.r, self.g, self.b))
     }
 }
 
-/// Ocean Depths — theme-factory default.
+/// Ocean Depths seeds. This is the default palette.
 pub const DEFAULT_SEEDS: ThemeSeeds = ThemeSeeds {
     light_header: Rgb::from_hex(0xf1faee),
     light_accent: Rgb::from_hex(0x2d8b8b),
@@ -121,8 +139,10 @@ pub const DEFAULT_SEEDS: ThemeSeeds = ThemeSeeds {
     dark_accent: Rgb::from_hex(0xa8dadc),
 };
 
+/// Default appearance mode when `export.ini` has no `appearance.mode`.
 pub const DEFAULT_MODE: ThemeMode = ThemeMode::Dark;
 
+/// Named palettes shown in the Appearance combo box, in combo order.
 pub const THEME_PRESETS: &[ThemePreset] = &[
     ThemePreset {
         id: "ocean-depths",
@@ -186,7 +206,7 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
             light_header: Rgb::from_hex(0xd3d3d3),
             light_accent: Rgb::from_hex(0x708090),
             dark_header: Rgb::from_hex(0x36454f),
-            // Light Gray darkened so white sent-text stays readable
+            // Light Gray darkened so white sent-message text stays readable
             dark_accent: Rgb::from_hex(0x9aa8b5),
         },
     },
@@ -207,7 +227,7 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
             light_header: Rgb::from_hex(0xfafafa),
             light_accent: Rgb::from_hex(0x4a6fa5),
             dark_header: Rgb::from_hex(0x4a6fa5),
-            // Ice Blue darkened toward Steel Blue for sent-text contrast
+            // Ice Blue darkened toward Steel Blue so sent-message text stays readable
             dark_accent: Rgb::from_hex(0x5a7fb5),
         },
     },
@@ -228,7 +248,7 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
             light_header: Rgb::from_hex(0xffffff),
             light_accent: Rgb::from_hex(0x0066ff),
             dark_header: Rgb::from_hex(0x1e1e1e),
-            // Neon Cyan mixed toward Electric Blue for sent-text contrast
+            // Neon Cyan mixed toward Electric Blue so sent-message text stays readable
             dark_accent: Rgb::from_hex(0x0088bb),
         },
     },
@@ -254,7 +274,7 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
 ];
 
-/// CSS `color-mix(in srgb, a percent%, b)` → `percent` of `a` + rest of `b`.
+/// Mix `a_percent` percent of `a` with the rest of `b` (same idea as CSS `color-mix` in sRGB).
 fn mix(a: Rgb, b: Rgb, a_percent: f32) -> Rgb {
     let t = (a_percent / 100.0).clamp(0.0, 1.0);
     let inv = 1.0 - t;
@@ -268,6 +288,7 @@ fn mix(a: Rgb, b: Rgb, a_percent: f32) -> Rgb {
 const BLACK: Rgb = Rgb::new(0, 0, 0);
 const WHITE: Rgb = Rgb::new(255, 255, 255);
 
+/// Full UI palette mixed from a preset's seeds and the resolved light/dark mode.
 #[derive(Debug, Clone, Copy)]
 pub struct DerivedPalette {
     pub is_dark: bool,
@@ -293,9 +314,9 @@ pub struct DerivedPalette {
     pub tab_bar: Rgb,
     pub tab_inactive: Rgb,
     pub tab_active: Rgb,
-    /// Always a dark terminal surface (independent of light/dark UI mode).
+    /// Always a dark terminal surface, regardless of light or dark UI mode.
     pub log_bg: Rgb,
-    /// Always light text for [`log_bg`] readability.
+    /// Always light text so it stays readable on [`log_bg`].
     pub log_text: Rgb,
     pub glyph_bg: Rgb,
     pub glyph_fg: Rgb,
@@ -303,6 +324,7 @@ pub struct DerivedPalette {
     pub separator: Rgb,
 }
 
+/// True when the OS color scheme is dark, unspecified, or cannot be read.
 pub fn prefers_dark_scheme() -> bool {
     match dark_light::detect() {
         Ok(dark_light::Mode::Light) => false,
@@ -310,6 +332,7 @@ pub fn prefers_dark_scheme() -> bool {
     }
 }
 
+/// Turn Light / Dark / System into a concrete light or dark result.
 pub fn resolve_mode(mode: ThemeMode) -> ResolvedTheme {
     match mode {
         ThemeMode::Light => ResolvedTheme::Light,
@@ -324,6 +347,7 @@ pub fn resolve_mode(mode: ThemeMode) -> ResolvedTheme {
     }
 }
 
+/// Look up a preset by `id`. Unknown ids fall back to Ocean Depths (index 0).
 pub fn preset_by_id(id: &str) -> &'static ThemePreset {
     THEME_PRESETS
         .iter()
@@ -331,22 +355,25 @@ pub fn preset_by_id(id: &str) -> &'static ThemePreset {
         .unwrap_or(&THEME_PRESETS[0])
 }
 
+/// Combo index of the preset with this `id`, or `0` if missing.
 pub fn preset_index(id: &str) -> i32 {
     THEME_PRESETS.iter().position(|p| p.id == id).unwrap_or(0) as i32
 }
 
+/// Preset at `index`, or Ocean Depths if the index is out of range.
 pub fn preset_from_index(index: i32) -> &'static ThemePreset {
     THEME_PRESETS
         .get(index as usize)
         .unwrap_or(&THEME_PRESETS[0])
 }
 
+/// Mix a full [`DerivedPalette`] from `seeds` and the resolved light/dark mode.
 pub fn derive_palette(seeds: ThemeSeeds, resolved: ResolvedTheme) -> DerivedPalette {
     let (header, accent) = match resolved {
         ResolvedTheme::Dark => (seeds.dark_header, seeds.dark_accent),
         ResolvedTheme::Light => (seeds.light_header, seeds.light_accent),
     };
-    // Log pane stays terminal-style in every theme (dark bg + light text).
+    // The log pane stays terminal-style in every theme (dark background, light text).
     let log_bg = Rgb::from_hex(0x121416);
     let log_text = Rgb::from_hex(0xe8eaed);
 
@@ -434,6 +461,7 @@ pub fn derive_palette(seeds: ThemeSeeds, resolved: ResolvedTheme) -> DerivedPale
     }
 }
 
+/// Combo-box labels for Light / Dark / System.
 pub fn mode_options() -> ModelRc<SharedString> {
     let items: Vec<SharedString> = ThemeMode::ALL
         .iter()
@@ -442,6 +470,7 @@ pub fn mode_options() -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(items))
 }
 
+/// Combo-box labels for the named palettes in [`THEME_PRESETS`] order.
 pub fn preset_options() -> ModelRc<SharedString> {
     let items: Vec<SharedString> = THEME_PRESETS
         .iter()
@@ -450,12 +479,14 @@ pub fn preset_options() -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(items))
 }
 
+/// Read mode and preset from the `[appearance]` section of `export.ini`.
 pub fn appearance_from_section(section: &AppearanceSection) -> (ThemeMode, &'static ThemePreset) {
     let mode = ThemeMode::parse(&section.mode).unwrap_or(DEFAULT_MODE);
     let preset = preset_by_id(&section.preset);
     (mode, preset)
 }
 
+/// Push mixed colors into the Slint `Theme` global and update Appearance combo indexes.
 pub fn apply_to_ui(ui: &AppWindow, mode: ThemeMode, preset: &ThemePreset) {
     let resolved = resolve_mode(mode);
     let palette = derive_palette(preset.seeds, resolved);
@@ -496,6 +527,7 @@ pub fn apply_to_ui(ui: &AppWindow, mode: ThemeMode, preset: &ThemePreset) {
     appearance.set_preset_index(preset_index(preset.id));
 }
 
+/// Fill the Appearance combo boxes with mode and preset labels.
 pub fn push_option_models(ui: &AppWindow) {
     let appearance = ui.global::<AppearanceAdapter>();
     appearance.set_mode_options(mode_options());

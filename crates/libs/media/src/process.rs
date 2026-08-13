@@ -18,7 +18,7 @@ pub struct MediaReport {
     pub errors: Vec<String>,
 }
 
-/// How often to emit `…n/total` progress lines during convert/compress.
+/// How often to write `…n/total` progress lines during convert/compress.
 const MEDIA_PROGRESS_EVERY: usize = 100;
 
 /// Convert or compress media under `output_dir/attachments`.
@@ -321,8 +321,8 @@ fn changed(output_dir: &Path, old_rel: &str, new_path: &Path) -> Result<Outcome>
     let new_rel = rel_path(output_dir, new_path)?;
     // Always report Changed — even when the relative path is unchanged (e.g. JPG
     // recompressed in place). Callers must invalidate digest_sha256 for remapped
-    // paths; treating same-path rewrites as Skipped left stale digests in JSONL
-    // and caused vault-push sha256 mismatches after upload.
+    // paths; treating same-path rewrites as Skipped left stale fingerprints in
+    // JSON Lines files and caused vault-push sha256 mismatches after upload.
     Ok(Outcome::Changed {
         old_rel: old_rel.to_string(),
         new_rel,

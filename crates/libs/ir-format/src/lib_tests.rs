@@ -1,3 +1,5 @@
+//! Round-trip tests for reading and writing conversation documents.
+
 use super::*;
 use mail::clean_previous_mail_output;
 use message_ir::{

@@ -1,8 +1,18 @@
-//! Serialize message-ir v3 JSONL lines for Message Vault import.
+//! Turn conversation documents into JSON Lines for the Message Vault import API.
+//!
+//! JSON Lines means one JSON object per line. The first line is the conversation
+//! header. Each later line is one message.
 
 use anyhow::{Context, Result, bail};
 use message_ir::{ConversationDocument, ConversationHeader, IrMessage, SCHEMA_VERSION};
 
+/// Return the backup source name from a conversation header, or an error if the
+/// schema version or source field is unusable.
+///
+/// # Errors
+///
+/// Returns an error when `schema_version` is not the current version, or when
+/// `export.source` is empty.
 pub fn validate_header(header: &ConversationHeader) -> Result<String> {
     if header.schema_version != SCHEMA_VERSION {
         bail!(
@@ -18,7 +28,12 @@ pub fn validate_header(header: &ConversationHeader) -> Result<String> {
     Ok(source.to_string())
 }
 
-/// Header line for a conversation document (message-ir JSONL).
+/// First JSON Lines row for a conversation: the header object plus a newline.
+///
+/// # Errors
+///
+/// Returns an error when the header fails [`validate_header`] or cannot be
+/// serialized.
 pub fn document_header_line(doc: &ConversationDocument) -> Result<Vec<u8>> {
     let header = ConversationHeader::from_document(doc);
     validate_header(&header)?;
@@ -45,10 +60,14 @@ pub enum AttachmentProjection {
     },
 }
 
-/// Message line with attachment digests / missing placeholders applied.
+/// One JSON Lines message row, with attachment fingerprints or missing placeholders.
 ///
-/// `index` is the message's position in the conversation JSONL; it disambiguates
-/// empty-guid rows that share a timestamp so journal resume keys stay unique.
+/// `index` is the message's position in the conversation file. It keeps resume
+/// keys unique when two rows share a timestamp and have an empty guid.
+///
+/// # Errors
+///
+/// Returns an error when the message cannot be serialized.
 pub fn message_line(
     msg: &IrMessage,
     projections: &[AttachmentProjection],
@@ -86,7 +105,11 @@ pub fn message_line(
     serialize_message(&msg, index)
 }
 
-/// Message line with attachments stripped (text-only import).
+/// One JSON Lines message row with attachments removed (text-only import).
+///
+/// # Errors
+///
+/// Returns an error when the message cannot be serialized.
 pub fn message_line_without_attachments(
     msg: &IrMessage,
     index: usize,
@@ -96,6 +119,14 @@ pub fn message_line_without_attachments(
     serialize_message(&msg, index)
 }
 
+/// Serialize one message and return `(line_bytes, resume_guid)`.
+///
+/// Empty guids become `unguided:{timestamp}:{index}` so a later run can skip
+/// the same row.
+///
+/// # Errors
+///
+/// Returns an error when JSON serialization fails.
 fn serialize_message(msg: &IrMessage, index: usize) -> Result<(Vec<u8>, String)> {
     let mut out = serde_json::to_vec(msg).context("serialize message-ir message")?;
     out.push(b'\n');

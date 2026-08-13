@@ -44,6 +44,7 @@ struct ReexportReport {
 }
 
 impl ReexportReport {
+    /// Lines for CLI / GUI logs.
     fn log_lines(&self) -> Vec<String> {
         let mut lines = vec![
             format!("Detected input format: {}", self.detected_format),
@@ -54,6 +55,7 @@ impl ReexportReport {
     }
 }
 
+/// Detect the input format, copy attachments if needed, and write the new export.
 fn convert_export(input_dir: &Path, config: &ExporterConfig) -> Result<ReexportReport> {
     let input_canon = fs::canonicalize(input_dir)
         .with_context(|| format!("canonicalize input {}", input_dir.display()))?;
@@ -97,6 +99,7 @@ fn convert_export(input_dir: &Path, config: &ExporterConfig) -> Result<ReexportR
     })
 }
 
+/// Load every conversation document from a detected export directory.
 fn load_documents(
     input_dir: &Path,
     detected: DetectedExport,
@@ -124,17 +127,23 @@ fn load_documents(
 
     list_artifacts(input_dir, detected.format)?
         .into_iter()
-        .map(|path| match detected.format {
-            OutputFormat::Json => read_conversation_json(&path),
-            OutputFormat::Jsonl => read_conversation_jsonl(&path),
-            OutputFormat::Csv => read_conversation_csv(&path),
-            OutputFormat::Mbox => read_conversation_mbox(&path),
-            OutputFormat::Eml => read_conversation_eml_dir(&path),
-            OutputFormat::Xml => unreachable!("XML handled above"),
-        })
+        .map(|path| read_artifact(&path, detected.format))
         .collect()
 }
 
+/// Read one conversation file or EML folder in the detected format.
+fn read_artifact(path: &Path, format: OutputFormat) -> Result<ConversationDocument> {
+    match format {
+        OutputFormat::Json => read_conversation_json(path),
+        OutputFormat::Jsonl => read_conversation_jsonl(path),
+        OutputFormat::Csv => read_conversation_csv(path),
+        OutputFormat::Mbox => read_conversation_mbox(path),
+        OutputFormat::Eml => read_conversation_eml_dir(path),
+        OutputFormat::Xml => unreachable!("XML handled above"),
+    }
+}
+
+/// Detect a single Message Vault export format in `input_dir`.
 fn detect_ir_export(input_dir: &Path) -> Result<DetectedExport> {
     if !input_dir.is_dir() {
         bail!("input is not a directory: {}", input_dir.display());
@@ -210,6 +219,7 @@ fn detect_ir_export(input_dir: &Path) -> Result<DetectedExport> {
     }
 }
 
+/// List conversation files or EML folders for the detected format.
 fn list_artifacts(input_dir: &Path, format: OutputFormat) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(input_dir)? {
@@ -263,6 +273,7 @@ fn list_artifacts(input_dir: &Path, format: OutputFormat) -> Result<Vec<PathBuf>
     Ok(paths)
 }
 
+/// True for sidecar files that are not conversation artifacts.
 fn ignored_artifact(name: &str) -> bool {
     name == "attachments"
         || name.starts_with('.')
@@ -272,6 +283,7 @@ fn ignored_artifact(name: &str) -> bool {
         || name.ends_with(".xml.sbrbody")
 }
 
+/// True when the first line of `path` looks like `<smses`.
 fn looks_like_smses(path: &Path) -> bool {
     let Ok(file) = File::open(path) else {
         return false;
@@ -281,6 +293,7 @@ fn looks_like_smses(path: &Path) -> bool {
     first_line.to_ascii_lowercase().contains("<smses")
 }
 
+/// True when `path` is a schema-version-3 conversation JSON file.
 fn looks_like_ir_json(path: &Path) -> Result<bool> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let value: serde_json::Value = match serde_json::from_str(&raw) {
@@ -294,6 +307,7 @@ fn looks_like_ir_json(path: &Path) -> Result<bool> {
         && value.get("messages").is_some())
 }
 
+/// True when `path` is a schema-version-3 JSON Lines conversation file.
 fn looks_like_ir_jsonl(path: &Path) -> Result<bool> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let Some(Ok(first_line)) = BufReader::new(file).lines().next() else {
@@ -310,6 +324,7 @@ fn looks_like_ir_jsonl(path: &Path) -> Result<bool> {
         && value.get("messages").is_none())
 }
 
+/// True when `path` has every column in [`CSV_HEADERS`].
 fn looks_like_ir_csv(path: &Path) -> Result<bool> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut reader = csv::ReaderBuilder::new()
@@ -322,6 +337,7 @@ fn looks_like_ir_csv(path: &Path) -> Result<bool> {
     Ok(CSV_HEADERS.iter().all(|header| headers.contains(header)))
 }
 
+/// True when `dir` contains at least one `.eml` file.
 fn dir_has_eml(dir: &Path) -> Result<bool> {
     for entry in fs::read_dir(dir)? {
         if entry?
@@ -336,6 +352,7 @@ fn dir_has_eml(dir: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// Copy `input_dir/attachments` into `output_dir/attachments` when present.
 fn copy_attachments_dir(input_dir: &Path, output_dir: &Path) -> Result<()> {
     let source = input_dir.join("attachments");
     if !source.is_dir() {
@@ -346,6 +363,7 @@ fn copy_attachments_dir(input_dir: &Path, output_dir: &Path) -> Result<()> {
     copy_dir_recursive(&source, &destination)
 }
 
+/// Recursively copy files from `source` into `destination`.
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
     for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
         let entry = entry?;
@@ -372,6 +390,7 @@ mod tests {
     use message_ir_format::{read_conversation_csv, read_conversation_json};
     use message_vault_io_core::{FormatConfig, MediaConfig, ObfuscateConfig, SourceConfig};
 
+    /// One-message conversation used by convert tests.
     fn sample_doc() -> ConversationDocument {
         let mut document = ConversationDocument {
             schema_version: SCHEMA_VERSION,

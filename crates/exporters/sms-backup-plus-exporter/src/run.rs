@@ -94,7 +94,12 @@ fn resolve_inputs(cli_inputs: Vec<PathBuf>, defaults: Vec<PathBuf>) -> Result<Ve
     Ok(inputs)
 }
 
-/// Resolve owner/contacts/name-mapping, convert, apply media/obfuscate via FormatSink.
+/// Resolve owner, contacts, and name mapping, then convert.
+///
+/// # Errors
+///
+/// Returns an error when the source is not SMS Backup+, conversion fails, media
+/// processing fails for every candidate file, or the user cancels.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::SmsBackupPlus(source) = &config.source else {
         bail!("sms-backup-plus-exporter requires SourceConfig::SmsBackupPlus");

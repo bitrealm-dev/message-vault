@@ -1,4 +1,4 @@
-//! Encrypted iOS backup decrypt helpers (ported from imessage-vault-io).
+//! Decrypt encrypted iOS backup files (Messages DB, Contacts DB, attachments).
 
 use std::{
     env::temp_dir,
@@ -20,11 +20,12 @@ use crate::{contacts, error::RuntimeError, options::MailOptions};
 
 const MAX_IN_MEMORY_DECRYPT: u64 = 25 * 1024 * 1024;
 
-/// Process-unique temp file suffix (PID + timestamp + monotonic counter) so
-/// concurrent exports never collide on the same `/tmp` file name. The counter
-/// guards against same-process collisions where the clock tick is coarse.
+/// Process-unique suffix (PID + timestamp + counter) so concurrent exports
+/// never share the same `/tmp` file name. The counter covers same-process
+/// collisions when the clock tick is coarse.
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Unique suffix for a temp file name.
 fn unique_suffix() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -34,8 +35,13 @@ fn unique_suffix() -> String {
     format!("{}-{nanos}-{counter}", std::process::id())
 }
 
-/// Restrict a freshly created temp file to the current user (0600) on Unix;
-/// decrypted backup contents must not be world-readable in shared `/tmp`.
+/// Restrict a freshly created temp file to the current user (0600) on Unix.
+///
+/// Decrypted backup contents must not be world-readable in shared `/tmp`.
+///
+/// # Errors
+///
+/// Returns an error when permissions cannot be set.
 #[cfg(unix)]
 fn restrict_permissions(file: &File) -> Result<(), RuntimeError> {
     use std::{fs, os::unix::fs::PermissionsExt};
@@ -51,6 +57,11 @@ fn restrict_permissions(_file: &File) -> Result<(), RuntimeError> {
 /// Open the iOS backup, prompting for a password if encrypted and none was provided.
 ///
 /// Returns `Ok(None)` for non-iOS platforms or unencrypted iOS backups.
+///
+/// # Errors
+///
+/// Returns an error when the backup is unencrypted but a password was given,
+/// the password is wrong, or the backup cannot be opened.
 pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, RuntimeError> {
     if !matches!(options.platform, Platform::iOS) {
         return Ok(None);
@@ -88,6 +99,11 @@ pub(crate) fn decrypt_backup(options: &MailOptions) -> Result<Option<Backup>, Ru
     Ok(Some(backup))
 }
 
+/// Prompt on a TTY for the iOS backup password.
+///
+/// # Errors
+///
+/// Returns an error when stdin is not a terminal or the password cannot be read.
 fn prompt_for_password() -> Result<String, RuntimeError> {
     if !stdin().is_terminal() {
         return Err(RuntimeError::InvalidOptions(
@@ -103,6 +119,10 @@ fn prompt_for_password() -> Result<String, RuntimeError> {
 }
 
 /// Write the decrypted Messages database from the iOS backup to a temp file.
+///
+/// # Errors
+///
+/// Returns an error when the file is missing from the backup or cannot be written.
 pub(crate) fn get_decrypted_message_database(
     backup: &Backup,
     log: Option<&LogSink>,
@@ -122,6 +142,10 @@ pub(crate) fn get_decrypted_message_database(
 }
 
 /// Write the decrypted Contacts database from the iOS backup to a temp file.
+///
+/// # Errors
+///
+/// Returns an error when the file is missing from the backup or cannot be written.
 pub(crate) fn get_decrypted_contacts_database(
     backup: &Backup,
     log: Option<&LogSink>,
@@ -142,6 +166,11 @@ pub(crate) fn get_decrypted_contacts_database(
 }
 
 /// Decrypt one iOS backup file into a temporary file.
+///
+/// # Errors
+///
+/// Returns an error when the path has no file name, the file is missing from
+/// the backup, or the temp file cannot be written.
 pub(crate) fn decrypt_file(backup: &Backup, from: &Path) -> Result<PathBuf, RuntimeError> {
     match backup.get_file(
         from.file_name()

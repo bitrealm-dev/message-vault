@@ -126,10 +126,10 @@ impl ContactsBook {
             let Some(digits) = sanitize_number(phone) else {
                 continue;
             };
-            // Guarded policy: digits-as-is when the value is ambiguous for the
-            // US-centric book (a trunk-zero `020 7946 0000` must never become
-            // the invalid `+02079460000`). The review note is produced
-            // server-side, where the handles table stores it.
+            // Keep digits as-is when the value is ambiguous for the US-centric
+            // book. A trunk-zero `020 7946 0000` must never become the invalid
+            // `+02079460000`. The vault server records a review note on the
+            // handles table for those cases.
             let normalized = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
             if !key.is_empty() {
                 self.by_name
@@ -198,7 +198,7 @@ fn normalize_handle(raw: &str, handle_type: HandleType) -> String {
 /// `--contacts` accepts the same files as contacts-validate (VCF or vCard
 /// CSV). `--vcf` is a VCF-only alias.
 ///
-/// When neither is passed, returns an empty book and emits a warning via `log`
+/// When neither is passed, returns an empty book and writes a warning via `log`
 /// (or stderr when `log` is `None`).
 pub fn resolve_contacts_cli(
     contacts: Option<PathBuf>,

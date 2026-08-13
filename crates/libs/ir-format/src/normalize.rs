@@ -1,14 +1,14 @@
-//! Normalize IR documents before content equality checks.
+//! Prepare conversation documents so round-trip tests can compare content.
 
 #[cfg(test)]
 use message_ir::{ConversationDocument, IrAttachment};
 use message_ir::{IrImessage, IrSource};
 
-/// Prepare a document for content equality after round-trip.
+/// Prepare a document so two copies can be compared after a round trip.
 ///
-/// - Recomputes conversation stats
-/// - Collapses empty `source` / `imessage` bags to `None`
-/// - Clears packaging stem suffix and attachment bytes (not part of JSON content)
+/// Recomputes conversation stats. Drops empty `source` / `imessage` bags.
+/// Clears the packaging stem suffix and attachment bytes, which are not part
+/// of the JSON content.
 #[cfg(test)]
 pub(crate) fn normalize_document_for_compare(doc: &mut ConversationDocument) {
     for msg in &mut doc.messages {
@@ -16,7 +16,7 @@ pub(crate) fn normalize_document_for_compare(doc: &mut ConversationDocument) {
             msg.source = source.into_option();
         }
         if let Some(mut imessage) = msg.imessage.take() {
-            // Match CSV packaging: a single text/run part equal to `text` is omitted.
+            // CSV packaging omits a single text/run part that equals `text`.
             if crate::write::parts_are_trivial_text_duplicate(&msg.text, imessage.parts.as_ref()) {
                 imessage.parts = None;
             }
@@ -25,7 +25,6 @@ pub(crate) fn normalize_document_for_compare(doc: &mut ConversationDocument) {
         for att in &mut msg.attachments {
             clear_attachment_ephemera(att);
         }
-        // Normalize empty option strings.
         empty_to_none(&mut msg.sender_handle);
         empty_to_none(&mut msg.sender_display_name);
         empty_to_none(&mut msg.subject);
@@ -41,6 +40,7 @@ pub(crate) fn normalize_document_for_compare(doc: &mut ConversationDocument) {
     doc.finalize_stats();
 }
 
+/// Drop fields that exist only while packaging (bytes, empty strings).
 #[cfg(test)]
 fn clear_attachment_ephemera(att: &mut IrAttachment) {
     att.bytes = None;
@@ -52,6 +52,7 @@ fn clear_attachment_ephemera(att: &mut IrAttachment) {
     empty_to_none(&mut att.sticker_effect);
 }
 
+/// Replace a blank or whitespace-only string with `None`.
 #[cfg(test)]
 fn empty_to_none(v: &mut Option<String>) {
     if let Some(s) = v.as_ref() {
@@ -61,12 +62,15 @@ fn empty_to_none(v: &mut Option<String>) {
     }
 }
 
-/// Build [`IrImessage`] from optional pieces; returns `None` when empty.
+/// Return `None` when every iMessage-only field is empty.
 pub(crate) fn imessage_from_parts(im: IrImessage) -> Option<IrImessage> {
     im.into_option()
 }
 
-/// Build [`IrSource`] from android type + fields JSON cell.
+/// Build [`IrSource`] from an Android type and a JSON object of extra fields.
+///
+/// Returns `None` when both pieces are empty. Invalid JSON becomes an empty
+/// field map.
 pub(crate) fn source_from_parts(android_type: Option<i32>, fields_json: &str) -> Option<IrSource> {
     let fields = if fields_json.trim().is_empty() {
         Default::default()

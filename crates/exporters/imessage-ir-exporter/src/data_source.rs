@@ -1,4 +1,4 @@
-//! Open macOS chat.db or iOS backup (encrypted → temp sms.db).
+//! Open macOS `chat.db` or an iOS backup (encrypted backups decrypt to a temp sms.db).
 
 use std::{
     fs::remove_file,
@@ -23,10 +23,12 @@ struct TempDatabase {
 }
 
 impl TempDatabase {
+    /// Remember a temp database path so [`Drop`] can delete it.
     fn new(path: PathBuf, log: Option<LogSink>) -> Self {
         Self { path, log }
     }
 
+    /// Path of the temp database file.
     fn path(&self) -> &Path {
         &self.path
     }
@@ -54,6 +56,12 @@ pub(crate) struct DataSource {
 }
 
 impl DataSource {
+    /// Open the Messages database (and contacts index) for `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backup cannot be decrypted or `chat.db` cannot
+    /// be opened.
     pub fn from(options: &MailOptions) -> Result<Self, RuntimeError> {
         let log = options.log.clone();
         match options.platform {
@@ -143,6 +151,7 @@ impl DataSource {
         }
     }
 
+    /// Build a contacts index, or `None` (with a log line) when that fails.
     fn get_contacts_index(path: Option<&Path>, log: Option<&LogSink>) -> Option<ContactsIndex> {
         match ContactsIndex::build(path) {
             Ok(index) => Some(index),
@@ -158,6 +167,7 @@ impl DataSource {
         }
     }
 
+    /// Open SQLite connection to the Messages database.
     pub fn db(&self) -> &Connection {
         match self.messages_connection.as_ref() {
             Some(db) => db,

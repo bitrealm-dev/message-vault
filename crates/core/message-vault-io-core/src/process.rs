@@ -1,4 +1,4 @@
-//! In-process job runners with cooperative cancel and mpsc log streaming.
+//! Background jobs with cooperative cancel and a channel for log lines.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +13,7 @@ pub type CancelFlag = Arc<AtomicBool>;
 pub struct LogSink(Arc<dyn Fn(&str) + Send + Sync>);
 
 impl LogSink {
+    /// Wrap a callback that receives one log line at a time.
     pub fn new<F>(f: F) -> Self
     where
         F: Fn(&str) + Send + Sync + 'static,
@@ -20,6 +21,7 @@ impl LogSink {
         Self(Arc::new(f))
     }
 
+    /// Send one log line to the callback.
     pub fn emit(&self, line: &str) {
         (self.0)(line);
     }
@@ -31,7 +33,7 @@ impl fmt::Debug for LogSink {
     }
 }
 
-/// Emit a log line to `sink` when set; otherwise print to stderr (CLI default).
+/// Send a log line to `sink` when set. Otherwise print to stderr (CLI default).
 pub fn emit_log(sink: Option<&LogSink>, line: impl AsRef<str>) {
     let line = line.as_ref();
     match sink {
@@ -47,7 +49,11 @@ pub fn is_cancelled(cancel: Option<&CancelFlag>) -> bool {
         .unwrap_or(false)
 }
 
-/// Err if cancel was requested.
+/// Return `Err("cancelled")` if cancel was requested.
+///
+/// # Errors
+///
+/// Returns `"cancelled"` when the flag is set.
 pub fn check_cancel(cancel: Option<&CancelFlag>) -> Result<(), &'static str> {
     if is_cancelled(cancel) {
         Err("cancelled")
@@ -64,6 +70,7 @@ pub struct JobError {
 }
 
 impl JobError {
+    /// Failure with a technical detail and no separate banner text.
     pub fn detail(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
@@ -71,6 +78,7 @@ impl JobError {
         }
     }
 
+    /// Failure with a technical detail plus a short banner for the GUI.
     pub fn with_user_message(detail: impl Into<String>, user_message: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
@@ -78,6 +86,7 @@ impl JobError {
         }
     }
 
+    /// True when the detail text contains `cancelled` (case-insensitive).
     pub fn is_cancelled(&self) -> bool {
         self.detail.to_ascii_lowercase().contains("cancelled")
     }
@@ -102,6 +111,7 @@ impl fmt::Display for JobError {
 }
 
 #[derive(Debug, Clone)]
+/// One event sent on the job channel: started, log line, finished, or error.
 pub enum ProcessEvent {
     Started(String),
     Log(String),
@@ -123,6 +133,7 @@ impl ProcessEvent {
 }
 
 #[derive(Debug, Clone)]
+/// Cancel flag shared with a running in-process job.
 pub struct ProcessControl {
     cancel: CancelFlag,
 }
@@ -141,11 +152,17 @@ impl ProcessControl {
         Arc::clone(&self.cancel)
     }
 
+    /// Ask the running job to stop. Always succeeds; the job checks the flag.
+    ///
+    /// # Errors
+    ///
+    /// The `Result` is for a stable GUI API; this method currently always returns `Ok`.
     pub fn cancel(&self) -> Result<(), String> {
         self.cancel.store(true, Ordering::Relaxed);
         Ok(())
     }
 
+    /// Clear the cancel flag before a new job starts.
     fn begin_job(&self) {
         self.cancel.store(false, Ordering::Relaxed);
     }

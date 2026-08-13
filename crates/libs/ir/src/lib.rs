@@ -1,17 +1,20 @@
-//! Canonical conversation intermediate representation (IR) — schema types only.
+//! Shared conversation structure every exporter writes.
 //!
-//! Source exporters parse vendor formats into [`ConversationDocument`]. Packaging
-//! (FormatSink, readers/writers) lives in `message-ir-format`; directory convert
-//! in `message-reexport`. See the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md).
+//! A [`ConversationDocument`] is the in-memory form of one chat: export
+//! metadata, participants, and messages. Backup converters parse vendor
+//! formats into this type. Writing files (JSON, CSV, EML, and so on) lives
+//! in `message-ir-format`. Converting an existing export directory lives in
+//! `message-reexport`. See the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md).
 //!
-//! Exporters stage parsed rows in the shared [`PendingMessage`] /
-//! [`PendingConversation`] intermediates (with per-exporter metadata in their
-//! `extra` maps) before converting them into [`ConversationDocument`].
+//! Converters stage parsed rows in [`PendingMessage`] and
+//! [`PendingConversation`] (with per-converter metadata in their `extra`
+//! maps) before building a [`ConversationDocument`].
 
 use message_csv::conversation_filename;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+/// Schema version written into every [`ConversationDocument`] (currently 3).
 pub const SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationDocument {
@@ -19,7 +22,7 @@ pub struct ConversationDocument {
     pub export: ExportMeta,
     pub conversation: ConversationMeta,
     pub messages: Vec<IrMessage>,
-    /// On-disk stem suffix (e.g. `__whatsapp`). Never serialized into JSON/JSONL.
+    /// On-disk stem suffix (e.g. `__whatsapp`). Never written into JSON or JSON Lines files.
     #[serde(skip)]
     pub packaging_stem_suffix: Option<String>,
 }
@@ -30,7 +33,7 @@ pub struct ExportMeta {
     pub tool: String,
     pub tool_version: String,
     pub owner_handle: Option<String>,
-    /// Outgoing display name; emitters should set when known (iMessage caller-id / `"Me"`).
+    /// Outgoing display name. Set when known (iMessage caller-id or `"Me"`).
     pub owner_display_name: Option<String>,
 }
 
@@ -174,7 +177,7 @@ impl HandleService {
         }
     }
 
-    /// Parse storage ids and common aliases from IR / UI / import.
+    /// Parse storage ids and common aliases from documents, UI, and import.
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "whatsapp" | "wa" => Self::Whatsapp,
@@ -185,7 +188,7 @@ impl HandleService {
         }
     }
 
-    /// Map IR per-message/service transport onto a handle platform bucket.
+    /// Map a per-message transport onto a handle platform bucket.
     pub fn from_ir_service(service: IrService) -> Self {
         match service {
             IrService::Whatsapp => Self::Whatsapp,
@@ -371,6 +374,7 @@ impl IrImessage {
 }
 
 impl ConversationDocument {
+    /// Filename stem used for CSV, JSON, and mail folders (no extension).
     pub fn filename_stem(&self) -> String {
         let handles: Vec<String> = self
             .conversation
@@ -394,6 +398,7 @@ impl ConversationDocument {
     }
 }
 
+/// Count messages and attachments and find first/last timestamps.
 fn compute_stats(messages: &[IrMessage]) -> ConversationStats {
     let message_count = messages.len() as u64;
     let attachment_count = messages.iter().map(|m| m.attachments.len() as u64).sum();
@@ -451,6 +456,7 @@ pub struct ConversationHeader {
 }
 
 impl ConversationHeader {
+    /// Copy export and conversation metadata from a full document.
     pub fn from_document(doc: &ConversationDocument) -> Self {
         Self {
             schema_version: doc.schema_version,

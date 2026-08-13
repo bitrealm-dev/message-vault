@@ -1,4 +1,4 @@
-//! Small shared helpers for IR readers / projectors.
+//! Small shared helpers for reading and writing conversation documents.
 
 use anyhow::{Context, Result};
 use message_ir::{HandleType, IrAttachment};

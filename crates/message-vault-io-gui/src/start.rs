@@ -1,4 +1,8 @@
-//! Job start helpers and the shared library-job event bridge.
+//! Start background jobs and forward their events onto the Slint UI thread.
+//!
+//! A library job runs an exporter or vault client in this process.
+//! Progress arrives on an `mpsc` channel and is flushed to the on-screen log
+//! in small batches so the UI stays responsive.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,8 +21,8 @@ use vault_pull::{
     query_stats as run_vault_query_stats, run as run_vault_pull,
 };
 use vault_push::{
-    ProgressEvent as VaultProgressEvent, VaultPushConfig, authenticate as vault_authenticate,
-    run as run_vault_push,
+    AuthInfo, ProgressEvent as VaultProgressEvent, VaultPushConfig,
+    authenticate as vault_authenticate, run as run_vault_push,
 };
 
 use crate::AppWindow;
@@ -31,7 +35,7 @@ use crate::staging::{self, IPHONE_IOS_IMPORTER, MACOS_IMPORTER};
 use crate::state::{self, AppState};
 use crate::sync;
 
-/// When true, Run actions log a stub message instead of calling exporters / vault CLIs.
+/// When true, Run actions log a stub message instead of calling exporters or vault libraries.
 /// Keep false so Verify / Import / Export call the real vault libraries.
 const STUB_JOBS: bool = false;
 
@@ -41,16 +45,17 @@ enum OnSuccess {
     None,
     GoToImportScreen,
     GoToExportScreen,
-    /// Apply Vault Export query summary (written by the job before finish).
+    /// Fill the Vault Export query summary (written by the job before finish).
     VaultExportQuery(Arc<Mutex<Option<QueryStats>>>),
 }
 
+/// Show `errors` on the current workflow screen and refresh the chrome.
 pub(crate) fn report_errors(ui: &AppWindow, state: &mut AppState, errors: Vec<String>) {
     state.set_errors(errors, ui.get_workflow_screen());
     sync::push_chrome(ui, state);
 }
 
-/// Start a library job and bridge its events onto the Slint UI thread.
+/// Start a library job and forward its events onto the Slint UI thread.
 fn start_library_job(
     ui_weak: &slint::Weak<AppWindow>,
     state: &Arc<Mutex<AppState>>,
@@ -88,116 +93,48 @@ fn start_library_job(
 
     let ui_weak = ui_weak.clone();
     let state_for_done = Arc::clone(state);
-    // Coalesce UI flushes: session log is written immediately; the on-screen
-    // buffer is updated at most once per outstanding event-loop callback.
+    // Write the session log immediately. Update the on-screen buffer at most
+    // once per outstanding event-loop callback so the UI is not flooded.
     let pending_ui = Arc::new(PendingUiLog::default());
     std::thread::spawn(move || {
         while let Ok(first) = rx.recv() {
-            let mut batch = vec![first];
-            let deadline = Instant::now() + Duration::from_millis(50);
-            loop {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                match rx.recv_timeout(remaining) {
-                    Ok(more) => {
-                        let terminal =
-                            matches!(more, ProcessEvent::Finished(_) | ProcessEvent::Error { .. });
-                        batch.push(more);
-                        if terminal {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-
-            let mut lines = Vec::with_capacity(batch.len());
-            let mut finished = false;
-            let mut banner: Option<String> = None;
-            for event in batch {
-                match event {
-                    ProcessEvent::Started(s) => lines.push(format!("$ {s}")),
-                    ProcessEvent::Log(s) => lines.push(s),
-                    ProcessEvent::Finished(s) => {
-                        lines.push(s);
-                        finished = true;
-                    }
-                    ProcessEvent::Error {
-                        detail,
-                        user_message,
-                    } => {
-                        lines.push(detail.clone());
-                        banner = Some(user_message.unwrap_or(detail));
-                        finished = true;
-                    }
-                }
-            }
+            let batch = recv_event_batch(&rx, first);
+            let outcome = log_lines_from_events(batch);
 
             {
                 let mut st = state_for_done.lock().expect("state lock");
-                for line in &lines {
+                for line in &outcome.lines {
                     st.append_session_log(line);
                 }
             }
 
-            let chunk = lines.join("\n");
-            {
-                let mut pending = pending_ui.text.lock().expect("pending ui log");
-                if !pending.is_empty() {
-                    pending.push('\n');
-                }
-                pending.push_str(&chunk);
-            }
+            pending_ui.push_chunk(&outcome.lines.join("\n"));
 
-            // Always flush terminal events; otherwise only schedule if idle.
-            let schedule = finished || !pending_ui.scheduled.swap(true, Ordering::AcqRel);
+            // Always flush Finished/Error; otherwise only schedule if idle.
+            let schedule = outcome.finished || !pending_ui.scheduled.swap(true, Ordering::AcqRel);
             if schedule {
                 let state_clone = Arc::clone(&state_for_done);
                 let pending_ui = Arc::clone(&pending_ui);
                 let on_success = on_success.clone();
+                let finished = outcome.finished;
+                let banner = outcome.banner;
                 let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-                    let text = {
-                        let mut pending = pending_ui.text.lock().expect("pending ui log");
-                        pending_ui.scheduled.store(false, Ordering::Release);
-                        std::mem::take(&mut *pending)
-                    };
+                    let text = pending_ui.take_pending();
                     if !text.is_empty() {
                         sync::append_log_text(&ui, &text);
                     }
                     if finished {
                         let mut st = state_clone.lock().expect("state lock");
-                        st.running = false;
-                        if let Some(banner) = banner {
-                            st.set_errors(vec![banner], source_screen);
-                        } else if matches!(on_success, OnSuccess::GoToImportScreen) {
-                            ui.set_workflow_screen(state::screen::IMPORT);
-                            ui.global::<crate::ImportAdapter>().set_panel_tab(0);
-                            sync::push_import(&ui, &st);
-                        } else if matches!(on_success, OnSuccess::GoToExportScreen) {
-                            ui.set_workflow_screen(state::screen::EXPORT);
-                            ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
-                            sync::push_vault_export(&ui);
-                        } else if let OnSuccess::VaultExportQuery(slot) = &on_success {
-                            if let Some(stats) = slot.lock().expect("query stats").take() {
-                                let export = ui.global::<VaultExportAdapter>();
-                                export.set_query_summary(format_query_summary(&stats).into());
-                                export.set_query_message_count(stats.messages as i32);
-                                export.set_query_ready(true);
-                            }
-                        }
-                        sync::push_chrome(&ui, &st);
+                        apply_job_finished(&ui, &mut st, banner, source_screen, &on_success);
                     }
                 });
             }
-            if finished {
+            if outcome.finished {
                 break;
             }
         }
-        // The channel closed without a Finished or Error event. This means the job
-        // thread panicked or was aborted abnormally. Reset state and report the error
-        // so the UI doesn't stay wedged in "Running" state.
+        // Reset running state if the job thread stopped without a Finished or Error
+        // event (for example a panic). Otherwise the UI would stay on "Running…".
         let _ = ui_weak.upgrade_in_event_loop(move |ui| {
             let mut st = state_for_done.lock().expect("state lock");
             st.running = false;
@@ -214,12 +151,130 @@ fn start_library_job(
     });
 }
 
+/// Collect further events for up to 50ms, or until Finished/Error arrives.
+fn recv_event_batch(rx: &mpsc::Receiver<ProcessEvent>, first: ProcessEvent) -> Vec<ProcessEvent> {
+    let mut batch = vec![first];
+    let deadline = Instant::now() + Duration::from_millis(50);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(more) => {
+                let terminal =
+                    matches!(more, ProcessEvent::Finished(_) | ProcessEvent::Error { .. });
+                batch.push(more);
+                if terminal {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    batch
+}
+
+/// Log lines and finish/error flag produced from one event batch.
+struct EventBatchOutcome {
+    lines: Vec<String>,
+    finished: bool,
+    banner: Option<String>,
+}
+
+/// Turn a batch of process events into log lines and a finish/error flag.
+fn log_lines_from_events(batch: Vec<ProcessEvent>) -> EventBatchOutcome {
+    let mut lines = Vec::with_capacity(batch.len());
+    let mut finished = false;
+    let mut banner: Option<String> = None;
+    for event in batch {
+        match event {
+            ProcessEvent::Started(s) => lines.push(format!("$ {s}")),
+            ProcessEvent::Log(s) => lines.push(s),
+            ProcessEvent::Finished(s) => {
+                lines.push(s);
+                finished = true;
+            }
+            ProcessEvent::Error {
+                detail,
+                user_message,
+            } => {
+                lines.push(detail.clone());
+                banner = Some(user_message.unwrap_or(detail));
+                finished = true;
+            }
+        }
+    }
+    EventBatchOutcome {
+        lines,
+        finished,
+        banner,
+    }
+}
+
+/// Mark the job idle, then show an error banner or run the success action.
+fn apply_job_finished(
+    ui: &AppWindow,
+    st: &mut AppState,
+    banner: Option<String>,
+    source_screen: i32,
+    on_success: &OnSuccess,
+) {
+    st.running = false;
+    if let Some(banner) = banner {
+        st.set_errors(vec![banner], source_screen);
+    } else {
+        match on_success {
+            OnSuccess::GoToImportScreen => {
+                ui.set_workflow_screen(state::screen::IMPORT);
+                ui.global::<crate::ImportAdapter>().set_panel_tab(0);
+                sync::push_import(ui, st);
+            }
+            OnSuccess::GoToExportScreen => {
+                ui.set_workflow_screen(state::screen::EXPORT);
+                ui.global::<crate::VaultExportAdapter>().set_panel_tab(0);
+                sync::push_vault_export(ui);
+            }
+            OnSuccess::VaultExportQuery(slot) => {
+                if let Some(stats) = slot.lock().expect("query stats").take() {
+                    let export = ui.global::<VaultExportAdapter>();
+                    export.set_query_summary(format_query_summary(&stats).into());
+                    export.set_query_message_count(stats.messages as i32);
+                    export.set_query_ready(true);
+                }
+            }
+            OnSuccess::None => {}
+        }
+    }
+    sync::push_chrome(ui, st);
+}
+
+/// On-screen log text waiting for the next Slint event-loop flush.
 #[derive(Default)]
 struct PendingUiLog {
     text: Mutex<String>,
     scheduled: AtomicBool,
 }
 
+impl PendingUiLog {
+    /// Append `chunk` to the pending on-screen log (separated by a newline).
+    fn push_chunk(&self, chunk: &str) {
+        let mut pending = self.text.lock().expect("pending ui log");
+        if !pending.is_empty() {
+            pending.push('\n');
+        }
+        pending.push_str(chunk);
+    }
+
+    /// Take the pending text and mark the event-loop callback as idle.
+    fn take_pending(&self) -> String {
+        let mut pending = self.text.lock().expect("pending ui log");
+        self.scheduled.store(false, Ordering::Release);
+        std::mem::take(&mut *pending)
+    }
+}
+
+/// Validate a contacts CSV or VCF file (`check_only` skips writing updates).
 pub(crate) fn start_validate(
     ui_weak: &slint::Weak<AppWindow>,
     state: &Arc<Mutex<AppState>>,
@@ -280,6 +335,7 @@ pub(crate) fn start_validate(
     }
 }
 
+/// Run the selected Extract Messages exporter.
 pub(crate) fn start_extract(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -316,6 +372,7 @@ pub(crate) fn start_extract(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<
     }
 }
 
+/// Convert an existing export folder into another output format.
 pub(crate) fn start_format(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -355,6 +412,7 @@ pub(crate) fn start_format(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<A
     }
 }
 
+/// Check Vault URL and API token from the older Vault Import screen.
 pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -391,24 +449,7 @@ pub(crate) fn start_vault_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mut
             return;
         }
         let label = "vault-push auth".to_string();
-        let job: LibraryJob = Box::new(move |_cancel, tx| {
-            let _ = tx.send(ProcessEvent::Log(format!("Authenticating {url}…")));
-            match vault_authenticate(&url, &key, "") {
-                Ok(auth) => {
-                    let name = auth
-                        .username
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or_else(|| auth.account_id.clone());
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Authenticated as {name} ({})",
-                        auth.account_id
-                    )));
-                    Ok(())
-                }
-                Err(e) => Err(JobError::with_user_message(e.detail(), e.user_message())),
-            }
-        });
+        let job = vault_auth_job(url, key);
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
@@ -459,24 +500,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             return;
         }
         let label = "vault-push auth".to_string();
-        let job: LibraryJob = Box::new(move |_cancel, tx| {
-            let _ = tx.send(ProcessEvent::Log(format!("Authenticating {url}…")));
-            match vault_authenticate(&url, &key, "") {
-                Ok(auth) => {
-                    let name = auth
-                        .username
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or_else(|| auth.account_id.clone());
-                    let _ = tx.send(ProcessEvent::Log(format!(
-                        "Authenticated as {name} ({})",
-                        auth.account_id
-                    )));
-                    Ok(())
-                }
-                Err(e) => Err(JobError::with_user_message(e.detail(), e.user_message())),
-            }
-        });
+        let job = vault_auth_job(url, key);
         Some((label, job))
     };
     if let Some((label, job)) = job_and_label {
@@ -484,6 +508,7 @@ pub(crate) fn start_guided_verify(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
     }
 }
 
+/// Count matching messages for the Vault Export query preview.
 pub(crate) fn start_vault_export_query(
     ui_weak: &slint::Weak<AppWindow>,
     state: &Arc<Mutex<AppState>>,
@@ -586,6 +611,7 @@ pub(crate) fn start_vault_export_query(
     start_library_job(ui_weak, state, label, job, on_success);
 }
 
+/// Download matching messages from the vault into a timestamped export folder.
 pub(crate) fn start_vault_export(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -773,7 +799,7 @@ pub(crate) fn start_account_backup(ui_weak: &slint::Weak<AppWindow>, state: &Arc
                 base_url: url,
                 username: String::new(),
                 key,
-                query: String::new(), // empty = all messages
+                query: String::new(), // empty query means every message
                 after: None,
                 before: None,
                 source: None,
@@ -783,7 +809,7 @@ pub(crate) fn start_account_backup(ui_weak: &slint::Weak<AppWindow>, state: &Arc
                 cancel: Some(cancel),
                 asset_download_workers: vault_pull::DEFAULT_ASSET_DOWNLOAD_WORKERS,
                 force,
-                journal_path: None, // default: out_dir/.vault-pull-state.jsonl
+                journal_path: None, // default journal: out_dir/.vault-pull-state.jsonl
             };
             let expected_messages = Arc::new(AtomicU64::new(0));
             let mut on_progress = |event: VaultPullProgressEvent| match event {
@@ -822,6 +848,7 @@ pub(crate) fn start_account_backup(ui_weak: &slint::Weak<AppWindow>, state: &Arc
     }
 }
 
+/// One-line summary of a completed account backup for the session log.
 fn format_backup_summary(report: &vault_pull::PullReport) -> String {
     format!(
         "==== Backup Complete ====\n\
@@ -837,6 +864,7 @@ fn format_backup_summary(report: &vault_pull::PullReport) -> String {
     )
 }
 
+/// One-line summary of a Vault Export query (message count, attachments, size).
 fn format_query_summary(stats: &QueryStats) -> String {
     format!(
         "{} messages · {} attachments · {}",
@@ -846,6 +874,7 @@ fn format_query_summary(stats: &QueryStats) -> String {
     )
 }
 
+/// Format a byte count as B, KB, MB, or GB for the query summary.
 fn format_bytes_human(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
@@ -861,6 +890,7 @@ fn format_bytes_human(bytes: u64) -> String {
     }
 }
 
+/// Upload an existing export folder to the vault (older Vault Import screen).
 pub(crate) fn start_vault_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
     let Some(ui) = ui_weak.upgrade() else {
         return;
@@ -997,7 +1027,7 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
             let staging = staging::staging_dir_path(&st.export_ini.path, importer, Local::now());
             st.form.output = staging.display().to_string();
             st.form.output_format = message_vault_io_core::OutputFormat::Jsonl;
-            // apple_platform already set by pull_import from Import Format.
+            // `apple_platform` was already set by `pull_import` from the Import Format combo.
             st.exporter = Exporter::Imessage;
             st.export_ini.exporter = Exporter::Imessage;
             st.last_staging_dir = Some(staging.clone());
@@ -1092,12 +1122,40 @@ pub(crate) fn start_guided_import(ui_weak: &slint::Weak<AppWindow>, state: &Arc<
     }
 }
 
+/// Check the Vault URL and API token, then log the account name.
+fn vault_auth_job(url: String, key: String) -> LibraryJob {
+    Box::new(move |_cancel, tx| {
+        let _ = tx.send(ProcessEvent::Log(format!("Authenticating {url}…")));
+        match vault_authenticate(&url, &key, "") {
+            Ok(auth) => {
+                let name = account_label(&auth);
+                let _ = tx.send(ProcessEvent::Log(format!(
+                    "Authenticated as {name} ({})",
+                    auth.account_id
+                )));
+                Ok(())
+            }
+            Err(e) => Err(JobError::with_user_message(e.detail(), e.user_message())),
+        }
+    })
+}
+
+/// Prefer a non-empty Vault username; otherwise use the account id.
+fn account_label(auth: &AuthInfo) -> String {
+    auth.username
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| auth.account_id.clone())
+}
+
+/// Write a boxed title into the job log so extract and upload steps are easy to spot.
 fn send_step_banner(tx: &mpsc::Sender<ProcessEvent>, title: &str) {
     let _ = tx.send(ProcessEvent::Log("==========".into()));
     let _ = tx.send(ProcessEvent::Log(title.to_string()));
     let _ = tx.send(ProcessEvent::Log("==========".into()));
 }
 
+/// Arguments for [`run_vault_upload`].
 struct VaultUploadArgs {
     input: PathBuf,
     url: String,
@@ -1107,6 +1165,12 @@ struct VaultUploadArgs {
     skip_attachments: bool,
 }
 
+/// Upload a JSON Lines export folder to the Message Vault import API.
+///
+/// # Errors
+///
+/// Returns a [`JobError`] if the upload fails, or if the server reports
+/// conversation failures (`import completed with failures`).
 fn run_vault_upload(
     args: VaultUploadArgs,
     cancel: message_vault_io_core::CancelFlag,
@@ -1124,7 +1188,7 @@ fn run_vault_upload(
         verify_digests: false,
         max_retries: 3,
         batch_size: vault_push::DEFAULT_BATCH_SIZE,
-        // A bit higher than the CLI default: guided import often has many small assets.
+        // Guided import often has many small attachments. Use the library default worker count.
         asset_upload_workers: vault_push::DEFAULT_ASSET_UPLOAD_WORKERS,
         asset_multipart_threshold: vault_push::MAX_PROXY_BODY_BYTES,
         asset_max_bytes: vault_push::DEFAULT_ASSET_MAX_BYTES,
@@ -1149,7 +1213,7 @@ fn run_vault_upload(
             )));
         }
         VaultProgressEvent::FileStart { index, total, file } => {
-            // Sparse heartbeat so a long attachment upload doesn't look hung.
+            // Log every 10th file (and the first and last) so a long upload still looks alive.
             if index == 1 || index == total || index.is_multiple_of(10) {
                 let _ = tx.send(ProcessEvent::Log(format!(
                     "Preparing {index}/{total}: {file}"

@@ -1,10 +1,9 @@
-//! Stream messages → [`MailMessage`] → common message → packaging via FormatSink.
+//! Convert Apple Messages rows into the shared conversation structure
+//! ([`ConversationDocument`]) every exporter writes.
 //!
-//! Every message is built once via [`build_mail_message`] (unchanged Apple →
-//! `MailMessage` mapping), converted to [`IrMessage`] (core fields + a nested
-//! `imessage` extension bag), and accumulated per conversation.
-//! After the DB stream ends, conversations are written via
-//! [`message_ir_format::FormatSink`] (see the [message-ir architecture](../../../docs/maintainers/architecture/message-ir.md)).
+//! Each row becomes a [`MailMessage`], then an [`IrMessage`] (core fields plus
+//! an `imessage` extension bag). After the database stream ends,
+//! [`message_ir_format::FormatSink`] writes the chosen output format.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -53,7 +52,7 @@ use crate::{
 const EXPORT_SOURCE: &str = "imessage";
 const EXPORT_TOOL: &str = "imessage-ir-exporter";
 const DEFAULT_MESSAGE_PROGRESS_EVERY: u64 = 500;
-/// JSONL still batches work, but report often enough that long attachment
+/// JSON Lines still batches work, but report often enough that long attachment
 /// decrypts between ticks do not look frozen on large backups.
 const JSONL_MESSAGE_PROGRESS_EVERY: u64 = 1_000;
 const CONVERSATION_PROGRESS_EVERY: u64 = 100;
@@ -77,7 +76,13 @@ struct PendingConversation {
     messages: Vec<IrMessage>,
 }
 
-/// Stream chat.db into per-conversation CSV, EML, MBOX, JSON, or JSONL.
+/// Stream `chat.db` into the shared conversation structure, then write the
+/// chosen output format (JSON Lines, JSON, CSV, EML, MBOX, or XML).
+///
+/// # Errors
+///
+/// Returns an error when the Messages database cannot be read, a conversation
+/// cannot be written, or the user cancels.
 pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, RuntimeError> {
     let format = session.options.output_format;
     session.options.emit_log("");
@@ -197,18 +202,7 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
                 chat_identifier,
                 conversation_type: convo.conversation_type,
                 group_title: convo.group_title,
-                participants: convo
-                    .participants
-                    .into_iter()
-                    .map(|p| {
-                        let handle_type = handle_type_for(&p.handle);
-                        IrParticipant {
-                            handle: p.handle,
-                            display_name: p.display_name,
-                            handle_type: Some(handle_type),
-                        }
-                    })
-                    .collect(),
+                participants: mail_participants_to_ir(convo.participants),
                 stats: Default::default(),
             },
             messages,
@@ -238,6 +232,27 @@ pub(crate) fn run_export(session: &MailSession) -> Result<FormatSinkResult, Runt
     Ok(sink_result)
 }
 
+/// Map mail-crate participants onto the shared [`IrParticipant`] shape.
+fn mail_participants_to_ir(participants: Vec<Participant>) -> Vec<IrParticipant> {
+    participants
+        .into_iter()
+        .map(|p| {
+            let handle_type = handle_type_for(&p.handle);
+            IrParticipant {
+                handle: p.handle,
+                display_name: p.display_name,
+                handle_type: Some(handle_type),
+            }
+        })
+        .collect()
+}
+
+/// Convert one Apple message into an [`IrMessage`] and append it to its conversation.
+///
+/// # Errors
+///
+/// Returns an error when the message cannot be converted or an attachment
+/// cannot be written.
 fn collect_one(
     session: &MailSession,
     conversations: &mut BTreeMap<String, PendingConversation>,
@@ -281,9 +296,13 @@ fn collect_one(
 
 /// Convert a built [`MailMessage`] into [`IrMessage`] (core fields + `imessage` bag).
 ///
-/// For CSV / JSON / JSONL / XML, non-empty attachment bytes are persisted under
-/// `attachments/` and referenced by `path`. For EML / MBOX, bytes stay in
+/// For CSV / JSON / JSON Lines / XML, non-empty attachment bytes are written
+/// under `attachments/` and referenced by `path`. For EML / MBOX, bytes stay in
 /// memory for [`message_ir_format::document_to_mail_messages`] to embed directly.
+///
+/// # Errors
+///
+/// Returns an error when attachment bytes cannot be written to disk.
 fn mail_message_to_ir(
     mail: &MailMessage,
     attachments_dir: &Path,
@@ -573,6 +592,10 @@ fn attachment_dest_name(
 ///
 /// Returns the export-relative path (`attachments/<name>`), the sha256 digest,
 /// and the byte length of the persisted file.
+///
+/// # Errors
+///
+/// Returns an error when the temp file cannot be written or renamed.
 fn persist_attachment(
     attachments_dir: &Path,
     timestamp_unix_ms: i64,
@@ -595,6 +618,7 @@ fn persist_attachment(
     Ok((format!("attachments/{name}"), digest_hex, byte_len))
 }
 
+/// Message time as milliseconds since 1970-01-01 UTC.
 fn timestamp_unix_ms(message: &Message, offset: i64) -> i64 {
     if let Ok(dt) = message.date(offset) {
         return dt.timestamp_millis();
@@ -618,12 +642,14 @@ fn handle_type_for(handle: &str) -> HandleType {
     }
 }
 
+/// Raw handle string for a Messages `handle_id`, if the participant is known.
 fn raw_handle(session: &MailSession, handle_id: i32) -> Option<String> {
     session
         .resolve_participant(handle_id)
         .map(|name| name.details.clone())
 }
 
+/// Contact display name for a Messages `handle_id`, falling back to the handle.
 fn display_name_for(session: &MailSession, handle_id: i32) -> Option<String> {
     session.resolve_participant(handle_id).map(|name| {
         if name.full.is_empty() {
@@ -634,9 +660,10 @@ fn display_name_for(session: &MailSession, handle_id: i32) -> Option<String> {
     })
 }
 
+/// Participants and conversation type (`dm` / `group`) for one chat room.
 fn participants_for(session: &MailSession, chatroom: &Chat) -> (Vec<Participant>, &'static str) {
     let mut records = Vec::new();
-    // Only non-empty handles are emitted, so only count those; a raw handle
+    // Only non-empty handles are written, so only count those. A raw handle
     // row count over-counts empty handles and misclassifies the chat.
     let mut count = 0;
     if let Some(handles) = session.chatroom_participants.get(&chatroom.rowid) {
@@ -672,6 +699,7 @@ fn participants_for(session: &MailSession, chatroom: &Chat) -> (Vec<Participant>
     (records, conversation_type)
 }
 
+/// Human-readable text for a group announcement (rename, add, leave, and similar).
 fn announcement_text(session: &MailSession, msg: &Message) -> Option<String> {
     let announcement = msg.get_announcement()?;
     let mut who = session.who(msg.handle_id, msg.is_from_me(), &msg.destination_caller_id);
@@ -708,6 +736,7 @@ fn announcement_text(session: &MailSession, msg: &Message) -> Option<String> {
     Some(format!("{who} {body}"))
 }
 
+/// Owner display name from the destination caller id, or `Me`, when that option is on.
 fn owner_display_name(session: &MailSession, message: &Message) -> Option<String> {
     if session.options.use_caller_id {
         message
@@ -722,6 +751,7 @@ fn owner_display_name(session: &MailSession, message: &Message) -> Option<String
     }
 }
 
+/// One-line description of a tapback (Loved, Liked, Removed Heart, and similar).
 fn tapback_human_line(kind: &str, emoji: Option<&str>, action: &str) -> String {
     if action == "remove" {
         return match kind {
@@ -749,6 +779,7 @@ fn tapback_human_line(kind: &str, emoji: Option<&str>, action: &str) -> String {
     }
 }
 
+/// JSON array of tapbacks on this message, if any exist.
 fn build_parent_tapbacks_json(session: &MailSession, message: &Message) -> Option<String> {
     let parts = session.tapbacks.get(&message.guid)?;
     let mut sortable: Vec<(usize, i64, i32, TapbackCell)> = Vec::new();
@@ -805,6 +836,7 @@ fn build_parent_tapbacks_json(session: &MailSession, message: &Message) -> Optio
     serde_json::to_string(&cells).ok()
 }
 
+/// Render handwriting ink as an SVG attachment, if this message is handwriting.
 fn try_handwriting_svg(session: &MailSession, message: &Message) -> Option<MailAttachment> {
     if !message.is_handwriting() {
         return None;
@@ -834,6 +866,7 @@ struct MailConversationContext {
     service: String,
 }
 
+/// Chat id, participants, and sender fields used to build a [`MailMessage`].
 fn resolve_mail_conversation_context(
     session: &MailSession,
     message: &Message,
@@ -885,26 +918,41 @@ fn resolve_mail_conversation_context(
     }
 }
 
+/// Rewrite part attachment indices so they match the kept (referenced) list,
+/// not the full attachment list from the database.
+fn remap_part_attachment_indices(
+    parts: &mut [PartRecord],
+    index_by_full: &std::collections::HashMap<usize, usize>,
+) {
+    for part in parts {
+        part.attachment_indices = part
+            .attachment_indices
+            .iter()
+            .filter_map(|full| index_by_full.get(full).copied())
+            .collect();
+    }
+}
+
+/// Load body parts and attachment bytes for one Apple message.
+///
+/// # Errors
+///
+/// Returns an error when attachments cannot be loaded from the database or
+/// decrypted from an iOS backup.
 fn collect_mail_parts_and_attachments(
     session: &MailSession,
     message: &Message,
 ) -> Result<(Vec<PartRecord>, Vec<MailAttachment>), RuntimeError> {
     let mut attachments = Attachment::from_message(session.data_source.db(), message)?;
     let referenced = referenced_attachment_indices(message, &attachments);
-    let emitted_index: std::collections::HashMap<usize, usize> = referenced
+    let index_by_full: std::collections::HashMap<usize, usize> = referenced
         .iter()
         .enumerate()
-        .map(|(emitted, &full)| (full, emitted))
+        .map(|(kept, &full)| (full, kept))
         .collect();
 
     let mut parts = build_part_records(message, &attachments);
-    for part in &mut parts {
-        part.attachment_indices = part
-            .attachment_indices
-            .iter()
-            .filter_map(|full| emitted_index.get(full).copied())
-            .collect();
-    }
+    remap_part_attachment_indices(&mut parts, &index_by_full);
 
     let mut mail_attachments = Vec::new();
     for &idx in &referenced {
@@ -935,6 +983,11 @@ fn collect_mail_parts_and_attachments(
     Ok((parts, mail_attachments))
 }
 
+/// Build a [`MailMessage`] from one Apple Messages row.
+///
+/// # Errors
+///
+/// Returns an error when body parts or attachments cannot be loaded.
 fn build_mail_message(
     session: &MailSession,
     message: &Message,

@@ -19,6 +19,7 @@ const EXPORT_SOURCE: &str = "sms-backup-restore";
 const EXPORT_TOOL: &str = "SMS Backup & Restore";
 const EXPORT_TOOL_VERSION: &str = "10.26.003";
 
+/// Counts from parsing SMS Backup & Restore XML into conversation documents.
 #[derive(Debug, Default)]
 pub struct SbrReadReport {
     pub conversations: u64,
@@ -37,6 +38,7 @@ pub struct SbrReadReport {
     pub errors: Vec<String>,
 }
 
+/// Options for [`read_sbr_documents`].
 pub struct SbrReadOptions<'a> {
     pub owner_phones: &'a [String],
     pub date_range: &'a DateRange,
@@ -377,7 +379,14 @@ fn to_document(
     document
 }
 
-/// Parse SBR XML, project records to IR, stage attachments, filter, and dedupe.
+/// Parse SMS Backup & Restore XML into conversation documents.
+///
+/// Stages attachments, applies the date filter, and drops duplicate messages.
+///
+/// # Errors
+///
+/// Returns an error when no XML files are found, owner phones cannot be
+/// inferred, or a file cannot be parsed.
 pub fn read_sbr_documents(
     input: &Path,
     options: SbrReadOptions<'_>,

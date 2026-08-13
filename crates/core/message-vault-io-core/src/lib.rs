@@ -1,4 +1,7 @@
-//! Shared exporter forms, typed config, and process helpers for desktop GUIs.
+//! Shared exporter forms, typed config, and background-job helpers for desktop apps.
+//!
+//! The desktop app and exporter command-line tools share this crate so every
+//! backup type validates the same way before a job starts.
 
 #[cfg(feature = "cli")]
 mod cli;

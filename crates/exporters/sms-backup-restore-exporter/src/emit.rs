@@ -1,4 +1,5 @@
-//! Thin orchestration from the message-ir SBR reader to packaging.
+//! Read SMS Backup & Restore XML into the shared conversation structure, then
+//! write the chosen output format via [`FormatSink`].
 
 use anyhow::Result;
 use contacts::ContactsBook;
@@ -47,6 +48,7 @@ fn to_core_report(report: SbrReadReport) -> ExportReport {
     out
 }
 
+/// Fill participant and sender display names from the contacts book.
 fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) {
     for document in documents {
         for participant in &mut document.conversation.participants {
@@ -69,7 +71,13 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
     }
 }
 
-/// Convert SMS Backup & Restore XML into IR, then package it through FormatSink.
+/// Convert SMS Backup & Restore XML into the shared conversation structure,
+/// then write the chosen output format.
+///
+/// # Errors
+///
+/// Returns an error when the XML cannot be read, a conversation cannot be
+/// written, or the user cancels.
 pub(crate) fn convert_export(
     input: &Path,
     output_dir: &Path,

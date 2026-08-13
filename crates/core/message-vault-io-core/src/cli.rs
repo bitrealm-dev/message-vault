@@ -1,6 +1,7 @@
 //! Shared CLI argument groups for exporter binaries.
 //!
-//! Every exporter CLI flattens [`CommonCli`] plus its own source-specific args.
+//! Every exporter command-line tool flattens [`CommonCli`] plus its own
+//! source-specific args.
 
 use std::path::PathBuf;
 

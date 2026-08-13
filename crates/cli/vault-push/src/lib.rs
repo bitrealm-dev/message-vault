@@ -1,6 +1,7 @@
-//! Push message-ir JSONL export folders into a Message Vault import API.
+//! Upload a folder of conversation files into the Message Vault HTTP server.
 //!
-//! Used by the `vault-push` CLI and the Message Vault GUI Vault tab.
+//! Each conversation is a JSON Lines file (one JSON object per line). The
+//! `vault-push` command and the desktop app Vault tab both call this crate.
 
 mod auth_error;
 mod http;

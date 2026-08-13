@@ -1,4 +1,4 @@
-//! IR packaging writers (JSON/JSONL/CSV/mail) and CSV_HEADERS.
+//! Write [`ConversationDocument`] as JSON, JSON Lines, CSV, or mail.
 
 use crate::util;
 use crate::write_sbr;
@@ -72,10 +72,15 @@ pub const CSV_HEADERS: &[&str] = &[
     "tapback_action",
 ];
 
-/// Write one conversation in a per-chat packaging format.
+/// Write one conversation in a per-chat format.
 ///
 /// For multi-chat exports (including XML `smses.xml`), use [`FormatSink`] instead.
 /// [`OutputFormat::Xml`] returns an error here.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be created, a file cannot be
+/// written, or `format` is XML.
 pub(crate) fn write_format(
     output_dir: &Path,
     format: OutputFormat,
@@ -110,7 +115,7 @@ fn write_conversation_json(output_dir: &Path, doc: &ConversationDocument) -> Res
     Ok(path)
 }
 
-/// JSONL header line (schema + export + conversation; no messages).
+/// First JSON Lines line: schema, export, and conversation metadata (no messages).
 fn write_conversation_jsonl(output_dir: &Path, doc: &ConversationDocument) -> Result<PathBuf> {
     fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
     let path = output_dir.join(format!("{}.jsonl", doc.filename_stem()));

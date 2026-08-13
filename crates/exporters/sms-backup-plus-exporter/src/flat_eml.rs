@@ -115,7 +115,7 @@ fn timestamp_seconds(headers: &MailHeaders) -> Option<f64> {
     if headers.date.is_empty() {
         return None;
     }
-    // mailparse doesn't parse dates for us; try chrono RFC2822
+    // mailparse does not parse Date headers; try chrono RFC2822.
     chrono::DateTime::parse_from_rfc2822(&headers.date)
         .ok()
         .map(|d| d.timestamp() as f64)
@@ -180,6 +180,26 @@ pub(crate) fn is_flat_sms_eml(headers: &MailHeaders) -> bool {
     is_single_sms_eml(headers)
 }
 
+/// Format digit strings as E.164 when unambiguous, then join with `", "`.
+fn join_usa_phones(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
+/// become `12_34`.
+fn group_id_slug(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| format!("{}:{}", d.len(), d))
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Group chat id (`group-…`) and display title from non-owner participant digits.
 fn group_chat_id(others: &[String]) -> (String, String) {
     let mut sorted = others.to_vec();
     sorted.sort();
@@ -187,35 +207,17 @@ fn group_chat_id(others: &[String]) -> (String, String) {
     let title = if sorted.is_empty() {
         "Group".to_string()
     } else if sorted.len() <= 4 {
-        format!(
-            "Group: {}",
-            sorted
-                .iter()
-                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        format!("Group: {}", join_usa_phones(&sorted))
     } else {
         format!(
             "Group: {}, and {} others",
-            sorted[..4]
-                .iter()
-                .map(|d| phone::normalize_guarded(d, phone::PhoneRegion::Usa).normalized)
-                .collect::<Vec<_>>()
-                .join(", "),
+            join_usa_phones(&sorted[..4]),
             sorted.len() - 4
         )
     };
     // Length-prefix each number so `["12","34"]` and `["123","4"]` cannot
     // both become `group-12_34`.
-    let key = format!(
-        "group-{}",
-        sorted
-            .iter()
-            .map(|d| format!("{}:{}", d.len(), d))
-            .collect::<Vec<_>>()
-            .join("_")
-    );
+    let key = format!("group-{}", group_id_slug(&sorted));
     let key = if key.len() > 180 {
         let digest = hex::encode(Sha256::digest(key.as_bytes()));
         format!("group-{}", &digest[..16])
@@ -320,7 +322,7 @@ pub(crate) fn parse_flat_eml_mail(
     } else {
         sanitize_number(&addr_raw).unwrap_or_default()
     };
-    // Keep empty chat_key when we have a display name so contacts reverse-lookup can fill it.
+    // Keep an empty chat_key when a display name exists so contacts reverse-lookup can fill it.
     if conv_number.is_empty()
         && name_alias
             .as_ref()

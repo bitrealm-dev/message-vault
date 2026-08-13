@@ -10,7 +10,13 @@ use message_vault_io_core::{
 use std::env;
 use std::fs;
 
-/// Resolve JSON (via wtsexporter or `--json`), convert, apply media/obfuscate via FormatSink.
+/// Resolve JSON (via wtsexporter or `--json`), then convert.
+///
+/// # Errors
+///
+/// Returns an error when the source is not WhatsApp, wtsexporter cannot run,
+/// conversion fails, media processing fails for every candidate file, or the
+/// user cancels.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::Whatsapp(source) = &config.source else {
         bail!("whatsapp-exporter requires SourceConfig::Whatsapp");
@@ -58,7 +64,7 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
             .context("create temp dir for wtsexporter")?;
         let json_out = work.path().join("result.json");
 
-        // Cooperative only: we check cancel before and after the external process.
+        // Cooperative only: cancel is checked before and after the external process.
         // Killing wtsexporter mid-run is not implemented.
         message_vault_io_core::check_cancel(config.cancel.as_ref()).map_err(anyhow::Error::msg)?;
         let log = run_wtsexporter(

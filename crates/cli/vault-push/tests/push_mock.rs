@@ -1,4 +1,8 @@
-//! Mock-server smoke for auth + JSONL push + journal skip.
+//! Mock HTTP server tests for login, JSON Lines push, and journal skip.
+//!
+//! JSON Lines means one JSON object per line. The journal is
+//! `.vault-import-state.jsonl`, a local log of which conversations and files
+//! were already uploaded.
 
 use std::fs;
 use std::io::Write;
@@ -15,6 +19,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vault_push::{AuthError, ProgressEvent, VaultPushConfig, authenticate, run};
 
+/// One SMS conversation used by most mock-server tests.
 fn sample_doc() -> ConversationDocument {
     ConversationDocument {
         schema_version: SCHEMA_VERSION,
@@ -54,6 +59,7 @@ fn sample_doc() -> ConversationDocument {
     }
 }
 
+/// Same fixture as [`sample_doc`], with a different chat handle and message guid.
 fn sample_doc_for(handle: &str, guid: &str) -> ConversationDocument {
     let mut doc = sample_doc();
     doc.conversation.chat_identifier = handle.into();
@@ -63,6 +69,7 @@ fn sample_doc_for(handle: &str, guid: &str) -> ConversationDocument {
     doc
 }
 
+/// Write `doc` as a JSON Lines file under `dir`.
 fn write_jsonl(dir: &Path, doc: &ConversationDocument) {
     let stem = doc.filename_stem();
     let path = dir.join(format!("{stem}.jsonl"));
@@ -78,6 +85,7 @@ fn write_jsonl(dir: &Path, doc: &ConversationDocument) {
     }
 }
 
+/// Push config that skips attachments, pointed at a mock vault URL.
 fn text_only_config(dir: &Path, base_url: String) -> VaultPushConfig {
     VaultPushConfig {
         input: dir.to_path_buf(),

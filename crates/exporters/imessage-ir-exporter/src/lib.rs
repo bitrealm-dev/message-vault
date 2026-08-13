@@ -1,8 +1,9 @@
-//! iMessage → per-conversation CSV / EML / MBOX / JSON / JSONL / XML via `imessage-database`.
+//! Convert Apple Messages (`chat.db` or an iOS backup) into the shared
+//! conversation structure ([`message_ir::ConversationDocument`]) every exporter writes.
 //!
-//! Messages stream from `chat.db`, build [`mail::MailMessage`] per row,
-//! convert to canonical [`message_ir::IrMessage`], and project via
-//! [`message_ir_format::FormatSink`].
+//! Each row becomes a [`mail::MailMessage`], then a [`message_ir::IrMessage`].
+//! [`message_ir_format::FormatSink`] writes the chosen output format (JSON Lines,
+//! JSON, CSV, EML, MBOX, or XML).
 
 mod attachments;
 mod backup;

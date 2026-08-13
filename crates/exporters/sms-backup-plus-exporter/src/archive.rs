@@ -98,8 +98,9 @@ fn parse_archive_timestamp(date_str: &str) -> Option<f64> {
 
 /// Guess which MIME attachments belong to which archive body lines.
 ///
-/// The archive file lists attachments in order, but does not say “this JPEG
-/// goes with the 2:15pm message.” Perfect matching is impossible, so we guess:
+/// The archive file lists attachments in order, but does not say which JPEG
+/// belongs to which timestamped message. Perfect matching is impossible, so
+/// the pairing is a guess:
 ///
 /// 1. **Empty-body first** — if a message has no text (common for photo-only
 ///    MMS), give it the next unused attachment.

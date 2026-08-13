@@ -1,8 +1,9 @@
-//! Pull messages from Message Vault into a message-ir folder.
+//! Download messages from the Message Vault HTTP server into a local folder.
 //!
-//! Query prefers `GET /v1/export/messages/count`, then falls back to paging
-//! `GET /v1/export/messages`. Used by the `vault-pull` CLI and the Message Vault
-//! GUI Vault Export screen.
+//! A count request (`GET /v1/export/messages/count`) is tried first. Older
+//! servers that lack that route are queried by paging `GET /v1/export/messages`.
+//! The `vault-pull` command and the desktop app Vault Export screen both call
+//! this crate.
 
 mod http;
 pub mod journal;

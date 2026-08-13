@@ -1,9 +1,12 @@
-//! Push `AppState` into Slint adapters and pull adapter values back into `Form`
-//! / `ExportIniState` before validation and save.
+//! Copy values between `AppState` and the Slint UI adapters.
+//!
+//! A Slint adapter is a global object the `.slint` files bind to.
+//! Push writes Rust state into the UI.
+//! Pull reads the UI back into Rust before validation or save.
 
 use media::ffmpeg_available;
 use message_vault_io_core::{
-    AttachmentMedia, Exporter, OutputFormat, WhatsappPlatform, contacts_kind_from_path,
+    AttachmentMedia, Exporter, Form, OutputFormat, WhatsappPlatform, contacts_kind_from_path,
 };
 use slint::{ComponentHandle, SharedString};
 use vault_push::detect_source as vault_detect_source;
@@ -16,6 +19,7 @@ use crate::{
     ImportAdapter, LogAdapter, VaultAdapter, VaultExportAdapter,
 };
 
+/// Fill combo-box models that do not depend on saved settings (exporters, formats, …).
 pub fn push_static_option_models(ui: &AppWindow) {
     let extract = ui.global::<ExtractAdapter>();
     extract.set_exporter_options(options::exporter_options());
@@ -46,6 +50,7 @@ pub fn push_static_option_models(ui: &AppWindow) {
         .set_exporter_options(options::vault_export_exporter_options());
 }
 
+/// Write every adapter from `state`. Call after load and after a successful job.
 pub fn push_all(ui: &AppWindow, state: &mut AppState) {
     push_contacts(ui, state);
     push_extract(ui, state);
@@ -57,7 +62,7 @@ pub fn push_all(ui: &AppWindow, state: &mut AppState) {
     push_chrome(ui, state);
 }
 
-/// Prefill Vault Export parent directory with the process cwd when empty.
+/// Fill the Vault Export parent directory with the process working directory when empty.
 pub fn push_vault_export(ui: &AppWindow) {
     let export = ui.global::<VaultExportAdapter>();
     if export.get_output().trim().is_empty() {
@@ -66,6 +71,7 @@ pub fn push_vault_export(ui: &AppWindow) {
     }
 }
 
+/// Update window chrome: error banner, status text, and which controls are enabled.
 pub fn push_chrome(ui: &AppWindow, state: &AppState) {
     ui.set_error_text(SharedString::from(state.error_text()));
     ui.set_error_source_screen(state.error_source_screen.unwrap_or(-1));
@@ -90,18 +96,21 @@ pub fn push_chrome(ui: &AppWindow, state: &AppState) {
         .set_session_log_name(SharedString::from(state.session_log_name()));
 }
 
+/// Write contacts-validator fields into the Contacts adapter.
 pub fn push_contacts(ui: &AppWindow, state: &AppState) {
     let contacts = ui.global::<ContactsAdapter>();
     contacts.set_input(SharedString::from(state.validate_input.as_str()));
     contacts.set_region_index(if state.validate_usa { 0 } else { 1 });
 }
 
+/// Read contacts-validator fields from the Contacts adapter into `state`.
 pub fn pull_contacts(ui: &AppWindow, state: &mut AppState) {
     let contacts = ui.global::<ContactsAdapter>();
     state.validate_input = contacts.get_input().to_string();
     state.validate_usa = contacts.get_region_index() == 0;
 }
 
+/// Read Backup Account fields from the adapter into `state`.
 pub fn pull_backup_account(ui: &AppWindow, state: &mut AppState) {
     let adapter = ui.global::<BackupAccountAdapter>();
     state.export_ini.vault.url = adapter.get_url().trim().to_string();
@@ -109,6 +118,7 @@ pub fn pull_backup_account(ui: &AppWindow, state: &mut AppState) {
     state.backup_output = adapter.get_output().trim().to_string();
 }
 
+/// Write Backup Account fields from `state` into the adapter.
 pub fn push_backup_account(ui: &AppWindow, state: &AppState) {
     let adapter = ui.global::<BackupAccountAdapter>();
     adapter.set_url(state.export_ini.vault.url.clone().into());
@@ -116,6 +126,7 @@ pub fn push_backup_account(ui: &AppWindow, state: &AppState) {
     adapter.set_output(state.backup_output.clone().into());
 }
 
+/// Write Vault URL and API token into the Credentials adapter.
 pub fn push_credentials(ui: &AppWindow, state: &AppState) {
     let credentials = ui.global::<CredentialsAdapter>();
     let v = &state.export_ini.vault;
@@ -123,12 +134,14 @@ pub fn push_credentials(ui: &AppWindow, state: &AppState) {
     credentials.set_key(SharedString::from(v.key.as_str()));
 }
 
+/// Read Vault URL and API token from the Credentials adapter into `state`.
 pub fn pull_credentials(ui: &AppWindow, state: &mut AppState) {
     let credentials = ui.global::<CredentialsAdapter>();
     state.export_ini.vault.url = credentials.get_url().to_string();
     state.export_ini.vault.key = credentials.get_key().to_string();
 }
 
+/// Write guided Import Messages fields from `state` into the Import adapter.
 pub fn push_import(ui: &AppWindow, state: &AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &state.form;
@@ -152,7 +165,7 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     import.set_continue_on_error(state.export_ini.vault.continue_on_error);
     import.set_force(state.export_ini.vault.force);
 
-    let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
+    let obfuscate_active = obfuscate_is_active(form);
     let show_media_warnings =
         state.guided_import_format != options::GuidedImportFormat::ExistingArchive;
     import.set_show_ffmpeg_warning(
@@ -166,6 +179,10 @@ pub fn push_import(ui: &AppWindow, state: &AppState) {
     );
 }
 
+/// Read guided Import Messages fields from the adapter into `state`.
+///
+/// An existing archive only updates the archive path and Vault flags.
+/// iOS and macOS also copy backup paths and media options onto the Extract form.
 pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
     let import = ui.global::<ImportAdapter>();
     let form = &mut state.form;
@@ -200,6 +217,7 @@ pub fn pull_import(ui: &AppWindow, state: &mut AppState) {
     form.obfuscate = import.get_obfuscate();
 }
 
+/// Write Extract Messages fields from `state` into the Extract adapter.
 pub fn push_extract(ui: &AppWindow, state: &AppState) {
     let form = &state.form;
     let exporter = state.exporter;
@@ -247,7 +265,7 @@ pub fn push_extract(ui: &AppWindow, state: &AppState) {
 
     let flags = extract_visibility_flags(exporter);
     let whatsapp_is_ios = form.whatsapp_platform == WhatsappPlatform::Ios;
-    let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
+    let obfuscate_active = obfuscate_is_active(form);
     let show_ffmpeg_warning =
         !obfuscate_active && form.attachment_media.needs_ffmpeg() && !ffmpeg_available();
     let show_compress_options = form.attachment_media == AttachmentMedia::Compress;
@@ -269,7 +287,7 @@ pub fn push_extract(ui: &AppWindow, state: &AppState) {
     extract.set_input_label(SharedString::from(input_label));
 }
 
-/// Exporter-dependent Extract screen visibility flags (no Slint / display needed).
+/// Which Extract Messages fields to show for a given exporter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExtractVisibilityFlags {
     is_whatsapp: bool,
@@ -280,6 +298,7 @@ struct ExtractVisibilityFlags {
     show_contacts: bool,
 }
 
+/// Compute visibility flags from the selected exporter (no Slint types needed).
 fn extract_visibility_flags(exporter: Exporter) -> ExtractVisibilityFlags {
     let is_whatsapp = exporter == Exporter::Whatsapp;
     let is_imessage = exporter == Exporter::Imessage;
@@ -296,6 +315,7 @@ fn extract_visibility_flags(exporter: Exporter) -> ExtractVisibilityFlags {
     }
 }
 
+/// Read Extract Messages fields from the adapter into `state`.
 pub fn pull_extract(ui: &AppWindow, state: &mut AppState) {
     let extract = ui.global::<ExtractAdapter>();
     let form = &mut state.form;
@@ -339,6 +359,7 @@ pub fn pull_extract(ui: &AppWindow, state: &mut AppState) {
     form.conversation_filter = extract.get_conversation_filter().to_string();
 }
 
+/// Write Format tab fields from `state` into the Format adapter.
 pub fn push_format(ui: &AppWindow, state: &AppState) {
     let format = ui.global::<FormatAdapter>();
     let form = &state.form;
@@ -355,13 +376,14 @@ pub fn push_format(ui: &AppWindow, state: &AppState) {
     format.set_obfuscate(form.obfuscate);
     format.set_obfuscate_seed(SharedString::from(form.obfuscate_seed.as_str()));
 
-    let obfuscate_active = form.obfuscate || !form.obfuscate_seed.trim().is_empty();
+    let obfuscate_active = obfuscate_is_active(form);
     format.set_show_ffmpeg_warning(
         !obfuscate_active && form.attachment_media.needs_ffmpeg() && !ffmpeg_available(),
     );
     format.set_show_compress_options(form.attachment_media == AttachmentMedia::Compress);
 }
 
+/// Read Format tab fields from the adapter into `state`.
 pub fn pull_format(ui: &AppWindow, state: &mut AppState) {
     let format = ui.global::<FormatAdapter>();
     state.export_ini.format.input = format.get_input().to_string();
@@ -377,6 +399,9 @@ pub fn pull_format(ui: &AppWindow, state: &mut AppState) {
     state.form.obfuscate_seed = format.get_obfuscate_seed().to_string();
 }
 
+/// Write Vault Import fields from `state` into the Vault adapter.
+///
+/// Also fills an empty input path from Extract output, and a source-format note.
 pub fn push_vault(ui: &AppWindow, state: &mut AppState) {
     state.prefill_vault_input();
     let vault = ui.global::<VaultAdapter>();
@@ -391,15 +416,26 @@ pub fn push_vault(ui: &AppWindow, state: &mut AppState) {
     let note = if !state.vault_source_note.is_empty() {
         state.vault_source_note.clone()
     } else {
-        vault_detect_source(std::path::Path::new(v.input.trim()))
-            .ok()
-            .flatten()
-            .map(|s| format!("Detected source: {s}"))
-            .unwrap_or_default()
+        detected_vault_source_note(v.input.trim())
     };
     vault.set_source_note(SharedString::from(note));
 }
 
+/// True when obfuscation is on, or a seed is present (seed implies obfuscation).
+fn obfuscate_is_active(form: &Form) -> bool {
+    form.obfuscate || !form.obfuscate_seed.trim().is_empty()
+}
+
+/// Detect the export format of `input` and return a short note, or empty on failure.
+fn detected_vault_source_note(input: &str) -> String {
+    vault_detect_source(std::path::Path::new(input))
+        .ok()
+        .flatten()
+        .map(|source| format!("Detected source: {source}"))
+        .unwrap_or_default()
+}
+
+/// Read Vault Import fields from the adapter into `state`.
 pub fn pull_vault(ui: &AppWindow, state: &mut AppState) {
     let vault = ui.global::<VaultAdapter>();
     state.export_ini.vault.url = vault.get_url().to_string();
@@ -413,15 +449,18 @@ pub fn pull_vault(ui: &AppWindow, state: &mut AppState) {
 /// Soft cap for on-screen log text. The session log file keeps the full stream.
 const UI_LOG_MAX_CHARS: usize = 256 * 1024;
 
+/// Replace the on-screen log with `lines` joined by newlines.
 pub fn set_log_lines(ui: &AppWindow, lines: &[String]) {
     ui.global::<LogAdapter>()
         .set_text(SharedString::from(trim_ui_log(&lines.join("\n"))));
 }
 
+/// Append one log line to the on-screen log.
 pub fn append_log_line(ui: &AppWindow, line: &str) {
     append_log_text(ui, line);
 }
 
+/// Append `text` to the on-screen log, then trim if it exceeds [`UI_LOG_MAX_CHARS`].
 pub fn append_log_text(ui: &AppWindow, text: &str) {
     if text.is_empty() {
         return;
@@ -436,19 +475,25 @@ pub fn append_log_text(ui: &AppWindow, text: &str) {
     log.set_text(SharedString::from(trim_ui_log(&next)));
 }
 
+/// Keep the last [`UI_LOG_MAX_CHARS`] of `text`, cutting at a newline when possible.
 fn trim_ui_log(text: &str) -> String {
     if text.len() <= UI_LOG_MAX_CHARS {
         return text.to_string();
     }
-    let cut = text.len() - UI_LOG_MAX_CHARS;
-    let cut = text[cut..].find('\n').map(|i| cut + i + 1).unwrap_or(cut);
-    format!("… (earlier log truncated)\n{}", &text[cut..])
+    let overflow_start = text.len() - UI_LOG_MAX_CHARS;
+    let keep_from = match text[overflow_start..].find('\n') {
+        Some(newline_offset) => overflow_start + newline_offset + 1,
+        None => overflow_start,
+    };
+    format!("… (earlier log truncated)\n{}", &text[keep_from..])
 }
 
+/// Clear the on-screen log.
 pub fn clear_log_lines(ui: &AppWindow) {
     set_log_lines(ui, &[]);
 }
 
+/// Switch Credentials or Import to the Log tab when a job starts on those screens.
 pub fn show_embedded_log(ui: &AppWindow) {
     match ui.get_workflow_screen() {
         crate::state::screen::CREDENTIALS => {
@@ -468,7 +513,7 @@ mod tests {
 
     #[test]
     fn all_exporters_populate_extract_flags() {
-        // Headless: do not create AppWindow (needs DISPLAY/WAYLAND; CI has neither).
+        // Do not create AppWindow. That needs a display, and CI has none.
         for exporter in EXPORTERS {
             let flags = extract_visibility_flags(exporter);
             assert_eq!(

@@ -1,4 +1,4 @@
-//! Project [`ConversationDocument`] → SMS Backup & Restore XML messages.
+//! Write [`ConversationDocument`] messages as SMS Backup & Restore XML.
 
 use crate::util::load_attachment_bytes_strict;
 use anyhow::{Context, Result, bail};

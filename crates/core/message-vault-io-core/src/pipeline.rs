@@ -1,7 +1,7 @@
-//! Thin helpers shared by exporter CLIs and in-process runners.
+//! Helpers shared by exporter command-line tools and in-process runners.
 //!
-//! Kept free of `anyhow` so GUI/core stay lightweight; callers map `String`
-//! errors at the edge when needed.
+//! This module avoids `anyhow` so the desktop app stays lightweight. Callers
+//! map `String` errors at the edge when needed.
 
 use message_csv::DateRange;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 /// Skips symlinks (both files and directories). Directories are
 /// traversed depth-first with no explicit depth limit (callers
 /// should use this on trusted local input trees).
+///
+/// # Errors
+///
+/// Returns an I/O error when `root` cannot be read.
 pub fn discover_files(
     root: &Path,
     predicate: &dyn Fn(&Path) -> bool,
@@ -19,6 +23,11 @@ pub fn discover_files(
     Ok(out)
 }
 
+/// Append matching files under `dir` onto `out`.
+///
+/// # Errors
+///
+/// Returns an I/O error when a directory cannot be read.
 fn discover_files_into(
     dir: &Path,
     predicate: &dyn Fn(&Path) -> bool,
@@ -119,6 +128,10 @@ pub fn print_result(result: &RunResult) {
 }
 
 /// Parse optional start/end date strings into a [`DateRange`].
+///
+/// # Errors
+///
+/// Returns an error string when a date cannot be parsed.
 pub fn parse_date_range(
     start_date: Option<&str>,
     end_date: Option<&str>,
@@ -127,6 +140,10 @@ pub fn parse_date_range(
 }
 
 /// Parse optional start/end dates with an optional timezone name (iMazing path).
+///
+/// # Errors
+///
+/// Returns an error string when a date or timezone cannot be parsed.
 pub fn parse_date_range_tz(
     start_date: Option<&str>,
     end_date: Option<&str>,
@@ -138,16 +155,14 @@ pub fn parse_date_range_tz(
 
 /// Filesystem-safe stem from a display name or handle (alnum / `-` / `_` / `+`).
 pub fn name_stem(value: &str) -> String {
-    let raw: String = value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    let mut raw = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' {
+            raw.push(c);
+        } else {
+            raw.push('_');
+        }
+    }
     if raw.is_empty() || raw.chars().all(|c| c == '_') {
         "unknown".to_string()
     } else {

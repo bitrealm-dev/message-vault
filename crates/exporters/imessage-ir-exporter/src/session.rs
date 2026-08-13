@@ -18,7 +18,7 @@ use imessage_database::{
 
 use crate::{contacts::Name, data_source::DataSource, error::RuntimeError, options::MailOptions};
 
-/// Bootstrap state for one mail export.
+/// Cached chats, handles, contacts, and tapbacks for one conversion run.
 pub(crate) struct MailSession {
     pub options: MailOptions,
     pub offset: i64,
@@ -35,6 +35,12 @@ pub(crate) struct MailSession {
 }
 
 impl MailSession {
+    /// Load chats, handles, contacts, and tapbacks from the Messages database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the data source cannot be opened or a cache query
+    /// fails.
     pub fn new(options: MailOptions) -> Result<Self, RuntimeError> {
         let data_source = DataSource::from(&options)?;
 
@@ -72,6 +78,7 @@ impl MailSession {
         })
     }
 
+    /// Chat row and deduped chat id for a message, if the chat has participants.
     pub fn conversation(&self, message: &Message) -> Option<(&Chat, &i32)> {
         match message.chat_id.or(message.deleted_from) {
             Some(chat_id) => {
@@ -101,6 +108,7 @@ impl MailSession {
         }
     }
 
+    /// Display name for the sender: Me / caller id, a contact name, or Unknown.
     pub fn who<'a, 'b: 'a>(
         &'a self,
         handle_id: Option<i32>,
@@ -121,6 +129,7 @@ impl MailSession {
         UNKNOWN
     }
 
+    /// Contact name for a handle id after merging duplicate handles.
     pub fn resolve_participant(&self, handle_id: i32) -> Option<&Name> {
         self.real_participants
             .get(&handle_id)
@@ -163,6 +172,7 @@ impl MailSession {
         }
     }
 
+    /// Log how many handles and chats matched the conversation filter.
     fn log_filtered_handles_and_chats(&self) {
         if let (Some(selected_handle_ids), Some(selected_chat_ids)) = (
             &self.options.query_context.selected_handle_ids,
@@ -187,6 +197,7 @@ impl MailSession {
     }
 }
 
+/// `""` for 1, `"s"` otherwise (for log lines like "1 chat" / "2 chats").
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }

@@ -1,6 +1,7 @@
-//! SMS Backup & Restore → per-conversation CSV or EML archive exporter.
+//! Convert SMS Backup & Restore XML into the shared conversation structure
+//! ([`message_ir::ConversationDocument`]) every exporter writes.
 //!
-//! Library entrypoint: [`run`] for the full pipeline. The
+//! Library entry: [`run`] for the full pipeline. The
 //! `sms-backup-restore-exporter` binary is a thin CLI over it.
 
 mod emit;

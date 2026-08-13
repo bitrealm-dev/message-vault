@@ -1,4 +1,4 @@
-//! Copy a contacts VCF/CSV and rewrite only unambiguous phone numbers.
+//! Copy a contacts VCF or CSV and rewrite only unambiguous phone numbers.
 
 use std::path::PathBuf;
 

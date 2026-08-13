@@ -1,4 +1,4 @@
-//! Remove prior IR packaging artifacts under an export directory.
+//! Remove leftover files from a previous export in the same directory.
 
 use anyhow::{Context, Result, bail};
 use mail::clean_previous_mail_output;
@@ -17,13 +17,18 @@ pub fn write_export_sentinel(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Delete previous CSV / JSON / JSONL / meta / `smses.xml` / temps / staged
-/// attachments, then mail archives.
+/// Delete previous CSV, JSON, JSON Lines, meta, `smses.xml`, temps, staged
+/// attachments, and mail archives.
 ///
-/// Only cleans directories that contain the sentinel file `.message-vault-export`
-/// or are empty or already contain recognizable export artifacts. This prevents
-/// accidentally deleting unrelated user files when the output path is pointed at
-/// a non-export directory by mistake.
+/// Only directories that contain the sentinel file `.message-vault-export`,
+/// are empty, or already contain recognizable export files are cleaned. This
+/// avoids deleting unrelated user files when the output path points at a
+/// non-export directory by mistake.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be read, a file cannot be
+/// removed, or the directory looks like it is not an export folder.
 pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
     if !output_dir.is_dir() {
         return Ok(());
@@ -31,7 +36,7 @@ pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
     let has_sentinel = output_dir.join(EXPORT_SENTINEL).is_file();
     if !has_sentinel {
         // Check if the directory looks like an export directory (contains files
-        // matching our known patterns) or is empty. If neither, refuse to clean.
+        // matching known export patterns) or is empty. If neither, refuse to clean.
         let mut has_export_files = false;
         let mut has_other_files = false;
         for entry in
@@ -68,11 +73,11 @@ pub fn clean_previous_ir_output(output_dir: &Path) -> Result<()> {
                 .with_context(|| format!("remove previous {}", path.display()))?;
         }
     }
-    // Drop staged attachments from previous runs. Content-addressed digest
-    // files that the new run does not reference would otherwise accumulate
-    // forever, and media transforms reprocess every file under attachments/,
-    // so stale files can fail re-runs. Every caller re-stages (or re-copies)
-    // the attachments it needs after this function.
+    // Drop staged attachments from previous runs. Files named by a SHA-256
+    // fingerprint of their bytes would otherwise pile up when a new run does
+    // not reuse them. Media transforms also reprocess every file under
+    // attachments/, so leftover files can fail a later run. Callers copy the
+    // attachments they need after this function.
     let attachments = output_dir.join("attachments");
     if attachments.is_dir() {
         fs::remove_dir_all(&attachments)

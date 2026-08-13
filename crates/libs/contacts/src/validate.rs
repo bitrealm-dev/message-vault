@@ -92,6 +92,10 @@ impl ContactsInputError {
 }
 
 /// Probe that `path` exists and is a contacts `.csv` / `.vcf` this crate can validate.
+///
+/// # Errors
+///
+/// Returns [`ContactsInputError`] when the path is missing or the format is unknown.
 pub fn probe_contacts_input(path: &Path) -> Result<(), ContactsInputError> {
     detect_format(path).map(|_| ())
 }
@@ -101,6 +105,11 @@ pub fn probe_contacts_input(path: &Path) -> Result<(), ContactsInputError> {
 /// - [`ValidateMode::Update`]: write `{stem}-update.{ext}` (or `{stem}-update-N` when the
 ///   input already ends in `-update` / `-update-N`) plus `.log`; CSV also writes `.vcf`.
 /// - [`ValidateMode::Check`]: same analysis; no files written; results are in [`ValidateReport::log_lines`].
+///
+/// # Errors
+///
+/// Returns an error when the input is missing, the format is unknown, or a
+/// rewrite file cannot be written.
 pub fn validate_contacts_file(
     input: &Path,
     region: PhoneRegion,

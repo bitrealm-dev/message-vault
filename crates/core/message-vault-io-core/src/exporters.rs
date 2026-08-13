@@ -1,3 +1,8 @@
+//! Backup-type forms, dropdown labels, and validation used by the desktop app.
+//!
+//! [`Form`] is the GUI field set. [`Form::to_config`] turns it into a typed
+//! [`ExporterConfig`] after checking required paths and options.
+
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +27,7 @@ pub const EXPORTERS: [Exporter; 7] = [
     Exporter::SmsBackupPlus,
 ];
 
+/// Which backup type the user selected (iMessage, WhatsApp, SMS Backup & Restore, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Exporter {
     GoSmsPro,
@@ -35,6 +41,7 @@ pub enum Exporter {
 }
 
 impl Exporter {
+    /// Standalone CLI binary name for this backup type.
     pub fn binary(self) -> &'static str {
         match self {
             Self::GoSmsPro => "go-sms-pro-exporter",
@@ -47,6 +54,7 @@ impl Exporter {
         }
     }
 
+    /// Short product name shown in the backup-type dropdown.
     pub fn display_name(self) -> &'static str {
         match self {
             Self::GoSmsPro => "GO SMS Pro",
@@ -84,6 +92,7 @@ impl Exporter {
         }
     }
 
+    /// Homepage or docs URL for this backup type.
     pub fn product_url(self) -> &'static str {
         match self {
             Self::GoSmsPro => "https://play.google.com/store/apps/details?id=com.jb.gosms",
@@ -98,6 +107,7 @@ impl Exporter {
         }
     }
 
+    /// Default output folder name under the user's export directory.
     pub fn output_subdir(self) -> &'static str {
         match self {
             Self::GoSmsPro => "go-sms-pro",
@@ -115,6 +125,7 @@ impl Exporter {
         self.output_subdir()
     }
 
+    /// Parse an `export.ini` `exporter=` value, or `None` if unknown.
     pub fn from_ini_key(key: &str) -> Option<Self> {
         match key.trim().to_ascii_lowercase().as_str() {
             "go-sms-pro" => Some(Self::GoSmsPro),
@@ -147,6 +158,7 @@ impl fmt::Display for WhatsappPlatform {
 }
 
 impl WhatsappPlatform {
+    /// CLI flag value (`android` or `ios`).
     pub fn as_cli_str(self) -> &'static str {
         match self {
             Self::Android => "android",
@@ -154,10 +166,12 @@ impl WhatsappPlatform {
         }
     }
 
+    /// Value stored in `export.ini` for this platform.
     pub fn as_ini_str(self) -> &'static str {
         self.as_cli_str()
     }
 
+    /// Parse an `export.ini` WhatsApp platform string, or `None` if unknown.
     pub fn from_ini_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "android" | "a" | "" => Some(Self::Android),
@@ -171,6 +185,10 @@ pub const WHATSAPP_PLATFORMS: [WhatsappPlatform; 2] =
     [WhatsappPlatform::Android, WhatsappPlatform::Ios];
 
 /// Create `path` and parents if missing.
+///
+/// # Errors
+///
+/// Returns an error string when the directory cannot be created.
 pub fn ensure_output_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| {
         format!(
@@ -187,6 +205,7 @@ impl fmt::Display for Exporter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// How a contacts file is parsed: none, CSV, or vCard (VCF).
 pub enum ContactsKind {
     #[default]
     None,
@@ -218,7 +237,7 @@ impl fmt::Display for ContactsKind {
     }
 }
 
-/// Attachment media handling for every exporter that can emit media files.
+/// How attachments are copied or converted when writing output files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttachmentMedia {
     #[default]
@@ -240,6 +259,7 @@ impl fmt::Display for AttachmentMedia {
 }
 
 impl AttachmentMedia {
+    /// Matching `message-media` mode used by FormatSink.
     pub fn media_mode(self) -> MediaMode {
         match self {
             Self::Clone => MediaMode::Clone,
@@ -249,14 +269,17 @@ impl AttachmentMedia {
         }
     }
 
+    /// True when convert or compress is selected (ffmpeg must be on PATH).
     pub fn needs_ffmpeg(self) -> bool {
         matches!(self, Self::Convert | Self::Compress)
     }
 
+    /// Value stored in `export.ini` for this media choice.
     pub fn as_ini_str(self) -> &'static str {
         self.media_mode().as_str()
     }
 
+    /// Parse an `export.ini` media string, or `None` if unknown.
     pub fn from_ini_str(s: &str) -> Option<Self> {
         MediaMode::parse(s).map(|mode| match mode {
             MediaMode::Clone => Self::Clone,
@@ -280,6 +303,7 @@ pub const MAX_RESOLUTIONS: [MaxResolution; 3] = [
     MaxResolution::P4k,
 ];
 
+/// iPhone vs Mac backup layout for iMessage / iMazing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApplePlatform {
     #[default]
@@ -299,6 +323,7 @@ impl fmt::Display for ApplePlatform {
 }
 
 impl ApplePlatform {
+    /// Value stored in `export.ini` for this Apple platform.
     pub fn as_ini_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -307,6 +332,7 @@ impl ApplePlatform {
         }
     }
 
+    /// Parse an `export.ini` Apple platform string, or `None` if unknown.
     pub fn from_ini_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "auto" | "" => Some(Self::Auto),
@@ -323,6 +349,7 @@ pub const APPLE_PLATFORMS: [ApplePlatform; 3] = [
     ApplePlatform::Ios,
 ];
 
+/// GUI field set for one backup type, plus shared output and media options.
 #[derive(Debug, Clone)]
 pub struct Form {
     pub input: String,
@@ -401,6 +428,10 @@ impl Default for Form {
 
 impl Form {
     /// Validate the form and build a typed [`ExporterConfig`] for `exporter`.
+    ///
+    /// # Errors
+    ///
+    /// Returns one string per validation problem (missing path, bad seed, …).
     pub fn to_config(&self, exporter: Exporter) -> Result<ExporterConfig, Vec<String>> {
         let mut errors = Vec::new();
         let obfuscate = self.validate_obfuscate(&mut errors);
@@ -423,6 +454,10 @@ impl Form {
     }
 
     /// Validate shared output options and build a Format-tab configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns one string per validation problem (missing folder, bad media, …).
     pub fn to_format_config(
         &self,
         input: &str,
@@ -455,6 +490,7 @@ impl Form {
         }
     }
 
+    /// Build an iMessage config, pushing path and ffmpeg problems onto `errors`.
     fn to_imessage_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -512,6 +548,7 @@ impl Form {
         }
     }
 
+    /// Build a WhatsApp config, pushing path and key problems onto `errors`.
     fn to_whatsapp_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -552,6 +589,7 @@ impl Form {
         }
     }
 
+    /// Build an iMazing config, pushing path and timezone problems onto `errors`.
     fn to_imazing_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -588,6 +626,7 @@ impl Form {
         }
     }
 
+    /// Build an OpenExtract config, pushing path problems onto `errors`.
     fn to_openextract_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -617,6 +656,7 @@ impl Form {
         }
     }
 
+    /// Build a GO SMS Pro config from the shared Android fields.
     fn to_go_sms_pro_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -638,6 +678,7 @@ impl Form {
         }
     }
 
+    /// Build an SMS Backup & Restore config from the shared Android fields.
     fn to_sms_restore_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -659,6 +700,7 @@ impl Form {
         }
     }
 
+    /// Build an SMS Backup+ config, including owner emails and name mapping.
     fn to_sms_plus_config(
         &self,
         obfuscate: ObfuscateConfig,
@@ -693,6 +735,7 @@ impl Form {
         }
     }
 
+    /// Shared Android backup fields: input path, owner phones, contacts, dates, media.
     fn android_common(
         &self,
         errors: &mut Vec<String>,
@@ -705,10 +748,10 @@ impl Form {
     ) {
         let input = require_single_existing_path(&self.input, "Input", errors);
         required_text(&self.output, "Output", errors);
-        let owner_phones: Vec<String> = values(&self.owner_phones)
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let mut owner_phones = Vec::new();
+        for phone in values(&self.owner_phones) {
+            owner_phones.push(phone.to_string());
+        }
         if owner_phones.is_empty() {
             errors.push("At least one phone number is required.".into());
         }
@@ -728,6 +771,7 @@ impl Form {
         )
     }
 
+    /// Contacts file from the form, or `None` when the user chose no contacts.
     fn contacts_config(&self, errors: &mut Vec<String>) -> Option<ContactsConfig> {
         match self.contacts_kind {
             ContactsKind::None => None,
@@ -756,6 +800,7 @@ impl Form {
         }
     }
 
+    /// Media options for Android exporters (always validate compress settings).
     fn validate_media(&self, errors: &mut Vec<String>) -> MediaConfig {
         let mode = self.attachment_media.media_mode();
         let obfuscate_active = self.obfuscate || !self.obfuscate_seed.trim().is_empty();
@@ -768,6 +813,7 @@ impl Form {
         self.media_config_for(matches!(mode, MediaMode::Compress), errors)
     }
 
+    /// Fake-name rewrite flag and optional hex seed.
     fn validate_obfuscate(&self, errors: &mut Vec<String>) -> ObfuscateConfig {
         let seed = validate_obfuscate_seed(&self.obfuscate_seed, errors);
         ObfuscateConfig {
@@ -776,6 +822,7 @@ impl Form {
         }
     }
 
+    /// Attachment copy/convert/compress options; optionally check compress fields.
     fn media_config_for(&self, validate_compress: bool, errors: &mut Vec<String>) -> MediaConfig {
         let mode = self.attachment_media.media_mode();
         let compress = if validate_compress || matches!(mode, MediaMode::Compress) {
@@ -793,6 +840,10 @@ impl Form {
     }
 
     /// Compress options for GUI iMessage post-process (after exporter exits).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when fps or min-size cannot be parsed.
     pub fn compress_options(&self) -> Result<media::CompressOptions, String> {
         let fps = self.media_max_fps.trim();
         if fps.is_empty() {
@@ -815,6 +866,7 @@ impl Form {
     }
 }
 
+/// Require one existing file or directory; push a message onto `errors` if missing.
 fn require_single_existing_path(
     value: &str,
     label: &str,
@@ -836,12 +888,14 @@ fn require_single_existing_path(
     Some(PathBuf::from(path))
 }
 
+/// Push `"{label} is required."` when `value` is blank.
 fn required_text(value: &str, label: &str, errors: &mut Vec<String>) {
     if value.trim().is_empty() {
         errors.push(format!("{label} is required."));
     }
 }
 
+/// Require an existing directory; push a message onto `errors` if missing.
 fn require_existing_directory(
     value: &str,
     label: &str,
@@ -860,6 +914,7 @@ fn require_existing_directory(
     Some(path)
 }
 
+/// Return a trimmed hex seed, or push an error when the string is not hex.
 fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<String> {
     let seed = seed.trim();
     if seed.is_empty() {
@@ -873,6 +928,7 @@ fn validate_obfuscate_seed(seed: &str, errors: &mut Vec<String>) -> Option<Strin
     }
 }
 
+/// Parse optional start/end dates in host-local time; push parse errors onto `errors`.
 fn parse_date_range_local(
     start: Option<&str>,
     end: Option<&str>,
@@ -887,6 +943,7 @@ fn parse_date_range_local(
     }
 }
 
+/// Non-empty trimmed lines from a multiline text field.
 fn lines(value: &str) -> Vec<&str> {
     value
         .lines()
@@ -895,6 +952,7 @@ fn lines(value: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Non-empty tokens split on commas or whitespace.
 fn values(value: &str) -> Vec<&str> {
     value
         .split(['\n', ',', ';'])
@@ -903,6 +961,7 @@ fn values(value: &str) -> Vec<&str> {
         .collect()
 }
 
+/// `Some(trimmed)` when the string is not blank.
 fn non_empty(value: &str) -> Option<&str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -912,6 +971,7 @@ fn non_empty(value: &str) -> Option<&str> {
     }
 }
 
+/// `Some(path)` when the string is not blank.
 fn non_empty_path(value: &str) -> Option<PathBuf> {
     non_empty(value).map(PathBuf::from)
 }

@@ -1,4 +1,8 @@
-//! In-process exporter job adapters for the Slint GUI.
+//! Run exporter libraries on a background thread for the Slint GUI.
+//!
+//! Each exporter crate exposes a `run` function that takes an `ExporterConfig`.
+//! This module picks the matching `run` from `config.source` and wraps it as a
+//! [`LibraryJob`] that the GUI can spawn.
 
 use std::sync::mpsc;
 
@@ -14,9 +18,11 @@ use sms_backup_plus_exporter::run as run_sms_plus;
 use sms_backup_restore_exporter::run as run_sms_restore;
 use whatsapp_exporter::run as run_whatsapp;
 
+/// Background work item: cancel flag plus a channel for log and finish events.
 pub type LibraryJob =
     Box<dyn FnOnce(CancelFlag, mpsc::Sender<ProcessEvent>) -> Result<(), JobError> + Send>;
 
+/// Attach the cancel flag and a log callback that forwards lines onto `tx`.
 fn prepare_config(
     mut config: ExporterConfig,
     cancel: CancelFlag,
@@ -30,13 +36,14 @@ fn prepare_config(
     config
 }
 
-/// Run the exporter identified by `config.source` in-process (no subprocess).
+/// Run the exporter named by `config.source` in this process (not as a subprocess).
 ///
-/// Single dispatch point for every library runner: the seven exporter crates
-/// plus `message-reexport` (Format tab). `config.source` is authoritative —
-/// `Form::to_config` / `to_format_config` set it from the exporter chosen in
-/// the GUI. Keeping the match here means adding an exporter touches one place
-/// instead of every caller.
+/// `config.source` is set by `Form::to_config` and `Form::to_format_config` from
+/// the exporter chosen in the GUI. Adding an exporter means adding one match arm here.
+///
+/// # Errors
+///
+/// Returns the exporter's error if conversion or writing fails.
 pub fn run_exporter(config: &ExporterConfig) -> anyhow::Result<RunResult> {
     match &config.source {
         SourceConfig::GoSmsPro(_) => run_go_sms_pro(config),
@@ -50,11 +57,10 @@ pub fn run_exporter(config: &ExporterConfig) -> anyhow::Result<RunResult> {
     }
 }
 
-/// Wrap a runnable [`ExporterConfig`] as a background [`LibraryJob`].
+/// Wrap an [`ExporterConfig`] as a background [`LibraryJob`].
 ///
-/// Both the extract tabs and the Format tab build the same kind of job: wire
-/// cancel/log sinks into the config, run it through [`run_exporter`], and
-/// forward the result lines onto the job's event channel.
+/// Extract and Format both use this: attach cancel and log sinks, run
+/// [`run_exporter`], and forward result lines onto the job's event channel.
 pub fn library_job_for_exporter(config: ExporterConfig) -> LibraryJob {
     Box::new(move |cancel, tx| {
         let config = prepare_config(config, cancel, &tx);
@@ -62,6 +68,11 @@ pub fn library_job_for_exporter(config: ExporterConfig) -> LibraryJob {
     })
 }
 
+/// Send each success message as a log event, or turn a failure into a [`JobError`].
+///
+/// # Errors
+///
+/// Returns [`JobError::detail`] with the Display form of `error` (`{error:#}`).
 pub fn run_and_log<R, E: std::fmt::Display>(
     result: Result<R, E>,
     tx: mpsc::Sender<ProcessEvent>,
@@ -80,7 +91,9 @@ where
     }
 }
 
+/// Types that can be turned into log lines after a successful library run.
 pub trait HasMessages {
+    /// Consume the value and return the lines to show in the session log.
     fn into_messages(self) -> Vec<String>;
 }
 

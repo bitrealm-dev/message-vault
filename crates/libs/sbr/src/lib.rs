@@ -208,7 +208,7 @@ pub fn default_backup_path(output_dir: &Path) -> PathBuf {
     output_dir.join(DEFAULT_BACKUP_FILENAME)
 }
 
-/// Ensure required keys exist (used by synthesizers).
+/// Insert `key` only when it is not already present.
 pub fn ensure_attr(attrs: &mut BTreeMap<String, String>, key: &str, value: impl Into<String>) {
     attrs.entry(key.to_string()).or_insert_with(|| value.into());
 }

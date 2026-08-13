@@ -1,6 +1,15 @@
+//! Parse human-readable byte sizes such as `20M` or `512k`.
+
 use anyhow::{Result, bail};
 
-/// Parse sizes like `20M`, `512k`, `100` (bytes).
+/// Parse sizes like `20M`, `512k`, or `100` (bytes).
+///
+/// Suffixes `k`, `m`, and `g` are treated as 1024-based units. The suffix is
+/// case-insensitive.
+///
+/// # Errors
+///
+/// Returns an error when `raw` is empty or the number cannot be parsed.
 pub(crate) fn parse_size(raw: &str) -> Result<u64> {
     let s = raw.trim();
     if s.is_empty() {

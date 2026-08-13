@@ -1,4 +1,7 @@
-//! Blocking HTTP helpers for vault auth, asset upload, and JSONL import.
+//! HTTP helpers for login, attachment upload, and JSON Lines message import.
+//!
+//! JSON Lines means one JSON object per line. Calls are blocking so they can
+//! run on worker threads without an async runtime.
 
 use std::path::Path;
 use std::thread;
@@ -11,6 +14,7 @@ use serde::Deserialize;
 use crate::AuthError;
 
 #[derive(Debug, Clone)]
+/// Account id and username returned by a successful `GET /v1/auth/check`.
 pub struct AuthInfo {
     pub account_id: String,
     pub username: Option<String>,
@@ -32,6 +36,7 @@ struct AuthCheckResponse {
 }
 
 #[derive(Debug, Deserialize)]
+/// Vault reply after HEAD or PUT of one attachment.
 pub struct AssetPutResponse {
     pub ok: bool,
     #[serde(default)]
@@ -41,6 +46,7 @@ pub struct AssetPutResponse {
 }
 
 #[derive(Debug, Deserialize)]
+/// Vault reply after posting one JSON Lines import batch.
 pub struct ImportResponse {
     pub ok: bool,
     #[serde(default)]
@@ -67,10 +73,12 @@ pub struct ImportResponse {
 }
 
 #[derive(Clone)]
+/// Blocking HTTP client used for login, attachment upload, and import.
 pub struct HttpSession {
     client: Client,
 }
 
+/// Arguments for uploading one attachment file.
 pub struct AssetPutRequest<'a> {
     pub base_url: &'a str,
     pub key: &'a str,
@@ -97,6 +105,11 @@ struct UploadStartResponse {
 }
 
 impl HttpSession {
+    /// Blocking HTTP client with a connection pool for worker threads.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reqwest client cannot be built.
     pub fn new() -> Result<Self> {
         let client = Client::builder()
             .pool_max_idle_per_host(16)
@@ -106,11 +119,13 @@ impl HttpSession {
     }
 }
 
+/// True when the body looks like an HTML error page instead of JSON.
 fn looks_like_html(body: &str) -> bool {
     let t = body.trim_start();
     t.starts_with("<!DOCTYPE") || t.starts_with("<html") || t.starts_with("<HTML")
 }
 
+/// True for HTTP 413 or a proxy HTML page that says the body was too large.
 fn looks_like_payload_too_large(status: reqwest::StatusCode, body: &str) -> bool {
     status.as_u16() == 413
         || body.contains("413 Payload Too Large")
@@ -118,6 +133,7 @@ fn looks_like_payload_too_large(status: reqwest::StatusCode, body: &str) -> bool
         || (looks_like_html(body) && body.to_ascii_lowercase().contains("payload too large"))
 }
 
+/// Human-readable 413 error that names the request kind and optional byte size.
 fn payload_too_large_message(kind: &str, bytes: Option<usize>) -> String {
     let size = bytes
         .map(|n| format!(" (request was {n} bytes)"))
@@ -131,6 +147,7 @@ fn payload_too_large_message(kind: &str, bytes: Option<usize>) -> String {
     )
 }
 
+/// Copy `s`, cutting it to `max` bytes and adding an ellipsis when longer.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -139,6 +156,7 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Percent-encode a query value so it is safe inside a vault URL.
 fn encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -153,6 +171,12 @@ fn encode(s: &str) -> String {
 }
 
 impl HttpSession {
+    /// Call `GET /v1/auth/check` and return the account id on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError`] when the URL is invalid, the host is unreachable,
+    /// or the key is rejected.
     pub fn auth_check(
         &self,
         base_url: &str,
@@ -222,8 +246,15 @@ impl HttpSession {
         })
     }
 
-    /// Probe whether the vault already has this SHA. Returns `Some` when present,
-    /// `None` when missing (HTTP 404). Does not transfer the file body.
+    /// Probe whether the vault already has this SHA-256 fingerprint.
+    ///
+    /// Returns `Some` when present, `None` when missing (HTTP 404). Does not
+    /// transfer the file body. SHA-256 here is a short hex fingerprint of the
+    /// file bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on auth failure or any non-404 HTTP error.
     pub fn head_asset(
         &self,
         base_url: &str,
@@ -278,6 +309,12 @@ impl HttpSession {
         Ok(Some(parsed))
     }
 
+    /// Upload one attachment with PUT, or multipart when the file is large.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read, the vault rejects the
+    /// upload, or the response cannot be parsed.
     pub fn put_asset(&self, request: AssetPutRequest<'_>) -> Result<AssetPutResponse> {
         let file_len = std::fs::metadata(request.file)
             .with_context(|| format!("stat {}", request.file.display()))?
@@ -332,6 +369,12 @@ impl HttpSession {
         Ok(parsed)
     }
 
+    /// Upload a large file as several parts, then complete the upload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when start, part PUT, or complete fails, or the file
+    /// cannot be read.
     fn put_asset_multipart(
         &self,
         request: AssetPutRequest<'_>,
@@ -479,6 +522,14 @@ impl HttpSession {
         Ok(parsed)
     }
 
+    /// POST one JSON Lines batch (`ndjson`) to `/v1/import`.
+    ///
+    /// JSON Lines means one JSON object per line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body is too large, the vault rejects the batch,
+    /// or the response cannot be parsed.
     pub fn post_import(
         &self,
         base_url: &str,
@@ -543,6 +594,10 @@ impl HttpSession {
 
     /// Start a vault import session. Returns `None` when the vault is older and
     /// does not expose `/v1/imports` (push continues without message linking).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the vault rejects the request (other than 404).
     pub fn start_import(
         &self,
         base_url: &str,
@@ -601,6 +656,10 @@ impl HttpSession {
     }
 
     /// Complete a vault import session. Soft-fails with `Ok(())` on 404.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the vault rejects the request (other than 404).
     pub fn complete_import(
         &self,
         base_url: &str,
@@ -671,6 +730,7 @@ fn classify_unauthorized(
     }
 }
 
+/// Map a reqwest transport failure (timeout, connect, TLS) onto [`AuthError`].
 fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError {
     let url = url.to_string();
     let detail = error.to_string();
@@ -685,6 +745,7 @@ fn classify_auth_transport_error(url: &str, error: reqwest::Error) -> AuthError 
     }
 }
 
+/// Map a non-success HTTP status from `/v1/auth/check` onto [`AuthError`].
 fn classify_auth_http_status(status: u16, body: String) -> AuthError {
     match status {
         403 => AuthError::Forbidden { status, body },
@@ -695,6 +756,11 @@ fn classify_auth_http_status(status: u16, body: String) -> AuthError {
     }
 }
 
+/// Build a session and call [`HttpSession::auth_check`].
+///
+/// # Errors
+///
+/// Returns [`AuthError`] when the client cannot be built or login fails.
 pub fn auth_check(
     base_url: &str,
     key: &str,
@@ -731,6 +797,12 @@ fn is_transient_error(error: &anyhow::Error) -> bool {
     true
 }
 
+/// Run `op` again on transient failures, with backoff, up to `max_retries` extra tries.
+///
+/// # Errors
+///
+/// Returns the last error from `op` when retries are exhausted or the error is
+/// permanent (auth, 413, missing file).
 pub fn with_retries<T, F>(max_retries: u32, mut op: F) -> Result<T>
 where
     F: FnMut() -> Result<T>,

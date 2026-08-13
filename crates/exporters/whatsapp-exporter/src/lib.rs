@@ -1,6 +1,7 @@
-//! WhatsApp (via KnugiHK wtsexporter JSON) → shared per-chat CSV.
+//! Convert WhatsApp chats (via KnugiHK wtsexporter JSON) into the shared
+//! conversation structure ([`message_ir::ConversationDocument`]) every exporter writes.
 //!
-//! Library entrypoint: [`run`] for the full pipeline.
+//! Library entry: [`run`] for the full pipeline.
 //! The `whatsapp-exporter` binary is a thin CLI over [`run`].
 
 mod emit;

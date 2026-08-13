@@ -1,11 +1,15 @@
-//! Contact books and shared VCF / vCard-CSV parsers for message-vault-io and vault.
+//! Contact books and shared VCF / vCard-CSV parsers.
 //!
-//! - [`parse_vcf`] / [`read_vcard_csv_rows`] — public parse APIs (vault ingest + exporters)
-//! - [`ContactsBook`] — name↔phone indexes for backup→IR exporters
-//! - [`validate_contacts_file`] — contacts-validate rewrite tool
+//! A VCF file is a vCard address book. A vCard CSV is the same data exported
+//! as a spreadsheet (First Name, Last Name, phone columns).
 //!
-//! Accepted inputs: VCF, or vCard CSV (First Name, Last Name, phone columns —
-//! a contacts app VCF exported as CSV).
+//! - [`parse_vcf`] / [`read_vcard_csv_rows`] — parse APIs used by vault ingest
+//!   and by backup converters
+//! - [`ContactsBook`] — name and phone indexes used when a converter looks up
+//!   display names
+//! - [`validate_contacts_file`] — the `contacts-validate` rewrite tool
+//!
+//! Accepted inputs: VCF, or vCard CSV.
 
 mod book;
 mod mapping;

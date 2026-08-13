@@ -1,3 +1,5 @@
+//! Convert an existing Message Vault export directory into another format.
+
 use std::path::PathBuf;
 
 use anyhow::Result;
