@@ -69,6 +69,7 @@ pub(crate) struct TapbackCell {
     pub reactor_display_name: Option<String>,
 }
 
+/// Local and UTC RFC 3339 strings from a date result, or `(None, None)` on error.
 pub(crate) fn optional_rfc3339(
     result: Result<
         chrono::DateTime<chrono::Local>,
@@ -81,11 +82,13 @@ pub(crate) fn optional_rfc3339(
     }
 }
 
+/// Screen-effect label (slam, loud, invisible ink, and similar), if any.
 pub(crate) fn expressive_label(expressive: Expressive<'_>) -> Option<String> {
     let label = expressive.to_string();
     if label.is_empty() { None } else { Some(label) }
 }
 
+/// `"started"` or `"stopped"` for a live-location share.
 pub(crate) fn shared_location_label(kind: SharedLocation) -> &'static str {
     match kind {
         SharedLocation::Started => "started",
@@ -93,6 +96,7 @@ pub(crate) fn shared_location_label(kind: SharedLocation) -> &'static str {
     }
 }
 
+/// Compact label for a typed-stream text effect.
 fn effect_label(effect: &TextEffect) -> String {
     match effect {
         TextEffect::Default => "default".to_string(),
@@ -246,6 +250,7 @@ pub(crate) fn transcription_for_attachment(
     None
 }
 
+/// JSON object for an iMessage app bubble payload.
 fn app_message_json(bubble: &AppMessage<'_>) -> Value {
     json!({
         "image": bubble.image,
@@ -261,6 +266,7 @@ fn app_message_json(bubble: &AppMessage<'_>) -> Value {
     })
 }
 
+/// JSON object for a rich-link (URL) bubble payload.
 fn url_message_json(bubble: &URLMessage<'_>) -> Value {
     json!({
         "title": bubble.title,
@@ -487,6 +493,7 @@ pub(crate) fn sticker_extras(
     (prompt, effect)
 }
 
+/// Parse the part index from a thread identifier like `"0/1"`.
 pub(crate) fn parse_thread_part(part: &str) -> Option<u32> {
     part.split('/').next()?.parse().ok()
 }

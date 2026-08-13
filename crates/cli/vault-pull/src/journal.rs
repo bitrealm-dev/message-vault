@@ -1,5 +1,7 @@
-// crates/vault-pull/src/journal.rs
-//! Append-only resume journal for vault-pull (mirrors vault-push/src/journal.rs).
+//! Local log of which files were already downloaded by vault-pull.
+//!
+//! The file is `.vault-pull-state.jsonl`. JSON Lines means one JSON object per
+//! line. A later download can skip attachments that are already on disk.
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -9,10 +11,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Filename of the local download log, written in the output folder.
 pub const PULL_JOURNAL_NAME: &str = ".vault-pull-state.jsonl";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
+/// One row in `.vault-pull-state.jsonl`.
 pub enum PullJournalEvent {
     AssetOk {
         url: String,
@@ -31,17 +35,27 @@ pub enum PullJournalEvent {
 }
 
 #[derive(Debug, Default)]
+/// Skip sets rebuilt from the journal for one vault URL and username.
 pub struct PullJournalState {
-    /// SHA-256 digests of assets already downloaded.
+    /// SHA-256 fingerprints (hex of the file bytes) of attachments already on disk.
     pub assets: HashSet<String>,
-    /// True if the last run completed cleanly (a `backup_complete` event was written).
+    /// True if the last run finished cleanly (a `backup_complete` event was written).
     pub backup_complete: bool,
 }
 
+/// Path of `.vault-pull-state.jsonl` inside the output folder.
 pub fn journal_path(out_dir: &Path) -> PathBuf {
     out_dir.join(PULL_JOURNAL_NAME)
 }
 
+/// Read the journal and keep events that match this vault URL and username.
+///
+/// A missing file is treated as an empty journal. A line that cannot be parsed
+/// is skipped so a newer event type does not break an older client.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or a line cannot be read.
 pub fn load(path: &Path, url: &str, username: &str) -> Result<PullJournalState> {
     let mut state = PullJournalState::default();
     if !path.is_file() {
@@ -55,7 +69,7 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<PullJournalState> 
         }
         let event: PullJournalEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
-            Err(_) => continue, // skip unparseable lines (forward compat)
+            Err(_) => continue, // skip lines this version cannot parse
         };
         match event {
             PullJournalEvent::AssetOk {
@@ -79,6 +93,12 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<PullJournalState> 
     Ok(state)
 }
 
+/// Append one event as a JSON Lines row and flush it to disk.
+///
+/// # Errors
+///
+/// Returns an error when the parent folder cannot be created, the file cannot
+/// be opened, or the write fails.
 pub fn append(path: &Path, event: &PullJournalEvent) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -94,6 +114,11 @@ pub fn append(path: &Path, event: &PullJournalEvent) -> Result<()> {
     Ok(())
 }
 
+/// Rewrite the journal from in-memory `state` for one vault URL and username.
+///
+/// # Errors
+///
+/// Returns an error when the temporary file cannot be written or the rename fails.
 pub fn compact(path: &Path, url: &str, username: &str, state: &PullJournalState) -> Result<()> {
     let mut events: Vec<PullJournalEvent> = Vec::new();
     let mut assets: Vec<_> = state.assets.iter().collect();
@@ -103,13 +128,12 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &PullJournalState)
             url: url.to_string(),
             username: username.to_string(),
             sha256: sha.clone(),
-            path: String::new(), // path not needed for resume (uses attachments/{sha})
-            size_bytes: 0,       // size not needed for resume
+            path: String::new(), // resume looks up attachments/{sha}, not this path
+            size_bytes: 0,       // size is unused when skipping already-downloaded files
         });
     }
     if state.backup_complete {
-        // backup_complete is rewritten during compact — conversations/messages/assets set to 0
-        // since the compacted form only needs to signal "was complete"
+        // Counts are unused on resume; a `backup_complete` row only means the last run finished.
         events.push(PullJournalEvent::BackupComplete {
             url: url.to_string(),
             username: username.to_string(),

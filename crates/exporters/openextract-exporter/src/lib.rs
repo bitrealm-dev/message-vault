@@ -1,6 +1,7 @@
-//! OpenExtract conversation CSV (+ VCF) → shared per-chat CSV.
+//! Convert OpenExtract conversation CSV (plus VCF) into the shared conversation
+//! structure ([`message_ir::ConversationDocument`]) every exporter writes.
 //!
-//! Library entrypoint: [`run`] for the full pipeline.
+//! Library entry: [`run`] for the full pipeline.
 //! The `openextract-exporter` binary is a thin CLI over [`run`].
 
 mod emit;

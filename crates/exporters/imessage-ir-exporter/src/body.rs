@@ -28,6 +28,7 @@ pub(crate) struct AttachmentResolver {
 }
 
 impl AttachmentResolver {
+    /// Index attachments by GUID so body ranges can resolve them.
     pub(crate) fn new(attachments: &[Attachment]) -> Self {
         let mut by_guid = HashMap::new();
         let mut has_guid = HashSet::new();
@@ -46,6 +47,7 @@ impl AttachmentResolver {
         }
     }
 
+    /// Pick the attachment index for this body range (GUID match, else next unused).
     pub(crate) fn resolve(&mut self, range: &AttributedRange) -> usize {
         if let Some(idx) = range
             .attachment
@@ -77,6 +79,7 @@ impl AttachmentResolver {
     }
 }
 
+/// Pair each attributed range with the attachment index it refers to, if any.
 pub(crate) fn resolve_run<'r>(
     ranges: &'r [AttributedRange],
     resolver: &mut AttachmentResolver,

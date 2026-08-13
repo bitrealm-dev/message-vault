@@ -1,5 +1,8 @@
-//! Native file/folder pickers via `rfd`, run off the Slint UI thread so the
-//! event loop is never blocked (Wayland compositors treat a blocked UI as hung).
+//! Native file and folder pickers via `rfd`, run off the Slint UI thread.
+//!
+//! `rfd` is a crate that opens the OS file dialog.
+//! The dialog runs on a background thread so the Slint event loop is never blocked.
+//! Wayland compositors treat a blocked UI as hung.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,10 +19,13 @@ use crate::ImportAdapter;
 use crate::VaultAdapter;
 use crate::VaultExportAdapter;
 
-/// Ensures only one native picker is open at a time (Browse can fire again while
-/// the dialog is still up because it runs off the UI thread).
+/// True while a native picker is open.
+///
+/// Browse can fire again while the dialog is still up because the dialog runs
+/// off the UI thread. A second click is ignored until the first dialog closes.
 static PICKER_OPEN: AtomicBool = AtomicBool::new(false);
 
+/// What the OS dialog should let the user pick.
 #[derive(Debug, Clone, Copy)]
 pub enum BrowseKind {
     File,
@@ -27,6 +33,7 @@ pub enum BrowseKind {
     FileOrFolder,
 }
 
+/// Choose file, folder, or either, based on the Slint field id.
 pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
     match field_id {
         "contacts.input"
@@ -47,7 +54,7 @@ pub fn browse_kind_for_field(field_id: &str) -> BrowseKind {
     }
 }
 
-/// Spawn a background dialog, then apply the picked path on the UI thread.
+/// Open a background dialog, then write the picked path into the matching UI field.
 pub fn pick_path(ui_weak: Weak<AppWindow>, field_id: String, kind: BrowseKind) {
     if PICKER_OPEN
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -68,6 +75,9 @@ pub fn pick_path(ui_weak: Weak<AppWindow>, field_id: String, kind: BrowseKind) {
     });
 }
 
+/// Block until the user picks a path or cancels.
+///
+/// On WSL, try a Windows dialog first so the picker appears on the host desktop.
 fn pick_path_blocking(kind: BrowseKind) -> Option<PathBuf> {
     if crate::wsl::is_wsl() {
         match pick_with_windows_dialog(kind) {
@@ -86,6 +96,7 @@ fn pick_path_blocking(kind: BrowseKind) -> Option<PathBuf> {
     }
 }
 
+/// Run a PowerShell WinForms dialog and convert the Windows path to a WSL path.
 fn pick_with_windows_dialog(kind: BrowseKind) -> io::Result<Option<PathBuf>> {
     let script = match kind {
         BrowseKind::File => WINDOWS_FILE_PICKER,
@@ -110,6 +121,7 @@ fn pick_with_windows_dialog(kind: BrowseKind) -> io::Result<Option<PathBuf>> {
     windows_to_wsl_path(Path::new(&selected)).map(Some)
 }
 
+/// Convert a Windows path (for example `C:\Users\…`) to a WSL path via `wslpath`.
 fn windows_to_wsl_path(path: &Path) -> io::Result<PathBuf> {
     let output = Command::new("wslpath").arg("-u").arg(path).output()?;
     if !output.status.success() {
@@ -128,7 +140,7 @@ fn windows_to_wsl_path(path: &Path) -> io::Result<PathBuf> {
 }
 
 // WinForms pickers use an invisible TopMost owner form so ShowDialog appears in
-// front when launched via powershell from WSL (otherwise often opens behind).
+// front when launched via powershell from WSL (otherwise the dialog often opens behind).
 
 const WINDOWS_FILE_PICKER: &str = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -216,6 +228,7 @@ try {
 }
 "#;
 
+/// Write `path` into the Slint property named by `field_id`.
 fn apply_path(ui: &AppWindow, field_id: &str, path: SharedString) {
     match field_id {
         "contacts.input" => ui.global::<ContactsAdapter>().set_input(path),

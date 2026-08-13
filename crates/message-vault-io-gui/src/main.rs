@@ -1,9 +1,12 @@
-//! Slint desktop GUI for message-vault-io.
+//! Desktop GUI for converting phone backups and talking to a Message Vault server.
 //!
-//! In-process exporter libraries and `export.ini` persistence.
+//! A Message Vault server stores imported conversations behind an HTTP API.
+//! This crate draws the window with Slint, a Rust UI toolkit.
+//! Exporters run in the same process as libraries, not as separate programs.
+//! Settings are saved in `export.ini` next to the binary or in the working directory.
 
 // Release builds use the Windows GUI subsystem so launching message-vault-io.exe
-// does not open a console window. Debug builds keep a console for logging/panics.
+// does not open a console window. Debug builds keep a console for logging and panics.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod browse;
@@ -24,6 +27,11 @@ use state::AppState;
 
 slint::include_modules!();
 
+/// Create the window, load saved settings, and run the Slint event loop.
+///
+/// # Errors
+///
+/// Returns a platform error if the window cannot be created or the event loop fails.
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.set_app_title(format!("Message Vault {}", env!("CARGO_PKG_VERSION")).into());
@@ -43,9 +51,10 @@ fn main() -> Result<(), slint::PlatformError> {
 
     wire::wire_all(&ui, Arc::clone(&state));
 
-    // Persist when the process exits after `run()` returns.
-    // Pull guided workflow fields only — legacy adapters are not shown and
-    // would overwrite Import / Credentials edits with stale values.
+    // Save settings after the window closes.
+    // Copy only the guided Import and Credentials fields back from the UI.
+    // The older Extract, Format, and Vault screens are hidden.
+    // Reading those screens here would replace the guided fields with leftover values.
     let result = ui.run();
     {
         let mut st = state.lock().expect("state lock");

@@ -1,4 +1,4 @@
-//! Attachment media + obfuscate transforms applied before IR projection.
+//! Media convert/compress and obfuscation applied before writing files.
 
 use crate::util::read_attachment_file;
 use anyhow::{Context, Result};
@@ -271,7 +271,7 @@ pub(crate) fn apply_transforms(
         for doc in docs.iter_mut() {
             apply_media_remap(doc, &remap);
         }
-        // Recompute digests for remapped attachments so JSONL matches bytes on disk.
+        // Recompute fingerprints for remapped attachments so JSON Lines files match bytes on disk.
         refresh_missing_attachment_digests(docs, output_dir)?;
     }
 

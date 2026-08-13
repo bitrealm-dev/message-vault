@@ -1,13 +1,13 @@
 //! Convert or compress attachment media under a converter export directory.
 //!
 //! Modes:
-//! - **Disabled** — do not copy/write attachment files (CLI exporters)
-//! - **Clone** — leave exported files as-is (post-process no-op)
-//! - **Convert** — standardize images→`.jpg`, videos→`.mp4`, audio→`.mp3`
-//! - **Compress** — size-oriented re-encode with optional video knobs
+//! - **Disabled** — do not copy or write attachment files (CLI exporters)
+//! - **Clone** — leave exported files as-is (a no-op after export)
+//! - **Convert** — rewrite images to `.jpg`, videos to `.mp4`, audio to `.mp3`
+//! - **Compress** — re-encode to shrink files, with optional video settings
 //!
-//! Requires `ffmpeg` / `ffprobe` for convert/compress (beside the running
-//! binary, in `MESSAGE_VAULT_IO_BIN`, or on `PATH`).
+//! Convert and compress need `ffmpeg` / `ffprobe` beside the running binary,
+//! in `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
 
 mod process;
 mod size;

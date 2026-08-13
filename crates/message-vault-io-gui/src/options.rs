@@ -1,4 +1,7 @@
 //! Combo-box option lists shared with the Slint adapters.
+//!
+//! Each function returns labels in combo-box order, or maps an enum to that
+//! index (and back). Slint combo boxes are driven by integer indexes.
 
 use media::MaxResolution;
 use message_vault_io_core::{
@@ -57,30 +60,48 @@ pub const UTC_OFFSETS: &[&str] = &[
     "UTC+14:00",
 ];
 
+/// Build a Slint string model from owned label strings.
 fn model_from_labels(labels: impl IntoIterator<Item = String>) -> ModelRc<SharedString> {
     let items: Vec<SharedString> = labels.into_iter().map(SharedString::from).collect();
     ModelRc::new(VecModel::from(items))
 }
 
-pub fn exporter_options() -> ModelRc<SharedString> {
-    model_from_labels(EXPORTERS.iter().map(|e| e.dropdown_label()))
+/// Index of `value` in `items`, or `0` if it is missing.
+fn index_of<T: PartialEq>(items: &[T], value: &T) -> i32 {
+    items.iter().position(|item| item == value).unwrap_or(0) as i32
 }
 
+/// Item at `index`, or `T::default()` if the index is out of range.
+fn value_at<T: Copy + Default>(items: &[T], index: i32) -> T {
+    items.get(index as usize).copied().unwrap_or_default()
+}
+
+/// Exporter names for the Extract Messages combo box, in `EXPORTERS` order.
+pub fn exporter_options() -> ModelRc<SharedString> {
+    model_from_labels(EXPORTERS.iter().map(|exporter| exporter.dropdown_label()))
+}
+
+/// Combo index where unsupported (experimental) exporters begin, or `-1` if none.
 pub fn exporter_separator_before_index() -> i32 {
-    EXPORTERS
+    match EXPORTERS
         .iter()
         .position(|exporter| !exporter.is_supported())
-        .map_or(-1, |index| index as i32)
+    {
+        Some(index) => index as i32,
+        None => -1,
+    }
 }
 
+/// Output format labels as file extensions (`.jsonl`, `.csv`, …), A–Z.
 pub fn output_format_options() -> ModelRc<SharedString> {
     model_from_labels(
         OUTPUT_FORMATS_ALPHABETICAL
             .iter()
-            .map(|f| format!(".{}", f.as_str())),
+            .map(|format| format!(".{}", format.as_str())),
     )
 }
 
+/// Attachment handling labels: Copy, Convert, Compress & Convert, Skip.
 pub fn attachment_media_options() -> ModelRc<SharedString> {
     model_from_labels(
         ["Copy", "Convert", "Compress & Convert", "Skip"]
@@ -89,28 +110,37 @@ pub fn attachment_media_options() -> ModelRc<SharedString> {
     )
 }
 
+/// Max video/image resolution labels from `MAX_RESOLUTIONS`.
 pub fn max_resolution_options() -> ModelRc<SharedString> {
-    model_from_labels(MAX_RESOLUTIONS.iter().map(|r| r.as_str().to_string()))
+    model_from_labels(MAX_RESOLUTIONS.iter().map(|res| res.as_str().to_string()))
 }
 
+/// Apple platform labels (`ios` / `macos`) as stored in `export.ini`.
 pub fn apple_platform_options() -> ModelRc<SharedString> {
-    model_from_labels(APPLE_PLATFORMS.iter().map(|p| p.as_ini_str().to_string()))
+    model_from_labels(
+        APPLE_PLATFORMS
+            .iter()
+            .map(|platform| platform.as_ini_str().to_string()),
+    )
 }
 
+/// WhatsApp platform labels as stored in `export.ini`.
 pub fn whatsapp_platform_options() -> ModelRc<SharedString> {
     model_from_labels(
         WHATSAPP_PLATFORMS
             .iter()
-            .map(|p| p.as_ini_str().to_string()),
+            .map(|platform| platform.as_ini_str().to_string()),
     )
 }
 
+/// Timezone combo: "Local time" at index 0, then the [`UTC_OFFSETS`] list.
 pub fn timezone_options() -> ModelRc<SharedString> {
     let mut labels = vec!["Local time".to_string()];
-    labels.extend(UTC_OFFSETS.iter().map(|s| (*s).to_string()));
+    labels.extend(UTC_OFFSETS.iter().map(|offset| (*offset).to_string()));
     model_from_labels(labels)
 }
 
+/// Phone-number region labels for the contacts validator.
 pub fn region_options() -> ModelRc<SharedString> {
     model_from_labels(["USA".into(), "International".into()])
 }
@@ -141,6 +171,7 @@ pub enum GuidedImportFormat {
 }
 
 impl GuidedImportFormat {
+    /// Value stored in `export.ini` under `import_format`.
     pub fn as_ini_str(self) -> &'static str {
         match self {
             Self::Ios => "ios",
@@ -149,6 +180,7 @@ impl GuidedImportFormat {
         }
     }
 
+    /// Parse an `import_format` string from `export.ini`.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "ios" => Some(Self::Ios),
@@ -158,6 +190,7 @@ impl GuidedImportFormat {
         }
     }
 
+    /// Default format from the Apple platform already stored on the form.
     pub fn from_platform(platform: ApplePlatform) -> Self {
         match platform {
             ApplePlatform::MacOs => Self::MacOs,
@@ -165,6 +198,7 @@ impl GuidedImportFormat {
         }
     }
 
+    /// Matching Apple platform, or `None` for an existing archive (no extract step).
     pub fn apple_platform(self) -> Option<ApplePlatform> {
         match self {
             Self::Ios => Some(ApplePlatform::Ios),
@@ -192,6 +226,7 @@ pub fn guided_import_format_index(format: GuidedImportFormat) -> i32 {
     }
 }
 
+/// Guided import format for a combo index. Unknown indexes map to iOS.
 pub fn guided_import_format_at(index: i32) -> GuidedImportFormat {
     match index {
         1 => GuidedImportFormat::MacOs,
@@ -200,99 +235,91 @@ pub fn guided_import_format_at(index: i32) -> GuidedImportFormat {
     }
 }
 
+/// Combo index of `exporter` in `EXPORTERS`, or `0` if missing.
 pub fn exporter_index(exporter: Exporter) -> i32 {
-    EXPORTERS.iter().position(|&e| e == exporter).unwrap_or(0) as i32
+    index_of(&EXPORTERS, &exporter)
 }
 
+/// Exporter at `index`, or the default exporter if the index is out of range.
 pub fn exporter_at(index: i32) -> Exporter {
-    EXPORTERS.get(index as usize).copied().unwrap_or_default()
+    value_at(&EXPORTERS, index)
 }
 
+/// Combo index of `format` in the A–Z output format list, or `0` if missing.
 pub fn output_format_index(format: OutputFormat) -> i32 {
-    OUTPUT_FORMATS_ALPHABETICAL
-        .iter()
-        .position(|&f| f == format)
-        .unwrap_or(0) as i32
+    index_of(&OUTPUT_FORMATS_ALPHABETICAL, &format)
 }
 
+/// Output format at `index`, or the default format if the index is out of range.
 pub fn output_format_at(index: i32) -> OutputFormat {
-    OUTPUT_FORMATS_ALPHABETICAL
-        .get(index as usize)
-        .copied()
-        .unwrap_or_default()
+    value_at(&OUTPUT_FORMATS_ALPHABETICAL, index)
 }
 
+/// Combo index of `media` in `ATTACHMENT_MEDIA`, or `0` if missing.
 pub fn attachment_media_index(media: AttachmentMedia) -> i32 {
-    ATTACHMENT_MEDIA
-        .iter()
-        .position(|&m| m == media)
-        .unwrap_or(0) as i32
+    index_of(&ATTACHMENT_MEDIA, &media)
 }
 
+/// Attachment handling at `index`, or the default if the index is out of range.
 pub fn attachment_media_at(index: i32) -> AttachmentMedia {
-    ATTACHMENT_MEDIA
-        .get(index as usize)
-        .copied()
-        .unwrap_or_default()
+    value_at(&ATTACHMENT_MEDIA, index)
 }
 
+/// Combo index of `res` in `MAX_RESOLUTIONS`, or `0` if missing.
 pub fn max_resolution_index(res: MaxResolution) -> i32 {
-    MAX_RESOLUTIONS.iter().position(|&r| r == res).unwrap_or(0) as i32
+    index_of(&MAX_RESOLUTIONS, &res)
 }
 
+/// Max resolution at `index`, or the default if the index is out of range.
 pub fn max_resolution_at(index: i32) -> MaxResolution {
-    MAX_RESOLUTIONS
-        .get(index as usize)
-        .copied()
-        .unwrap_or_default()
+    value_at(&MAX_RESOLUTIONS, index)
 }
 
+/// Combo index of `platform` in `APPLE_PLATFORMS`, or `0` if missing.
 pub fn apple_platform_index(platform: ApplePlatform) -> i32 {
-    APPLE_PLATFORMS
-        .iter()
-        .position(|&p| p == platform)
-        .unwrap_or(0) as i32
+    index_of(&APPLE_PLATFORMS, &platform)
 }
 
+/// Apple platform at `index`, or the default if the index is out of range.
 pub fn apple_platform_at(index: i32) -> ApplePlatform {
-    APPLE_PLATFORMS
-        .get(index as usize)
-        .copied()
-        .unwrap_or_default()
+    value_at(&APPLE_PLATFORMS, index)
 }
 
+/// Combo index of `platform` in `WHATSAPP_PLATFORMS`, or `0` if missing.
 pub fn whatsapp_platform_index(platform: WhatsappPlatform) -> i32 {
-    WHATSAPP_PLATFORMS
-        .iter()
-        .position(|&p| p == platform)
-        .unwrap_or(0) as i32
+    index_of(&WHATSAPP_PLATFORMS, &platform)
 }
 
+/// WhatsApp platform at `index`, or the default if the index is out of range.
 pub fn whatsapp_platform_at(index: i32) -> WhatsappPlatform {
-    WHATSAPP_PLATFORMS
-        .get(index as usize)
-        .copied()
-        .unwrap_or_default()
+    value_at(&WHATSAPP_PLATFORMS, index)
 }
 
+/// Combo index for a timezone string.
+///
+/// Empty or unknown values map to 0 (Local time). A matching UTC offset is
+/// stored at `position + 1` because index 0 is Local time.
 pub fn timezone_index(timezone: &str) -> i32 {
     let trimmed = timezone.trim();
     if trimmed.is_empty() {
         return 0;
     }
-    UTC_OFFSETS
-        .iter()
-        .position(|&o| o == trimmed)
-        .map(|i| (i + 1) as i32)
-        .unwrap_or(0)
+    match UTC_OFFSETS.iter().position(|&offset| offset == trimmed) {
+        Some(position) => (position + 1) as i32,
+        None => 0,
+    }
 }
 
+/// Timezone string for a combo index.
+///
+/// Index 0 (and anything below) is Local time, stored as an empty string.
 pub fn timezone_at(index: i32) -> String {
     if index <= 0 {
         String::new()
     } else {
+        let offset_index = (index as usize).saturating_sub(1);
         UTC_OFFSETS
-            .get((index as usize).saturating_sub(1))
+            .get(offset_index)
             .copied()
             .unwrap_or("")
             .to_string()

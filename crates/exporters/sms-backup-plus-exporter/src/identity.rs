@@ -1,12 +1,12 @@
-//! Build fingerprint strings so duplicate EML messages collapse to one CSV row.
+//! Build fingerprint strings so duplicate EML messages collapse to one row.
 //!
 //! Convert dedupe uses [`cover_identity`]: chat + whole-second time + direction +
-//! normalized text. That matches archive body times (`HH:MM:SS`) to flat
+//! collapsed text. That matches archive body times (`HH:MM:SS`) to flat
 //! `X-smssync-date` values that include milliseconds, and ignores `X-smssync-id`
-//! so archive↔flat copies of the same SMS collapse.
+//! so archive and flat copies of the same SMS collapse.
 //!
-//! Text normalization collapses whitespace so tiny export differences do not
-//! create two identities.
+//! Collapsing whitespace in the text avoids two identities for tiny export
+//! differences.
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 
@@ -22,9 +22,8 @@ pub(crate) fn chat_id_for(msg: &ParsedMessage) -> String {
     } else if msg.chat_key.is_empty() {
         "unknown".to_string()
     } else {
-        // Guarded policy on the raw chat key: E.164 only when unambiguous,
-        // so a trunk-zero value stays digits-as-is instead of being
-        // fabricated into `+02079460000`.
+        // Format as E.164 only when unambiguous, so a trunk-zero value stays
+        // digits-as-is instead of becoming `+02079460000`.
         phone::normalize_guarded(&msg.chat_key, phone::PhoneRegion::for_raw(&msg.chat_key))
             .normalized
     }

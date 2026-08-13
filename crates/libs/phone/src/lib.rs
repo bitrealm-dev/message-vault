@@ -1,4 +1,4 @@
-//! Shared US-centric phone normalization for message-vault-io.
+//! Shared US-centric phone-number parsing for message converters.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -81,10 +81,10 @@ pub fn to_e164(digits: &str) -> String {
     }
 }
 
-/// Canonical E.164 only when the parse is unambiguous for `region`.
+/// E.164 only when the parse is unambiguous for `region`.
 ///
 /// Unlike [`sanitize_number`], this does **not** accept short codes or
-/// ambiguous lengths — used by contacts validation before rewriting files.
+/// ambiguous lengths. Contacts validation uses this before rewriting files.
 pub fn normalize_certain(raw: &str, region: PhoneRegion) -> Option<String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -149,8 +149,8 @@ pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
     }
 }
 
-/// Result of [`normalize_guarded`]: the canonical value plus, when the value
-/// is ambiguous, a human-readable reason for the review note.
+/// Result of [`normalize_guarded`]: the E.164 value when certain, plus a
+/// review note when the value is ambiguous.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardedNormalize {
     pub normalized: String,
@@ -159,11 +159,10 @@ pub struct GuardedNormalize {
 
 /// E.164 when unambiguous for `region`, else digits-as-is plus a note.
 ///
-/// Policy: normalize only when the parse is certain; otherwise store the
-/// digits without fabricating a `+` prefix (a trunk-zero national number like
+/// Rewrite to E.164 only when the parse is certain. Otherwise store the
+/// digits without adding a `+` prefix (a trunk-zero national number like
 /// `020 7946 0000` would otherwise become the invalid `+02079460000`) and
-/// flag the value with a human-readable reason so the vault can surface it
-/// for review.
+/// attach a human-readable reason so the vault can show it for review.
 pub fn normalize_guarded(raw: &str, region: PhoneRegion) -> GuardedNormalize {
     match normalize_certain(raw, region) {
         Some(e164) => GuardedNormalize {
@@ -241,17 +240,7 @@ impl OwnerHandleSet {
     pub fn all_phone_digits(&self) -> HashSet<String> {
         self.handles
             .iter()
-            .filter_map(|(v, t)| {
-                if *t == HandleType::Phone {
-                    // The stored value is E.164-normalised; re-extract sanitized
-                    // digits for compatibility with consumers that compare against
-                    // `sanitize_number` output.
-                    let digits = sanitize_number(v).unwrap_or_else(|| v.clone());
-                    Some(digits)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(v, t)| phone_digits_if_phone(v, *t))
             .collect()
     }
 
@@ -263,6 +252,14 @@ impl OwnerHandleSet {
             .find(|(_, t)| *t == HandleType::Phone)
             .map(|(v, _)| v.as_str())
     }
+}
+
+/// Strip a stored phone handle back to digits for comparison with [`sanitize_number`].
+fn phone_digits_if_phone(value: &str, handle_type: HandleType) -> Option<String> {
+    if handle_type != HandleType::Phone {
+        return None;
+    }
+    Some(sanitize_number(value).unwrap_or_else(|| value.to_string()))
 }
 
 #[cfg(test)]

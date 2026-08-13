@@ -44,6 +44,7 @@ impl fmt::Display for OutputFormat {
 }
 
 impl OutputFormat {
+    /// Short format id used on the CLI (`json`, `jsonl`, `csv`, …).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Csv => "csv",
@@ -55,6 +56,11 @@ impl OutputFormat {
         }
     }
 
+    /// Parse a format id. `ndjson` is accepted as JSON Lines; `sbr`/`smses` as XML.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when `s` is not a known format.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s.trim().to_ascii_lowercase().as_str() {
             "csv" => Ok(Self::Csv),
@@ -113,7 +119,7 @@ pub struct ExporterConfig {
 }
 
 impl ExporterConfig {
-    /// Emit a progress / warning line (sink when set, else stderr).
+    /// Send a progress or warning line to the log sink, or to stderr if none is set.
     pub fn emit_log(&self, line: impl AsRef<str>) {
         emit_log(self.log.as_ref(), line);
     }
@@ -124,6 +130,10 @@ impl ExporterConfig {
     }
 
     /// Require a single primary input (most exporters).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no input is set, or when more than one path is set.
     pub fn require_input(&self) -> Result<&Path, String> {
         match self.inputs.as_slice() {
             [path] => Ok(path.as_path()),
@@ -140,11 +150,13 @@ impl ExporterConfig {
         }
     }
 
+    /// True when fake-name rewrite is on, or a seed was supplied.
     pub fn obfuscate_active(&self) -> bool {
         self.obfuscate.enabled || self.obfuscate.seed.is_some()
     }
 }
 
+/// Path and kind of an optional contacts file used to resolve phone numbers to names.
 #[derive(Debug, Clone)]
 pub struct ContactsConfig {
     pub path: PathBuf,
@@ -152,6 +164,7 @@ pub struct ContactsConfig {
 }
 
 impl ContactsConfig {
+    /// Split this contacts file into `(csv_path, vcf_path)` for loaders that take both.
     pub fn csv_and_vcf(&self) -> (Option<PathBuf>, Option<PathBuf>) {
         match self.kind {
             ContactsKind::Csv => (Some(self.path.clone()), None),
@@ -162,12 +175,14 @@ impl ContactsConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Fake-name rewrite: on/off plus an optional hex seed for repeatable output.
 pub struct ObfuscateConfig {
     pub enabled: bool,
     pub seed: Option<String>,
 }
 
 #[derive(Debug, Clone)]
+/// How attachments are copied, converted, or compressed when writing output.
 pub struct MediaConfig {
     pub mode: MediaMode,
     pub compress: CompressOptions,
@@ -198,6 +213,7 @@ pub enum SourceConfig {
 }
 
 impl SourceConfig {
+    /// Backup type for this source, or `None` for the Format-tab converter.
     pub fn exporter(&self) -> Option<Exporter> {
         match self {
             Self::GoSmsPro(_) => Some(Exporter::GoSmsPro),
@@ -213,19 +229,23 @@ impl SourceConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Empty marker: convert an existing export folder to another output format.
 pub struct FormatConfig {}
 
 #[derive(Debug, Clone)]
+/// GO SMS Pro extras: owner phone numbers used to mark outgoing messages.
 pub struct GoSmsProConfig {
     pub owner_phones: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+/// SMS Backup & Restore extras: owner phone numbers used to mark outgoing messages.
 pub struct SmsBackupRestoreConfig {
     pub owner_phones: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+/// SMS Backup+ extras: owner phones/emails, optional name-mapping file, log flags.
 pub struct SmsBackupPlusConfig {
     pub owner_phones: Vec<String>,
     pub owner_emails: Vec<String>,
@@ -235,12 +255,15 @@ pub struct SmsBackupPlusConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// OpenExtract has no extra fields beyond the shared [`ExporterConfig`].
 pub struct OpenExtractConfig {}
 
 #[derive(Debug, Clone, Default)]
+/// iMazing has no extra fields beyond the shared [`ExporterConfig`] (timezone lives there).
 pub struct ImazingConfig {}
 
 #[derive(Debug, Clone)]
+/// iMessage / iPhone backup extras: platform, copy method, contacts, password.
 pub struct AppleConfig {
     pub platform: Option<ApplePlatform>,
     pub attachment_root: Option<String>,
@@ -271,6 +294,7 @@ impl Default for AppleConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// WhatsApp extras: Android vs iOS, key, backup folder, and optional media/db paths.
 pub struct WhatsappConfig {
     pub platform: Option<WhatsappPlatform>,
     pub json: Option<PathBuf>,

@@ -26,6 +26,11 @@ pub(crate) enum AttachmentEmbed {
 /// `clone` copies files, `basic` embeds thumbnails, and `full` embeds
 /// originals — all three resolve bytes through the same embed path in this
 /// exporter. `disabled` skips media bytes entirely.
+///
+/// # Errors
+///
+/// Returns an error when `copy_method` is not `clone`, `basic`, `full`, or
+/// `disabled`.
 pub(crate) fn attachment_embed_from_copy_method(
     copy_method: &str,
 ) -> Result<AttachmentEmbed, RuntimeError> {
@@ -53,7 +58,7 @@ pub(crate) struct MailOptions {
     pub attachment_embed: AttachmentEmbed,
     /// Media / obfuscate transforms applied by [`message_ir_format::FormatSink`].
     pub transforms: ExportTransforms,
-    /// CSV, EML, MBOX, JSON, or JSONL.
+    /// CSV, EML, MBOX, JSON, or JSON Lines (one JSON object per line).
     pub output_format: OutputFormat,
     /// Mid-run progress / warnings (GUI sink or stderr).
     pub log: Option<LogSink>,
@@ -70,16 +75,22 @@ impl MailOptions {
         }
     }
 
+    /// Write one log line when a log sink is configured.
     pub fn emit_log(&self, line: impl AsRef<str>) {
         emit_log(self.log.as_ref(), line);
     }
 }
 
-/// Validate export directory does not already contain mail-archive data for `format`.
+/// Refuse to use `export_path` when it already contains files for `format`.
 ///
 /// Prefer [`message_ir_format::clean_previous_ir_output`] for re-runs (used by
 /// `run_export`). This stricter refuse-on-existing check remains available for
 /// callers that want to abort instead of cleaning.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be read or already contains
+/// export files for `format`.
 #[allow(dead_code)]
 pub(crate) fn validate_export_path(
     export_path: &Path,

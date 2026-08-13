@@ -1,4 +1,8 @@
-//! Append-only resumable outcome journal under the export folder.
+//! Local log of which conversations and files were already uploaded.
+//!
+//! The file is `.vault-import-state.jsonl`. JSON Lines means one JSON object per
+//! line. A later push can skip work that already succeeded. The Message Vault
+//! HTTP server still ignores true duplicates if a line is sent again.
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -9,20 +13,25 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Filename of the local upload log, written next to the conversation files.
 pub const JOURNAL_NAME: &str = ".vault-import-state.jsonl";
+/// Filename of the JSON summary written at the end of a push.
 pub const REPORT_NAME: &str = "vault-push-report.json";
+/// Filename of the human-readable push log.
 pub const LOG_NAME: &str = "vault-push.log";
 
-/// Serializes append and compact so concurrent prepare workers cannot tear lines
-/// and cannot interleave with a full rewrite.
+/// One lock for append and rewrite so two threads cannot mix bytes on a line
+/// or rewrite the file while another thread is appending.
 static JOURNAL_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
+/// One message identity recorded in the journal: conversation file plus guid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalMessage {
     pub file: String,
     pub guid: String,
 }
 
+/// One row in `.vault-import-state.jsonl`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum JournalEvent {
@@ -66,6 +75,7 @@ pub enum JournalEvent {
 }
 
 impl JournalEvent {
+    /// Vault URL and username this event belongs to.
     fn target(&self) -> (&str, &str) {
         match self {
             Self::AssetOk { url, username, .. }
@@ -77,6 +87,7 @@ impl JournalEvent {
     }
 }
 
+/// In-memory skip sets rebuilt from the journal for one vault URL and username.
 #[derive(Debug, Default)]
 pub struct JournalState {
     pub assets: HashSet<String>,
@@ -85,15 +96,22 @@ pub struct JournalState {
 }
 
 impl JournalState {
+    /// Join a conversation filename and message guid into one set key.
     pub fn message_key(file: &str, guid: &str) -> String {
         format!("{file}\0{guid}")
     }
 }
 
+/// Path of `.vault-import-state.jsonl` inside the export folder.
 pub fn journal_path(input: &Path) -> PathBuf {
     input.join(JOURNAL_NAME)
 }
 
+/// Write one journal event as a single JSON Lines row.
+///
+/// # Errors
+///
+/// Returns an error when the event cannot be serialized or the write fails.
 fn write_event_line(out: &mut impl Write, event: &JournalEvent) -> Result<()> {
     let mut buf = serde_json::to_vec(event).context("serialize journal event")?;
     buf.push(b'\n');
@@ -101,6 +119,15 @@ fn write_event_line(out: &mut impl Write, event: &JournalEvent) -> Result<()> {
     Ok(())
 }
 
+/// Read the journal and keep events that match this vault URL and username.
+///
+/// A missing file is treated as an empty journal. A corrupt line is skipped
+/// after a warning; those entries will be uploaded again. The server ignores
+/// true duplicates.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or a line cannot be read.
 pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
     let mut state = JournalState::default();
     if !path.is_file() {
@@ -115,8 +142,8 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
         let event: JournalEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                // Truncated/corrupt line — log a warning so users know
-                // the journal is damaged rather than silently skipping state.
+                // Truncated or corrupt line. Warn so the damage is visible
+                // instead of dropping state with no explanation.
                 eprintln!(
                     "warning: journal {} line {} is corrupt ({}). \
                      The affected entries will be re-submitted (server dedup is safe).",
@@ -153,11 +180,11 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
                 messages,
                 ..
             } if u == url && a == username => {
-                state.messages.extend(
-                    messages
-                        .into_iter()
-                        .map(|message| JournalState::message_key(&message.file, &message.guid)),
-                );
+                for message in messages {
+                    state
+                        .messages
+                        .insert(JournalState::message_key(&message.file, &message.guid));
+                }
             }
             JournalEvent::FileOk {
                 url: u,
@@ -173,6 +200,12 @@ pub fn load(path: &Path, url: &str, username: &str) -> Result<JournalState> {
     Ok(state)
 }
 
+/// Append one event as a JSON Lines row and flush it to disk.
+///
+/// # Errors
+///
+/// Returns an error when the parent folder cannot be created, the file cannot
+/// be opened, or the write fails.
 pub fn append(path: &Path, event: &JournalEvent) -> Result<()> {
     let _guard = JOURNAL_WRITE_LOCK
         .lock()
@@ -190,8 +223,15 @@ pub fn append(path: &Path, event: &JournalEvent) -> Result<()> {
     Ok(())
 }
 
-/// Rewrite the journal for one vault target from in-memory `state`, keeping
-/// events that belong to other `(url, username)` pairs.
+/// Rewrite the journal from in-memory `state` for one vault URL and username.
+///
+/// Events for other URL and username pairs are kept, so one export folder can
+/// resume against more than one server.
+///
+/// # Errors
+///
+/// Returns an error when the existing file cannot be read, the temporary file
+/// cannot be written, or the rename fails.
 pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> Result<()> {
     let _guard = JOURNAL_WRITE_LOCK
         .lock()
@@ -229,16 +269,7 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> 
             sha256: sha.clone(),
         });
     }
-    let mut messages: Vec<_> = state
-        .messages
-        .iter()
-        .filter_map(|key| key.split_once('\0'))
-        .map(|(file, guid)| JournalMessage {
-            file: file.to_string(),
-            guid: guid.to_string(),
-        })
-        .collect();
-    messages.sort_unstable_by(|a, b| (&a.file, &a.guid).cmp(&(&b.file, &b.guid)));
+    let messages = messages_from_state_keys(state);
     for batch in messages.chunks(1_000) {
         events.push(JournalEvent::MessageBatchOk {
             url: url.to_string(),
@@ -267,6 +298,22 @@ pub fn compact(path: &Path, url: &str, username: &str, state: &JournalState) -> 
     }
     fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Split stored `file\0guid` keys back into journal message records, sorted.
+fn messages_from_state_keys(state: &JournalState) -> Vec<JournalMessage> {
+    let mut messages: Vec<JournalMessage> = Vec::new();
+    for key in &state.messages {
+        let Some((file, guid)) = key.split_once('\0') else {
+            continue;
+        };
+        messages.push(JournalMessage {
+            file: file.to_string(),
+            guid: guid.to_string(),
+        });
+    }
+    messages.sort_unstable_by(|a, b| (&a.file, &a.guid).cmp(&(&b.file, &b.guid)));
+    messages
 }
 
 #[cfg(test)]

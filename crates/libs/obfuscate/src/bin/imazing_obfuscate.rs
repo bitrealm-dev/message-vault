@@ -1,3 +1,5 @@
+//! Rewrite iMazing Messages CSV with fake names, numbers, text, and attachments.
+
 use std::path::PathBuf;
 
 use anyhow::Result;

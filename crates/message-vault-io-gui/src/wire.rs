@@ -1,4 +1,6 @@
-//! Slint callback wiring for each workflow screen / chrome control.
+//! Connect Slint callbacks on each workflow screen to Rust handlers.
+//!
+//! Chrome controls (error dismiss, back, appearance) are wired here too.
 
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,28 @@ use crate::{
 
 const DOCS_URL: &str = "https://bitrealm-dev.github.io/message-vault-io/";
 
+/// Parse `YYYY-MM-DD`. Invalid or empty input becomes today's local date.
+fn date_from_iso_or_today(value: &str) -> Date {
+    let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+        .unwrap_or_else(|_| Local::now().date_naive());
+    Date {
+        year: date.year(),
+        month: i32::try_from(date.month()).expect("month fits in i32"),
+        day: i32::try_from(date.day()).expect("day fits in i32"),
+    }
+}
+
+/// Open the docs site, or show an error banner if the browser cannot be started.
+fn open_docs_or_report(ui_weak: &slint::Weak<AppWindow>, state: &Arc<Mutex<AppState>>) {
+    if let Err(error) = wsl::open_url(DOCS_URL)
+        && let Some(ui) = ui_weak.upgrade()
+    {
+        let mut st = state.lock().expect("state lock");
+        start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
+    }
+}
+
+/// Attach every screen and chrome callback to `ui`.
 pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_error_dismiss(ui, Arc::clone(&state));
     wire_navigate_back(ui);
@@ -31,7 +55,7 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_import(ui, Arc::clone(&state));
     wire_vault_export(ui, Arc::clone(&state));
     wire_backup_account(ui, Arc::clone(&state));
-    // Legacy adapters remain wired for reference until the deprecation pass.
+    // Older Extract / Format / Vault adapters stay connected until those screens are removed.
     wire_contacts(ui, Arc::clone(&state));
     wire_extract(ui, Arc::clone(&state));
     wire_format(ui, Arc::clone(&state));
@@ -39,6 +63,7 @@ pub fn wire_all(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     wire_log(ui, Arc::clone(&state));
 }
 
+/// Save appearance mode and preset when the combo boxes change.
 fn wire_appearance(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.global::<AppearanceAdapter>().on_mode_changed({
@@ -78,6 +103,7 @@ fn wire_appearance(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Clear the error banner when the user dismisses it.
 fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.on_error_dismissed(move || {
@@ -90,8 +116,10 @@ fn wire_error_dismiss(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
-/// Expand the OS window when Advanced Options opens without locking Slint `height`
-/// (assigning `Window.height` makes the window non-resizable).
+/// Grow the OS window when Advanced Options opens.
+///
+/// The window height is not locked in Slint. Assigning `Window.height` would
+/// make the window non-resizable.
 fn wire_grow_for_advanced(ui: &AppWindow) {
     let ui_weak = ui.as_weak();
     ui.on_grow_for_advanced(move || {
@@ -110,6 +138,7 @@ fn wire_grow_for_advanced(ui: &AppWindow) {
     });
 }
 
+/// Switch a destination screen to its form tab (not the Log tab).
 fn select_main_panel_tab(ui: &AppWindow, screen: i32) {
     match screen {
         state::screen::CREDENTIALS => {
@@ -126,6 +155,7 @@ fn select_main_panel_tab(ui: &AppWindow, screen: i32) {
     }
 }
 
+/// Go back one workflow screen. Import and Export both return to Credentials.
 fn wire_navigate_back(ui: &AppWindow) {
     let ui_weak = ui.as_weak();
     ui.on_navigate_back(move || {
@@ -146,11 +176,11 @@ fn wire_navigate_back(ui: &AppWindow) {
             _ => current - 1,
         };
         ui.set_workflow_screen(previous);
-        // Destination opens on its primary (form) tab, not Log.
         select_main_panel_tab(&ui, previous);
     });
 }
 
+/// Home screen: open Credentials, Extract, or Backup Account.
 fn wire_home(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.global::<HomeAdapter>().on_vault_import({
@@ -162,7 +192,7 @@ fn wire_home(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
             }
         }
     });
-    // Convert messages is intentionally a no-op for this refactor phase.
+    // Convert messages is a no-op until that workflow is built.
     ui.global::<HomeAdapter>().on_convert_messages(move || {});
     ui.global::<HomeAdapter>().on_extract_messages({
         let ui_weak = ui_weak.clone();
@@ -189,6 +219,7 @@ fn wire_home(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Backup Account: browse for an output folder and start a full-account download.
 fn wire_backup_account(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
@@ -207,20 +238,14 @@ fn wire_backup_account(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Credentials: open help and verify the Vault URL plus API token.
 fn wire_credentials(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
     ui.global::<CredentialsAdapter>().on_open_help({
         let ui_weak = ui_weak.clone();
         let state = Arc::clone(&state);
-        move || {
-            if let Err(error) = wsl::open_url(DOCS_URL)
-                && let Some(ui) = ui_weak.upgrade()
-            {
-                let mut st = state.lock().expect("state lock");
-                start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
-            }
-        }
+        move || open_docs_or_report(&ui_weak, &state)
     });
 
     ui.global::<CredentialsAdapter>().on_verify({
@@ -230,18 +255,12 @@ fn wire_credentials(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Guided Import: date parsing, browse, help, media refresh, and run.
 fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
-    ui.global::<ImportAdapter>().on_date_for_text(|value| {
-        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
-            .unwrap_or_else(|_| Local::now().date_naive());
-        Date {
-            year: date.year(),
-            month: i32::try_from(date.month()).expect("month fits in i32"),
-            day: i32::try_from(date.day()).expect("day fits in i32"),
-        }
-    });
+    ui.global::<ImportAdapter>()
+        .on_date_for_text(|value| date_from_iso_or_today(&value));
 
     ui.global::<ImportAdapter>().on_browse({
         let ui_weak = ui_weak.clone();
@@ -254,14 +273,7 @@ fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     ui.global::<ImportAdapter>().on_open_help({
         let ui_weak = ui_weak.clone();
         let state = Arc::clone(&state);
-        move || {
-            if let Err(error) = wsl::open_url(DOCS_URL)
-                && let Some(ui) = ui_weak.upgrade()
-            {
-                let mut st = state.lock().expect("state lock");
-                start::report_errors(&ui, &mut st, vec![format!("Could not open help: {error}")]);
-            }
-        }
+        move || open_docs_or_report(&ui_weak, &state)
     });
 
     ui.global::<ImportAdapter>().on_media_changed({
@@ -284,17 +296,11 @@ fn wire_import(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Vault Export: date parsing, browse, query preview, and run.
 fn wire_vault_export(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
-    ui.global::<VaultExportAdapter>().on_date_for_text(|value| {
-        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
-            .unwrap_or_else(|_| Local::now().date_naive());
-        Date {
-            year: date.year(),
-            month: i32::try_from(date.month()).expect("month fits in i32"),
-            day: i32::try_from(date.day()).expect("day fits in i32"),
-        }
-    });
+    ui.global::<VaultExportAdapter>()
+        .on_date_for_text(|value| date_from_iso_or_today(&value));
 
     ui.global::<VaultExportAdapter>().on_browse({
         let ui_weak = ui_weak.clone();
@@ -317,6 +323,7 @@ fn wire_vault_export(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Contacts validator: browse, check-only, and update-in-place.
 fn wire_contacts(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.global::<ContactsAdapter>().on_browse({
@@ -339,18 +346,12 @@ fn wire_contacts(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Extract Messages: date parsing, browse, product URL, exporter change, run, and clear.
 fn wire_extract(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
-    ui.global::<ExtractAdapter>().on_date_for_text(|value| {
-        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
-            .unwrap_or_else(|_| Local::now().date_naive());
-        Date {
-            year: date.year(),
-            month: i32::try_from(date.month()).expect("month fits in i32"),
-            day: i32::try_from(date.day()).expect("day fits in i32"),
-        }
-    });
+    ui.global::<ExtractAdapter>()
+        .on_date_for_text(|value| date_from_iso_or_today(&value));
 
     ui.global::<ExtractAdapter>().on_browse({
         let ui_weak = ui_weak.clone();
@@ -404,7 +405,7 @@ fn wire_extract(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
                     start::report_errors(&ui, &mut st, vec![error]);
                 }
             }
-            // Refresh visibility helpers after attachment / platform changes too.
+            // Refresh which fields are visible after attachment or platform changes too.
             sync::push_extract(&ui, &st);
             sync::push_chrome(&ui, &st);
         }
@@ -440,6 +441,7 @@ fn wire_extract(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Format tab: browse, media refresh, run, and clear.
 fn wire_format(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
@@ -488,6 +490,7 @@ fn wire_format(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Older Vault Import screen: browse, authenticate, import, and clear.
 fn wire_vault(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
 
@@ -532,6 +535,7 @@ fn wire_vault(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+/// Log panel: cancel the running job and clear the on-screen log.
 fn wire_log(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     let ui_weak = ui.as_weak();
     ui.global::<LogAdapter>().on_cancel({

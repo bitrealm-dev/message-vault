@@ -1,4 +1,8 @@
-//! Load/save GUI export options as INI (`export.ini`).
+//! Load and save GUI export options as INI (`export.ini`).
+//!
+//! The file stores paths and flags for each backup type, plus Format, Vault,
+//! Backup, and appearance sections. Passwords are never written. The vault API
+//! key is stored in plain text under `[vault]` (file mode `0600` on Unix).
 
 use std::env;
 use std::fs;
@@ -121,10 +125,12 @@ pub struct ExportIniState {
 }
 
 impl ExportIniState {
+    /// Mutable per-backup-type fields for `exporter`.
     fn section_mut(&mut self, exporter: Exporter) -> &mut ExporterSection {
         &mut self.sections[exporter_index(exporter)]
     }
 
+    /// Per-backup-type fields for `exporter`.
     fn section(&self, exporter: Exporter) -> &ExporterSection {
         &self.sections[exporter_index(exporter)]
     }
@@ -135,6 +141,7 @@ impl ExportIniState {
         Self::load_or_default_at(path)
     }
 
+    /// Load `path` when it exists; on parse error return defaults plus the error text.
     fn load_or_default_at(path: PathBuf) -> (Self, Form, Option<String>) {
         if path.is_file() {
             match Self::load(&path) {
@@ -149,6 +156,7 @@ impl ExportIniState {
         (state, form, None)
     }
 
+    /// Empty state pointing at `path`, with the default backup type applied to the form.
     fn defaults_at(path: PathBuf) -> (Self, Form) {
         let state = Self {
             path,
@@ -167,6 +175,11 @@ impl ExportIniState {
         (state, form)
     }
 
+    /// Read `export.ini` from `path` and fill a [`Form`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the file cannot be read or parsed.
     pub fn load(path: &Path) -> Result<(Self, Form), String> {
         let text = fs::read_to_string(path)
             .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
@@ -277,6 +290,12 @@ impl ExportIniState {
         form.advanced = false;
     }
 
+    /// Write the current form and per-type sections to `self.path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the parent folder cannot be created or the
+    /// file cannot be written.
     pub fn save(&mut self, form: &Form) -> Result<(), String> {
         self.capture_form_section(form);
         let ini = build_ini(self, form);
@@ -292,8 +311,12 @@ impl ExportIniState {
 
 /// Write INI contents. On Unix, create/update with mode `0o600` (owner read/write only).
 ///
-/// Writes to a temporary file then renames into place for atomicity — a crash
-/// mid-write won't corrupt the existing config.
+/// Writes to a temporary file then renames into place so a crash mid-write
+/// does not corrupt the existing config.
+///
+/// # Errors
+///
+/// Returns an error string when serialize, create, write, chmod, or rename fails.
 fn write_ini_restricted(path: &Path, ini: &Ini) -> Result<(), String> {
     let mut buf = Vec::new();
     ini.write_to(&mut buf)
@@ -365,6 +388,7 @@ fn resolve_export_ini_path() -> PathBuf {
         .join(EXPORT_INI_NAME)
 }
 
+/// Index of `exporter` in [`EXPORTERS`] (panics if missing).
 fn exporter_index(exporter: Exporter) -> usize {
     EXPORTERS
         .iter()
@@ -372,6 +396,7 @@ fn exporter_index(exporter: Exporter) -> usize {
         .expect("exporter in EXPORTERS")
 }
 
+/// Trimmed INI value, or empty string when the key is missing or blank.
 fn get(ini: &Ini, section: Option<&str>, key: &str) -> String {
     ini.get_from(section, key)
         .map(str::trim)
@@ -380,6 +405,7 @@ fn get(ini: &Ini, section: Option<&str>, key: &str) -> String {
         .to_string()
 }
 
+/// Copy `[common]` dates, contacts, media, and obfuscate fields onto `form`.
 fn apply_common(ini: &Ini, form: &mut Form) {
     form.start_date = get(ini, Some(COMMON), "start_date");
     form.end_date = get(ini, Some(COMMON), "end_date");
@@ -410,6 +436,7 @@ fn apply_common(ini: &Ini, form: &mut Form) {
     form.media_skip_efficient = parse_bool(&get(ini, Some(COMMON), "media_skip_efficient"), true);
 }
 
+/// Read one backup-type section from the INI.
 fn read_section(ini: &Ini, exporter: Exporter) -> ExporterSection {
     let name = exporter.ini_key();
     ExporterSection {
@@ -433,6 +460,7 @@ fn read_section(ini: &Ini, exporter: Exporter) -> ExporterSection {
     }
 }
 
+/// Build the INI document from in-memory state plus the current form.
 fn build_ini(state: &ExportIniState, form: &Form) -> Ini {
     let mut ini = Ini::new();
     {
@@ -518,6 +546,7 @@ fn build_ini(state: &ExportIniState, form: &Form) -> Ini {
     ini
 }
 
+/// Read the Format tab section (`[format]`, or legacy `[message-reexport]`).
 fn read_format_section(ini: &Ini) -> FormatSection {
     // Prefer `[format]`; fall back to legacy `[message-reexport]` for older files.
     let section = if ini.section(Some(FORMAT)).is_some() {
@@ -533,6 +562,7 @@ fn read_format_section(ini: &Ini) -> FormatSection {
     }
 }
 
+/// Read the Vault tab section (`[vault]`).
 fn read_vault_section(ini: &Ini) -> VaultSection {
     VaultSection {
         url: get(ini, Some(VAULT), "url"),
@@ -546,6 +576,7 @@ fn read_vault_section(ini: &Ini) -> VaultSection {
     }
 }
 
+/// Read theme mode and preset from `[appearance]`.
 fn read_appearance_section(ini: &Ini) -> AppearanceSection {
     let defaults = AppearanceSection::default();
     let mode = get(ini, Some(APPEARANCE), "mode");
@@ -560,12 +591,14 @@ fn read_appearance_section(ini: &Ini) -> AppearanceSection {
     }
 }
 
+/// Read the Backup Account output folder from `[backup]`.
 fn read_backup_section(ini: &Ini) -> BackupSection {
     BackupSection {
         output: get(ini, Some(BACKUP), "output"),
     }
 }
 
+/// Parse a bool from an INI string; unknown values keep `default`.
 fn parse_bool(s: &str, default: bool) -> bool {
     match s.trim().to_ascii_lowercase().as_str() {
         "" => default,
@@ -575,6 +608,7 @@ fn parse_bool(s: &str, default: bool) -> bool {
     }
 }
 
+/// `true` / `false` for INI output.
 fn bool_str(v: bool) -> &'static str {
     if v { "true" } else { "false" }
 }
@@ -584,6 +618,7 @@ fn multiline_value(raw: &str) -> String {
     raw.replace("\\n", "\n")
 }
 
+/// Turn real newlines into the two-character sequence `\n` for a single INI line.
 fn escape_multiline(raw: &str) -> String {
     raw.replace('\n', "\\n")
 }

@@ -1,7 +1,13 @@
-//! Packaging for [`message_ir::ConversationDocument`]: FormatSink, transforms,
-//! and reverse projectors (CSV/JSON/mail/SBR).
+//! Write and read [`message_ir::ConversationDocument`] in each output format.
 //!
-//! Directory convert lives in `message-reexport`. Schema types live in `message-ir`.
+//! A `ConversationDocument` is the shared conversation structure every
+//! exporter writes. This crate packages those documents as JSON, JSON Lines
+//! (one JSON object per line), CSV, EML, MBOX, or a single SyncTech
+//! `smses.xml`. It also applies media transforms and obfuscation through
+//! [`FormatSink`].
+//!
+//! Directory convert lives in `message-reexport`. Schema types live in
+//! `message-ir`.
 
 mod clean;
 mod export_transforms;

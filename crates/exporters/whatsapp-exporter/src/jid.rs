@@ -1,17 +1,21 @@
 //! WhatsApp JID helpers.
+//!
+//! A JID is WhatsApp's address for a user or group (for example
+//! `15551234567@s.whatsapp.net` or `120363042@g.us`).
 
 use phone::{PhoneRegion, normalize_guarded, sanitize_number};
 
-/// True for `@g.us` group JIDs.
+/// True for `@g.us` group JIDs (WhatsApp's group address suffix).
 pub(crate) fn is_group_jid(jid: &str) -> bool {
     jid.trim().ends_with("@g.us")
 }
 
-/// Map a user JID / phone-like sender to E.164 when possible.
+/// Map a user JID / phone-like sender to E.164 (the international phone-number
+/// format that starts with +) when possible.
 ///
 /// - `15551234567@s.whatsapp.net` → `+15551234567`
 /// - `447911123456@s.whatsapp.net` → `+447911123456` (country-code locals)
-/// - bare digits / `+E164` → guarded normalization (E.164 when unambiguous)
+/// - bare digits / `+E164` → E.164 when unambiguous
 /// - trunk-zero locals stay without a fabricated `+0…`
 /// - otherwise `None`
 pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
@@ -28,7 +32,7 @@ pub(crate) fn jid_to_e164(jid: &str) -> Option<String> {
         return None;
     }
     let digits = sanitize_number(local)?;
-    // Prefer US guarded form when it produces a real E.164 (`+…`).
+    // Prefer the US form when it produces a real E.164 (`+…`).
     let usa = normalize_guarded(&digits, PhoneRegion::Usa).normalized;
     if usa.starts_with('+') {
         return Some(usa);

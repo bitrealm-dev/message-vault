@@ -1,4 +1,7 @@
-//! Headless CLI: pull messages from Message Vault into a message-ir folder.
+//! Command-line entry for downloading messages from Message Vault.
+//!
+//! Message Vault is the HTTP server that stores imported messages. Output is a
+//! folder of JSON Lines files (one JSON object per line) plus `attachments/`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -75,6 +78,11 @@ fn main() -> ExitCode {
     }
 }
 
+/// Parse flags, check the API key, and either authenticate or run a full download.
+///
+/// # Errors
+///
+/// Returns an error when the key is missing, login fails, or the download fails.
 fn real_main() -> Result<ExitCode> {
     let cli = Cli::parse();
     if cli.key.trim().is_empty() {

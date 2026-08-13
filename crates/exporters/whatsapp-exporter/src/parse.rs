@@ -24,7 +24,7 @@ pub(crate) struct ChatJson {
 pub(crate) struct MessageJson {
     #[serde(default)]
     pub from_me: bool,
-    /// Unix seconds (or ms — normalized in emit).
+    /// Unix seconds (or milliseconds — converted when writing the conversation).
     pub timestamp: Option<f64>,
     pub data: Option<Value>,
     pub sender: Option<String>,
@@ -41,6 +41,11 @@ pub(crate) struct MessageJson {
     pub reactions: Value,
 }
 
+/// Load a wtsexporter `result.json` (one JSON object: JID → chat).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or parsed.
 pub(crate) fn load_chat_store(path: &Path) -> Result<ChatStoreFile> {
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))

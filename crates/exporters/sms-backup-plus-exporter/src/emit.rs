@@ -1,4 +1,5 @@
-//! Convert SMS Backup+ `.eml` trees into the common message → packaging via FormatSink.
+//! Convert SMS Backup+ `.eml` trees into the shared conversation structure,
+//! then write the chosen output format via [`FormatSink`].
 
 use crate::archive::parse_archive_eml_mail;
 use crate::contacts::{apply_name_mapping, enrich_display_names, fill_unknown_phone};
@@ -204,12 +205,7 @@ fn add_message(
     let chat_id = chat_id_for(&msg);
     let dedupe_key = cover_identity(&msg);
 
-    let peers: Vec<String> = msg
-        .participant_digits
-        .iter()
-        .map(|(d, _)| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
-        .filter(|d| !d.is_empty())
-        .collect();
+    let peers: Vec<String> = peer_handles_from_digits(&msg.participant_digits);
     let convo = ensure_convo(
         conversations,
         &chat_id,
@@ -292,6 +288,51 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
     names
 }
 
+/// Format each participant's digits as E.164 when unambiguous, dropping empties.
+fn peer_handles_from_digits(participant_digits: &[(String, Option<String>)]) -> Vec<String> {
+    participant_digits
+        .iter()
+        .map(|(d, _)| phone::normalize_guarded(d, phone::PhoneRegion::for_raw(d)).normalized)
+        .filter(|d| !d.is_empty())
+        .collect()
+}
+
+/// First non-empty `contact_name` extra on a message in this conversation.
+fn first_contact_name(convo: &PendingConversation) -> Option<String> {
+    convo
+        .messages
+        .iter()
+        .map(|m| m.extra_str("contact_name").trim())
+        .find(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// Map a staged attachment onto the shared [`IrAttachment`] shape.
+fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
+    IrAttachment {
+        path: Some(a.rel_path.clone()),
+        original_name: a.name_hint.clone(),
+        mime_type: a.mime_type(),
+        digest_sha256: a.digest_sha256.clone(),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }
+}
+
+/// True when the path has a `.eml` extension (any case).
+fn is_eml_file(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
+}
+
+/// Build a [`ConversationDocument`] from one pending conversation.
+///
+/// Currently always returns `Ok`. The `Result` matches the other exporters.
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
@@ -312,14 +353,10 @@ fn pending_to_document(
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
-            display_name: name_by_handle.get(chat_id).cloned().or_else(|| {
-                convo
-                    .messages
-                    .iter()
-                    .map(|m| m.extra_str("contact_name").trim())
-                    .find(|n| !n.is_empty())
-                    .map(str::to_string)
-            }),
+            display_name: name_by_handle
+                .get(chat_id)
+                .cloned()
+                .or_else(|| first_contact_name(convo)),
             handle_type: Some(HandleType::Phone),
         });
     }
@@ -374,18 +411,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(|a| IrAttachment {
-                path: Some(a.rel_path.clone()),
-                original_name: a.name_hint.clone(),
-                mime_type: a.mime_type(),
-                digest_sha256: a.digest_sha256.clone(),
-                is_sticker: false,
-                transcription: None,
-                sticker_effect: None,
-                size_bytes: None,
-                missing_reason: None,
-                bytes: None,
-            })
+            .map(pending_attachment_to_ir)
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms
@@ -416,7 +442,7 @@ fn pending_to_document(
             );
         }
         if let Some(title) = convo.display_name.as_deref().filter(|t| !t.is_empty()) {
-            // Synthetic group label; kept as data, not used for filenames.
+            // Android group title stored as data only. Filenames do not use it.
             fields.insert(
                 "android_group_title".into(),
                 serde_json::Value::String(title.to_string()),
@@ -458,7 +484,7 @@ fn pending_to_document(
             } else {
                 IrConversationType::Individual
             },
-            // Synthetic Android group titles are not used for filenames.
+            // Android group titles are not used for filenames.
             group_title: None,
             participants,
             stats: ConversationStats::default(),
@@ -468,6 +494,13 @@ fn pending_to_document(
     })
 }
 
+/// Collect `.eml` paths from files and directories, skipping `duplicate` /
+/// `exclude` / `.git` folders.
+///
+/// # Errors
+///
+/// Returns an error when an input is neither a file nor a directory, a file is
+/// not `.eml`, no `.eml` files are found, or the user cancels.
 fn collect_eml_paths<P: AsRef<Path>>(
     inputs: &[P],
     cancel: Option<&CancelFlag>,
@@ -494,11 +527,7 @@ fn collect_eml_paths<P: AsRef<Path>>(
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         let input = input.as_ref();
         if input.is_file() {
-            if input
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
-            {
+            if is_eml_file(input) {
                 paths.push(input.to_path_buf());
             } else {
                 bail!("input file is not .eml: {}", input.display());
@@ -508,11 +537,7 @@ fn collect_eml_paths<P: AsRef<Path>>(
         if !input.is_dir() {
             bail!("input is not a file or directory: {}", input.display());
         }
-        let mut found = message_vault_io_core::discover_files(input, &|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("eml"))
-        })?;
+        let mut found = message_vault_io_core::discover_files(input, &is_eml_file)?;
         found.retain(|p| !in_skipped_dir(p));
         paths.extend(found);
     }
@@ -625,12 +650,18 @@ fn report_progress(verbose: bool, log: Option<&LogSink>, label: &str, processed:
     }
 }
 
-/// Convert SMS Backup+ EML tree(s) into per-conversation CSV, EML, or MBOX.
+/// Convert SMS Backup+ EML tree(s) into the shared conversation structure, then
+/// write the chosen output format.
 ///
 /// Deduplication runs while scanning, using [`cover_identity`] (second-floored
 /// chat + direction + text) so archive and flat copies of the same SMS collapse.
 /// When `cancel` is set, cooperative cancellation is checked during the EML walk
 /// and while merging parse results.
+///
+/// # Errors
+///
+/// Returns an error when no `.eml` files are found, output overlaps an input,
+/// a file cannot be read or written, or the user cancels.
 pub(crate) fn convert_export<P: AsRef<Path>>(
     inputs: &[P],
     output_dir: &Path,
@@ -680,10 +711,10 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     vlog(verbose, log, format!("output: {}", output_dir.display()));
 
     fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
-    // Canonicalize so relative paths resolve and so output/input identity is
-    // checked on resolved paths. Cleaning the output before reading the input
-    // would otherwise delete leftover export CSVs/JSON inside a backup tree
-    // when output points at (or contains) an input root.
+    // Resolve to absolute paths so relative inputs work and so the output/input
+    // overlap check uses the same path form. Cleaning the output before reading
+    // the input would otherwise delete leftover export CSVs/JSON inside a backup
+    // tree when output points at (or contains) an input root.
     let output_dir = fs::canonicalize(output_dir)
         .with_context(|| format!("resolve {}", output_dir.display()))?;
     for input in inputs {

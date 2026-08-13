@@ -504,6 +504,10 @@ pub fn placeholder_rel_path(class: MediaClass) -> &'static str {
 }
 
 /// Write the three shared placeholder files under `output_dir/attachments/`.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be created or a file cannot be written.
 pub fn materialize_placeholders(output_dir: &Path) -> Result<()> {
     let dir = output_dir.join("attachments");
     fs::create_dir_all(&dir)?;
@@ -543,11 +547,15 @@ fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
 }
 
 /// Parse `--obfuscate-seed` hex or generate a random seed; print seed to stderr when generated.
+///
+/// # Errors
+///
+/// Returns an error when `seed_hex` is not valid hex of length 8–64.
 pub fn resolve_obfuscator(seed_hex: Option<&str>) -> Result<Obfuscator> {
     resolve_obfuscator_with_log(seed_hex, None)
 }
 
-/// Like [`resolve_obfuscator`], but emit the generated-seed notice via `log` when set.
+/// Like [`resolve_obfuscator`], but print the generated-seed notice through `log` when set.
 pub fn resolve_obfuscator_with_log(
     seed_hex: Option<&str>,
     log: Option<&dyn Fn(&str)>,
@@ -804,6 +812,10 @@ fn obfuscate_attachments_json(raw: &str) -> String {
 }
 
 /// Obfuscate iMazing vendor CSV(s) into an output directory.
+///
+/// # Errors
+///
+/// Returns an error when a CSV cannot be read or the output cannot be written.
 pub fn obfuscate_imazing(input: &Path, output_dir: &Path, anon: &mut Obfuscator) -> Result<usize> {
     fs::create_dir_all(output_dir)?;
     materialize_placeholders(output_dir)?;

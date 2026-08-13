@@ -1,4 +1,4 @@
-//! Shared CSV emit helpers for message-vault-io.
+//! Shared CSV helpers for writing conversation files.
 
 mod date_range;
 mod utc_offset;
@@ -132,13 +132,7 @@ pub fn conversation_filename(
         }
     }
 
-    let mut phones: Vec<String> = participant_e164s
-        .iter()
-        .map(|p| p.trim().to_string())
-        .filter(|p| is_phone_handle(p))
-        .collect();
-    phones.sort();
-    phones.dedup();
+    let phones = unique_sorted_phone_handles(participant_e164s);
 
     if phones.is_empty() {
         let stem = if chat_id.trim().is_empty() {
@@ -162,6 +156,18 @@ pub fn conversation_filename(
         stem.push_str(&digest[..16]);
     }
     with_suffix(&stem, suffix)
+}
+
+/// Trim, keep phone-looking handles, sort, and drop duplicates.
+fn unique_sorted_phone_handles(participant_e164s: &[String]) -> Vec<String> {
+    let mut phones: Vec<String> = participant_e164s
+        .iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| is_phone_handle(p))
+        .collect();
+    phones.sort();
+    phones.dedup();
+    phones
 }
 
 #[cfg(test)]

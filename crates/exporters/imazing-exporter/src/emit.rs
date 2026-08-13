@@ -1,4 +1,5 @@
-//! Convert iMazing Messages / WhatsApp rows → common message → packaging via FormatSink.
+//! Convert iMazing Messages / WhatsApp rows into the shared conversation
+//! structure, then write the chosen output format via [`FormatSink`].
 
 use crate::attachments::{AttachmentIndex, resolve_attachment_cell};
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
@@ -62,6 +63,11 @@ impl TransportFamily {
 /// `timezone`: fixed UTC offset (e.g. `UTC-05:00`). When `None`, use the host local zone.
 /// When `transforms` copies attachments, media files are copied into `output/attachments/`.
 /// When `cancel` is set, cooperative cancellation is checked between CSV files.
+///
+/// # Errors
+///
+/// Returns an error when output overlaps input, a CSV cannot be parsed, or the
+/// user cancels.
 pub(crate) fn convert_export(
     input: &Path,
     output: &Path,
@@ -74,8 +80,8 @@ pub(crate) fn convert_export(
 ) -> Result<(ExportReport, FormatSinkResult)> {
     let tz = resolve_tz(timezone)?;
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Canonicalize so relative inputs resolve and `parent()` below is absolute,
-    // and so output/input identity is checked on resolved paths.
+    // Resolve to absolute paths so relative inputs work, `parent()` below is
+    // absolute, and the output/input overlap check uses the same path form.
     let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
     let output =
         fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
@@ -336,8 +342,8 @@ fn collect_peer_info(
         if sid.contains('@') {
             handles.insert(sid.to_string());
         } else if sanitize_number(sid).is_some() {
-            // Guarded policy on the raw id: E.164 when unambiguous (keeps the
-            // `+` for +-prefixed values), else digits-as-is — never `+0…`.
+            // Format as E.164 (the international phone-number format that starts
+            // with +) when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
             handles
                 .insert(phone::normalize_guarded(sid, phone::PhoneRegion::for_raw(sid)).normalized);
         }
@@ -523,9 +529,8 @@ fn resolve_chat_identifier(
         return (session.to_string(), String::new(), false);
     }
     if let Some(digits) = sanitize_number(session) {
-        // Guarded policy on the raw session: E.164 when unambiguous (keeps
-        // the `+`), else digits-as-is — never `+0…`. The book lookup uses
-        // its own US-digit form.
+        // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never
+        // invent `+0…`. The contacts book looks up its own US-digit form.
         let handle =
             phone::normalize_guarded(session, phone::PhoneRegion::for_raw(session)).normalized;
         let book_form = phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized;
@@ -575,8 +580,7 @@ fn resolve_sender(
     if row.sender_id.contains('@') {
         handle = row.sender_id.trim().to_string();
     } else if sanitize_number(&row.sender_id).is_some() {
-        // Guarded policy on the raw id: E.164 when unambiguous (keeps the
-        // `+`), else digits-as-is — never `+0…`.
+        // Format as E.164 when unambiguous. Otherwise keep digits as-is. Never invent `+0…`.
         handle =
             phone::normalize_guarded(&row.sender_id, phone::PhoneRegion::for_raw(&row.sender_id))
                 .normalized;
@@ -672,6 +676,35 @@ fn attachment_guid_materials(attachments: &[PendingAttachment]) -> Vec<String> {
     digests
 }
 
+/// First non-empty `contact_name` extra on a message in this conversation.
+fn first_contact_name(convo: &PendingConversation) -> Option<String> {
+    convo
+        .messages
+        .iter()
+        .map(|m| m.extra_str("contact_name").trim())
+        .find(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// Map a staged attachment onto the shared [`IrAttachment`] shape.
+fn pending_attachment_to_ir(a: &PendingAttachment, msg: &PendingMessage) -> IrAttachment {
+    IrAttachment {
+        path: Some(a.rel_path.clone()),
+        original_name: a.name_hint.clone(),
+        mime_type: a.mime_type(),
+        digest_sha256: a.digest_sha256.clone(),
+        is_sticker: msg.extra_flag("is_sticker"),
+        transcription: msg.extra_opt("transcription"),
+        sticker_effect: msg.extra_opt("sticker_effect"),
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }
+}
+
+/// Build a [`ConversationDocument`] from one pending conversation.
+///
+/// Currently always returns `Ok`. The `Result` matches the other exporters.
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
@@ -689,12 +722,7 @@ fn pending_to_document(
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
-            display_name: convo
-                .messages
-                .iter()
-                .map(|m| m.extra_str("contact_name").trim())
-                .find(|n| !n.is_empty())
-                .map(str::to_string),
+            display_name: first_contact_name(convo),
             handle_type: Some(handle_type_for(chat_id)),
         });
     }
@@ -734,18 +762,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(|a| IrAttachment {
-                path: Some(a.rel_path.clone()),
-                original_name: a.name_hint.clone(),
-                mime_type: a.mime_type(),
-                digest_sha256: a.digest_sha256.clone(),
-                is_sticker: msg.extra_flag("is_sticker"),
-                transcription: msg.extra_opt("transcription"),
-                sticker_effect: msg.extra_opt("sticker_effect"),
-                size_bytes: None,
-                missing_reason: None,
-                bytes: None,
-            })
+            .map(|a| pending_attachment_to_ir(a, msg))
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms

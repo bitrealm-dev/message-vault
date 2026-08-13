@@ -31,10 +31,7 @@ impl NameMapping {
         let mut lines = reader.lines();
         let header = lines.next().transpose()?.unwrap_or_default();
         let header_parts = crate::book::split_csv_line(&header);
-        let header_l: Vec<String> = header_parts
-            .iter()
-            .map(|h| h.trim().to_ascii_lowercase().replace('_', " "))
-            .collect();
+        let header_l: Vec<String> = header_parts.iter().map(|h| csv_header_key(h)).collect();
 
         let handle_idx = header_l.iter().position(|h| h == "handle" || h == "phone");
         let type_idx = header_l
@@ -123,6 +120,11 @@ impl NameMapping {
     pub fn is_empty(&self) -> bool {
         self.incorrect_to_handle.is_empty()
     }
+}
+
+/// Lowercase a CSV header and turn underscores into spaces for matching.
+fn csv_header_key(h: &str) -> String {
+    h.trim().to_ascii_lowercase().replace('_', " ")
 }
 
 #[cfg(test)]

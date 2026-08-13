@@ -60,6 +60,11 @@ pub(crate) struct XmlParseStats {
     pub skipped_unknown_address_details_more: u64,
 }
 
+/// Parse one GO SMS Pro XML backup file.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or the XML cannot be parsed.
 pub(crate) fn parse_xml_file(path: &Path) -> Result<(Vec<XmlMessage>, XmlParseStats)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
@@ -75,6 +80,11 @@ pub(crate) fn parse_xml_file(path: &Path) -> Result<(Vec<XmlMessage>, XmlParseSt
     Ok((msgs, stats))
 }
 
+/// Parse GO SMS Pro XML from a string.
+///
+/// # Errors
+///
+/// Returns an error when the XML cannot be parsed.
 pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStats)> {
     let file: GoSmsFile = quick_xml::de::from_str(text).context("failed to parse GoSms XML")?;
     let mut stats = XmlParseStats::default();
@@ -176,6 +186,7 @@ pub(crate) fn parse_xml_str(text: &str) -> Result<(Vec<XmlMessage>, XmlParseStat
     Ok((out, stats))
 }
 
+/// Trimmed string, or `None` when empty.
 fn non_empty(s: &str) -> Option<String> {
     let t = s.trim();
     if t.is_empty() {
@@ -185,6 +196,7 @@ fn non_empty(s: &str) -> Option<String> {
     }
 }
 
+/// Record an XML SMS whose `<address>` had no usable digits.
 fn push_bad_addr(
     stats: &mut XmlParseStats,
     fields: &BTreeMap<String, String>,

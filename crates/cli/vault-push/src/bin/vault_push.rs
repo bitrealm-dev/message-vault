@@ -1,4 +1,8 @@
-//! Headless CLI: push a message-ir JSONL export folder to Message Vault.
+//! Command-line entry for uploading a conversation folder to Message Vault.
+//!
+//! Message Vault is the HTTP server that stores imported messages. The folder
+//! holds JSON Lines files (one JSON object per line) plus an `attachments/`
+//! directory.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -103,6 +107,12 @@ fn main() -> ExitCode {
     }
 }
 
+/// Parse flags, check the API key, and either authenticate or run a full push.
+///
+/// # Errors
+///
+/// Returns an error when flags are invalid, the key is missing, login fails, or
+/// the push itself fails.
 fn real_main() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.mode.as_str() {

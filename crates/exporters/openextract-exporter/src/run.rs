@@ -6,7 +6,12 @@ use contacts::resolve_contacts_cli;
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
-/// Resolve contacts, convert, apply media/obfuscate via FormatSink.
+/// Resolve contacts, convert, then apply media transforms and obfuscation.
+///
+/// # Errors
+///
+/// Returns an error when the source is not OpenExtract, conversion fails, media
+/// processing fails for every candidate file, or the user cancels.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::OpenExtract(_) = &config.source else {
         bail!("openextract-exporter requires SourceConfig::OpenExtract");

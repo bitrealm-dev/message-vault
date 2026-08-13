@@ -687,7 +687,11 @@ fn score_decode_quality(
     "mixed"
 }
 
-/// Parse one PDU file. Returns `None` for unparseable / bad filenames.
+/// Parse one PDU file. Returns `None` for unparseable files or bad filenames.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read.
 pub fn parse_pdu_file(
     path: &Path,
     owners: &HashSet<String>,

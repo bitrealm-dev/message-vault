@@ -1,4 +1,4 @@
-//! Reverse projectors: EML folder / mboxrd → [`ConversationDocument`].
+//! Read an EML folder or mboxrd mailbox back into a [`ConversationDocument`].
 
 use crate::normalize::{imessage_from_parts, source_from_parts};
 use anyhow::{Context, Result, bail};
@@ -14,7 +14,12 @@ use message_vault_io_core::discover_files;
 use std::fs;
 use std::path::Path;
 
-/// Scan a conversation directory of `.eml` files into IR.
+/// Scan a conversation directory of `.eml` files into a conversation document.
+///
+/// # Errors
+///
+/// Returns an error when `dir` is not a directory, no `.eml` files are found,
+/// or a file cannot be read or parsed.
 pub fn read_conversation_eml_dir(dir: &Path) -> Result<ConversationDocument> {
     if !dir.is_dir() {
         bail!("not a directory: {}", dir.display());
@@ -37,11 +42,7 @@ pub fn read_conversation_eml_dir(dir: &Path) -> Result<ConversationDocument> {
             .with_context(|| format!("parse {}", path.display()))?;
         mail_messages.push(msg);
     }
-    mail_messages.sort_by(|a, b| {
-        a.timestamp_unix_ms
-            .cmp(&b.timestamp_unix_ms)
-            .then_with(|| a.guid.cmp(&b.guid))
-    });
+    mail_messages.sort_by(cmp_mail_messages);
 
     let packaging = crate::util::packaging_suffix_from_stem(
         dir.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
@@ -49,17 +50,17 @@ pub fn read_conversation_eml_dir(dir: &Path) -> Result<ConversationDocument> {
     document_from_mail_messages(&mail_messages, packaging)
 }
 
-/// Read a conversation `.mbox` (mboxrd) into IR.
+/// Read a conversation `.mbox` (mboxrd) into a conversation document.
+///
+/// # Errors
+///
+/// Returns an error when the mailbox cannot be read or contains no messages.
 pub fn read_conversation_mbox(path: &Path) -> Result<ConversationDocument> {
     let mut mail_messages = mail_messages_from_mbox(path)?;
     if mail_messages.is_empty() {
         bail!("mbox has no messages: {}", path.display());
     }
-    mail_messages.sort_by(|a, b| {
-        a.timestamp_unix_ms
-            .cmp(&b.timestamp_unix_ms)
-            .then_with(|| a.guid.cmp(&b.guid))
-    });
+    mail_messages.sort_by(cmp_mail_messages);
     let packaging = crate::util::packaging_suffix_from_stem(
         path.file_stem()
             .and_then(|n| n.to_str())
@@ -68,7 +69,19 @@ pub fn read_conversation_mbox(path: &Path) -> Result<ConversationDocument> {
     document_from_mail_messages(&mail_messages, packaging)
 }
 
-/// Map [`MailMessage`] list (same conversation) into a [`ConversationDocument`].
+/// Order mail messages by timestamp, then GUID, so both readers agree.
+fn cmp_mail_messages(a: &MailMessage, b: &MailMessage) -> std::cmp::Ordering {
+    a.timestamp_unix_ms
+        .cmp(&b.timestamp_unix_ms)
+        .then_with(|| a.guid.cmp(&b.guid))
+}
+
+/// Map a list of [`MailMessage`] values from one conversation into a
+/// [`ConversationDocument`].
+///
+/// # Errors
+///
+/// Returns an error when `messages` is empty.
 fn document_from_mail_messages(
     messages: &[MailMessage],
     packaging_stem_suffix: Option<String>,
@@ -93,18 +106,7 @@ fn document_from_mail_messages(
     let participants: Vec<IrParticipant> = first
         .participants
         .iter()
-        .map(|p| IrParticipant {
-            handle: p.handle.clone(),
-            display_name: p
-                .display_name
-                .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
-            // EML/mbox carries no handle type, so infer it from the handle
-            // string (@ → email, digit-heavy → phone, else other).
-            handle_type: Some(crate::util::infer_handle_type(&p.handle)),
-        })
+        .map(participant_from_mail)
         .collect();
 
     let ir_messages: Vec<IrMessage> = messages.iter().map(ir_message_from_mail).collect();
@@ -131,6 +133,24 @@ fn document_from_mail_messages(
     Ok(doc)
 }
 
+/// Build an [`IrParticipant`] from a mail participant.
+///
+/// EML and mbox do not store a handle type, so the type is inferred from the
+/// handle string (`@` → email, digit-heavy → phone, else other).
+fn participant_from_mail(p: &mail::Participant) -> IrParticipant {
+    IrParticipant {
+        handle: p.handle.clone(),
+        display_name: p
+            .display_name
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        handle_type: Some(crate::util::infer_handle_type(&p.handle)),
+    }
+}
+
+/// Map one mail message into the shared conversation message type.
 fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
     let direction = match msg.direction {
         MailDirection::Incoming => IrDirection::Incoming,
@@ -163,26 +183,7 @@ fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
         tapback_action: msg.tapback_action.clone(),
     });
 
-    let attachments = msg
-        .attachments
-        .iter()
-        .map(|a| IrAttachment {
-            path: None,
-            original_name: a.original_name.clone(),
-            mime_type: a.mime_type.clone(),
-            digest_sha256: a.digest_sha256.clone(),
-            is_sticker: a.is_sticker,
-            transcription: a.transcription.clone(),
-            sticker_effect: a.sticker_effect.clone(),
-            size_bytes: None,
-            missing_reason: None,
-            bytes: if a.bytes.is_empty() {
-                None
-            } else {
-                Some(a.bytes.clone())
-            },
-        })
-        .collect();
+    let attachments = msg.attachments.iter().map(attachment_from_mail).collect();
 
     IrMessage {
         guid: msg.guid.clone(),
@@ -200,6 +201,27 @@ fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
     }
 }
 
+/// Map one mail attachment into [`IrAttachment`].
+fn attachment_from_mail(a: &mail::MailAttachment) -> IrAttachment {
+    IrAttachment {
+        path: None,
+        original_name: a.original_name.clone(),
+        mime_type: a.mime_type.clone(),
+        digest_sha256: a.digest_sha256.clone(),
+        is_sticker: a.is_sticker,
+        transcription: a.transcription.clone(),
+        sticker_effect: a.sticker_effect.clone(),
+        size_bytes: None,
+        missing_reason: None,
+        bytes: if a.bytes.is_empty() {
+            None
+        } else {
+            Some(a.bytes.clone())
+        },
+    }
+}
+
+/// Parse an optional JSON cell, treating blank and `null` as `None`.
 fn parse_json_opt(s: Option<&str>) -> Option<serde_json::Value> {
     let t = s?.trim();
     if t.is_empty() || t == "null" {
@@ -208,6 +230,7 @@ fn parse_json_opt(s: Option<&str>) -> Option<serde_json::Value> {
     serde_json::from_str(t).ok()
 }
 
+/// Trimmed owned string, or `None` when blank.
 fn nonempty_owned(s: &str) -> Option<String> {
     let t = s.trim();
     if t.is_empty() {

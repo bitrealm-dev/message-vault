@@ -1,3 +1,5 @@
+//! Look up contact names from macOS Address Book or iOS Contacts databases.
+
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -105,11 +107,16 @@ pub(crate) struct ContactsIndex {
 impl ContactsIndex {
     /// Build a contacts index from one database path or all local macOS sources.
     ///
-    /// - If `path` is `Some`, we only look at that database.
-    /// - If `path` is `None`, scans macOS Contacts sources under
-    ///   `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`
+    /// When `path` is `Some`, only that database is read. When `path` is `None`,
+    /// scans macOS Contacts sources under
+    /// `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`.
     ///
-    /// Supports building from both macOS (`AddressBook-v22.abcddb`) and iOS (`AddressBook.sqlitedb`) databases.
+    /// Accepts macOS (`AddressBook-v22.abcddb`) and iOS (`AddressBook.sqlitedb`)
+    /// databases.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a database cannot be opened or queried.
     pub fn build(path: Option<&Path>) -> Result<Self, TableError> {
         if let Some(path) = path {
             let conn = get_connection(path)?;
@@ -136,6 +143,10 @@ impl ContactsIndex {
 
     // MARK: macOS
     /// Build a contacts index from a macOS Contacts database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query fails.
     fn build_from_macos(conn: &Connection) -> Result<Self> {
         let mut index = HashMap::new();
 
@@ -174,6 +185,10 @@ impl ContactsIndex {
 
     // MARK: iOS
     /// Build a contacts index from an iOS backup Contacts database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query fails.
     fn build_from_ios(conn: &Connection) -> Result<Self> {
         // iOS backup contacts: ABPersonFullTextSearch_content with columns:
         // c0First (TEXT), c1Last (TEXT), c16Phone (TEXT: space-separated variants), c17Email (TEXT: space-separated)
@@ -360,6 +375,7 @@ fn phone_keys(raw: &str) -> Vec<String> {
 }
 
 /// Extract digits from a raw phone number string.
+/// Keep only ASCII digits from a phone-like string.
 fn to_phone_digits(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {

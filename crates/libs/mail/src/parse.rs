@@ -20,6 +20,11 @@ struct AttachmentMetaCell {
 }
 
 /// Parse one RFC 5322 / MIME message (EML bytes) into [`MailMessage`].
+///
+/// # Errors
+///
+/// Returns an error when the bytes are not a valid email or a required
+/// `X-ME-*` header is missing.
 pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
     let mail = mailparse::parse_mail(bytes).context("parse eml bytes")?;
     let headers = &mail.headers;
@@ -102,6 +107,10 @@ pub fn mail_message_from_eml_bytes(bytes: &[u8]) -> Result<MailMessage> {
 }
 
 /// Read an mboxrd file and parse each record into [`MailMessage`].
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or a record cannot be parsed.
 pub fn mail_messages_from_mbox(path: &Path) -> Result<Vec<MailMessage>> {
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let records = split_mboxrd(&text);

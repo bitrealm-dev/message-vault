@@ -1,4 +1,6 @@
-//! Blocking HTTP helpers for vault export + asset download.
+//! HTTP helpers for paging exported messages and downloading attachments.
+//!
+//! Calls are blocking so they can run on worker threads without an async runtime.
 
 use std::fs::File;
 use std::io::Write;
@@ -10,6 +12,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+/// One page from `GET /v1/export/messages`.
 pub struct ExportMessagesResponse {
     pub ok: bool,
     #[serde(default)]
@@ -21,6 +24,7 @@ pub struct ExportMessagesResponse {
 }
 
 #[derive(Debug, Deserialize)]
+/// Totals from `GET /v1/export/messages/count`.
 pub struct ExportCountResponse {
     pub ok: bool,
     #[serde(default)]
@@ -34,6 +38,7 @@ pub struct ExportCountResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// One message row from the vault export API.
 pub struct ExportMessage {
     pub id: i64,
     pub source: String,
@@ -68,6 +73,7 @@ pub struct ExportMessage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Chat metadata attached to each export message.
 pub struct ExportConversation {
     pub id: i64,
     pub chat_identifier: String,
@@ -81,6 +87,7 @@ pub struct ExportConversation {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// One person in a conversation (handle plus optional display name).
 pub struct ExportParticipant {
     pub handle: String,
     #[serde(default)]
@@ -88,6 +95,7 @@ pub struct ExportParticipant {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// One attachment on an export message (path, fingerprint, size).
 pub struct ExportAttachment {
     #[serde(default)]
     pub path: Option<String>,
@@ -109,6 +117,7 @@ pub struct ExportAttachment {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// One reaction (tapback) on an export message.
 pub struct ExportTapback {
     #[serde(default)]
     pub part_index: i64,
@@ -122,6 +131,7 @@ pub struct ExportTapback {
 }
 
 #[derive(Clone)]
+/// Blocking HTTP client used for paging export messages and downloading files.
 pub struct HttpSession {
     client: Client,
 }
@@ -169,6 +179,11 @@ fn export_url(request: ExportUrl<'_>) -> Result<reqwest::Url> {
 }
 
 impl HttpSession {
+    /// Blocking HTTP client with a connection pool for worker threads.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reqwest client cannot be built.
     pub fn new() -> Result<Self> {
         let client = Client::builder()
             .pool_max_idle_per_host(16)
@@ -177,6 +192,11 @@ impl HttpSession {
         Ok(Self { client })
     }
 
+    /// Fetch one page of messages from `GET /v1/export/messages`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or the body is not valid JSON.
     pub fn export_messages(
         &self,
         base_url: &str,
@@ -232,6 +252,11 @@ impl HttpSession {
 
     /// `GET /v1/export/messages/count`. Returns `Ok(None)` when the vault does not
     /// support the route (HTTP 404), so callers can fall back to paging.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails (other than 404) or the body is
+    /// not valid JSON.
     pub fn export_message_count(
         &self,
         base_url: &str,
@@ -286,6 +311,15 @@ impl HttpSession {
         Ok(Some(parsed))
     }
 
+    /// Download one attachment by SHA-256 fingerprint to `dest`.
+    ///
+    /// Bytes are written to a `.part` file first, then renamed, so a crash does
+    /// not leave a truncated file at the destination.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the fingerprint is not 64 hex characters, the vault
+    /// returns 404 or another failure, or the file cannot be written.
     pub fn download_asset(
         &self,
         base_url: &str,
@@ -346,6 +380,7 @@ impl HttpSession {
     }
 }
 
+/// Copy `s`, cutting it to `max` bytes and adding an ellipsis when longer.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()

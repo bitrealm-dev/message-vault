@@ -1,4 +1,6 @@
-//! Convert GO SMS Pro export → common message → packaging via FormatSink.
+//! Convert a GO SMS Pro backup into the shared conversation structure
+//! ([`ConversationDocument`]) every exporter writes, then write the chosen
+//! output format via [`FormatSink`].
 
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
@@ -70,6 +72,7 @@ pub(crate) struct SkippedNoPartyDetail {
     pub has_to: bool,
 }
 
+/// MIME type for a common media file extension, if known.
 fn mime_for_ext(ext: &str) -> Option<&'static str> {
     match ext {
         ".jpg" | ".jpeg" => Some("image/jpeg"),
@@ -83,17 +86,39 @@ fn mime_for_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
-/// Guarded normalization for digit-only values (see `phone::normalize_guarded`):
-/// E.164 when unambiguous for the US-centric crate, else digits-as-is — never
-/// a fabricated `+0…`.
+/// Format as E.164 (the international phone-number format that starts with +)
+/// when the digits are unambiguous for the US-centric crate. Otherwise keep
+/// the digits as-is. Never invent `+0…`.
 fn guarded_phone(digits: &str) -> String {
     phone::normalize_guarded(digits, phone::PhoneRegion::Usa).normalized
 }
 
+/// Format digit strings as E.164 (the international phone-number format that
+/// starts with +) when unambiguous, then join with `", "`.
+fn join_guarded_phones(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| guarded_phone(d))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
+/// become `12_34`.
+fn group_id_slug(digits: &[String]) -> String {
+    digits
+        .iter()
+        .map(|d| format!("{}:{}", d.len(), d))
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Chat id for a 1:1 conversation: E.164 when unambiguous.
 fn chat_id_individual(digits: &str) -> String {
     guarded_phone(digits)
 }
 
+/// Group chat id and display title from participant digits (owner excluded).
 fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (String, String) {
     let mut others: Vec<String> = participant_digits
         .iter()
@@ -105,30 +130,15 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (Str
     let title = if others.is_empty() {
         "Group".to_string()
     } else if others.len() <= 4 {
-        format!(
-            "Group: {}",
-            others
-                .iter()
-                .map(|d| guarded_phone(d))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        format!("Group: {}", join_guarded_phones(&others))
     } else {
         format!(
             "Group: {}, and {} others",
-            others[..4]
-                .iter()
-                .map(|d| guarded_phone(d))
-                .collect::<Vec<_>>()
-                .join(", "),
+            join_guarded_phones(&others[..4]),
             others.len() - 4
         )
     };
-    let slug = others
-        .iter()
-        .map(|d| format!("{}:{}", d.len(), d))
-        .collect::<Vec<_>>()
-        .join("_");
+    let slug = group_id_slug(&others);
     let id = if slug.is_empty() {
         "chat-group-unknown".to_string()
     } else {
@@ -144,6 +154,7 @@ fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (Str
     (id, title)
 }
 
+/// Get or create the pending conversation for `chat_id`.
 fn ensure_convo<'a>(
     map: &'a mut BTreeMap<String, PendingConversation>,
     chat_id: &str,
@@ -163,6 +174,7 @@ fn ensure_convo<'a>(
         })
 }
 
+/// Append parsed XML SMS rows to pending conversations.
 fn add_xml_messages(
     conversations: &mut BTreeMap<String, PendingConversation>,
     msgs: Vec<XmlMessage>,
@@ -200,6 +212,11 @@ fn add_xml_messages(
     }
 }
 
+/// Write PDU (binary SMS/MMS) attachment parts under `attachments_dir`.
+///
+/// # Errors
+///
+/// Returns an error when an attachment file cannot be written.
 fn save_pdu_attachments(
     parsed: &ParsedPdu,
     attachments_dir: &Path,
@@ -245,6 +262,7 @@ fn save_pdu_attachments(
     Ok(out)
 }
 
+/// File name of the PDU on disk (for skip-detail rows).
 fn pdu_basename(parsed: &ParsedPdu) -> String {
     parsed
         .path
@@ -263,6 +281,7 @@ fn is_empty_pdu(parsed: &ParsedPdu) -> bool {
         && !parsed.has_to
 }
 
+/// Append one parsed PDU (binary SMS/MMS) to the matching conversation(s).
 fn add_pdu_message(
     conversations: &mut BTreeMap<String, PendingConversation>,
     parsed: ParsedPdu,
@@ -383,6 +402,7 @@ fn dedupe_base_key(key: &str) -> &str {
     key.rsplit_once('|').map(|(base, _)| base).unwrap_or(key)
 }
 
+/// Drop duplicate pending messages, keeping the row with more attachments.
 fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
     messages.sort_by(|a, b| {
         a.sort_key
@@ -420,6 +440,7 @@ fn dedupe_messages(messages: &mut Vec<PendingMessage>) {
     *messages = out;
 }
 
+/// Sort, drop invalid dates, and return false when nothing remains.
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     dedupe_messages(&mut convo.messages);
     convo.messages.retain(|m| {
@@ -434,6 +455,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     !convo.messages.is_empty()
 }
 
+/// Map of handle → display name from message extras and sender fields.
 fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for msg in &convo.messages {
@@ -462,6 +484,50 @@ fn display_names_for_handles(convo: &PendingConversation) -> HashMap<String, Str
     names
 }
 
+/// First non-empty `contact_name` extra on a message in this conversation.
+fn first_contact_name(convo: &PendingConversation) -> Option<String> {
+    convo
+        .messages
+        .iter()
+        .map(|m| m.extra_str("contact_name").trim())
+        .find(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// Map a staged attachment onto the shared [`IrAttachment`] shape.
+fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
+    IrAttachment {
+        path: Some(a.rel_path.clone()),
+        original_name: a.name_hint.clone(),
+        mime_type: a.mime_type(),
+        digest_sha256: a.digest_sha256.clone(),
+        is_sticker: false,
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }
+}
+
+/// True when the path has a `.xml` extension (any case).
+fn is_xml_file(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
+}
+
+/// True for GO SMS Pro PDU files named `I_*.pdu` (the binary encoding of an
+/// SMS/MMS on the phone).
+fn is_pdu_file(p: &Path) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("I_") && n.ends_with(".pdu"))
+}
+
+/// Build a [`ConversationDocument`] from one pending conversation.
+///
+/// Currently always returns `Ok`. The `Result` matches the other exporters.
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
@@ -482,14 +548,10 @@ fn pending_to_document(
     if participants.is_empty() && !convo.is_group && !chat_id.is_empty() {
         participants.push(IrParticipant {
             handle: chat_id.to_string(),
-            display_name: name_by_handle.get(chat_id).cloned().or_else(|| {
-                convo
-                    .messages
-                    .iter()
-                    .map(|m| m.extra_str("contact_name").trim())
-                    .find(|n| !n.is_empty())
-                    .map(str::to_string)
-            }),
+            display_name: name_by_handle
+                .get(chat_id)
+                .cloned()
+                .or_else(|| first_contact_name(convo)),
             handle_type: Some(HandleType::Phone),
         });
     }
@@ -537,18 +599,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(|a| IrAttachment {
-                path: Some(a.rel_path.clone()),
-                original_name: a.name_hint.clone(),
-                mime_type: a.mime_type(),
-                digest_sha256: a.digest_sha256.clone(),
-                is_sticker: false,
-                transcription: None,
-                sticker_effect: None,
-                size_bytes: None,
-                missing_reason: None,
-                bytes: None,
-            })
+            .map(pending_attachment_to_ir)
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms
@@ -590,7 +641,7 @@ fn pending_to_document(
             }
         }
         if let Some(title) = convo.display_name.as_deref().filter(|t| !t.is_empty()) {
-            // Synthetic Android group label; kept as data, not used for filenames.
+            // Android group title stored as data only. Filenames do not use it.
             fields.insert(
                 "android_group_title".into(),
                 serde_json::Value::String(title.to_string()),
@@ -632,7 +683,7 @@ fn pending_to_document(
             } else {
                 IrConversationType::Individual
             },
-            // Synthetic Android group titles are not used for filenames.
+            // Android group titles are not used for filenames.
             group_title: None,
             participants,
             stats: ConversationStats::default(),
@@ -642,6 +693,7 @@ fn pending_to_document(
     })
 }
 
+/// Fill `contact_name` and sender display name from the contacts book.
 fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMessage) {
     let phones: Vec<&str> = if msg.sender_handle.is_empty() {
         vec![chat_id]
@@ -660,10 +712,16 @@ fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMes
     }
 }
 
-/// Convert a GO SMS Pro export directory into per-conversation CSV, EML, or MBOX.
+/// Convert a GO SMS Pro export directory into the shared conversation structure
+/// ([`ConversationDocument`]), then write the chosen output format.
 ///
 /// When `cancel` is set, cooperative cancellation is checked between XML files
 /// and between PDU files. Cancelled runs return an error with message `cancelled`.
+///
+/// # Errors
+///
+/// Returns an error when the input is not a directory, output overlaps input,
+/// a file cannot be read or written, or the user cancels.
 pub(crate) fn convert_export(
     input_dir: &Path,
     output_dir: &Path,
@@ -679,9 +737,10 @@ pub(crate) fn convert_export(
     }
 
     fs::create_dir_all(output_dir)?;
-    // Canonicalize so relative paths resolve and so output/input identity is
-    // checked on resolved paths. Cleaning the output before reading the input
-    // would otherwise delete the backup itself when both paths are the same.
+    // Resolve to absolute paths so relative inputs work and so the output/input
+    // overlap check uses the same path form. Cleaning the output before reading
+    // the input would otherwise delete the backup itself when both paths are
+    // the same.
     let input_dir =
         fs::canonicalize(input_dir).with_context(|| format!("resolve {}", input_dir.display()))?;
     let output_dir = fs::canonicalize(output_dir)
@@ -709,11 +768,7 @@ pub(crate) fn convert_export(
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
-    let mut xml_paths = message_vault_io_core::discover_files(&input_dir, &|p| {
-        p.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
-    })?;
+    let mut xml_paths = message_vault_io_core::discover_files(&input_dir, &is_xml_file)?;
     xml_paths.sort();
 
     for xml_path in xml_paths {
@@ -759,11 +814,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    let mut pdu_paths = message_vault_io_core::discover_files(&input_dir, &|p| {
-        p.file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("I_") && n.ends_with(".pdu"))
-    })?;
+    let mut pdu_paths = message_vault_io_core::discover_files(&input_dir, &is_pdu_file)?;
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {

@@ -1,4 +1,7 @@
-//! Reverse projectors: JSON / JSONL → [`ConversationDocument`].
+//! Read JSON or JSON Lines back into a [`ConversationDocument`].
+//!
+//! JSON Lines is one JSON object per line. Line 1 is a conversation header.
+//! Each following line is one message.
 
 use anyhow::{Context, Result, bail};
 use message_ir::{ConversationDocument, ConversationHeader, IrMessage, SCHEMA_VERSION};
@@ -7,6 +10,11 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Read a conversation JSON file written by [`crate::write_conversation_json`].
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, the JSON is invalid, or
+/// `schema_version` is not the current schema.
 pub fn read_conversation_json(path: &Path) -> Result<ConversationDocument> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut doc: ConversationDocument = serde_json::from_str(&raw)
@@ -29,9 +37,14 @@ pub fn read_conversation_json(path: &Path) -> Result<ConversationDocument> {
     Ok(doc)
 }
 
-/// Read a conversation JSONL file written by [`crate::write_conversation_jsonl`].
+/// Read a conversation JSON Lines file written by [`crate::write_conversation_jsonl`].
 ///
-/// Line 1 is a [`ConversationHeader`]; each following line is one [`IrMessage`].
+/// Line 1 is a [`ConversationHeader`]. Each following line is one [`IrMessage`].
+///
+/// # Errors
+///
+/// Returns an error when the file is empty, a line cannot be parsed, or
+/// `schema_version` is not the current schema.
 pub fn read_conversation_jsonl(path: &Path) -> Result<ConversationDocument> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut lines = BufReader::new(file).lines();

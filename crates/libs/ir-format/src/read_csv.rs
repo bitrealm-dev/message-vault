@@ -1,4 +1,4 @@
-//! Reverse projector: unified CSV → [`ConversationDocument`].
+//! Read a unified conversation CSV back into a [`ConversationDocument`].
 
 use crate::CSV_HEADERS;
 use crate::normalize::{imessage_from_parts, source_from_parts};
@@ -44,7 +44,12 @@ where
 
 /// Read a conversation CSV written by [`crate::write_conversation_csv`].
 ///
-/// Conversation / export header is taken from the first data row.
+/// Conversation and export header fields come from the first data row.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened, a required column is
+/// missing, there are no data rows, or a row cannot be parsed.
 pub fn read_conversation_csv(path: &Path) -> Result<ConversationDocument> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut rdr = csv::ReaderBuilder::new()

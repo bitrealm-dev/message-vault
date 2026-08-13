@@ -6,7 +6,12 @@ use contacts::ContactsBook;
 use message_ir_format::ExportTransforms;
 use message_vault_io_core::{ExporterConfig, RunResult, SourceConfig};
 
-/// Load contacts, convert, apply media/obfuscate via FormatSink.
+/// Load contacts, convert, then apply media transforms and obfuscation.
+///
+/// # Errors
+///
+/// Returns an error when the source is not iMazing, conversion fails, media
+/// processing fails for every candidate file, or the user cancels.
 pub fn run(config: &ExporterConfig) -> Result<RunResult> {
     let SourceConfig::Imazing(_) = &config.source else {
         bail!("imazing-exporter requires SourceConfig::Imazing");

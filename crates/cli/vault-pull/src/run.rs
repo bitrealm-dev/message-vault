@@ -1,6 +1,9 @@
-//! Page export messages, download assets, write message-ir JSONL folders.
+//! Page exported messages, download attachments, and write JSON Lines folders.
+//!
+//! JSON Lines means one JSON object per line. Message Vault is the HTTP server
+//! that stores imported messages.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,6 +23,7 @@ pub const DEFAULT_PAGE_LIMIT: usize = 100;
 /// Default number of parallel asset download workers.
 pub const DEFAULT_ASSET_DOWNLOAD_WORKERS: usize = 8;
 
+/// Settings for one download run (output folder, URL, search, flags).
 #[derive(Debug, Clone)]
 pub struct VaultPullConfig {
     pub out_dir: PathBuf,
@@ -44,6 +48,7 @@ pub struct VaultPullConfig {
     pub journal_path: Option<PathBuf>,
 }
 
+/// Final summary of a download (conversations, messages, attachment counts).
 #[derive(Debug, Clone, Serialize)]
 pub struct PullReport {
     pub ok: bool,
@@ -56,7 +61,7 @@ pub struct PullReport {
     pub out_dir: String,
 }
 
-/// Counts from a dry-run export query (no downloads / no JSONL write).
+/// Counts from a dry-run export query (no downloads and no JSON Lines files written).
 #[derive(Debug, Clone, Serialize)]
 pub struct QueryStats {
     pub messages: u64,
@@ -64,6 +69,7 @@ pub struct QueryStats {
     pub total_bytes: u64,
 }
 
+/// Live progress sent to the CLI or desktop app during a query or download.
 #[derive(Debug, Clone)]
 pub enum ProgressEvent {
     Log(String),
@@ -113,7 +119,11 @@ pub fn compose_query(base: &str, after: Option<&str>, before: Option<&str>) -> S
 
 /// Prefer `GET /v1/export/messages/count`; fall back to paging the export
 /// endpoint on older vaults that lack the count route.
-/// Does not download assets or write JSONL. `cfg.out_dir` is ignored.
+/// Does not download assets or write JSON Lines. `cfg.out_dir` is ignored.
+///
+/// # Errors
+///
+/// Returns an error when the key is missing, login fails, or a page request fails.
 pub fn query_stats(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
@@ -177,6 +187,11 @@ pub fn query_stats(
     query_stats_by_paging(cfg, &session, &account, &q, &mut on_progress)
 }
 
+/// Count messages and unique attachments by walking every export page.
+///
+/// # Errors
+///
+/// Returns an error when a page request fails or cancel is requested.
 fn query_stats_by_paging(
     cfg: &VaultPullConfig,
     session: &HttpSession,
@@ -252,6 +267,16 @@ fn query_stats_by_paging(
     Ok(stats)
 }
 
+/// Download matching messages into `cfg.out_dir` as JSON Lines plus attachments.
+///
+/// JSON Lines means one JSON object per line. A local journal
+/// (`.vault-pull-state.jsonl`) records which files were already downloaded so a
+/// later run can skip them.
+///
+/// # Errors
+///
+/// Returns an error when the key or output folder is missing, login fails, a
+/// page or download fails, or a conversation file cannot be written.
 pub fn run(
     cfg: &VaultPullConfig,
     mut on_progress: Option<&mut ProgressFn<'_>>,
@@ -296,7 +321,7 @@ pub fn run(
         fs::create_dir_all(&attachments_dir)?;
     }
 
-    // --- resume journal ---
+    // Load the local skip log so a later run does not re-download files already on disk.
     let journal_path = cfg
         .journal_path
         .clone()
@@ -399,14 +424,7 @@ pub fn run(
     let mut attachments_skipped = 0u64;
 
     if !cfg.skip_attachments {
-        // Leave out assets a previous run recorded that are still on disk.
-        let to_download: HashMap<String, (String, String)> = assets
-            .iter()
-            .filter(|(sha, (_source, rel))| {
-                !(journal_state.assets.contains(*sha) && cfg.out_dir.join(rel).is_file())
-            })
-            .map(|(sha, entry)| (sha.clone(), entry.clone()))
-            .collect();
+        let to_download = assets_needing_download(&assets, &journal_state.assets, &cfg.out_dir);
         let skipped_by_journal = assets.len() as u64 - to_download.len() as u64;
 
         if !to_download.is_empty() {
@@ -469,7 +487,7 @@ pub fn run(
         conversations += 1;
     }
 
-    // --- journal completion ---
+    // Record that this download finished, then rewrite the journal in its shortest form.
     let event = crate::journal::PullJournalEvent::BackupComplete {
         url: cfg.base_url.clone(),
         username: username.clone(),
@@ -523,11 +541,36 @@ struct AssetDownloadStats {
     skipped: u64,
 }
 
-/// Download unique assets in parallel using work-stealing workers.
+/// Attachments whose SHA-256 fingerprint is not already on disk from a prior run.
 ///
-/// Mirrors vault-push's `upload_assets` pattern: jobs are collected, then
+/// SHA-256 is a short hex fingerprint of the file bytes. The journal lists
+/// fingerprints already downloaded; those files are skipped when they still exist.
+fn assets_needing_download(
+    assets: &HashMap<String, (String, String)>,
+    journal_assets: &HashSet<String>,
+    out_dir: &Path,
+) -> HashMap<String, (String, String)> {
+    let mut to_download = HashMap::new();
+    for (sha, entry) in assets {
+        let (_source, rel) = entry;
+        if journal_assets.contains(sha) && out_dir.join(rel).is_file() {
+            continue;
+        }
+        to_download.insert(sha.clone(), entry.clone());
+    }
+    to_download
+}
+
+/// Download unique attachments in parallel using work-stealing workers.
+///
+/// Same pattern as vault-push `upload_assets`: jobs are collected, then
 /// `asset_download_workers` threads pull from a shared `AtomicUsize` counter.
-/// Assets already on disk are skipped (counted as `skipped`).
+/// Files already on disk are skipped (counted as `skipped`).
+///
+/// # Errors
+///
+/// Returns an error when a download fails, a dest path cannot be created, or
+/// cancel is requested.
 fn download_assets_parallel(
     session: &crate::http::HttpSession,
     base_url: &str,
@@ -614,6 +657,7 @@ fn download_assets_parallel(
     Ok(stats)
 }
 
+/// Format a byte count as GB, MB, KB, or B with one decimal place when scaled.
 fn format_bytes_human(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
         format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
@@ -626,6 +670,11 @@ fn format_bytes_human(bytes: u64) -> String {
     }
 }
 
+/// Write one conversation as a JSON Lines file (header, then one message per line).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be created or a row cannot be serialized.
 fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Result<()> {
     let stem = doc.filename_stem();
     // Disambiguate same chat across sources.
@@ -653,15 +702,15 @@ fn write_conversation_jsonl(out_dir: &Path, doc: &ConversationDocument) -> Resul
     Ok(())
 }
 
+/// Keep letters, digits, `-`, and `_`; replace every other character with `_`.
 fn sanitize_source_suffix(source: &str) -> String {
-    source
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    let mut out = String::with_capacity(source.len());
+    for c in source.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    out
 }

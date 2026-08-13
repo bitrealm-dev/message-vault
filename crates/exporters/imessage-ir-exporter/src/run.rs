@@ -1,4 +1,5 @@
-//! Library entrypoint: [`ExporterConfig`] → common message → packaging.
+//! Library entry: [`ExporterConfig`] to the shared conversation structure, then
+//! the chosen output format.
 
 use std::path::PathBuf;
 
@@ -18,7 +19,14 @@ use crate::{
     session::MailSession,
 };
 
-/// Build options from [`ExporterConfig`], open the DB, and write the export.
+/// Build options from [`ExporterConfig`], open the Messages database, and write
+/// the export.
+///
+/// # Errors
+///
+/// Returns an error when the source is not Apple Messages, the database cannot
+/// be opened, conversion fails, media processing fails for every candidate
+/// file, or the user cancels.
 pub fn run(config: &ExporterConfig) -> anyhow::Result<RunResult> {
     check_cancel(config)?;
 

@@ -1,4 +1,4 @@
-//! Unified per-export writer for IR packaging formats.
+//! Write conversations in one output format (JSON, JSON Lines, CSV, EML, MBOX, or XML).
 
 use crate::clean::clean_previous_ir_output;
 use crate::export_transforms::{ExportTransforms, apply_transforms};
@@ -60,6 +60,11 @@ pub struct FormatSink {
 }
 
 impl FormatSink {
+    /// Open a sink that buffers documents until [`finish`](Self::finish).
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds. The `Result` matches the other constructors.
     pub fn open(
         output_dir: &Path,
         format: OutputFormat,
@@ -75,10 +80,15 @@ impl FormatSink {
 
     /// Prepare `output` for a fresh export, then open a sink into it.
     ///
-    /// Creates the output directory, removes artifacts from previous exports
-    /// via [`clean_previous_ir_output`], creates `attachments/` when the
+    /// Creates the output directory, removes files from previous exports via
+    /// [`clean_previous_ir_output`], creates `attachments/` when the
     /// transforms copy media, and returns the sink together with the
     /// attachments directory path (created or not).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory cannot be created or previous
+    /// export files cannot be removed.
     pub fn open_prepared(
         output: &Path,
         format: OutputFormat,
@@ -95,27 +105,40 @@ impl FormatSink {
         Ok((sink, att_dir))
     }
 
+    /// Output format this sink will write.
     pub fn format(&self) -> OutputFormat {
         self.format
     }
 
+    /// Directory conversations are written into.
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
     }
 
+    /// Media and obfuscation settings applied at [`finish`](Self::finish).
     pub fn transforms(&self) -> &ExportTransforms {
         &self.transforms
     }
 
+    /// Buffer one conversation until [`finish`](Self::finish).
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds.
     pub fn write_document(&mut self, doc: ConversationDocument) -> Result<()> {
         self.docs.push(doc);
         Ok(())
     }
 
-    /// Apply media/obfuscate transforms, then write all buffered documents.
+    /// Apply media and obfuscation transforms, then write all buffered documents.
     ///
-    /// For EML / MBOX / XML, media is transformed then embedded; the staged
-    /// `attachments/` directory is removed so the output folder is the archive.
+    /// For EML, MBOX, and XML, media is transformed then embedded. The staged
+    /// `attachments/` directory is removed so the output folder holds only the
+    /// archive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a transform or a write fails.
     pub fn finish(mut self) -> Result<FormatSinkResult> {
         let embeds_media = self.format.is_mail_archive() || self.format.is_sbr_xml();
         let outcome = apply_transforms(

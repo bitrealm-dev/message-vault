@@ -1,10 +1,10 @@
 //! Per-conversation `.eml` / `.mbox` archive writer.
 //!
 //! Layout and headers follow the [mail archive format](../../../docs/maintainers/formats/mail-archive.md).
-//! Canonical packaging is folders of `.eml`; [`append_message_mbox`] writes
-//! derived **mboxrd** mailboxes for clients that prefer a single file.
-//! SMS/MMS fill the core fields; iMessage Vault also set reply / tapback /
-//! balloon / parts / edits extension fields.
+//! The usual layout is one folder of `.eml` files per conversation.
+//! [`append_message_mbox`] writes **mboxrd** mailboxes for clients that prefer
+//! a single file. SMS/MMS fill the core fields. iMessage also sets reply,
+//! tapback, balloon, parts, and edits extension fields.
 
 mod parse;
 
@@ -37,6 +37,7 @@ pub enum Direction {
 }
 
 impl Direction {
+    /// Lowercase storage id (`incoming` or `outgoing`).
     fn as_str(self) -> &'static str {
         match self {
             Self::Incoming => "incoming",
@@ -206,6 +207,10 @@ impl MailMessage {
 
 /// Remove prior mail-archive artifacts under `output_dir` (`.mbox` files and
 /// directories that contain `.eml`). Leaves `attachments/` alone.
+///
+/// # Errors
+///
+/// Returns an error when a directory cannot be read or a file cannot be removed.
 pub fn clean_previous_mail_output(output_dir: &Path) -> Result<()> {
     if !output_dir.is_dir() {
         return Ok(());
@@ -240,6 +245,10 @@ pub fn clean_previous_mail_output(output_dir: &Path) -> Result<()> {
 }
 
 /// Write one conversation as EML folders or a single mboxrd file.
+///
+/// # Errors
+///
+/// Returns an error when the directory or file cannot be written.
 pub fn write_mail_package(
     output_root: &Path,
     package: MailPackage,
@@ -304,7 +313,7 @@ fn write_message_file(conv_dir: &Path, sequence: u32, msg: &MailMessage) -> Resu
 /// Write one conversation folder of `.eml` files under `output_root`.
 ///
 /// Returns the conversation directory path. Messages are sorted by timestamp,
-/// then guid, before emit.
+/// then guid, before writing.
 fn write_conversation(output_root: &Path, messages: &[MailMessage]) -> Result<PathBuf> {
     if messages.is_empty() {
         bail!("write_conversation requires at least one message");
@@ -403,7 +412,8 @@ fn write_mboxrd_record(writer: &mut impl Write, msg: &MailMessage) -> Result<()>
     writeln!(writer, "From {envelope} {asctime}").context("write mbox From_ line")?;
 
     let text = String::from_utf8_lossy(&eml);
-    // Normalize to LF; strip a single trailing newline so we control the separator.
+    // Convert CRLF to LF. Strip a single trailing newline so the writer
+    // can add the mbox record separator.
     let body = text.trim_end_matches(['\r', '\n']);
     for line in body.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);

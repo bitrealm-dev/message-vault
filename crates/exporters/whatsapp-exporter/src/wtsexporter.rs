@@ -39,8 +39,13 @@ pub(crate) struct WtsexporterArgs {
     pub business: bool,
 }
 
-/// Resolve `wtsexporter`: `WTSEXPORTER` → sibling of this exe → `cli/` next to the GUI →
+/// Locate `wtsexporter` (the Python WhatsApp export tool this crate shells out to):
+/// `WTSEXPORTER` → sibling of this exe → `cli/` next to the GUI →
 /// legacy parent dir → `MESSAGE_VAULT_IO_BIN` → `PATH`.
+///
+/// # Errors
+///
+/// Returns an error when no usable binary is found.
 pub(crate) fn resolve_wtsexporter() -> Result<PathBuf> {
     if let Some(explicit) = env::var_os("WTSEXPORTER") {
         let path = PathBuf::from(explicit);
@@ -113,6 +118,11 @@ pub(crate) fn resolve_wtsexporter() -> Result<PathBuf> {
 
 /// Run wtsexporter in `args.work_dir`; write JSON to `json_out`.
 /// Returns stderr+stdout for logging.
+///
+/// # Errors
+///
+/// Returns an error when the work dir is missing, the process cannot start, or
+/// wtsexporter exits with a non-zero status.
 pub(crate) fn run_wtsexporter(
     bin: &Path,
     args: &WtsexporterArgs,
@@ -266,6 +276,11 @@ fn resolve_forwarded_paths(args: &WtsexporterArgs) -> Result<ForwardedPaths> {
     })
 }
 
+/// Directory used to resolve relative wtsexporter defaults (`msgstore.db`, and similar).
+///
+/// # Errors
+///
+/// Returns an error when `input` does not exist.
 fn input_search_root(input: &Path) -> Result<PathBuf> {
     if input.is_dir() {
         return Ok(absolutize(input)?);
@@ -280,14 +295,21 @@ fn input_search_root(input: &Path) -> Result<PathBuf> {
     bail!("input path does not exist: {}", input.display());
 }
 
+/// First candidate path that exists on disk.
 fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|p| p.exists()).cloned()
 }
 
+/// True when `s` looks like a filesystem path rather than a hex key string.
 fn looks_like_path(s: &str) -> bool {
     s.contains('/') || s.contains('\\') || s.ends_with(".key") || Path::new(s).exists()
 }
 
+/// Make `path` absolute relative to the current working directory.
+///
+/// # Errors
+///
+/// Returns an error when the current working directory cannot be read.
 fn absolutize(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -296,6 +318,7 @@ fn absolutize(path: &Path) -> Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
+/// Append `flag` and `path` to `cmd` when `path` is `Some`.
 fn push_opt(cmd: &mut Command, flag: &str, path: Option<&Path>) {
     if let Some(p) = path {
         cmd.arg(flag).arg(p);
@@ -308,6 +331,10 @@ fn push_opt(cmd: &mut Command, flag: &str, path: Option<&Path>) {
 /// stdin key support upstream), so the file path is forwarded instead of the
 /// hex string itself. The file lives in the disposable scratch dir and is
 /// removed with it when the run finishes.
+///
+/// # Errors
+///
+/// Returns an error when the hex is invalid or the file cannot be written.
 fn write_key_file(work_dir: &Path, hex_key: &str) -> Result<PathBuf> {
     let cleaned: String = hex_key.chars().filter(|c| !c.is_whitespace()).collect();
     // Deliberately do not echo the key material in the error message.

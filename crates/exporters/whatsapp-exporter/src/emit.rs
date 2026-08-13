@@ -1,4 +1,5 @@
-//! Convert wtsexporter JSON → common message → packaging via FormatSink.
+//! Convert wtsexporter JSON into the shared conversation structure, then write
+//! the chosen output format via [`FormatSink`].
 
 use crate::jid::{chat_id_from_jid, is_group_jid, jid_to_e164};
 use crate::parse::{
@@ -40,12 +41,18 @@ fn ext_of(name: &str) -> String {
         .to_string()
 }
 
-/// Convert a wtsexporter `result.json` into per-chat CSV under `output`.
+/// Convert a wtsexporter `result.json` into the shared conversation structure,
+/// then write the chosen output format.
 ///
 /// `media_search_roots` are directories tried when resolving relative media paths
 /// (typically the wtsexporter working directory / process cwd).
 ///
 /// When `cancel` is set, it is checked between chats (cooperative cancellation).
+///
+/// # Errors
+///
+/// Returns an error when the JSON cannot be read, a conversation cannot be
+/// written, or the user cancels.
 pub(crate) fn convert_json(
     json_path: &Path,
     output: &Path,
@@ -103,6 +110,7 @@ pub(crate) fn convert_json(
     Ok((report, sink_result))
 }
 
+/// Ingest one WhatsApp chat JSON into a pending conversation (messages + media).
 fn ingest_chat(
     jid: &str,
     chat: &ChatJson,
@@ -248,6 +256,7 @@ fn ingest_chat(
     Ok(Some((chat_id, pending)))
 }
 
+/// Sender handle and display name for a WhatsApp message (empty when from me).
 fn resolve_sender(
     msg: &MessageJson,
     is_from_me: bool,
@@ -279,6 +288,12 @@ fn resolve_sender(
     }
 }
 
+/// Copy one media file into `output/attachments/` and return a staged attachment.
+///
+/// # Errors
+///
+/// Returns an error when the destination cannot be created or the file cannot
+/// be copied or hashed.
 fn copy_media(
     src: &str,
     media_base: Option<&str>,
@@ -315,8 +330,8 @@ fn copy_media(
 
 /// Resolve a wtsexporter media path against `media_base` and search roots.
 ///
-/// Only paths that canonicalize inside an allowed root (search roots, or an
-/// absolute `media_base`) are accepted — absolute hints and `..` segments
+/// Only paths that resolve inside an allowed root (search roots, or an
+/// absolute `media_base`) are accepted. Absolute hints and `..` segments
 /// cannot escape those roots.
 fn resolve_media_file(
     src: &str,
@@ -354,6 +369,7 @@ fn resolve_media_file(
         .find(|p| p.is_file() && path_within_any(p, &allowed))
 }
 
+/// Allowed roots for media path checks (search roots plus an absolute `media_base`).
 fn allowed_media_roots(media_base: Option<&str>, media_search_roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = media_search_roots.to_vec();
     if let Some(base) = media_base.map(str::trim).filter(|s| !s.is_empty()) {
@@ -365,6 +381,7 @@ fn allowed_media_roots(media_base: Option<&str>, media_search_roots: &[PathBuf])
     roots
 }
 
+/// True when `path` resolves to a location under any of `roots`.
 fn path_within_any(path: &Path, roots: &[PathBuf]) -> bool {
     let Ok(canon) = fs::canonicalize(path) else {
         return false;
@@ -376,6 +393,7 @@ fn path_within_any(path: &Path, roots: &[PathBuf]) -> bool {
     })
 }
 
+/// Pick a unique attachment file name under `output/attachments/`.
 fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson) -> String {
     let dir = output.join("attachments");
     let short: String = key_id_string(msg).chars().take(12).collect();
@@ -402,6 +420,7 @@ fn unique_name(output: &Path, chat_stem: &str, original: &str, msg: &MessageJson
     unreachable!("u32 counter exhausted for attachment names");
 }
 
+/// Filesystem-safe stem from a chat id (non-alphanumeric → `_`).
 fn sanitize_att_stem(chat_id: &str) -> String {
     let s: String = chat_id
         .chars()
@@ -416,6 +435,11 @@ fn sanitize_att_stem(chat_id: &str) -> String {
     if s.is_empty() { "chat".into() } else { s }
 }
 
+/// SHA-256 fingerprint of the file bytes (streamed, not loaded whole).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read.
 fn file_sha256(path: &Path) -> Result<String> {
     // Stream in 64KB chunks so large media never loads fully into RAM.
     let file = fs::File::open(path)?;
@@ -432,6 +456,7 @@ fn file_sha256(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// WhatsApp `key_id` as a string (empty when missing).
 fn key_id_string(msg: &MessageJson) -> String {
     match &msg.key_id {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -440,6 +465,7 @@ fn key_id_string(msg: &MessageJson) -> String {
     }
 }
 
+/// Compact JSON cell, or empty when `None` / null.
 fn optional_json(v: &Option<serde_json::Value>) -> String {
     match v {
         Some(val) if !val.is_null() => json_cell(val),
@@ -447,6 +473,7 @@ fn optional_json(v: &Option<serde_json::Value>) -> String {
     }
 }
 
+/// Compact JSON for reactions, or empty when null / empty object.
 fn reactions_json(v: &serde_json::Value) -> String {
     if v.is_null() || (v.is_object() && v.as_object().is_some_and(|o| o.is_empty())) {
         String::new()
@@ -455,6 +482,7 @@ fn reactions_json(v: &serde_json::Value) -> String {
     }
 }
 
+/// Sort, drop invalid dates, and return false when nothing remains.
 fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportReport) -> bool {
     convo.messages.sort_by(|a, b| {
         a.sort_key
@@ -473,6 +501,25 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
     !convo.messages.is_empty()
 }
 
+/// Map a staged attachment onto the shared [`IrAttachment`] shape.
+fn pending_attachment_to_ir(a: &PendingAttachment, msg: &PendingMessage) -> IrAttachment {
+    IrAttachment {
+        path: (!a.rel_path.is_empty()).then(|| a.rel_path.clone()),
+        original_name: a.name_hint.clone(),
+        mime_type: a.mime_type(),
+        digest_sha256: a.digest_sha256.clone(),
+        is_sticker: msg.extra_flag("is_sticker"),
+        transcription: None,
+        sticker_effect: None,
+        size_bytes: None,
+        missing_reason: None,
+        bytes: None,
+    }
+}
+
+/// Build a [`ConversationDocument`] from one pending conversation.
+///
+/// Currently always returns `Ok`. The `Result` matches the other exporters.
 fn pending_to_document(
     chat_id: &str,
     convo: &PendingConversation,
@@ -520,18 +567,7 @@ fn pending_to_document(
         let attachments: Vec<IrAttachment> = msg
             .attachments
             .iter()
-            .map(|a| IrAttachment {
-                path: (!a.rel_path.is_empty()).then(|| a.rel_path.clone()),
-                original_name: a.name_hint.clone(),
-                mime_type: a.mime_type(),
-                digest_sha256: a.digest_sha256.clone(),
-                is_sticker: msg.extra_flag("is_sticker"),
-                transcription: None,
-                sticker_effect: None,
-                size_bytes: None,
-                missing_reason: None,
-                bytes: None,
-            })
+            .map(|a| pending_attachment_to_ir(a, msg))
             .collect();
         let message_kind = if msg.attachments.is_empty() {
             IrMessageKind::Sms

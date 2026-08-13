@@ -1,4 +1,7 @@
-//! Map vault export API messages into message-ir conversation documents.
+//! Map vault export API messages into conversation documents.
+//!
+//! The export API is the Message Vault HTTP server's read path. Each document
+//! is later written as JSON Lines (one JSON object per line).
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, NaiveDateTime};
@@ -11,26 +14,19 @@ use serde_json::{Value, json};
 
 use crate::http::{ExportAttachment, ExportMessage, ExportTapback};
 
+/// Grouping key so messages from the same chat and backup source stay together.
 pub fn conversation_key(msg: &ExportMessage) -> String {
     format!("{}::{}", msg.source, msg.conversation.chat_identifier)
 }
 
+/// Build one conversation document from a seed message and the mapped rows.
 pub fn build_document(
     source: &str,
     seed: &ExportMessage,
     messages: Vec<IrMessage>,
 ) -> ConversationDocument {
     let conversation_type = IrConversationType::parse(&seed.conversation.conversation_type);
-    let participants = seed
-        .conversation
-        .participants
-        .iter()
-        .map(|p| IrParticipant {
-            handle: p.handle.clone(),
-            display_name: p.name_alias.clone(),
-            handle_type: None,
-        })
-        .collect::<Vec<_>>();
+    let participants = participants_from_seed(seed);
     let mut attachment_count = 0u64;
     let mut first_ts = None;
     let mut last_ts = None;
@@ -66,6 +62,11 @@ pub fn build_document(
     }
 }
 
+/// Map one vault export message into the shared conversation message type.
+///
+/// # Errors
+///
+/// Returns an error when the timestamp cannot be parsed.
 pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMessage> {
     let timestamp_unix_ms = parse_timestamp_unix_ms(
         msg.timestamp_utc
@@ -140,6 +141,20 @@ pub fn to_ir_message(msg: &ExportMessage, skip_attachments: bool) -> Result<IrMe
     })
 }
 
+/// Copy participant handles and display names from the seed export message.
+fn participants_from_seed(seed: &ExportMessage) -> Vec<IrParticipant> {
+    let mut participants = Vec::with_capacity(seed.conversation.participants.len());
+    for p in &seed.conversation.participants {
+        participants.push(IrParticipant {
+            handle: p.handle.clone(),
+            display_name: p.name_alias.clone(),
+            handle_type: None,
+        });
+    }
+    participants
+}
+
+/// Map one vault attachment record onto the shared attachment type.
 fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
     let path = att
         .path
@@ -159,26 +174,25 @@ fn to_ir_attachment(att: &ExportAttachment) -> IrAttachment {
     }
 }
 
+/// JSON array of tapbacks (reactions), or `None` when the message has none.
 fn tapbacks_json(tapbacks: &[ExportTapback]) -> Option<Value> {
     if tapbacks.is_empty() {
         return None;
     }
-    Some(Value::Array(
-        tapbacks
-            .iter()
-            .map(|t| {
-                json!({
-                    "part_index": t.part_index,
-                    "kind": t.kind,
-                    "emoji": t.emoji,
-                    "is_from_me": t.is_from_me,
-                    "sender": t.sender,
-                })
-            })
-            .collect(),
-    ))
+    let mut items = Vec::with_capacity(tapbacks.len());
+    for t in tapbacks {
+        items.push(json!({
+            "part_index": t.part_index,
+            "kind": t.kind,
+            "emoji": t.emoji,
+            "is_from_me": t.is_from_me,
+            "sender": t.sender,
+        }));
+    }
+    Some(Value::Array(items))
 }
 
+/// Choose SMS, MMS, iMessage, or announcement from service and attachments.
 fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
     if msg.is_announcement {
         return IrMessageKind::Announcement;
@@ -204,6 +218,14 @@ fn infer_kind(msg: &ExportMessage, service: IrService) -> IrMessageKind {
     }
 }
 
+/// Parse a vault timestamp into milliseconds since Unix epoch.
+///
+/// Accepts a millisecond or second integer, RFC 3339, or a few common vault
+/// date strings without a timezone (treated as UTC).
+///
+/// # Errors
+///
+/// Returns an error when the string is empty or none of the formats match.
 fn parse_timestamp_unix_ms(raw: &str) -> Result<i64> {
     let t = raw.trim();
     if t.is_empty() {

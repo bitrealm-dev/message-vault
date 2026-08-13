@@ -1,4 +1,7 @@
-//! Typed vault authentication failures with stable kinds and user-facing copy.
+//! Typed login failures from `GET /v1/auth/check`.
+//!
+//! Each variant has a stable `kind()` string for tests and a short
+//! `user_message()` for the desktop app banner.
 
 use std::fmt;
 

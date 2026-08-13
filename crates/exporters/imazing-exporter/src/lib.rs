@@ -1,6 +1,8 @@
-//! iMazing Messages / WhatsApp CSV (+ vCard CSV / VCF contacts) → shared per-chat CSV.
+//! Convert iMazing Messages / WhatsApp CSV (plus vCard CSV / VCF contacts)
+//! into the shared conversation structure ([`message_ir::ConversationDocument`])
+//! every exporter writes.
 //!
-//! Library entrypoint: [`run`] for the full pipeline.
+//! Library entry: [`run`] for the full pipeline.
 //! The `imazing-exporter` binary is a thin CLI over [`run`].
 
 mod attachments;
