@@ -18,4 +18,4 @@ This crate is a library used by the converters and the desktop app.
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

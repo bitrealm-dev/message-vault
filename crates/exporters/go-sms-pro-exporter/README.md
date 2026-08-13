@@ -21,4 +21,4 @@ Import mapping: https://bitrealm.dev/formats/go-sms-pro/mapping/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

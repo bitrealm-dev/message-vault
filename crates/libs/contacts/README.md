@@ -19,4 +19,4 @@ This crate is a library. Desktop app contacts: https://bitrealm.dev/how-to/conta
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

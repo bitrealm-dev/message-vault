@@ -3,7 +3,7 @@ name = "media"
 version = "0.1.0"
 edition = "2024"
 description = "Convert or compress attachment media in converter export output"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [dependencies]
 anyhow = "1.0.103"

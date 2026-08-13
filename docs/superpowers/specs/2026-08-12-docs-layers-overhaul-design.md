@@ -144,7 +144,7 @@ The rewritten README follows the Good Docs README shape and matches the guideboo
 4. **What you can do** — extract (Apple Messages, SMS Backup & Restore, WhatsApp; rescue imports named as limited), convert formats, import/browse/export. User-facing names, not crate names. Link https://bitrealm.dev/ for the long guide. After Format Reference exists, link `/formats/` instead of `docs/maintainers/exporter-matrix.md`.
 5. **From source** — one sentence and a link to `CONTRIBUTING.md`.
 6. **Get involved** — `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
-7. **License** — MIT for most crates; `imessage-ir-exporter` is GPL-3.0-or-later, so the desktop app binary includes GPL code.
+7. **License** — AGPL-3.0. `imessage-ir-exporter` still depends on `imessage-database` (GPL-3.0-or-later); combined binaries are AGPL-3.0.
 
 WSL, Linux packages, Node version, and `cargo tauri` live only in `CONTRIBUTING.md`, checked against current prerequisites (Rust 1.85+, Node 22+). The README does not keep a second copy that can drift.
 
@@ -181,7 +181,7 @@ Four blocks on every crate README:
 1. **What it is** — crate name, what it does, who uses it (CLI, library linked by the desktop app, vault server).
 2. **Build and test this crate** — `cargo test -p <package>` and, if there is a binary, `cargo run -p <package> -- --help`. Workspace-wide setup stays in `CONTRIBUTING.md`.
 3. **Docs** — see the split below.
-4. **License** — MIT, except `imessage-ir-exporter` (GPL-3.0-or-later, and the desktop app therefore includes GPL code).
+4. **License** — AGPL-3.0. `imessage-ir-exporter` still depends on `imessage-database` (GPL-3.0-or-later).
 
 No manpage flags, mapping tables, or vendor XML field lists in the README.
 

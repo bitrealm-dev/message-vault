@@ -18,4 +18,4 @@ This crate is a library. Layout and headers: https://bitrealm.dev/formats/mail-a
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

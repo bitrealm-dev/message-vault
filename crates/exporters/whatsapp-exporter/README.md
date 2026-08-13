@@ -19,4 +19,4 @@ Command-line options: https://bitrealm.dev/reference/cli/whatsapp-exporter/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

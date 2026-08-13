@@ -114,7 +114,7 @@ Build and run instructions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Most crates are MIT — see [LICENSE](LICENSE). `imessage-ir-exporter` is GPL-3.0-or-later (via `imessage-database`), so the desktop app binary includes GPL-licensed code.
+This project is licensed under the GNU Affero General Public License v3.0 — see [LICENSE](LICENSE). `imessage-ir-exporter` still depends on `imessage-database` (GPL-3.0-or-later); the combined binaries are AGPL-3.0.
 ```
 
 - [ ] **Step 3: Restructure `CONTRIBUTING.md`**
@@ -212,7 +212,7 @@ Packages and slugs:
 
 | Package | README path | CLI slug |
 |---------|-------------|----------|
-| `imessage-ir-exporter` | `crates/exporters/imessage-ir-exporter/README.md` | `imessage-ir-exporter` (license GPL-3.0-or-later) |
+| `imessage-ir-exporter` | `crates/exporters/imessage-ir-exporter/README.md` | `imessage-ir-exporter` (license AGPL-3.0; `imessage-database` is GPL-3.0-or-later) |
 | `sms-backup-restore-exporter` | `crates/exporters/sms-backup-restore-exporter/README.md` | `sms-backup-restore-exporter` |
 | `whatsapp-exporter` | `crates/exporters/whatsapp-exporter/README.md` | `whatsapp-exporter` |
 | `go-sms-pro-exporter` | `crates/exporters/go-sms-pro-exporter/README.md` | `go-sms-pro-exporter` |
@@ -247,7 +247,7 @@ Command-line options: https://bitrealm.dev/reference/cli/sms-backup-restore-expo
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.
 ```
 
 Check each crate’s `Cargo.toml` for whether `--features cli` is required (`cli` feature is default-on for exporters). If default features include `cli`, `cargo run -p <pkg> -- --help` is enough.

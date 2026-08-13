@@ -21,4 +21,4 @@ How conversion works: https://bitrealm.dev/formats/convert/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

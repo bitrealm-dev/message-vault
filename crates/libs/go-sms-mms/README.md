@@ -18,4 +18,4 @@ This crate is a library. Field mapping: https://bitrealm.dev/formats/go-sms-pro/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

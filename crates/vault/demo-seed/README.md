@@ -21,4 +21,4 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md). Demo walkthrough: 
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

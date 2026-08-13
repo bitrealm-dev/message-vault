@@ -23,4 +23,4 @@ Import mapping: https://bitrealm.dev/formats/sms-backup-plus/mapping/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

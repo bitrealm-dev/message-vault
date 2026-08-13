@@ -18,4 +18,4 @@ This crate is a library. CSV column list for users: https://bitrealm.dev/referen
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

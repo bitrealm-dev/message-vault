@@ -3,7 +3,7 @@ name = "message-ir"
 version = "0.1.0"
 edition = "2024"
 description = "Schema types for the common-message ConversationDocument intermediate representation"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [dependencies]
 message-csv = { path = "../csv" }

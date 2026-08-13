@@ -23,4 +23,4 @@ Importer design: https://bitrealm.dev/formats/imazing/design/
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

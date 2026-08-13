@@ -2,6 +2,7 @@
 name = "contacts"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0-only"
 description = "VCF / contacts CSV name↔phone resolution for message-vault-io"
 
 [[bin]]

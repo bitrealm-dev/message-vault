@@ -18,4 +18,4 @@ This crate is a library. XML output: https://bitrealm.dev/formats/sms-backup-res
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

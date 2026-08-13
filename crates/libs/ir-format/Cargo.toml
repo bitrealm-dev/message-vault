@@ -3,7 +3,7 @@ name = "message-ir-format"
 version = "0.1.0"
 edition = "2024"
 description = "FormatSink, readers/writers, and transforms for message-ir ConversationDocument"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [dependencies]
 anyhow = "1.0.103"

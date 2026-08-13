@@ -19,4 +19,4 @@ This crate is a library. User options: https://bitrealm.dev/how-to/media-and-pri
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

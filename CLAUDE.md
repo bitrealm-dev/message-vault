@@ -201,4 +201,4 @@ Push a tag (`v*`) to trigger the CI workflow (`.github/workflows/ci.yml`), which
 
 ## Licensing
 
-Most crates are MIT. `imessage-ir-exporter` is GPL-3.0-or-later (via `imessage-database` / `crabapple` dependencies), which means the GUI binary includes GPL-licensed code. New exporter crates that wrap GPL libraries must propagate that license.
+The project is AGPL-3.0. `imessage-ir-exporter` still depends on `imessage-database` / `crabapple` (GPL-3.0-or-later). Combined binaries are AGPL-3.0. New exporter crates that wrap GPL libraries must keep that dependency visible in docs.

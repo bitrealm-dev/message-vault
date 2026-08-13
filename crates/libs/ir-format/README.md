@@ -18,4 +18,4 @@ This crate is a library. Contributor notes: [shared message model](../../../docs
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.

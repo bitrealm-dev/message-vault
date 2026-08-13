@@ -52,4 +52,4 @@ Build and run instructions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Most crates are MIT — see [LICENSE](LICENSE). `imessage-ir-exporter` is GPL-3.0-or-later (via `imessage-database`), so the desktop app binary includes GPL-licensed code.
+This project is licensed under the GNU Affero General Public License v3.0 — see [LICENSE](LICENSE). `imessage-ir-exporter` still depends on `imessage-database` (GPL-3.0-or-later); the combined binaries are AGPL-3.0.

@@ -16,4 +16,4 @@ Workspace setup: [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## License
 
-MIT. The desktop app that replaced this crate still includes GPL-licensed `imessage-ir-exporter` code.
+AGPL-3.0. The desktop app that replaced this crate still links `imessage-ir-exporter` (`imessage-database` is GPL-3.0-or-later).

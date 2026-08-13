@@ -3,7 +3,7 @@ name = "vault-push"
 version = "0.1.0"
 edition = "2024"
 description = "Push message-ir JSONL exports into a Message Vault import API"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [features]
 default = ["cli"]

@@ -19,4 +19,4 @@ Command-line options: https://bitrealm.dev/reference/cli/imessage-ir-exporter/
 
 ## License
 
-GPL-3.0-or-later (via `imessage-database`). The desktop app binary therefore includes GPL-licensed code.
+AGPL-3.0. `imessage-database` remains GPL-3.0-or-later; the combined desktop app is AGPL-3.0.

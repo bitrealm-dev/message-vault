@@ -22,4 +22,4 @@ Docker: `docker compose up` from the repository root (website and API on http://
 
 ## License
 
-MIT.
+AGPL-3.0. See the repository root `LICENSE`.
