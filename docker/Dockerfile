@@ -1,8 +1,8 @@
 # Multi-stage release image built from the current checkout.
-# Usage:
-#   docker build -f Dockerfile.release -t message-vault-server .
+# Usage (from the repository root):
+#   docker build -f docker/Dockerfile -t message-vault-server .
 # Or:
-#   docker compose -f compose-release.yml up --build
+#   docker compose -f docker/compose.release.yml up --build
 
 # -----------------------------------------------------------------------------
 # Stage 1: Vite SPA frontend
@@ -57,7 +57,7 @@ COPY config/config.docker.toml ./config/config.docker.toml
 # Vite SPA (built in Stage 1)
 COPY --from=frontend-builder /web/dist ./static
 
-COPY scripts/docker-entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
+COPY docker/entrypoint-release.sh /usr/local/bin/docker-entrypoint-release.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint-release.sh \
   && mkdir -p /app/data \
   && chown -R node:node /app

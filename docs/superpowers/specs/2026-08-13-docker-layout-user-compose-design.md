@@ -79,13 +79,14 @@ services:
 
 volumes:
   message-vault-data:
+    name: message-vault-data
 ```
 
 Rules for this file:
 
 - `image:` only. No `build:`, no Dockerfile.
 - No `VAULT_AUTH` and no `HANKO_API_URL`. The only environment variable in this file is `DEMO_DATA`. The server maps a missing `VAULT_AUTH` to local username/password (`AuthMode::from_env`). Compose does not pass host env into the container unless the file lists it, so a leftover `VAULT_AUTH=hanko` in the user’s shell does not reach the vault.
-- Volume name `message-vault-data` matches `docker run -v message-vault-data:/app/data`.
+- Volume name `message-vault-data` matches `docker run -v message-vault-data:/app/data`. Declare it with `name: message-vault-data` under `volumes:` so Compose does not prefix the project name (`message-vault_message-vault-data`).
 - `name: message-vault` keeps the Compose project name stable if the folder is not called `message-vault`.
 - `./staging` is optional JSONL drop, same idea as today’s release Compose. Compose creates the host directory if missing.
 - Tag `latest` in the committed file. Docs mention pinning `:0.7.3` (Hub semver tags have no `v` prefix; git tags do).
