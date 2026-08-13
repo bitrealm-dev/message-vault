@@ -156,4 +156,4 @@ Rust loads them from [`src/db/schema.rs`](https://github.com/bitrealm-dev/messag
 After editing the SQL files, run `node scripts/sync-vault-schema.mjs` so the web
 app’s generated copy stays in sync.
 
-Related: [import modes and dedupe](/use-the-desktop-app/import-into-vault/).
+Related: [Import from a backup](/import-from-a-backup/) (desktop) and [Extract to files](/how-to/extract-to-files/) (JSONL on disk).

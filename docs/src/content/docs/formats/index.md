@@ -3,6 +3,8 @@ title: "Converter capabilities"
 description: "What each backup converter writes, where it falls short, and links to input-format and mapping pages."
 ---
 
+These pages are Developer docs (CLI converters and field mapping). Day-to-day Import from a phone backup is in the [User Guide](/import-from-a-backup/).
+
 What each converter writes (and where it falls short). Marks: **yes** / **partial** / **no**.
 
 ## Shared model

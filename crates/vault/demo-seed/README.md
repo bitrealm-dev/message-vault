@@ -17,7 +17,7 @@ Regenerate and import in one step:
 cargo run --release -p message-vault-server -- reset-demo
 ```
 
-Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md). Demo walkthrough: https://bitrealm.dev/set-up-the-server/try-the-demo/
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md). Demo walkthrough: https://bitrealm.dev/get-started/try-the-vault/
 
 ## License
 

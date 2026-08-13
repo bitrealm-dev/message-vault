@@ -6,17 +6,14 @@ hero:
   title: Your messages, your way
   tagline: Extract messages from Apple and Android phone backups. Import them into a local SQLite vault. Browse, search, and export in formats you can keep.
   actions:
-    - text: Quick start
-      link: /introduction/quick-start/
+    - text: Try the vault
+      link: /get-started/try-the-vault/
       icon: right-arrow
       variant: primary
-    - text: Try the demo vault
-      link: /set-up-the-server/try-the-demo/
-      icon: rocket
+    - text: Use your own messages
+      link: /get-started/your-own-messages/
+      icon: right-arrow
       variant: secondary
-    - text: Install the desktop app
-      link: /introduction/install/
-      icon: download
 ---
 
 import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
@@ -24,45 +21,42 @@ import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
 ## How it works
 
 ```text
-1. Extract    Phone backup → JSONL + attachments
-              (Message Vault desktop app)
+1. Try it     Run the vault, sign in as demo in the browser
+              (sample conversations — no phone backup yet)
 
-2. Import     Push or CLI-import JSONL into the vault
+2. Your data  Create an account on that same vault, prepare a backup,
+              import with the desktop app
 
-3. Browse     Open the website on your computer — search, browse contacts, view media
+3. Browse     Search and read threads on the website you control
 ```
 
-Your messages stay in a SQLite database on a machine you control. They are not uploaded to a cloud service by this project.
+Your messages stay in a SQLite database on a machine you control. They are not uploaded to a cloud service by this project. The vault login is local — not a Bitrealm cloud account.
 
-## Choose what you want to do
+Already sure you want your own data? Skip the sample login and go to [Use your own messages](/get-started/your-own-messages/).
+
+## Choose a chapter
 
 <CardGrid>
-  <Card title="Back up an iPhone or iPad">
-    Use an iPhone backup or a Mac chat.db to export Messages, or use an iPhone backup for WhatsApp. [Apple backup guide](/prepare-your-backups/iphone-ipad/).
+  <Card title="What is Message Vault?">
+    The vault and the desktop app, and what stays on your machine. [What is Message Vault?](/get-started/what-is-message-vault/)
   </Card>
-  <Card title="Back up an Android phone">
-    Use SMS Backup & Restore XML for text messages, or provide a WhatsApp database or encrypted backup with its key. [Android backup guide](/prepare-your-backups/android-sms/).
+  <Card title="Try sample conversations">
+    One Docker command, then the website as `demo`. [Try the vault](/get-started/try-the-vault/)
   </Card>
-  <Card title="Convert an existing export">
-    Change a Message Vault folder from JSON, JSONL, CSV, EML, MBOX, or XML into another format. [Convert between formats](/use-the-desktop-app/convert-formats/).
+  <Card title="Prepare a backup">
+    iPhone, Android SMS, WhatsApp. [Prepare a backup](/prepare-a-backup/)
   </Card>
-  <Card title="Import into the vault">
-    Upload a JSONL archive to the vault server, resume safely, or force reprocessing after a partial run. [Import into the vault](/use-the-desktop-app/import-into-vault/).
+  <Card title="Import">
+    Desktop app, signed in, from a phone backup. [Import from a backup](/import-from-a-backup/)
   </Card>
-  <Card title="Browse the vault">
-    Use contacts, labels, group messages, sources, trash, and settings. [Navigation and sources](/browse/navigation-and-sources/).
+  <Card title="How do I…">
+    Search, convert formats, extract to files, settings. [Search](/how-to/search/)
   </Card>
-  <Card title="Install the desktop app">
-    Download the release for Linux, Windows, or macOS and keep the helper programs with the app. [Install Message Vault](/introduction/install/).
-  </Card>
-  <Card title="Try sample data">
-    Load the committed demo vault and click through contacts without a real backup. [Try the demo](/set-up-the-server/try-the-demo/).
-  </Card>
-  <Card title="Protect private information">
-    Choose whether to copy media, convert it, compress it, or replace personal data before sharing. [Media and privacy options](/use-the-desktop-app/media-and-privacy/).
+  <Card title="Developer">
+    CLI, HTTP API, Compose, formats. [Run from source](/developer/run-from-source/)
   </Card>
 </CardGrid>
 
 <Aside title="Supported paths and limited rescue imports">
-  The supported paths are Apple Messages from chat.db or an iPhone backup, Android SMS/MMS from SMS Backup & Restore XML, and WhatsApp through wtsexporter. GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+ are rescue imports for files you already have. Their source formats can omit identity, group, attachment, reply, or reaction details, so those imports cannot always recreate the original messages.
+  The supported paths are Apple Messages from chat.db or an iPhone backup, Android SMS/MMS from SMS Backup & Restore XML, and WhatsApp through wtsexporter. GO SMS Pro, iMazing, OpenExtract, and SMS Backup+ are rescue imports for files you already have. [Rescue imports](/how-to/rescue-imports/).
 </Aside>

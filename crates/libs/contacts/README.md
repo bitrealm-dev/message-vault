@@ -15,7 +15,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-This crate is a library. Desktop app contacts: https://bitrealm.dev/use-the-desktop-app/contacts/
+This crate is a library. Desktop app contacts: https://bitrealm.dev/how-to/contacts-and-labels/
 
 ## License
 

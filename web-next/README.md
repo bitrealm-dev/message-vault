@@ -7,9 +7,9 @@ Handlers and `better-sqlite3`.
 The primary product GUI is the Vite SPA in [`../web/`](../web/) (Tauri + Docker
 static). This package is the restored historical Next.js browse app.
 
-Product documentation (routes, Message Sources, contacts, settings, undo):
+Product documentation:
 
-**https://bitrealm-dev.github.io/browse/navigation-and-sources/**
+**https://bitrealm.dev/browse-your-messages/**
 
 ## Local development
 

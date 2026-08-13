@@ -79,4 +79,4 @@ The detector ignores `attachments/` and legacy `*.meta.json` files. It rejects a
 
 ## SEE ALSO
 
-- [Convert user guide](/use-the-desktop-app/convert-formats/)
+- [Convert formats](/how-to/convert-formats/)

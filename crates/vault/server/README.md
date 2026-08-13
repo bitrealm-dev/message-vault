@@ -15,7 +15,8 @@ Docker: `docker compose up` from the repository root (website and API on http://
 
 ## Docs
 
-- Docker install: https://bitrealm.dev/set-up-the-server/docker-install/
+- Try the vault: https://bitrealm.dev/get-started/try-the-vault/
+- Operator Docker: https://bitrealm.dev/developer/docker-compose/
 - Server CLI: https://bitrealm.dev/reference/server-cli/
 - API: https://bitrealm.dev/reference/api/
 

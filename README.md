@@ -17,7 +17,7 @@ People who have phone backups and want to extract, convert, and browse those mes
 
 ## Getting started
 
-**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.dev/introduction/install/).
+**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.dev/get-started/install-the-desktop-app/).
 
 **Demo vault:**
 
@@ -29,7 +29,7 @@ docker run -d --name message-vault \
   mbeisser1/message-vault:latest
 ```
 
-Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Quick start](https://bitrealm.dev/introduction/quick-start/).
+Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Try the vault](https://bitrealm.dev/get-started/try-the-vault/).
 
 ## What you can do
 
@@ -39,7 +39,7 @@ Open **http://localhost:8080** and sign in with username `demo` and an empty pas
 
 Full guide: **https://bitrealm.dev/**
 
-Converter capability details: [Format Reference](https://bitrealm.dev/formats/).
+Converter and mapping details: [Formats](https://bitrealm.dev/formats/) (Developer).
 
 ## From source
 
