@@ -1,35 +1,22 @@
 # obfuscate
 
-Shared library and tools to rewrite exporter CSV output so it keeps message **structure** (chats, timestamps, directions, attachment counts) without exposing real names, phone numbers, message bodies, or media bytes.
+Rewrite an export so chats, timestamps, and attachment counts stay, while names, numbers, message bodies, and media bytes are replaced. Remaps are stable for a given seed and are not reversible from the output alone.
 
-Remaps are **stable** for a given secret seed (HMAC-SHA256) and **not reversible** from the CSV alone. No real→fake mapping file is written.
+`message-ir-format` applies this when obfuscation is on. The `imazing-obfuscate` binary can rewrite an iMazing vendor CSV in place.
 
-## Flags on converters
-
-Every converter accepts:
-
-- `--obfuscate` — rewrite the output directory after convert
-- `--obfuscate-seed <8-hex>` — reproducible remaps (implies obfuscate). Exactly 8 hex characters. If omitted, a random 8-hex seed is printed once to stderr.
-
-## iMazing CSV rewriter
-
-iMazing vendor CSV is not converted here—only rewritten:
+## Build and test
 
 ```bash
-cargo run --release -p obfuscate --bin imazing-obfuscate -- \
-  --input /path/to/imazing.csv \
-  --output ./staging/imazing-anon
+cargo test -p obfuscate
+cargo run -p obfuscate --bin imazing-obfuscate -- --help
 ```
 
-Optional: `--obfuscate-seed <8-hex>`.
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
-## What changes
+## Docs
 
-| Field | Behavior |
-|-------|----------|
-| Phone numbers | Same digit count; `+` / spaces / dashes / parentheses kept |
-| Display names | Human first + last from a fixed word list |
-| Emails | Valid `first.last@example.invalid` (stable per original) |
-| URLs | Valid `http(s)://…example.invalid…` (path shape kept) |
-| Message text | Word-shape nonsense; embedded emails/URLs/phones stay valid fakes |
-| Attachments | Shared placeholders: image → `placeholder.jpg`, video → `placeholder.mp4`, other → `placeholder.bin` |
+This crate is a library. User options: https://bitrealm.dev/use-the-desktop-app/media-and-privacy/
+
+## License
+
+MIT.

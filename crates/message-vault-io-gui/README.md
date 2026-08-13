@@ -1,74 +1,19 @@
-# DEPRECATED Message Vault GUI - NO LONGER SUPPORTED
+# DEPRECATED — Slint desktop app
 
-This slint based gui is deprecated and exists for reference only. It should not be modified, changed, updated, documented, or considered in any features. It compiles and runs as a standalone.
+This Slint GUI is deprecated. Do not modify it or add features to it. The supported UI is the Tauri desktop app (`src-tauri/` plus `web/`).
 
-Desktop GUI built with [Slint](https://slint.dev). Same exporter libraries and
-`export.ini` as the rest of the workspace.
+It still compiles as a standalone binary for historical reference.
 
-Restored on branch `restore-slint-gui` from the last pre-Tauri tree. Home →
-**Extract Messages** opens the full exporter form (all seven sources). Vault
-Import / Export authenticate with a named API token (`mv-api-…` from the vault
-web UI under Settings → Account) via `GET /v1/auth/check`, then call
-`vault-push` / `vault-pull` as libraries.
-
-## Run in development
+## Run (reference only)
 
 ```bash
 cargo run -p message-vault-io-gui
 ```
 
-For release:
+Release binary name: `message-vault-io`.
 
-```bash
-cargo build --release -p message-vault-io-gui
-./target/release/message-vault-io
-```
+Workspace setup: [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-On Windows the final command is `target\release\message-vault-io.exe`.
+## License
 
-The app searches for helpers under `lib/` (`ffmpeg`/`ffprobe`) and `cli/`
-(`wtsexporter` only) next to its own executable, then in `MESSAGE_VAULT_IO_BIN`,
-then on `PATH`. Exporters are linked as libraries; they are not separate CLIs
-in the message-vault-io release archive.
-
-## Look and feel
-
-Built with Slint's **`native`** widget style (set in `build.rs`):
-
-- **Windows** — Fluent
-- **macOS** — Cupertino
-- **Linux** — Qt if Qt 5.15+ is installed; otherwise Fluent (pure-Rust fallback; no Qt SDK required)
-
-Custom chrome uses a Fastmail-style **four-seed theme** (same defaults/presets as
-message-vault-rs): mode `light` / `dark` / `system` (default dark) and named
-color presets. Change them on the Home screen; values persist in
-`export.ini` under `[appearance]` (`mode=`, `preset=`). See
-[`docs/maintainers/gui.md`](../../docs/maintainers/gui.md) for tokens.
-
-Forms use a classic dialog grid (right-aligned label column, full-width
-controls, tight row gaps, content packed at the top). Form rows use bare
-`HorizontalLayout`/`VerticalLayout` — not `HorizontalBox`/`VerticalBox`, which
-inject Fluent's 8px `layout-padding` per side and inflate every row. Ordinary
-fields do not stretch when you grow the window vertically; only the Log viewer
-does. Dropdown menus use compact rows; Backup type separates supported sources
-from the Experimental group. Override the style at compile time with
-`SLINT_STYLE` if needed:
-
-```bash
-SLINT_STYLE=fluent cargo run -p message-vault-io-gui
-```
-
-## Included
-
-- Top tabs: **Extract Messages** | **Format** | **Vault** | **Contacts** | **Log**
-- **Extract Messages**: choose a backup source and extract a JSONL archive; attachments, obfuscation, and optional date filters are available
-- **Format**: convert a prior Message Vault output folder to another format
-- **Vault**: push a JSONL export folder into Message Vault
-- **Contacts**: Check (dry run) / Update (write corrected files)
-- Forms for GO SMS Pro, SMS Backup & Restore, SMS Backup+, OpenExtract, iMazing, WhatsApp, and iPhone backup
-- Native file/folder dialogs via `rfd`
-- Live run log with cooperative cancel
-- Help button linking to the published user documentation
-- About dialog with Slint attribution (`AboutSlint`) for the Royalty-free license
-
-Architecture notes: [`../../docs/maintainers/gui.md`](../../docs/maintainers/gui.md).
+MIT. The desktop app that replaced this crate still includes GPL-licensed `imessage-ir-exporter` code.

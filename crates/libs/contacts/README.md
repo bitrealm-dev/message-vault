@@ -1,22 +1,21 @@
 # message-contacts
 
-Shared **name ↔ phone** resolution for Android CSV exporters.
+Load a VCF or a vCard CSV and resolve names to phone numbers (and the reverse) for backup converters.
 
-Load the same contact files as **contacts-validate**: a VCF, or a vCard CSV (First Name, Last Name, phone columns). Then:
+The desktop app Contacts screen and several exporters use this crate. The `contacts-validate` helper binary checks a contacts file from a terminal.
 
-- **name → phone** — fill missing chat peer numbers (SMS Backup+)
-- **phone → name** — fill blank / `unknown` display names (GO SMS Pro, SMS Backup & Restore, Plus)
+## Build and test
 
-Name resolution belongs in **the desktop app** (backup → common message → packaging), not in vault `csv-ingest`. CSV packaging is a useful human checkpoint: inspect and correct before further convert.
-
-## CLI helper
-
-```rust
-use contacts::resolve_contacts_cli;
-
-let (book, path) = resolve_contacts_cli(contacts_opt, vcf_opt, None)?;
-// At most one of --contacts or --vcf. Neither → empty book + stderr warning.
+```bash
+cargo test -p contacts
+cargo run -p contacts --bin contacts-validate -- --help
 ```
+
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+
+## Docs
+
+This crate is a library. Desktop app contacts: https://bitrealm.dev/use-the-desktop-app/contacts/
 
 ## License
 

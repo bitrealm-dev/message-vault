@@ -1,54 +1,24 @@
-# Message Vault demo dataset
+# demo-seed
 
-Committed message-ir JSONL bundle for local browsing without a real phone backup.
+Generate synthetic JSON Lines conversations for the demo vault so the website can be clicked through without a real phone backup.
 
-Three staging trees simulate separate backups:
+`message-vault-server` `reset-demo` uses this crate. Config lives in `demo_seed.toml`. Names and corpus files are under `data/`.
 
-- `staging/imessage/` — Apple Messages-style export
-- `staging/sms-backup-restore/` — Android SMS Backup & Restore–style export
-- `staging/whatsapp/` — WhatsApp-style export for ~20% of contacts (same phone, platform `whatsapp`)
+## Build and test
 
-Most conversations are single-source. A small set appears in both iMessage and Android so the
-Sources panel and cross-source dedupe can be exercised. WhatsApp threads share the phone number
-with Text message handles so the contact drawer shows both platforms.
+```bash
+cargo test -p demo-seed
+cargo run -p demo-seed
+```
 
-Regenerate + import in one step:
+Regenerate and import in one step:
 
 ```bash
 cargo run --release -p message-vault-server -- reset-demo
 ```
 
-Or regenerate the bundle only:
+Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md). Demo walkthrough: https://bitrealm.dev/set-up-the-server/try-the-demo/
 
-```bash
-cargo run -p demo-seed
-```
+## License
 
-Config knobs live in `demo_seed.toml` (seed, contact count, rate/span
-distributions, group membership, dual-source split, `whatsapp_contact_fraction`,
-`apple_fallback_transport_fraction`). Message bodies are sampled from Pride and
-Prejudice (5274 sentences) under `data/corpus/`. Names come from
-`data/names/`.
-
-## Contents (seed 42)
-
-| Item | Count |
-|------|------:|
-| Contacts (VCF) | 200 |
-| Groups | 185 |
-| Conversation files | 394 |
-| Messages | 612893 |
-| Attachment references | 9567 |
-
-## Exercises
-
-- **Triple sources** — `imessage` vs `sms-backup-restore` vs `whatsapp`
-- **Platform handles** — Text message + WhatsApp rows on the same contact
-- **Transport mix** — SMS/RCS mixed into iMessage threads (~20% by default)
-- **Contacts / labels / No Messages** — label memberships and zero-message rows
-- **Unassigned** — handles with messages but no VCF row (phone + email)
-- **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year
-- **History** — typical first contact ~3–5 years ago; longest ~14 years; newest ~1 week
-- **Group Chats** — membership mean ~5 groups/contact; size mean ~4; at least 10 groups with 8–20 participants; bursty days (several / none / a lot)
-- **Replies, tapbacks, attachments** — including one intentionally missing file
-- **orphaned.jsonl** — synthetic orphaned conversation
+MIT.
