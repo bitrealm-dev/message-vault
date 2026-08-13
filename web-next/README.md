@@ -49,7 +49,7 @@ flags `--force`, `--dry-run`, `--skip-image`, `--skip-video`, `--skip-audio`,
   - `data/vault.db`
   - `data/<account_id>/<source_id>/assets/`
   - `data/<account_id>/<source_id>/assets_converted/`
-- `compose-dev.yml` bind-mounts `./data` so Docker and `npm run dev`
+- `docker/compose.dev.yml` bind-mounts `./data` so Docker and `npm run dev`
   see the same files. Do not put vault data only in a named volume if
   you want Next.js to serve attachments.
 - JSONL import is the Rust `serve` API / CLI, not Next.js.

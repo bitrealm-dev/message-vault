@@ -11,7 +11,7 @@ cargo test -p message-vault-server
 cargo run --release -p message-vault-server -- serve
 ```
 
-Docker: `docker compose up` from the repository root (website and API on http://localhost:8080). Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+Docker: `docker compose up` from the repository root (website and API on http://localhost:8080). Compose files live under `docker/`. Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 

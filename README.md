@@ -29,6 +29,15 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
+Or with Compose:
+
+```bash
+mkdir message-vault && cd message-vault
+curl -fsSL -o compose.yml \
+  https://raw.githubusercontent.com/bitrealm-dev/message-vault/main/docker/compose.yml
+docker compose up -d
+```
+
 Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Try the vault](https://bitrealm.dev/get-started/try-the-vault/).
 
 ## What you can do

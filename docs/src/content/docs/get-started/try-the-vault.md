@@ -23,7 +23,18 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
-This starts the vault and, on an **empty** volume, seeds sample conversations. The website and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts.
+Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) and start it:
+
+```bash
+mkdir message-vault && cd message-vault
+curl -fsSL -o compose.yml \
+  https://raw.githubusercontent.com/bitrealm-dev/message-vault/main/docker/compose.yml
+docker compose up -d
+```
+
+Both commands start the vault and, on an **empty** volume, seed sample conversations. The website and the import API share **port 8080**. The `message-vault-data` volume keeps the database between restarts. Compose and `docker run` use that same volume name, so you can switch methods without copying the database.
+
+Edit the Compose file to change the published port, set `DEMO_DATA=false` for an empty vault, or pin `bitrealm/message-vault:0.7.3` instead of `latest`.
 
 `DEMO_DATA=true` only seeds when the volume is new. Changing the variable later does not add or remove accounts.
 

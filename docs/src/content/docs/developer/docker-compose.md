@@ -3,7 +3,7 @@ title: Operator Docker
 description: Run the vault from a git checkout with Docker Compose — bind-mounts, hot reload, and the SQLite browser.
 ---
 
-Use Compose when working on the vault from this repository. To try the published image without cloning, see [Try the vault](/get-started/try-the-vault/).
+Use these Compose files when working on the vault from this repository. To try the published image without cloning, save [`docker/compose.yml`](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) as described on [Try the vault](/get-started/try-the-vault/). That sample pulls `bitrealm/message-vault`; it is not used from a clone.
 
 ## Prerequisites
 
@@ -12,12 +12,14 @@ Use Compose when working on the vault from this repository. To try the published
 
 ## Profiles
 
+Run these from the **repository root**.
+
 | File | Command | Best for |
 |---|---|---|
-| `compose-dev.yml` (default) | `docker compose up` | Laptop; bind-mounted source, hot reload |
-| `compose-release.yml` | `docker compose -f compose-release.yml up --build` | Slimmer runtime image from the checkout |
+| `docker/compose.dev.yml` (default) | `docker compose up` | Laptop; bind-mounted source, hot reload |
+| `docker/compose.release.yml` | `docker compose -f docker/compose.release.yml up --build` | Slimmer runtime image from the checkout |
 
-A committed `.env` sets `COMPOSE_FILE=compose-dev.yml`, so bare `docker compose up` uses the dev profile. Override with `-f` or change the variable in `.env`.
+A committed `.env` sets `COMPOSE_FILE=docker/compose.dev.yml`, so bare `docker compose up` uses the dev profile. Override with `-f` or change the variable in `.env`.
 
 ### Dev mode
 
@@ -32,12 +34,12 @@ Bind-mounts the repo root so code changes reload at runtime. Serves the vault on
 ### Release mode
 
 ```bash
-docker compose -f compose-release.yml up --build
+docker compose -f docker/compose.release.yml up --build
 ```
 
 Builds a slimmer production-shaped image from the checkout. Serves the vault on port **8080**.
 
-Do not run both compose files at once. They share the default ports and the volume name.
+Do not run both compose files at once. They share the default ports.
 
 ## Published image
 
