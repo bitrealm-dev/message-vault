@@ -1,7 +1,7 @@
 //! SMS Backup & Restore (SyncTech) XML codec.
 //!
 //! Writers produce a single backup file (`smses.xml`) with root
-//! `<smses count="N">`. See the [SMS Backup & Restore XML output](../../../docs/maintainers/formats/sms-backup-restore-xml.md).
+//! `<smses count="N">`. See the [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/).
 
 mod read;
 

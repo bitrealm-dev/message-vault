@@ -39,7 +39,7 @@ Open **http://localhost:8080** and sign in with username `demo` and an empty pas
 
 Full guide: **https://bitrealm.dev/**
 
-Converter capability details: [exporter capability matrix](docs/maintainers/exporter-matrix.md).
+Converter capability details: [Format Reference](https://bitrealm.dev/formats/).
 
 ## From source
 

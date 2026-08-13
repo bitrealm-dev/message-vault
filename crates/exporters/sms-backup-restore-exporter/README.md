@@ -17,6 +17,10 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 Command-line options: https://bitrealm.dev/reference/cli/sms-backup-restore-exporter/
 
+Input format: https://bitrealm.dev/formats/sms-backup-restore/input/
+
+Import mapping: https://bitrealm.dev/formats/sms-backup-restore/mapping/
+
 ## License
 
 MIT.

@@ -1,10 +1,13 @@
-# Exporter capability matrix
+---
+title: "Converter capabilities"
+description: "What each backup converter writes, where it falls short, and links to input-format and mapping pages."
+---
 
 What each converter writes (and where it falls short). Marks: **yes** / **partial** / **no**.
 
 ## Shared model
 
-All converters build a **common message** per conversation (`ConversationDocument`, schema v3 in [`message-ir`](../../crates/message/ir/)), then project the user-picked format via `FormatSink` in [`message-ir-format`](../../crates/message/ir-format/) (default **JSON**). When packaging is CSV, columns follow [`CSV_HEADERS`](../../crates/message/ir-format/src/write.rs). Across the board:
+All converters build a **common message** per conversation (`ConversationDocument`, schema v3 in [`message-ir`](../../crates/libs/ir/)), then project the user-picked format via `FormatSink` in [`message-ir-format`](../../crates/libs/ir-format/) (default **JSON**). When packaging is CSV, columns follow [`CSV_HEADERS`](../../crates/libs/ir-format/src/write.rs). Across the board:
 
 - The peer is `chat_identifier` — there is **no** dedicated receiver-phone column
 - Every participant is a **typed handle**: `handle_type` (`phone` / `email` / `username` / `other`) on each JSON/JSONL participant and inside `participants_json`; the CSV `handle_type` column carries the sender's type, inferred from the handle when the source doesn't supply it
@@ -61,14 +64,14 @@ Discord, Signal, Telegram, and Slack are recognized services in the shared model
 
 | Exporter | Mapping / design |
 |---|---|
-| GO SMS Pro | [`crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md`](../../crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md) |
-| SMS Backup & Restore | [`INPUT_FORMAT.md`](../../crates/exporters/sms-backup-restore-exporter/docs/INPUT_FORMAT.md) · [`IMPORT_MAPPING.md`](../../crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md) |
-| SMS Backup+ | [`FORMAT.md`](../../crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md) · [`IMPORT_MAPPING.md`](../../crates/exporters/sms-backup-plus-exporter/docs/IMPORT_MAPPING.md) |
+| GO SMS Pro | [Import mapping](/formats/go-sms-pro/mapping/) |
+| SMS Backup & Restore | [Input format](/formats/sms-backup-restore/input/) · [Import mapping](/formats/sms-backup-restore/mapping/) |
+| SMS Backup+ | [Format](/formats/sms-backup-plus/format/) · [Import mapping](/formats/sms-backup-plus/mapping/) |
 | OpenExtract | [CLI](https://bitrealm.dev/reference/cli/openextract-exporter/) |
-| iMazing | [`INPUT_FORMAT.md`](../../crates/exporters/imazing-exporter/docs/INPUT_FORMAT.md) · [`DESIGN.md`](../../crates/exporters/imazing-exporter/docs/DESIGN.md) |
+| iMazing | [Input format](/formats/imazing/input/) · [Design](/formats/imazing/design/) |
 | WhatsApp | [CLI](https://bitrealm.dev/reference/cli/whatsapp-exporter/) |
 | iMessage | [CLI](https://bitrealm.dev/reference/cli/imessage-ir-exporter/) |
 
-**Common message:** end-user [export structure](../src/content/docs/reference/export-structure.md); schema [message-ir architecture](architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](formats/mail-archive.md) and [SMS Backup & Restore XML](formats/sms-backup-restore-xml.md). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
+**Common message:** end-user [export structure](/reference/export-structure/); schema [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](/formats/mail-archive/) and [SMS Backup & Restore XML](/formats/sms-backup-restore-xml/). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
 
-**Convert:** the [`message-reexporter` command](../../crates/message/reexport/docs/REEXPORT.md), owned by `message-reexport`, converts an existing Message Vault output directory to another format (auto-detect input; GUI **Format** tab). Not a vendor backup source.
+**Convert:** the [`message-reexporter` command](/formats/convert/), owned by `message-reexport`, converts an existing Message Vault output directory to another format (auto-detect input; desktop app **Format** tab). Not a vendor backup source.

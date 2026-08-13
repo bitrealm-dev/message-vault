@@ -6,9 +6,9 @@ Three crates:
 
 | Package | Path | Owns |
 |---------|------|------|
-| **`message-ir`** | [`crates/message/ir/`](../../../crates/message/ir/) | Schema types only (`ConversationDocument`, `Ir*` bags, helpers) |
-| **`message-ir-format`** | [`crates/message/ir-format/`](../../../crates/message/ir-format/) | `FormatSink`, readers/writers, transforms, `CSV_HEADERS` |
-| **`message-reexport`** | [`crates/message/reexport/`](../../../crates/message/reexport/) | Directory convert + `message-reexporter` binary |
+| **`message-ir`** | [`crates/libs/ir/`](../../../crates/libs/ir/) | Schema types only (`ConversationDocument`, `Ir*` bags, helpers) |
+| **`message-ir-format`** | [`crates/libs/ir-format/`](../../../crates/libs/ir-format/) | `FormatSink`, readers/writers, transforms, `CSV_HEADERS` |
+| **`message-reexport`** | [`crates/libs/reexport/`](../../../crates/libs/reexport/) | Directory convert + `message-reexporter` binary |
 
 On-disk forms:
 
@@ -119,13 +119,13 @@ Line 1 is the header (includes `conversation.stats`; no `messages` array). Each 
 |--------|--------|--------|
 | JSON | pretty-printed `ConversationDocument` | `read_conversation_json` |
 | JSONL | header + one message per line | `read_conversation_jsonl` |
-| CSV | unified [`CSV_HEADERS`](../../../crates/message/ir-format/src/write.rs) (header from first data row on read) | `read_conversation_csv` |
-| EML / MBOX | common message → `MailMessage` → [`message-mail`](../../../crates/message/mail/) | `read_conversation_eml_dir` / `read_conversation_mbox` |
-| XML | single `smses.xml` via [`FormatSink`](../../../crates/message/ir-format/) + [`message-sbr`](../../../crates/message/sbr/) | `message_ir_format::read_sbr_documents` (owner inferred when omitted) |
+| CSV | unified [`CSV_HEADERS`](../../../crates/libs/ir-format/src/write.rs) (header from first data row on read) | `read_conversation_csv` |
+| EML / MBOX | common message → `MailMessage` → [`message-mail`](../../../crates/libs/mail/) | `read_conversation_eml_dir` / `read_conversation_mbox` |
+| XML | single `smses.xml` via [`FormatSink`](../../../crates/libs/ir-format/) + [`message-sbr`](../../../crates/libs/sbr/) | `message_ir_format::read_sbr_documents` (owner inferred when omitted) |
 
-**Directory convert:** [`message-reexport`](../../../crates/message/reexport/) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
+**Directory convert:** [`message-reexport`](../../../crates/libs/reexport/) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
 
-**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](../formats/sms-backup-restore-xml.md).
+**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/).
 
 ## Content round-trip
 
@@ -133,7 +133,7 @@ Library APIs support content-preserving cycles:
 
 `ConversationDocument` → CSV \| EML \| MBOX \| JSON \| JSONL → `ConversationDocument`
 
-Use the [`message-reexporter` command](../../../crates/message/reexport/docs/REEXPORT.md) to convert a whole export directory between formats.
+Use the [`message-reexporter` command](https://bitrealm.dev/formats/convert/) to convert a whole export directory between formats.
 
 XML is **lossy** for non-Android common messages (Apple bags omitted). SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
 
@@ -151,7 +151,7 @@ CSV nested bags use empty string when absent (never literal `null`). See [CSV co
 
 ## Related
 
-- [Mail archive format](../formats/mail-archive.md) — EML/MBOX packaging
-- [SMS Backup & Restore XML output](../formats/sms-backup-restore-xml.md) — SyncTech `smses.xml` output
+- [Mail archive format](https://bitrealm.dev/formats/mail-archive/) — EML/MBOX packaging
+- [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
 - [CSV columns](../../src/content/docs/reference/csv-columns.md) — user-facing CSV conventions
-- [Exporter capability matrix](../exporter-matrix.md)
+- [Converter capabilities](https://bitrealm.dev/formats/)

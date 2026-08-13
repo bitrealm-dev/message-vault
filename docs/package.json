@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.41.5",
-    "astro": "^7.1.5"
+    "astro": "^7.1.5",
+    "starlight-sidebar-topics": "^0.8.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

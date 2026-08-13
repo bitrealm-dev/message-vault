@@ -1,4 +1,7 @@
-# SMS Backup+ EML format notes
+---
+title: "SMS Backup+ format"
+description: "Layout of SMS Backup+ EML archives that the rescue converter reads."
+---
 
 Input messages come from [SMS Backup+](https://github.com/jberkel/sms-backup-plus) syncing Android SMS/MMS to Gmail/IMAP, then archived as `.eml` (this project does **not** talk to IMAP).
 

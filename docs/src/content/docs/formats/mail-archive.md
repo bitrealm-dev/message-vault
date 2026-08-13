@@ -1,8 +1,11 @@
-# Mail archive format (EML)
+---
+title: "Mail archives"
+description: "EML and MBOX layout and X-ME headers used when Message Vault writes a mail archive."
+---
 
 Design for a human-viewable export: **one folder per conversation**, **one `.eml` per message**, with structured `X-ME-*` headers for machine fidelity. Intended as an archive / interchange path before vault exists. Mail clients can open individual messages; translators can recover SMS, group MMS, and (later) iMessage semantics without relying on CSV.
 
-**Status:** Writer in [`message-mail`](../../../crates/message/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](../../../crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](../../src/content/docs/reference/export-structure.md) ([`message-ir`](../../../crates/message/ir/)) → output format (see [message-ir architecture](../architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](../../src/content/docs/reference/csv-columns.md).
+**Status:** Writer in [`message-mail`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](/reference/export-structure/) ([`message-ir`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir/)) → output format (see [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](/reference/csv-columns/).
 
 ## Goals
 
@@ -30,7 +33,7 @@ output/
     ...
 ```
 
-- **Conversation stem:** same rules as CSV filenames from [`message-csv::conversation_filename`](../../../crates/message/csv/src/lib.rs), without the `.csv` suffix (e.g. `+15555550101`, `Family_Chat`, `group_+A_+B`).
+- **Conversation stem:** same rules as CSV filenames from [`message-csv::conversation_filename`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/csv/src/lib.rs), without the `.csv` suffix (e.g. `+15555550101`, `Family_Chat`, `group_+A_+B`).
 - **Sequence prefix:** zero-padded decimal in chronological emit order so file browsers sort stably.
 - **Timestamp in name:** local wall-clock of the message for skimming (authoritative time is still `Date` / `X-ME-Timestamp-Unix-Ms`).
 - **`guid8`:** first 8 hex chars of `X-ME-Guid` (or Message-ID local-part hash) to avoid collisions when two messages share a second.
@@ -51,7 +54,7 @@ Each file is one RFC 5322 message. Prefer writing via a MIME builder (e.g. `mail
 
 ### Explicit anti-pattern: SMS Backup+ archive EML
 
-Do **not** pack many SMS into one MIME body with order-based attachment assignment (SMS Backup+ `Subject: SMS archive …`). Perfect pairing is impossible; see [Plus FORMAT.md](../../../crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md) and `archive.rs` heuristics.
+Do **not** pack many SMS into one MIME body with order-based attachment assignment (SMS Backup+ `Subject: SMS archive …`). Perfect pairing is impossible; see [Plus FORMAT.md](/formats/sms-backup-plus/format/) and `archive.rs` heuristics.
 
 ## Lessons from SMS Backup+ (do not repeat)
 
@@ -108,7 +111,7 @@ Browse-oriented so mail-client **Correspondents** / Subject columns stay readabl
 
 Empty owner handle falls back to `me@sms.local` with display name `Me`. Outgoing rows set `X-ME-Sender-*` from owner identity (same as common message / CSV). Owner is always mirrored in `X-ME-Owner-*` when known.
 
-Reverse import (EML/MBOX → common-message JSON) is available via [`message-ir-format`](../../../crates/message/ir-format/) (`read_conversation_eml_dir` / `read_conversation_mbox`).
+Reverse import (EML/MBOX → common-message JSON) is available via [`message-ir-format`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/) (`read_conversation_eml_dir` / `read_conversation_mbox`).
 
 ## Core `X-ME-*` headers (SMS / MMS / shared)
 
@@ -200,7 +203,7 @@ Media is transformed then embedded; FormatSink removes the staged `attachments/`
 
 ## iMessage extension
 
-Align with the unified CSV inventory in [`message_ir_format::CSV_HEADERS`](../../../crates/message/ir-format/src/write.rs). Apple-only cells are empty for SMS rows.
+Align with the unified CSV inventory in [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs). Apple-only cells are empty for SMS rows.
 
 ### Threading (replies)
 
@@ -336,14 +339,14 @@ Normal sticker sends: image MIME part + `X-ME-Attachment-Meta` (`is_sticker`, `s
 
 ## Implementation notes
 
-1. Crate [`message-mail`](../../../crates/message/mail/) emits one `.eml` / mboxrd record per message (`write_mail_package`).
+1. Crate [`message-mail`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/mail/) emits one `.eml` / mboxrd record per message (`write_mail_package`).
 2. **Android / OpenExtract / iMazing / WhatsApp** exporters map pending rows → `MailMessage` (`--format eml|mbox`).
-3. **iMessage** is [`imessage-ir-exporter`](../../../crates/exporters/imessage-ir-exporter/) (`imessage-database` → common message → packaging).
+3. **iMessage** is [`imessage-ir-exporter`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imessage-ir-exporter/) (`imessage-database` → common message → packaging).
 4. Deferred: Digital Touch animation, translations UI, HEIC convert / obfuscate inside MIME, Askama HTML bodies.
 
 ## Related docs
 
-- [CSV output conventions](../../src/content/docs/reference/csv-columns.md)
-- [Exporter capability matrix](../exporter-matrix.md)
-- [SMS Backup+ EML input notes](../../../crates/exporters/sms-backup-plus-exporter/docs/FORMAT.md)
-- [SMS Backup & Restore import mapping](../../../crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md)
+- [CSV output conventions](/reference/csv-columns/)
+- [Exporter capability matrix](/formats/)
+- [SMS Backup+ EML input notes](/formats/sms-backup-plus/format/)
+- [SMS Backup & Restore import mapping](/formats/sms-backup-restore/mapping/)

@@ -78,7 +78,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 4. **Exporter crates** under `crates/exporters/` — Each parses one backup source into `ConversationDocument` and feeds it to `FormatSink`. The GUI links them as libraries (`default-features = false` in GUI Cargo.toml, which drops the `cli` feature). Each crate has a `cli` feature (default on) that gates the standalone binary behind `dep:clap`. Three tiers:
    - **Primary**: iMessage (`imessage-ir-exporter`), WhatsApp (`whatsapp-exporter`, shells out to `wtsexporter`), SMS Backup & Restore (`sms-backup-restore-exporter`)
    - **Experimental**: GO SMS Pro, iMazing, OpenExtract, SMS Backup+
-   - See `docs/maintainers/exporter-matrix.md` for per-exporter capability gaps
+   - See https://bitrealm.dev/formats/ for per-converter capability gaps
 
 5. **`crates/core/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 

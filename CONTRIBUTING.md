@@ -220,6 +220,6 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 
 - [Maintainer documentation index](docs/maintainers/README.md)
 - [Development and releases](docs/maintainers/developing.md)
-- [Exporter capability matrix](docs/maintainers/exporter-matrix.md)
+- [Converter capabilities](https://bitrealm.dev/formats/)
 - [Code signing](docs/maintainers/signing.md)
 - End-user docs: <https://bitrealm.dev/>

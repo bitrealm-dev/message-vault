@@ -17,6 +17,8 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 Command-line options: https://bitrealm.dev/reference/cli/message-reexporter/
 
+How conversion works: https://bitrealm.dev/formats/convert/
+
 ## License
 
 MIT.

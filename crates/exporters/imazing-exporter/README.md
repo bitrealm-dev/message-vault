@@ -17,6 +17,10 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 Command-line options: https://bitrealm.dev/reference/cli/imazing-exporter/
 
+Input format: https://bitrealm.dev/formats/imazing/input/
+
+Importer design: https://bitrealm.dev/formats/imazing/design/
+
 ## License
 
 MIT.

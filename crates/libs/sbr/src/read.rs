@@ -545,8 +545,8 @@ fn parse_mms(
     // Group chats are keyed by the sorted participant set because the format
     // has no stable thread ID. When the roster changes (someone is added or
     // removed), messages before and after the change land in different
-    // conversations — an inherent limitation of the source, documented in
-    // crates/exporters/sms-backup-restore-exporter/docs/IMPORT_MAPPING.md.
+    // conversations — an inherent limitation of the source, documented at
+    // https://bitrealm.dev/formats/sms-backup-restore/mapping/.
     let raw_key = format!("group-{}", peers.join("_"));
     let chat_key = if raw_key.len() > 180 {
         format!(

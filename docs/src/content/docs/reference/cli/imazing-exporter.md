@@ -92,5 +92,5 @@ Experimental in the GUI. Outgoing sender identity, WhatsApp group roster, and re
 ## SEE ALSO
 
 - [iMazing user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/imazing/)
-- [Input format and source limitations](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imazing-exporter/docs/INPUT_FORMAT.md)
-- [Importer design](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imazing-exporter/docs/DESIGN.md)
+- [Input format and source limitations](/formats/imazing/input/)
+- [Importer design](/formats/imazing/design/)

@@ -107,9 +107,9 @@ go-sms-pro-exporter \
 
 ## NOTES
 
-Experimental in the desktop GUI. Field mapping and skip counters: [IMPORT_MAPPING.md](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md).
+Limited rescue import in the desktop app. Field mapping and skip counters: [IMPORT_MAPPING.md](/formats/go-sms-pro/mapping/).
 
 ## SEE ALSO
 
 - [GO SMS Pro user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/go-sms-pro/)
-- [Import mapping](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/go-sms-pro-exporter/docs/IMPORT_MAPPING.md)
+- [Import mapping](/formats/go-sms-pro/mapping/)
