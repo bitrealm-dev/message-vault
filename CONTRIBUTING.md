@@ -2,6 +2,8 @@
 
 How to set up, build, run, and contribute to Message Vault.
 
+This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
@@ -12,7 +14,7 @@ End-user guides (install, first export, formats) live on the [docs site](https:/
 | **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
 | **macOS** | Xcode Command Line Tools (`xcode-select --install`). |
 | **Linux** | C toolchain plus GUI system libs (see [Linux packages](#linux-packages) below). |
-| **Node.js 22+** | For the docs site (`docs/`). |
+| **Node.js 22+** | For the desktop app frontend (`web/`) and the docs site (`docs/`). |
 
 Optional for full WhatsApp / media features while developing: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
 
@@ -39,6 +41,17 @@ sudo dnf install \
   openssl-devel javascriptcoregtk4.1-devel libsoup3-devel
 ```
 
+### WSL2
+
+Use WSL2 with WSLg enabled (Windows 11) or an X server like VcXsrv (Windows 10). Keep the repository in the Linux filesystem (`~/repo/...`), not under `/mnt/c`. Install Rust and Node.js inside WSL rather than invoking Windows `cargo` or `npm.cmd`.
+
+Set `DISPLAY` if using a standalone X server:
+
+```bash
+export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
+cargo tauri dev
+```
+
 ## Clone and build
 
 ```bash
@@ -62,8 +75,8 @@ Release packaging uses `cargo tauri build` which bundles the desktop app fronten
 ### One-time setup
 
 ```bash
-# Install Tauri CLI
 cargo install tauri-cli --version "^2"
+cd web && npm ci && cd ..
 ```
 
 ### Dev mode (hot reload)
@@ -83,15 +96,6 @@ cargo build --release --workspace
 
 Use a release build when testing real exports. Debug builds compile faster, but parsing, attachment hashing, and JSON serialization can be substantially slower.
 
-### WSL2
-
-On WSL2, the Tauri window requires **WSLg** (Windows 11, built-in) or an X server like **VcXsrv** (Windows 10). Set `DISPLAY` if using a standalone X server:
-
-```bash
-export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
-cargo tauri dev
-```
-
 ### Vault server
 
 The vault server (`message-vault-server`) is built from this repo and runs in Docker:
@@ -100,7 +104,7 @@ The vault server (`message-vault-server`) is built from this repo and runs in Do
 docker compose up
 ```
 
-The server's API is available at `http://localhost:8080` by default. The web interface is at `http://localhost:3000`. Create an account and API key through the web UI under **Settings → Access**.
+The website and the import API share **http://localhost:8080**. Create an account through the web UI. For CLI import and export, create an API token under **Settings → Account**.
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
@@ -152,6 +156,12 @@ cargo test -p go-sms-pro-exporter
 
 Exporter smoke tests under `crates/*/tests/convert_smoke.rs` use committed fixtures. You do not need personal phone backups to run the suite.
 
+Frontend (`web/`):
+
+```bash
+cd web && npm ci && npm run lint && npm test
+```
+
 ## Docs site (optional)
 
 User-facing docs are Astro Starlight under `docs/`, published to **https://bitrealm.dev/** by `.github/workflows/docs.yml` (manual dispatch or push to `main` that touches `docs/**`).
@@ -187,13 +197,13 @@ GitHub Pages on this repo serves the built site. Custom domain is `bitrealm.dev`
 - **Server:** `message-vault-server` crate — the vault REST API, SQLite database, and web UI
 - **CLI tools:** `vault-push`, `vault-pull`, `message-reexport` (package `message-reexport`), and individual exporter CLIs — built from this repo
 
-Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database`). The GUI binary therefore includes GPL-licensed code.
+Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessage-database`). The desktop app binary therefore includes GPL-licensed code.
 
 ## Contribution rules
 
 1. **Keep changes focused.** Prefer small PRs that do one job over mixed refactors and features.
-2. **Match existing style.** Follow patterns already used in nearby crates; do not add drive-by renames or unrelated cleanup.
-3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there.
+2. **Match existing style.** Follow patterns already used in nearby crates; do not add drive-by renames or unrelated edits.
+3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there. If you touched `web/`, also run `npm run lint` and `npm test` there.
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
 5. **Respect licenses.** Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls it into new binaries.
 6. **Document CLI changes in the crate manpage** (`crates/<name>/docs/MANPAGE.md`), then sync the docs site as above.
