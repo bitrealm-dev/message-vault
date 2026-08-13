@@ -21,7 +21,7 @@ Hanko (passkeys via Hanko Cloud, `VAULT_AUTH=hanko` + `HANKO_API_URL`) is how th
 - All Docker build and Compose files live under `docker/`.
 - Contributors still run `docker compose up` from the repository root (dev stack).
 - CI still builds `bitrealm/message-vault` from the repository root as context.
-- Auth on the published-image stack is local username/password. Compose does not pass Hanko variables.
+- Auth on the published-image stack is local username/password. The user Compose file does not set `VAULT_AUTH` or any Hanko variable; the server already defaults to local when `VAULT_AUTH` is unset.
 - `docker run -v message-vault-data:…` and the user Compose file share the same Docker volume name so switching methods does not look like data loss.
 
 ## Non-goals
@@ -72,7 +72,6 @@ services:
       - "8080:8080"
     environment:
       DEMO_DATA: ${DEMO_DATA:-true}
-      VAULT_AUTH: local
     volumes:
       - message-vault-data:/app/data
       - ./staging:/app/staging
@@ -85,8 +84,7 @@ volumes:
 Rules for this file:
 
 - `image:` only. No `build:`, no Dockerfile.
-- `VAULT_AUTH: local` is a literal, not `${VAULT_AUTH:-local}`. A leftover `VAULT_AUTH=hanko` in the user’s shell must not switch a laptop vault onto Hanko Cloud.
-- No `HANKO_API_URL`. The container default is already local if the variable is absent; the Compose file still sets `VAULT_AUTH` so the file documents the mode.
+- No `VAULT_AUTH` and no `HANKO_API_URL`. The only environment variable in this file is `DEMO_DATA`. The server maps a missing `VAULT_AUTH` to local username/password (`AuthMode::from_env`). Compose does not pass host env into the container unless the file lists it, so a leftover `VAULT_AUTH=hanko` in the user’s shell does not reach the vault.
 - Volume name `message-vault-data` matches `docker run -v message-vault-data:/app/data`.
 - `name: message-vault` keeps the Compose project name stable if the folder is not called `message-vault`.
 - `./staging` is optional JSONL drop, same idea as today’s release Compose. Compose creates the host directory if missing.
@@ -174,7 +172,7 @@ Entrypoint scripts keep the same seed/`DEMO_DATA` behavior. Only their on-disk p
 
 | Audience | `VAULT_AUTH` | Hanko in Compose |
 |---|---|---|
-| User `docker/compose.yml` | literal `local` | no |
+| User `docker/compose.yml` | omitted (server default: local) | no |
 | Checkout Compose | `${VAULT_AUTH:-local}` | no |
 | Server if unset | local | n/a |
 | Bitrealm VPS | set in private `message-vault-ops` | yes, there |
@@ -205,7 +203,7 @@ Historical `docs/superpowers/plans/` and older specs are not updated.
 - `docker build -f docker/Dockerfile -t message-vault:layout-test .` from the repo root succeeds (same as today’s release image).
 - From repo root, `docker compose config` (with the committed `.env`) resolves `docker/compose.dev.yml` and shows bind-mounts of the repo root, not of `docker/`.
 - `docker compose -f docker/compose.release.yml config` shows `context` as the repo root and `dockerfile` `docker/Dockerfile`.
-- User file `docker/compose.yml` has `image: bitrealm/message-vault`, `VAULT_AUTH: local`, no `HANKO_API_URL`, volume `message-vault-data`.
+- User file `docker/compose.yml` has `image: bitrealm/message-vault`, only `DEMO_DATA` under `environment:`, no `VAULT_AUTH` or `HANKO_API_URL`, volume `message-vault-data`.
 - Grep of live docs, README, CI, CLAUDE.md, CONTRIBUTING.md has no `Dockerfile.release`, root `compose-dev.yml`, or `scripts/docker-entrypoint-*.sh`.
 - No server or frontend code change is required for this layout.
 
