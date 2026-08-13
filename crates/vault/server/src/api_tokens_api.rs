@@ -108,6 +108,11 @@ pub struct RenameApiTokenResponse {
 }
 
 /// `GET /v1/account/api-tokens`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session or the list
+/// cannot be loaded.
 pub async fn list_api_tokens_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -129,6 +134,11 @@ pub async fn list_api_tokens_handler(
 }
 
 /// `POST /v1/account/api-tokens`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session, the label
+/// is invalid, or the insert fails.
 pub async fn create_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -171,6 +181,11 @@ pub async fn create_api_token_handler(
 }
 
 /// `DELETE /v1/account/api-tokens/{id}`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session or the token
+/// is missing.
 pub async fn delete_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -195,6 +210,11 @@ pub async fn delete_api_token_handler(
 }
 
 /// `PATCH /v1/account/api-tokens/{id}`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session, the label
+/// is invalid, or the token is missing.
 pub async fn rename_api_token_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

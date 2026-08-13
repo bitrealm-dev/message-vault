@@ -3,11 +3,13 @@ use std::path::Path;
 use anyhow::Result;
 use rusqlite::{Connection, params};
 
-/// Shared SQLite pragmas for serve/import (WAL + busy wait so auth/UI can overlap writes).
+/// Shared SQLite settings for serve and import.
 ///
-/// Busy timeout is applied first. WAL is best-effort: a hot rollback journal or another
-/// process holding the DB (e.g. Next.js) can make `journal_mode=WAL` fail; callers still
-/// get a usable connection.
+/// A busy timeout is applied first so overlapping auth and UI writes wait
+/// instead of failing immediately. Write-ahead logging (SQLite's extra log of
+/// recent writes, often called WAL) is best-effort: a hot rollback journal or
+/// another process holding the database can make `journal_mode=WAL` fail;
+/// callers still get a usable connection.
 pub fn configure_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
@@ -18,7 +20,7 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
         PRAGMA foreign_keys = ON;
         "#,
     )?;
-    // journal_mode returns a row; may fail if another connection holds a lock.
+    // journal_mode returns a row; it may fail if another connection holds a lock.
     match conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
         row.get::<_, String>(0)
     }) {
@@ -29,13 +31,18 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
         }
         Err(err) => {
             eprintln!(
-                "warning: could not enable WAL ({err}); continuing with current journal mode"
+                "warning: could not enable write-ahead logging ({err}); continuing with current journal mode"
             );
         }
     }
     Ok(())
 }
 
+/// Open `path` and apply [`configure_connection`].
+///
+/// # Errors
+///
+/// Returns an error when the database file cannot be opened or configured.
 pub fn open_configured(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     configure_connection(&conn)?;
@@ -54,6 +61,10 @@ const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
     include_str!("../../../../../schema/sql/fts_triggers_create.sql");
 
 /// Create every table and index required by a current vault.
+///
+/// # Errors
+///
+/// Returns an error when a DDL statement fails.
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_accounts_schema(conn)?;
@@ -67,10 +78,10 @@ pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Marker that current FTS sync trigger definitions are installed.
+/// Marker that current full-text search (FTS) sync trigger definitions are installed.
 pub const MESSAGES_FTS_TRIGGERS_META_KEY: &str = "messages_fts_triggers_v1";
 
-/// Contentless FTS5 index over message body/subject plus attachment text.
+/// Contentless full-text search index over message body/subject plus attachment text.
 fn ensure_messages_fts(conn: &Connection) -> Result<()> {
     conn.execute_batch(FTS_VIRTUAL_DDL)?;
 
@@ -86,7 +97,12 @@ fn ensure_messages_fts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Drop FTS sync triggers (used during bulk promote so inserts skip per-row indexing).
+/// Drop full-text search sync triggers (used during bulk promote so inserts skip
+/// per-row indexing).
+///
+/// # Errors
+///
+/// Returns an error when the drop statements fail.
 pub(crate) fn drop_messages_fts_triggers(conn: &Connection) -> Result<()> {
     conn.execute_batch(DROP_MESSAGES_FTS_TRIGGERS_SQL)?;
     conn.execute(
@@ -96,7 +112,11 @@ pub(crate) fn drop_messages_fts_triggers(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Install FTS sync triggers and mark them ready in `schema_meta`.
+/// Install full-text search sync triggers and mark them ready in `schema_meta`.
+///
+/// # Errors
+///
+/// Returns an error when the trigger SQL or metadata write fails.
 pub(crate) fn install_messages_fts_triggers(conn: &Connection) -> Result<()> {
     conn.execute_batch(DROP_MESSAGES_FTS_TRIGGERS_SQL)?;
     conn.execute_batch(CREATE_MESSAGES_FTS_TRIGGERS_SQL)?;
@@ -140,7 +160,8 @@ const MESSAGES_SECONDARY_INDEX_DDL: &[(&str, &str)] = &[
     ),
 ];
 
-/// Drop secondary `messages` indexes during bulk promote (transactional with the promote tx).
+/// Drop secondary `messages` indexes during bulk promote (same transaction as
+/// the promote inserts).
 pub(crate) fn drop_messages_secondary_indexes(conn: &Connection) -> Result<()> {
     for (name, _) in MESSAGES_SECONDARY_INDEX_DDL {
         conn.execute(&format!("DROP INDEX IF EXISTS {name}"), [])?;
@@ -156,16 +177,18 @@ pub(crate) fn create_messages_secondary_indexes(conn: &Connection) -> Result<()>
     Ok(())
 }
 
-/// Bulk-index promoted messages (joined via temp `_promote_msg_map`) into `messages_fts`.
+/// Bulk-index promoted messages (joined via temp `_promote_msg_map`) into the
+/// full-text search table `messages_fts`.
 /// Call after attachment rows exist so `attachment_text` is complete.
 ///
 /// `_promote_msg_map` also targets messages that already existed before this
 /// promotion (so attachments and tapbacks can attach to them), and several
-/// staging rows can point at one production row. `messages_fts` is contentless,
-/// so re-indexing an already indexed row writes redundant index entries that a
-/// later delete does not fully retract. `min_new_message_id` is the highest
-/// `messages.id` that existed before this promotion inserted anything; only
-/// distinct production ids above it are indexed here.
+/// staging rows can point at one production row. `messages_fts` stores no
+/// copy of the message text, so re-indexing an already indexed row writes
+/// extra index entries that a later delete does not fully retract.
+/// `min_new_message_id` is the highest `messages.id` that existed before this
+/// promotion inserted anything; only distinct production ids above it are
+/// indexed here.
 pub(crate) fn index_messages_fts_from_promote_map(
     conn: &Connection,
     min_new_message_id: i64,
@@ -201,6 +224,10 @@ const MESSAGE_IDS_FOR_SOURCE: &str = "SELECT m.id FROM messages m \
      WHERE m.source = ?1 AND c.account_id = ?2";
 
 /// Delete all production messages (and cascaded rows) for one import source within one account.
+///
+/// # Errors
+///
+/// Returns an error when a delete or update statement fails.
 pub fn delete_messages_for_source(
     conn: &Connection,
     account_id: &str,
@@ -234,7 +261,12 @@ pub fn delete_messages_for_source(
     Ok(n as u64)
 }
 
-/// Clear one account's staging rows (CASCADE removes children). Other accounts are untouched.
+/// Clear one account's staging rows (the temporary import area). Child rows
+/// are removed by CASCADE. Other accounts are untouched.
+///
+/// # Errors
+///
+/// Returns an error when schema setup or the delete fails.
 pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<()> {
     ensure_vault_schema(conn)?;
     conn.execute(
@@ -245,6 +277,10 @@ pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<
 }
 
 /// Create current account and vault metadata tables.
+///
+/// # Errors
+///
+/// Returns an error when DDL or a column migration fails.
 pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(ACCOUNTS_DDL)?;
     // Additive migrations for DBs created before expiry/disable columns existed.
@@ -271,10 +307,17 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, alter_sql: &str) -> Result<()> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let exists = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .filter_map(|r| r.ok())
-        .any(|name| name == column);
+    let mut exists = false;
+    let mut rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows.by_ref() {
+        let Ok(name) = row else {
+            continue;
+        };
+        if name == column {
+            exists = true;
+            break;
+        }
+    }
     if !exists {
         conn.execute_batch(alter_sql)?;
     }

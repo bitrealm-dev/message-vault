@@ -1,4 +1,8 @@
 //! Cross-process exclusion between the HTTP server and database replacement.
+//!
+//! Serve and reset-demo must not run at the same time against the same
+//! database. This lock file sits next to the database and is taken exclusively
+//! for the life of either operation.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -7,11 +11,18 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use fs2::FileExt;
 
+/// Holds an exclusive lock on `{database}.operation.lock` until dropped.
 #[derive(Debug)]
 pub(crate) struct VaultOperationLock {
     _file: File,
 }
 
+/// Take the lock for the HTTP server. Fails if reset-demo or another server
+/// already holds it.
+///
+/// # Errors
+///
+/// Returns an error when the lock file cannot be created or is already held.
 pub(crate) fn acquire_for_serve(db: &Path) -> Result<VaultOperationLock> {
     acquire(db).with_context(|| {
         format!(
@@ -21,6 +32,11 @@ pub(crate) fn acquire_for_serve(db: &Path) -> Result<VaultOperationLock> {
     })
 }
 
+/// Take the lock for reset-demo. Fails if the HTTP server already holds it.
+///
+/// # Errors
+///
+/// Returns an error when the lock file cannot be created or is already held.
 pub(crate) fn acquire_for_reset(db: &Path) -> Result<VaultOperationLock> {
     acquire(db).with_context(|| {
         format!(

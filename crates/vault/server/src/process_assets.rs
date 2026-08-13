@@ -67,6 +67,11 @@ impl AssetRow {
 }
 
 /// Run derived-media conversion for every account/source in the vault.
+///
+/// # Errors
+///
+/// Returns an error when the database is missing, a conversion tool fails, or
+/// a derived file cannot be written.
 pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsStats> {
     let db_path = opts.db.as_ref().unwrap_or(&cfg.paths.db);
     if !db_path.is_file() {
@@ -428,10 +433,14 @@ fn update_derived(
 
 /// Incomplete iMessage/SMS transfers and aborted vault uploads use a `.part` suffix.
 fn is_part_path(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("part"))
+    has_part_extension(Path::new(path))
+}
+
+fn has_part_extension(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    ext.eq_ignore_ascii_case("part")
 }
 
 /// Max age for abandoned multipart upload sessions under `.incoming/{sha}/{upload_id}/`.
@@ -449,11 +458,7 @@ fn cleanup_incoming_parts(assets_dir: &Path, dry_run: bool) -> Result<u64> {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
-            let is_part = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("part"));
-            if !is_part {
+            if !has_part_extension(&path) {
                 continue;
             }
             if dry_run {
@@ -517,9 +522,9 @@ fn upload_session_is_stale(session: &Path, now: std::time::SystemTime) -> Result
     Ok(age.as_secs() >= STALE_UPLOAD_SESSION_SECS)
 }
 
-/// Classify a stored blob, falling back to the names the export supplied.
+/// Classify a stored file, falling back to the names the export supplied.
 ///
-/// Canonical blob paths are `<shard>/<sha256>` with no extension, so a row whose
+/// Stored files are named `<folder>/<sha256>` with no extension, so a row whose
 /// `mime_type` is missing (older imports, or a source that declared nothing)
 /// would otherwise classify as `Other` and never be converted for the browser.
 /// `name_hints` are the attachment's `original_name` and original export `path`,
@@ -528,19 +533,32 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
     if is_part_path(assets_path) {
         return MediaKind::Other;
     }
-    let declared = mime.map(str::trim).filter(|m| !m.is_empty());
+    let declared = nonempty_mime(mime);
     let kind = media_tools::kind_of(Path::new(assets_path), declared);
     // A stored path that already identifies the file wins, and so does a
     // declared MIME — including `image/gif` and `.gif`, which stay unconverted.
     if kind != MediaKind::Other || declared.is_some() || ext_of(Path::new(assets_path)) == ".gif" {
         return kind;
     }
-    name_hints
-        .iter()
-        .flatten()
-        .map(|hint| media_tools::kind_of(Path::new(hint), None))
-        .find(|kind| *kind != MediaKind::Other)
-        .unwrap_or(MediaKind::Other)
+    for hint in name_hints.iter().flatten() {
+        let hinted = media_tools::kind_of(Path::new(hint), None);
+        if hinted != MediaKind::Other {
+            return hinted;
+        }
+    }
+    MediaKind::Other
+}
+
+fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
+    let Some(raw) = mime else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 fn derive_image(source_path: &Path) -> Result<Option<Vec<u8>>> {

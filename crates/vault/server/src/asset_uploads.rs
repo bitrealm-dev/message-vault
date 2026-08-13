@@ -83,6 +83,10 @@ fn new_upload_id() -> String {
 }
 
 /// Reject path separators and non-hex ids before joining into `.incoming/…`.
+///
+/// # Errors
+///
+/// Returns an error when the id is empty, too long, or not hex.
 pub fn require_upload_id(upload_id: &str) -> Result<String> {
     let id = upload_id.trim();
     if id.is_empty() || id.len() > 64 {
@@ -94,6 +98,7 @@ pub fn require_upload_id(upload_id: &str) -> Result<String> {
     Ok(id.to_ascii_lowercase())
 }
 
+/// Folder for one multipart upload: `{assets}/.incoming/{sha256}/{upload_id}`.
 pub fn session_dir(assets_root: &Path, sha256: &str, upload_id: &str) -> PathBuf {
     assets_root.join(".incoming").join(sha256).join(upload_id)
 }
@@ -284,10 +289,17 @@ pub fn put_part(
     Ok(body.len() as u64)
 }
 
-/// Concatenate parts, verify claimed SHA-256, install into the asset store.
+/// Concatenate parts, check the claimed SHA-256 fingerprint, and install into
+/// the asset store.
 ///
-/// Always hashes the assembled object and rejects digest mismatches, regardless
-/// of `limits.hash_threshold_bytes` (kept for config compatibility only).
+/// Always hashes the assembled object and rejects fingerprint mismatches,
+/// regardless of `limits.hash_threshold_bytes` (kept for config compatibility
+/// only).
+///
+/// # Errors
+///
+/// Returns an error when the upload session is missing, a part is missing, the
+/// fingerprint does not match, or the file cannot be stored.
 pub fn complete_upload(
     assets_root: &Path,
     sha256: &str,
@@ -454,7 +466,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
         let data = b"large-enough-to-skip";
-        // Claimed digest deliberately wrong: completion must still hash and reject.
+        // Claimed fingerprint deliberately wrong: completion must still hash and reject.
         let claimed_sha = "a".repeat(64);
         let upload_id = "aabbccdd";
         let session = session_dir(root, &claimed_sha, upload_id);

@@ -278,7 +278,8 @@ fn recompute_content_keys(conn: &Connection, missing_only: bool, account_id: &st
         return Ok(0);
     }
 
-    // Sorted participant handles per group conversation (canonical cross-source identity).
+    // Sorted participant handles per group conversation (one shared identity
+    // across import sources).
     let mut group_handles: HashMap<i64, Vec<String>> = HashMap::new();
     {
         let mut p_stmt = conn.prepare(

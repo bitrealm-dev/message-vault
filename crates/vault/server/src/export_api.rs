@@ -48,9 +48,9 @@ pub struct ExportCountResponse {
     pub messages: u64,
     /// Distinct conversations with at least one matching message.
     pub conversations: u64,
-    /// Unique attachment digests among matching messages.
+    /// Unique attachment fingerprints among matching messages.
     pub attachments: u64,
-    /// Sum of known `size_bytes` for those unique digests (unknown sizes omitted).
+    /// Sum of known `size_bytes` for those unique fingerprints (unknown sizes omitted).
     pub total_bytes: u64,
 }
 
@@ -197,6 +197,26 @@ struct BuiltFilters {
     dedupe_sql: String,
 }
 
+fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
+    let mut ids: Vec<i64> = ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn nonempty_source(source: Option<&str>) -> Option<&str> {
+    let Some(raw) = source else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Build WHERE-clause SQL for a validated message-mode search.
 fn prepare_message_export(
     conn: &Connection,
     account_id: &str,
@@ -215,6 +235,11 @@ fn prepare_message_export(
 /// Export messages matching a Fastmail-style query (message mode only).
 ///
 /// Empty query (no criteria) returns all non-trashed, non-duplicate messages for the account.
+///
+/// # Errors
+///
+/// Returns a bad-request error for an invalid query or cursor, or an internal
+/// error when a database statement fails.
 pub fn export_messages(
     conn: &Connection,
     opts: ExportPageOpts<'_>,
@@ -323,12 +348,7 @@ pub fn export_messages(
         None
     };
 
-    let conv_ids: Vec<i64> = {
-        let mut ids: Vec<i64> = page_rows.iter().map(|r| r.conversation_id).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    };
+    let conv_ids = unique_ids(page_rows.iter().map(|r| r.conversation_id));
     let participants = load_participants(conn, &conv_ids)?;
     let msg_ids: Vec<i64> = page_rows.iter().map(|r| r.id).collect();
     let attachments = load_attachments(conn, &msg_ids)?;
@@ -382,8 +402,14 @@ pub fn export_messages(
 
 /// Aggregate counts for messages matching a Fastmail-style query (no paging).
 ///
-/// Attachment count is unique non-empty `sha256` values on matching messages.
-/// `total_bytes` sums known `attachments.size_bytes` for those digests.
+/// Attachment count is unique non-empty SHA-256 fingerprints (a short
+/// fingerprint of the file contents) on matching messages.
+/// `total_bytes` sums known `attachments.size_bytes` for those fingerprints.
+///
+/// # Errors
+///
+/// Returns a bad-request error for an invalid query, or an internal error when
+/// a database statement fails.
 pub fn export_message_count(
     conn: &Connection,
     opts: ExportCountOpts<'_>,
@@ -613,10 +639,7 @@ fn build_message_filters(
         params.push(before_val.into());
     }
 
-    let source_filter = source_override
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .or(parsed.source.as_deref());
+    let source_filter = nonempty_source(source_override).or(parsed.source.as_deref());
     if let Some(source) = source_filter {
         where_parts.push("m.source = ?".into());
         params.push(source.to_string().into());
@@ -771,7 +794,7 @@ fn metadata_term_matches_sql(
     .into()
 }
 
-/// Quote a free-text token for FTS5 so operators/punctuation are literal.
+/// Quote a free-text token for full-text search so operators and punctuation are treated as literal text.
 fn fts5_literal_query(term: &str) -> String {
     format!("\"{}\"", term.replace('"', "\"\""))
 }
@@ -780,16 +803,18 @@ fn involves_contacts_sql(contact_ids: &[i64]) -> String {
     if contact_ids.is_empty() {
         return "1=0".into();
     }
-    let ids = contact_ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
+    let mut id_list = String::new();
+    for (i, id) in contact_ids.iter().enumerate() {
+        if i > 0 {
+            id_list.push(',');
+        }
+        id_list.push_str(&id.to_string());
+    }
     format!(
         "EXISTS (
     SELECT 1 FROM contact_handles ch
     WHERE ch.account_id = c.account_id
-      AND ch.contact_id IN ({ids})
+      AND ch.contact_id IN ({id_list})
       AND (
         ch.handle_id = c.chat_handle_id
         OR EXISTS (

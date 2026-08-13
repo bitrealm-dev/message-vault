@@ -10,6 +10,10 @@ const TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 pub const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Generate a new GUI session token (`mv-user-` + 32 alphanumeric characters).
+///
+/// # Errors
+///
+/// Returns an error when random bytes cannot be generated.
 #[allow(dead_code)] // used by rotate_account_session_token
 pub fn generate_session_token() -> Result<String> {
     generate_prefixed_token("mv-user-")
@@ -25,7 +29,7 @@ pub(crate) fn generate_prefixed_token(prefix: &str) -> Result<String> {
     Ok(format!("{prefix}{suffix}"))
 }
 
-/// SHA-256 hex digest of a plaintext token (stored in DB; used for Bearer lookup).
+/// SHA-256 hex fingerprint of a plaintext token (stored in DB; used for Bearer lookup).
 pub fn hash_api_token(token: &str) -> String {
     crate::assets::sha256_hex(token.as_bytes())
 }
@@ -52,6 +56,10 @@ fn now_unix_secs() -> u64 {
 }
 
 /// Look up which account owns this session Bearer (by hash). Expired rows are removed.
+///
+/// # Errors
+///
+/// Returns an error when the lookup or delete fails.
 pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option<String>> {
     let token_hash = hash_api_token(token);
     let found: Option<(String, String)> = conn
@@ -77,6 +85,11 @@ pub fn lookup_account_for_token(conn: &Connection, token: &str) -> Result<Option
     Ok(Some(account_id))
 }
 
+/// True when the account already has a session token row.
+///
+/// # Errors
+///
+/// Returns an error when the count query fails.
 #[allow(dead_code)]
 pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<bool> {
     let n: i64 = conn.query_row(
@@ -88,6 +101,10 @@ pub fn account_has_session_token(conn: &Connection, account_id: &str) -> Result<
 }
 
 /// Create or replace the account's session token hash; returns plaintext once.
+///
+/// # Errors
+///
+/// Returns an error when a token cannot be generated or the write fails.
 #[allow(dead_code)]
 pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
     let token = generate_session_token()?;
@@ -110,6 +127,10 @@ pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Resu
 }
 
 /// Create a fresh session token for an account and return the plaintext.
+///
+/// # Errors
+///
+/// Returns an error when a token cannot be generated or the insert fails.
 pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
     let token = generate_session_token()?;
     let token_hash = hash_api_token(&token);
@@ -125,6 +146,10 @@ pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Resu
 }
 
 /// Session token for GUI: if a row exists, rotate it; otherwise insert.
+///
+/// # Errors
+///
+/// Returns an error when the lookup or token write fails.
 pub fn get_or_create_session_token(conn: &Connection, account_id: &str) -> Result<String> {
     let existing: Option<String> = conn
         .query_row(
@@ -140,6 +165,10 @@ pub fn get_or_create_session_token(conn: &Connection, account_id: &str) -> Resul
 }
 
 /// Revoke the presented session token (logout). Returns whether a row was deleted.
+///
+/// # Errors
+///
+/// Returns an error when the delete fails.
 pub fn revoke_session_token(conn: &Connection, token: &str) -> Result<bool> {
     let token_hash = hash_api_token(token);
     let n = conn.execute(
@@ -150,6 +179,11 @@ pub fn revoke_session_token(conn: &Connection, token: &str) -> Result<bool> {
 }
 
 /// Revoke every session for an account (e.g. after password change).
+/// Delete the account's session token row.
+///
+/// # Errors
+///
+/// Returns an error when the delete fails.
 pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM account_session_tokens WHERE account_id = ?1",

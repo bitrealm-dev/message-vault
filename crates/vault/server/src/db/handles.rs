@@ -1,11 +1,11 @@
-//! Shared handle identity helpers (normalize + infer type from shape).
+//! Shared handle identity helpers (same format for matching + infer type from shape).
 
 use anyhow::Result;
 use message_ir::{HandleService, HandleType};
 use rusqlite::{Connection, params};
 
-/// Canonical form of a handle for identity matching, per type, plus a
-/// human-readable note when the canonical form is ambiguous (guarded policy).
+/// One standard form of a handle for identity matching, per type, plus a
+/// human-readable note when that form is ambiguous (guarded policy).
 ///
 /// Phone: E.164 when the raw is unambiguous (`+`-prefixed, or a US national
 /// number); otherwise digits-as-is with a review note — a trunk-zero

@@ -1,11 +1,11 @@
 //! Vault search query parser.
 //!
-//! Behavior reference: `web-next/src/lib/searchQuery.ts` (deprecated UI).
-//! Contract: both sides must match `tests/fixtures/search/parse-cases.json`.
-//! After changing the TypeScript grammar, run
+//! Expected parse results live in `tests/fixtures/search/parse-cases.json`.
+//! The deprecated TypeScript parser in `web-next/src/lib/searchQuery.ts` used
+//! to share that contract. After changing the TypeScript grammar, run
 //! `node scripts/deprecated/regen-search-goldens.mjs` and update this module
-//! until Rust golden tests pass. Once web-next is gone, this parser stands
-//! alone and the goldens become a plain Rust regression fixture.
+//! until the Rust tests pass. Once web-next is gone, this parser stands alone
+//! and those JSON cases become a plain Rust regression check.
 
 use chrono::{Datelike, Local};
 use serde::Serialize;
@@ -13,10 +13,10 @@ use std::fmt;
 
 use crate::export_api::ExportQueryError;
 
-/// Reject pathological search strings before parsing or SQL construction.
+/// Reject huge search strings before parsing or SQL construction.
 pub const MAX_SEARCH_QUERY_BYTES: usize = 2_048;
 pub const MAX_SEARCH_TEXT_TERMS: usize = 32;
-/// Hard cap on FTS AST nodes (guards nested OR/AND DoS).
+/// Hard cap on full-text search expression nodes (guards nested OR/AND abuse).
 pub const MAX_FTS_NODES: usize = 64;
 /// Hard cap on parenthesis / negation nesting depth.
 ///
@@ -228,6 +228,7 @@ impl Default for ParsedSearchQuery {
     }
 }
 
+/// Read characters until the next `"` and return `(phrase, index_after_quote)`.
 fn read_quoted(s: &str, start: usize) -> (String, usize) {
     let bytes = s.as_bytes();
     let mut i = start;
@@ -242,6 +243,7 @@ fn read_quoted(s: &str, start: usize) -> (String, usize) {
     (phrase, i)
 }
 
+/// Split a search string into operator tokens, quoted phrases, and parentheses.
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let s = input.trim();
@@ -541,13 +543,14 @@ fn flatten_fts_leaves(
     }
 }
 
-/// Count nodes in an FTS expression tree (for DoS guards).
+/// Count nodes in a full-text search expression tree (to reject huge queries).
 pub fn count_fts_nodes(node: &FtsNode) -> usize {
     match node {
         FtsNode::Term { .. } | FtsNode::Phrase { .. } => 1,
         FtsNode::Not { child } => 1 + count_fts_nodes(child),
         FtsNode::And { children } | FtsNode::Or { children } => {
-            1 + children.iter().map(count_fts_nodes).sum::<usize>()
+            let child_nodes: usize = children.iter().map(count_fts_nodes).sum();
+            1 + child_nodes
         }
     }
 }
@@ -578,24 +581,38 @@ fn validate_search_query_complexity(
     Ok(())
 }
 
-/// Enforce resource limits without interpreting list-search text as boolean syntax.
+/// Enforce size limits without treating list-search text as boolean syntax.
+///
+/// # Errors
+///
+/// Returns a bad-request error when the query is too long or has too many terms.
 pub fn validate_list_search_query(input: &str) -> Result<(), ExportQueryError> {
     validate_search_query_bytes(input)?;
     let tokens = tokenize(input);
-    let text_term_count = tokens
-        .iter()
-        .filter(|token| token.as_str() != "(" && token.as_str() != ")")
-        .count();
+    let mut text_term_count = 0usize;
+    for token in &tokens {
+        if token.as_str() != "(" && token.as_str() != ")" {
+            text_term_count += 1;
+        }
+    }
     validate_search_query_complexity(text_term_count, tokens.len())
 }
 
-/// Parse a boolean search query and enforce resource limits.
+/// Parse a boolean search query and enforce size limits.
+///
+/// # Errors
+///
+/// Returns a bad-request error when the query is too long, too complex, or
+/// not valid boolean syntax.
 pub fn validate_search_query(input: &str) -> Result<ParsedSearchQuery, ExportQueryError> {
     validate_search_query_bytes(input)?;
     let parsed = parse_search_query(input)
         .map_err(|error| ExportQueryError::bad(format!("invalid search expression: {error}")))?;
     let text_term_count = parsed.terms.len() + parsed.phrases.len() + parsed.exclude.len();
-    let node_count = parsed.fts_ast.as_ref().map(count_fts_nodes).unwrap_or(0);
+    let node_count = match &parsed.fts_ast {
+        Some(ast) => count_fts_nodes(ast),
+        None => 0,
+    };
     validate_search_query_complexity(text_term_count, node_count)?;
     Ok(parsed)
 }
@@ -634,36 +651,8 @@ fn normalize_date(raw: &str) -> Option<String> {
                     b'w' => today
                         .checked_sub_signed(chrono::Duration::days(n * 7))
                         .unwrap_or(today),
-                    b'm' => {
-                        let (y, m, day) = (today.year(), today.month(), today.day());
-                        let total = i64::from(y) * 12 + i64::from(m) - 1 - n;
-                        let ny = (total.div_euclid(12)) as i32;
-                        let nm = (total.rem_euclid(12) + 1) as u32;
-                        chrono::NaiveDate::from_ymd_opt(ny, nm, 1)
-                            .and_then(|_first| {
-                                let last_day = if nm == 12 {
-                                    chrono::NaiveDate::from_ymd_opt(ny + 1, 1, 1)
-                                        .unwrap()
-                                        .pred_opt()
-                                        .unwrap()
-                                        .day()
-                                } else {
-                                    chrono::NaiveDate::from_ymd_opt(ny, nm + 1, 1)
-                                        .unwrap()
-                                        .pred_opt()
-                                        .unwrap()
-                                        .day()
-                                };
-                                chrono::NaiveDate::from_ymd_opt(ny, nm, day.min(last_day))
-                            })
-                            .unwrap_or(today)
-                    }
-                    _ => {
-                        let y = today.year() - n as i32;
-                        chrono::NaiveDate::from_ymd_opt(y, today.month(), today.day())
-                            .or_else(|| chrono::NaiveDate::from_ymd_opt(y, today.month(), 28))
-                            .unwrap_or(today)
-                    }
+                    b'm' => shift_calendar_months(today, n),
+                    _ => shift_calendar_years(today, n),
                 };
                 return Some(d.format("%Y-%m-%d").to_string());
             }
@@ -680,6 +669,32 @@ fn normalize_date(raw: &str) -> Option<String> {
         return Some(format!("{t}-01-01"));
     }
     Some(t.to_string())
+}
+
+fn last_day_of_month(year: i32, month: u32) -> Option<u32> {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let first_of_next = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)?;
+    Some(first_of_next.pred_opt()?.day())
+}
+
+fn shift_calendar_months(today: chrono::NaiveDate, months: i64) -> chrono::NaiveDate {
+    let (y, m, day) = (today.year(), today.month(), today.day());
+    let total = i64::from(y) * 12 + i64::from(m) - 1 - months;
+    let year = (total.div_euclid(12)) as i32;
+    let month = (total.rem_euclid(12) + 1) as u32;
+    let last_day = last_day_of_month(year, month).unwrap_or(day);
+    chrono::NaiveDate::from_ymd_opt(year, month, day.min(last_day)).unwrap_or(today)
+}
+
+fn shift_calendar_years(today: chrono::NaiveDate, years: i64) -> chrono::NaiveDate {
+    let year = today.year() - years as i32;
+    chrono::NaiveDate::from_ymd_opt(year, today.month(), today.day())
+        .or_else(|| chrono::NaiveDate::from_ymd_opt(year, today.month(), 28))
+        .unwrap_or(today)
 }
 
 fn parse_date_bounds(raw: &str) -> DateBounds {
@@ -809,6 +824,10 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
 }
 
 /// Parse a vault search string into structured filters.
+///
+/// # Errors
+///
+/// Returns an error when boolean operators or parentheses are unbalanced.
 pub fn parse_search_query(input: &str) -> Result<ParsedSearchQuery, FtsParseError> {
     let mut out = ParsedSearchQuery::default();
     if input.trim().is_empty() {

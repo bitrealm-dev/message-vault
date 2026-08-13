@@ -68,6 +68,21 @@ struct ResetPreparedStats {
     process_assets: process_assets::ProcessAssetsStats,
 }
 
+/// Parent directory of `path`, or `.` when the path has no parent.
+fn parent_dir_or_cwd(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+/// Rebuild the demo vault from the bundle at `bundle` and write the active
+/// config to `config_dest`.
+///
+/// # Errors
+///
+/// Returns an error when the bundle is incomplete, the database cannot be
+/// replaced, or import / media processing fails.
 pub fn run_reset_demo(bundle: &Path, config_dest: &Path) -> Result<ResetDemoStats> {
     run_reset_demo_for_account(bundle, config_dest, DEMO_ACCOUNT_ID)
 }
@@ -108,10 +123,7 @@ fn prepare_config_and_reset(
             bundle.display()
         );
     }
-    let config_parent = config_dest
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let config_parent = parent_dir_or_cwd(config_dest);
     fs::create_dir_all(config_parent)
         .with_context(|| format!("create config directory {}", config_parent.display()))?;
     let temporary_config = tempfile::Builder::new()
@@ -145,18 +157,8 @@ fn reset_prepared_bundle(
 ) -> Result<ResetPreparedStats> {
     let prepared = validate_prepared_bundle(bundle)?;
     let _operation_lock = crate::operation_lock::acquire_for_reset(&cfg.paths.db)?;
-    let db_parent = cfg
-        .paths
-        .db
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let data_parent = cfg
-        .paths
-        .data_dir
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let db_parent = parent_dir_or_cwd(&cfg.paths.db);
+    let data_parent = parent_dir_or_cwd(&cfg.paths.data_dir);
     fs::create_dir_all(db_parent)
         .with_context(|| format!("create database parent {}", db_parent.display()))?;
     fs::create_dir_all(data_parent)
@@ -261,10 +263,10 @@ fn reset_prepared_bundle(
     );
     if let Err(error) = replacement {
         let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
-        let rollback_incomplete = db_work.path().join("previous-vault.db").exists()
+        let previous_state_still_in_work = db_work.path().join("previous-vault.db").exists()
             || data_work.path().join("previous-account").exists()
             || config_backup.exists();
-        if rollback_incomplete {
+        if previous_state_still_in_work {
             let db_work = db_work.keep();
             let data_work = data_work.keep();
             return Err(error.context(format!(
@@ -333,6 +335,9 @@ fn prepare_database_snapshot(active: &Path, prepared: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copy pending SQLite writes into the main database file, then remove the
+/// write-ahead log (`-wal`) and shared-memory (`-shm`) sidecar files so the
+/// database can be renamed safely.
 fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()> {
     if !db.is_file() {
         return Ok(());
@@ -343,7 +348,12 @@ fn checkpoint_and_clean_sidecars(db: &Path, operation: &str) -> Result<()> {
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .with_context(|| format!("checkpoint SQLite WAL for {} {operation}", db.display()))?;
+        .with_context(|| {
+            format!(
+                "checkpoint SQLite write-ahead log for {} {operation}",
+                db.display()
+            )
+        })?;
     conn.close()
         .map_err(|(_, error)| error)
         .with_context(|| format!("close {} {operation}", db.display()))?;
@@ -650,8 +660,12 @@ fn remove_any_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Regenerate from `demo_seed.toml` when present (dev checkout).
-/// Release images only ship the committed staging/config tree — skip regen there.
+/// Rebuild the demo bundle from `demo_seed.toml` when that file is present
+/// (a development checkout). Release images only ship the committed
+/// staging/config tree — skip regeneration there.
+///
+/// Staging here is the temporary import area under the demo bundle
+/// (`staging/imessage`, and so on).
 fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     let seed_toml = demo_seed::SeedConfig::default_path();
     if seed_toml.is_file() {
@@ -734,7 +748,7 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
             seed.owner.display_name
         ],
     )?;
-    // Optional email handles for recognizing “you” in messages — not for login.
+    // Extra email addresses used only to recognize "you" in messages, not for login.
     conn.execute(
         "DELETE FROM account_emails WHERE account_id = ?1",
         params![account_id],
@@ -750,7 +764,8 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     }
     // Demo has no Import API token until the user generates one in Settings.
 
-    // Owner identity handles ("you" matching) live in `handles`, linked via `account_handles`.
+    // Phone and email identities that mark messages as from "you" live in
+    // `handles`, linked through `account_handles`.
     conn.execute(
         "DELETE FROM account_handles WHERE account_id = ?1",
         params![account_id],
@@ -762,8 +777,8 @@ fn seed_demo_account(db_path: &Path, account_id: &str, seed: &DemoSeed) -> Resul
     Ok(())
 }
 
-/// Clear the demo account's vault rows (CASCADE) and on-disk assets.
-/// Leaves `vault.db` and other accounts intact.
+/// Delete the demo account's vault rows (child rows follow via CASCADE) and
+/// on-disk attachments. Leaves `vault.db` and other accounts intact.
 fn wipe_demo_account(cfg: &Config, account_id: &str) -> Result<()> {
     let db = &cfg.paths.db;
     if db.is_file() {

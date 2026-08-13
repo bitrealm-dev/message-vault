@@ -23,6 +23,7 @@ pub struct AccountProfileResponse {
     pub read_only: bool,
 }
 
+/// Load the profile JSON for `account_id`.
 fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileResponse> {
     let username = account_profile::username_for_account(conn, account_id)?
         .unwrap_or_else(|| account_id.to_string());
@@ -41,6 +42,11 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
 }
 
 /// `GET /v1/account/profile`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session or the
+/// profile cannot be loaded.
 pub async fn account_profile_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -76,6 +82,7 @@ pub struct AccountProfileUpdateRequest {
     pub remove_handles: Vec<ProfileHandleInput>,
 }
 
+/// Apply name and handle changes on an open connection.
 fn apply_profile_update(
     conn: &Connection,
     account_id: &str,
@@ -85,16 +92,14 @@ fn apply_profile_update(
 ) -> Result<()> {
     if let Some(name) = preferred_name {
         let name = name.trim();
+        let stored_name = if name.is_empty() {
+            None::<&str>
+        } else {
+            Some(name)
+        };
         conn.execute(
             "UPDATE accounts SET preferred_name = ?1 WHERE id = ?2",
-            rusqlite::params![
-                if name.is_empty() {
-                    None::<&str>
-                } else {
-                    Some(name)
-                },
-                account_id
-            ],
+            rusqlite::params![stored_name, account_id],
         )?;
     }
 
@@ -146,6 +151,7 @@ fn apply_profile_update(
     Ok(())
 }
 
+/// Apply a profile update in one transaction, then reload the response.
 fn update_profile_on_conn(
     conn: &mut Connection,
     account_id: &str,
@@ -169,6 +175,7 @@ enum ProfileHandleKind {
     Whatsapp,
 }
 
+/// Map a client `service` string to a handle kind.
 fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
     match service.trim().to_ascii_lowercase().as_str() {
         "phone" => Ok(ProfileHandleKind::Phone),
@@ -179,6 +186,11 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
 }
 
 /// `POST /v1/account/profile`
+///
+/// # Errors
+///
+/// Returns an API error when the caller is not a signed-in session, a handle
+/// service is unsupported, or the update fails.
 pub async fn account_profile_update_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -218,6 +230,7 @@ pub struct DeleteMessagesResponse {
     pub attachments: u64,
 }
 
+/// Delete on-disk attachment trees for every source under this account.
 fn remove_account_asset_trees(
     data_dir: &std::path::Path,
     account_id: &str,
@@ -247,8 +260,13 @@ fn remove_account_asset_trees(
     Ok(())
 }
 
-/// `POST /v1/account/delete-messages` — delete conversations/messages/attachments;
-/// keep contacts and account login.
+/// `POST /v1/account/delete-messages` — delete conversations, messages, and
+/// attachments; keep contacts and account login.
+///
+/// # Errors
+///
+/// Returns an API error when confirmation is missing, the caller is not a
+/// signed-in session, or the delete fails.
 pub async fn delete_messages_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

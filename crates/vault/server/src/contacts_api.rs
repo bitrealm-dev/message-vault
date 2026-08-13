@@ -348,6 +348,11 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
 /// Advanced tokens: `first-contact:` / `last-contact:` (optional `>=` / `<` prefix;
 /// bare first = on or after, bare last = on or before; repeated tokens AND),
 /// `has:messages`, `has:no-messages`, `has:no-name`, `has:no-handle`, `service:` (OR across services).
+///
+/// # Errors
+///
+/// Returns a bad-request error for an invalid query, or an internal error when
+/// a database statement fails.
 pub fn list_contacts(
     conn: &Connection,
     account_id: &str,
@@ -586,6 +591,10 @@ fn parse_contact_list_query(q: &str) -> (Option<String>, String) {
 
 /// Full contact view: per-handle service + date range + direct message count,
 /// plus conversation and total-message stats across all the contact's handles.
+///
+/// # Errors
+///
+/// Returns an internal error when a database statement fails.
 pub fn get_contact_detail(
     conn: &Connection,
     account_id: &str,
@@ -781,6 +790,10 @@ fn contact_exists(conn: &Connection, account_id: &str, contact_id: i64) -> AnyRe
 }
 
 /// Apply a contact mutation. Returns false when the contact is missing.
+///
+/// # Errors
+///
+/// Returns an error when the mutation is invalid or a database write fails.
 pub fn mutate_contact(
     conn: &Connection,
     account_id: &str,
