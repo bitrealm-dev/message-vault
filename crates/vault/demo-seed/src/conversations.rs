@@ -1,4 +1,6 @@
-//! Write JSONL conversation files for the demo bundle.
+//! Write conversation files for the demo dataset.
+//!
+//! Each file is JSON Lines: a header object, then one JSON object per message.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -35,6 +37,7 @@ enum SourceFlavor {
     Whatsapp,
 }
 
+/// Counts of contacts, conversations, messages, and attachments written this run.
 #[derive(Debug, Default)]
 pub struct GenStats {
     pub contacts: usize,
@@ -64,6 +67,7 @@ const PHOTO_CAPTIONS: &[&str] = &[
 
 const EMOJI_ONLY: &[&str] = &["👍", "😂", "❤️", "🎉", "😊"];
 
+/// Export metadata stamped on every conversation header.
 fn export_meta(source: &str) -> ExportMeta {
     ExportMeta {
         source: source.into(),
@@ -74,6 +78,15 @@ fn export_meta(source: &str) -> ExportMeta {
     }
 }
 
+/// Write every conversation file into the three backup folders and return counts.
+///
+/// One-to-one contacts are split into iMessage-only, Android-only, and overlap.
+/// Groups, unassigned handles, empty threads, and WhatsApp copies are written
+/// after that.
+///
+/// # Errors
+///
+/// Returns an error if a conversation file cannot be created or written.
 pub fn write_all(
     imessage_staging: &Path,
     sbr_staging: &Path,
@@ -222,6 +235,7 @@ pub fn write_all(
     Ok(stats)
 }
 
+/// Contacts that have a phone number and a one-to-one conversation.
 fn contacts_with_one_to_one(roster: &Roster) -> Vec<&Contact> {
     let mut contacts = Vec::new();
     for contact in &roster.contacts {
@@ -236,6 +250,11 @@ fn contacts_with_one_to_one(roster: &Roster) -> Vec<&Contact> {
     contacts
 }
 
+/// Delete existing `.jsonl` and `.json` files in `staging` so a regenerate does not leave leftovers.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be listed or a file cannot be deleted.
 fn clear_jsonl(staging: &Path) -> Result<()> {
     if !staging.is_dir() {
         return Ok(());
@@ -250,6 +269,7 @@ fn clear_jsonl(staging: &Path) -> Result<()> {
     Ok(())
 }
 
+/// True when `path` is a conversation file (`.jsonl` or `.json`).
 fn is_json_conversation_file(path: &Path) -> bool {
     match path.extension() {
         Some(extension) => extension == "jsonl" || extension == "json",
@@ -257,6 +277,11 @@ fn is_json_conversation_file(path: &Path) -> bool {
     }
 }
 
+/// Write one one-to-one conversation for a single backup source.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be created or a line cannot be written.
 #[allow(clippy::too_many_arguments)]
 fn write_individual(
     staging: &Path,
@@ -335,6 +360,14 @@ fn write_individual(
     Ok(())
 }
 
+/// Write the same contact into both the iMessage and Android folders.
+///
+/// Shared messages use the same text and time so import can treat them as
+/// duplicates. The Android copy also gets extra messages that only exist there.
+///
+/// # Errors
+///
+/// Returns an error if either conversation file cannot be written.
 #[allow(clippy::too_many_arguments)]
 fn write_overlap_individual(
     imessage_staging: &Path,
@@ -403,6 +436,11 @@ fn write_overlap_individual(
     Ok(())
 }
 
+/// Write the iMessage side of an overlapping conversation: shared rows, then the rest.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 #[allow(clippy::too_many_arguments)]
 fn write_overlap_imessage(
     imessage_staging: &Path,
@@ -477,6 +515,11 @@ fn write_overlap_imessage(
     Ok(())
 }
 
+/// Write the Android side of an overlapping conversation: shared rows, then extra messages.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 #[allow(clippy::too_many_arguments)]
 fn write_overlap_android(
     sbr_staging: &Path,
@@ -541,6 +584,7 @@ fn write_overlap_android(
     Ok(())
 }
 
+/// Timestamp to start extra Android messages from: last shared message, else last iMessage time.
 fn overlap_android_base_timestamp(
     shared: &[(i64, bool, String)],
     timestamps: &[i64],
@@ -555,6 +599,7 @@ fn overlap_android_base_timestamp(
     cfg.reference_time.timestamp_millis()
 }
 
+/// Build a plain shared message used on both the iMessage and Android sides.
 fn overlap_shared_message(
     guid: String,
     timestamp_unix_ms: i64,
@@ -584,6 +629,7 @@ fn overlap_shared_message(
     }
 }
 
+/// `None` when the display name is empty, otherwise `Some`.
 fn optional_display_name(display: String) -> Option<String> {
     if display.is_empty() {
         None
@@ -592,6 +638,7 @@ fn optional_display_name(display: String) -> Option<String> {
     }
 }
 
+/// One participant for a one-to-one conversation: the other person's phone or email.
 fn individual_participants(chat_id: &str, display_name: Option<String>) -> Vec<IrParticipant> {
     vec![IrParticipant {
         handle: chat_id.into(),
@@ -600,6 +647,7 @@ fn individual_participants(chat_id: &str, display_name: Option<String>) -> Vec<I
     }]
 }
 
+/// Folder name for this backup source (`imessage`, `sms-backup-restore`, or `whatsapp`).
 fn source_id(flavor: SourceFlavor) -> &'static str {
     match flavor {
         SourceFlavor::IMessage => IMESSAGE_SOURCE,
@@ -608,6 +656,7 @@ fn source_id(flavor: SourceFlavor) -> &'static str {
     }
 }
 
+/// Prefix on message IDs so Android and WhatsApp IDs do not collide with iMessage.
 fn guid_prefix(flavor: SourceFlavor) -> &'static str {
     match flavor {
         SourceFlavor::IMessage => "",
@@ -616,6 +665,11 @@ fn guid_prefix(flavor: SourceFlavor) -> &'static str {
     }
 }
 
+/// Write a conversation for a phone or email that has no contact card.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 fn write_unassigned(
     staging: &Path,
     ua: &Unassigned,
@@ -679,6 +733,11 @@ fn write_unassigned(
     Ok(())
 }
 
+/// Write one group conversation. The first group starts with a rename announcement.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 fn write_group(
     staging: &Path,
     roster: &Roster,
@@ -807,6 +866,7 @@ fn write_group(
     Ok(())
 }
 
+/// Participants for a group: named contacts, or phone numbers with no names.
 fn group_participants(roster: &Roster, group: &crate::personas::GroupSpec) -> Vec<IrParticipant> {
     if group.phone_only {
         return phone_only_participants(&group.phone_only_handles);
@@ -814,6 +874,7 @@ fn group_participants(roster: &Roster, group: &crate::personas::GroupSpec) -> Ve
     named_group_participants(roster, &group.member_idxs)
 }
 
+/// Group members who are only phone numbers, with no display names.
 fn phone_only_participants(handles: &[String]) -> Vec<IrParticipant> {
     let mut participants = Vec::with_capacity(handles.len());
     for handle in handles {
@@ -826,6 +887,7 @@ fn phone_only_participants(handles: &[String]) -> Vec<IrParticipant> {
     participants
 }
 
+/// Group members looked up from the roster by index.
 fn named_group_participants(roster: &Roster, member_idxs: &[usize]) -> Vec<IrParticipant> {
     let mut participants = Vec::new();
     for &index in member_idxs {
@@ -843,6 +905,11 @@ fn named_group_participants(roster: &Roster, member_idxs: &[usize]) -> Vec<IrPar
     participants
 }
 
+/// Write messages that have a sender but no conversation to attach them to.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 fn write_orphaned(
     staging: &Path,
     cfg: &SeedConfig,
@@ -883,6 +950,11 @@ fn write_orphaned(
     Ok(())
 }
 
+/// Write a conversation header with no messages (empty individual or empty group).
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 fn write_header_only(
     staging: &Path,
     chat_id: &str,
@@ -904,6 +976,7 @@ fn write_header_only(
     Ok(())
 }
 
+/// Add photos, other files, tapbacks, replies, and occasional SMS/RCS labels to an iMessage.
 #[allow(clippy::too_many_arguments)]
 fn decorate_message(
     msg: &mut IrMessage,
@@ -953,6 +1026,7 @@ fn decorate_message(
     maybe_mark_as_sms_or_rcs(msg, cfg.messages.apple_fallback_transport_fraction, rng);
 }
 
+/// Sometimes mark an iMessage as SMS or RCS so the conversation view can show those labels.
 fn maybe_mark_as_sms_or_rcs(msg: &mut IrMessage, fraction: f64, rng: &mut impl Rng) {
     if !rng.random_bool(fraction.clamp(0.0, 1.0)) {
         return;
@@ -971,11 +1045,21 @@ fn maybe_mark_as_sms_or_rcs(msg: &mut IrMessage, fraction: f64, rng: &mut impl R
     msg.message_kind = IrMessageKind::Sms;
 }
 
+/// Create a buffered writer for a new conversation file.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be created.
 fn open_jsonl(path: &Path) -> Result<BufWriter<File>> {
     let f = File::create(path).with_context(|| format!("create {}", path.display()))?;
     Ok(BufWriter::new(f))
 }
 
+/// Write the first line of a conversation file: schema, export info, and participants.
+///
+/// # Errors
+///
+/// Returns an error if the header cannot be serialized or written.
 fn write_conversation_header(
     file: &mut BufWriter<File>,
     chat_id: &str,
@@ -1005,6 +1089,11 @@ fn write_conversation_header(
     Ok(())
 }
 
+/// Write one message as a JSON line. Empty iMessage extras are dropped first.
+///
+/// # Errors
+///
+/// Returns an error if the message cannot be serialized or written.
 fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
     if let Some(im) = msg.imessage.take() {
         msg.imessage = im.into_option();
@@ -1013,6 +1102,7 @@ fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
     Ok(())
 }
 
+/// Build a text message with a body from the book, or sometimes only an emoji.
 fn text_message(
     guid: &str,
     timestamp_unix_ms: i64,
@@ -1053,6 +1143,7 @@ fn text_message(
     }
 }
 
+/// Add photos or other files to an Android message and mark it as MMS when it has an attachment.
 fn decorate_android_message(
     msg: &mut IrMessage,
     i: usize,
@@ -1105,6 +1196,7 @@ fn bursty_timestamps<R: Rng, F: FnMut(&mut R) -> usize>(
     out
 }
 
+/// Assign bursts of messages to days, preferring recent days.
 fn assign_messages_to_days<R: Rng, F: FnMut(&mut R) -> usize>(
     total: usize,
     span_days: i64,
@@ -1125,6 +1217,7 @@ fn assign_messages_to_days<R: Rng, F: FnMut(&mut R) -> usize>(
     per_day
 }
 
+/// Place a day's messages between 8am and 11pm, a few seconds apart.
 fn append_day_timestamps<R: Rng>(
     out: &mut Vec<i64>,
     day_start: chrono::DateTime<Utc>,
@@ -1159,6 +1252,7 @@ fn append_day_timestamps<R: Rng>(
     }
 }
 
+/// How many messages land on one active day in a one-to-one conversation.
 fn sample_direct_day_burst(rng: &mut impl Rng) -> usize {
     let roll: f64 = rng.random();
     if roll < 0.08 {
@@ -1170,6 +1264,7 @@ fn sample_direct_day_burst(rng: &mut impl Rng) -> usize {
     }
 }
 
+/// How many messages land on one active day in a group conversation.
 fn sample_group_day_burst(rng: &mut impl Rng) -> usize {
     let roll: f64 = rng.random();
     if roll < 0.10 {
@@ -1181,6 +1276,7 @@ fn sample_group_day_burst(rng: &mut impl Rng) -> usize {
     }
 }
 
+/// Chat identifier for a group: a mix of `chat…` IDs and phone-looking IDs.
 fn group_chat_id(index: usize) -> String {
     match index % 5 {
         0 => format!("chat{:010}", 1_000_000_000u64 + index as u64),
@@ -1191,6 +1287,7 @@ fn group_chat_id(index: usize) -> String {
     }
 }
 
+/// True when this message index should get a JPEG with a caption.
 fn should_attach_jpg(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     if total < 8 {
         return false;
@@ -1199,6 +1296,7 @@ fn should_attach_jpg(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     i > 0 && i.is_multiple_of(stride)
 }
 
+/// True when this message should be a photo with no text.
 fn should_attach_photo_only(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     if total < 20 {
         return false;
@@ -1207,6 +1305,7 @@ fn should_attach_photo_only(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     i % stride == 5
 }
 
+/// True when this message should get a non-JPEG attachment (PDF, audio, sticker, and so on).
 fn should_attach_other(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     if total < 30 {
         return false;
@@ -1215,6 +1314,7 @@ fn should_attach_other(i: usize, total: usize, cfg: &SeedConfig) -> bool {
     i > 0 && i.is_multiple_of(stride)
 }
 
+/// Attach a JPEG from the demo photo list and record it in `stats`.
 fn add_jpg_attachment(
     msg: &mut IrMessage,
     idx: usize,
@@ -1238,6 +1338,7 @@ fn add_jpg_attachment(
     stats.attachment_refs += 1;
 }
 
+/// Attach a non-JPEG file. Audio files get a short transcription.
 fn add_attachment(
     msg: &mut IrMessage,
     idx: usize,
@@ -1267,6 +1368,7 @@ fn add_attachment(
     stats.attachment_refs += 1;
 }
 
+/// Look up the content fingerprint and size for an attachment path, if the file was written.
 fn digest_fields(
     digests: &HashMap<String, (String, u64)>,
     path: &str,
@@ -1277,6 +1379,7 @@ fn digest_fields(
     }
 }
 
+/// Last path segment of `path`, or the whole string if it has no `/`.
 fn filename_from_relative_path(path: &str) -> &str {
     match path.rsplit('/').next() {
         Some(name) => name,
@@ -1284,6 +1387,7 @@ fn filename_from_relative_path(path: &str) -> &str {
     }
 }
 
+/// Optional emoji for a tapback of kind `"emoji"`.
 fn tapback_emoji(kind: &str, rng: &mut impl Rng) -> Option<String> {
     if kind != "emoji" {
         return None;
@@ -1295,6 +1399,7 @@ fn tapback_emoji(kind: &str, rng: &mut impl Rng) -> Option<String> {
     Some(emoji.to_string())
 }
 
+/// Add a tapback (heart, thumbs-up, and similar) from `sender` onto `msg`.
 fn push_tapback(
     msg: &mut IrMessage,
     kind: &str,
@@ -1323,6 +1428,7 @@ fn push_tapback(
     im.tapbacks = Some(serde_json::Value::Array(taps));
 }
 
+/// Turn a phone or email into a safe file name (`+` becomes `p`, `@` becomes `a`).
 fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| match c {

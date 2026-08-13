@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, de};
 
+/// Settings loaded from `demo_seed.toml`: how many contacts, how conversations
+/// are split across backups, and how often messages get photos or replies.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeedConfig {
     #[serde(default = "default_seed")]
@@ -32,6 +34,7 @@ fn default_out() -> String {
     "crates/vault/demo-seed".into()
 }
 
+/// Read a timestamp string such as `2026-08-01T12:00:00Z` and convert it to UTC.
 fn deserialize_reference_time<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
 where
     D: Deserializer<'de>,
@@ -170,6 +173,7 @@ pub struct SourcesConfig {
 }
 
 impl Default for SourcesConfig {
+    /// Values used when `demo_seed.toml` omits the `[sources]` section.
     fn default() -> Self {
         Self {
             android_only_fraction: default_android_only_fraction(),
@@ -202,6 +206,12 @@ fn default_whatsapp_contact_fraction() -> f64 {
 }
 
 impl SeedConfig {
+    /// Load settings from a TOML file and check that group-size ranges make sense.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read, the TOML is invalid, or
+    /// [`Self::validate`] fails.
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("read demo-seed config {}", path.display()))?;
@@ -211,6 +221,12 @@ impl SeedConfig {
         Ok(cfg)
     }
 
+    /// Check that the large-group size range sits inside the overall group size range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the minimum is larger than the maximum, or if the
+    /// large-group range sticks out past the overall min or max.
     pub fn validate(&self) -> Result<()> {
         let g = &self.groups;
         if g.large_min_count == 0 {
@@ -240,6 +256,7 @@ impl SeedConfig {
         Ok(())
     }
 
+    /// Path to `demo_seed.toml` next to this crate's `Cargo.toml`.
     pub fn default_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo_seed.toml")
     }

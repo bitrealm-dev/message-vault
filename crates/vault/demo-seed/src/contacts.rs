@@ -1,3 +1,5 @@
+//! Writes contact cards and the small config files used by `reset-demo`.
+
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -6,6 +8,14 @@ use anyhow::{Context, Result};
 
 use crate::personas::{OWNER_PHONE, Roster};
 
+/// Write `contacts.vcf`, one vCard (a contact card) per roster contact.
+///
+/// Cards with no name use the primary phone as the display name so the file
+/// stays valid.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
     let contacts_path = config_dir.join("contacts.vcf");
     let mut out = String::new();
@@ -44,6 +54,7 @@ pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
     Ok(())
 }
 
+/// Escape characters that would break a vCard field (`\`, newlines, `;`, `,`).
 fn escape_vcf(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -52,6 +63,11 @@ fn escape_vcf(value: &str) -> String {
         .replace(',', "\\,")
 }
 
+/// Write `config.toml` with the database and asset folder paths used after a demo reset.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 pub fn write_config_toml(config_dir: &Path) -> Result<()> {
     let path = config_dir.join("config.toml");
     let body = r#"# Instance config restored by `reset-demo`.
@@ -71,6 +87,14 @@ assets_converted_dir = "assets_converted"
     Ok(())
 }
 
+/// Write `seed.toml` with the demo account name, phone, and username.
+///
+/// This file is only used by `reset-demo`. It is not copied into the running
+/// server config.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 pub fn write_seed_toml(config_dir: &Path) -> Result<()> {
     let path = config_dir.join("seed.toml");
     let body = format!(

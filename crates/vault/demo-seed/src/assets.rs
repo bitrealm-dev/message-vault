@@ -1,3 +1,5 @@
+//! Writes the photo and other attachment files used by demo conversations.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -56,11 +58,17 @@ pub const OTHER_ATTACHMENTS: &[(&str, &str, bool)] = &[
     ("attachments/missing-file.heic", "image/heic", false),
 ];
 
-/// Write colorful JPEGs large enough to show inline in the web UI.
+/// Write colorful JPEGs large enough to show inline in the web UI, plus a few
+/// small stand-in files for PNG, GIF, audio, and PDF.
 ///
 /// Returns a map from attachment path to a short fingerprint of the file
 /// contents and the file size in bytes. Conversation files store those
-/// values next to each attachment.
+/// values next to each attachment. One path, `attachments/missing-file.heic`,
+/// is left out on purpose so import can show a missing-file warning.
+///
+/// # Errors
+///
+/// Returns an error if a JPEG cannot be written or a file cannot be read back.
 pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64)>> {
     let specs: &[(&str, [u8; 3])] = &[
         ("sunset.jpg", [255, 140, 60]),
@@ -99,11 +107,17 @@ pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64
     Ok(digests)
 }
 
+/// Store the content fingerprint and byte length for `relative_path`.
 fn record_blob(digests: &mut HashMap<String, (String, u64)>, relative_path: &str, bytes: &[u8]) {
     let sha = hex::encode(Sha256::digest(bytes));
     digests.insert(relative_path.into(), (sha, bytes.len() as u64));
 }
 
+/// Write a solid-color JPEG with a light gradient so thumbnails look different.
+///
+/// # Errors
+///
+/// Returns an error if the image cannot be saved.
 fn write_color_jpeg(path: &Path, rgb: [u8; 3], width: u32, height: u32) -> Result<()> {
     let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(width, height, |x, y| {
         // Subtle gradient so thumbnails are visibly distinct.

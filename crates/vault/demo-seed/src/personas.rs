@@ -52,6 +52,7 @@ pub struct GroupSpec {
     pub title: Option<String>,
 }
 
+/// Contacts, groups, and unassigned handles used to write the demo conversations.
 #[derive(Debug)]
 pub struct Roster {
     pub contacts: Vec<Contact>,
@@ -82,6 +83,12 @@ const GROUP_TITLES: &[&str] = &[
     "Volunteer Squad",
 ];
 
+/// Build contacts, groups, and unassigned handles from the settings and name lists.
+///
+/// # Errors
+///
+/// Returns an error if not enough contacts can be placed into the required
+/// large groups.
 pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> Result<Roster> {
     let mut used_phones = HashSet::new();
     used_phones.insert(OWNER_PHONE.to_string());
@@ -103,6 +110,7 @@ pub fn build_roster(cfg: &SeedConfig, names: &NameBank, rng: &mut impl Rng) -> R
     })
 }
 
+/// Mark a share of one-to-one contacts so they also get a WhatsApp conversation.
 fn mark_whatsapp_contacts(contacts: &mut [Contact], fraction: f64, rng: &mut impl Rng) {
     let mut eligible = Vec::new();
     for (index, contact) in contacts.iter().enumerate() {
@@ -121,6 +129,7 @@ fn mark_whatsapp_contacts(contacts: &mut [Contact], fraction: f64, rng: &mut imp
     }
 }
 
+/// Build one contact: name shape, phones, labels, and how often they message.
 fn make_contact(
     cfg: &SeedConfig,
     names: &NameBank,
@@ -189,6 +198,7 @@ fn make_contact(
     }
 }
 
+/// Pick first-only, first-middle-last, or first-last from the configured shares.
 fn sample_name_shape(
     cfg: &SeedConfig,
     names: &NameBank,
@@ -209,6 +219,7 @@ fn sample_name_shape(
     }
 }
 
+/// Messages per year for a one-to-one conversation, using the one-to-one settings.
 fn sample_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
     sample_skewed_msgs_per_year(
         cfg.one_to_one.min_per_year,
@@ -221,6 +232,7 @@ fn sample_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
     )
 }
 
+/// Messages per year for a group conversation, using the group settings.
 fn sample_group_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
     sample_skewed_msgs_per_year(
         cfg.groups.min_per_year,
@@ -233,6 +245,7 @@ fn sample_group_msgs_per_year(cfg: &SeedConfig, rng: &mut impl Rng) -> f64 {
     )
 }
 
+/// Pick a yearly message count: usually typical, sometimes very low or very high.
 fn sample_skewed_msgs_per_year(
     min_per_year: u32,
     typical_min: u32,
@@ -255,6 +268,9 @@ fn sample_skewed_msgs_per_year(
     }
 }
 
+/// How many years the conversation history covers, clustered around `mean`.
+///
+/// A few conversations are much older, and a few started only days ago.
 fn sample_span_years(
     mean: f64,
     jitter: f64,
@@ -278,6 +294,7 @@ fn sample_span_years(
     years.clamp(min_years, max_years)
 }
 
+/// How many groups this contact should join, clustered around the configured mean.
 fn sample_groups_per_contact(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     let g = &cfg.groups;
     let poisson = match Poisson::new(g.per_contact_mean.max(0.1)) {
@@ -288,6 +305,7 @@ fn sample_groups_per_contact(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     n.clamp(g.per_contact_min, g.per_contact_max) as usize
 }
 
+/// How many people are in a typical group.
 fn sample_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     let g = &cfg.groups;
     let normal = match Normal::new(g.participants_mean, 2.0) {
@@ -298,12 +316,14 @@ fn sample_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     n.clamp(g.participants_min as i32, g.participants_max as i32) as usize
 }
 
+/// How many people are in a large group, within the configured large-group range.
 fn sample_large_group_size(cfg: &SeedConfig, rng: &mut impl Rng) -> usize {
     let lo = cfg.groups.large_participants_min as usize;
     let hi = cfg.groups.large_participants_max as usize;
     rng.random_range(lo..=hi)
 }
 
+/// Remaining group slots for each contact, in the same order as `contacts`.
 fn membership_budgets(cfg: &SeedConfig, contacts: &[Contact], rng: &mut impl Rng) -> Vec<usize> {
     let mut budgets = Vec::with_capacity(contacts.len());
     for contact in contacts {
@@ -312,6 +332,7 @@ fn membership_budgets(cfg: &SeedConfig, contacts: &[Contact], rng: &mut impl Rng
     budgets
 }
 
+/// How many groups this contact may still join. Inactive and silent contacts get zero.
 fn group_membership_budget(cfg: &SeedConfig, contact: &Contact, rng: &mut impl Rng) -> usize {
     if !contact.has_messages || contact.has_label("Inactive") {
         return 0;
@@ -326,8 +347,11 @@ fn group_membership_budget(cfg: &SeedConfig, contact: &Contact, rng: &mut impl R
     sample_groups_per_contact(cfg, rng)
 }
 
-/// Prefer contacts who still have room in more groups. If that pool is too small,
-/// fill from other active contacts the same way small groups do.
+/// Fill a group from contacts who still have room, then from other active contacts if needed.
+///
+/// # Errors
+///
+/// Returns an error if fewer than `min_size` members can be found.
 fn pick_group_members(
     target_size: usize,
     min_size: usize,
@@ -378,6 +402,7 @@ fn pick_group_members(
     Ok(member_idxs)
 }
 
+/// Attach yearly rate, history length, and an optional title to a group's member list.
 fn finish_group_spec(
     cfg: &SeedConfig,
     index: usize,
@@ -418,6 +443,11 @@ fn finish_group_spec(
     }
 }
 
+/// Create the required large groups first, then fill remaining membership slots.
+///
+/// # Errors
+///
+/// Returns an error if the large groups cannot be filled before the group cap.
 fn build_groups(
     cfg: &SeedConfig,
     contacts: &[Contact],
@@ -498,6 +528,7 @@ fn build_groups(
     Ok(groups)
 }
 
+/// Phone numbers and email addresses that have messages but no contact card.
 fn build_unassigned(
     cfg: &SeedConfig,
     rng: &mut impl Rng,
@@ -532,16 +563,19 @@ fn build_unassigned(
 }
 
 impl Contact {
+    /// True when this contact has a label that matches `name`, ignoring letter case.
     pub fn has_label(&self, name: &str) -> bool {
         self.labels
             .iter()
             .any(|label| label.eq_ignore_ascii_case(name))
     }
 
+    /// First phone number on the contact. Contacts always have at least one.
     pub fn primary_phone(&self) -> &str {
         &self.phones[0]
     }
 
+    /// Display name from first, middle, and last. Empty when the contact has no name.
     pub fn display_hint(&self) -> String {
         let mut parts = Vec::new();
         if !self.first_name.is_empty() {
@@ -556,6 +590,7 @@ impl Contact {
         parts.join(" ")
     }
 
+    /// True when this contact should get a one-to-one conversation.
     pub fn has_one_to_one(&self) -> bool {
         self.has_messages
             && matches!(
@@ -564,6 +599,7 @@ impl Contact {
             )
     }
 
+    /// How many messages to write in the one-to-one conversation. Zero if there is none.
     pub fn message_count(&self) -> usize {
         if !self.has_one_to_one() {
             return 0;
