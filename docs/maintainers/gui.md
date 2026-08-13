@@ -232,7 +232,7 @@ under the export/staging tree. Reprocessing retries the asset upload; a successf
 digest on the vault fills the gap. It cannot repair attachments that are missing
 from disk, or media omitted by skip-attachments / text-only import.
 
-End-user write-up: [Import to Message Vault](../src/content/docs/use-the-desktop-app/import-into-vault.md).
+End-user write-up: [Import from a backup](../src/content/docs/import-from-a-backup.md).
 
 Persists under `[vault]` in `export.ini`. See
 [`vault-push` CLI reference](https://bitrealm.dev/reference/cli/vault-push/).
@@ -473,7 +473,7 @@ Tabs: Extract Messages | Format | Vault | Contacts | Log
   Contacts → contacts file, USA checkbox → Check / Update / Cancel → log
 ```
 
-End-user walkthrough: [First export with the app](../src/content/docs/use-the-desktop-app/extract-messages.md).
+End-user walkthrough: [Extract to files](../src/content/docs/how-to/extract-to-files.md).
 
 ## Known gaps
 

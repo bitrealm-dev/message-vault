@@ -4,8 +4,8 @@ description: Endpoints, auth, and defaults for the Rust serve import and export 
 ---
 
 `cargo run --release -p message-vault-server -- serve` reads `[server]` in `config/config.toml`
-(`bind`). Prefer the desktop app **Import** screen or **`vault-push`** CLI for
-day-to-day import; prefer **Export** or **`vault-pull`** for download. This page
+(`bind`). Prefer the desktop app [Import](/import-from-a-backup/) screen or **`vault-push`** CLI for
+day-to-day import; prefer [Export](/how-to/export-from-the-vault/) or **`vault-pull`** for download. This page
 documents the HTTP surface those tools call. They send [JSONL](/reference/export-structure/)
 (and upload attachments by SHA-256) to these endpoints. Read-only export lets
 clients pull messages and asset bytes back out with the same Bearer token.

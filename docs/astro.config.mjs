@@ -10,60 +10,52 @@ const limitedBadge = {
 const userGuideItems = [
   { label: 'Home', slug: '' },
   {
-    label: 'Introduction',
+    label: 'Get started',
     items: [
-      'introduction/what-is-message-vault',
-      'introduction/why-manual-backups',
-      'introduction/quick-start',
-      'introduction/install',
-      'introduction/glossary',
+      'get-started/what-is-message-vault',
+      'get-started/why-you-provide-backups',
+      'get-started/try-the-vault',
+      'get-started/your-own-messages',
+      'get-started/install-the-desktop-app',
     ],
   },
   {
-    label: 'Prepare your backups',
+    label: 'Prepare a backup',
     items: [
-      'prepare-your-backups/iphone-ipad',
-      'prepare-your-backups/iphone-whatsapp',
-      'prepare-your-backups/android-sms',
-      'prepare-your-backups/android-whatsapp',
-      { slug: 'prepare-your-backups/rescue-imports', badge: limitedBadge },
+      'prepare-a-backup',
+      'prepare-a-backup/iphone-ipad',
+      'prepare-a-backup/iphone-whatsapp',
+      'prepare-a-backup/android-sms',
+      'prepare-a-backup/android-whatsapp',
     ],
   },
+  'import-from-a-backup',
+  'browse-your-messages',
   {
-    label: 'Set up the server',
+    label: 'How do I…',
     items: [
-      'set-up-the-server/docker-install',
-      'set-up-the-server/first-personal-vault',
-      'set-up-the-server/try-the-demo',
-      'set-up-the-server/updating',
+      'how-to/search',
+      'how-to/contacts-and-labels',
+      'how-to/saved-searches',
+      'how-to/trash',
+      'how-to/settings',
+      'how-to/convert-formats',
+      'how-to/extract-to-files',
+      'how-to/export-from-the-vault',
+      'how-to/media-and-privacy',
+      { slug: 'how-to/rescue-imports', badge: limitedBadge },
+      'how-to/update',
+      'how-to/troubleshooting',
     ],
   },
+  'glossary',
+];
+
+const developerItems = [
+  'developer/run-from-source',
+  'developer/docker-compose',
   {
-    label: 'Use the desktop app',
-    items: [
-      'use-the-desktop-app/extract-messages',
-      'use-the-desktop-app/convert-formats',
-      'use-the-desktop-app/contacts',
-      'use-the-desktop-app/import-into-vault',
-      'use-the-desktop-app/export-from-vault',
-      'use-the-desktop-app/media-and-privacy',
-      'use-the-desktop-app/output-formats',
-    ],
-  },
-  {
-    label: 'Browse the vault',
-    items: [
-      'browse/navigation-and-sources',
-      'browse/search',
-      'browse/contacts-and-labels',
-      'browse/group-messages',
-      'browse/trash-and-undo',
-      'browse/settings',
-    ],
-  },
-  {
-    label: 'Reference',
-    collapsed: true,
+    label: 'CLI tools',
     items: [
       'reference/cli',
       'reference/cli/imessage-ir-exporter',
@@ -76,13 +68,49 @@ const userGuideItems = [
       'reference/cli/imazing-exporter',
       'reference/cli/openextract-exporter',
       'reference/cli/sms-backup-plus-exporter',
-      'reference/server-cli',
+    ],
+  },
+  'reference/api',
+  {
+    label: 'Formats',
+    items: [
+      'formats',
+      'formats/mail-archive',
+      'formats/sms-backup-restore-xml',
+      'formats/convert',
+      {
+        label: 'SMS Backup & Restore',
+        items: [
+          'formats/sms-backup-restore/input',
+          'formats/sms-backup-restore/mapping',
+        ],
+      },
+      {
+        label: 'SMS Backup+',
+        items: [
+          'formats/sms-backup-plus/format',
+          'formats/sms-backup-plus/mapping',
+        ],
+      },
+      {
+        label: 'GO SMS Pro',
+        items: ['formats/go-sms-pro/mapping'],
+      },
+      {
+        label: 'iMazing',
+        items: ['formats/imazing/input', 'formats/imazing/design'],
+      },
+    ],
+  },
+  {
+    label: 'Instance internals',
+    collapsed: true,
+    items: [
       'reference/config-and-accounts',
-      'reference/api',
       'reference/database',
       'reference/export-structure',
       'reference/csv-columns',
-      'troubleshooting',
+      'reference/server-cli',
     ],
   },
 ];
@@ -115,40 +143,10 @@ export default defineConfig({
             items: userGuideItems,
           },
           {
-            label: 'Format Reference',
-            link: '/formats/',
-            icon: 'document',
-            items: [
-              'formats',
-              'formats/mail-archive',
-              'formats/sms-backup-restore-xml',
-              'formats/convert',
-              {
-                label: 'SMS Backup & Restore',
-                items: [
-                  'formats/sms-backup-restore/input',
-                  'formats/sms-backup-restore/mapping',
-                ],
-              },
-              {
-                label: 'SMS Backup+',
-                items: [
-                  'formats/sms-backup-plus/format',
-                  'formats/sms-backup-plus/mapping',
-                ],
-              },
-              {
-                label: 'GO SMS Pro',
-                items: ['formats/go-sms-pro/mapping'],
-              },
-              {
-                label: 'iMazing',
-                items: [
-                  'formats/imazing/input',
-                  'formats/imazing/design',
-                ],
-              },
-            ],
+            label: 'Developer',
+            link: '/developer/run-from-source/',
+            icon: 'laptop',
+            items: developerItems,
           },
         ]),
       ],

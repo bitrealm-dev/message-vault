@@ -58,4 +58,4 @@ Rows are scoped by `account_id` in a shared `vault.db`.
 - Demo seed identity: username `demo` (`crates/vault/demo-seed/config/seed.toml`), always
   no-password and read-only by default.
 
-See [Settings](/browse/settings/).
+See [Settings](/how-to/settings/).
