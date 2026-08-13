@@ -1,5 +1,8 @@
-//! Builds a demo message dataset with three backup sources, written as JSONL
-//! files for Message Vault.
+//! Builds a demo message dataset with three backup sources.
+//!
+//! Each conversation is a JSON Lines file: one JSON object per line. The three
+//! folders under `staging/` look like separate phone backups (iMessage, Android
+//! SMS Backup & Restore, and WhatsApp).
 
 mod assets;
 mod config;
@@ -25,13 +28,23 @@ const SBR_SOURCE: &str = "sms-backup-restore";
 const WHATSAPP_SOURCE: &str = "whatsapp";
 const GENERATED_PATHS: [&str; 3] = ["staging", "config", "README.md"];
 
-/// Round `total * fraction` to a whole number that still fits in `0..=total`.
+/// Turn `total * fraction` into a whole number that still fits in `0..=total`.
 fn rounded_fraction(total: usize, fraction: f64) -> usize {
     let count = (total as f64) * fraction;
     count.round().clamp(0.0, total as f64) as usize
 }
 
-/// Generate (or regenerate) a demo bundle under `cfg.out`.
+/// Build the demo dataset under `cfg.out`.
+///
+/// New files are written in a temporary directory next to the destination.
+/// After they look valid, `staging`, `config`, and `README.md` are moved into
+/// place. If that move fails partway through, the previous copies are moved
+/// back.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be created, a file cannot be written,
+/// the new files fail a check, or they cannot replace the old ones.
 pub fn generate(cfg: &SeedConfig) -> Result<GenStats> {
     let out = Path::new(&cfg.out);
     let parent = output_parent_dir(out);
@@ -88,6 +101,12 @@ fn keep_prepared_if_restore_failed(
     ))
 }
 
+/// Write contacts, conversations, attachments, and README into `out`.
+///
+/// # Errors
+///
+/// Returns an error if a directory or file cannot be created, or if a name list
+/// or message-text file cannot be loaded.
 fn generate_into(cfg: &SeedConfig, out: &Path) -> Result<GenStats> {
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
 
@@ -138,6 +157,12 @@ fn generate_into(cfg: &SeedConfig, out: &Path) -> Result<GenStats> {
     Ok(stats)
 }
 
+/// Run `prepare` in `prepared`, check the result, then move it over `active`.
+///
+/// # Errors
+///
+/// Returns an error if the two paths are the same, preparation fails, the new
+/// files are incomplete, or the move cannot finish.
 fn prepare_and_replace<F>(active: &Path, prepared: &Path, prepare: F) -> Result<GenStats>
 where
     F: FnOnce(&Path) -> Result<GenStats>,
@@ -151,6 +176,12 @@ where
     Ok(stats)
 }
 
+/// Check that the three backup folders and the expected config files exist.
+///
+/// # Errors
+///
+/// Returns an error if a required folder or file is missing, or if a JSON Lines
+/// file cannot be read as JSON.
 fn validate_generated_bundle(root: &Path) -> Result<()> {
     for source in [IMESSAGE_SOURCE, SBR_SOURCE, WHATSAPP_SOURCE] {
         let staging = root.join("staging").join(source);
@@ -172,6 +203,12 @@ fn validate_generated_bundle(root: &Path) -> Result<()> {
     validate_tree_files(root)
 }
 
+/// Walk every file under `root`. JSON Lines files must parse as JSON, one object per line.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be listed, a file cannot be read, or a
+/// JSON Lines line is not valid JSON.
 fn validate_tree_files(root: &Path) -> Result<()> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -199,6 +236,7 @@ fn validate_tree_files(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// True when `path` ends in `.jsonl`.
 fn is_jsonl_file(path: &Path) -> bool {
     match path.extension() {
         Some(extension) => extension == "jsonl",
@@ -206,6 +244,15 @@ fn is_jsonl_file(path: &Path) -> bool {
     }
 }
 
+/// Move `staging`, `config`, and `README.md` from `prepared` onto `active`.
+///
+/// Existing copies are set aside first so they can be moved back if the new
+/// files cannot be installed.
+///
+/// # Errors
+///
+/// Returns an error if a rename fails. If the previous files cannot be fully
+/// restored, they are left in the backup folder and the error says so.
 fn replace_generated_paths(active: &Path, prepared: &Path) -> Result<()> {
     replace_generated_paths_with(active, prepared, |source, destination| {
         fs::rename(source, destination).with_context(|| {
@@ -218,6 +265,11 @@ fn replace_generated_paths(active: &Path, prepared: &Path) -> Result<()> {
     })
 }
 
+/// Same as [`replace_generated_paths`], but uses `rename` so tests can fail a move on purpose.
+///
+/// # Errors
+///
+/// Returns an error if `rename` fails. Tries to put the previous files back.
 fn replace_generated_paths_with<F>(active: &Path, prepared: &Path, mut rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
@@ -252,6 +304,11 @@ where
     Ok(())
 }
 
+/// Set aside the current `staging`, `config`, and `README.md`, then move the new copies in.
+///
+/// # Errors
+///
+/// Returns an error if `rename` fails for any of those paths.
 fn install_generated_paths<F>(
     active: &Path,
     prepared: &Path,
@@ -293,6 +350,15 @@ where
     Ok(())
 }
 
+/// Remove the new files that were installed, then move the previous copies back.
+///
+/// Every restore step is attempted even if an earlier one fails. If any step
+/// fails, the backup folder is left on disk.
+///
+/// # Errors
+///
+/// Always returns `error`, with extra context if the previous files could not
+/// all be restored.
 fn restore_previous_paths<F>(
     active: &Path,
     backup: &Path,
@@ -340,6 +406,11 @@ where
     ))
 }
 
+/// Delete `path` if it exists. Directories are removed with their contents.
+///
+/// # Errors
+///
+/// Returns an error if the file or directory cannot be deleted.
 fn remove_path_if_exists(path: &Path) -> Result<()> {
     if path.is_dir() {
         fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
@@ -349,8 +420,14 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Load `demo_seed.toml` from the crate directory, optionally override the
-/// output path and seed, then generate.
+/// Load `demo_seed.toml` from this crate, then generate into `out`.
+///
+/// `seed` replaces the seed from the settings file when it is `Some`.
+///
+/// # Errors
+///
+/// Returns an error if the settings file cannot be read, `out` is not valid
+/// UTF-8, or generation fails.
 pub fn generate_to(out: &Path, seed: Option<u64>) -> Result<GenStats> {
     let mut cfg = SeedConfig::load(&SeedConfig::default_path())?;
     cfg.out = out
@@ -363,6 +440,11 @@ pub fn generate_to(out: &Path, seed: Option<u64>) -> Result<GenStats> {
     generate(&cfg)
 }
 
+/// Copy each file in `from` into `to`. Subdirectories are skipped.
+///
+/// # Errors
+///
+/// Returns an error if a directory cannot be listed or a file cannot be copied.
 fn copy_dir_files(from: &Path, to: &Path) -> Result<()> {
     for entry in fs::read_dir(from)? {
         let entry = entry?;
@@ -376,6 +458,11 @@ fn copy_dir_files(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Write `README.md` with counts and how to regenerate the dataset.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
 fn write_readme(
     out: &Path,
     stats: &GenStats,
@@ -548,6 +635,7 @@ mod tests {
         assert!(prepared.join(".previous-active/config").exists());
     }
 
+    /// Write `staging/marker`, `config/marker`, and `README.md` with the same bytes.
     fn write_bundle_paths(root: &Path, marker: &[u8]) {
         fs::create_dir_all(root.join("staging")).expect("create staging directory");
         fs::create_dir_all(root.join("config")).expect("create config directory");
@@ -556,6 +644,7 @@ mod tests {
         fs::write(root.join("README.md"), marker).expect("write README marker");
     }
 
+    /// Check that `staging/marker`, `config/marker`, and `README.md` still hold `marker`.
     fn assert_bundle_paths(root: &Path, marker: &[u8]) {
         assert_eq!(
             fs::read(root.join("staging/marker")).expect("staging"),

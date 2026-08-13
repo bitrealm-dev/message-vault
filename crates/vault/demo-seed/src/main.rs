@@ -23,6 +23,8 @@ struct Cli {
     seed: Option<u64>,
 }
 
+/// Load settings, then write the demo files. Command-line flags override the
+/// output path and seed from the settings file.
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = SeedConfig::load(Path::new(&cli.config))?;

@@ -52,6 +52,11 @@ const INTL: &[IntlPattern] = &[
     },
 ];
 
+/// Pick a unique phone number. Most numbers look like US numbers when
+/// `us_probability` is high; otherwise they use other country codes.
+///
+/// The demo owner's number is never returned. After many collisions, a
+/// `+1555…` number is used so generation can still finish.
 pub fn generate_phone(
     rng: &mut impl Rng,
     us_probability: f64,
@@ -72,6 +77,9 @@ pub fn generate_phone(
     fallback
 }
 
+/// Build a US number as `+1` plus area code, exchange, and line number.
+///
+/// The 555 exchange is skipped so the numbers do not look like movie placeholders.
 fn us_phone(rng: &mut impl Rng) -> String {
     let area = *US_AREA.choose(rng).unwrap_or(&415);
     let mut exchange = rng.random_range(200..1000);
@@ -82,6 +90,7 @@ fn us_phone(rng: &mut impl Rng) -> String {
     format!("+1{area}{exchange:03}{station:04}")
 }
 
+/// Build a non-US number from a country code and a random national number.
 fn intl_phone(rng: &mut impl Rng) -> String {
     let pat = *INTL.choose(rng).unwrap_or(&INTL[0]);
     let mut national = String::with_capacity(pat.national_len);
