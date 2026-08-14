@@ -103,6 +103,58 @@ pub fn assign_ready_guest(
     Ok(Some((account_id, username, token)))
 }
 
+fn refill_target(settings: GuestDemoSettings, assignments_last_15m: u32) -> u32 {
+    settings
+        .pool_min
+        .max(assignments_last_15m)
+        .min(settings.pool_max)
+}
+
+/// Delete unused ready guests when the pool is above `pool_max`.
+///
+/// Oldest ready rows (by `id`) are removed first. Assigned guests are left
+/// alone. Returns how many accounts were deleted.
+///
+/// # Errors
+///
+/// Returns an error when the count, delete, or directory remove fails.
+pub fn shrink_over_ceiling(
+    conn: &Connection,
+    cfg: &Config,
+    settings: GuestDemoSettings,
+) -> Result<u32> {
+    let ready = count_ready(conn)?;
+    if ready <= settings.pool_max {
+        return Ok(0);
+    }
+    let excess = ready - settings.pool_max;
+    drop_oldest_ready(conn, &cfg.paths.data_dir, excess)?;
+    Ok(excess)
+}
+
+/// Clone at most one ready guest when the unused pool is below the refill target.
+///
+/// Target is `max(pool_min, assignments_last_15m)` capped at `pool_max`.
+/// Returns `1` when a guest was cloned, or `0` when the pool is already at
+/// the target.
+///
+/// # Errors
+///
+/// Returns an error when the count or clone fails.
+pub fn refill_one(
+    conn: &mut Connection,
+    cfg: &Config,
+    settings: GuestDemoSettings,
+    assignments_last_15m: u32,
+) -> Result<u32> {
+    let target = refill_target(settings, assignments_last_15m);
+    if count_ready(conn)? >= target {
+        return Ok(0);
+    }
+    clone_template_to_guest(conn, cfg, DEMO_ACCOUNT_ID)?;
+    Ok(1)
+}
+
 /// Grow unused ready guests up to the refill target, and shrink if over the ceiling.
 ///
 /// Target is `max(pool_min, assignments_last_15m)` capped at `pool_max`.
@@ -118,18 +170,9 @@ pub fn refill_pool(
     settings: GuestDemoSettings,
     assignments_last_15m: u32,
 ) -> Result<u32> {
-    let target = settings
-        .pool_min
-        .max(assignments_last_15m)
-        .min(settings.pool_max);
-    let ready = count_ready(conn)?;
-    if ready > settings.pool_max {
-        let excess = ready - settings.pool_max;
-        drop_oldest_ready(conn, &cfg.paths.data_dir, excess)?;
-    }
+    shrink_over_ceiling(conn, cfg, settings)?;
     let mut created = 0u32;
-    while count_ready(conn)? < target {
-        clone_template_to_guest(conn, cfg, DEMO_ACCOUNT_ID)?;
+    while refill_one(conn, cfg, settings, assignments_last_15m)? == 1 {
         created += 1;
     }
     Ok(created)
@@ -522,6 +565,25 @@ mod tests {
         assert_eq!(count_ready(&conn).unwrap(), 3);
         let created_again = refill_pool(&mut conn, &env, settings, 50).unwrap();
         assert_eq!(created_again, 0);
+        assert_eq!(count_ready(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn refill_one_creates_at_most_one() {
+        let mut conn = memory_conn();
+        tiny_template(&conn);
+        let env = test_config();
+        let settings = GuestDemoSettings {
+            enabled: true,
+            pool_min: 2,
+            pool_max: 2,
+            session_secs: 60,
+        };
+        assert_eq!(refill_one(&mut conn, &env, settings, 0).unwrap(), 1);
+        assert_eq!(count_ready(&conn).unwrap(), 1);
+        assert_eq!(refill_one(&mut conn, &env, settings, 0).unwrap(), 1);
+        assert_eq!(count_ready(&conn).unwrap(), 2);
+        assert_eq!(refill_one(&mut conn, &env, settings, 0).unwrap(), 0);
         assert_eq!(count_ready(&conn).unwrap(), 2);
     }
 

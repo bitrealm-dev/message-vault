@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::config::Config;
 use crate::db::account_profile;
@@ -1228,7 +1228,7 @@ fn link_tree_inner(src: &Path, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::db::schema;
-    use rusqlite::{params, Connection};
+    use rusqlite::{Connection, params};
 
     const T: &str = "00000000-0000-0000-0000-00000000d001";
 

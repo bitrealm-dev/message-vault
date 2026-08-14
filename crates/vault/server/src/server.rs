@@ -590,9 +590,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 /// Sweep expired guests and refill unused ready copies every 60 seconds.
 ///
 /// The first tick runs immediately so the pool is not empty on the first Try it.
-/// Clones wait on `guest_clone_lock` with `.lock().await` (same as on-demand
-/// Try it), then `refill_pool` runs in `spawn_blocking`. The worker does not
-/// take the vault operation lock; `serve` already holds it.
+/// Shrink-over-ceiling runs without the clone lock. Each clone takes
+/// `guest_clone_lock` only for that one copy so on-demand Try it can assign a
+/// ready guest (or clone one) between refills. The worker does not take the
+/// vault operation lock; `serve` already holds it.
 fn spawn_guest_pool_worker(worker_state: AppState) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -615,15 +616,37 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
                 .await,
             );
 
-            let _guard = clone_lock.lock().await;
+            let shrink_db = db.clone();
+            let shrink_cfg = cfg.clone();
             log_guest_pool_task(
-                "refill",
+                "shrink",
                 tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                    let mut conn = schema::open_configured(&db)?;
-                    guest_pool::refill_pool(&mut conn, &cfg, guest, demand)
+                    let conn = schema::open_configured(&shrink_db)?;
+                    guest_pool::shrink_over_ceiling(&conn, &shrink_cfg, guest)
                 })
                 .await,
             );
+
+            loop {
+                let one_db = db.clone();
+                let one_cfg = cfg.clone();
+                let result = {
+                    let _guard = clone_lock.lock().await;
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                        let mut conn = schema::open_configured(&one_db)?;
+                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand)
+                    })
+                    .await
+                };
+                match result {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(_)) => {}
+                    other => {
+                        log_guest_pool_task("refill", other);
+                        break;
+                    }
+                }
+            }
         }
     });
 }
@@ -1179,6 +1202,7 @@ async fn imports_complete_handler(
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
     validate_complete_import_issues(&body.issues)?;
     let db = Arc::clone(&state.db);
@@ -1726,6 +1750,7 @@ async fn asset_upload_part_handler(
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1753,6 +1778,7 @@ async fn asset_upload_complete_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -2281,6 +2307,41 @@ mod tests {
                 panic!("GET /v1/export/messages must not be 403 for guests, got {msg}")
             }
             Err(other) => panic!("unexpected export error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_cannot_complete_imports() {
+        let (_tmp, state, token) = guest_test_state();
+        let err = imports_complete_handler(
+            State(state),
+            auth_headers(&token),
+            AxumPath(1),
+            Json(CompleteImportBody {
+                ok: true,
+                message_count: Some(1),
+                attachment_count: None,
+                bytes_uploaded: None,
+                duration_ms: None,
+                parse_ms: None,
+                convert_ms: None,
+                upload_ms: None,
+                summary: None,
+                issues: vec![],
+            }),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiError::Forbidden(msg) => {
+                assert!(
+                    msg.contains("sample accounts"),
+                    "expected sample-account message, got {msg}"
+                );
+            }
+            other => {
+                panic!("expected forbidden on POST /v1/imports/{{id}}/complete, got {other:?}")
+            }
         }
     }
 

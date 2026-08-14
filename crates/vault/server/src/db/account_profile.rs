@@ -586,10 +586,16 @@ mod tests {
         let conn = setup();
         let guest_id = "22222222-2222-4222-8222-222222222222";
         insert_guest_account(&conn, guest_id, "guest-abc", Some("Guest")).unwrap();
-        assert_eq!(guest_status(&conn, guest_id).unwrap().as_deref(), Some("ready"));
+        assert_eq!(
+            guest_status(&conn, guest_id).unwrap().as_deref(),
+            Some("ready")
+        );
         assert!(is_guest_account(&conn, guest_id).unwrap());
         set_guest_status(&conn, guest_id, "assigned").unwrap();
-        assert_eq!(guest_status(&conn, guest_id).unwrap().as_deref(), Some("assigned"));
+        assert_eq!(
+            guest_status(&conn, guest_id).unwrap().as_deref(),
+            Some("assigned")
+        );
         assert!(!is_guest_account(&conn, "00000000-0000-4000-8000-000000000001").unwrap());
     }
 

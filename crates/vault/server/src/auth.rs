@@ -37,6 +37,8 @@ const MAX_HANKO_JWT_BYTES: usize = 16 * 1024;
 /// Sliding window for unauthenticated auth endpoints.
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_RATE_MAX: usize = 20;
+/// Hosted Try it is a single public bucket (no per-user key). Login stays at 20.
+const TRY_DEMO_RATE_MAX: usize = 200;
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(300);
 const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -46,6 +48,11 @@ static DUMMY_PASSWORD_HASH: OnceLock<String> = OnceLock::new();
 
 /// Reject when `bucket` has seen more than [`AUTH_RATE_MAX`] hits in [`AUTH_RATE_WINDOW`].
 fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
+    check_auth_rate_limit_max(bucket, AUTH_RATE_MAX)
+}
+
+/// Reject when `bucket` has seen at least `max` hits in [`AUTH_RATE_WINDOW`].
+fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
     let mut guard = AUTH_RATE_LIMITS
         .lock()
         .map_err(|_| ApiError::Internal("auth rate limiter poisoned".into()))?;
@@ -58,7 +65,7 @@ fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
         }
         entry.pop_front();
     }
-    if entry.len() >= AUTH_RATE_MAX {
+    if entry.len() >= max {
         return Err(ApiError::TooManyRequests(
             "too many authentication attempts; try again shortly".into(),
         ));
@@ -68,9 +75,11 @@ fn check_auth_rate_limit(bucket: &str) -> Result<(), ApiError> {
 }
 
 #[cfg(test)]
-fn reset_auth_rate_limits_for_test() {
+fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
     if let Ok(mut guard) = AUTH_RATE_LIMITS.lock() {
-        *guard = None;
+        if let Some(map) = guard.as_mut() {
+            map.remove(bucket);
+        }
     }
 }
 
@@ -579,7 +588,7 @@ fn try_demo_from_pool(
 pub async fn try_demo_handler(
     State(state): State<AppState>,
 ) -> Result<Json<AuthTokenResponse>, ApiError> {
-    check_auth_rate_limit("try-demo")?;
+    check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX)?;
 
     if !state.guest.enabled {
         let db = state.cfg.paths.db.clone();
@@ -907,8 +916,8 @@ mod tests {
 
     #[test]
     fn auth_rate_limit_trips_after_max() {
-        reset_auth_rate_limits_for_test();
         let bucket = "test:rate-limit-unique";
+        reset_auth_rate_limit_bucket_for_test(bucket);
         for _ in 0..AUTH_RATE_MAX {
             check_auth_rate_limit(bucket).unwrap();
         }
@@ -917,7 +926,22 @@ mod tests {
             ApiError::TooManyRequests(_) => {}
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
-        reset_auth_rate_limits_for_test();
+        reset_auth_rate_limit_bucket_for_test(bucket);
+    }
+
+    #[test]
+    fn try_demo_rate_limit_allows_more_than_login() {
+        let bucket = "test:try-demo-rate-limit";
+        reset_auth_rate_limit_bucket_for_test(bucket);
+        for _ in 0..TRY_DEMO_RATE_MAX {
+            check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap();
+        }
+        let err = check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap_err();
+        match err {
+            ApiError::TooManyRequests(_) => {}
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+        reset_auth_rate_limit_bucket_for_test(bucket);
     }
 
     #[test]
