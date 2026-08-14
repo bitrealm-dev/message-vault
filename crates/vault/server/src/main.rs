@@ -8,6 +8,7 @@ mod conversations_api;
 mod db;
 mod dedupe;
 mod export_api;
+mod guest_clone;
 mod import;
 mod import_cli;
 mod import_media;
