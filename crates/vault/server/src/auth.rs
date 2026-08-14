@@ -753,6 +753,7 @@ pub async fn change_password_handler(
     }
     let auth = crate::server::resolve_auth(&headers, &state).await?;
     crate::server::require_full_access(&auth)?;
+    crate::server::reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let current_password = req.current_password.clone();
     let db = state.cfg.paths.db.clone();

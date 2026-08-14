@@ -62,6 +62,35 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
     }
 }
 
+/// Reject sample (guest) accounts on import, asset upload, and API-token mutations.
+///
+/// # Errors
+///
+/// Returns forbidden when `account_id` has a `guest_status`, or internal when
+/// the lookup fails.
+pub fn reject_if_guest(conn: &Connection, account_id: &str) -> Result<(), ApiError> {
+    if account_profile::is_guest_account(conn, account_id)
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Err(ApiError::Forbidden(
+            "sample accounts cannot import, export backups, or create API tokens".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Open the configured database and reject the account when it is a guest.
+pub(crate) async fn reject_if_guest_account(db: &Path, account_id: &str) -> Result<(), ApiError> {
+    let db = db.to_path_buf();
+    let account_id = account_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        reject_if_guest(&conn, &account_id)
+    })
+    .await
+    .join_map("guest check task", |e| e)
+}
+
 /// Allow session or an API token that includes import.
 ///
 /// # Errors
@@ -1061,6 +1090,7 @@ async fn imports_create_handler(
 ) -> Result<Json<CreateImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
@@ -1195,6 +1225,7 @@ async fn import_handler(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
@@ -1494,6 +1525,7 @@ async fn asset_put_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
 
     let mime = upload_content_type(&headers);
 
@@ -1593,6 +1625,7 @@ async fn asset_upload_start_handler(
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -2130,6 +2163,67 @@ mod tests {
             auth_route_status(AuthMode::Hanko, "/v1/auth/hanko/session").await,
             StatusCode::NOT_FOUND
         );
+    }
+
+    fn guest_test_state() -> (TempDir, AppState, String) {
+        let (tmp, state, _token, _import_id) = test_state();
+        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let token = {
+            let conn = state.db.lock().unwrap();
+            account_profile::insert_guest_account(&conn, guest_id, "guest-bbbb", None).unwrap();
+            account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
+            crate::db::session_tokens::insert_account_session_token(&conn, guest_id).unwrap()
+        };
+        (tmp, state, token)
+    }
+
+    #[tokio::test]
+    async fn guest_cannot_create_imports_but_can_export_messages() {
+        let (_tmp, state, token) = guest_test_state();
+
+        let err = imports_create_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            Json(CreateImportBody {
+                source: "ios".into(),
+                mode: "append".into(),
+                tool: None,
+                account: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiError::Forbidden(msg) => {
+                assert!(
+                    msg.contains("sample accounts"),
+                    "expected sample-account message, got {msg}"
+                );
+            }
+            other => panic!("expected forbidden on POST /v1/imports, got {other:?}"),
+        }
+
+        let export = export_messages_handler(
+            State(state),
+            auth_headers(&token),
+            Query(ExportMessagesQuery {
+                q: "hello".into(),
+                limit: None,
+                offset: None,
+                cursor: None,
+                account: None,
+                source: None,
+            }),
+        )
+        .await;
+        match export {
+            Ok(_) => {}
+            Err(ApiError::BadRequest(_)) => {}
+            Err(ApiError::Forbidden(msg)) => {
+                panic!("GET /v1/export/messages must not be 403 for guests, got {msg}")
+            }
+            Err(other) => panic!("unexpected export error: {other:?}"),
+        }
     }
 
     #[tokio::test]
