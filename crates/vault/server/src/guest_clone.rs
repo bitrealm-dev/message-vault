@@ -875,7 +875,9 @@ fn copy_staging_conversations(
     )?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, chat_handle_id, conversation_type, group_title, exported_at, source_file) in rows {
-        let new_handle = mapped(handles, chat_handle_id).unwrap_or(chat_handle_id);
+        let Some(new_handle) = mapped(handles, chat_handle_id) else {
+            continue;
+        };
         tx.execute(
             r#"
             INSERT INTO staging_conversations (
@@ -925,7 +927,9 @@ fn copy_staging_participants(
         let Some(new_conv) = mapped(conversations, conversation_id) else {
             continue;
         };
-        let new_handle = mapped(handles, handle_id).unwrap_or(handle_id);
+        let Some(new_handle) = mapped(handles, handle_id) else {
+            continue;
+        };
         let new_contact = mapped_opt(contacts, contact_id);
         tx.execute(
             r#"
@@ -1376,5 +1380,101 @@ mod tests {
                 // Hard-link unavailable; byte equality already asserted.
             }
         }
+    }
+
+    #[test]
+    fn clone_skips_staging_rows_with_unmapped_handles() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        tiny_template(&conn);
+
+        let template_handle: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1",
+                params![T],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        const DANGLING_CONV_HANDLE: i64 = 9_000_001;
+        const DANGLING_PART_HANDLE: i64 = 9_000_002;
+
+        conn.execute(
+            "INSERT INTO staging_conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (?1, ?2, 'individual', 'orphan.jsonl')",
+            params![T, DANGLING_CONV_HANDLE],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO staging_conversations (
+                account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (?1, ?2, 'individual', 'ok.jsonl')",
+            params![T, template_handle],
+        )
+        .unwrap();
+        let ok_staging_cid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO staging_participants (conversation_id, handle_id, name_alias)
+             VALUES (?1, ?2, 'orphan-part')",
+            params![ok_staging_cid, DANGLING_PART_HANDLE],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO staging_participants (conversation_id, handle_id, name_alias)
+             VALUES (?1, ?2, 'mapped-part')",
+            params![ok_staging_cid, template_handle],
+        )
+        .unwrap();
+
+        let cfg = test_config();
+        let guest = clone_template_to_guest(&mut conn, &cfg, T).unwrap();
+
+        let guest_handle: i64 = conn
+            .query_row(
+                "SELECT id FROM handles WHERE account_id = ?1",
+                params![guest],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_ne!(guest_handle, template_handle);
+
+        let guest_staging_handles: Vec<i64> = conn
+            .prepare("SELECT chat_handle_id FROM staging_conversations WHERE account_id = ?1")
+            .unwrap()
+            .query_map(params![guest], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            !guest_staging_handles.contains(&DANGLING_CONV_HANDLE),
+            "guest staging conversation kept the template handle id {DANGLING_CONV_HANDLE}"
+        );
+        assert!(
+            !guest_staging_handles.contains(&template_handle),
+            "guest staging conversation reused the template handle id {template_handle}"
+        );
+        assert_eq!(guest_staging_handles, vec![guest_handle]);
+
+        let guest_part_handles: Vec<i64> = conn
+            .prepare(
+                "SELECT p.handle_id FROM staging_participants p
+                 JOIN staging_conversations c ON c.id = p.conversation_id
+                 WHERE c.account_id = ?1",
+            )
+            .unwrap()
+            .query_map(params![guest], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            !guest_part_handles.contains(&DANGLING_PART_HANDLE),
+            "guest staging participant kept the template handle id {DANGLING_PART_HANDLE}"
+        );
+        assert!(
+            !guest_part_handles.contains(&template_handle),
+            "guest staging participant reused the template handle id {template_handle}"
+        );
+        assert_eq!(guest_part_handles, vec![guest_handle]);
     }
 }
