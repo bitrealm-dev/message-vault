@@ -309,6 +309,48 @@ pub fn insert_account(
     Ok(())
 }
 
+pub fn guest_status(conn: &Connection, account_id: &str) -> Result<Option<String>> {
+    schema::ensure_accounts_schema(conn)?;
+    let status: Option<Option<String>> = conn
+        .query_row(
+            "SELECT guest_status FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(status.flatten().filter(|s| !s.is_empty()))
+}
+
+pub fn is_guest_account(conn: &Connection, account_id: &str) -> Result<bool> {
+    Ok(guest_status(conn, account_id)?.is_some())
+}
+
+pub fn insert_guest_account(
+    conn: &Connection,
+    id: &str,
+    username: &str,
+    preferred_name: Option<&str>,
+) -> Result<()> {
+    schema::ensure_accounts_schema(conn)?;
+    conn.execute(
+        r#"
+        INSERT INTO accounts (
+            id, username, read_only, password_hash, preferred_name, guest_status
+        ) VALUES (?1, ?2, 0, NULL, ?3, 'ready')
+        "#,
+        params![id, username, preferred_name],
+    )?;
+    Ok(())
+}
+
+pub fn set_guest_status(conn: &Connection, account_id: &str, status: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE accounts SET guest_status = ?2 WHERE id = ?1",
+        params![account_id, status],
+    )?;
+    Ok(())
+}
+
 /// Ensure a phone handle is linked to the account via `account_handles`.
 pub fn upsert_account_phone(conn: &Connection, account_id: &str, phone: &str) -> Result<()> {
     link_account_handle(conn, account_id, phone, HandleType::Phone)?;
@@ -537,6 +579,18 @@ mod tests {
             .unwrap();
         assert_eq!(linked_ids.len(), 2);
         assert!(linked_ids.contains(&email));
+    }
+
+    #[test]
+    fn guest_helpers_work() {
+        let conn = setup();
+        let guest_id = "22222222-2222-4222-8222-222222222222";
+        insert_guest_account(&conn, guest_id, "guest-abc", Some("Guest")).unwrap();
+        assert_eq!(guest_status(&conn, guest_id).unwrap().as_deref(), Some("ready"));
+        assert!(is_guest_account(&conn, guest_id).unwrap());
+        set_guest_status(&conn, guest_id, "assigned").unwrap();
+        assert_eq!(guest_status(&conn, guest_id).unwrap().as_deref(), Some("assigned"));
+        assert!(!is_guest_account(&conn, "00000000-0000-4000-8000-000000000001").unwrap());
     }
 
     #[test]

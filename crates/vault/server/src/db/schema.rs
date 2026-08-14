@@ -302,6 +302,12 @@ pub fn ensure_accounts_schema(conn: &Connection) -> Result<()> {
         "disabled",
         "ALTER TABLE account_api_tokens ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0",
     )?;
+    ensure_column(
+        conn,
+        "accounts",
+        "guest_status",
+        "ALTER TABLE accounts ADD COLUMN guest_status TEXT",
+    )?;
     Ok(())
 }
 
@@ -493,7 +499,8 @@ mod tests {
                 "read_only",
                 "password_hash",
                 "preferred_name",
-                "hanko_user_id"
+                "hanko_user_id",
+                "guest_status"
             ]
         );
         assert_eq!(
@@ -612,6 +619,25 @@ mod tests {
             .unwrap();
         assert_eq!(remaining, 1);
         assert_eq!(messages, 1);
+    }
+
+    #[test]
+    fn guest_status_column_exists_and_defaults_null() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_accounts_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
+            params![A1],
+        )
+        .unwrap();
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT guest_status FROM accounts WHERE id = ?1",
+                params![A1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, None);
     }
 
     #[test]

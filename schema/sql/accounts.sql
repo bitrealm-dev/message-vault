@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     -- Display name for “you” in the UI.
     preferred_name TEXT,
     -- Optional Hanko identity provider user id.
-    hanko_user_id TEXT
+    hanko_user_id TEXT,
+    -- 'ready' | 'assigned' for hosted guest copies; NULL for every other account.
+    guest_status TEXT
 );
 
 -- Email addresses attached to an account (not used for login).
