@@ -609,11 +609,15 @@ pub async fn try_demo_handler(
         return Ok(Json(response));
     }
 
-    let timed = tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, async {
-        let _guard = state.guest_clone_lock.lock().await;
-        let db = state.cfg.paths.db.clone();
-        let cfg = std::sync::Arc::clone(&state.cfg);
-        let session_secs = state.guest.session_secs;
+    // Own the lock in a detached task so a 60s client timeout cannot drop the
+    // guard while `spawn_blocking` is still cloning. Dropping the JoinHandle
+    // detaches; the lock stays held until the clone returns.
+    let lock = state.guest_clone_lock.clone();
+    let db = state.cfg.paths.db.clone();
+    let cfg = std::sync::Arc::clone(&state.cfg);
+    let session_secs = state.guest.session_secs;
+    let clone_task = tokio::spawn(async move {
+        let _guard = lock.lock().await;
         tokio::task::spawn_blocking(move || -> Result<Option<AuthTokenResponse>, ApiError> {
             let mut conn =
                 schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -621,15 +625,15 @@ pub async fn try_demo_handler(
         })
         .await
         .join_map("try-demo clone", |e| e)
-    })
-    .await;
+    });
 
-    match timed {
-        Ok(Ok(Some(response))) => Ok(Json(response)),
-        Ok(Ok(None)) => Err(ApiError::ServiceUnavailable(
+    match tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, clone_task).await {
+        Ok(Ok(Ok(Some(response)))) => Ok(Json(response)),
+        Ok(Ok(Ok(None))) => Err(ApiError::ServiceUnavailable(
             "guest demo copy is not available".into(),
         )),
-        Ok(Err(err)) => Err(err),
+        Ok(Ok(Err(err))) => Err(err),
+        Ok(Err(join_err)) => Err(ApiError::Internal(format!("try-demo clone: {join_err}"))),
         Err(_) => Err(ApiError::ServiceUnavailable(
             "guest demo copy timed out; try again shortly".into(),
         )),
