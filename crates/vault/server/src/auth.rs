@@ -606,6 +606,7 @@ pub async fn try_demo_handler(
         .join_map("try-demo assign", |e| e)?;
 
     if let Some(response) = assigned {
+        state.guest_demand.lock().unwrap().record_assignment();
         return Ok(Json(response));
     }
 
@@ -628,7 +629,10 @@ pub async fn try_demo_handler(
     });
 
     match tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, clone_task).await {
-        Ok(Ok(Ok(Some(response)))) => Ok(Json(response)),
+        Ok(Ok(Ok(Some(response)))) => {
+            state.guest_demand.lock().unwrap().record_assignment();
+            Ok(Json(response))
+        }
         Ok(Ok(Ok(None))) => Err(ApiError::ServiceUnavailable(
             "guest demo copy is not available".into(),
         )),

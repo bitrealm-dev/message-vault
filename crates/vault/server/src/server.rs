@@ -29,6 +29,7 @@ use crate::dedupe;
 use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
 };
+use crate::guest_pool::{self, GuestPoolState};
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
@@ -161,6 +162,8 @@ pub struct AppState {
     pub guest: GuestDemoSettings,
     /// One on-demand template clone at a time (empty-pool Try it).
     pub guest_clone_lock: Arc<Mutex<()>>,
+    /// Hosted Try it assignments in the last 15 minutes (refill demand).
+    pub guest_demand: Arc<StdMutex<GuestPoolState>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -464,7 +467,12 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         max_body_bytes,
         guest: GuestDemoSettings::from_env(),
         guest_clone_lock: Arc::new(Mutex::new(())),
+        guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
     };
+
+    if state.guest.enabled {
+        spawn_guest_pool_worker(state.clone());
+    }
 
     let auth_public = auth_public_router(AuthMode::from_env());
 
@@ -577,6 +585,33 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+/// Sweep expired guests and refill unused ready copies every 60 seconds.
+///
+/// The first tick runs immediately so the pool is not empty on the first Try it.
+/// Clones take `guest_clone_lock` (same lock as on-demand Try it). The worker
+/// does not take the vault operation lock; `serve` already holds it.
+fn spawn_guest_pool_worker(worker_state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let db = worker_state.cfg.paths.db.clone();
+            let cfg = worker_state.cfg.clone();
+            let guest = worker_state.guest;
+            let demand = worker_state.guest_demand.lock().unwrap().count_last_15m();
+            let clone_lock = worker_state.guest_clone_lock.clone();
+            let data_dir = cfg.paths.data_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                let mut conn = schema::open_configured(&db)?;
+                guest_pool::sweep_expired_guests(&conn, &data_dir)?;
+                let _lock = clone_lock.blocking_lock();
+                guest_pool::refill_pool(&mut conn, &cfg, guest, demand)
+            })
+            .await;
+        }
+    });
 }
 
 async fn shutdown_signal() {
@@ -2095,6 +2130,7 @@ mod tests {
             max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
             guest: crate::config::GuestDemoSettings::disabled(),
             guest_clone_lock: Arc::new(Mutex::new(())),
+            guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
         };
 
         (tmp, state, token, import_id)

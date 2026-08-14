@@ -1,8 +1,9 @@
 //! Ready-guest pool: assign a session, refill unused copies, and delete expired ones.
 
+use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -11,6 +12,46 @@ use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile::{self, DEMO_ACCOUNT_ID};
 use crate::db::session_tokens;
 use crate::guest_clone::clone_template_to_guest;
+
+/// How far back refill demand looks when counting recent Try it assignments.
+const ASSIGNMENT_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// In-memory count of hosted Try it assignments in the last 15 minutes.
+///
+/// The worker passes `count_last_15m()` into `refill_pool` so a burst of
+/// visitors grows unused ready copies up to the ceiling.
+#[derive(Debug, Default)]
+pub struct GuestPoolState {
+    assignments: VecDeque<(Instant, u32)>,
+}
+
+impl GuestPoolState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one successful hosted Try it assignment.
+    pub fn record_assignment(&mut self) {
+        self.record_assignment_at(Instant::now());
+    }
+
+    fn record_assignment_at(&mut self, when: Instant) {
+        self.assignments.push_back((when, 1));
+    }
+
+    /// Drop timestamps older than 15 minutes and return the remaining count.
+    pub fn count_last_15m(&mut self) -> u32 {
+        let cutoff = Instant::now().checked_sub(ASSIGNMENT_WINDOW);
+        while let Some((when, _)) = self.assignments.front() {
+            if cutoff.is_some_and(|c| *when < c) {
+                self.assignments.pop_front();
+            } else {
+                break;
+            }
+        }
+        self.assignments.iter().map(|(_, n)| *n).sum()
+    }
+}
 
 /// Count unused ready guest accounts sitting in the pool.
 ///
@@ -203,6 +244,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     struct TestEnv {
         cfg: Config,
@@ -481,6 +523,16 @@ mod tests {
         let created_again = refill_pool(&mut conn, &env, settings, 50).unwrap();
         assert_eq!(created_again, 0);
         assert_eq!(count_ready(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn guest_pool_state_counts_assignments_inside_15m_window() {
+        let mut state = GuestPoolState::new();
+        assert_eq!(state.count_last_15m(), 0);
+        state.record_assignment_at(Instant::now() - Duration::from_secs(16 * 60));
+        state.record_assignment();
+        state.record_assignment();
+        assert_eq!(state.count_last_15m(), 2);
     }
 
     #[test]
