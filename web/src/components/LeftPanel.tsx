@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { canUseImportExport } from "../lib/desktopFeatures";
+import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
 import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
 import {
@@ -135,7 +135,7 @@ export default function LeftPanel({
       </div>
 
       {/* Import/Export — desktop app only, never on a guest session */}
-      {canUseImportExport(isTauri(), profile?.is_guest === true) && (
+      {canUseImportExportWithProfile(isTauri(), profile) && (
         <div className="border-t border-border px-3 py-2">
           <div className={sectionHeaderClass}>Messages</div>
           <div className="pl-3">

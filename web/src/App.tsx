@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
-import { canUseImportExport } from "./lib/desktopFeatures";
+import { canUseImportExportWithProfile } from "./lib/desktopFeatures";
 import { isTauri } from "./lib/tauri-check";
 import { ThemeProvider } from "./lib/ThemeProvider";
 import { useAccountProfile } from "./lib/useAccountProfile";
@@ -25,7 +25,7 @@ function ImportExportRoute({ children }: { children: ReactNode }) {
   if (loading) {
     return null;
   }
-  if (!canUseImportExport(true, profile?.is_guest === true)) {
+  if (profile == null || !canUseImportExportWithProfile(true, profile)) {
     return <Navigate to="/" replace />;
   }
   return children;
