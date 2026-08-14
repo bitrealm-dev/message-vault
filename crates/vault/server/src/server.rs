@@ -20,7 +20,7 @@ use rusqlite::Connection;
 
 use crate::asset_uploads;
 use crate::assets;
-use crate::config::{AuthMode, Config, validate_source_id};
+use crate::config::{AuthMode, Config, GuestDemoSettings, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::schema;
@@ -128,6 +128,10 @@ pub struct AppState {
     upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
     max_body_bytes: usize,
+    /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
+    pub guest: GuestDemoSettings,
+    /// One on-demand template clone at a time (empty-pool Try it).
+    pub guest_clone_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +193,7 @@ pub enum ApiError {
     BadRequest(String),
     NotFound(String),
     TooManyRequests(String),
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -200,6 +205,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
+            Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
                 // Keep diagnostics server-side; clients only see a stable message.
                 eprintln!("internal error: {m}");
@@ -314,10 +320,12 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
 }
 
 fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-    let router = Router::new().route(
-        "/v1/auth/hanko/session",
-        post(crate::auth::hanko_session_handler),
-    );
+    let router = Router::new()
+        .route(
+            "/v1/auth/hanko/session",
+            post(crate::auth::hanko_session_handler),
+        )
+        .route("/v1/auth/try-demo", post(crate::auth::try_demo_handler));
     let router = match mode {
         AuthMode::Hanko => router,
         AuthMode::Local => router
@@ -425,6 +433,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
+        guest: GuestDemoSettings::from_env(),
+        guest_clone_lock: Arc::new(Mutex::new(())),
     };
 
     let auth_public = auth_public_router(AuthMode::from_env());
@@ -551,7 +561,7 @@ async fn health() -> impl IntoResponse {
 
 /// Returns the server's configured authentication mode so clients
 /// can render the correct login form before authenticating.
-async fn auth_mode_handler() -> Json<serde_json::Value> {
+async fn auth_mode_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let mode = crate::config::AuthMode::from_env();
     let hanko_api_url = std::env::var("HANKO_API_URL")
         .ok()
@@ -562,6 +572,7 @@ async fn auth_mode_handler() -> Json<serde_json::Value> {
             crate::config::AuthMode::Local => "local",
         },
         "hanko_api_url": hanko_api_url,
+        "try_demo": state.guest.enabled,
     }))
 }
 
@@ -2049,6 +2060,8 @@ mod tests {
             asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
             upload_limits: asset_uploads::UploadLimits::default(),
             max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
+            guest: crate::config::GuestDemoSettings::disabled(),
+            guest_clone_lock: Arc::new(Mutex::new(())),
         };
 
         (tmp, state, token, import_id)
@@ -2079,6 +2092,26 @@ mod tests {
             .unwrap();
         server.abort();
         response.status()
+    }
+
+    #[tokio::test]
+    async fn auth_mode_includes_try_demo_flag() {
+        let (_tmp, state, _token, _import_id) = test_state();
+        let Json(value) = auth_mode_handler(State(state)).await;
+        assert_eq!(value["try_demo"], false);
+        assert!(value.get("mode").is_some());
+    }
+
+    #[tokio::test]
+    async fn try_demo_route_exists() {
+        assert_ne!(
+            auth_route_status(AuthMode::Local, "/v1/auth/try-demo").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_ne!(
+            auth_route_status(AuthMode::Hanko, "/v1/auth/try-demo").await,
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]

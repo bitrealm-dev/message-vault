@@ -7,6 +7,7 @@
 //! and then exchanges for a vault token.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -16,8 +17,17 @@ use axum::http::HeaderMap;
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
 use crate::server::{ApiError, AppState, JoinBlocking};
+
+/// How long Try it waits for an on-demand guest clone when the ready pool is empty.
+const TRY_DEMO_CLONE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Hosted vaults reject password login as the shared `demo` template account.
+pub(crate) fn reject_demo_password_login(enabled: bool, username: &str) -> bool {
+    enabled && username.eq_ignore_ascii_case("demo")
+}
 
 /// Max password bytes accepted before hashing (registration / login / change).
 const MAX_PASSWORD_BYTES: usize = 1024;
@@ -373,6 +383,7 @@ pub async fn login_handler(
 
     let password = req.password.clone();
     let db = state.cfg.paths.db.clone();
+    let guest_enabled = state.guest.enabled;
 
     let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
         let conn = schema::open_configured(&db)?;
@@ -382,6 +393,10 @@ pub async fn login_handler(
             bail!("invalid username or password");
         };
 
+        if reject_demo_password_login(guest_enabled, &username) {
+            bail!("use Try it to open a sample account");
+        }
+
         let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
         if !verify_login_password(password_hash.as_deref(), &password) {
             bail!("invalid username or password");
@@ -390,8 +405,13 @@ pub async fn login_handler(
         AuthTokenResponse::for_existing_account(&conn, account_id)
     })
     .await
-    .join_map("login task", |_| {
-        ApiError::Unauthorized("invalid username or password".into())
+    .join_map("login task", |e| {
+        let msg = e.to_string();
+        if msg.contains("use Try it") {
+            ApiError::Unauthorized(msg)
+        } else {
+            ApiError::Unauthorized("invalid username or password".into())
+        }
     })?;
 
     Ok(Json(result))
@@ -504,6 +524,118 @@ pub async fn hanko_session_handler(
     Ok(Json(result))
 }
 
+/// Self-hosted Try it: session for the shared demo account.
+fn try_demo_self_hosted(conn: &rusqlite::Connection) -> Result<AuthTokenResponse, ApiError> {
+    if account_profile::username_for_account(conn, account_profile::DEMO_ACCOUNT_ID)
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .is_none()
+    {
+        return Err(ApiError::ServiceUnavailable(
+            "demo account is not available; run reset-demo first".into(),
+        ));
+    }
+    AuthTokenResponse::for_existing_account(conn, account_profile::DEMO_ACCOUNT_ID.to_string())
+        .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// Hosted Try it: take a ready guest, or clone the template when `clone_if_empty`.
+fn try_demo_from_pool(
+    conn: &mut rusqlite::Connection,
+    cfg: &Config,
+    session_secs: u64,
+    clone_if_empty: bool,
+) -> Result<Option<AuthTokenResponse>, ApiError> {
+    if let Some((account_id, username, token)) =
+        crate::guest_pool::assign_ready_guest(conn, session_secs)
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Ok(Some(AuthTokenResponse {
+            token,
+            account_id,
+            username,
+        }));
+    }
+    if !clone_if_empty {
+        return Ok(None);
+    }
+    crate::guest_clone::clone_template_to_guest(conn, cfg, account_profile::DEMO_ACCOUNT_ID)
+        .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
+    let Some((account_id, username, token)) =
+        crate::guest_pool::assign_ready_guest(conn, session_secs)
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+    else {
+        return Err(ApiError::ServiceUnavailable(
+            "guest demo copy is not available".into(),
+        ));
+    };
+    Ok(Some(AuthTokenResponse {
+        token,
+        account_id,
+        username,
+    }))
+}
+
+/// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
+pub async fn try_demo_handler(
+    State(state): State<AppState>,
+) -> Result<Json<AuthTokenResponse>, ApiError> {
+    check_auth_rate_limit("try-demo")?;
+
+    if !state.guest.enabled {
+        let db = state.cfg.paths.db.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse, ApiError> {
+            let conn =
+                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+            try_demo_self_hosted(&conn)
+        })
+        .await
+        .join_map("try-demo self-hosted", |e| e)?;
+        return Ok(Json(result));
+    }
+
+    let db = state.cfg.paths.db.clone();
+    let cfg = std::sync::Arc::clone(&state.cfg);
+    let session_secs = state.guest.session_secs;
+    let assigned =
+        tokio::task::spawn_blocking(move || -> Result<Option<AuthTokenResponse>, ApiError> {
+            let mut conn =
+                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+            try_demo_from_pool(&mut conn, &cfg, session_secs, false)
+        })
+        .await
+        .join_map("try-demo assign", |e| e)?;
+
+    if let Some(response) = assigned {
+        return Ok(Json(response));
+    }
+
+    let timed = tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, async {
+        let _guard = state.guest_clone_lock.lock().await;
+        let db = state.cfg.paths.db.clone();
+        let cfg = std::sync::Arc::clone(&state.cfg);
+        let session_secs = state.guest.session_secs;
+        tokio::task::spawn_blocking(move || -> Result<Option<AuthTokenResponse>, ApiError> {
+            let mut conn =
+                schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+            try_demo_from_pool(&mut conn, &cfg, session_secs, true)
+        })
+        .await
+        .join_map("try-demo clone", |e| e)
+    })
+    .await;
+
+    match timed {
+        Ok(Ok(Some(response))) => Ok(Json(response)),
+        Ok(Ok(None)) => Err(ApiError::ServiceUnavailable(
+            "guest demo copy is not available".into(),
+        )),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(ApiError::ServiceUnavailable(
+            "guest demo copy timed out; try again shortly".into(),
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Change-password / delete-account request types
 // ---------------------------------------------------------------------------
@@ -568,6 +700,24 @@ fn change_password_on_conn(
 // Change-password / delete-account / logout handlers
 // ---------------------------------------------------------------------------
 
+/// Revoke the session token. Guest accounts are deleted with their data dir.
+fn logout_on_conn(conn: &rusqlite::Connection, token: &str, data_dir: &Path) -> Result<()> {
+    let account_id = session_tokens::lookup_account_for_token(conn, token)?;
+    let _ = session_tokens::revoke_session_token(conn, token)?;
+    let Some(account_id) = account_id else {
+        return Ok(());
+    };
+    if account_profile::is_guest_account(conn, &account_id)? {
+        account_profile::delete_account(conn, &account_id)?;
+        let dir = data_dir.join(&account_id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("remove guest data dir {}", dir.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// `POST /v1/auth/logout` — revoke the presented session token.
 pub async fn logout_handler(
     State(state): State<AppState>,
@@ -575,11 +725,11 @@ pub async fn logout_handler(
 ) -> Result<Json<LogoutResponse>, ApiError> {
     let token = crate::server::bearer_token(&headers)?;
     let db = state.cfg.paths.db.clone();
+    let data_dir = state.cfg.paths.data_dir.clone();
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = schema::open_configured(&db)?;
         schema::ensure_accounts_schema(&conn)?;
-        let _ = session_tokens::revoke_session_token(&conn, &token)?;
-        Ok(())
+        logout_on_conn(&conn, &token, &data_dir)
     })
     .await
     .join_blocking("logout task")?;
@@ -797,6 +947,146 @@ mod tests {
                 .unwrap()
                 .account_id,
             OTHER_ACCOUNT
+        );
+    }
+
+    fn memory_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        schema::ensure_vault_schema(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn reject_demo_password_login_only_when_hosted_demo() {
+        assert!(reject_demo_password_login(true, "demo"));
+        assert!(reject_demo_password_login(true, "DEMO"));
+        assert!(!reject_demo_password_login(true, "alice"));
+        assert!(!reject_demo_password_login(false, "demo"));
+    }
+
+    #[test]
+    fn logout_on_conn_deletes_guest_row_and_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        let conn = memory_conn();
+        let guest_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        account_profile::insert_guest_account(&conn, guest_id, "guest-cccc", None).unwrap();
+        account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
+        let token = session_tokens::insert_account_session_token(&conn, guest_id).unwrap();
+        let guest_dir = data_dir.join(guest_id);
+        std::fs::create_dir_all(&guest_dir).unwrap();
+        std::fs::write(guest_dir.join("marker.txt"), "x").unwrap();
+
+        logout_on_conn(&conn, &token, &data_dir).unwrap();
+
+        assert!(
+            account_profile::username_for_account(&conn, guest_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!guest_dir.exists());
+        assert!(
+            session_tokens::lookup_account_for_token(&conn, &token)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn logout_on_conn_leaves_registered_account() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        let conn = memory_conn();
+        account_profile::insert_account(&conn, TEST_ACCOUNT, "alice", None, None, None, false)
+            .unwrap();
+        let token = session_tokens::insert_account_session_token(&conn, TEST_ACCOUNT).unwrap();
+        let account_dir = data_dir.join(TEST_ACCOUNT);
+        std::fs::create_dir_all(&account_dir).unwrap();
+
+        logout_on_conn(&conn, &token, &data_dir).unwrap();
+
+        assert_eq!(
+            account_profile::username_for_account(&conn, TEST_ACCOUNT)
+                .unwrap()
+                .as_deref(),
+            Some("alice")
+        );
+        assert!(account_dir.exists());
+        assert!(
+            session_tokens::lookup_account_for_token(&conn, &token)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn try_demo_self_hosted_issues_demo_session() {
+        let conn = memory_conn();
+        account_profile::insert_account(
+            &conn,
+            account_profile::DEMO_ACCOUNT_ID,
+            "demo",
+            None,
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+
+        let response = try_demo_self_hosted(&conn).unwrap();
+        assert_eq!(response.account_id, account_profile::DEMO_ACCOUNT_ID);
+        assert_eq!(response.username, "demo");
+        assert!(response.token.starts_with("mv-user-"));
+        assert_eq!(
+            session_tokens::lookup_account_for_token(&conn, &response.token)
+                .unwrap()
+                .as_deref(),
+            Some(account_profile::DEMO_ACCOUNT_ID)
+        );
+    }
+
+    #[test]
+    fn try_demo_self_hosted_missing_account_is_unavailable() {
+        let conn = memory_conn();
+        let err = try_demo_self_hosted(&conn).unwrap_err();
+        match err {
+            ApiError::ServiceUnavailable(msg) => {
+                assert!(
+                    msg.to_ascii_lowercase().contains("demo"),
+                    "expected a clear demo-account message, got {msg}"
+                );
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_demo_assigns_ready_guest() {
+        let mut conn = memory_conn();
+        let guest_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+        account_profile::insert_guest_account(&conn, guest_id, "guest-dddd", None).unwrap();
+        let cfg = crate::config::Config {
+            paths: crate::config::PathsConfig {
+                db: std::path::PathBuf::from(":memory:"),
+                data_dir: std::path::PathBuf::from("/tmp"),
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: None,
+        };
+
+        let response = try_demo_from_pool(&mut conn, &cfg, 120, false)
+            .unwrap()
+            .expect("ready guest");
+        assert_eq!(response.account_id, guest_id);
+        assert_eq!(response.username, "guest-dddd");
+        assert!(response.token.starts_with("mv-user-"));
+        assert_eq!(
+            account_profile::guest_status(&conn, guest_id)
+                .unwrap()
+                .as_deref(),
+            Some("assigned")
         );
     }
 
