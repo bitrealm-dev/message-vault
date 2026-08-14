@@ -132,10 +132,23 @@ pub fn rotate_account_session_token(conn: &Connection, account_id: &str) -> Resu
 ///
 /// Returns an error when a token cannot be generated or the insert fails.
 pub fn insert_account_session_token(conn: &Connection, account_id: &str) -> Result<String> {
+    insert_account_session_token_with_ttl(conn, account_id, SESSION_TTL_SECS)
+}
+
+/// Create a fresh session token with a custom lifetime and return the plaintext.
+///
+/// # Errors
+///
+/// Returns an error when a token cannot be generated or the insert fails.
+pub fn insert_account_session_token_with_ttl(
+    conn: &Connection,
+    account_id: &str,
+    ttl_secs: u64,
+) -> Result<String> {
     let token = generate_session_token()?;
     let token_hash = hash_api_token(&token);
     let created_at = unix_secs_string();
-    let expires_at = session_expiry_unix(now_unix_secs());
+    let expires_at = format!("{}", now_unix_secs().saturating_add(ttl_secs));
     conn.execute(
         "INSERT INTO account_session_tokens (account_id, token_hash, created_at, expires_at)
          VALUES (?1, ?2, ?3, ?4)",
@@ -233,6 +246,30 @@ mod tests {
         conn.execute("UPDATE account_session_tokens SET expires_at = '1'", [])
             .unwrap();
         assert!(lookup_account_for_token(&conn, &token).unwrap().is_none());
+    }
+
+    #[test]
+    fn insert_session_with_ttl_sets_expires_at() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        schema::ensure_accounts_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES ('a1', 'alice')",
+            [],
+        )
+        .unwrap();
+        let before = now_unix_secs();
+        let token = insert_account_session_token_with_ttl(&conn, "a1", 120).unwrap();
+        assert!(token.starts_with("mv-user-"));
+        let expires: String = conn
+            .query_row(
+                "SELECT expires_at FROM account_session_tokens WHERE account_id = 'a1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let exp: u64 = expires.parse().unwrap();
+        assert!(exp >= before + 120);
+        assert!(exp <= before + 130);
     }
 
     #[test]
