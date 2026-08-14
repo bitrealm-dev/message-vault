@@ -590,8 +590,9 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
 /// Sweep expired guests and refill unused ready copies every 60 seconds.
 ///
 /// The first tick runs immediately so the pool is not empty on the first Try it.
-/// Clones take `guest_clone_lock` (same lock as on-demand Try it). The worker
-/// does not take the vault operation lock; `serve` already holds it.
+/// Clones wait on `guest_clone_lock` with `.lock().await` (same as on-demand
+/// Try it), then `refill_pool` runs in `spawn_blocking`. The worker does not
+/// take the vault operation lock; `serve` already holds it.
 fn spawn_guest_pool_worker(worker_state: AppState) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -603,15 +604,36 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
             let demand = worker_state.guest_demand.lock().unwrap().count_last_15m();
             let clone_lock = worker_state.guest_clone_lock.clone();
             let data_dir = cfg.paths.data_dir.clone();
-            let _ = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-                let mut conn = schema::open_configured(&db)?;
-                guest_pool::sweep_expired_guests(&conn, &data_dir)?;
-                let _lock = clone_lock.blocking_lock();
-                guest_pool::refill_pool(&mut conn, &cfg, guest, demand)
-            })
-            .await;
+
+            let sweep_db = db.clone();
+            log_guest_pool_task(
+                "sweep",
+                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                    let conn = schema::open_configured(&sweep_db)?;
+                    guest_pool::sweep_expired_guests(&conn, &data_dir)
+                })
+                .await,
+            );
+
+            let _guard = clone_lock.lock().await;
+            log_guest_pool_task(
+                "refill",
+                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                    let mut conn = schema::open_configured(&db)?;
+                    guest_pool::refill_pool(&mut conn, &cfg, guest, demand)
+                })
+                .await,
+            );
         }
     });
+}
+
+fn log_guest_pool_task(what: &str, result: Result<anyhow::Result<u32>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => eprintln!("guest pool {what} failed: {err:#}"),
+        Err(join_err) => eprintln!("guest pool {what} failed: {join_err}"),
+    }
 }
 
 async fn shutdown_signal() {
