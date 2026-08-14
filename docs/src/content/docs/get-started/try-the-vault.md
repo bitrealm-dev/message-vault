@@ -1,9 +1,19 @@
 ---
 title: Try the vault
-description: Run the vault with Docker, sign in as demo in the browser, and look around before preparing a backup.
+description: Look at sample conversations in the browser — click Try it on a hosted vault, or run Docker and sign in as demo.
 ---
 
 Getting a phone backup takes work. The sample account answers whether search, contacts, and media in the vault are useful before that work starts.
+
+## Hosted vault
+
+If the vault is already on a public URL, open that URL in a browser and click **Try it**. The website is enough.
+
+**Try it** signs in to a private copy of the sample conversations. The copy lasts 24 hours, or until sign-out. Import and Export are not in the browser.
+
+To keep a personal archive on that same vault, create an account and continue at [Use your own messages](/get-started/your-own-messages/).
+
+## Self-hosted vault
 
 Connect with the **website**. Importing your own messages later needs the [desktop app](/get-started/install-the-desktop-app/) — more on that when you [use your own messages](/get-started/your-own-messages/).
 

@@ -8,6 +8,8 @@
 # With COMPOSE_FILE=docker/compose.dev.yml in .env (default), bare `docker compose up` works.
 #
 # Blank vault (no demo seed): DEMO_DATA=false docker compose up
+# Guest pool is off unless GUEST_DEMO_POOL=true. Default false so local compose
+# still uses the shared demo user. Set true on a laptop to test the hosted path.
 # Staging drop: copy JSONL into ./staging (mounted at /app/staging).
 #
 # This image builds no frontend. Run Vite on the host (cd web && npm run dev,
@@ -30,6 +32,7 @@ services:
     environment:
       DEMO_DATA: ${DEMO_DATA:-true}
       VAULT_AUTH: ${VAULT_AUTH:-local}
+      GUEST_DEMO_POOL: ${GUEST_DEMO_POOL:-false}
     volumes:
       - ..:/app
       - ../staging:/app/staging

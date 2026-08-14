@@ -56,6 +56,27 @@ Rows are scoped by `account_id` in a shared `vault.db`.
   token.
 - New accounts start with browsing edits enabled.
 - Demo seed identity: username `demo` (`crates/vault/demo-seed/config/seed.toml`), always
-  no-password and read-only by default.
+  no-password and read-only by default. Self-hosted sign-in stays username `demo` and
+  an empty password. On a hosted vault with the guest pool on, that account is the
+  clone template; visitors use **Try it** instead of signing in as `demo`.
 
 See [Settings](/how-to/settings/).
+
+## Guest demo pool
+
+Off by default so a local Compose vault still uses the shared `demo` user. When
+`GUEST_DEMO_POOL` is true, **Try it** assigns a private sample account from a
+ready pool. Password login as `demo` is rejected. The copy lasts
+`GUEST_SESSION_SECS` (24 hours by default). Guests cannot import or export a
+backup or create API tokens.
+
+Set these as environment variables (Compose) or matching `[server]` keys. A
+hosted image that turns the pool on should keep `DEMO_DATA=true` so first boot
+still creates the template `demo` account.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `GUEST_DEMO_POOL` | `false` | Enable the pool, `try_demo` on `/v1/auth/mode`, and reject password login as `demo` |
+| `GUEST_POOL_MIN` | `2` | Unused ready floor |
+| `GUEST_POOL_MAX` | `20` | Unused ready ceiling |
+| `GUEST_SESSION_SECS` | `86400` | Guest session lifetime |
