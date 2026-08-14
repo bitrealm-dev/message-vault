@@ -70,9 +70,9 @@ ready pool. Password login as `demo` is rejected. The copy lasts
 `GUEST_SESSION_SECS` (24 hours by default). Guests cannot import or export a
 backup or create API tokens.
 
-Set these as environment variables (Compose) or matching `[server]` keys. A
-hosted image that turns the pool on should keep `DEMO_DATA=true` so first boot
-still creates the template `demo` account.
+Set these as environment variables (Compose). A hosted image that turns the
+pool on should keep `DEMO_DATA=true` so first boot still creates the template
+`demo` account.
 
 | Key | Default | Meaning |
 |---|---|---|
