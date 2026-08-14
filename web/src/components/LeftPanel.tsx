@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { canUseImportExport } from "../lib/desktopFeatures";
 import { isTauri } from "../lib/tauri-check";
+import { useAccountProfile } from "../lib/useAccountProfile";
 import {
   listGroups,
   addGroup,
@@ -93,6 +95,7 @@ export default function LeftPanel({
   const location = useLocation();
   const navigate = useNavigate();
   const { logout } = useAuth();
+  const { profile } = useAccountProfile();
 
   function isActive(path: string): boolean {
     if (path === "/") return location.pathname === "/" || location.pathname.startsWith("/messages/");
@@ -131,8 +134,8 @@ export default function LeftPanel({
         </div>
       </div>
 
-      {/* Import/Export — Tauri only */}
-      {isTauri() && (
+      {/* Import/Export — desktop app only, never on a guest session */}
+      {canUseImportExport(isTauri(), profile?.is_guest === true) && (
         <div className="border-t border-border px-3 py-2">
           <div className={sectionHeaderClass}>Messages</div>
           <div className="pl-3">

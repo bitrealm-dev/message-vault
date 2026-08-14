@@ -16,6 +16,11 @@ export function isAuthMode(value: unknown): value is AuthMode {
   return value === "hanko" || value === "local";
 }
 
+/** True when GET /v1/auth/mode reports try_demo as the boolean true. */
+export function isTryDemoEnabled(value: unknown): boolean {
+  return value === true;
+}
+
 /**
  * Read a saved login session from JSON.
  * Returns null when the text is not valid JSON or required fields are missing.

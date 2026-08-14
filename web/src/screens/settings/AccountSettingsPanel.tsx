@@ -31,6 +31,7 @@ export function AccountSettingsPanel() {
   }
 
   const isDemo = profile.is_demo === true;
+  const isGuest = profile.is_guest === true;
 
   const handleChangePassword = async () => {
     setPwMsg("");
@@ -73,60 +74,68 @@ export function AccountSettingsPanel() {
           className={`${inputClassName} !text-muted`}
         />
       </div>
-      <h3 className={sectionTitleClass}>Change Password</h3>
-      <div className="mb-6 max-w-[360px]">
-        <label className="mb-1 block text-[0.813rem] font-medium">
-          Current password
-        </label>
-        <input
-          type="password"
-          value={currentPw}
-          onChange={(e) => setCurrentPw(e.target.value)}
-          autoComplete="current-password"
-          disabled={isDemo}
-          className={`${inputClassName} mb-2`}
-        />
-        <label className="mb-1 block text-[0.813rem] font-medium">
-          New password
-        </label>
-        <input
-          type="password"
-          value={newPw}
-          onChange={(e) => setNewPw(e.target.value)}
-          autoComplete="new-password"
-          disabled={isDemo}
-          className={`${inputClassName} mb-2`}
-        />
-        <label className="mb-1 block text-[0.813rem] font-medium">
-          Confirm new password
-        </label>
-        <input
-          type="password"
-          value={confirmPw}
-          onChange={(e) => setConfirmPw(e.target.value)}
-          autoComplete="new-password"
-          disabled={isDemo}
-          className={`${inputClassName} mb-2`}
-        />
-        <Button
-          variant="primary"
-          onClick={handleChangePassword}
-          disabled={isDemo || !currentPw || !newPw || !confirmPw}
-          className="!px-3 !py-1.5"
-        >
-          Change password
-        </Button>
-        {pwMsg && (
-          <div
-            className="mt-1.5 text-[0.813rem]"
-            style={{ color: pwOk ? "var(--ok)" : "var(--danger)" }}
-          >
-            {pwMsg}
+      {isGuest ? (
+        <p className="mb-6 text-[0.875rem] text-muted">
+          This is a temporary sample account. It is removed after 24 hours or when you sign out.
+        </p>
+      ) : (
+        <>
+          <h3 className={sectionTitleClass}>Change Password</h3>
+          <div className="mb-6 max-w-[360px]">
+            <label className="mb-1 block text-[0.813rem] font-medium">
+              Current password
+            </label>
+            <input
+              type="password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              autoComplete="current-password"
+              disabled={isDemo}
+              className={`${inputClassName} mb-2`}
+            />
+            <label className="mb-1 block text-[0.813rem] font-medium">
+              New password
+            </label>
+            <input
+              type="password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              autoComplete="new-password"
+              disabled={isDemo}
+              className={`${inputClassName} mb-2`}
+            />
+            <label className="mb-1 block text-[0.813rem] font-medium">
+              Confirm new password
+            </label>
+            <input
+              type="password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              autoComplete="new-password"
+              disabled={isDemo}
+              className={`${inputClassName} mb-2`}
+            />
+            <Button
+              variant="primary"
+              onClick={handleChangePassword}
+              disabled={isDemo || !currentPw || !newPw || !confirmPw}
+              className="!px-3 !py-1.5"
+            >
+              Change password
+            </Button>
+            {pwMsg && (
+              <div
+                className="mt-1.5 text-[0.813rem]"
+                style={{ color: pwOk ? "var(--ok)" : "var(--danger)" }}
+              >
+                {pwMsg}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      <ApiTokensSection />
+          <ApiTokensSection />
+        </>
+      )}
 
       <ProfileDangerZone isDemo={isDemo} username={profile.username} />
     </div>

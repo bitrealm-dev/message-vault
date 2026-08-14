@@ -1,6 +1,10 @@
+import type { ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { canUseImportExport } from "./lib/desktopFeatures";
+import { isTauri } from "./lib/tauri-check";
 import { ThemeProvider } from "./lib/ThemeProvider";
+import { useAccountProfile } from "./lib/useAccountProfile";
 import { AuthGuard } from "./components/AuthGuard";
 import AppLayout from "./components/AppLayout";
 import LoginScreen from "./screens/LoginScreen";
@@ -11,6 +15,21 @@ import MessageRoute from "./components/MessageRoute";
 import ImportScreen from "./screens/ImportScreen";
 import ExportScreen from "./screens/ExportScreen";
 import SettingsScreen from "./screens/SettingsScreen";
+
+/** Import and export stay on the desktop app and are closed to guest sessions. */
+function ImportExportRoute({ children }: { children: ReactNode }) {
+  const { profile, loading } = useAccountProfile();
+  if (!isTauri()) {
+    return <Navigate to="/" replace />;
+  }
+  if (loading) {
+    return null;
+  }
+  if (!canUseImportExport(true, profile?.is_guest === true)) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
 
 function AppRoutes() {
   const { isAuthenticated, needsOnboarding } = useAuth();
@@ -48,8 +67,22 @@ function AppRoutes() {
           <Route index element={<></>} />
           <Route path="contacts" element={<></>} />
           <Route path="trash" element={<TrashScreen />} />
-          <Route path="import" element={<ImportScreen />} />
-          <Route path="export" element={<ExportScreen />} />
+          <Route
+            path="import"
+            element={
+              <ImportExportRoute>
+                <ImportScreen />
+              </ImportExportRoute>
+            }
+          />
+          <Route
+            path="export"
+            element={
+              <ImportExportRoute>
+                <ExportScreen />
+              </ImportExportRoute>
+            }
+          />
           <Route path="settings" element={<SettingsScreen />} />
           <Route path="messages/:conversationId" element={<MessageRoute />} />
         </Route>
