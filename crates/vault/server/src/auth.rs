@@ -7,6 +7,7 @@
 //! and then exchanges for a vault token.
 
 use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -72,6 +73,21 @@ fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
     }
     entry.push_back(now);
     Ok(())
+}
+
+fn try_demo_client_key(cf_connecting_ip: Option<&str>) -> String {
+    match cf_connecting_ip.and_then(parse_single_ip) {
+        Some(ip) => format!("try-demo:{ip}"),
+        None => "try-demo:unknown".to_string(),
+    }
+}
+
+fn parse_single_ip(raw: &str) -> Option<IpAddr> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.contains(',') || trimmed.contains(' ') {
+        return None;
+    }
+    trimmed.parse().ok()
 }
 
 #[cfg(test)]
@@ -942,6 +958,29 @@ mod tests {
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
         reset_auth_rate_limit_bucket_for_test(bucket);
+    }
+
+    #[test]
+    fn try_demo_client_key_accepts_single_ipv4_and_ipv6() {
+        assert_eq!(
+            try_demo_client_key(Some("203.0.113.10")),
+            "try-demo:203.0.113.10"
+        );
+        assert_eq!(
+            try_demo_client_key(Some(" 2001:db8::1 ")),
+            "try-demo:2001:db8::1"
+        );
+    }
+
+    #[test]
+    fn try_demo_client_key_rejects_missing_list_and_garbage() {
+        assert_eq!(try_demo_client_key(None), "try-demo:unknown");
+        assert_eq!(try_demo_client_key(Some("")), "try-demo:unknown");
+        assert_eq!(
+            try_demo_client_key(Some("203.0.113.10, 198.51.100.1")),
+            "try-demo:unknown"
+        );
+        assert_eq!(try_demo_client_key(Some("not-an-ip")), "try-demo:unknown");
     }
 
     #[test]
