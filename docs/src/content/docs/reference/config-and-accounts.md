@@ -80,3 +80,11 @@ pool on should keep `DEMO_DATA=true` so first boot still creates the template
 | `GUEST_POOL_MIN` | `2` | Unused ready floor |
 | `GUEST_POOL_MAX` | `20` | Unused ready ceiling |
 | `GUEST_SESSION_SECS` | `86400` | Guest session lifetime |
+
+**Try it** is limited in two ways. Each visitor internet address
+(`CF-Connecting-IP` on a host behind Cloudflare) may accept 60 Try it
+calls per minute. The whole server may accept 2000 per minute. People
+who share one building address share the 60. If that header is missing,
+those calls share one pile of 60. Cloudflare bot rules can sit in front;
+this server does not configure them. Login stays 20 attempts per username
+per minute.
