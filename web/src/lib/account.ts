@@ -6,5 +6,6 @@ export interface AccountProfile {
   phones: string[];
   emails: string[];
   is_demo?: boolean;
+  is_guest?: boolean;
   read_only?: boolean;
 }

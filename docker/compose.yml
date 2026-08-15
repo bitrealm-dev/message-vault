@@ -3,6 +3,7 @@
 #
 # Pin a release: change :latest to :0.7.3 (no "v").
 # Empty vault: DEMO_DATA=false docker compose up -d
+# Hosted Try it (private sample copies): GUEST_DEMO_POOL=true docker compose up -d
 # JSONL drop: copy files into ./staging
 
 name: message-vault
@@ -14,6 +15,7 @@ services:
       - "8080:8080"
     environment:
       DEMO_DATA: ${DEMO_DATA:-true}
+      GUEST_DEMO_POOL: ${GUEST_DEMO_POOL:-false}
     volumes:
       - message-vault-data:/app/data
       - ./staging:/app/staging

@@ -20,7 +20,7 @@ use rusqlite::Connection;
 
 use crate::asset_uploads;
 use crate::assets;
-use crate::config::{AuthMode, Config, validate_source_id};
+use crate::config::{AuthMode, Config, GuestDemoSettings, validate_source_id};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::schema;
@@ -29,6 +29,7 @@ use crate::dedupe;
 use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
 };
+use crate::guest_pool::{self, GuestPoolState};
 use crate::import::{self, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
@@ -60,6 +61,35 @@ pub fn require_full_access(auth: &AuthIdentity) -> Result<(), ApiError> {
                 .into(),
         )),
     }
+}
+
+/// Reject sample (guest) accounts on import, asset upload, and API-token mutations.
+///
+/// # Errors
+///
+/// Returns forbidden when `account_id` has a `guest_status`, or internal when
+/// the lookup fails.
+pub fn reject_if_guest(conn: &Connection, account_id: &str) -> Result<(), ApiError> {
+    if account_profile::is_guest_account(conn, account_id)
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Err(ApiError::Forbidden(
+            "sample accounts cannot import, export backups, or create API tokens".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Open the configured database and reject the account when it is a guest.
+pub(crate) async fn reject_if_guest_account(db: &Path, account_id: &str) -> Result<(), ApiError> {
+    let db = db.to_path_buf();
+    let account_id = account_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let conn = schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        reject_if_guest(&conn, &account_id)
+    })
+    .await
+    .join_map("guest check task", |e| e)
 }
 
 /// Allow session or an API token that includes import.
@@ -128,6 +158,12 @@ pub struct AppState {
     upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
     max_body_bytes: usize,
+    /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
+    pub guest: GuestDemoSettings,
+    /// One on-demand template clone at a time (empty-pool Try it).
+    pub guest_clone_lock: Arc<Mutex<()>>,
+    /// Hosted Try it assignments in the last 15 minutes (refill demand).
+    pub guest_demand: Arc<StdMutex<GuestPoolState>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +225,7 @@ pub enum ApiError {
     BadRequest(String),
     NotFound(String),
     TooManyRequests(String),
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -200,6 +237,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
+            Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
             Self::Internal(m) => {
                 // Keep diagnostics server-side; clients only see a stable message.
                 eprintln!("internal error: {m}");
@@ -314,10 +352,12 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
 }
 
 fn auth_public_router(mode: AuthMode) -> Router<AppState> {
-    let router = Router::new().route(
-        "/v1/auth/hanko/session",
-        post(crate::auth::hanko_session_handler),
-    );
+    let router = Router::new()
+        .route(
+            "/v1/auth/hanko/session",
+            post(crate::auth::hanko_session_handler),
+        )
+        .route("/v1/auth/try-demo", post(crate::auth::try_demo_handler));
     let router = match mode {
         AuthMode::Hanko => router,
         AuthMode::Local => router
@@ -425,7 +465,14 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
         upload_limits,
         max_body_bytes,
+        guest: GuestDemoSettings::from_env(),
+        guest_clone_lock: Arc::new(Mutex::new(())),
+        guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
     };
+
+    if state.guest.enabled {
+        spawn_guest_pool_worker(state.clone());
+    }
 
     let auth_public = auth_public_router(AuthMode::from_env());
 
@@ -540,6 +587,84 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sweep expired guests and refill unused ready copies every 60 seconds.
+///
+/// The first tick runs immediately so the pool is not empty on the first Try it.
+/// Shrink-over-ceiling runs without the clone lock. Each clone takes
+/// `guest_clone_lock` only for that one copy so on-demand Try it can assign a
+/// ready guest (or clone one) between refills. The worker does not take the
+/// vault operation lock; `serve` already holds it.
+fn spawn_guest_pool_worker(worker_state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let db = worker_state.cfg.paths.db.clone();
+            let cfg = worker_state.cfg.clone();
+            let guest = worker_state.guest;
+            let demand = match worker_state.guest_demand.lock() {
+                Ok(mut guard) => guard.count_last_15m(),
+                Err(_) => {
+                    eprintln!("guest demand lock poisoned; refill uses the floor");
+                    0
+                }
+            };
+            let clone_lock = worker_state.guest_clone_lock.clone();
+            let data_dir = cfg.paths.data_dir.clone();
+
+            let sweep_db = db.clone();
+            log_guest_pool_task(
+                "sweep",
+                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                    let conn = schema::open_configured(&sweep_db)?;
+                    guest_pool::sweep_expired_guests(&conn, &data_dir)
+                })
+                .await,
+            );
+
+            let shrink_db = db.clone();
+            let shrink_cfg = cfg.clone();
+            log_guest_pool_task(
+                "shrink",
+                tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                    let conn = schema::open_configured(&shrink_db)?;
+                    guest_pool::shrink_over_ceiling(&conn, &shrink_cfg, guest)
+                })
+                .await,
+            );
+
+            loop {
+                let one_db = db.clone();
+                let one_cfg = cfg.clone();
+                let result = {
+                    let _guard = clone_lock.lock().await;
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                        let mut conn = schema::open_configured(&one_db)?;
+                        guest_pool::refill_one(&mut conn, &one_cfg, guest, demand)
+                    })
+                    .await
+                };
+                match result {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(_)) => {}
+                    other => {
+                        log_guest_pool_task("refill", other);
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn log_guest_pool_task(what: &str, result: Result<anyhow::Result<u32>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => eprintln!("guest pool {what} failed: {err:#}"),
+        Err(join_err) => eprintln!("guest pool {what} failed: {join_err}"),
+    }
+}
+
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
     eprintln!("shutting down");
@@ -551,7 +676,7 @@ async fn health() -> impl IntoResponse {
 
 /// Returns the server's configured authentication mode so clients
 /// can render the correct login form before authenticating.
-async fn auth_mode_handler() -> Json<serde_json::Value> {
+async fn auth_mode_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let mode = crate::config::AuthMode::from_env();
     let hanko_api_url = std::env::var("HANKO_API_URL")
         .ok()
@@ -562,6 +687,7 @@ async fn auth_mode_handler() -> Json<serde_json::Value> {
             crate::config::AuthMode::Local => "local",
         },
         "hanko_api_url": hanko_api_url,
+        "try_demo": state.guest.enabled,
     }))
 }
 
@@ -1050,6 +1176,7 @@ async fn imports_create_handler(
 ) -> Result<Json<CreateImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     if body.source.trim().is_empty() {
         return Err(ApiError::BadRequest("body field source is required".into()));
     }
@@ -1081,6 +1208,7 @@ async fn imports_complete_handler(
 ) -> Result<Json<CompleteImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
     validate_complete_import_issues(&body.issues)?;
     let db = Arc::clone(&state.db);
@@ -1184,6 +1312,7 @@ async fn import_handler(
 ) -> Result<Json<ImportResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
@@ -1483,6 +1612,7 @@ async fn asset_put_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
 
     let mime = upload_content_type(&headers);
 
@@ -1582,6 +1712,7 @@ async fn asset_upload_start_handler(
 ) -> Result<Json<AssetUploadStartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
     let mime = body.mime.clone();
     let bytes = body.bytes;
@@ -1625,6 +1756,7 @@ async fn asset_upload_part_handler(
 ) -> Result<Json<AssetUploadPartResponse>, ApiError> {
     let (account, source_id, _existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     if part == 0 {
         return Err(ApiError::BadRequest("part number must be >= 1".into()));
     }
@@ -1652,6 +1784,7 @@ async fn asset_upload_complete_handler(
 ) -> Result<Json<AssetPutResponse>, ApiError> {
     let (account, source_id, existing) =
         resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
     if let Some(stored) = existing {
         // Drop staging if a concurrent single-PUT won the race.
         let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
@@ -2049,6 +2182,9 @@ mod tests {
             asset_complete_locks: Arc::new(Mutex::new(HashMap::new())),
             upload_limits: asset_uploads::UploadLimits::default(),
             max_body_bytes: asset_uploads::DEFAULT_MAX_BYTES as usize,
+            guest: crate::config::GuestDemoSettings::disabled(),
+            guest_clone_lock: Arc::new(Mutex::new(())),
+            guest_demand: Arc::new(StdMutex::new(GuestPoolState::new())),
         };
 
         (tmp, state, token, import_id)
@@ -2082,6 +2218,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_mode_includes_try_demo_flag() {
+        let (_tmp, state, _token, _import_id) = test_state();
+        let Json(value) = auth_mode_handler(State(state)).await;
+        assert_eq!(value["try_demo"], false);
+        assert!(value.get("mode").is_some());
+    }
+
+    #[tokio::test]
+    async fn try_demo_route_exists() {
+        assert_ne!(
+            auth_route_status(AuthMode::Local, "/v1/auth/try-demo").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_ne!(
+            auth_route_status(AuthMode::Hanko, "/v1/auth/try-demo").await,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
     async fn hanko_router_excludes_local_auth_routes() {
         for path in ["/v1/auth/register", "/v1/auth/login"] {
             assert_ne!(
@@ -2097,6 +2253,102 @@ mod tests {
             auth_route_status(AuthMode::Hanko, "/v1/auth/hanko/session").await,
             StatusCode::NOT_FOUND
         );
+    }
+
+    fn guest_test_state() -> (TempDir, AppState, String) {
+        let (tmp, state, _token, _import_id) = test_state();
+        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let token = {
+            let conn = state.db.lock().unwrap();
+            account_profile::insert_guest_account(&conn, guest_id, "guest-bbbb", None).unwrap();
+            account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
+            crate::db::session_tokens::insert_account_session_token(&conn, guest_id).unwrap()
+        };
+        (tmp, state, token)
+    }
+
+    #[tokio::test]
+    async fn guest_cannot_create_imports_but_can_export_messages() {
+        let (_tmp, state, token) = guest_test_state();
+
+        let err = imports_create_handler(
+            State(state.clone()),
+            auth_headers(&token),
+            Json(CreateImportBody {
+                source: "ios".into(),
+                mode: "append".into(),
+                tool: None,
+                account: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiError::Forbidden(msg) => {
+                assert!(
+                    msg.contains("sample accounts"),
+                    "expected sample-account message, got {msg}"
+                );
+            }
+            other => panic!("expected forbidden on POST /v1/imports, got {other:?}"),
+        }
+
+        let export = export_messages_handler(
+            State(state),
+            auth_headers(&token),
+            Query(ExportMessagesQuery {
+                q: "hello".into(),
+                limit: None,
+                offset: None,
+                cursor: None,
+                account: None,
+                source: None,
+            }),
+        )
+        .await;
+        match export {
+            Ok(_) => {}
+            Err(ApiError::BadRequest(_)) => {}
+            Err(ApiError::Forbidden(msg)) => {
+                panic!("GET /v1/export/messages must not be 403 for guests, got {msg}")
+            }
+            Err(other) => panic!("unexpected export error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_cannot_complete_imports() {
+        let (_tmp, state, token) = guest_test_state();
+        let err = imports_complete_handler(
+            State(state),
+            auth_headers(&token),
+            AxumPath(1),
+            Json(CompleteImportBody {
+                ok: true,
+                message_count: Some(1),
+                attachment_count: None,
+                bytes_uploaded: None,
+                duration_ms: None,
+                parse_ms: None,
+                convert_ms: None,
+                upload_ms: None,
+                summary: None,
+                issues: vec![],
+            }),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiError::Forbidden(msg) => {
+                assert!(
+                    msg.contains("sample accounts"),
+                    "expected sample-account message, got {msg}"
+                );
+            }
+            other => {
+                panic!("expected forbidden on POST /v1/imports/{{id}}/complete, got {other:?}")
+            }
+        }
     }
 
     #[tokio::test]

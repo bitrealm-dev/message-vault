@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::api_tokens::{self, ApiTokenScopes};
 use crate::db::schema;
-use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
+use crate::server::{
+    ApiError, AppState, JoinBlocking, reject_if_guest_account, require_full_access, resolve_auth,
+};
 
 #[derive(Debug, Serialize)]
 pub struct ApiTokenItem {
@@ -146,6 +148,7 @@ pub async fn create_api_token_handler(
 ) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let label = req.label;
     let scopes =
@@ -223,6 +226,7 @@ pub async fn rename_api_token_handler(
 ) -> Result<Json<RenameApiTokenResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
     let account_id = auth.account_id;
     let label = req.label;
     let db = state.cfg.paths.db.clone();

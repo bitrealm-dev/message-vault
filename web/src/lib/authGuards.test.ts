@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAuthMode, parsePersistedAuth } from "./authGuards.ts";
+import { isAuthMode, isTryDemoEnabled, parsePersistedAuth } from "./authGuards.ts";
 
 describe("isAuthMode", () => {
   it("accepts hanko and local", () => {
@@ -11,6 +11,14 @@ describe("isAuthMode", () => {
     expect(isAuthMode(null)).toBe(false);
     expect(isAuthMode("oauth")).toBe(false);
     expect(isAuthMode(1)).toBe(false);
+  });
+});
+
+describe("isTryDemoEnabled", () => {
+  it("reads try_demo only when true", () => {
+    expect(isTryDemoEnabled(true)).toBe(true);
+    expect(isTryDemoEnabled(false)).toBe(false);
+    expect(isTryDemoEnabled(undefined)).toBe(false);
   });
 });
 

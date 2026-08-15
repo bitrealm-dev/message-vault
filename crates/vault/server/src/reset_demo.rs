@@ -10,10 +10,11 @@ use message_ir::HandleType;
 use rusqlite::params;
 use serde::Deserialize;
 
-use crate::config::Config;
+use crate::config::{Config, GuestDemoSettings};
 use crate::db::account_profile;
 use crate::db::schema;
 use crate::dedupe;
+use crate::guest_pool;
 use crate::import::{self, ImportMode};
 use crate::process_assets::{self, ProcessAssetsOptions};
 
@@ -278,11 +279,32 @@ fn reset_prepared_bundle(
         return Err(error);
     }
 
+    after_reset_refresh_guest_pool(cfg, GuestDemoSettings::from_env())?;
+
     Ok(ResetPreparedStats {
         import: import_stats,
         dedupe_keys_filled: dedupe_stats.keys_filled,
         process_assets: process_stats,
     })
+}
+
+/// After a new demo template is live, drop unused ready guests and refill.
+///
+/// Assigned guests are left alone so a visitor who already has a copy keeps it.
+/// When the hosted pool is off this is a no-op.
+///
+/// # Errors
+///
+/// Returns an error when the live database cannot be opened, unused ready
+/// guests cannot be deleted, or a refill clone fails.
+pub fn after_reset_refresh_guest_pool(cfg: &Config, settings: GuestDemoSettings) -> Result<()> {
+    if !settings.enabled {
+        return Ok(());
+    }
+    let mut conn = schema::open_configured(&cfg.paths.db)?;
+    guest_pool::drop_ready_guests(&conn, &cfg.paths.data_dir)?;
+    guest_pool::refill_pool(&mut conn, cfg, settings, 0)?;
+    Ok(())
 }
 
 fn validate_prepared_bundle(bundle: &Path) -> Result<PreparedBundle> {
@@ -812,7 +834,134 @@ fn remove_tree_if_exists(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::PathsConfig;
+    use crate::config::{GuestDemoSettings, PathsConfig};
+    use crate::guest_pool;
+
+    /// A template refresh must delete unused ready guests (they still point at
+    /// the old sample set) and grow the pool back to `pool_min` from the new
+    /// template. Assigned guests keep the snapshot they already received.
+    #[test]
+    fn after_reset_refresh_guest_pool_drops_ready_and_refills_to_min() {
+        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture();
+        let settings = GuestDemoSettings {
+            enabled: true,
+            pool_min: 2,
+            pool_max: 20,
+            session_secs: 60,
+        };
+
+        after_reset_refresh_guest_pool(&cfg, settings).expect("refresh guest pool");
+
+        let conn = schema::open_configured(&cfg.paths.db).expect("reopen");
+        assert!(
+            account_profile::username_for_account(&conn, &stale_id)
+                .unwrap()
+                .is_none(),
+            "unused ready guest must be deleted so it cannot hand out the old dataset"
+        );
+        assert_eq!(
+            account_profile::guest_status(&conn, &assigned_id)
+                .unwrap()
+                .as_deref(),
+            Some("assigned"),
+            "assigned guests stay after a template refresh"
+        );
+        assert_eq!(guest_pool::count_ready(&conn).unwrap(), settings.pool_min);
+        assert!(!cfg.paths.data_dir.join(&stale_id).exists());
+        assert!(cfg.paths.data_dir.join(&assigned_id).is_dir());
+    }
+
+    #[test]
+    fn after_reset_refresh_guest_pool_skips_when_disabled() {
+        let (_temp, cfg, stale_id, assigned_id) = guest_pool_refresh_fixture();
+        let settings = GuestDemoSettings {
+            enabled: false,
+            pool_min: 2,
+            pool_max: 20,
+            session_secs: 60,
+        };
+
+        after_reset_refresh_guest_pool(&cfg, settings).expect("disabled refresh is a no-op");
+
+        let conn = schema::open_configured(&cfg.paths.db).expect("reopen");
+        assert_eq!(
+            account_profile::guest_status(&conn, &stale_id)
+                .unwrap()
+                .as_deref(),
+            Some("ready")
+        );
+        assert_eq!(
+            account_profile::guest_status(&conn, &assigned_id)
+                .unwrap()
+                .as_deref(),
+            Some("assigned")
+        );
+        assert_eq!(guest_pool::count_ready(&conn).unwrap(), 1);
+    }
+
+    fn guest_pool_refresh_fixture() -> (tempfile::TempDir, Config, String, String) {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let db = temp.path().join("vault.db");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).expect("create data dir");
+
+        let conn = schema::open_configured(&db).expect("open test database");
+        schema::ensure_vault_schema(&conn).expect("create vault schema");
+        conn.execute(
+            "INSERT INTO accounts (id, username, read_only, preferred_name)
+             VALUES (?1, 'demo', 1, 'Alex Demo')",
+            params![DEMO_ACCOUNT_ID],
+        )
+        .expect("insert template account");
+        conn.execute(
+            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
+             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
+            params![DEMO_ACCOUNT_ID],
+        )
+        .expect("insert template handle");
+        let hid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO account_handles (account_id, handle_id) VALUES (?1, ?2)",
+            params![DEMO_ACCOUNT_ID, hid],
+        )
+        .expect("link template handle");
+        conn.execute(
+            "INSERT INTO conversations (account_id, chat_handle_id, conversation_type, source_file)
+             VALUES (?1, ?2, 'individual', 'a.jsonl')",
+            params![DEMO_ACCOUNT_ID, hid],
+        )
+        .expect("insert template conversation");
+        let cid = conn.last_insert_rowid();
+        conn.execute(
+            r#"INSERT INTO messages (
+                conversation_id, account_id, source, guid, timestamp, is_from_me, sort_order, body
+            ) VALUES (?1, ?2, 'imessage', 'g1', '2020-01-01T00:00:00Z', 1, 0, 'hello')"#,
+            params![cid, DEMO_ACCOUNT_ID],
+        )
+        .expect("insert template message");
+
+        let stale_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1".to_string();
+        let assigned_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2".to_string();
+        account_profile::insert_guest_account(&conn, &stale_id, "guest-stale", Some("Guest"))
+            .expect("insert stale ready guest");
+        account_profile::insert_guest_account(&conn, &assigned_id, "guest-keep", Some("Guest"))
+            .expect("insert assigned guest");
+        account_profile::set_guest_status(&conn, &assigned_id, "assigned").expect("mark assigned");
+        fs::create_dir_all(data_dir.join(&stale_id)).expect("stale guest dir");
+        fs::create_dir_all(data_dir.join(&assigned_id)).expect("assigned guest dir");
+        drop(conn);
+
+        let cfg = Config {
+            paths: PathsConfig {
+                db,
+                data_dir,
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: None,
+        };
+        (temp, cfg, stale_id, assigned_id)
+    }
 
     /// The committed demo bundle ships a `seed.toml`; it must parse with the
     /// current `DemoOwner` (handle_specs) format or `reset-demo` fails on

@@ -236,6 +236,57 @@ impl AuthMode {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct GuestDemoSettings {
+    pub enabled: bool,
+    pub pool_min: u32,
+    pub pool_max: u32,
+    pub session_secs: u64,
+}
+
+fn env_truthy(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    )
+}
+
+impl GuestDemoSettings {
+    pub fn from_env() -> Self {
+        Self::parse(
+            &std::env::var("GUEST_DEMO_POOL").unwrap_or_default(),
+            &std::env::var("GUEST_POOL_MIN").unwrap_or_default(),
+            &std::env::var("GUEST_POOL_MAX").unwrap_or_default(),
+            &std::env::var("GUEST_SESSION_SECS").unwrap_or_default(),
+        )
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            pool_min: 2,
+            pool_max: 20,
+            session_secs: 86_400,
+        }
+    }
+
+    pub(crate) fn parse(pool: &str, min: &str, max: &str, secs: &str) -> Self {
+        let enabled = env_truthy(pool);
+        let pool_min = min.parse::<u32>().unwrap_or(2).max(1);
+        let mut pool_max = max.parse::<u32>().unwrap_or(20).max(1);
+        if pool_max < pool_min {
+            pool_max = pool_min;
+        }
+        let session_secs = secs.parse::<u64>().unwrap_or(86_400).max(60);
+        Self {
+            enabled,
+            pool_min,
+            pool_max,
+            session_secs,
+        }
+    }
+}
+
 fn resolve_path(base: &Path, configured: &Path) -> PathBuf {
     if configured.is_absolute() {
         configured.to_path_buf()
@@ -294,5 +345,27 @@ mod tests {
         assert_eq!(AuthMode::parse(""), AuthMode::Local);
         assert_eq!(AuthMode::parse("local"), AuthMode::Local);
         assert_eq!(AuthMode::parse("anything-else"), AuthMode::Local);
+    }
+
+    #[test]
+    fn guest_demo_settings_default_disabled() {
+        let s = GuestDemoSettings::parse("", "", "", "");
+        assert!(!s.enabled);
+        assert_eq!(s.pool_min, 2);
+        assert_eq!(s.pool_max, 20);
+        assert_eq!(s.session_secs, 86_400);
+    }
+
+    #[test]
+    fn guest_demo_settings_truthy_and_clamps() {
+        let s = GuestDemoSettings::parse("true", "0", "100", "60");
+        assert!(s.enabled);
+        assert_eq!(s.pool_min, 1);
+        assert_eq!(s.pool_max, 100);
+        assert_eq!(s.session_secs, 60);
+        let s = GuestDemoSettings::parse("yes", "5", "3", "not-a-number");
+        assert!(s.enabled);
+        assert_eq!(s.pool_max, 5);
+        assert_eq!(s.session_secs, 86_400);
     }
 }

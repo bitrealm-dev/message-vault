@@ -20,6 +20,8 @@ pub struct AccountProfileResponse {
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
+    /// True when `accounts.guest_status` is set (ready or assigned sample copy).
+    pub is_guest: bool,
     pub read_only: bool,
 }
 
@@ -37,6 +39,7 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
         phones: profile.phones,
         emails: profile.emails,
         is_demo: account_profile::is_demo_account(account_id),
+        is_guest: account_profile::is_guest_account(conn, account_id)?,
         read_only,
     })
 }
@@ -403,6 +406,20 @@ mod tests {
         let loaded = load_response(&conn, &account_id).unwrap();
         assert!(loaded.phones.is_empty());
         assert!(loaded.emails.is_empty());
+    }
+
+    #[test]
+    fn load_response_sets_is_guest_true_when_guest_status_assigned() {
+        let (conn, account_id) = setup();
+        let guest_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        account_profile::insert_guest_account(&conn, guest_id, "guest-bbbb", None).unwrap();
+        account_profile::set_guest_status(&conn, guest_id, "assigned").unwrap();
+
+        let guest = load_response(&conn, guest_id).unwrap();
+        assert!(guest.is_guest);
+
+        let regular = load_response(&conn, &account_id).unwrap();
+        assert!(!regular.is_guest);
     }
 
     #[test]

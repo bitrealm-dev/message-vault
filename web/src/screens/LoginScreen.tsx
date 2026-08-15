@@ -23,6 +23,7 @@ import { isAuthMode, type AuthMode } from "../lib/authGuards";
 interface AuthModeResponse {
   mode: string;
   hanko_api_url?: string | null;
+  try_demo?: boolean;
 }
 
 export default function LoginScreen() {
@@ -63,6 +64,18 @@ export default function LoginScreen() {
             : "Could not reach server. Leave the URL blank for this origin (Vite proxy / vault UI), or enter an absolute vault URL.",
         );
       }
+    });
+  };
+
+  const handleTryDemo = () => {
+    void run(async () => {
+      const url = serverUrl.trim();
+      setBaseUrl(url);
+      const res = await apiClient.post<{
+        token: string;
+        account_id: string;
+      }>("/v1/auth/try-demo", {});
+      login(url, res.token, res.account_id);
     });
   };
 
@@ -153,6 +166,17 @@ export default function LoginScreen() {
 
         {authMode === null && (
           <>
+            <div className="mb-4">
+              <TryItButton busy={busy} onClick={handleTryDemo} />
+              <p className={`${mutedText} mt-2`}>
+                Open a sample account.
+              </p>
+            </div>
+            <div className={`${orRowClass} mb-4`}>
+              <span className={orLineClass} />
+              <span className={orTextClass}>OR</span>
+              <span className={orLineClass} />
+            </div>
             <label className={authLabel}>Server URL</label>
             <TextField
               value={serverUrl}
@@ -216,6 +240,12 @@ export default function LoginScreen() {
 
         {authMode === "local" && (
           <>
+            <div className="mb-4">
+              <TryItButton busy={busy} onClick={handleTryDemo} />
+              <p className={`${mutedText} mt-2`}>
+                Open a sample account.
+              </p>
+            </div>
             <label className={authLabel}>Username</label>
             <TextField
               value={username}
@@ -253,6 +283,12 @@ export default function LoginScreen() {
 
         {authMode === "hanko" && (
           <>
+            <div className="mb-4">
+              <TryItButton busy={busy} onClick={handleTryDemo} />
+              <p className={`${mutedText} mt-2`}>
+                Open a sample account.
+              </p>
+            </div>
             <div ref={hankoRef}>
               {hankoApiUrl ? (
                 <hanko-auth />
@@ -272,6 +308,20 @@ export default function LoginScreen() {
         )}
       </div>
     </div>
+  );
+}
+
+function TryItButton({
+  busy,
+  onClick,
+}: {
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button variant="primary" onClick={onClick} disabled={busy}>
+      {busy ? "Opening sample…" : "Try it"}
+    </Button>
   );
 }
 
