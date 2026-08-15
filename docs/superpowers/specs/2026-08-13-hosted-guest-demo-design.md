@@ -15,7 +15,7 @@ That fails on a public host for two reasons:
 1. **One session token per account.** Login rotates `account_session_tokens`. The next sign-in invalidates the previous visitor.
 2. **One inbox.** Edits and deletes would collide if many people shared that account.
 
-A full `reset-demo` import per visitor is too slow. The sample set is large (about 200 contacts and years of messages). The clone copies database rows and hard-links already-processed attachment files.
+A full `reset-demo` import per visitor is too slow. The sample set is large (about 200 contacts and years of messages). The clone copies database rows and copies already-processed attachment files.
 
 ## Product decisions
 
