@@ -38,8 +38,10 @@ const MAX_HANKO_JWT_BYTES: usize = 16 * 1024;
 /// Sliding window for unauthenticated auth endpoints.
 const AUTH_RATE_WINDOW: Duration = Duration::from_secs(60);
 const AUTH_RATE_MAX: usize = 20;
-/// Hosted Try it is a single public bucket (no per-user key). Login stays at 20.
-const TRY_DEMO_RATE_MAX: usize = 200;
+/// Per visitor address (`CF-Connecting-IP`, or `unknown` when missing).
+const TRY_DEMO_PER_IP_RATE_MAX: usize = 60;
+/// Whole-process Try it cap. Login stays at 20.
+const TRY_DEMO_RATE_MAX: usize = 2000;
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(300);
 const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -72,6 +74,13 @@ fn check_auth_rate_limit_max(bucket: &str, max: usize) -> Result<(), ApiError> {
         ));
     }
     entry.push_back(now);
+    Ok(())
+}
+
+fn check_try_demo_rate_limits(cf_connecting_ip: Option<&str>) -> Result<(), ApiError> {
+    let per_ip = try_demo_client_key(cf_connecting_ip);
+    check_auth_rate_limit_max(&per_ip, TRY_DEMO_PER_IP_RATE_MAX)?;
+    check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX)?;
     Ok(())
 }
 
@@ -603,8 +612,12 @@ fn try_demo_from_pool(
 /// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
 pub async fn try_demo_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<AuthTokenResponse>, ApiError> {
-    check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX)?;
+    let cf_ip = headers
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok());
+    check_try_demo_rate_limits(cf_ip)?;
 
     if !state.guest.enabled {
         let db = state.cfg.paths.db.clone();
@@ -949,6 +962,7 @@ mod tests {
     fn try_demo_rate_limit_allows_more_than_login() {
         let bucket = "test:try-demo-rate-limit";
         reset_auth_rate_limit_bucket_for_test(bucket);
+        assert!(TRY_DEMO_RATE_MAX > AUTH_RATE_MAX);
         for _ in 0..TRY_DEMO_RATE_MAX {
             check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap();
         }
@@ -958,6 +972,44 @@ mod tests {
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
         reset_auth_rate_limit_bucket_for_test(bucket);
+    }
+
+    #[test]
+    fn try_demo_per_ip_trips_at_60_and_does_not_block_another_ip() {
+        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
+        reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
+        reset_auth_rate_limit_bucket_for_test("try-demo");
+        for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
+            check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
+        }
+        match check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err() {
+            ApiError::TooManyRequests(_) => {}
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+        check_try_demo_rate_limits(Some("198.51.100.1")).unwrap();
+        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
+        reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
+        reset_auth_rate_limit_bucket_for_test("try-demo");
+    }
+
+    #[test]
+    fn try_demo_per_ip_429_does_not_increment_global() {
+        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
+        reset_auth_rate_limit_bucket_for_test("try-demo");
+        for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
+            check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
+        }
+        let _ = check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err();
+        // Global saw only the 60 accepts, not the rejected 61st.
+        for _ in 0..(TRY_DEMO_RATE_MAX - TRY_DEMO_PER_IP_RATE_MAX) {
+            check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap();
+        }
+        match check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap_err() {
+            ApiError::TooManyRequests(_) => {}
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
+        reset_auth_rate_limit_bucket_for_test("try-demo");
     }
 
     #[test]
