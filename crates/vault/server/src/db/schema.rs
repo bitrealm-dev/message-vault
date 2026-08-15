@@ -68,6 +68,9 @@ const CREATE_MESSAGES_FTS_TRIGGERS_SQL: &str =
 pub fn ensure_vault_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_accounts_schema(conn)?;
+    // Older vaults used `contact_labels`. Rename those tables before CREATE
+    // so a restart picks up the current names.
+    migrate_contact_labels_to_groups(conn)?;
     // Contacts DDL defines `handles`, the FK target of conversations, participants,
     // messages, and tapbacks (messages.sql) plus account_handles (accounts.sql).
     // Apply it before the tables that reference handles.
@@ -276,6 +279,35 @@ pub fn reset_staging_for_account(conn: &Connection, account_id: &str) -> Result<
     Ok(())
 }
 
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(exists)
+}
+
+/// Rename leftover `contact_labels` tables from vaults created before groups.
+fn migrate_contact_labels_to_groups(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "contact_labels")? {
+        return Ok(());
+    }
+    if table_exists(conn, "contact_groups")? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = OFF;
+        ALTER TABLE contact_labels RENAME TO contact_groups;
+        ALTER TABLE contact_label_members RENAME TO contact_group_members;
+        ALTER TABLE contact_group_members RENAME COLUMN label_id TO group_id;
+        PRAGMA foreign_keys = ON;
+        "#,
+    )?;
+    Ok(())
+}
+
 /// Create current account and vault metadata tables.
 ///
 /// # Errors
@@ -336,15 +368,6 @@ mod tests {
 
     const A1: &str = "11111111-1111-1111-1111-111111111111";
     const A2: &str = "22222222-2222-2222-2222-222222222222";
-
-    fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
-        let exists: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [name],
-            |row| row.get(0),
-        )?;
-        Ok(exists)
-    }
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -507,6 +530,8 @@ mod tests {
             columns("contacts"),
             ["id", "account_id", "preferred_name", "last_modified"]
         );
+        assert_eq!(columns("contact_groups"), ["id", "account_id", "name"]);
+        assert_eq!(columns("contact_group_members"), ["contact_id", "group_id"]);
         assert_eq!(
             columns("handles"),
             [
@@ -619,6 +644,69 @@ mod tests {
             .unwrap();
         assert_eq!(remaining, 1);
         assert_eq!(messages, 1);
+    }
+
+    #[test]
+    fn restart_renames_contact_labels_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_vault_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, username) VALUES (?1, 'alice')",
+            params![A1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Ada')",
+            params![A1],
+        )
+        .unwrap();
+        let contact_id = conn.last_insert_rowid();
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            DROP TABLE contact_group_members;
+            DROP TABLE contact_groups;
+            CREATE TABLE contact_labels (
+                id INTEGER PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE contact_label_members (
+                contact_id INTEGER NOT NULL,
+                label_id INTEGER NOT NULL,
+                PRIMARY KEY (contact_id, label_id)
+            );
+            PRAGMA foreign_keys = ON;
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contact_labels (account_id, name) VALUES (?1, 'Family')",
+            params![A1],
+        )
+        .unwrap();
+        let group_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
+            params![contact_id, group_id],
+        )
+        .unwrap();
+
+        ensure_vault_schema(&conn).unwrap();
+
+        assert!(!table_exists(&conn, "contact_labels").unwrap());
+        assert!(table_exists(&conn, "contact_groups").unwrap());
+        let name: String = conn
+            .query_row(
+                "SELECT cg.name
+                 FROM contact_groups cg
+                 JOIN contact_group_members cgm ON cgm.group_id = cg.id
+                 WHERE cgm.contact_id = ?1",
+                params![contact_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Family");
     }
 
     #[test]

@@ -6,7 +6,7 @@ description: SQLite tables in Message Vault and how chats, contacts, and message
 The Message Vault SQLite database falls into four groups:
 
 1. **Chats and texts** — threads, participants, messages, files, reactions
-2. **People and groups** — handles, address book, labels, accounts
+2. **People and groups** — handles, address book, contact groups, accounts
 3. **Staging** — temporary copies used while importing
 4. **Trash markers** — soft-delete lists without removing chat data
 
@@ -29,8 +29,8 @@ erDiagram
     handles ||--o{ tapbacks : "sender_handle_id"
     handles ||--o{ contact_handles : "has"
     contacts ||--o{ contact_handles : "has"
-    contacts ||--o{ contact_label_members : "in"
-    contact_labels ||--o{ contact_label_members : "has"
+    contacts ||--o{ contact_group_members : "in"
+    contact_groups ||--o{ contact_group_members : "has"
     participants }o--o| contacts : "contact_id"
 ```
 
@@ -95,15 +95,15 @@ in `normalized_note` so the vault UI can surface them for review.
 
 Address book rows; display name is `preferred_name` only. `last_modified` is a
 SQLite `datetime('now')` string bumped when the contact’s address-book shape
-changes (create, rename, handle add/update/remove, label membership, merge
+changes (create, rename, handle add/update/remove, group membership, merge
 survivor, import sibling platform link) — not when messages arrive.
 `contact_handles` links a contact to its `handles` rows per account (one contact
 per handle per account); the optional `name_alias` is the name the source gave
 for that handle.
 
-### `contact_labels` / `contact_label_members`
+### `contact_groups` / `contact_group_members`
 
-Named labels and membership. Labels are ordinary memberships with no reserved
+Named groups and membership. Groups are ordinary memberships with no reserved
 status names.
 
 ## How chats meet people

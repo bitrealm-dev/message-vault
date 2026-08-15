@@ -110,8 +110,8 @@ fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
     let contact_map = copy_contacts(tx, template, &guest_id)?;
     copy_contact_handles(tx, template, &guest_id, &handle_map, &contact_map)?;
     copy_account_handles(tx, template, &guest_id, &handle_map)?;
-    let label_map = copy_contact_labels(tx, template, &guest_id)?;
-    copy_contact_label_members(tx, template, &contact_map, &label_map)?;
+    let group_map = copy_contact_groups(tx, template, &guest_id)?;
+    copy_contact_group_members(tx, template, &contact_map, &group_map)?;
     copy_trashed_handles(tx, template, &guest_id, &handle_map)?;
     copy_trashed_contacts(tx, template, &guest_id, &contact_map)?;
 
@@ -290,21 +290,21 @@ fn copy_account_handles(
     Ok(())
 }
 
-fn copy_contact_labels(
+fn copy_contact_groups(
     tx: &Transaction<'_>,
     template: &str,
     guest: &str,
 ) -> Result<HashMap<i64, i64>> {
     let rows = collect_rows(
         tx,
-        "SELECT id, name FROM contact_labels WHERE account_id = ?1",
+        "SELECT id, name FROM contact_groups WHERE account_id = ?1",
         template,
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
     let mut map = HashMap::with_capacity(rows.len());
     for (old_id, name) in rows {
         tx.execute(
-            "INSERT INTO contact_labels (account_id, name) VALUES (?1, ?2)",
+            "INSERT INTO contact_groups (account_id, name) VALUES (?1, ?2)",
             params![guest, name],
         )?;
         map.insert(old_id, tx.last_insert_rowid());
@@ -312,33 +312,33 @@ fn copy_contact_labels(
     Ok(map)
 }
 
-fn copy_contact_label_members(
+fn copy_contact_group_members(
     tx: &Transaction<'_>,
     template: &str,
     contacts: &HashMap<i64, i64>,
-    labels: &HashMap<i64, i64>,
+    groups: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = collect_rows(
         tx,
         r#"
-        SELECT clm.contact_id, clm.label_id
-        FROM contact_label_members clm
-        JOIN contacts c ON c.id = clm.contact_id
+        SELECT cgm.contact_id, cgm.group_id
+        FROM contact_group_members cgm
+        JOIN contacts c ON c.id = cgm.contact_id
         WHERE c.account_id = ?1
         "#,
         template,
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     )?;
-    for (contact_id, label_id) in rows {
+    for (contact_id, group_id) in rows {
         let Some(new_contact) = mapped(contacts, contact_id) else {
             continue;
         };
-        let Some(new_label) = mapped(labels, label_id) else {
+        let Some(new_group) = mapped(groups, group_id) else {
             continue;
         };
         tx.execute(
-            "INSERT INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
-            params![new_contact, new_label],
+            "INSERT INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
+            params![new_contact, new_group],
         )?;
     }
     Ok(())

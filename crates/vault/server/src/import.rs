@@ -158,7 +158,7 @@ pub struct ImportStats {
     pub assets_missing: u64,
     pub contacts: u64,
     pub contact_handles: u64,
-    pub contact_label_links: u64,
+    pub contact_group_links: u64,
     pub contacts_skipped: bool,
     pub messages_deduped: u64,
     pub messages_appended: u64,
@@ -330,8 +330,8 @@ pub fn import_jsonl_files_on_conn(
         println!("  sql:      contacts skipped (already loaded or no address book)");
     } else {
         println!(
-            "  sql:      contacts={} phones={} labels={}",
-            contact_stats.contacts, contact_stats.phones, contact_stats.labels
+            "  sql:      contacts={} phones={} groups={}",
+            contact_stats.contacts, contact_stats.phones, contact_stats.groups
         );
     }
     if schema_mode == ImportSchemaMode::Ensure {
@@ -373,7 +373,7 @@ pub fn import_jsonl_files_on_conn(
     let mut stats = ImportStats {
         contacts: contact_stats.contacts,
         contact_handles: contact_stats.phones,
-        contact_label_links: contact_stats.labels,
+        contact_group_links: contact_stats.groups,
         contacts_skipped: contact_stats.skipped,
         phones_needing_review: contact_stats.phones_needing_review,
         mode: opts.mode.as_str().to_string(),

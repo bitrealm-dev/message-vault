@@ -18,7 +18,7 @@ import {
 } from "../lib/uiStyles";
 import ExtractScreen from "./Extract";
 import FormatScreen from "./Format";
-import { isAuthMode, type AuthMode } from "../lib/authGuards";
+import { initialLoginServerUrl, isAuthMode, type AuthMode } from "../lib/authGuards";
 
 interface AuthModeResponse {
   mode: string;
@@ -29,10 +29,9 @@ interface AuthModeResponse {
 export default function LoginScreen() {
   const navigate = useNavigate();
   const { login, setServer: setAuthServer, serverUrl: savedUrl } = useAuth();
-  const [serverUrl, setServerUrl] = useState(() => {
-    if (typeof savedUrl === "string" && savedUrl.length > 0) return savedUrl;
-    return isTauri() ? "http://localhost:8080" : "";
-  });
+  const [serverUrl, setServerUrl] = useState(() =>
+    initialLoginServerUrl(savedUrl, isTauri()),
+  );
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [hankoApiUrl, setHankoApiUrl] = useState<string | null>(null);
   const { busy, error, run, clearError } = useAsyncAction();

@@ -20,6 +20,7 @@ export type CachedContactDetail = {
   group_conversations: number;
   total_messages: number;
   last_modified?: string;
+  groups?: string[];
 };
 
 const cache = new Map<string, CachedContactDetail>();

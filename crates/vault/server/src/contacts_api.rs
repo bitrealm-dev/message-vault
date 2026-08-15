@@ -35,6 +35,9 @@ pub struct ContactSummary {
     pub handles: Vec<String>,
     /// When the contact’s address-book shape last changed (`datetime('now')`).
     pub last_modified: String,
+    /// Group names on this contact (A–Z).
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +102,9 @@ pub struct ContactDetail {
     pub total_messages: u64,
     /// When the contact’s address-book shape last changed (`datetime('now')`).
     pub last_modified: String,
+    /// Group names on this contact (A–Z).
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 /// A contact is linked to a conversation when one of its handles is either
@@ -229,6 +235,10 @@ struct ContactListFilters {
     /// Lowercased service ids (`imessage`, `sms`, `mms`, `whatsapp`); OR match.
     /// UI may send `service:phone` (Text message), which expands to imessage/sms/mms.
     services: Vec<String>,
+    /// Contacts that belong to this group (case-insensitive).
+    group: Option<String>,
+    /// Contacts with no group memberships (`group:none` / `has:no-group`).
+    no_group: bool,
 }
 
 fn normalize_ymd(raw: &str) -> Option<String> {
@@ -279,13 +289,86 @@ fn expand_service_token(value: &str) -> Vec<String> {
     }
 }
 
+/// Pull `prefix:"quoted value"` or `prefix:bare` from `q`. Returns (value, remainder).
+fn take_prefixed_quoted_or_bare(q: &str, prefix: &str) -> (Option<String>, String) {
+    let q = q.trim();
+    if q.is_empty() {
+        return (None, String::new());
+    }
+    let lower = q.to_ascii_lowercase();
+    let quoted = format!("{prefix}\"");
+    if let Some(start) = lower.find(&quoted) {
+        let after = start + quoted.len();
+        if let Some(rel_end) = q[after..].find('"') {
+            let end = after + rel_end;
+            let value = q[after..end].to_string();
+            let mut rest = String::new();
+            rest.push_str(&q[..start]);
+            rest.push_str(&q[end + 1..]);
+            return (
+                Some(value).filter(|s| !s.is_empty()),
+                rest.split_whitespace().collect::<Vec<_>>().join(" "),
+            );
+        }
+    }
+    if let Some(start) = lower.find(prefix) {
+        let after = start + prefix.len();
+        if q.get(after..after + 1) != Some("\"") {
+            let end = q[after..]
+                .find(char::is_whitespace)
+                .map(|i| after + i)
+                .unwrap_or(q.len());
+            if end > after {
+                let value = q[after..end].trim_matches('"').to_string();
+                let mut rest = String::new();
+                rest.push_str(&q[..start]);
+                rest.push_str(&q[end..]);
+                return (
+                    Some(value).filter(|s| !s.is_empty()),
+                    rest.split_whitespace().collect::<Vec<_>>().join(" "),
+                );
+            }
+        }
+    }
+    (None, q.to_string())
+}
+
+fn apply_group_token(out: &mut ContactListFilters, raw: &str) {
+    let value = raw.trim();
+    if value.is_empty() {
+        return;
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower == "none" || lower == "no-group" || lower == "no-label" {
+        out.no_group = true;
+        out.group = None;
+        return;
+    }
+    out.no_group = false;
+    out.group = Some(value.to_string());
+}
+
 /// Parse `q` into structured list filters (handle, free text, advanced tokens).
 fn parse_contact_list_filters(q: &str) -> ContactListFilters {
     let (handle, rest) = parse_contact_list_query(q);
+    let (group_raw, rest) = take_prefixed_quoted_or_bare(&rest, "group:");
+    let (label_raw, rest) = if group_raw.is_none() {
+        take_prefixed_quoted_or_bare(&rest, "label:")
+    } else {
+        (None, rest)
+    };
+    let (within, rest) = if group_raw.is_none() && label_raw.is_none() {
+        take_prefixed_quoted_or_bare(&rest, "within:")
+    } else {
+        (None, rest)
+    };
     let mut out = ContactListFilters {
         handle,
         ..Default::default()
     };
+    if let Some(ref raw) = group_raw.or(label_raw).or(within) {
+        apply_group_token(&mut out, raw);
+    }
     let mut text_parts = Vec::new();
     for tok in rest.split_whitespace() {
         let lower = tok.to_ascii_lowercase();
@@ -320,6 +403,11 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
             out.no_handle = true;
             continue;
         }
+        if lower == "has:no-label" || lower == "has:no-group" {
+            out.no_group = true;
+            out.group = None;
+            continue;
+        }
         if let Some(rest) = lower.strip_prefix("service:") {
             for s in expand_service_token(rest) {
                 if !out.services.iter().any(|x| x == &s) {
@@ -347,7 +435,8 @@ fn parse_contact_list_filters(q: &str) -> ContactListFilters {
 /// `handle:<raw>` restricts to contacts that have that handle substring.
 /// Advanced tokens: `first-contact:` / `last-contact:` (optional `>=` / `<` prefix;
 /// bare first = on or after, bare last = on or before; repeated tokens AND),
-/// `has:messages`, `has:no-messages`, `has:no-name`, `has:no-handle`, `service:` (OR across services).
+/// `has:messages`, `has:no-messages`, `has:no-name`, `has:no-handle`, `has:no-group`,
+/// `group:` / `label:` / `within:` (one group, or `group:none`), `service:` (OR across services).
 ///
 /// # Errors
 ///
@@ -446,6 +535,30 @@ pub fn list_contacts(
         );
     }
 
+    if let Some(ref label) = filters.group {
+        where_parts.push(
+            "EXISTS (
+               SELECT 1 FROM contact_group_members clm
+               JOIN contact_groups cl ON cl.id = clm.group_id
+               WHERE clm.contact_id = ct.id
+                 AND cl.account_id = ct.account_id
+                 AND cl.name = ? COLLATE NOCASE
+             )"
+            .into(),
+        );
+        params.push(label.clone().into());
+    } else if filters.no_group {
+        where_parts.push(
+            "NOT EXISTS (
+               SELECT 1 FROM contact_group_members clm
+               JOIN contact_groups cl ON cl.id = clm.group_id
+               WHERE clm.contact_id = ct.id
+                 AND cl.account_id = ct.account_id
+             )"
+            .into(),
+        );
+    }
+
     if !filters.services.is_empty() {
         let placeholders = in_placeholders(filters.services.len());
         where_parts.push(format!(
@@ -504,7 +617,11 @@ pub fn list_contacts(
                    WHERE ch.account_id = ct.account_id AND ch.contact_id = ct.id
                      AND h.raw IS NOT NULL AND trim(h.raw) != ''
                  )) AS handles,
-                ct.last_modified
+                ct.last_modified,
+                (SELECT GROUP_CONCAT(cl.name, char(31))
+                 FROM contact_group_members clm
+                 JOIN contact_groups cl ON cl.id = clm.group_id
+                 WHERE clm.contact_id = ct.id AND cl.account_id = ct.account_id) AS groups
          FROM contacts ct
          WHERE {where_sql}
          ORDER BY name COLLATE NOCASE, ct.id
@@ -528,12 +645,24 @@ pub fn list_contacts(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let groups_blob: Option<String> = row.get(5)?;
+            let mut groups = groups_blob
+                .map(|s| {
+                    s.split('\u{1f}')
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            groups.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
             Ok(ContactSummary {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 handle_count: row.get::<_, i64>(2)?.max(0) as u64,
                 handles,
                 last_modified: row.get(4)?,
+                groups,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -691,6 +820,9 @@ pub fn get_contact_detail(
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
 
+    let contact_groups =
+        crate::contact_groups_api::groups_for_contact(conn, account_id, contact_id)?;
+
     Ok(Some(ContactDetail {
         id: contact_id,
         name,
@@ -699,6 +831,7 @@ pub fn get_contact_detail(
         group_conversations: groups.max(0) as u64,
         total_messages: total.max(0) as u64,
         last_modified,
+        groups: contact_groups,
     }))
 }
 
@@ -1772,5 +1905,35 @@ mod tests {
             })
         );
         assert!(parse_date_bound_value("<=2024-01-15", DateBoundOp::OnOrAfter).is_none());
+    }
+
+    #[test]
+    fn list_contacts_filters_by_group_and_no_group() {
+        let (conn, account) = setup();
+        let family = insert_contact_with_handle(&conn, &account, "Ada", "+15555550100");
+        insert_contact_with_handle(&conn, &account, "Ben", "+15555550200");
+        crate::contact_groups_api::set_contacts_group_membership(
+            &conn,
+            &account,
+            &[family],
+            "Family",
+            true,
+        )
+        .unwrap();
+
+        let grouped =
+            list_contacts(&conn, &account, "group:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(grouped.total, 1);
+        assert_eq!(grouped.contacts[0].name, "Ada");
+        assert_eq!(grouped.contacts[0].groups, vec!["Family".to_string()]);
+
+        let quoted =
+            list_contacts(&conn, &account, r#"group:"Family""#, DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(quoted.total, 1);
+
+        let none = list_contacts(&conn, &account, "group:none", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(none.total, 1);
+        assert_eq!(none.contacts[0].name, "Ben");
+        assert!(none.contacts[0].groups.is_empty());
     }
 }

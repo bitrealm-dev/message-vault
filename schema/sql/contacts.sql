@@ -50,24 +50,24 @@ CREATE TABLE IF NOT EXISTS contact_handles (
 CREATE INDEX IF NOT EXISTS ix_contact_handles_contact_id
     ON contact_handles (contact_id);
 
--- Named label a user can attach to contacts.
-CREATE TABLE IF NOT EXISTS contact_labels (
-    -- Surrogate primary key for this label.
+-- Named group a user can attach to contacts.
+CREATE TABLE IF NOT EXISTS contact_groups (
+    -- Surrogate primary key for this group.
     id INTEGER PRIMARY KEY,
     -- Owning vault account (`accounts.id`).
     account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    -- Label text unique per account.
+    -- Group text unique per account.
     name TEXT NOT NULL,
     UNIQUE(account_id, name)
 );
 
--- Membership of a contact in a label.
-CREATE TABLE IF NOT EXISTS contact_label_members (
-    -- Contact in the label (`contacts.id`).
+-- Membership of a contact in a group.
+CREATE TABLE IF NOT EXISTS contact_group_members (
+    -- Contact in the group (`contacts.id`).
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    -- Label that includes the contact (`contact_labels.id`).
-    label_id INTEGER NOT NULL REFERENCES contact_labels(id) ON DELETE CASCADE,
-    PRIMARY KEY (contact_id, label_id)
+    -- Group that includes the contact (`contact_groups.id`).
+    group_id INTEGER NOT NULL REFERENCES contact_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (contact_id, group_id)
 );
 
 -- Soft-delete marker for a handle; underlying handle row stays.

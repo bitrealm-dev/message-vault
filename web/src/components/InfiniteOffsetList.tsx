@@ -1,4 +1,11 @@
-import { useCallback, useRef, useState, type ReactNode, type UIEvent } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
 import {
   ListBox,
   ListBoxItem,
@@ -6,6 +13,7 @@ import {
   Virtualizer,
   type Selection,
 } from "react-aria-components";
+import { groupByLetter } from "../lib/contactSort";
 import { formatVisibleRange } from "../lib/usePagedList";
 import { isTauri } from "../lib/tauri-check";
 import { listRowDividersThin } from "../lib/tw";
@@ -37,6 +45,10 @@ type InfiniteOffsetListProps<T> = {
   /** Override the “N of total” denominator (e.g. filtered client count). */
   rangeTotal?: number;
   errorPrefix?: string;
+  /** Control on the right of the “N–M of total” row. */
+  headerActions?: ReactNode;
+  /** Letter for in-list section headers. Omit while searching. */
+  getSectionLetter?: (item: T) => string;
 };
 
 function rowClass(selected: boolean, hovered = false): string {
@@ -232,6 +244,119 @@ function TanStackVirtualList<T>({
   );
 }
 
+const LETTER_DIVIDER =
+  "flex items-center border-b border-border bg-panel px-3 py-1";
+
+function SectionedLetterList<T>({
+  items,
+  selectedId,
+  onSelect,
+  getId,
+  renderRow,
+  requestMore,
+  hasMore,
+  getSectionLetter,
+  currentLetter,
+  onVisibleRangeChange,
+  empty,
+}: {
+  items: T[];
+  selectedId: string | null;
+  onSelect: (item: T) => void;
+  getId: (item: T) => string;
+  renderRow: (item: T) => ReactNode;
+  requestMore: () => void;
+  hasMore: boolean;
+  getSectionLetter: (item: T) => string;
+  currentLetter: string | null;
+  onVisibleRangeChange: (range: VisibleRange) => void;
+  empty?: ReactNode;
+}) {
+  const groups = groupByLetter(items, getSectionLetter);
+  const indexById = new Map(items.map((item, i) => [getId(item), i]));
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const onRangeRef = useRef(onVisibleRangeChange);
+  onRangeRef.current = onVisibleRangeChange;
+  const requestMoreRef = useRef(requestMore);
+  requestMoreRef.current = requestMore;
+  const hasMoreRef = useRef(hasMore);
+  hasMoreRef.current = hasMore;
+
+  const publishVisibleRange = (root: HTMLElement) => {
+    const rootRect = root.getBoundingClientRect();
+    const rows = root.querySelectorAll("[data-contact-index]");
+    let start = 0;
+    let end = 0;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
+      const raw = row.getAttribute("data-contact-index");
+      const idx = raw == null ? Number.NaN : Number(raw);
+      if (!Number.isFinite(idx)) continue;
+      const oneBased = idx + 1;
+      if (start === 0) start = oneBased;
+      end = oneBased;
+    }
+    onRangeRef.current({ start, end });
+    if (
+      hasMoreRef.current &&
+      items.length > 0 &&
+      end >= items.length - NEAR_END_THRESHOLD
+    ) {
+      requestMoreRef.current();
+    }
+  };
+
+  useLayoutEffect(() => {
+    const root = scrollerRef.current;
+    if (root) publishVisibleRange(root);
+  }, [items]);
+
+  const onScroll = (e: UIEvent<HTMLDivElement>) => {
+    publishVisibleRange(e.currentTarget);
+  };
+
+  if (items.length === 0 && empty) {
+    return <div className="min-h-0 flex-1 overflow-auto">{empty}</div>;
+  }
+
+  return (
+    <div
+      ref={scrollerRef}
+      className="min-h-0 flex-1 overflow-auto"
+      onScroll={onScroll}
+    >
+      {groups.map(([letter, groupItems], groupIndex) => (
+        <section key={`${letter}-${groupIndex}`} aria-label={`Names starting with ${letter}`}>
+          {letter !== currentLetter ? (
+            <div className={LETTER_DIVIDER}>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
+                {letter}
+              </span>
+            </div>
+          ) : null}
+          {groupItems.map((item) => {
+            const id = getId(item);
+            const selected = id === selectedId;
+            const index = indexById.get(id) ?? 0;
+            return (
+              <button
+                key={id}
+                type="button"
+                data-contact-index={index}
+                onClick={() => onSelect(item)}
+                className={rowClass(selected)}
+              >
+                {renderRow(item)}
+              </button>
+            );
+          })}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export default function InfiniteOffsetList<T extends object>({
   items,
   total,
@@ -252,6 +377,8 @@ export default function InfiniteOffsetList<T extends object>({
   ariaLabel,
   rangeTotal,
   errorPrefix = "Could not load list",
+  headerActions,
+  getSectionLetter,
 }: InfiniteOffsetListProps<T>) {
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({
     start: 0,
@@ -268,6 +395,14 @@ export default function InfiniteOffsetList<T extends object>({
           denom,
           items.length,
         );
+
+  const firstVisibleIndex =
+    visibleRange.start > 0 ? visibleRange.start - 1 : 0;
+  const firstVisible = items[firstVisibleIndex];
+  const headerLetter =
+    getSectionLetter && firstVisible
+      ? getSectionLetter(firstVisible)
+      : null;
 
   if (error && items.length === 0) {
     return (
@@ -298,8 +433,24 @@ export default function InfiniteOffsetList<T extends object>({
         rangeLabel={rangeLabel}
         refreshing={refreshing}
         filling={filling}
+        actions={headerActions}
+        letter={headerLetter}
       />
-      {isTauri() ? (
+      {getSectionLetter ? (
+        <SectionedLetterList
+          items={items}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          getId={getId}
+          renderRow={renderRow}
+          requestMore={requestMore}
+          hasMore={hasMore}
+          getSectionLetter={getSectionLetter}
+          currentLetter={headerLetter}
+          onVisibleRangeChange={setVisibleRange}
+          empty={empty}
+        />
+      ) : isTauri() ? (
         <RacVirtualList {...listProps} ariaLabel={ariaLabel} />
       ) : (
         <TanStackVirtualList {...listProps} />

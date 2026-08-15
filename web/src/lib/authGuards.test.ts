@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isAuthMode, isTryDemoEnabled, parsePersistedAuth } from "./authGuards.ts";
+import {
+  DEFAULT_TAURI_VAULT_URL,
+  initialLoginServerUrl,
+  isAuthMode,
+  isTryDemoEnabled,
+  parsePersistedAuth,
+} from "./authGuards.ts";
 
 describe("isAuthMode", () => {
   it("accepts hanko and local", () => {
@@ -11,6 +17,30 @@ describe("isAuthMode", () => {
     expect(isAuthMode(null)).toBe(false);
     expect(isAuthMode("oauth")).toBe(false);
     expect(isAuthMode(1)).toBe(false);
+  });
+});
+
+describe("initialLoginServerUrl", () => {
+  it("defaults the desktop app to IPv4 loopback", () => {
+    expect(initialLoginServerUrl(undefined, true)).toBe(DEFAULT_TAURI_VAULT_URL);
+    expect(initialLoginServerUrl("", true)).toBe(DEFAULT_TAURI_VAULT_URL);
+  });
+
+  it("leaves the browser field blank so the page origin is used", () => {
+    expect(initialLoginServerUrl(undefined, false)).toBe("");
+    expect(initialLoginServerUrl("", false)).toBe("");
+  });
+
+  it("rewrites the old localhost default and keeps any other saved URL", () => {
+    expect(initialLoginServerUrl("http://localhost:8080", true)).toBe(
+      DEFAULT_TAURI_VAULT_URL,
+    );
+    expect(initialLoginServerUrl("http://localhost:8080/", false)).toBe(
+      DEFAULT_TAURI_VAULT_URL,
+    );
+    expect(initialLoginServerUrl("https://vault.example.com", true)).toBe(
+      "https://vault.example.com",
+    );
   });
 });
 

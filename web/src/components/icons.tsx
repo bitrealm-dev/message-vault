@@ -52,3 +52,46 @@ export function TrashIcon({ size, className, ...rest }: IconProps) {
     </IconShell>
   );
 }
+
+/** Plus — horizontal and vertical stroke. */
+export function PlusIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </IconShell>
+  );
+}
+
+/** Three dots for a row menu. */
+export function EllipsisIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </IconShell>
+  );
+}
+
+/** Two people — a contact group. */
+export function PeopleGroupIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3 19c0-2.8 2.7-5 6-5s6 2.2 6 5" />
+      <circle cx="17" cy="9" r="2.4" />
+      <path d="M16 14.2c2.4.4 4 2.2 4 4.8" />
+    </IconShell>
+  );
+}
+
+/** One person — contacts with no group. */
+export function PersonIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <circle cx="12" cy="8" r="3" />
+      <path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6" />
+    </IconShell>
+  );
+}

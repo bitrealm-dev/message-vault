@@ -3,6 +3,7 @@ mod asset_uploads;
 mod assets;
 mod auth;
 mod config;
+mod contact_groups_api;
 mod contacts_api;
 mod conversations_api;
 mod db;
@@ -240,7 +241,7 @@ fn main() -> Result<()> {
             } else {
                 println!("  contacts:      {}", stats.import.contacts);
                 println!("  contact handles:{}", stats.import.contact_handles);
-                println!("  contact labels:{}", stats.import.contact_label_links);
+                println!("  contact groups:{}", stats.import.contact_group_links);
             }
             println!("  files:         {}", stats.import.files);
             println!("  conversations: {}", stats.import.conversations);
@@ -354,7 +355,7 @@ fn main() -> Result<()> {
             println!("  contacts:     {}", contacts.display());
             println!("  rows:         {}", stats.contacts);
             println!("  phones:       {}", stats.phones);
-            println!("  label links:  {}", stats.labels);
+            println!("  group links:  {}", stats.groups);
         }
 
         Commands::ResetDemo { bundle, config } => {

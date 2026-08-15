@@ -18,6 +18,7 @@ bind = "0.0.0.0:8080"
 # verification at upload completion. 20 MiB default.
 asset_hash_threshold_bytes = 20971520
 
-# CORS: leave empty for same-origin (static UI on this server). List exact
-# origins if a separate web origin must call the API. Use ["*"] only locally.
-# cors_origins = ["https://app.example.com"]
+# `cargo tauri dev` and `cd web && npm run dev` serve the UI on port 5173 and
+# call this API on 8080. Those are different origins. Without this list the
+# desktop app reports "Could not reach server" even though curl to :8080 works.
+cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]

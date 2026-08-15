@@ -1,8 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
+import ContactSortMenu from "../components/ContactSortMenu";
+import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { highlightText } from "../lib/highlightText";
+import {
+  compareContactsByName,
+  contactSortLetter,
+  loadContactNameSort,
+  saveContactNameSort,
+  type ContactNameSortState,
+} from "../lib/contactSort";
+import {
+  GROUP_FILTER_TOKEN_RE,
+  createContactGroup,
+  groupListQuery,
+  hasGroupFilterToken,
+  setContactGroupMembership,
+} from "../lib/contactGroups";
+import { useContactGroups } from "../lib/useContactGroups";
+import { invalidateContactDetail } from "../lib/contactDetailCache";
 import {
   PAGE_SIZE_CONTACTS_FIRST,
   PAGE_SIZE_FIRST,
@@ -19,6 +37,7 @@ interface Contact {
   name: string;
   handle_count: number;
   handles?: string[];
+  groups?: string[];
 }
 
 type ContactsPage = {
@@ -32,7 +51,7 @@ type FilterNeedles = { text: string; handle: string | null };
 
 /** Search words that the client cannot apply locally; those go to the server. */
 const ADVANCED_TOKEN_RE =
-  /\b(search:contacts|has:(?:messages|no-messages|no-name)|(?:first-contact|last-contact|message-count|group-count|service):\S+)\b/gi;
+  /\b(search:contacts|has:(?:messages|no-messages|no-name|no-label|no-group)|(?:first-contact|last-contact|message-count|group-count|service):\S+)\b/gi;
 
 /** True when the filter uses search words the client cannot apply on its own. */
 function hasAdvancedContactTokens(raw: string): boolean {
@@ -58,6 +77,7 @@ function filterNeedles(raw: string): FilterNeedles {
 
   q = q
     .replace(ADVANCED_TOKEN_RE, " ")
+    .replace(GROUP_FILTER_TOKEN_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -104,20 +124,37 @@ function normalizeContacts(
     ...c,
     id: String(c.id),
     handles: c.handles ?? [],
+    groups: c.groups ?? [],
   }));
 }
 
 export default function ContactList({
   filter = "",
+  groupFilter = null,
   selectedId = null,
   onSelect,
 }: {
   filter?: string;
+  /** Named group, or `"none"` for contacts with no group. */
+  groupFilter?: string | "none" | null;
   selectedId?: string | null;
   onSelect: (contact: Contact) => void;
 }) {
   const [serverQ, setServerQ] = useState("");
+  const [membershipRev, setMembershipRev] = useState(0);
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>(
+    {},
+  );
+  const [nameSort, setNameSort] = useState<ContactNameSortState>(() =>
+    loadContactNameSort(),
+  );
   const catalogCompleteRef = useRef(false);
+  const { groups: allGroups } = useContactGroups();
+
+  const onNameSortChange = (next: ContactNameSortState) => {
+    setNameSort(next);
+    saveContactNameSort(next);
+  };
 
   const fetchPage = useCallback<PagedFetchPage<Contact>>(
     async ({ limit, offset, signal }) => {
@@ -147,7 +184,7 @@ export default function ContactList({
     error,
     hasMore,
     loadMore: requestMore,
-  } = usePagedList(serverQ, fetchPage, {
+  } = usePagedList(`${serverQ}#${membershipRev}`, fetchPage, {
     firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
   });
 
@@ -155,25 +192,29 @@ export default function ContactList({
     !loading && !refreshing && contacts.length >= total && (total > 0 || contacts.length === 0);
   catalogCompleteRef.current = catalogComplete && !serverQ.trim();
 
-  const advancedActive = hasAdvancedContactTokens(filter);
+  const groupActive = Boolean(groupFilter);
+  const advancedActive =
+    hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
 
   useEffect(() => {
+    setGroupOverrides({});
+    const combined = groupListQuery(groupFilter, filter);
     // Empty filter: load the full catalog.
-    if (!filter.trim()) {
+    if (!combined.trim()) {
       setServerQ("");
       return;
     }
-    // Filters the client cannot apply always go to the server.
-    if (advancedActive) {
-      const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
+    // Group pages and advanced tokens always go to the server.
+    if (groupActive || advancedActive) {
+      const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
       return () => window.clearTimeout(t);
     }
     // The full catalog is already in memory, so filter it locally.
     if (catalogCompleteRef.current) return;
 
-    const t = window.setTimeout(() => setServerQ(filter), FILTER_DEBOUNCE_MS);
+    const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [filter, catalogComplete, advancedActive]);
+  }, [filter, catalogComplete, advancedActive, groupFilter, groupActive]);
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
@@ -183,10 +224,59 @@ export default function ContactList({
 
   // Filter by name and handle in the browser. Server results are used when the
   // filter has search words the client cannot apply.
-  const displayContacts =
+  const filteredContacts =
     filterActive && !advancedActive
       ? contacts.filter((c) => contactMatchesFilter(c, filter))
       : contacts;
+
+  const displayContacts = useMemo(
+    () =>
+      [...filteredContacts]
+        .map((c) =>
+          groupOverrides[c.id] ? { ...c, groups: groupOverrides[c.id] } : c,
+        )
+        .sort((a, b) =>
+          compareContactsByName(a.name, b.name, nameSort.sort, nameSort.order),
+        ),
+    [filteredContacts, nameSort, groupOverrides],
+  );
+
+  const selectedContact =
+    displayContacts.find((c) => c.id === selectedId) ?? null;
+  const selectedNumericId = selectedContact ? Number(selectedContact.id) : NaN;
+  const selectedGroups = useMemo(
+    () => selectedContact?.groups ?? [],
+    [selectedContact],
+  );
+  const groupChecks = useMemo(() => {
+    const checks: Record<string, "on" | "off"> = {};
+    for (const name of allGroups) {
+      checks[name] = selectedGroups.some(
+        (g) => g.toLowerCase() === name.toLowerCase(),
+      )
+        ? "on"
+        : "off";
+    }
+    return checks;
+  }, [allGroups, selectedGroups]);
+
+  const applyMembership = async (name: string, enable: boolean) => {
+    if (!Number.isFinite(selectedNumericId) || selectedNumericId <= 0) return;
+    await setContactGroupMembership([selectedNumericId], name, enable);
+    invalidateContactDetail(String(selectedNumericId));
+    setGroupOverrides((prev) => {
+      const current = prev[String(selectedNumericId)] ?? selectedGroups;
+      const next = enable
+        ? current.some((g) => g.toLowerCase() === name.toLowerCase())
+          ? current
+          : [...current, name]
+        : current.filter((g) => g.toLowerCase() !== name.toLowerCase());
+      return { ...prev, [String(selectedNumericId)]: next };
+    });
+    if (groupActive) {
+      setMembershipRev((n) => n + 1);
+    }
+  };
 
   const rangeTotal =
     filterActive &&
@@ -214,10 +304,57 @@ export default function ContactList({
       getTextValue={(c) => c.name}
       ariaLabel="Contacts"
       errorPrefix="Could not load contacts"
+      headerActions={
+        <div className="flex items-center gap-1">
+          <GroupsMenu
+            allGroups={allGroups}
+            checks={groupChecks}
+            disabled={!selectedContact}
+            onToggle={(name) => {
+              const on = groupChecks[name] === "on";
+              void applyMembership(name, !on);
+            }}
+            onCreate={(name) => {
+              void (async () => {
+                const existing = allGroups.find(
+                  (g) => g.toLowerCase() === name.toLowerCase(),
+                );
+                if (!existing) {
+                  await createContactGroup(name);
+                }
+                await applyMembership(existing ?? name, true);
+              })();
+            }}
+            onClearAll={() => {
+              void (async () => {
+                for (const name of selectedGroups) {
+                  await applyMembership(name, false);
+                }
+              })();
+            }}
+          />
+          <ContactSortMenu
+            sort={nameSort.sort}
+            order={nameSort.order}
+            onChange={onNameSortChange}
+          />
+        </div>
+      }
+      getSectionLetter={
+        filterActive
+          ? undefined
+          : (c) => contactSortLetter(c.name, nameSort.sort)
+      }
       empty={
         !loading ? (
           <div className="p-4 text-[0.813rem] text-muted">
-            {filterActive ? "No contacts match this filter" : "No contacts"}
+            {filterActive
+              ? "No contacts match this filter"
+              : groupFilter === "none"
+                ? "Every contact has a group"
+                : groupFilter
+                  ? "No contacts in this group"
+                  : "No contacts"}
           </div>
         ) : null
       }

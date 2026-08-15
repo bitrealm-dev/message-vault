@@ -37,7 +37,7 @@ pub fn contact_id_for_handle(
 pub struct ContactLoadStats {
     pub contacts: u64,
     pub phones: u64,
-    pub labels: u64,
+    pub groups: u64,
     pub emails_restored: u64,
     pub skipped: bool,
     /// Phone handles written with a review note (ambiguous normalized form).
@@ -49,7 +49,7 @@ struct ContactDraft {
     /// (normalized handle, review note when the value is ambiguous).
     phones: Vec<(String, Option<String>)>,
     preferred_name: Option<String>,
-    labels: Vec<String>,
+    groups: Vec<String>,
 }
 
 fn contacts_file_format(path: &Path) -> Result<ContactsFormat> {
@@ -272,7 +272,7 @@ pub fn load_contacts_if_needed(
 
 fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
     conn.execute(
-        "DELETE FROM contact_label_members WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = ?1)",
+        "DELETE FROM contact_group_members WHERE contact_id IN (SELECT id FROM contacts WHERE account_id = ?1)",
         params![account_id],
     )?;
     conn.execute(
@@ -280,7 +280,7 @@ fn delete_account_contacts(conn: &Connection, account_id: &str) -> Result<()> {
         params![account_id],
     )?;
     conn.execute(
-        "DELETE FROM contact_labels WHERE account_id = ?1",
+        "DELETE FROM contact_groups WHERE account_id = ?1",
         params![account_id],
     )?;
     conn.execute(
@@ -328,7 +328,7 @@ fn load_from_vcard_csv(
         drafts.push(ContactDraft {
             phones,
             preferred_name,
-            labels: Vec::new(),
+            groups: Vec::new(),
         });
     }
 
@@ -389,28 +389,28 @@ fn load_from_vcf(
             }
         };
 
-        let mut labels = Vec::new();
+        let mut groups = Vec::new();
         for tag in fn_tags {
             let t = tag.trim();
             if t.is_empty() || t.eq_ignore_ascii_case("People") {
                 continue;
             }
-            labels.push(t.to_string());
+            groups.push(t.to_string());
         }
         for category in &card.categories {
             let t = category.trim();
             if t.is_empty() || t.eq_ignore_ascii_case("People") {
                 continue;
             }
-            if !labels.iter().any(|l| l.eq_ignore_ascii_case(t)) {
-                labels.push(t.to_string());
+            if !groups.iter().any(|g| g.eq_ignore_ascii_case(t)) {
+                groups.push(t.to_string());
             }
         }
 
         drafts.push(ContactDraft {
             phones,
             preferred_name,
-            labels,
+            groups,
         });
     }
 
@@ -466,14 +466,13 @@ fn insert_contact_drafts(
             }
         }
 
-        // Labels unchanged
-        for label_name in &draft.labels {
-            let label_id = ensure_label(&tx, account_id, label_name)?;
+        for group_name in &draft.groups {
+            let group_id = ensure_group(&tx, account_id, group_name)?;
             tx.execute(
-                "INSERT OR IGNORE INTO contact_label_members (contact_id, label_id) VALUES (?1, ?2)",
-                params![contact_id, label_id],
+                "INSERT OR IGNORE INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
+                params![contact_id, group_id],
             )?;
-            stats.labels += 1;
+            stats.groups += 1;
         }
     }
 
@@ -521,24 +520,24 @@ fn merge_contact_draft(into: &mut ContactDraft, from: ContactDraft) {
             into.phones.push(phone);
         }
     }
-    for label in from.labels {
+    for group in from.groups {
         if !into
-            .labels
+            .groups
             .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&label))
+            .any(|existing| existing.eq_ignore_ascii_case(&group))
         {
-            into.labels.push(label);
+            into.groups.push(group);
         }
     }
 }
 
-fn ensure_label(conn: &Connection, account_id: &str, name: &str) -> Result<i64> {
+fn ensure_group(conn: &Connection, account_id: &str, name: &str) -> Result<i64> {
     conn.execute(
-        "INSERT OR IGNORE INTO contact_labels (account_id, name) VALUES (?1, ?2)",
+        "INSERT OR IGNORE INTO contact_groups (account_id, name) VALUES (?1, ?2)",
         params![account_id, name],
     )?;
     let id: i64 = conn.query_row(
-        "SELECT id FROM contact_labels WHERE account_id = ?1 AND name = ?2",
+        "SELECT id FROM contact_groups WHERE account_id = ?1 AND name = ?2",
         params![account_id, name],
         |row| row.get(0),
     )?;
@@ -748,7 +747,7 @@ mod tests {
             load_contacts_if_needed(&mut conn, Some(&vcf_path), true, TEST_ACCOUNT_ID).unwrap();
         assert_eq!(stats.contacts, 2);
         assert_eq!(stats.phones, 3);
-        assert_eq!(stats.labels, 3);
+        assert_eq!(stats.groups, 3);
 
         let preferred_name: String = conn
             .query_row(
@@ -762,11 +761,11 @@ mod tests {
             .unwrap();
         assert_eq!(preferred_name, "Ada Augusta Lovelace");
 
-        let labels: Vec<String> = conn
+        let groups: Vec<String> = conn
             .prepare(
-                "SELECT cl.name FROM contact_labels cl
-                 JOIN contact_label_members m ON m.label_id = cl.id
-                 WHERE cl.account_id = ?1 ORDER BY cl.name",
+                "SELECT cg.name FROM contact_groups cg
+                 JOIN contact_group_members m ON m.group_id = cg.id
+                 WHERE cg.account_id = ?1 ORDER BY cg.name",
             )
             .unwrap()
             .query_map(params![TEST_ACCOUNT_ID], |row| row.get(0))
@@ -774,7 +773,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(
-            labels,
+            groups,
             vec![
                 "Family".to_string(),
                 "Friends".to_string(),

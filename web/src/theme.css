@@ -175,7 +175,7 @@ select option {
 /*
   Scrollbars: Chromium/WebKit ignore ::-webkit-scrollbar sizing when
   scrollbar-width is set to anything other than auto. Keep the standard
-  properties for Firefox only; use 4px webkit rules everywhere else.
+  properties for Firefox only; use 8px webkit rules everywhere else.
 */
 @supports not selector(::-webkit-scrollbar) {
   * {
@@ -185,8 +185,8 @@ select option {
 }
 
 *::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-track {
@@ -195,7 +195,7 @@ select option {
 
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 2px;
+  border-radius: 4px;
   border: none;
 }
 

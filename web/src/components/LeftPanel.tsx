@@ -10,6 +10,8 @@ import {
   removeGroup,
   SAVED_GROUPS_CHANGED_EVENT,
 } from "../lib/savedGroups";
+import { useContactGroups } from "../lib/useContactGroups";
+import GroupsNav from "./GroupsNav";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
 
@@ -106,6 +108,7 @@ export default function LeftPanel({
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const { groups: contactGroups } = useContactGroups();
 
   useEffect(() => {
     const refresh = () => setGroups(listGroups());
@@ -153,8 +156,8 @@ export default function LeftPanel({
 
       <div className="mx-3 border-t border-border" />
 
-      {/* Saved groups */}
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      {/* Saved conversation searches (import shortcuts). Contact groups are below. */}
+      <div className="shrink-0 px-3 pt-3">
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
             Saved Groups
@@ -195,6 +198,8 @@ export default function LeftPanel({
           ))
         )}
       </div>
+
+      <GroupsNav groups={contactGroups} />
 
       {/* Settings */}
       <div className="border-t border-border px-3 py-2">

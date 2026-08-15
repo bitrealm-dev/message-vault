@@ -19,7 +19,7 @@ Follow [Prepare a backup](/prepare-a-backup/) for your phone and app.
 
 ## 3. Install the desktop app
 
-Import is not in the browser. [Install the desktop app](/get-started/install-the-desktop-app/), then sign in with the same server URL (`http://localhost:8080`) and the account you just created.
+Import is not in the browser. [Install the desktop app](/get-started/install-the-desktop-app/), then sign in with the same server URL (`http://127.0.0.1:8080`) and the account you just created.
 
 ## 4. Import and browse
 

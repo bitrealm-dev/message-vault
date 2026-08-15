@@ -42,7 +42,7 @@ Dev window (hot reload):
 cargo tauri dev
 ```
 
-Point the app at **http://localhost:8080** (or the URL where the vault is listening).
+Point the app at **http://127.0.0.1:8080** (or the URL where the vault is listening).
 
 A release-shaped binary (faster on real backups):
 

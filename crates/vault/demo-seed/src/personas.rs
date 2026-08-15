@@ -25,7 +25,7 @@ pub struct Contact {
     pub first_name: String,
     pub middle_name: String,
     pub last_name: String,
-    pub labels: Vec<String>,
+    pub groups: Vec<String>,
     pub has_messages: bool,
     pub message_scope: MessageScope,
     pub msgs_per_year: f64,
@@ -129,7 +129,7 @@ fn mark_whatsapp_contacts(contacts: &mut [Contact], fraction: f64, rng: &mut imp
     }
 }
 
-/// Build one contact: name shape, phones, labels, and how often they message.
+/// Build one contact: name shape, phones, groups, and how often they message.
 fn make_contact(
     cfg: &SeedConfig,
     names: &NameBank,
@@ -151,18 +151,18 @@ fn make_contact(
     let inactive = rng.random_bool(cfg.contacts.inactive_fraction);
     let no_messages = inactive || rng.random_bool(cfg.contacts.no_messages_fraction);
 
-    let mut labels = Vec::new();
+    let mut groups = Vec::new();
     if inactive {
-        labels.push("Inactive".into());
+        groups.push("Inactive".into());
     } else {
         if rng.random_bool(cfg.labels.family) {
-            labels.push("Family".into());
+            groups.push("Family".into());
         }
         if rng.random_bool(cfg.labels.work) {
-            labels.push("Work".into());
+            groups.push("Work".into());
         }
         if rng.random_bool(cfg.labels.college) {
-            labels.push("College".into());
+            groups.push("College".into());
         }
     }
 
@@ -183,7 +183,7 @@ fn make_contact(
         first_name: first,
         middle_name: middle,
         last_name: last,
-        labels,
+        groups,
         has_messages: !no_messages,
         message_scope,
         msgs_per_year: sample_msgs_per_year(cfg, rng),
@@ -334,7 +334,7 @@ fn membership_budgets(cfg: &SeedConfig, contacts: &[Contact], rng: &mut impl Rng
 
 /// How many groups this contact may still join. Inactive and silent contacts get zero.
 fn group_membership_budget(cfg: &SeedConfig, contact: &Contact, rng: &mut impl Rng) -> usize {
-    if !contact.has_messages || contact.has_label("Inactive") {
+    if !contact.has_messages || contact.has_group("Inactive") {
         return 0;
     }
     if matches!(contact.message_scope, MessageScope::OneToOne) {
@@ -375,7 +375,7 @@ fn pick_group_members(
     if member_idxs.len() < target_size {
         let mut extras = Vec::new();
         for (index, contact) in contacts.iter().enumerate() {
-            if !contact.has_messages || contact.has_label("Inactive") {
+            if !contact.has_messages || contact.has_group("Inactive") {
                 continue;
             }
             if member_idxs.contains(&index) {
@@ -563,11 +563,11 @@ fn build_unassigned(
 }
 
 impl Contact {
-    /// True when this contact has a label that matches `name`, ignoring letter case.
-    pub fn has_label(&self, name: &str) -> bool {
-        self.labels
+    /// True when this contact has a group that matches `name`, ignoring letter case.
+    pub fn has_group(&self, name: &str) -> bool {
+        self.groups
             .iter()
-            .any(|label| label.eq_ignore_ascii_case(name))
+            .any(|group| group.eq_ignore_ascii_case(name))
     }
 
     /// First phone number on the contact. Contacts always have at least one.
@@ -604,7 +604,7 @@ impl Contact {
         if !self.has_one_to_one() {
             return 0;
         }
-        if self.has_label("Inactive") {
+        if self.has_group("Inactive") {
             return ((self.msgs_per_year * self.span_years) as usize).clamp(3, 12);
         }
         let n = (self.msgs_per_year * self.span_years).round() as isize;

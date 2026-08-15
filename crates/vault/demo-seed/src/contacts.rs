@@ -41,10 +41,10 @@ pub fn write_vcf(config_dir: &Path, roster: &Roster) -> Result<()> {
         for phone in &c.phones {
             writeln!(out, "TEL:{}", escape_vcf(phone))?;
         }
-        if !c.labels.is_empty() {
-            let mut categories = Vec::with_capacity(c.labels.len());
-            for label in &c.labels {
-                categories.push(escape_vcf(label));
+        if !c.groups.is_empty() {
+            let mut categories = Vec::with_capacity(c.groups.len());
+            for group in &c.groups {
+                categories.push(escape_vcf(group));
             }
             writeln!(out, "CATEGORIES:{}", categories.join(","))?;
         }

@@ -199,11 +199,18 @@ export default function ListColumn({
         onKeyDown={onResizeKeyDown}
         onMouseEnter={() => setHandleHover(true)}
         onMouseLeave={() => setHandleHover(false)}
-        className={`absolute right-[-3px] top-0 h-full w-1.5 touch-none cursor-col-resize ${
+        className={`absolute top-0 right-0 h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent ${
           // Stay under the advanced/contacts search panel when it overhangs the main column.
           showAdvancedSearch || contactsSearchOpen ? "z-10" : "z-[60]"
-        } ${dragging ? "bg-accent" : handleHover ? "bg-border" : "bg-transparent"}`}
-      />
+        }`}
+      >
+        <div
+          aria-hidden
+          className={`pointer-events-none absolute top-0 bottom-0 left-0 w-px ${
+            dragging || handleHover ? "bg-accent" : "bg-transparent"
+          }`}
+        />
+      </div>
     </div>
     </ListColumnResizeContext.Provider>
   );

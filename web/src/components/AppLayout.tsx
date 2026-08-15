@@ -10,6 +10,8 @@ import ContactDrawer, {
 import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
+import { groupFromSlug } from "../lib/contactGroups";
+import { useContactGroups } from "../lib/useContactGroups";
 
 /** Search query used when browsing a contact's conversations from the drawer. */
 function contactBrowseQuery(
@@ -38,7 +40,13 @@ type ColumnMode = "conversations" | "contacts" | "trash" | "import" | "export" |
 /** Which left-column list to show for this URL. */
 function modeFromPathname(pathname: string): ColumnMode {
   if (pathname.startsWith("/messages/")) return "conversations";
-  if (pathname === "/contacts") return "contacts";
+  if (
+    pathname === "/contacts" ||
+    pathname === "/no-group" ||
+    pathname.startsWith("/group/")
+  ) {
+    return "contacts";
+  }
   if (pathname === "/trash") return "trash";
   if (pathname === "/import") return "import";
   if (pathname === "/export") return "export";
@@ -58,11 +66,18 @@ export default function AppLayout() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
+  const { groups } = useContactGroups();
 
   const pathname = location.pathname;
   const mode = modeFromPathname(pathname);
   const isMessageRoute = pathname.startsWith("/messages/");
   const contactsMode = mode === "contacts";
+  const noGroupMode = pathname === "/no-group";
+  const groupSlugParam = pathname.startsWith("/group/")
+    ? decodeURIComponent(pathname.slice("/group/".length))
+    : null;
+  const activeGroup = groupSlugParam ? groupFromSlug(groupSlugParam, groups) : null;
+  const groupFilter = noGroupMode ? "none" : activeGroup;
 
   const conversationSearch = searchParams.get("q") || "";
   const conversationFilter = searchParams.get("f") || "";
@@ -80,7 +95,14 @@ export default function AppLayout() {
 
   const handleSearch = (q: string) => {
     if (/\bsearch:contacts\b/i.test(q) || contactsMode) {
-      navigate(`/contacts?cq=${encodeURIComponent(q)}`);
+      const params = q ? `?cq=${encodeURIComponent(q)}` : "";
+      if (noGroupMode) {
+        navigate(`/no-group${params}`);
+      } else if (groupSlugParam) {
+        navigate(`/group/${groupSlugParam}${params}`);
+      } else {
+        navigate(`/contacts${params}`);
+      }
     } else {
       navigate(`/?q=${encodeURIComponent(q)}`);
     }
@@ -171,6 +193,7 @@ export default function AppLayout() {
           >
             <ContactList
               filter={contactSearch}
+              groupFilter={groupFilter}
               selectedId={selectedContact?.id ?? null}
               onSelect={(c) =>
                 setSelectedContact({ id: c.id, name: c.name, handles: c.handles })

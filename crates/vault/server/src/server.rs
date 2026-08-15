@@ -223,6 +223,7 @@ pub enum ApiError {
     Unauthorized(String),
     Forbidden(String),
     BadRequest(String),
+    Conflict(String),
     NotFound(String),
     TooManyRequests(String),
     ServiceUnavailable(String),
@@ -235,6 +236,7 @@ impl IntoResponse for ApiError {
             Self::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
@@ -519,6 +521,21 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route(
             "/v1/export/contacts/{id}",
             get(contact_detail_handler).post(contact_mutate_handler),
+        )
+        .route(
+            "/v1/contact-groups",
+            get(contact_groups_list_handler)
+                .post(contact_groups_create_handler)
+                .patch(contact_groups_rename_handler)
+                .delete(contact_groups_delete_handler),
+        )
+        .route(
+            "/v1/contact-groups/members",
+            get(contact_groups_members_handler),
+        )
+        .route(
+            "/v1/contacts/groups",
+            post(contact_groups_membership_handler),
         )
         .route("/v1/export/conversations", get(conversations_list_handler))
         .route(
@@ -1098,6 +1115,164 @@ async fn contact_mutate_handler(
     .join_map("contact mutate task", |e| e)?;
 
     Ok(Json(detail))
+}
+
+fn map_group_error(err: crate::contact_groups_api::GroupError) -> ApiError {
+    use crate::contact_groups_api::GroupError;
+    match err {
+        GroupError::BadRequest(m) => ApiError::BadRequest(m),
+        GroupError::NotFound(m) => ApiError::NotFound(m),
+        GroupError::Conflict(m) => ApiError::Conflict(m),
+        GroupError::Internal(m) => ApiError::Internal(m),
+    }
+}
+
+async fn with_group_conn<T, F>(
+    db: Arc<StdMutex<Connection>>,
+    task: &'static str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, crate::contact_groups_api::GroupError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        f(&conn).map_err(map_group_error)
+    })
+    .await
+    .join_map(task, |e| e)
+}
+
+#[derive(Debug, Deserialize)]
+struct ContactGroupNameBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContactGroupRenameBody {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContactGroupMembersQuery {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContactGroupMembershipBody {
+    ids: Vec<i64>,
+    name: String,
+    enable: bool,
+}
+
+async fn contact_groups_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let groups = with_group_conn(db, "contact groups list", move |conn| {
+        crate::contact_groups_api::list_groups(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "groups": groups })))
+}
+
+async fn contact_groups_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupNameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = body.name;
+    let (created, groups) = with_group_conn(db, "contact groups create", move |conn| {
+        let created = crate::contact_groups_api::create_group(conn, &auth.account_id, &name)?;
+        let groups = crate::contact_groups_api::list_groups(conn, &auth.account_id)?;
+        Ok((created, groups))
+    })
+    .await?;
+    Ok(Json(
+        serde_json::json!({ "name": created, "groups": groups }),
+    ))
+}
+
+async fn contact_groups_rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupRenameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let (name, groups) = with_group_conn(db, "contact groups rename", move |conn| {
+        let name =
+            crate::contact_groups_api::rename_group(conn, &auth.account_id, &body.from, &body.to)?;
+        let groups = crate::contact_groups_api::list_groups(conn, &auth.account_id)?;
+        Ok((name, groups))
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "name": name, "groups": groups })))
+}
+
+async fn contact_groups_delete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupNameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let groups = with_group_conn(db, "contact groups delete", move |conn| {
+        crate::contact_groups_api::delete_group(conn, &auth.account_id, &body.name)?;
+        crate::contact_groups_api::list_groups(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "groups": groups })))
+}
+
+async fn contact_groups_members_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ContactGroupMembersQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = query.name.clone();
+    let member_contact_ids = with_group_conn(db, "contact groups members", move |conn| {
+        crate::contact_groups_api::list_group_member_ids(conn, &auth.account_id, &name)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({
+        "name": query.name,
+        "memberContactIds": member_contact_ids,
+    })))
+}
+
+async fn contact_groups_membership_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactGroupMembershipBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let changed = with_group_conn(db, "contact groups membership", move |conn| {
+        crate::contact_groups_api::set_contacts_group_membership(
+            conn,
+            &auth.account_id,
+            &body.ids,
+            &body.name,
+            body.enable,
+        )
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "changed": changed })))
 }
 
 #[derive(Debug, Deserialize)]

@@ -518,7 +518,7 @@ Prejudice ({corpus_sentences} sentences) under `crates/vault/demo-seed/data/corp
 - **Triple sources** — `imessage` vs `sms-backup-restore` vs `whatsapp`
 - **Platform handles** — Text message + WhatsApp rows on the same contact
 - **Transport mix** — SMS/RCS mixed into iMessage threads (~20% by default)
-- **Contacts / labels / No Messages** — label memberships and zero-message rows
+- **Contacts / groups / No Messages** — group memberships and zero-message rows
 - **Unassigned** — handles with messages but no VCF row (phone + email)
 - **Rate skew** — most 1:1 threads ~200–300 msgs/year (bursty days); rare whales up to ~12k/year
 - **History** — typical first contact ~3–5 years ago; longest ~14 years; newest ~1 week

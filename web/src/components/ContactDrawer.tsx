@@ -6,7 +6,13 @@ import {
   invalidateContactDetail,
   type CachedContactDetail,
 } from "../lib/contactDetailCache";
+import {
+  createContactGroup,
+  setContactGroupMembership,
+} from "../lib/contactGroups";
+import { useContactGroups } from "../lib/useContactGroups";
 import Button from "./Button";
+import GroupsMenu from "./GroupsMenu";
 import { PencilIcon } from "./icons";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -98,6 +104,7 @@ export default function ContactDrawer({
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
+  const { groups: allGroups } = useContactGroups();
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -278,6 +285,87 @@ export default function ContactDrawer({
           ×
         </button>
       </div>
+
+      {detailMatches ? (
+        <div className="mb-4">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
+              Groups
+            </span>
+            <GroupsMenu
+              allGroups={allGroups}
+              checks={Object.fromEntries(
+                allGroups.map((name) => [
+                  name,
+                  (detail!.groups ?? []).some(
+                    (g) => g.toLowerCase() === name.toLowerCase(),
+                  )
+                    ? "on"
+                    : "off",
+                ]),
+              )}
+              onToggle={(name) => {
+                const on = (detail!.groups ?? []).some(
+                  (g) => g.toLowerCase() === name.toLowerCase(),
+                );
+                const id = Number(contactId);
+                if (!Number.isFinite(id) || id <= 0) return;
+                void setContactGroupMembership([id], name, !on).then(() => {
+                  invalidateContactDetail(contactId);
+                  setDetail((prev) => {
+                    if (!prev || String(prev.id) !== String(contactId)) {
+                      return prev;
+                    }
+                    const current = prev.groups ?? [];
+                    const groups = on
+                      ? current.filter(
+                          (g) => g.toLowerCase() !== name.toLowerCase(),
+                        )
+                      : [...current, name];
+                    return { ...prev, groups };
+                  });
+                });
+              }}
+              onCreate={(name) => {
+                const id = Number(contactId);
+                if (!Number.isFinite(id) || id <= 0) return;
+                void (async () => {
+                  const existing = allGroups.find(
+                    (g) => g.toLowerCase() === name.toLowerCase(),
+                  );
+                  if (!existing) await createContactGroup(name);
+                  await setContactGroupMembership([id], existing ?? name, true);
+                  loadDetail();
+                })();
+              }}
+              onClearAll={() => {
+                const id = Number(contactId);
+                if (!Number.isFinite(id) || id <= 0) return;
+                void (async () => {
+                  for (const name of detail!.groups ?? []) {
+                    await setContactGroupMembership([id], name, false);
+                  }
+                  loadDetail();
+                })();
+              }}
+            />
+          </div>
+          {(detail!.groups ?? []).length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {(detail!.groups ?? []).map((name) => (
+                <span
+                  key={name}
+                  className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] text-text"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[0.813rem] text-muted">No groups</p>
+          )}
+        </div>
+      ) : null}
 
       <ContactDrawerHandles
         contactId={contactId}

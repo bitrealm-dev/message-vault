@@ -655,7 +655,7 @@ fn build_message_filters(
     }
 
     if let Some(within) = &parsed.within {
-        let ids = list_label_member_contact_ids(conn, account_id, within)?;
+        let ids = list_group_member_contact_ids(conn, account_id, within)?;
         where_parts.push(involves_contacts_sql(&ids));
     }
 
@@ -826,7 +826,7 @@ fn involves_contacts_sql(contact_ids: &[i64]) -> String {
     )
 }
 
-fn list_label_member_contact_ids(
+fn list_group_member_contact_ids(
     conn: &Connection,
     account_id: &str,
     name: &str,
@@ -836,11 +836,11 @@ fn list_label_member_contact_ids(
         return Ok(Vec::new());
     }
     let mut stmt = conn.prepare(
-        "SELECT clm.contact_id
-             FROM contact_label_members clm
-             JOIN contact_labels cl ON cl.id = clm.label_id
-             WHERE cl.name = ? COLLATE NOCASE AND cl.account_id = ?
-             ORDER BY clm.contact_id",
+        "SELECT cgm.contact_id
+             FROM contact_group_members cgm
+             JOIN contact_groups cg ON cg.id = cgm.group_id
+             WHERE cg.name = ? COLLATE NOCASE AND cg.account_id = ?
+             ORDER BY cgm.contact_id",
     )?;
     let rows = stmt
         .query_map(rusqlite::params![trimmed, account_id], |r| r.get(0))?

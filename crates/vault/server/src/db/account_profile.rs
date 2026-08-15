@@ -218,7 +218,7 @@ pub struct DeletedMessagesStats {
 
 /// Permanently delete one account's conversations (cascades to messages,
 /// attachments, participants, tapbacks), staging rows, and trash markers.
-/// Contacts, labels, login details, and import tokens are retained.
+/// Contacts, groups, login details, and import tokens are retained.
 pub fn delete_all_messages_for_account(
     conn: &Connection,
     account_id: &str,

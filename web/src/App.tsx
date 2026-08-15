@@ -66,6 +66,8 @@ function AppRoutes() {
         <Route element={<AppLayout />}>
           <Route index element={<></>} />
           <Route path="contacts" element={<></>} />
+          <Route path="group/:slug" element={<></>} />
+          <Route path="no-group" element={<></>} />
           <Route path="trash" element={<TrashScreen />} />
           <Route
             path="import"
