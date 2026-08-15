@@ -419,34 +419,35 @@ pub async fn login_handler(
     let db = state.cfg.paths.db.clone();
     let guest_enabled = state.guest.enabled;
 
-    let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse> {
-        let conn = schema::open_configured(&db)?;
+    let result = tokio::task::spawn_blocking(move || -> Result<AuthTokenResponse, ApiError> {
+        let conn = schema::open_configured(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
 
-        let Some(account_id) = account_profile::lookup_account_ref(&conn, &username)? else {
+        let Some(account_id) = account_profile::lookup_account_ref(&conn, &username)
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+        else {
             let _ = verify_password(dummy_password_hash(), &password);
-            bail!("invalid username or password");
+            return Err(ApiError::Unauthorized(
+                "invalid username or password".into(),
+            ));
         };
 
         if reject_demo_password_login(guest_enabled, &username) {
-            bail!("use Try it to open a sample account");
+            return Err(hosted_demo_login_rejected());
         }
 
-        let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
+        let password_hash = account_profile::load_password_hash(&conn, &account_id)
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
         if !verify_login_password(password_hash.as_deref(), &password) {
-            bail!("invalid username or password");
+            return Err(ApiError::Unauthorized(
+                "invalid username or password".into(),
+            ));
         }
 
         AuthTokenResponse::for_existing_account(&conn, account_id)
+            .map_err(|e| ApiError::Internal(e.to_string()))
     })
     .await
-    .join_map("login task", |e| {
-        let msg = e.to_string();
-        if msg.contains("use Try it") {
-            ApiError::Unauthorized(msg)
-        } else {
-            ApiError::Unauthorized("invalid username or password".into())
-        }
-    })?;
+    .join_map("login task", |e| e)?;
 
     Ok(Json(result))
 }
@@ -592,21 +593,31 @@ fn try_demo_from_pool(
     if !clone_if_empty {
         return Ok(None);
     }
-    crate::guest_clone::clone_template_to_guest(conn, cfg, account_profile::DEMO_ACCOUNT_ID)
-        .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
-    let Some((account_id, username, token)) =
-        crate::guest_pool::assign_ready_guest(conn, session_secs)
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-    else {
-        return Err(ApiError::ServiceUnavailable(
-            "guest demo copy is not available".into(),
-        ));
-    };
+    let (account_id, username, token) = crate::guest_clone::clone_and_assign_guest(
+        conn,
+        cfg,
+        account_profile::DEMO_ACCOUNT_ID,
+        session_secs,
+    )
+    .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
     Ok(Some(AuthTokenResponse {
         token,
         account_id,
         username,
     }))
+}
+
+fn record_try_demo_assignment(state: &AppState) {
+    match state.guest_demand.lock() {
+        Ok(mut demand) => demand.record_assignment(),
+        Err(_) => {
+            eprintln!("guest demand lock poisoned; Try it still succeeded");
+        }
+    }
+}
+
+fn hosted_demo_login_rejected() -> ApiError {
+    ApiError::Unauthorized("use Try it to open a sample account".into())
 }
 
 /// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
@@ -644,7 +655,7 @@ pub async fn try_demo_handler(
         .join_map("try-demo assign", |e| e)?;
 
     if let Some(response) = assigned {
-        state.guest_demand.lock().unwrap().record_assignment();
+        record_try_demo_assignment(&state);
         return Ok(Json(response));
     }
 
@@ -668,7 +679,7 @@ pub async fn try_demo_handler(
 
     match tokio::time::timeout(TRY_DEMO_CLONE_TIMEOUT, clone_task).await {
         Ok(Ok(Ok(Some(response)))) => {
-            state.guest_demand.lock().unwrap().record_assignment();
+            record_try_demo_assignment(&state);
             Ok(Json(response))
         }
         Ok(Ok(Ok(None))) => Err(ApiError::ServiceUnavailable(
@@ -974,42 +985,48 @@ mod tests {
         reset_auth_rate_limit_bucket_for_test(bucket);
     }
 
-    #[test]
-    fn try_demo_per_ip_trips_at_60_and_does_not_block_another_ip() {
+    fn with_try_demo_rate_buckets(f: impl FnOnce()) {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
         reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
         reset_auth_rate_limit_bucket_for_test("try-demo");
-        for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
-            check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
-        }
-        match check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err() {
-            ApiError::TooManyRequests(_) => {}
-            other => panic!("expected TooManyRequests, got {other:?}"),
-        }
-        check_try_demo_rate_limits(Some("198.51.100.1")).unwrap();
+        f();
         reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
         reset_auth_rate_limit_bucket_for_test("try-demo:198.51.100.1");
         reset_auth_rate_limit_bucket_for_test("try-demo");
     }
 
     #[test]
+    fn try_demo_per_ip_trips_at_60_and_does_not_block_another_ip() {
+        with_try_demo_rate_buckets(|| {
+            for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
+                check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
+            }
+            match check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err() {
+                ApiError::TooManyRequests(_) => {}
+                other => panic!("expected TooManyRequests, got {other:?}"),
+            }
+            check_try_demo_rate_limits(Some("198.51.100.1")).unwrap();
+        });
+    }
+
+    #[test]
     fn try_demo_per_ip_429_does_not_increment_global() {
-        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
-        reset_auth_rate_limit_bucket_for_test("try-demo");
-        for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
-            check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
-        }
-        let _ = check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err();
-        // Global saw only the 60 accepts, not the rejected 61st.
-        for _ in 0..(TRY_DEMO_RATE_MAX - TRY_DEMO_PER_IP_RATE_MAX) {
-            check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap();
-        }
-        match check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap_err() {
-            ApiError::TooManyRequests(_) => {}
-            other => panic!("expected TooManyRequests, got {other:?}"),
-        }
-        reset_auth_rate_limit_bucket_for_test("try-demo:203.0.113.10");
-        reset_auth_rate_limit_bucket_for_test("try-demo");
+        with_try_demo_rate_buckets(|| {
+            for _ in 0..TRY_DEMO_PER_IP_RATE_MAX {
+                check_try_demo_rate_limits(Some("203.0.113.10")).unwrap();
+            }
+            let _ = check_try_demo_rate_limits(Some("203.0.113.10")).unwrap_err();
+            // Global saw only the 60 accepts, not the rejected 61st.
+            for _ in 0..(TRY_DEMO_RATE_MAX - TRY_DEMO_PER_IP_RATE_MAX) {
+                check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap();
+            }
+            match check_auth_rate_limit_max("try-demo", TRY_DEMO_RATE_MAX).unwrap_err() {
+                ApiError::TooManyRequests(_) => {}
+                other => panic!("expected TooManyRequests, got {other:?}"),
+            }
+        });
     }
 
     #[test]
@@ -1212,6 +1229,74 @@ mod tests {
                 .as_deref(),
             Some("assigned")
         );
+    }
+
+    #[test]
+    fn hosted_demo_login_rejected_is_unauthorized() {
+        match hosted_demo_login_rejected() {
+            ApiError::Unauthorized(msg) => {
+                assert_eq!(msg, "use Try it to open a sample account");
+            }
+            other => panic!("expected Unauthorized, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_demo_empty_pool_overlapping_clones_both_get_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("vault.db");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        {
+            let conn = schema::open_configured(&db).unwrap();
+            schema::ensure_vault_schema(&conn).unwrap();
+            account_profile::insert_account(
+                &conn,
+                account_profile::DEMO_ACCOUNT_ID,
+                "demo",
+                None,
+                None,
+                None,
+                true,
+            )
+            .unwrap();
+        }
+        let cfg = crate::config::Config {
+            paths: crate::config::PathsConfig {
+                db: db.clone(),
+                data_dir,
+                assets_dir: "assets".into(),
+                assets_converted_dir: "assets_converted".into(),
+            },
+            server: None,
+        };
+
+        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let path = db.clone();
+            let cfg = cfg.clone();
+            let results = std::sync::Arc::clone(&results);
+            handles.push(std::thread::spawn(move || {
+                let mut conn = schema::open_configured(&path).unwrap();
+                let assigned = try_demo_from_pool(&mut conn, &cfg, 120, true).unwrap();
+                results.lock().unwrap().push(assigned);
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("clone thread");
+        }
+        let got = results.lock().unwrap();
+        let responses: Vec<_> = got
+            .iter()
+            .map(|row| row.as_ref().expect("empty-pool Try it returned no session"))
+            .collect();
+        assert_eq!(responses.len(), 2);
+        assert_ne!(
+            responses[0].account_id, responses[1].account_id,
+            "overlapping empty-pool Try it shared a guest"
+        );
+        assert_ne!(responses[0].token, responses[1].token);
     }
 
     #[test]

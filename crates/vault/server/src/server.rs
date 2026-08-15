@@ -602,7 +602,13 @@ fn spawn_guest_pool_worker(worker_state: AppState) {
             let db = worker_state.cfg.paths.db.clone();
             let cfg = worker_state.cfg.clone();
             let guest = worker_state.guest;
-            let demand = worker_state.guest_demand.lock().unwrap().count_last_15m();
+            let demand = match worker_state.guest_demand.lock() {
+                Ok(mut guard) => guard.count_last_15m(),
+                Err(_) => {
+                    eprintln!("guest demand lock poisoned; refill uses the floor");
+                    0
+                }
+            };
             let clone_lock = worker_state.guest_clone_lock.clone();
             let data_dir = cfg.paths.data_dir.clone();
 

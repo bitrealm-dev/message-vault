@@ -1,26 +1,27 @@
-//! Clone a template vault account into a new guest (SQL rows + hard-linked files).
+//! Clone a template vault account into a new guest (SQL rows + copied files).
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::config::Config;
-use crate::db::account_profile;
+use crate::db::{account_profile, session_tokens};
 
 /// Copy the template account's rows and files into a new guest account.
 ///
 /// Integer primary keys are remapped. `account_emails`, session tokens, and API
-/// tokens are not copied. Attachment files are hard-linked (or copied) after
-/// the SQL transaction commits. If file linking fails, the guest account is
-/// deleted so a half-created copy is not left behind.
+/// tokens are not copied. Attachment files are copied after the SQL transaction
+/// commits so a later write on the guest path cannot change the template. If
+/// file copy fails, the guest account is deleted so a half-created copy is not
+/// left behind.
 ///
 /// # Errors
 ///
 /// Returns an error when the template is missing, a SQL statement fails, or
-/// files cannot be linked or copied.
+/// files cannot be copied.
 pub fn clone_template_to_guest(
     conn: &mut Connection,
     cfg: &Config,
@@ -32,11 +33,50 @@ pub fn clone_template_to_guest(
         tx.commit()?;
         guest_id
     };
+    finish_file_clone(conn, cfg, template_account_id, &guest_id)?;
+    Ok(guest_id)
+}
 
+/// Clone the template and mark that guest assigned in the same SQL transaction.
+///
+/// Used by on-demand Try it so another request cannot take the new `ready` row
+/// before this request issues a session.
+///
+/// # Errors
+///
+/// Returns an error when the template is missing, a SQL statement fails, or
+/// files cannot be copied.
+pub fn clone_and_assign_guest(
+    conn: &mut Connection,
+    cfg: &Config,
+    template_account_id: &str,
+    session_secs: u64,
+) -> Result<(String, String, String)> {
+    let (guest_id, username, token) = {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let guest_id = clone_sql(&tx, template_account_id)?;
+        account_profile::set_guest_status(&tx, &guest_id, "assigned")?;
+        let username = account_profile::username_for_account(&tx, &guest_id)?
+            .context("guest username missing after clone")?;
+        let token =
+            session_tokens::insert_account_session_token_with_ttl(&tx, &guest_id, session_secs)?;
+        tx.commit()?;
+        (guest_id, username, token)
+    };
+    finish_file_clone(conn, cfg, template_account_id, &guest_id)?;
+    Ok((guest_id, username, token))
+}
+
+fn finish_file_clone(
+    conn: &mut Connection,
+    cfg: &Config,
+    template_account_id: &str,
+    guest_id: &str,
+) -> Result<()> {
     let src_root = cfg.paths.data_dir.join(template_account_id);
-    let dest_root = cfg.paths.data_dir.join(&guest_id);
-    if let Err(err) = link_tree(&src_root, &dest_root) {
-        let cleanup = account_profile::delete_account(conn, &guest_id);
+    let dest_root = cfg.paths.data_dir.join(guest_id);
+    if let Err(err) = copy_tree(&src_root, &dest_root) {
+        let cleanup = account_profile::delete_account(conn, guest_id);
         let _ = fs::remove_dir_all(&dest_root);
         if let Err(cleanup_err) = cleanup {
             return Err(err.context(format!(
@@ -45,7 +85,7 @@ pub fn clone_template_to_guest(
         }
         return Err(err);
     }
-    Ok(guest_id)
+    Ok(())
 }
 
 fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
@@ -1188,36 +1228,31 @@ fn copy_account_prefs(tx: &Transaction<'_>, template: &str, guest: &str) -> Resu
     Ok(())
 }
 
-fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
+fn copy_file(src: &Path, dest: &Path) -> Result<()> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
-    match fs::hard_link(src, dest) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            fs::copy(src, dest)?;
-            Ok(())
-        }
-    }
+    fs::copy(src, dest)?;
+    Ok(())
 }
 
-fn link_tree(src_root: &Path, dest_root: &Path) -> Result<()> {
+fn copy_tree(src_root: &Path, dest_root: &Path) -> Result<()> {
     if !src_root.exists() {
         return Ok(());
     }
-    link_tree_inner(src_root, dest_root)
+    copy_tree_inner(src_root, dest_root)
 }
 
-fn link_tree_inner(src: &Path, dest: &Path) -> Result<()> {
+fn copy_tree_inner(src: &Path, dest: &Path) -> Result<()> {
     for entry in fs::read_dir(src).with_context(|| format!("read {}", src.display()))? {
         let entry = entry?;
         let file_type = entry.file_type()?;
         let dest_path = dest.join(entry.file_name());
         if file_type.is_dir() {
-            link_tree_inner(&entry.path(), &dest_path)?;
+            copy_tree_inner(&entry.path(), &dest_path)?;
         } else if file_type.is_file() {
-            link_or_copy(&entry.path(), &dest_path).with_context(|| {
-                format!("link {} -> {}", entry.path().display(), dest_path.display())
+            copy_file(&entry.path(), &dest_path).with_context(|| {
+                format!("copy {} -> {}", entry.path().display(), dest_path.display())
             })?;
         }
     }
@@ -1351,7 +1386,7 @@ mod tests {
     }
 
     #[test]
-    fn clone_hard_links_or_copies_asset_files() {
+    fn clone_copies_asset_files_without_sharing_inode() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         tiny_template(&conn);
@@ -1368,18 +1403,52 @@ mod tests {
             .assets_dir_for_account(&guest, "imessage")
             .join("photo.jpg");
         assert!(dest.is_file(), "guest asset missing at {}", dest.display());
-        let src_bytes = std::fs::read(&src).unwrap();
-        let dest_bytes = std::fs::read(&dest).unwrap();
-        assert_eq!(src_bytes, dest_bytes);
+        assert_eq!(std::fs::read(&src).unwrap(), b"asset-bytes");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"asset-bytes");
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
             let src_meta = std::fs::metadata(&src).unwrap();
             let dest_meta = std::fs::metadata(&dest).unwrap();
-            if src_meta.ino() != dest_meta.ino() || src_meta.dev() != dest_meta.dev() {
-                // Hard-link unavailable; byte equality already asserted.
-            }
+            assert!(
+                src_meta.ino() != dest_meta.ino() || src_meta.dev() != dest_meta.dev(),
+                "guest asset still shares an inode with the template"
+            );
         }
+        std::fs::write(&dest, b"changed").unwrap();
+        assert_eq!(
+            std::fs::read(&src).unwrap(),
+            b"asset-bytes",
+            "writing the guest file must not change the template"
+        );
+    }
+
+    #[test]
+    fn clone_and_assign_leaves_no_ready_row_to_steal() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        tiny_template(&conn);
+        let cfg = test_config();
+        let (guest_id, username, token) = clone_and_assign_guest(&mut conn, &cfg, T, 120).unwrap();
+        assert!(username.starts_with("guest-"));
+        assert!(token.starts_with("mv-user-"));
+        assert_eq!(
+            account_profile::guest_status(&conn, &guest_id)
+                .unwrap()
+                .as_deref(),
+            Some("assigned")
+        );
+        let ready: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts WHERE guest_status = 'ready'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ready, 0,
+            "on-demand clone left a ready row another Try it could take"
+        );
     }
 
     #[test]
