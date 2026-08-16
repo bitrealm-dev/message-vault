@@ -25,6 +25,7 @@ src-tauri/gen/schemas
 
 # Local machine export paths / owner identity
 config/export-to-vault.sh
+config/config.toml
 **/export.ini
 
 # Converter output trees (directory kept via .gitkeep)

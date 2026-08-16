@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -75,6 +76,74 @@ fn parent_dir_or_cwd(path: &Path) -> &Path {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     }
+}
+
+/// Work directory for the prepared account tree. Must live on the same mount
+/// as `data_dir` so the later install can `rename` into `data_dir/<account>`.
+fn reset_account_work_dir(data_dir: &Path) -> Result<tempfile::TempDir> {
+    fs::create_dir_all(data_dir)
+        .with_context(|| format!("create data directory {}", data_dir.display()))?;
+    tempfile::Builder::new()
+        .prefix(".reset-demo-data-")
+        .tempdir_in(data_dir)
+        .with_context(|| {
+            format!(
+                "create temporary demo account directory in {}",
+                data_dir.display()
+            )
+        })
+}
+
+/// Rename, or copy-then-remove when the paths sit on different mounts.
+fn rename_prepared_path(source: &Path, destination: &Path) -> Result<()> {
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            move_across_devices(source, destination).with_context(|| {
+                format!(
+                    "copy {} to {} after a cross-device rename",
+                    source.display(),
+                    destination.display()
+                )
+            })
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("rename {} to {}", source.display(), destination.display())),
+    }
+}
+
+fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
+    if source.is_dir() {
+        copy_dir_recursive(source, destination)?;
+        fs::remove_dir_all(source)
+            .with_context(|| format!("remove copied directory {}", source.display()))?;
+    } else {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create parent {}", parent.display()))?;
+        }
+        fs::copy(source, destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+        fs::remove_file(source)
+            .with_context(|| format!("remove copied file {}", source.display()))?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .with_context(|| format!("copy {} to {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Rebuild the demo vault from the bundle at `bundle` and write the active
@@ -159,19 +228,16 @@ fn reset_prepared_bundle(
     let prepared = validate_prepared_bundle(bundle)?;
     let _operation_lock = crate::operation_lock::acquire_for_reset(&cfg.paths.db)?;
     let db_parent = parent_dir_or_cwd(&cfg.paths.db);
-    let data_parent = parent_dir_or_cwd(&cfg.paths.data_dir);
     fs::create_dir_all(db_parent)
         .with_context(|| format!("create database parent {}", db_parent.display()))?;
-    fs::create_dir_all(data_parent)
-        .with_context(|| format!("create data parent {}", data_parent.display()))?;
     let db_work = tempfile::Builder::new()
         .prefix(".reset-demo-db-")
         .tempdir_in(db_parent)
         .context("create temporary demo database directory")?;
-    let data_work = tempfile::Builder::new()
-        .prefix(".reset-demo-data-")
-        .tempdir_in(data_parent)
-        .context("create temporary demo account directory")?;
+    // Keep the prepared account tree on the same mount as data_dir so
+    // install can rename into data_dir/<account>. A work directory on
+    // another mount (tmp, a nested bind, a named volume) fails with EXDEV.
+    let data_work = reset_account_work_dir(&cfg.paths.data_dir)?;
     let prepared_db = db_work.path().join("vault.db");
     checkpoint_and_clean_sidecars(&cfg.paths.db, "before creating the reset snapshot")?;
     prepare_database_snapshot(&cfg.paths.db, &prepared_db)?;
@@ -247,8 +313,8 @@ fn reset_prepared_bundle(
     )
     .context("process-assets after prepared demo import")?;
     if process_stats.errors > 0 {
-        bail!(
-            "prepared demo asset processing reported {} conversion failures",
+        eprintln!(
+            "warning: {} demo attachment(s) failed conversion; originals stay in place and reset-demo continues",
             process_stats.errors
         );
     }
@@ -474,11 +540,7 @@ fn install_reset_state(
         prepared_account,
         active_config,
         prepared_config,
-        |source, destination| {
-            fs::rename(source, destination).with_context(|| {
-                format!("rename {} to {}", source.display(), destination.display())
-            })
-        },
+        rename_prepared_path,
     )
 }
 
