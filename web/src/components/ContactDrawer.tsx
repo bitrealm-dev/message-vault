@@ -6,13 +6,7 @@ import {
   invalidateContactDetail,
   type CachedContactDetail,
 } from "../lib/contactDetailCache";
-import {
-  createContactGroup,
-  setContactGroupMembership,
-} from "../lib/contactGroups";
-import { useContactGroups } from "../lib/useContactGroups";
 import Button from "./Button";
-import GroupsMenu from "./GroupsMenu";
 import { PencilIcon } from "./icons";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
@@ -104,7 +98,6 @@ export default function ContactDrawer({
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
-  const { groups: allGroups } = useContactGroups();
 
   const detailMatches =
     !!contactId && !!detail && String(detail.id) === String(contactId);
@@ -217,7 +210,7 @@ export default function ContactDrawer({
 
   const panelClass =
     variant === "docked"
-      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel p-6 outline-none"
+      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel px-6 pb-6 pt-2 outline-none"
       : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
 
   const panelStyle =
@@ -235,144 +228,89 @@ export default function ContactDrawer({
       className={panelClass}
       style={panelStyle}
     >
-      <div className="mb-5 flex items-start justify-between gap-3">
-        {editingName && detailMatches ? (
-          <input
-            type="text"
-            value={nameValue}
-            onChange={(e) => setNameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void saveName();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                e.stopPropagation();
-                setEditingName(false);
-                setNameValue(detail!.name);
-              }
-            }}
-            onBlur={() => {
-              void saveName();
-            }}
-            autoFocus
-            className="box-border min-w-0 flex-1 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
-          />
-        ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">
-              {displayName}
-            </h2>
-            {detailMatches ? (
-              <Button
-                variant="ghost"
-                title="Edit name"
-                aria-label="Edit name"
-                onClick={() => setEditingName(true)}
-                className={iconBtnClass}
-              >
-                <PencilIcon />
-              </Button>
-            ) : null}
-          </div>
-        )}
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-          className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none hover:text-text"
-        >
-          ×
-        </button>
-      </div>
-
-      {detailMatches ? (
-        <div className="mb-4">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
-              Groups
-            </span>
-            <GroupsMenu
-              allGroups={allGroups}
-              checks={Object.fromEntries(
-                allGroups.map((name) => [
-                  name,
-                  (detail!.groups ?? []).some(
-                    (g) => g.toLowerCase() === name.toLowerCase(),
-                  )
-                    ? "on"
-                    : "off",
-                ]),
-              )}
-              onToggle={(name) => {
-                const on = (detail!.groups ?? []).some(
-                  (g) => g.toLowerCase() === name.toLowerCase(),
-                );
-                const id = Number(contactId);
-                if (!Number.isFinite(id) || id <= 0) return;
-                void setContactGroupMembership([id], name, !on).then(() => {
-                  invalidateContactDetail(contactId);
-                  setDetail((prev) => {
-                    if (!prev || String(prev.id) !== String(contactId)) {
-                      return prev;
-                    }
-                    const current = prev.groups ?? [];
-                    const groups = on
-                      ? current.filter(
-                          (g) => g.toLowerCase() !== name.toLowerCase(),
-                        )
-                      : [...current, name];
-                    return { ...prev, groups };
-                  });
-                });
-              }}
-              onCreate={(name) => {
-                const id = Number(contactId);
-                if (!Number.isFinite(id) || id <= 0) return;
-                void (async () => {
-                  const existing = allGroups.find(
-                    (g) => g.toLowerCase() === name.toLowerCase(),
-                  );
-                  if (!existing) await createContactGroup(name);
-                  await setContactGroupMembership([id], existing ?? name, true);
-                  loadDetail();
-                })();
-              }}
-              onClearAll={() => {
-                const id = Number(contactId);
-                if (!Number.isFinite(id) || id <= 0) return;
-                void (async () => {
-                  for (const name of detail!.groups ?? []) {
-                    await setContactGroupMembership([id], name, false);
-                  }
-                  loadDetail();
-                })();
-              }}
-            />
-          </div>
-          {(detail!.groups ?? []).length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {(detail!.groups ?? []).map((name) => (
-                <span
-                  key={name}
-                  className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] text-text"
-                >
-                  {name}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[0.813rem] text-muted">No groups</p>
-          )}
-        </div>
-      ) : null}
-
       <ContactDrawerHandles
         contactId={contactId}
         handleRows={handleRows}
         loading={loading}
         onHandlesChanged={loadDetail}
         onBrowse={onBrowseConversations ? browse : undefined}
+        title={
+          editingName && detailMatches ? (
+            <input
+              type="text"
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveName();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setEditingName(false);
+                  setNameValue(detail!.name);
+                }
+              }}
+              onBlur={() => {
+                void saveName();
+              }}
+              autoFocus
+              className="box-border w-full min-w-0 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
+            />
+          ) : (
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">
+                {displayName}
+              </h2>
+              {detailMatches ? (
+                <Button
+                  variant="ghost"
+                  title="Edit name"
+                  aria-label="Edit name"
+                  onClick={() => setEditingName(true)}
+                  className={iconBtnClass}
+                >
+                  <PencilIcon />
+                </Button>
+              ) : null}
+            </div>
+          )
+        }
+        intro={
+          detailMatches ? (
+            <div>
+              <div className="mb-1.5">
+                <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
+                  Groups
+                </span>
+              </div>
+              {(detail!.groups ?? []).length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {(detail!.groups ?? []).map((name) => (
+                    <span
+                      key={name}
+                      className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] text-text"
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="m-0 text-[0.813rem] text-muted">No groups</p>
+              )}
+            </div>
+          ) : null
+        }
+        toolbarExtra={
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-[1.25rem] leading-none text-muted outline-none hover:text-text"
+          >
+            ×
+          </button>
+        }
       />
     </aside>
   );

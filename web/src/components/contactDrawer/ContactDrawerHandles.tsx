@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Table,
   TableHeader,
@@ -41,12 +41,18 @@ export function ContactDrawerHandles({
   loading,
   onHandlesChanged,
   onBrowse,
+  title = "Contact Identity",
+  intro,
+  toolbarExtra,
 }: {
   contactId: string;
   handleRows: CachedContactDetail["handles"];
   loading: boolean;
   onHandlesChanged: () => void;
   onBrowse?: BrowseFn;
+  title?: ReactNode;
+  intro?: ReactNode;
+  toolbarExtra?: ReactNode;
 }) {
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
   const {
@@ -90,9 +96,8 @@ export function ContactDrawerHandles({
   };
 
   return (
-    <DataCard
-      title="Contact Identity"
-      toolbar={
+    <DataCard title={title} intro={intro} toolbar={toolbarExtra}>
+      <div className="mb-2 flex justify-end">
         <Button
           variant="primary"
           disabled={loading || busy}
@@ -101,8 +106,7 @@ export function ContactDrawerHandles({
         >
           Add identity
         </Button>
-      }
-    >
+      </div>
       <Table
         aria-label="Contact handles"
         className="w-full border-collapse text-left table-fixed"

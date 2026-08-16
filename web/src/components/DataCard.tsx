@@ -19,12 +19,15 @@ export default function DataCard({
   children,
   title,
   toolbar,
+  intro,
   className = "",
   maxWidthClass = "max-w-4xl",
 }: {
   children: ReactNode;
   title?: ReactNode;
   toolbar?: ReactNode;
+  /** Content between the title row and the table (groups, filters, etc.). */
+  intro?: ReactNode;
   className?: string;
   maxWidthClass?: string;
 }) {
@@ -34,15 +37,18 @@ export default function DataCard({
       className={`w-full ${maxWidthClass} rounded-lg border border-border bg-panel p-4 ${className}`.trim()}
     >
       {hasHeader ? (
-        <div className="mb-3 flex items-center justify-between gap-3 pr-5">
+        <div className="mb-3 flex items-start justify-between gap-3">
           {title != null ? (
-            <h3 className="m-0 min-w-0 text-[0.938rem] font-semibold text-text">{title}</h3>
+            <div className="min-w-0 flex-1 text-[0.938rem] font-semibold text-text">
+              {title}
+            </div>
           ) : (
             <span />
           )}
           {toolbar ? <div className="shrink-0">{toolbar}</div> : null}
         </div>
       ) : null}
+      {intro != null ? <div className="mb-4">{intro}</div> : null}
       <div className="overflow-x-auto">{children}</div>
     </div>
   );
