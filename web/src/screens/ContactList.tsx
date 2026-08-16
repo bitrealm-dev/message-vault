@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  startTransition,
+} from "react";
 import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
@@ -167,6 +174,7 @@ export default function ContactList({
   selectedId = null,
   onSelect,
   onCheckedChange,
+  clearCheckedRev = 0,
 }: {
   filter?: string;
   /** Named group, or `"none"` for contacts with no group. */
@@ -175,6 +183,8 @@ export default function ContactList({
   onSelect: (contact: Contact) => void;
   /** Checked rows, so the right panel can list them. */
   onCheckedChange?: (contacts: Contact[]) => void;
+  /** Increment to uncheck every row (Clear contacts on the selection card). */
+  clearCheckedRev?: number;
 }) {
   const [serverQ, setServerQ] = useState("");
   const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>(
@@ -248,6 +258,11 @@ export default function ContactList({
   useEffect(() => {
     setCheckedIds(new Set());
   }, [filter, groupFilter]);
+
+  useEffect(() => {
+    if (clearCheckedRev === 0) return;
+    setCheckedIds(new Set());
+  }, [clearCheckedRev]);
 
   useEffect(() => {
     setGroupOverrides({});
@@ -499,9 +514,11 @@ export default function ContactList({
       selectAllChecked={selectAllChecked}
       selectAllIndeterminate={selectAllIndeterminate}
       onSelectAllChange={(on) => {
-        setCheckedIds(
-          on ? new Set(displayContacts.map((c) => c.id)) : new Set(),
-        );
+        startTransition(() => {
+          setCheckedIds(
+            on ? new Set(displayContacts.map((c) => c.id)) : new Set(),
+          );
+        });
       }}
       selectAllLabel="Select all contacts"
       getId={(c) => c.id}

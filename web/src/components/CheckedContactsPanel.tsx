@@ -9,11 +9,8 @@ import {
   type SortDescriptor,
 } from "react-aria-components";
 import { apiClient } from "../lib/api";
-import {
-  fetchContactDetail,
-  getCachedContactDetail,
-  type CachedContactDetail,
-} from "../lib/contactDetailCache";
+import { getCachedContactDetail } from "../lib/contactDetailCache";
+import Button from "./Button";
 import DataCard, { dataCardHeaderRowClass } from "./DataCard";
 import type { ContactPreview } from "./ContactDrawer";
 import { sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
@@ -32,11 +29,53 @@ import {
 
 type ContactTotals = ReturnType<typeof sumHandleTotals>;
 
+/** Matches `MAX_LIST_LIMIT` on `POST /v1/export/contacts/summaries`. */
+const SUMMARY_BATCH_SIZE = 500;
+
+type ContactSelectionSummary = {
+  id: string | number;
+  name: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  individual_conversations: number;
+  group_conversations: number;
+  individual_message_count: number;
+  group_message_count: number;
+};
+
+type ContactSummariesPage = {
+  contacts: ContactSelectionSummary[];
+};
+
+type RowMetrics = {
+  name: string;
+  totals: ContactTotals;
+};
+
 type ContactRow = {
   id: string;
   name: string;
   totals: ContactTotals | null;
 };
+
+function totalsFromSummary(summary: ContactSelectionSummary): ContactTotals {
+  return {
+    individual_conversations: summary.individual_conversations,
+    group_conversations: summary.group_conversations,
+    individual_message_count: summary.individual_message_count,
+    group_message_count: summary.group_message_count,
+    start_date: summary.start_date ?? null,
+    end_date: summary.end_date ?? null,
+  };
+}
+
+function chunkIds(ids: string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    chunks.push(ids.slice(i, i + size));
+  }
+  return chunks;
+}
 
 function sortValue(row: ContactRow, col: string): string | number {
   const totals = row.totals;
@@ -74,16 +113,16 @@ function MetricCell({
 /** Right-hand card of contacts whose checkboxes are on, with identity-table totals. */
 export default function CheckedContactsPanel({
   contacts,
+  onClear,
 }: {
   contacts: ContactPreview[];
+  onClear: () => void;
 }) {
   const heading =
     contacts.length === 1
       ? "1 contact selected"
       : `${contacts.length} contacts selected`;
-  const [details, setDetails] = useState<Record<string, CachedContactDetail>>(
-    {},
-  );
+  const [metrics, setMetrics] = useState<Record<string, RowMetrics>>({});
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(
     null,
   );
@@ -94,36 +133,65 @@ export default function CheckedContactsPanel({
   useEffect(() => {
     const selected = contactsRef.current;
     const ac = new AbortController();
-    const next: Record<string, CachedContactDetail> = {};
+    const seeded: Record<string, RowMetrics> = {};
+    const missing: string[] = [];
     for (const c of selected) {
       const cached = getCachedContactDetail(c.id);
-      if (cached) next[c.id] = cached;
+      if (cached) {
+        seeded[c.id] = {
+          name: cached.name,
+          totals: sumHandleTotals(cached.handles),
+        };
+      } else {
+        missing.push(c.id);
+      }
     }
-    setDetails(next);
-    for (const c of selected) {
-      void fetchContactDetail(
-        c.id,
-        (path, opts) => apiClient.get<CachedContactDetail>(path, opts),
-        ac.signal,
+    setMetrics(seeded);
+    const batches = chunkIds(missing, SUMMARY_BATCH_SIZE)
+      .map((ids) =>
+        ids.map(Number).filter((id) => Number.isFinite(id) && id > 0),
       )
-        .then((detail) => {
-          if (ac.signal.aborted) return;
-          setDetails((prev) => ({ ...prev, [String(detail.id)]: detail }));
-        })
-        .catch(() => {
-          /* aborted or failed — row stays on em dash until a later load */
-        });
+      .filter((ids) => ids.length > 0);
+    if (batches.length === 0) {
+      return () => ac.abort();
     }
+    void Promise.all(
+      batches.map((ids) =>
+        apiClient.post<ContactSummariesPage>(
+          "/v1/export/contacts/summaries",
+          { ids },
+          { signal: ac.signal },
+        ),
+      ),
+    )
+      .then((pages) => {
+        if (ac.signal.aborted) return;
+        setMetrics((prev) => {
+          const next = { ...prev };
+          for (const page of pages) {
+            for (const summary of page.contacts) {
+              next[String(summary.id)] = {
+                name: summary.name,
+                totals: totalsFromSummary(summary),
+              };
+            }
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        /* aborted or failed — uncached rows stay on em dash until a later load */
+      });
     return () => ac.abort();
   }, [contactKey]);
 
   const rows = useMemo<ContactRow[]>(() => {
     const built = contacts.map((c) => {
-      const detail = details[c.id];
+      const row = metrics[c.id];
       return {
         id: c.id,
-        name: detail?.name ?? c.name,
-        totals: detail ? sumHandleTotals(detail.handles) : null,
+        name: row?.name ?? c.name,
+        totals: row?.totals ?? null,
       };
     });
     if (!sortDescriptor?.column) return built;
@@ -136,7 +204,7 @@ export default function CheckedContactsPanel({
       if (av > bv) return 1 * dir;
       return a.name.localeCompare(b.name);
     });
-  }, [contacts, details, sortDescriptor]);
+  }, [contacts, metrics, sortDescriptor]);
 
   return (
     <aside
@@ -146,6 +214,15 @@ export default function CheckedContactsPanel({
       <DataCard
         title={
           <h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>
+        }
+        toolbar={
+          <Button
+            variant="secondary"
+            onClick={onClear}
+            className="!px-2.5 !py-1 !text-[0.75rem]"
+          >
+            Clear contacts
+          </Button>
         }
         bodyClassName="overflow-x-hidden"
       >
@@ -198,7 +275,7 @@ export default function CheckedContactsPanel({
           </TableHeader>
           <TableBody
             items={rows}
-            dependencies={[sortDescriptor, details]}
+            dependencies={[sortDescriptor, metrics]}
             className="[&_tr]:border-b [&_tr]:border-border"
           >
             {(row) => (

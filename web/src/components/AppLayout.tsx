@@ -76,8 +76,12 @@ export default function AppLayout() {
 
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
+  const [clearCheckedRev, setClearCheckedRev] = useState(0);
   const handleCheckedContacts = useCallback((contacts: ContactPreview[]) => {
     setCheckedContacts(contacts);
+  }, []);
+  const clearCheckedContacts = useCallback(() => {
+    setClearCheckedRev((n) => n + 1);
   }, []);
   const { groups } = useContactGroups();
   const { tags } = useThreadTags();
@@ -240,11 +244,15 @@ export default function AppLayout() {
                 setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
               }
               onCheckedChange={handleCheckedContacts}
+              clearCheckedRev={clearCheckedRev}
             />
           </ListColumn>
           <RightPane>
             {checkedContacts.length > 0 ? (
-              <CheckedContactsPanel contacts={checkedContacts} />
+              <CheckedContactsPanel
+                contacts={checkedContacts}
+                onClear={clearCheckedContacts}
+              />
             ) : selectedContact ? (
               <ContactDrawer
                 variant="docked"
