@@ -281,7 +281,7 @@ export default function ContactDrawer({
             <div>
               <div className="mb-1.5">
                 <span className="text-[0.75rem] font-semibold uppercase tracking-[0.04em] text-muted">
-                  Groups
+                  Contact groups
                 </span>
               </div>
               {(detail!.groups ?? []).length > 0 ? (
