@@ -14,7 +14,7 @@ import NavGlyphButton from "./NavGlyphButton";
 import { EllipsisIcon, PeopleGroupIcon, PersonIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center gap-2 rounded border-none py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+  return `group relative flex w-full items-center gap-2 rounded border-none py-0.5 pl-3 text-left text-[0.875rem] text-text hover:bg-hover ${
     active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }

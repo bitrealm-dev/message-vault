@@ -171,10 +171,10 @@ export default function LeftPanel({
           className="px-3 pt-3"
         >
           {groups.length === 0 ? (
-            <div className="py-1.5 text-[0.813rem] text-muted">No saved searches</div>
+            <div className="py-1.5 pl-3 text-[0.813rem] text-muted">No saved searches</div>
           ) : (
             groups.map((g) => (
-              <div key={g.id} className="flex items-center gap-1">
+              <div key={g.id} className="flex items-center gap-1 pl-3">
                 <button
                   onClick={() => {
                     onSearchChange(g.query);
