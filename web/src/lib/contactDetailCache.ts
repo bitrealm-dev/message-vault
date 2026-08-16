@@ -83,6 +83,10 @@ export async function fetchContactDetail(
   signal?: AbortSignal,
 ): Promise<CachedContactDetail> {
   const key = String(id);
+  const cached = cache.get(key);
+  if (cached) {
+    return cached;
+  }
   const existing = inflight.get(key);
   if (existing) {
     return existing;

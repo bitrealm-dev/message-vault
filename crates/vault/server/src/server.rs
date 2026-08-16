@@ -519,6 +519,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         .route("/v1/export/messages", get(export_messages_handler))
         .route("/v1/export/contacts", get(contacts_list_handler))
         .route(
+            "/v1/export/contacts/summaries",
+            post(contact_summaries_handler),
+        )
+        .route(
             "/v1/export/contacts/{id}",
             get(contact_detail_handler).post(contact_mutate_handler),
         )
@@ -1084,6 +1088,28 @@ async fn conversation_sources_handler(
     .await?;
     page.map(|p| Json(serde_json::json!({ "sources": p.sources })))
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
+}
+
+async fn contact_summaries_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::contacts_api::ContactSummariesBody>,
+) -> Result<Json<crate::contacts_api::ContactSummariesPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    if body.ids.len() > crate::contacts_api::MAX_LIST_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "at most {} contact ids",
+            crate::contacts_api::MAX_LIST_LIMIT
+        )));
+    }
+    let db = Arc::clone(&state.db);
+    let page = with_locked_conn(db, "contact summaries task", move |conn| {
+        crate::contacts_api::get_contact_summaries(conn, &auth.account_id, &body.ids)
+            .map(|contacts| crate::contacts_api::ContactSummariesPage { contacts })
+    })
+    .await?;
+    Ok(Json(page))
 }
 
 async fn contact_detail_handler(

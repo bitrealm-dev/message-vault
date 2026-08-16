@@ -1,5 +1,7 @@
-//! Contact list/detail used by `GET /v1/export/contacts` and
-//! `GET|POST /v1/export/contacts/{id}`.
+//! Contact list/detail used by `GET /v1/export/contacts`,
+//! `GET|POST /v1/export/contacts/{id}`, and `POST /v1/export/contacts/summaries`.
+
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result as AnyResult, bail};
 use message_ir::HandleType;
@@ -105,6 +107,34 @@ pub struct ContactDetail {
     /// Group names on this contact (A–Z).
     #[serde(default)]
     pub groups: Vec<String>,
+}
+
+/// Body for `POST /v1/export/contacts/summaries`.
+#[derive(Debug, Deserialize)]
+pub struct ContactSummariesBody {
+    #[serde(default)]
+    pub ids: Vec<i64>,
+}
+
+/// Contact-level first/last seen and message counts for the selection table.
+#[derive(Debug, Serialize)]
+pub struct ContactSelectionSummary {
+    pub id: i64,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<String>,
+    pub individual_conversations: u64,
+    pub group_conversations: u64,
+    pub individual_message_count: u64,
+    pub group_message_count: u64,
+}
+
+/// Response for `POST /v1/export/contacts/summaries`.
+#[derive(Debug, Serialize)]
+pub struct ContactSummariesPage {
+    pub contacts: Vec<ContactSelectionSummary>,
 }
 
 /// A contact is linked to a conversation when one of its handles is either
@@ -835,6 +865,103 @@ pub fn get_contact_detail(
     }))
 }
 
+/// First/last seen and message counts for many contacts in one grouped query.
+///
+/// Unknown, trashed, and duplicate ids are skipped. At most [`MAX_LIST_LIMIT`]
+/// ids are read so the `IN` list stays under SQLite's variable cap.
+///
+/// # Errors
+///
+/// Returns an internal error when a database statement fails.
+pub fn get_contact_summaries(
+    conn: &Connection,
+    account_id: &str,
+    ids: &[i64],
+) -> Result<Vec<ContactSelectionSummary>, ExportQueryError> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+    for id in ids.iter().copied() {
+        if id <= 0 || !seen.insert(id) {
+            continue;
+        }
+        unique.push(id);
+        if unique.len() == MAX_LIST_LIMIT {
+            break;
+        }
+    }
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = in_placeholders(unique.len());
+    let involves = involves_contact_expr("selected.id");
+    let sql = format!(
+        "WITH selected AS (
+            SELECT ct.id,
+                   ct.account_id,
+                   COALESCE(NULLIF(trim(ct.preferred_name), ''), '(unknown)') AS name
+            FROM contacts ct
+            WHERE ct.account_id = ?
+              AND ct.id IN ({placeholders})
+              AND {not_trashed}
+         ),
+         involved AS (
+            SELECT selected.id AS contact_id, c.id AS conversation_id, c.conversation_type
+            FROM selected
+            JOIN conversations c ON c.account_id = selected.account_id
+              AND {involves}
+              AND {not_trashed_conversation}
+              AND {not_trashed_handle}
+         )
+         SELECT
+            s.id,
+            s.name,
+            MIN(m.timestamp) AS start_date,
+            MAX(m.timestamp) AS end_date,
+            COUNT(DISTINCT CASE WHEN i.conversation_type = 'individual' THEN i.conversation_id END),
+            COUNT(DISTINCT CASE WHEN i.conversation_type = 'group' THEN i.conversation_id END),
+            COUNT(DISTINCT CASE WHEN i.conversation_type = 'individual' THEN m.id END),
+            COUNT(DISTINCT CASE WHEN i.conversation_type = 'group' THEN m.id END)
+         FROM selected s
+         LEFT JOIN involved i ON i.contact_id = s.id
+         LEFT JOIN messages m ON m.conversation_id = i.conversation_id
+           AND m.duplicate_of IS NULL
+         GROUP BY s.id, s.name",
+        not_trashed = NOT_TRASHED_CONTACT_SQL,
+        not_trashed_conversation = NOT_TRASHED_CONVERSATION_SQL,
+        not_trashed_handle = NOT_TRASHED_CHAT_HANDLE_SQL,
+    );
+
+    let mut params: Vec<rusqlite::types::Value> = Vec::with_capacity(1 + unique.len());
+    params.push(account_id.to_string().into());
+    for id in &unique {
+        params.push((*id).into());
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(params.iter().cloned()), |row| {
+        Ok(ContactSelectionSummary {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            start_date: row.get(2)?,
+            end_date: row.get(3)?,
+            individual_conversations: row.get::<_, i64>(4)?.max(0) as u64,
+            group_conversations: row.get::<_, i64>(5)?.max(0) as u64,
+            individual_message_count: row.get::<_, i64>(6)?.max(0) as u64,
+            group_message_count: row.get::<_, i64>(7)?.max(0) as u64,
+        })
+    })?;
+    let mut by_id = HashMap::new();
+    for row in rows {
+        let summary = row?;
+        by_id.insert(summary.id, summary);
+    }
+    Ok(unique
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
+}
+
 fn infer_handle_type(raw: &str, service: Option<&str>) -> HandleType {
     let svc = service
         .map(|s| s.trim().to_ascii_lowercase())
@@ -1312,6 +1439,168 @@ mod tests {
         assert_eq!(detail.handles[0].group_conversations, 1);
         assert_eq!(detail.handles[0].individual_message_count, 2);
         assert_eq!(detail.handles[0].group_message_count, 1);
+    }
+
+    #[test]
+    fn get_contact_summaries_counts_two_contacts_in_one_query() {
+        let (conn, account) = setup();
+
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
+            params![&account],
+        )
+        .unwrap();
+        let sam_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = 'Sam'",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let sam_handle = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550200",
+            HandleType::Phone,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![&account, sam_handle, sam_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (1, ?1, ?2, 'individual', 'd.jsonl')",
+            params![&account, sam_handle],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (1, ?1, 'Sam')",
+            params![sam_handle],
+        )
+        .unwrap();
+        for (body, ts) in [
+            ("hi", "2024-06-01T12:00:00Z"),
+            ("there", "2024-06-01T13:00:00Z"),
+        ] {
+            conn.execute(
+                "INSERT INTO messages (
+                    conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+                 ) VALUES (1, ?1, 'imessage', ?2, 0, 0, ?3)",
+                params![&account, ts, body],
+            )
+            .unwrap();
+        }
+        let group_chat = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "chat-sam-group",
+            HandleType::Other,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, group_title, source_file
+             ) VALUES (2, ?1, ?2, 'group', 'Sam Group', 'g.jsonl')",
+            params![&account, group_chat],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (2, ?1, 'Sam')",
+            params![sam_handle],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (2, ?1, 'imessage', '2024-07-01T12:00:00Z', 0, 0, 'group hi')",
+            params![&account],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
+            params![&account],
+        )
+        .unwrap();
+        let pat_id: i64 = conn
+            .query_row(
+                "SELECT id FROM contacts WHERE account_id = ?1 AND preferred_name = 'Pat'",
+                params![&account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let pat_handle = account_profile::link_account_handle(
+            &conn,
+            &account,
+            "+15555550100",
+            HandleType::Phone,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
+             VALUES (?1, ?2, ?3)",
+            params![&account, pat_handle, pat_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (
+                id, account_id, chat_handle_id, conversation_type, source_file
+             ) VALUES (3, ?1, ?2, 'individual', 'pat.jsonl')",
+            params![&account, pat_handle],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO participants (conversation_id, handle_id, name_alias)
+             VALUES (3, ?1, 'Pat')",
+            params![pat_handle],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (
+                conversation_id, account_id, source, timestamp, is_from_me, sort_order, body
+             ) VALUES (3, ?1, 'imessage', '2024-05-01T09:00:00Z', 0, 0, 'hey')",
+            params![&account],
+        )
+        .unwrap();
+
+        let summaries = get_contact_summaries(&conn, &account, &[sam_id, pat_id, 99_999]).unwrap();
+        assert_eq!(summaries.len(), 2);
+
+        assert_eq!(summaries[0].id, sam_id);
+        assert_eq!(summaries[0].name, "Sam");
+        assert_eq!(summaries[0].individual_conversations, 1);
+        assert_eq!(summaries[0].group_conversations, 1);
+        assert_eq!(summaries[0].individual_message_count, 2);
+        assert_eq!(summaries[0].group_message_count, 1);
+        assert_eq!(
+            summaries[0].start_date.as_deref(),
+            Some("2024-06-01T12:00:00Z")
+        );
+        assert_eq!(
+            summaries[0].end_date.as_deref(),
+            Some("2024-07-01T12:00:00Z")
+        );
+
+        assert_eq!(summaries[1].id, pat_id);
+        assert_eq!(summaries[1].name, "Pat");
+        assert_eq!(summaries[1].individual_conversations, 1);
+        assert_eq!(summaries[1].group_conversations, 0);
+        assert_eq!(summaries[1].individual_message_count, 1);
+        assert_eq!(summaries[1].group_message_count, 0);
+        assert_eq!(
+            summaries[1].start_date.as_deref(),
+            Some("2024-05-01T09:00:00Z")
+        );
+        assert_eq!(
+            summaries[1].end_date.as_deref(),
+            Some("2024-05-01T09:00:00Z")
+        );
     }
 
     #[test]

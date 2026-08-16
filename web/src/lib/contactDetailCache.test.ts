@@ -32,6 +32,14 @@ describe("contactDetailCache", () => {
     expect(getCachedContactDetail("9")).toEqual(first);
   });
 
+  it("returns a cached copy without a second network request", async () => {
+    const get = vi.fn(async () => detail("9"));
+    await fetchContactDetail("9", get);
+    const second = await fetchContactDetail("9", get);
+    expect(second.name).toBe("Contact 9");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it("dedupes in-flight fetches for the same id", async () => {
     let release!: (d: CachedContactDetail) => void;
     const pending = new Promise<CachedContactDetail>((resolve) => {
