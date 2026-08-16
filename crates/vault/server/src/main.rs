@@ -6,7 +6,6 @@ mod config;
 mod contact_groups_api;
 mod contacts_api;
 mod conversations_api;
-mod thread_tags_api;
 mod db;
 mod dedupe;
 mod export_api;
@@ -24,6 +23,7 @@ mod profile;
 mod reset_demo;
 mod search_query;
 mod server;
+mod thread_tags_api;
 
 use crate::db::{account_profile, contacts as contacts_db};
 

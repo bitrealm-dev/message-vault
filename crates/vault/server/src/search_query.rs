@@ -825,10 +825,9 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
     match op_l.as_str() {
         "search" | "with" | "from" | "to" | "subject" | "text" | "has" | "after" | "before"
         | "source" | "is" | "within" | "label" | "people" | "tag" | "in" | "show" | "handle"
-        | "filename"
-        | "filetype" | "larger" | "smaller" | "group-count" | "message-count" | "group"
-        | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last" | "phone"
-        | "conversation" => Some((op, value)),
+        | "filename" | "filetype" | "larger" | "smaller" | "group-count" | "message-count"
+        | "group" | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last"
+        | "phone" | "conversation" => Some((op, value)),
         _ => None,
     }
 }

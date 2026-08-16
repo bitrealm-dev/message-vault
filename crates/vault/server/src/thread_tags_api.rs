@@ -136,7 +136,8 @@ pub fn tags_for_conversations(
         let rows = stmt.query_map(params_from_iter(binds), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     })
 }
 
