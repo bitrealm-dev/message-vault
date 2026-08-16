@@ -49,7 +49,7 @@ export default function ListRangeHeader({
             disabled={selectAllDisabled}
             aria-label={selectAllLabel}
             onChange={(e) => onSelectAllChange(e.target.checked)}
-            className="size-5 accent-accent disabled:opacity-40"
+            className="mv-list-check disabled:opacity-40"
           />
         </span>
       ) : null}

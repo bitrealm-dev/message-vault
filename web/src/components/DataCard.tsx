@@ -22,6 +22,7 @@ export default function DataCard({
   intro,
   className = "",
   maxWidthClass = "max-w-4xl",
+  bodyClassName = "overflow-x-auto",
 }: {
   children: ReactNode;
   title?: ReactNode;
@@ -30,6 +31,7 @@ export default function DataCard({
   intro?: ReactNode;
   className?: string;
   maxWidthClass?: string;
+  bodyClassName?: string;
 }) {
   const hasHeader = title != null || toolbar != null;
   return (
@@ -49,7 +51,7 @@ export default function DataCard({
         </div>
       ) : null}
       {intro != null ? <div className="mb-4">{intro}</div> : null}
-      <div className="overflow-x-auto">{children}</div>
+      <div className={bodyClassName}>{children}</div>
     </div>
   );
 }

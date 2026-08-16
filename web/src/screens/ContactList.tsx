@@ -572,7 +572,7 @@ export default function ContactList({
                 checked={checked}
                 aria-label={`Select ${c.name}`}
                 onChange={() => toggleChecked(c.id)}
-                className={`pointer-events-none absolute size-5 accent-accent ${
+                className={`mv-list-check pointer-events-none absolute ${
                   checked ? "" : "invisible group-hover/avatar:visible"
                 }`}
               />

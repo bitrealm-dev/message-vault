@@ -1,8 +1,77 @@
-import ContactInitialCircle from "./ContactInitialCircle";
-import { listRowDividersThin } from "../lib/tw";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  Column,
+  Row,
+  Cell,
+  type SortDescriptor,
+} from "react-aria-components";
+import { apiClient } from "../lib/api";
+import {
+  fetchContactDetail,
+  getCachedContactDetail,
+  type CachedContactDetail,
+} from "../lib/contactDetailCache";
+import DataCard, { dataCardHeaderRowClass } from "./DataCard";
 import type { ContactPreview } from "./ContactDrawer";
+import { sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
+import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
+import {
+  conversationCount,
+  handleDateCell,
+} from "./contactDrawer/handleTableLogic";
+import {
+  mutedClass,
+  tdCenterClass,
+  tdClass,
+  tdRightClass,
+  thClass,
+} from "./contactDrawer/handleTableStyles";
 
-/** Right-hand list of contacts whose checkboxes are on. */
+type ContactTotals = ReturnType<typeof sumHandleTotals>;
+
+type ContactRow = {
+  id: string;
+  name: string;
+  totals: ContactTotals | null;
+};
+
+function sortValue(row: ContactRow, col: string): string | number {
+  const totals = row.totals;
+  switch (col) {
+    case "name":
+      return row.name.toLowerCase();
+    case "start_date":
+      return totals?.start_date ?? "";
+    case "end_date":
+      return totals?.end_date ?? "";
+    case "conversations":
+      return totals ? conversationCount(totals) : -1;
+    case "direct_messages":
+      return totals?.individual_message_count ?? -1;
+    case "group_messages":
+      return totals?.group_message_count ?? -1;
+    default:
+      return "";
+  }
+}
+
+function MetricCell({
+  loaded,
+  children,
+}: {
+  loaded: boolean;
+  children: ReactNode;
+}) {
+  if (!loaded) {
+    return <span className={mutedClass}>—</span>;
+  }
+  return children;
+}
+
+/** Right-hand card of contacts whose checkboxes are on, with identity-table totals. */
 export default function CheckedContactsPanel({
   contacts,
 }: {
@@ -12,31 +81,165 @@ export default function CheckedContactsPanel({
     contacts.length === 1
       ? "1 contact selected"
       : `${contacts.length} contacts selected`;
+  const [details, setDetails] = useState<Record<string, CachedContactDetail>>(
+    {},
+  );
+  const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(
+    null,
+  );
+  const contactKey = contacts.map((c) => c.id).join(",");
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
+
+  useEffect(() => {
+    const selected = contactsRef.current;
+    const ac = new AbortController();
+    const next: Record<string, CachedContactDetail> = {};
+    for (const c of selected) {
+      const cached = getCachedContactDetail(c.id);
+      if (cached) next[c.id] = cached;
+    }
+    setDetails(next);
+    for (const c of selected) {
+      void fetchContactDetail(
+        c.id,
+        (path, opts) => apiClient.get<CachedContactDetail>(path, opts),
+        ac.signal,
+      )
+        .then((detail) => {
+          if (ac.signal.aborted) return;
+          setDetails((prev) => ({ ...prev, [String(detail.id)]: detail }));
+        })
+        .catch(() => {
+          /* aborted or failed — row stays on em dash until a later load */
+        });
+    }
+    return () => ac.abort();
+  }, [contactKey]);
+
+  const rows = useMemo<ContactRow[]>(() => {
+    const built = contacts.map((c) => {
+      const detail = details[c.id];
+      return {
+        id: c.id,
+        name: detail?.name ?? c.name,
+        totals: detail ? sumHandleTotals(detail.handles) : null,
+      };
+    });
+    if (!sortDescriptor?.column) return built;
+    const col = String(sortDescriptor.column);
+    const dir = sortDescriptor.direction === "descending" ? -1 : 1;
+    return [...built].sort((a, b) => {
+      const av = sortValue(a, col);
+      const bv = sortValue(b, col);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.name.localeCompare(b.name);
+    });
+  }, [contacts, details, sortDescriptor]);
 
   return (
     <aside
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel outline-none"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden overflow-y-auto bg-panel px-6 pb-6 pt-2 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       aria-label={heading}
     >
-      <div className="border-b border-border px-6 py-4">
-        <h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>
-      </div>
-      <ul className="m-0 list-none p-0">
-        {contacts.map((contact) => (
-          <li
-            key={contact.id}
-            className={`flex items-center gap-2.5 px-6 py-2 ${listRowDividersThin}`}
+      <DataCard
+        title={
+          <h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>
+        }
+        bodyClassName="overflow-x-hidden"
+      >
+        <Table
+          aria-label={heading}
+          className="w-full border-collapse text-left table-fixed"
+          sortDescriptor={sortDescriptor ?? undefined}
+          onSortChange={setSortDescriptor}
+        >
+          <TableHeader className={dataCardHeaderRowClass}>
+            <Column
+              id="name"
+              isRowHeader
+              allowsSorting
+              className={`${thClass} w-[28%] !text-left`}
+            >
+              {({ sortDirection }) => (
+                <span className="relative inline-flex items-center justify-start">
+                  <span className="text-left leading-tight">Contact</span>
+                  <span
+                    aria-hidden="true"
+                    className={`absolute top-1/2 left-[calc(100%+0.25rem)] -translate-y-1/2 text-[0.55rem] leading-none ${
+                      sortDirection ? "text-accent" : "invisible"
+                    }`}
+                  >
+                    {sortDirection === "descending" ? "▼" : "▲"}
+                  </span>
+                </span>
+              )}
+            </Column>
+            <SortableColumn id="start_date" widthClass="w-[14%]">
+              First Seen
+            </SortableColumn>
+            <SortableColumn id="end_date" widthClass="w-[14%]">
+              Last Seen
+            </SortableColumn>
+            <SortableColumn id="conversations" widthClass="w-[14%]" align="right">
+              Threads
+            </SortableColumn>
+            <SortableColumn id="direct_messages" widthClass="w-[15%]" align="right">
+              Direct
+              <br />
+              Messages
+            </SortableColumn>
+            <SortableColumn id="group_messages" widthClass="w-[15%]" align="right">
+              Group
+              <br />
+              Messages
+            </SortableColumn>
+          </TableHeader>
+          <TableBody
+            items={rows}
+            dependencies={[sortDescriptor, details]}
+            className="[&_tr]:border-b [&_tr]:border-border"
           >
-            <ContactInitialCircle
-              displayName={contact.name}
-              preferredHandle={contact.handles?.[0] ?? null}
-            />
-            <span className="min-w-0 truncate text-[0.875rem] font-medium">
-              {contact.name}
-            </span>
-          </li>
-        ))}
-      </ul>
+            {(row) => (
+              <Row id={row.id} className="outline-none">
+                <Cell className={`${tdClass} !text-left`}>
+                  <span className="min-w-0 truncate font-medium">{row.name}</span>
+                </Cell>
+                <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+                  <MetricCell loaded={row.totals != null}>
+                    {handleDateCell(row.totals?.start_date)}
+                  </MetricCell>
+                </Cell>
+                <Cell className={`${tdCenterClass} whitespace-nowrap text-muted`}>
+                  <MetricCell loaded={row.totals != null}>
+                    {handleDateCell(row.totals?.end_date)}
+                  </MetricCell>
+                </Cell>
+                <Cell className={tdRightClass}>
+                  <MetricCell loaded={row.totals != null}>
+                    <CountCell
+                      value={row.totals ? conversationCount(row.totals) : 0}
+                    />
+                  </MetricCell>
+                </Cell>
+                <Cell className={tdRightClass}>
+                  <MetricCell loaded={row.totals != null}>
+                    <CountCell
+                      value={row.totals?.individual_message_count ?? 0}
+                    />
+                  </MetricCell>
+                </Cell>
+                <Cell className={tdRightClass}>
+                  <MetricCell loaded={row.totals != null}>
+                    <CountCell value={row.totals?.group_message_count ?? 0} />
+                  </MetricCell>
+                </Cell>
+              </Row>
+            )}
+          </TableBody>
+        </Table>
+      </DataCard>
     </aside>
   );
 }
