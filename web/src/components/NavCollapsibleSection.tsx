@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ChevronRightIcon, PlusIcon } from "./icons";
+import NavGlyphButton from "./NavGlyphButton";
 
 const STORAGE_PREFIX = "mv-left-nav-open:";
 
@@ -29,7 +30,7 @@ export default function NavCollapsibleSection({
   addLabel,
   onAdd,
   addDisabled = false,
-  className = "p-3",
+  className = "px-3 py-2",
   children,
 }: {
   id: string;
@@ -44,7 +45,7 @@ export default function NavCollapsibleSection({
 
   return (
     <div className={className}>
-      <div className="mb-1 flex items-center justify-between gap-1">
+      <div className="mb-1 flex items-center gap-1">
         <button
           type="button"
           aria-expanded={open}
@@ -65,15 +66,13 @@ export default function NavCollapsibleSection({
           />
           <span className="truncate">{title}</span>
         </button>
-        <button
-          type="button"
+        <NavGlyphButton
           aria-label={addLabel}
           disabled={addDisabled}
           onClick={onAdd}
-          className="cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-accent disabled:opacity-40"
         >
           <PlusIcon size={14} />
-        </button>
+        </NavGlyphButton>
       </div>
       {open ? children : null}
     </div>

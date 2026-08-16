@@ -15,6 +15,7 @@ import GroupsNav from "./GroupsNav";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import ThreadTagsNav from "./ThreadTagsNav";
 import NavCollapsibleSection from "./NavCollapsibleSection";
+import NavGlyphButton from "./NavGlyphButton";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
 
@@ -170,30 +171,30 @@ export default function LeftPanel({
           className="px-3 pt-3"
         >
           {groups.length === 0 ? (
-            <div className="px-3 py-1.5 text-[0.813rem] text-muted">No saved searches</div>
+            <div className="py-1.5 text-[0.813rem] text-muted">No saved searches</div>
           ) : (
             groups.map((g) => (
-              <div key={g.id} className="flex items-center justify-between">
+              <div key={g.id} className="flex items-center gap-1">
                 <button
                   onClick={() => {
                     onSearchChange(g.query);
                     navigate(`/?q=${encodeURIComponent(g.query)}`);
                   }}
-                  className="block flex-1 cursor-pointer truncate border-none bg-transparent py-1 text-left text-[0.813rem] text-text"
+                  className="min-w-0 flex-1 cursor-pointer truncate border-none bg-transparent py-1.5 text-left text-[0.813rem] text-text"
                 >
                   {g.name}
                 </button>
-                <button
+                <NavGlyphButton
+                  title="Delete saved search"
+                  aria-label={`Delete saved search ${g.name}`}
+                  danger
                   onClick={() => {
                     removeGroup(g.id);
                     setGroups(listGroups());
                   }}
-                  title="Delete saved search"
-                  aria-label={`Delete saved search ${g.name}`}
-                  className="shrink-0 cursor-pointer border-none bg-transparent p-1 text-muted hover:text-danger"
                 >
                   <TrashIcon size={13} />
-                </button>
+                </NavGlyphButton>
               </div>
             ))
           )}

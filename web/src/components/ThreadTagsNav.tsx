@@ -10,10 +10,11 @@ import {
 } from "../lib/threadTags";
 import GroupNameDialog from "./GroupNameDialog";
 import NavCollapsibleSection from "./NavCollapsibleSection";
+import NavGlyphButton from "./NavGlyphButton";
 import { EllipsisIcon, TagIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+  return `group relative flex w-full items-center gap-2 rounded border-none py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
     active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }
@@ -138,26 +139,27 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
               >
                 <TagIcon size={15} />
-                <span className="truncate">{name}</span>
+                <span className="min-w-0 truncate">{name}</span>
               </button>
-              <button
-                type="button"
+              <NavGlyphButton
+                data-tag-row-menu=""
                 aria-label={`Tag options for ${name}`}
                 aria-expanded={menuOpen}
                 disabled={busy}
+                active={menuOpen}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   setMenuFor(menuOpen ? null : name);
                 }}
-                className={`shrink-0 cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-text ${
+                className={
                   active || menuOpen
-                    ? "opacity-100"
-                    : "opacity-0 group-hover:opacity-100"
-                }`}
+                    ? ""
+                    : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                }
               >
                 <EllipsisIcon size={15} />
-              </button>
+              </NavGlyphButton>
             </div>
             {menuOpen ? (
               <div
@@ -193,7 +195,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
       <button
         type="button"
         onClick={() => navigate("/no-tag")}
-        className={navRowClass(location.pathname === "/no-tag")}
+        className={`${navRowClass(location.pathname === "/no-tag")} cursor-pointer bg-transparent`}
       >
         <TagIcon size={15} />
         <span className="truncate">No tag</span>
