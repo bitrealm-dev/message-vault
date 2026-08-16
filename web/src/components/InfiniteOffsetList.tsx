@@ -50,6 +50,10 @@ type InfiniteOffsetListProps<T> = {
   errorPrefix?: string;
   /** Control on the right of the “N–M of total” row. */
   headerActions?: ReactNode;
+  selectAllChecked?: boolean;
+  selectAllIndeterminate?: boolean;
+  onSelectAllChange?: (checked: boolean) => void;
+  selectAllLabel?: string;
   /** Letter for in-list section headers. Omit while searching. */
   getSectionLetter?: (item: T) => string;
 };
@@ -381,6 +385,10 @@ export default function InfiniteOffsetList<T extends object>({
   rangeTotal,
   errorPrefix = "Could not load list",
   headerActions,
+  selectAllChecked = false,
+  selectAllIndeterminate = false,
+  onSelectAllChange,
+  selectAllLabel,
   getSectionLetter,
 }: InfiniteOffsetListProps<T>) {
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({
@@ -438,9 +446,19 @@ export default function InfiniteOffsetList<T extends object>({
         refreshing={refreshing}
         filling={filling}
         actions={headerActions}
-        letter={headerLetter}
-        letterLead={sectionLead}
+        selectAllChecked={selectAllChecked}
+        selectAllIndeterminate={selectAllIndeterminate}
+        onSelectAllChange={onSelectAllChange}
+        selectAllLabel={selectAllLabel}
+        selectAllDisabled={items.length === 0}
       />
+      {headerLetter ? (
+        <div className="flex shrink-0 items-center border-b border-border bg-panel px-3 py-1">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
+            {headerLetter}
+          </span>
+        </div>
+      ) : null}
       {getSectionLetter ? (
         <SectionedLetterList
           items={items}

@@ -13,6 +13,7 @@ import {
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
 import GroupsNav from "./GroupsNav";
+import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import ThreadTagsNav from "./ThreadTagsNav";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
@@ -127,10 +128,11 @@ export default function LeftPanel({
   }, []);
 
   return (
-    <div className="flex h-screen w-[220px] shrink-0 flex-col overflow-auto border-r border-border bg-panel text-text">
+    <div className="flex h-full w-[220px] shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text">
+      <div className={LIST_TOOLBAR_CLASS} aria-hidden />
+      <div className="min-h-0 flex-1 overflow-auto">
       {/* Browse */}
       <div className="px-3 py-2">
-        <div className={sectionHeaderClass}>Message Vault</div>
         <div className="pl-3">
           <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
             <ConversationsIcon />
@@ -164,7 +166,6 @@ export default function LeftPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto">
         <GroupsNav groups={contactGroups} />
 
         <div className="mx-3 border-t border-border" />

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import AppHeader from "./AppHeader";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
 import ConversationList from "../screens/ConversationList";
@@ -9,6 +10,8 @@ import ContactDrawer, {
 } from "./ContactDrawer";
 import ContactList from "../screens/ContactList";
 import CheckedContactsPanel from "./CheckedContactsPanel";
+import RightPane from "./RightPane";
+import { RightToolbarProvider } from "./RightToolbarContext";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { groupFromSlug } from "../lib/contactGroups";
@@ -120,6 +123,15 @@ export default function AppLayout() {
       } else {
         navigate(`/contacts${params}`);
       }
+    } else if (pathname.startsWith("/messages/")) {
+      const id = pathname.split("/")[2];
+      if (id) {
+        navigate(`/messages/${id}?q=${encodeURIComponent(q)}`, {
+          state: location.state,
+        });
+        return;
+      }
+      navigate(`/?q=${encodeURIComponent(q)}`);
     } else if (noTagMode) {
       navigate(`/no-tag${q ? `?q=${encodeURIComponent(q)}` : ""}`);
     } else if (tagSlugParam) {
@@ -184,7 +196,15 @@ export default function AppLayout() {
   const openContactId = asMessagesLocationState(location.state)?.openContactId ?? null;
 
   return (
-    <div className="flex h-screen bg-bg font-sans text-text">
+    <RightToolbarProvider>
+    <div className="flex h-screen flex-col bg-bg font-sans text-text">
+      <AppHeader
+        searchQuery={searchQuery}
+        searchMode={contactsMode ? "contacts" : "messages"}
+        onSearchChange={handleSearchChange}
+        onSearch={handleSearch}
+      />
+      <div className="flex min-h-0 flex-1">
       <LeftPanel
         onSearchChange={handleSearchChange}
         onSearch={handleSearch}
@@ -193,33 +213,25 @@ export default function AppLayout() {
       {/* Conversations: render list component directly with props */}
       {mode === "conversations" && !isMessageRoute && (
         <>
-          <ListColumn
-            searchQuery={searchQuery}
-            searchMode="messages"
-            onSearchChange={handleSearchChange}
-            onSearch={handleSearch}
-          >
+          <ListColumn>
             <ConversationList
               selectedId={null}
               onSelect={handleConversationSelect}
               query={threadListQuery}
             />
           </ListColumn>
-          <main className={mainPane}>
-            <div className={emptyMain}>Select a conversation to view messages</div>
-          </main>
+          <RightPane>
+            <main className={mainPane}>
+              <div className={emptyMain}>Select a conversation to view messages</div>
+            </main>
+          </RightPane>
         </>
       )}
 
       {/* Contacts: render list component directly with props */}
       {mode === "contacts" && (
         <>
-          <ListColumn
-            searchQuery={contactSearch}
-            searchMode="contacts"
-            onSearchChange={handleSearchChange}
-            onSearch={handleSearch}
-          >
+          <ListColumn>
             <ContactList
               filter={contactSearch}
               groupFilter={groupFilter}
@@ -230,33 +242,30 @@ export default function AppLayout() {
               onCheckedChange={handleCheckedContacts}
             />
           </ListColumn>
-          {checkedContacts.length > 0 ? (
-            <CheckedContactsPanel contacts={checkedContacts} />
-          ) : selectedContact ? (
-            <ContactDrawer
-              variant="docked"
-              contactId={selectedContact.id}
-              preview={selectedContact}
-              onClose={closeContactDrawer}
-              onBrowseConversations={handleBrowseContactConversations}
-            />
-          ) : (
-            <main className={mainPane}>
-              <div className={emptyMain}>Select a contact to view details</div>
-            </main>
-          )}
+          <RightPane>
+            {checkedContacts.length > 0 ? (
+              <CheckedContactsPanel contacts={checkedContacts} />
+            ) : selectedContact ? (
+              <ContactDrawer
+                variant="docked"
+                contactId={selectedContact.id}
+                preview={selectedContact}
+                onClose={closeContactDrawer}
+                onBrowseConversations={handleBrowseContactConversations}
+              />
+            ) : (
+              <main className={mainPane}>
+                <div className={emptyMain}>Select a contact to view details</div>
+              </main>
+            )}
+          </RightPane>
         </>
       )}
 
       {/* Trash: ListColumn shows ConversationList with trash query; main shows TrashScreen via <Outlet /> */}
       {isTrash && (
         <>
-          <ListColumn
-            searchQuery=""
-            searchMode="messages"
-            onSearchChange={handleSearchChange}
-            onSearch={handleSearch}
-          >
+          <ListColumn>
             <ConversationList
               selectedId={null}
               // Trash thread selection is handled by TrashScreen in the outlet.
@@ -264,9 +273,11 @@ export default function AppLayout() {
               query="is:trash"
             />
           </ListColumn>
-          <main className={mainPane}>
-            <Outlet />
-          </main>
+          <RightPane>
+            <main className={mainPane}>
+              <Outlet />
+            </main>
+          </RightPane>
         </>
       )}
 
@@ -293,6 +304,8 @@ export default function AppLayout() {
           onBrowseConversations={handleBrowseContactConversations}
         />
       ) : null}
+      </div>
     </div>
+    </RightToolbarProvider>
   );
 }

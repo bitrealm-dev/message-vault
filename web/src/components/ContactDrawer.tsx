@@ -217,7 +217,7 @@ export default function ContactDrawer({
 
   const panelClass =
     variant === "docked"
-      ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-border bg-panel p-6 outline-none"
+      ? "flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel p-6 outline-none"
       : "fixed top-0 bottom-0 z-40 w-[min(920px,calc(100vw-14rem))] overflow-auto border-l border-border bg-panel p-6 shadow-[2px_0_12px_rgba(0,0,0,0.18)] outline-none";
 
   const panelStyle =

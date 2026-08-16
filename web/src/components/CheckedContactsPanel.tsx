@@ -15,7 +15,7 @@ export default function CheckedContactsPanel({
 
   return (
     <aside
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l border-border bg-panel outline-none"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-auto bg-panel outline-none"
       aria-label={heading}
     >
       <div className="border-b border-border px-6 py-4">

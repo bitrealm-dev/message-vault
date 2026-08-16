@@ -3,6 +3,7 @@ import { useParams, useLocation, useNavigate, useSearchParams, Link } from "reac
 import ListColumn from "./ListColumn";
 import ConversationList from "../screens/ConversationList";
 import MessageView from "../screens/MessageView";
+import RightPane from "./RightPane";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { fetchConversationById } from "../lib/fetchConversationById";
@@ -11,7 +12,7 @@ export default function MessageRoute() {
   const { conversationId } = useParams<{ conversationId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
   const conversationSearch = searchParams.get("q") || "";
   const conversationFilter = searchParams.get("f") || "";
@@ -62,27 +63,9 @@ export default function MessageRoute() {
     return () => controller.abort();
   }, [conversationId, stateConversation]);
 
-  const handleSearchChange = (q: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (q) next.set("q", q); else next.delete("q");
-    next.delete("f");
-    setSearchParams(next, { replace: true });
-  };
-
-  const handleSearch = (q: string) => {
-    navigate(`/messages/${conversationId}?q=${encodeURIComponent(q)}`, {
-      state: { conversation, openContactId },
-    });
-  };
-
   return (
     <>
-      <ListColumn
-        searchQuery={conversationSearch}
-        searchMode="messages"
-        onSearchChange={handleSearchChange}
-        onSearch={handleSearch}
-      >
+      <ListColumn>
         <ConversationList
           selectedId={conversationId ?? null}
           onSelect={(c) =>
@@ -93,7 +76,8 @@ export default function MessageRoute() {
           query={query}
         />
       </ListColumn>
-      <main className="min-w-0 flex-1 overflow-auto bg-bg text-text">
+      <RightPane>
+      <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-bg text-text">
         {conversation ? (
           <MessageView
             conversation={conversation}
@@ -123,6 +107,7 @@ export default function MessageRoute() {
           </div>
         )}
       </main>
+      </RightPane>
     </>
   );
 }

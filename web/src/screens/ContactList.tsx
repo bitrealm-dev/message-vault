@@ -3,6 +3,7 @@ import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
+import { useSetRightToolbar } from "../components/RightToolbarContext";
 import { checksFromMembers } from "../lib/membershipChecks";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { highlightText } from "../lib/highlightText";
@@ -160,6 +161,7 @@ export default function ContactList({
   /** Unfiltered contact list, so group clicks can filter in the browser. */
   const fullCatalogRef = useRef<Contact[] | null>(null);
   const { groups: allGroups } = useContactGroups();
+  const setRightToolbar = useSetRightToolbar();
 
   const onNameSortChange = (next: ContactNameSortState) => {
     setNameSort(next);
@@ -269,6 +271,11 @@ export default function ContactList({
     () => displayContacts.filter((c) => checkedIds.has(c.id)),
     [checkedIds, displayContacts],
   );
+  const selectAllChecked =
+    displayContacts.length > 0 &&
+    displayContacts.every((c) => checkedIds.has(c.id));
+  const selectAllIndeterminate =
+    !selectAllChecked && displayContacts.some((c) => checkedIds.has(c.id));
   const targetContacts = useMemo(() => {
     if (checkedContacts.length > 0) return checkedContacts;
     return selectedContact ? [selectedContact] : [];
@@ -299,7 +306,7 @@ export default function ContactList({
     [allGroups, targetContacts],
   );
 
-  const applyMembership = async (name: string, enable: boolean) => {
+  const applyMembership = useCallback(async (name: string, enable: boolean) => {
     const ids = targetContacts
       .map((c) => Number(c.id))
       .filter((id) => Number.isFinite(id) && id > 0);
@@ -323,7 +330,44 @@ export default function ContactList({
     if (groupActive) {
       setMembershipRev((n) => n + 1);
     }
-  };
+  }, [groupActive, targetContacts]);
+
+  useEffect(() => {
+    setRightToolbar(
+      <GroupsMenu
+        allGroups={allGroups}
+        checks={groupChecks}
+        disabled={targetContacts.length === 0}
+        onToggle={(name) => {
+          const on = groupChecks[name] === "on";
+          void applyMembership(name, !on);
+        }}
+        onCreate={(name) => {
+          void (async () => {
+            const existing = allGroups.find(
+              (g) => g.toLowerCase() === name.toLowerCase(),
+            );
+            if (!existing) {
+              await createContactGroup(name);
+            }
+            await applyMembership(existing ?? name, true);
+          })();
+        }}
+        onClearAll={() => {
+          const names = new Set<string>();
+          for (const c of targetContacts) {
+            for (const g of c.groups ?? []) names.add(g);
+          }
+          void (async () => {
+            for (const name of names) {
+              await applyMembership(name, false);
+            }
+          })();
+        }}
+      />,
+    );
+    return () => setRightToolbar(null);
+  }, [allGroups, applyMembership, groupChecks, setRightToolbar, targetContacts]);
 
   const localSlice =
     !advancedActive &&
@@ -359,49 +403,24 @@ export default function ContactList({
       isRowHighlighted={(c) =>
         checkedIds.size > 0 ? checkedIds.has(c.id) : c.id === selectedId
       }
+      selectAllChecked={selectAllChecked}
+      selectAllIndeterminate={selectAllIndeterminate}
+      onSelectAllChange={(on) => {
+        setCheckedIds(
+          on ? new Set(displayContacts.map((c) => c.id)) : new Set(),
+        );
+      }}
+      selectAllLabel="Select all contacts"
       getId={(c) => c.id}
       getTextValue={(c) => c.name}
       ariaLabel="Contacts"
       errorPrefix="Could not load contacts"
       headerActions={
-        <div className="flex items-center gap-1">
-          <GroupsMenu
-            allGroups={allGroups}
-            checks={groupChecks}
-            disabled={targetContacts.length === 0}
-            onToggle={(name) => {
-              const on = groupChecks[name] === "on";
-              void applyMembership(name, !on);
-            }}
-            onCreate={(name) => {
-              void (async () => {
-                const existing = allGroups.find(
-                  (g) => g.toLowerCase() === name.toLowerCase(),
-                );
-                if (!existing) {
-                  await createContactGroup(name);
-                }
-                await applyMembership(existing ?? name, true);
-              })();
-            }}
-            onClearAll={() => {
-              const names = new Set<string>();
-              for (const c of targetContacts) {
-                for (const g of c.groups ?? []) names.add(g);
-              }
-              void (async () => {
-                for (const name of names) {
-                  await applyMembership(name, false);
-                }
-              })();
-            }}
-          />
-          <ContactSortMenu
-            sort={nameSort.sort}
-            order={nameSort.order}
-            onChange={onNameSortChange}
-          />
-        </div>
+        <ContactSortMenu
+          sort={nameSort.sort}
+          order={nameSort.order}
+          onChange={onNameSortChange}
+        />
       }
       getSectionLetter={
         filterActive

@@ -1,10 +1,6 @@
 import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useRef, useState } from "react";
-import GlobalSearch from "./GlobalSearch";
-import ContactSearch from "./ContactSearch";
-import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
+import { useRef, useState } from "react";
 import { ListColumnResizeContext } from "./ListColumnResizeContext";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 
 const DEFAULT_WIDTH = 300;
 const MIN_WIDTH = 220;
@@ -35,36 +31,10 @@ function saveWidth(n: number): void {
   }
 }
 
-export default function ListColumn({
-  searchQuery,
-  searchMode,
-  onSearchChange,
-  onSearch,
-  children,
-}: {
-  searchQuery: string;
-  searchMode: AdvancedSearchMode;
-  onSearchChange: (v: string) => void;
-  onSearch: (q: string) => void;
-  children: ReactNode;
-}) {
-  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const [contactsSearchOpen, setContactsSearchOpen] = useState(false);
+export default function ListColumn({ children }: { children: ReactNode }) {
   const [width, setWidth] = useState(() => loadWidth());
   const [dragging, setDragging] = useState(false);
   const [handleHover, setHandleHover] = useState(false);
-  const isContacts = searchMode === "contacts";
-  const conversationsAdvancedRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!showAdvancedSearch || isContacts) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (shouldIgnoreOutsideDismiss(e, conversationsAdvancedRef.current)) return;
-      setShowAdvancedSearch(false);
-    };
-    document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [showAdvancedSearch, isContacts]);
 
   const startXRef = useRef(0);
   const startWidthRef = useRef(DEFAULT_WIDTH);
@@ -133,53 +103,9 @@ export default function ListColumn({
     <ListColumnResizeContext.Provider value={dragging}>
     <div
       data-list-column
-      style={{
-        width: `${width}px`,
-        // Visible so the advanced / contacts search panels can extend over the main column.
-        zIndex: showAdvancedSearch || contactsSearchOpen ? 40 : 1,
-      }}
-      className="relative flex h-screen shrink-0 flex-col overflow-visible border-r border-border bg-panel text-text"
+      style={{ width: `${width}px` }}
+      className="relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text"
     >
-      <div className="relative shrink-0 border-b border-border p-3">
-        {isContacts ? (
-          <ContactSearch
-            value={searchQuery}
-            onChange={onSearchChange}
-            onSubmit={(q) => onSearch(q)}
-            onOpenChange={setContactsSearchOpen}
-          />
-        ) : (
-            <div ref={conversationsAdvancedRef} className="relative">
-              <GlobalSearch
-                value={searchQuery}
-                mode="search"
-                onChange={onSearchChange}
-                onSubmit={(q) => onSearch(q)}
-              />
-              <button
-                type="button"
-                onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
-                className="cursor-pointer border-none bg-none pt-1 text-[0.688rem] text-muted"
-              >
-                {showAdvancedSearch ? "Hide advanced search" : "Advanced search"}
-              </button>
-              {showAdvancedSearch ? (
-                <div className="absolute left-0 top-full z-[70] -mt-px w-full min-w-[300px]">
-                  <AdvancedSearchForm
-                    mode={searchMode}
-                    onApply={(q) => {
-                      onSearchChange(q);
-                      onSearch(q);
-                      setShowAdvancedSearch(false);
-                    }}
-                    onClose={() => setShowAdvancedSearch(false)}
-                  />
-                </div>
-              ) : null}
-            </div>
-        )}
-      </div>
-
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {children}
       </div>
@@ -199,10 +125,7 @@ export default function ListColumn({
         onKeyDown={onResizeKeyDown}
         onMouseEnter={() => setHandleHover(true)}
         onMouseLeave={() => setHandleHover(false)}
-        className={`absolute top-0 right-0 h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent ${
-          // Stay under the advanced/contacts search panel when it overhangs the main column.
-          showAdvancedSearch || contactsSearchOpen ? "z-10" : "z-[60]"
-        }`}
+        className="absolute top-0 right-0 z-[60] h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent"
       >
         <div
           aria-hidden

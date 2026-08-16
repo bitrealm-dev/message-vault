@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+
+/** Same height on the sidebar spacer, list toolbar, and right-pane toolbar. */
+export const LIST_TOOLBAR_CLASS =
+  "flex h-9 shrink-0 items-center gap-2.5 border-b border-border px-3";
 
 /** Shared “N–M of total” header chrome for conversation and contact lists. */
 export default function ListRangeHeader({
@@ -6,39 +10,53 @@ export default function ListRangeHeader({
   refreshing = false,
   filling = false,
   actions,
-  letter,
-  letterLead,
+  selectAllChecked = false,
+  selectAllIndeterminate = false,
+  onSelectAllChange,
+  selectAllLabel = "Select all",
+  selectAllDisabled = false,
 }: {
   rangeLabel: string;
   refreshing?: boolean;
   filling?: boolean;
-  /** Right side of the range row (sort control on the contact list). */
+  /** Right side of the range row (sort, groups, tags). */
   actions?: ReactNode;
-  /** Current name-section letter, aligned with the contact avatar column. */
-  letter?: string | null;
-  /** Spacer before the letter so it lines up with the initials column. */
-  letterLead?: ReactNode;
+  selectAllChecked?: boolean;
+  selectAllIndeterminate?: boolean;
+  onSelectAllChange?: (checked: boolean) => void;
+  selectAllLabel?: string;
+  selectAllDisabled?: boolean;
 }) {
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = selectAllIndeterminate;
+    }
+  }, [selectAllIndeterminate]);
+
   let activitySuffix = "";
   if (refreshing) activitySuffix = " · updating…";
   else if (filling) activitySuffix = " · loading more…";
 
   return (
-    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">
-      <div className="flex min-w-0 items-center gap-2.5">
-        {letter ? (
-          <>
-            {letterLead}
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
-              {letter}
-            </span>
-          </>
-        ) : null}
-        <span className="min-w-0 truncate text-[0.688rem] text-muted">
-          {rangeLabel}
-          {activitySuffix}
+    <div className={LIST_TOOLBAR_CLASS}>
+      {onSelectAllChange ? (
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+          <input
+            ref={selectAllRef}
+            type="checkbox"
+            checked={selectAllChecked}
+            disabled={selectAllDisabled}
+            aria-label={selectAllLabel}
+            onChange={(e) => onSelectAllChange(e.target.checked)}
+            className="size-5 accent-accent disabled:opacity-40"
+          />
         </span>
-      </div>
+      ) : null}
+      <span className="min-w-0 flex-1 truncate text-[0.688rem] text-muted">
+        {rangeLabel}
+        {activitySuffix}
+      </span>
       {actions ? <div className="shrink-0">{actions}</div> : null}
     </div>
   );

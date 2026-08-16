@@ -5,6 +5,7 @@ import ConversationRow from "../components/ConversationRow";
 import { checksFromMembers } from "../lib/membershipChecks";
 import ListRangeHeader from "../components/ListRangeHeader";
 import TagsMenu from "../components/TagsMenu";
+import { useSetRightToolbar } from "../components/RightToolbarContext";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import {
   createThreadTag,
@@ -41,6 +42,7 @@ export default function ConversationList({
   const [tagOverrides, setTagOverrides] = useState<Record<string, string[]>>({});
   const [membershipRev, setMembershipRev] = useState(0);
   const { tags: allTags } = useThreadTags();
+  const setRightToolbar = useSetRightToolbar();
 
   useEffect(() => {
     setCheckedIds(new Set());
@@ -116,7 +118,7 @@ export default function ConversationList({
     [allTags, targetConversations],
   );
 
-  const applyMembership = async (name: string, enable: boolean) => {
+  const applyMembership = useCallback(async (name: string, enable: boolean) => {
     const ids = targetConversations
       .map((c) => Number(c.id))
       .filter((id) => Number.isFinite(id) && id > 0);
@@ -137,7 +139,51 @@ export default function ConversationList({
     if (/\b(?:-?tag:|-?people:|within:|label:)/i.test(query)) {
       setMembershipRev((n) => n + 1);
     }
-  };
+  }, [query, targetConversations]);
+
+  useEffect(() => {
+    setRightToolbar(
+      <TagsMenu
+        allTags={allTags}
+        checks={tagChecks}
+        disabled={targetConversations.length === 0}
+        onToggle={(name) => {
+          const on = tagChecks[name] === "on";
+          void applyMembership(name, !on);
+        }}
+        onCreate={(name) => {
+          void (async () => {
+            const existing = allTags.find(
+              (t) => t.toLowerCase() === name.toLowerCase(),
+            );
+            if (!existing) {
+              await createThreadTag(name);
+            }
+            await applyMembership(existing ?? name, true);
+          })();
+        }}
+        onClearAll={() => {
+          const names = new Set<string>();
+          for (const c of targetConversations) {
+            for (const t of c.tags ?? []) names.add(t);
+          }
+          void (async () => {
+            for (const name of names) {
+              await applyMembership(name, false);
+            }
+          })();
+        }}
+      />,
+    );
+    return () => setRightToolbar(null);
+  }, [allTags, applyMembership, setRightToolbar, tagChecks, targetConversations]);
+
+  const selectAllChecked =
+    displayConversations.length > 0 &&
+    displayConversations.every((c) => checkedIds.has(c.id));
+  const selectAllIndeterminate =
+    !selectAllChecked &&
+    displayConversations.some((c) => checkedIds.has(c.id));
 
   const rangeLabel =
     loading && conversations.length === 0
@@ -163,39 +209,15 @@ export default function ConversationList({
         rangeLabel={rangeLabel}
         refreshing={refreshing}
         filling={filling}
-        actions={
-          <TagsMenu
-            allTags={allTags}
-            checks={tagChecks}
-            disabled={targetConversations.length === 0}
-            onToggle={(name) => {
-              const on = tagChecks[name] === "on";
-              void applyMembership(name, !on);
-            }}
-            onCreate={(name) => {
-              void (async () => {
-                const existing = allTags.find(
-                  (t) => t.toLowerCase() === name.toLowerCase(),
-                );
-                if (!existing) {
-                  await createThreadTag(name);
-                }
-                await applyMembership(existing ?? name, true);
-              })();
-            }}
-            onClearAll={() => {
-              const names = new Set<string>();
-              for (const c of targetConversations) {
-                for (const t of c.tags ?? []) names.add(t);
-              }
-              void (async () => {
-                for (const name of names) {
-                  await applyMembership(name, false);
-                }
-              })();
-            }}
-          />
-        }
+        selectAllChecked={selectAllChecked}
+        selectAllIndeterminate={selectAllIndeterminate}
+        onSelectAllChange={(on) => {
+          setCheckedIds(
+            on ? new Set(displayConversations.map((c) => c.id)) : new Set(),
+          );
+        }}
+        selectAllLabel="Select all conversations"
+        selectAllDisabled={displayConversations.length === 0}
       />
       <VirtualList
         count={displayConversations.length}
