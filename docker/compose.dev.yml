@@ -35,10 +35,10 @@ services:
       GUEST_DEMO_POOL: ${GUEST_DEMO_POOL:-false}
     volumes:
       - ..:/app
+      # ./data is already /app/data via the repo mount. A second
+      # ../data:/app/data bind makes Docker treat that path as another
+      # device, so reset-demo rename fails with EXDEV.
       - ../staging:/app/staging
-      # Host ./data (not a named volume) so web-next and the vault share
-      # the same per-account layout: data/<account_id>/<source_id>/assets.
-      - ../data:/app/data
       - cargo-target:/app/target
       - cargo-registry:/usr/local/cargo/registry
     stdin_open: true
