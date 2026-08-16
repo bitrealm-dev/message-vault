@@ -30,6 +30,9 @@ docs/node_modules
 docs/.astro
 docs/dist
 
-# Local export working trees at repo root (not the committed demo-seed bundle)
+# Local export working trees at repo root
 /staging
 /sources
+
+# Generated demo conversations (built in the rust-builder stage)
+/crates/vault/demo-seed/staging

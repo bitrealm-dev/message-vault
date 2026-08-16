@@ -94,8 +94,9 @@ pub fn write_attachment_blobs(dir: &Path) -> Result<HashMap<String, (String, u64
     fs::write(dir.join("sticker.gif"), MINI_GIF)?;
     record_blob(&mut digests, "attachments/sticker.gif", MINI_GIF);
 
-    fs::write(dir.join("voice.caf"), MINI_CAF)?;
-    record_blob(&mut digests, "attachments/voice.caf", MINI_CAF);
+    let voice = mini_caf();
+    fs::write(dir.join("voice.caf"), &voice)?;
+    record_blob(&mut digests, "attachments/voice.caf", &voice);
 
     fs::write(dir.join("notes.pdf"), MINI_PDF)?;
     record_blob(&mut digests, "attachments/notes.pdf", MINI_PDF);
@@ -146,6 +147,86 @@ const MINI_GIF: &[u8] = &[
     0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B,
 ];
 
-const MINI_CAF: &[u8] = b"caff\x00\x00\x00\x1C\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-
 const MINI_PDF: &[u8] = b"%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n";
+
+/// Silent 0.1s mono 16-bit CAF (Core Audio Format) clip.
+///
+/// The old 20-byte header had no audio frames. ffmpeg refused it during
+/// `reset-demo` (`Invalid data found when processing input`). This file is a
+/// real CAF so the web converter can turn it into MP3.
+pub fn mini_caf() -> Vec<u8> {
+    const SAMPLE_RATE: f64 = 8_000.0;
+    const CHANNELS: u32 = 1;
+    const BITS: u32 = 16;
+    const FRAMES: u32 = 800;
+    let data_bytes = FRAMES * CHANNELS * (BITS / 8);
+
+    let mut out = Vec::with_capacity(64 + data_bytes as usize);
+    out.extend(b"caff");
+    out.extend(1u16.to_be_bytes());
+    out.extend(0u16.to_be_bytes());
+
+    out.extend(b"desc");
+    out.extend(32i64.to_be_bytes());
+    out.extend(SAMPLE_RATE.to_be_bytes());
+    out.extend(b"lpcm");
+    out.extend(2u32.to_be_bytes());
+    out.extend((BITS / 8 * CHANNELS).to_be_bytes());
+    out.extend(1u32.to_be_bytes());
+    out.extend(CHANNELS.to_be_bytes());
+    out.extend(BITS.to_be_bytes());
+
+    out.extend(b"data");
+    out.extend(i64::from(4 + data_bytes).to_be_bytes());
+    out.extend(0u32.to_be_bytes());
+    out.extend(vec![0u8; data_bytes as usize]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mini_caf;
+    use std::process::Command;
+
+    #[test]
+    fn mini_caf_is_a_real_caf_file() {
+        let bytes = mini_caf();
+        assert!(bytes.starts_with(b"caff"), "CAF magic");
+        assert!(bytes.windows(4).any(|w| w == b"desc"), "desc chunk");
+        assert!(bytes.windows(4).any(|w| w == b"data"), "data chunk");
+        assert!(
+            bytes.len() > 64,
+            "must include PCM samples, not only a header"
+        );
+    }
+
+    #[test]
+    fn mini_caf_is_readable_by_ffprobe() {
+        let Ok(status) = Command::new("ffprobe").arg("-version").status() else {
+            return;
+        };
+        if !status.success() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("voice.caf");
+        std::fs::write(&path, mini_caf()).expect("write caf");
+        let probed = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&path)
+            .status()
+            .expect("run ffprobe");
+        assert!(
+            probed.success(),
+            "ffprobe must accept the demo voice note so reset-demo can convert it"
+        );
+    }
+}

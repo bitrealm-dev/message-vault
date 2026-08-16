@@ -1,4 +1,4 @@
-//! Command-line entry point that regenerates the committed demo files.
+//! Command-line entry point that writes the generated demo files.
 
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use demo_seed::SeedConfig;
 
 #[derive(Parser)]
 #[command(name = "demo-seed")]
-#[command(about = "Generate committed iMessage demo data for Message Vault")]
+#[command(about = "Generate iMessage demo data for Message Vault")]
 struct Cli {
     /// Path to the demo_seed.toml settings file
     #[arg(long, default_value_t = SeedConfig::default_path().display().to_string())]

@@ -227,6 +227,7 @@ fn reset_prepared_bundle(
 ) -> Result<ResetPreparedStats> {
     let prepared = validate_prepared_bundle(bundle)?;
     let _operation_lock = crate::operation_lock::acquire_for_reset(&cfg.paths.db)?;
+    crate::operation_lock::clear_ready(&cfg.paths.db)?;
     let db_parent = parent_dir_or_cwd(&cfg.paths.db);
     fs::create_dir_all(db_parent)
         .with_context(|| format!("create database parent {}", db_parent.display()))?;
@@ -345,6 +346,7 @@ fn reset_prepared_bundle(
         return Err(error);
     }
 
+    crate::operation_lock::mark_ready(&cfg.paths.db)?;
     after_reset_refresh_guest_pool(cfg, GuestDemoSettings::from_env())?;
 
     Ok(ResetPreparedStats {
@@ -506,6 +508,16 @@ fn verify_non_demo_state_preserved(active: &Path, prepared: &Path, demo_id: &str
 fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
     let conn = rusqlite::Connection::open(db)
         .with_context(|| format!("open {} to verify non-demo accounts", db.display()))?;
+    let has_accounts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'accounts'",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| format!("check accounts table in {}", db.display()))?;
+    if has_accounts == 0 {
+        return Ok(BTreeMap::new());
+    }
     let mut statement = conn.prepare(
         "SELECT a.id, COUNT(m.id)
          FROM accounts a
@@ -745,8 +757,8 @@ fn remove_any_if_exists(path: &Path) -> Result<()> {
 }
 
 /// Rebuild the demo bundle from `demo_seed.toml` when that file is present
-/// (a development checkout). Release images only ship the committed
-/// staging/config tree — skip regeneration there.
+/// (a development checkout). Release images copy a generated staging/config
+/// tree and omit `demo_seed.toml` — skip regeneration there.
 ///
 /// Staging here is the temporary import area under the demo bundle
 /// (`staging/imessage`, and so on).
@@ -767,7 +779,7 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
         && bundle.join("config/contacts.vcf").is_file();
     if complete {
         println!(
-            "Reset demo — using committed bundle (no {} in this image)",
+            "Reset demo — using image bundle (no {} in this image)",
             seed_toml.display()
         );
         return Ok(demo_seed::GenStats {
@@ -780,7 +792,7 @@ fn maybe_regenerate_bundle(bundle: &Path) -> Result<demo_seed::GenStats> {
     }
 
     bail!(
-        "cannot reset demo: {} is missing and {} is not a complete committed bundle \
+        "cannot reset demo: {} is missing and {} is not a complete demo bundle \
          (need staging/{IMESSAGE_SOURCE}/, staging/{SBR_SOURCE}/, and staging/{WHATSAPP_SOURCE}/)",
         seed_toml.display(),
         bundle.display()
@@ -1148,6 +1160,20 @@ mod tests {
             fs::read(&config_dest).expect("read active config"),
             original
         );
+    }
+
+    #[test]
+    fn vault_db_without_accounts_table_does_not_block_reset_check() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let active = temp.path().join("vault.db");
+        rusqlite::Connection::open(&active).expect("create empty sqlite file");
+        let prepared = temp.path().join("prepared.db");
+        let conn = schema::open_configured(&prepared).expect("open prepared database");
+        schema::ensure_vault_schema(&conn).expect("create prepared schema");
+        drop(conn);
+
+        verify_non_demo_state_preserved(&active, &prepared, DEMO_ACCOUNT_ID)
+            .expect("a vault.db with no accounts table must not block reset-demo");
     }
 
     #[test]

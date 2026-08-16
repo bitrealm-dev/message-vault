@@ -28,6 +28,8 @@ COPY crates ./crates
 COPY schema ./schema
 
 RUN cargo build --release -p message-vault-server
+# Conversation JSONL is not in git. Write it here so the runtime image can seed.
+RUN cargo run --release -p demo-seed
 
 # -----------------------------------------------------------------------------
 # Stage 3: slim runtime
@@ -47,9 +49,9 @@ WORKDIR /app
 COPY --from=rust-builder /src/target/release/message-vault-server /usr/local/bin/message-vault-server
 
 # Demo bundle (seeded on first start when DEMO_DATA is truthy)
-COPY crates/vault/demo-seed/staging ./crates/vault/demo-seed/staging
-COPY crates/vault/demo-seed/config ./crates/vault/demo-seed/config
-COPY crates/vault/demo-seed/README.md ./crates/vault/demo-seed/README.md
+COPY --from=rust-builder /src/crates/vault/demo-seed/staging ./crates/vault/demo-seed/staging
+COPY --from=rust-builder /src/crates/vault/demo-seed/config ./crates/vault/demo-seed/config
+COPY --from=rust-builder /src/crates/vault/demo-seed/README.md ./crates/vault/demo-seed/README.md
 
 # Container config template
 COPY config/config.docker.toml ./config/config.docker.toml
