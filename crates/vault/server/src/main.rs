@@ -6,6 +6,7 @@ mod config;
 mod contact_groups_api;
 mod contacts_api;
 mod conversations_api;
+mod thread_tags_api;
 mod db;
 mod dedupe;
 mod export_api;

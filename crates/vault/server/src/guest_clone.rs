@@ -119,6 +119,8 @@ fn clone_sql(tx: &Transaction<'_>, template: &str) -> Result<String> {
     copy_vault_import_issues(tx, &import_map)?;
 
     let conversation_map = copy_conversations(tx, template, &guest_id, &handle_map)?;
+    let tag_map = copy_conversation_tags(tx, template, &guest_id)?;
+    copy_conversation_tag_members(tx, template, &conversation_map, &tag_map)?;
     copy_trashed_conversations(tx, template, &guest_id, &conversation_map)?;
     copy_participants(tx, template, &conversation_map, &handle_map, &contact_map)?;
 
@@ -339,6 +341,60 @@ fn copy_contact_group_members(
         tx.execute(
             "INSERT INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
             params![new_contact, new_group],
+        )?;
+    }
+    Ok(())
+}
+
+fn copy_conversation_tags(
+    tx: &Transaction<'_>,
+    template: &str,
+    guest: &str,
+) -> Result<HashMap<i64, i64>> {
+    let rows = collect_rows(
+        tx,
+        "SELECT id, name FROM conversation_tags WHERE account_id = ?1",
+        template,
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    let mut map = HashMap::with_capacity(rows.len());
+    for (old_id, name) in rows {
+        tx.execute(
+            "INSERT INTO conversation_tags (account_id, name) VALUES (?1, ?2)",
+            params![guest, name],
+        )?;
+        map.insert(old_id, tx.last_insert_rowid());
+    }
+    Ok(map)
+}
+
+fn copy_conversation_tag_members(
+    tx: &Transaction<'_>,
+    template: &str,
+    conversations: &HashMap<i64, i64>,
+    tags: &HashMap<i64, i64>,
+) -> Result<()> {
+    let rows = collect_rows(
+        tx,
+        r#"
+        SELECT ctm.conversation_id, ctm.tag_id
+        FROM conversation_tag_members ctm
+        JOIN conversations c ON c.id = ctm.conversation_id
+        WHERE c.account_id = ?1
+        "#,
+        template,
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    )?;
+    for (conversation_id, tag_id) in rows {
+        let Some(new_conversation) = mapped(conversations, conversation_id) else {
+            continue;
+        };
+        let Some(new_tag) = mapped(tags, tag_id) else {
+            continue;
+        };
+        tx.execute(
+            "INSERT INTO conversation_tag_members (conversation_id, tag_id) VALUES (?1, ?2)",
+            params![new_conversation, new_tag],
         )?;
     }
     Ok(())

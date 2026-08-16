@@ -68,6 +68,8 @@ function AppRoutes() {
           <Route path="contacts" element={<></>} />
           <Route path="group/:slug" element={<></>} />
           <Route path="no-group" element={<></>} />
+          <Route path="tag/:slug" element={<></>} />
+          <Route path="no-tag" element={<></>} />
           <Route path="trash" element={<TrashScreen />} />
           <Route
             path="import"

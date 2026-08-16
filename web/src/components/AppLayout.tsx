@@ -11,7 +11,9 @@ import ContactList from "../screens/ContactList";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { groupFromSlug } from "../lib/contactGroups";
+import { tagFromSlug, tagListQuery } from "../lib/threadTags";
 import { useContactGroups } from "../lib/useContactGroups";
+import { useThreadTags } from "../lib/useThreadTags";
 
 /** Search query used when browsing a contact's conversations from the drawer. */
 function contactBrowseQuery(
@@ -47,6 +49,9 @@ function modeFromPathname(pathname: string): ColumnMode {
   ) {
     return "contacts";
   }
+  if (pathname === "/no-tag" || pathname.startsWith("/tag/")) {
+    return "conversations";
+  }
   if (pathname === "/trash") return "trash";
   if (pathname === "/import") return "import";
   if (pathname === "/export") return "export";
@@ -67,6 +72,7 @@ export default function AppLayout() {
 
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
   const { groups } = useContactGroups();
+  const { tags } = useThreadTags();
 
   const pathname = location.pathname;
   const mode = modeFromPathname(pathname);
@@ -78,6 +84,12 @@ export default function AppLayout() {
     : null;
   const activeGroup = groupSlugParam ? groupFromSlug(groupSlugParam, groups) : null;
   const groupFilter = noGroupMode ? "none" : activeGroup;
+  const noTagMode = pathname === "/no-tag";
+  const tagSlugParam = pathname.startsWith("/tag/")
+    ? decodeURIComponent(pathname.slice("/tag/".length))
+    : null;
+  const activeTag = tagSlugParam ? tagFromSlug(tagSlugParam, tags) : null;
+  const tagFilter = noTagMode ? "none" : activeTag;
 
   const conversationSearch = searchParams.get("q") || "";
   const conversationFilter = searchParams.get("f") || "";
@@ -103,6 +115,10 @@ export default function AppLayout() {
       } else {
         navigate(`/contacts${params}`);
       }
+    } else if (noTagMode) {
+      navigate(`/no-tag${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+    } else if (tagSlugParam) {
+      navigate(`/tag/${tagSlugParam}${q ? `?q=${encodeURIComponent(q)}` : ""}`);
     } else {
       navigate(`/?q=${encodeURIComponent(q)}`);
     }
@@ -116,8 +132,16 @@ export default function AppLayout() {
     updateSearchParams({ q: q, f: "" });
   };
 
+  const threadListQuery = tagListQuery(
+    tagFilter,
+    conversationFilter || conversationSearch,
+  );
+
   const handleConversationSelect = (c: Conversation) => {
-    navigate(`/messages/${c.id}`, { state: { conversation: c } });
+    const params = tagFilter
+      ? `?q=${encodeURIComponent(threadListQuery)}`
+      : "";
+    navigate(`/messages/${c.id}${params}`, { state: { conversation: c } });
   };
 
   const closeContactDrawer = () => {
@@ -173,7 +197,7 @@ export default function AppLayout() {
             <ConversationList
               selectedId={null}
               onSelect={handleConversationSelect}
-              query={conversationFilter || conversationSearch}
+              query={threadListQuery}
             />
           </ListColumn>
           <main className={mainPane}>

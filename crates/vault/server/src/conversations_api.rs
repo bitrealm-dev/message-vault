@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
-use crate::search_query::{CountComparison, parse_count_comparison};
+use crate::search_query::{parse_count_comparison, CountComparison};
 
 pub const DEFAULT_LIST_LIMIT: usize = 40;
 pub const MAX_LIST_LIMIT: usize = 100;
@@ -49,6 +49,8 @@ pub struct ConversationSummary {
     pub is_group: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Thread tags on this conversation.
+    pub tags: Vec<String>,
 }
 
 struct RawConversation {
@@ -79,6 +81,16 @@ struct ConversationListQuery {
     participants: Option<CountComparison>,
     /// Filter to conversations with at least one message from this import session.
     import_id: Option<i64>,
+    /// Contact-group name (`people:` / `within:` / `label:`).
+    people: Option<String>,
+    /// Hide threads that involve that contact group (`-people:`).
+    exclude_people: Option<String>,
+    /// Thread tag name (`tag:`).
+    tag: Option<String>,
+    /// Hide threads that have that tag (`-tag:`).
+    exclude_tag: Option<String>,
+    /// Threads with no thread tags (`tag:none`).
+    no_tag: bool,
     text: Option<String>,
 }
 
@@ -94,17 +106,135 @@ fn parse_participants_comparison(raw: &str) -> Option<CountComparison> {
     parse_count_comparison(t)
 }
 
+/// Pull `people:` / `tag:` / `within:` / `label:` (optional leading `-`) and quoted values.
+fn pull_named_ops(q: &str) -> (String, Vec<(String, String, bool)>) {
+    const KEYS: &[&str] = &["people", "tag", "within", "label"];
+    let mut rest = String::new();
+    let mut found = Vec::new();
+    let bytes = q.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let start = i;
+        let negated = bytes[i] == b'-';
+        let key_start = if negated { i + 1 } else { i };
+        let mut j = key_start;
+        while j < bytes.len() && bytes[j] != b':' && !bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j < bytes.len() && bytes[j] == b':' {
+            let key = q[key_start..j].to_ascii_lowercase();
+            if KEYS.contains(&key.as_str()) {
+                j += 1;
+                let value = if j < bytes.len() && bytes[j] == b'"' {
+                    j += 1;
+                    let v0 = j;
+                    while j < bytes.len() && bytes[j] != b'"' {
+                        j += 1;
+                    }
+                    let v = q[v0..j].to_string();
+                    if j < bytes.len() {
+                        j += 1;
+                    }
+                    v
+                } else {
+                    let v0 = j;
+                    while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    q[v0..j].to_string()
+                };
+                if !value.is_empty() {
+                    found.push((key, value, negated));
+                }
+                i = j;
+                continue;
+            }
+        }
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if !rest.is_empty() {
+            rest.push(' ');
+        }
+        rest.push_str(&q[start..i]);
+    }
+    (rest, found)
+}
+
+fn involves_people_group_sql(exclude: bool) -> String {
+    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
+    format!(
+        "{exists} (
+           SELECT 1 FROM contact_group_members cgm
+           JOIN contact_groups cg ON cg.id = cgm.group_id
+           JOIN contact_handles ch ON ch.contact_id = cgm.contact_id
+             AND ch.account_id = c.account_id
+           WHERE cg.account_id = c.account_id
+             AND cg.name = ? COLLATE NOCASE
+             AND (
+               ch.handle_id = c.chat_handle_id
+               OR EXISTS (
+                 SELECT 1 FROM participants p
+                 WHERE p.conversation_id = c.id AND p.handle_id = ch.handle_id
+               )
+             )
+         )"
+    )
+}
+
+fn has_thread_tag_sql(exclude: bool) -> String {
+    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
+    format!(
+        "{exists} (
+           SELECT 1 FROM conversation_tag_members ctm
+           JOIN conversation_tags ct ON ct.id = ctm.tag_id
+           WHERE ctm.conversation_id = c.id
+             AND ct.account_id = c.account_id
+             AND ct.name = ? COLLATE NOCASE
+         )"
+    )
+}
+
 /// Parse space-separated tokens from `q`.
 ///
 /// Recognized tokens: `is:trash`, `is:direct`, `is:group`, `handle:<raw>`,
 /// `service:phone` / `service:whatsapp` (only combined with `handle:`),
-/// `contact:<id>`, `import:<id>`, `participants:=N` / `:>N` / `:<N`. Remaining tokens become
+/// `contact:<id>`, `import:<id>`, `participants:=N` / `:>N` / `:<N`,
+/// `people:` / `-people:`, `tag:` / `-tag:`. Remaining tokens become
 /// a free-text filter.
 fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
     let mut out = ConversationListQuery::default();
     let mut text_parts: Vec<&str> = Vec::new();
+    let (remainder, named) = pull_named_ops(q);
+    for (key, value, negated) in named {
+        match key.as_str() {
+            "tag" => {
+                if value.eq_ignore_ascii_case("none") {
+                    out.no_tag = true;
+                } else if negated {
+                    out.exclude_tag = Some(value);
+                } else {
+                    out.tag = Some(value);
+                }
+            }
+            "people" | "within" | "label" => {
+                if negated {
+                    out.exclude_people = Some(value);
+                } else {
+                    out.people = Some(value);
+                }
+            }
+            _ => {}
+        }
+    }
 
-    for token in q.split_whitespace() {
+    for token in remainder.split_whitespace() {
         let lower = token.to_ascii_lowercase();
         if lower == "is:trash" {
             out.trash_only = true;
@@ -166,6 +296,8 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
 /// - `service:phone` / `service:whatsapp`: with `handle:`, restrict to that platform
 /// - `contact:<id>`: conversations involving any handle of that contact
 /// - `import:<id>`: conversations with at least one message from that import session
+/// - `people:<name>` / `-people:<name>`: involve (or hide) a contact group
+/// - `tag:<name>` / `-tag:<name>`: have (or hide) a thread tag
 /// - `is:direct` / `is:group`: restrict by conversation type
 /// - other text: case-insensitive match on group title or participant handle/name
 ///
@@ -279,6 +411,33 @@ pub fn list_conversations(
         params.push((cmp.value as i64).into());
     }
 
+    if let Some(ref people) = parsed.people {
+        where_parts.push(involves_people_group_sql(false));
+        params.push(people.clone().into());
+    }
+    if let Some(ref people) = parsed.exclude_people {
+        where_parts.push(involves_people_group_sql(true));
+        params.push(people.clone().into());
+    }
+    if let Some(ref tag) = parsed.tag {
+        where_parts.push(has_thread_tag_sql(false));
+        params.push(tag.clone().into());
+    }
+    if let Some(ref tag) = parsed.exclude_tag {
+        where_parts.push(has_thread_tag_sql(true));
+        params.push(tag.clone().into());
+    }
+    if parsed.no_tag {
+        where_parts.push(
+            "NOT EXISTS (
+               SELECT 1 FROM conversation_tag_members ctm
+               JOIN conversation_tags ct ON ct.id = ctm.tag_id
+               WHERE ctm.conversation_id = c.id AND ct.account_id = c.account_id
+             )"
+            .into(),
+        );
+    }
+
     if let Some(import_id) = parsed.import_id {
         where_parts.push(
             "EXISTS (
@@ -371,6 +530,8 @@ pub fn list_conversations(
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut participants = load_participants(conn, &ids)?;
     let source_sets = load_conversation_sources(conn, &ids)?;
+    let mut tag_sets = crate::thread_tags_api::tags_for_conversations(conn, account_id, &ids)
+        .map_err(|e| ExportQueryError::Internal(e.to_string()))?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
@@ -404,6 +565,7 @@ pub fn list_conversations(
                 .group_title
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            tags: tag_sets.remove(&row.id).unwrap_or_default(),
         });
     }
     Ok(ConversationListPage {
@@ -1544,5 +1706,61 @@ mod tests {
         );
         assert_eq!(display_service_label(&[]), "unknown");
         assert_eq!(display_service_label(&["whatsapp".into()]), "WhatsApp");
+    }
+
+    #[test]
+    fn list_conversations_filters_by_tag_and_people() {
+        let (conn, account) = setup();
+        crate::thread_tags_api::set_conversations_tag_membership(
+            &conn,
+            &account,
+            &[1],
+            "Holiday",
+            true,
+        )
+        .unwrap();
+        let tagged =
+            list_conversations(&conn, &account, "tag:Holiday", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(tagged.total, 1);
+        assert_eq!(tagged.conversations[0].tags, vec!["Holiday".to_string()]);
+        let hidden =
+            list_conversations(&conn, &account, "-tag:Holiday", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(hidden.total, 0);
+        let untagged =
+            list_conversations(&conn, &account, "tag:none", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(untagged.total, 0);
+
+        conn.execute(
+            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Sam')",
+            params![&account],
+        )
+        .unwrap();
+        let contact_id = conn.last_insert_rowid();
+        let handle_id: i64 = conn
+            .query_row(
+                "SELECT chat_handle_id FROM conversations WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO contact_handles (account_id, handle_id, contact_id) VALUES (?1, ?2, ?3)",
+            params![&account, handle_id, contact_id],
+        )
+        .unwrap();
+        crate::contact_groups_api::set_contacts_group_membership(
+            &conn,
+            &account,
+            &[contact_id],
+            "Family",
+            true,
+        )
+        .unwrap();
+        let family =
+            list_conversations(&conn, &account, "people:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(family.total, 1);
+        let not_family =
+            list_conversations(&conn, &account, "-people:Family", DEFAULT_LIST_LIMIT, 0).unwrap();
+        assert_eq!(not_family.total, 0);
     }
 }
