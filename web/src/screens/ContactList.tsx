@@ -134,12 +134,15 @@ export default function ContactList({
   groupFilter = null,
   selectedId = null,
   onSelect,
+  onCheckedChange,
 }: {
   filter?: string;
   /** Named group, or `"none"` for contacts with no group. */
   groupFilter?: string | "none" | null;
   selectedId?: string | null;
   onSelect: (contact: Contact) => void;
+  /** Checked rows, so the right panel can list them. */
+  onCheckedChange?: (contacts: Contact[]) => void;
 }) {
   const [serverQ, setServerQ] = useState("");
   const [membershipRev, setMembershipRev] = useState(0);
@@ -150,6 +153,8 @@ export default function ContactList({
     loadContactNameSort(),
   );
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  /** Ignores the row click that follows a checkbox press (nested control). */
+  const skipRowSelectRef = useRef(false);
   const catalogCompleteRef = useRef(false);
   const { groups: allGroups } = useContactGroups();
 
@@ -249,12 +254,31 @@ export default function ContactList({
 
   const selectedContact =
     displayContacts.find((c) => c.id === selectedId) ?? null;
+  const checkedContacts = useMemo(
+    () => displayContacts.filter((c) => checkedIds.has(c.id)),
+    [checkedIds, displayContacts],
+  );
   const targetContacts = useMemo(() => {
-    if (checkedIds.size > 0) {
-      return displayContacts.filter((c) => checkedIds.has(c.id));
-    }
+    if (checkedContacts.length > 0) return checkedContacts;
     return selectedContact ? [selectedContact] : [];
-  }, [checkedIds, displayContacts, selectedContact]);
+  }, [checkedContacts, selectedContact]);
+
+  useEffect(() => {
+    onCheckedChange?.(checkedContacts);
+  }, [checkedContacts, onCheckedChange]);
+
+  useEffect(() => {
+    return () => onCheckedChange?.([]);
+  }, [onCheckedChange]);
+
+  const toggleChecked = (id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const groupChecks = useMemo(
     () =>
       checksFromMembers(
@@ -311,7 +335,21 @@ export default function ContactList({
       estimateSize={CONTACT_ROW_HEIGHT}
       dynamicSize={filterActive}
       selectedId={selectedId}
-      onSelect={onSelect}
+      onSelect={(c) => {
+        if (skipRowSelectRef.current) {
+          skipRowSelectRef.current = false;
+          return;
+        }
+        if (checkedIds.size > 0) {
+          toggleChecked(c.id);
+          return;
+        }
+        onSelect(c);
+      }}
+      isRowHighlighted={(c) =>
+        checkedIds.size > 0 ? checkedIds.has(c.id) : c.id === selectedId
+      }
+      sectionLead={<span className="h-7 w-7 shrink-0" aria-hidden />}
       getId={(c) => c.id}
       getTextValue={(c) => c.name}
       ariaLabel="Contacts"
@@ -383,22 +421,23 @@ export default function ContactList({
           : [];
         return (
           <>
-            <input
-              type="checkbox"
-              checked={checkedIds.has(c.id)}
-              aria-label={`Select ${c.name}`}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => {
+            <span
+              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
                 e.stopPropagation();
-                setCheckedIds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(c.id)) next.delete(c.id);
-                  else next.add(c.id);
-                  return next;
-                });
+                skipRowSelectRef.current = true;
+                toggleChecked(c.id);
               }}
-              className="mt-2 size-3.5 shrink-0 self-start accent-accent"
-            />
+            >
+              <input
+                type="checkbox"
+                checked={checkedIds.has(c.id)}
+                aria-label={`Select ${c.name}`}
+                onChange={() => toggleChecked(c.id)}
+                className="pointer-events-none size-5 accent-accent"
+              />
+            </span>
             <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
               <ContactInitialCircle
                 displayName={c.name}

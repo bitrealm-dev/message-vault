@@ -11,7 +11,6 @@ import {
   ListBoxItem,
   ListLayout,
   Virtualizer,
-  type Selection,
 } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
 import { formatVisibleRange } from "../lib/usePagedList";
@@ -36,6 +35,10 @@ type InfiniteOffsetListProps<T> = {
   dynamicSize?: boolean;
   selectedId?: string | null;
   onSelect: (item: T) => void;
+  /** When set, drives the highlighted row instead of `selectedId`. */
+  isRowHighlighted?: (item: T) => boolean;
+  /** Spacer before the A–Z letter so it lines up with the initials column. */
+  sectionLead?: ReactNode;
   getId: (item: T) => string;
   /** Accessible name for ListBoxItem (Tauri path). */
   getTextValue?: (item: T) => string;
@@ -83,6 +86,7 @@ function RacVirtualList<T extends object>({
   dynamicSize,
   selectedId,
   onSelect,
+  isRowHighlighted,
   getId,
   getTextValue,
   renderRow,
@@ -97,6 +101,7 @@ function RacVirtualList<T extends object>({
   dynamicSize: boolean;
   selectedId: string | null;
   onSelect: (item: T) => void;
+  isRowHighlighted?: (item: T) => boolean;
   getId: (item: T) => string;
   getTextValue?: (item: T) => string;
   renderRow: (item: T) => ReactNode;
@@ -106,9 +111,6 @@ function RacVirtualList<T extends object>({
   empty?: ReactNode;
   ariaLabel: string;
 }) {
-  const itemById = useRef(new Map<string, T>());
-  itemById.current = new Map(items.map((item) => [getId(item), item]));
-
   const maybeRequestMore = useCallback(
     (end1Based: number) => {
       if (!hasMore || items.length === 0) return;
@@ -131,14 +133,6 @@ function RacVirtualList<T extends object>({
     maybeRequestMore(range.end);
   };
 
-  const onSelectionChange = (keys: Selection) => {
-    if (keys === "all") return;
-    const id = [...keys][0];
-    if (id == null) return;
-    const item = itemById.current.get(String(id));
-    if (item) onSelect(item);
-  };
-
   if (items.length === 0 && empty) {
     return <div className="min-h-0 flex-1 overflow-auto">{empty}</div>;
   }
@@ -155,7 +149,6 @@ function RacVirtualList<T extends object>({
         selectionMode="single"
         selectionBehavior="replace"
         selectedKeys={selectedId ? new Set([selectedId]) : new Set()}
-        onSelectionChange={onSelectionChange}
         onScroll={onScroll}
         className="min-h-0 flex-1 overflow-auto outline-none"
         style={{ display: "block", padding: 0 }}
@@ -166,8 +159,9 @@ function RacVirtualList<T extends object>({
             <ListBoxItem
               id={id}
               textValue={getTextValue?.(item) ?? id}
+              onAction={() => onSelect(item)}
               className={({ isSelected, isHovered }) =>
-                rowClass(isSelected, isHovered)
+                rowClass(isRowHighlighted?.(item) ?? isSelected, isHovered)
               }
               style={
                 dynamicSize
@@ -190,6 +184,7 @@ function TanStackVirtualList<T>({
   dynamicSize,
   selectedId,
   onSelect,
+  isRowHighlighted,
   getId,
   renderRow,
   requestMore,
@@ -202,6 +197,7 @@ function TanStackVirtualList<T>({
   dynamicSize: boolean;
   selectedId: string | null;
   onSelect: (item: T) => void;
+  isRowHighlighted?: (item: T) => boolean;
   getId: (item: T) => string;
   getTextValue?: (item: T) => string;
   renderRow: (item: T) => ReactNode;
@@ -225,7 +221,7 @@ function TanStackVirtualList<T>({
         const item = items[index];
         if (!item) return null;
         const id = getId(item);
-        const selected = id === selectedId;
+        const selected = isRowHighlighted?.(item) ?? id === selectedId;
         return (
           <button
             type="button"
@@ -251,6 +247,8 @@ function SectionedLetterList<T>({
   items,
   selectedId,
   onSelect,
+  isRowHighlighted,
+  sectionLead,
   getId,
   renderRow,
   requestMore,
@@ -263,6 +261,8 @@ function SectionedLetterList<T>({
   items: T[];
   selectedId: string | null;
   onSelect: (item: T) => void;
+  isRowHighlighted?: (item: T) => boolean;
+  sectionLead?: ReactNode;
   getId: (item: T) => string;
   renderRow: (item: T) => ReactNode;
   requestMore: () => void;
@@ -329,7 +329,8 @@ function SectionedLetterList<T>({
       {groups.map(([letter, groupItems], groupIndex) => (
         <section key={`${letter}-${groupIndex}`} aria-label={`Names starting with ${letter}`}>
           {letter !== currentLetter ? (
-            <div className={LETTER_DIVIDER}>
+            <div className={`${LETTER_DIVIDER} gap-2.5`}>
+              {sectionLead}
               <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
                 {letter}
               </span>
@@ -337,7 +338,7 @@ function SectionedLetterList<T>({
           ) : null}
           {groupItems.map((item) => {
             const id = getId(item);
-            const selected = id === selectedId;
+            const selected = isRowHighlighted?.(item) ?? id === selectedId;
             const index = indexById.get(id) ?? 0;
             return (
               <button
@@ -370,6 +371,8 @@ export default function InfiniteOffsetList<T extends object>({
   dynamicSize = false,
   selectedId = null,
   onSelect,
+  isRowHighlighted,
+  sectionLead,
   getId,
   getTextValue,
   renderRow,
@@ -418,6 +421,7 @@ export default function InfiniteOffsetList<T extends object>({
     dynamicSize,
     selectedId,
     onSelect,
+    isRowHighlighted,
     getId,
     getTextValue,
     renderRow,
@@ -435,12 +439,15 @@ export default function InfiniteOffsetList<T extends object>({
         filling={filling}
         actions={headerActions}
         letter={headerLetter}
+        letterLead={sectionLead}
       />
       {getSectionLetter ? (
         <SectionedLetterList
           items={items}
           selectedId={selectedId}
           onSelect={onSelect}
+          isRowHighlighted={isRowHighlighted}
+          sectionLead={sectionLead}
           getId={getId}
           renderRow={renderRow}
           requestMore={requestMore}

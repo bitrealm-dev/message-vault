@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import LeftPanel from "./LeftPanel";
 import ListColumn from "./ListColumn";
@@ -8,6 +8,7 @@ import ContactDrawer, {
   type ContactPreview,
 } from "./ContactDrawer";
 import ContactList from "../screens/ContactList";
+import CheckedContactsPanel from "./CheckedContactsPanel";
 import type { Conversation } from "../lib/types";
 import { asMessagesLocationState } from "../lib/messagesLocationState";
 import { groupFromSlug } from "../lib/contactGroups";
@@ -71,6 +72,10 @@ export default function AppLayout() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [selectedContact, setSelectedContact] = useState<ContactPreview | null>(null);
+  const [checkedContacts, setCheckedContacts] = useState<ContactPreview[]>([]);
+  const handleCheckedContacts = useCallback((contacts: ContactPreview[]) => {
+    setCheckedContacts(contacts);
+  }, []);
   const { groups } = useContactGroups();
   const { tags } = useThreadTags();
 
@@ -222,9 +227,12 @@ export default function AppLayout() {
               onSelect={(c) =>
                 setSelectedContact({ id: c.id, name: c.name, handles: c.handles })
               }
+              onCheckedChange={handleCheckedContacts}
             />
           </ListColumn>
-          {selectedContact ? (
+          {checkedContacts.length > 0 ? (
+            <CheckedContactsPanel contacts={checkedContacts} />
+          ) : selectedContact ? (
             <ContactDrawer
               variant="docked"
               contactId={selectedContact.id}

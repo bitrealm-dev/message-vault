@@ -7,6 +7,7 @@ export default function ListRangeHeader({
   filling = false,
   actions,
   letter,
+  letterLead,
 }: {
   rangeLabel: string;
   refreshing?: boolean;
@@ -15,6 +16,8 @@ export default function ListRangeHeader({
   actions?: ReactNode;
   /** Current name-section letter, aligned with the contact avatar column. */
   letter?: string | null;
+  /** Spacer before the letter so it lines up with the initials column. */
+  letterLead?: ReactNode;
 }) {
   let activitySuffix = "";
   if (refreshing) activitySuffix = " · updating…";
@@ -24,9 +27,12 @@ export default function ListRangeHeader({
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">
       <div className="flex min-w-0 items-center gap-2.5">
         {letter ? (
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
-            {letter}
-          </span>
+          <>
+            {letterLead}
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[0.75rem] font-semibold text-muted">
+              {letter}
+            </span>
+          </>
         ) : null}
         <span className="min-w-0 truncate text-[0.688rem] text-muted">
           {rangeLabel}
