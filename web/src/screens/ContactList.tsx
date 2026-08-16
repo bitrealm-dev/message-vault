@@ -359,7 +359,6 @@ export default function ContactList({
       isRowHighlighted={(c) =>
         checkedIds.size > 0 ? checkedIds.has(c.id) : c.id === selectedId
       }
-      sectionLead={<span className="h-7 w-7 shrink-0" aria-hidden />}
       getId={(c) => c.id}
       getTextValue={(c) => c.name}
       ariaLabel="Contacts"
@@ -429,29 +428,41 @@ export default function ContactList({
               (h) => h.trim().toLowerCase() !== nameKey,
             )
           : [];
+        const checked = checkedIds.has(c.id);
         return (
           <>
             <span
-              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
+              className="group/avatar relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 skipRowSelectRef.current = true;
                 toggleChecked(c.id);
+                // The row click is suppressed only for this press. A later
+                // click on the name must still toggle the row.
+                queueMicrotask(() => {
+                  skipRowSelectRef.current = false;
+                });
               }}
             >
+              <span
+                className={
+                  checked ? "invisible" : "group-hover/avatar:invisible"
+                }
+              >
+                <ContactInitialCircle
+                  displayName={c.name}
+                  preferredHandle={c.handles?.[0] ?? null}
+                />
+              </span>
               <input
                 type="checkbox"
-                checked={checkedIds.has(c.id)}
+                checked={checked}
                 aria-label={`Select ${c.name}`}
                 onChange={() => toggleChecked(c.id)}
-                className="pointer-events-none size-5 accent-accent"
-              />
-            </span>
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
-              <ContactInitialCircle
-                displayName={c.name}
-                preferredHandle={c.handles?.[0] ?? null}
+                className={`pointer-events-none absolute size-5 accent-accent ${
+                  checked ? "" : "invisible group-hover/avatar:visible"
+                }`}
               />
             </span>
             <div className="min-w-0 flex-1">
