@@ -537,6 +537,18 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             "/v1/contacts/groups",
             post(contact_groups_membership_handler),
         )
+        .route(
+            "/v1/thread-tags",
+            get(thread_tags_list_handler)
+                .post(thread_tags_create_handler)
+                .patch(thread_tags_rename_handler)
+                .delete(thread_tags_delete_handler),
+        )
+        .route("/v1/thread-tags/members", get(thread_tags_members_handler))
+        .route(
+            "/v1/conversations/tags",
+            post(thread_tags_membership_handler),
+        )
         .route("/v1/export/conversations", get(conversations_list_handler))
         .route(
             "/v1/export/conversations/{id}/sources",
@@ -1264,6 +1276,162 @@ async fn contact_groups_membership_handler(
     let db = Arc::clone(&state.db);
     let changed = with_group_conn(db, "contact groups membership", move |conn| {
         crate::contact_groups_api::set_contacts_group_membership(
+            conn,
+            &auth.account_id,
+            &body.ids,
+            &body.name,
+            body.enable,
+        )
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "changed": changed })))
+}
+
+fn map_tag_error(err: crate::thread_tags_api::TagError) -> ApiError {
+    use crate::thread_tags_api::TagError;
+    match err {
+        TagError::BadRequest(m) => ApiError::BadRequest(m),
+        TagError::NotFound(m) => ApiError::NotFound(m),
+        TagError::Conflict(m) => ApiError::Conflict(m),
+        TagError::Internal(m) => ApiError::Internal(m),
+    }
+}
+
+async fn with_tag_conn<T, F>(
+    db: Arc<StdMutex<Connection>>,
+    task: &'static str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, crate::thread_tags_api::TagError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        f(&conn).map_err(map_tag_error)
+    })
+    .await
+    .join_map(task, |e| e)
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadTagNameBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadTagRenameBody {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadTagMembersQuery {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadTagMembershipBody {
+    ids: Vec<i64>,
+    name: String,
+    enable: bool,
+}
+
+async fn thread_tags_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let tags = with_tag_conn(db, "thread tags list", move |conn| {
+        crate::thread_tags_api::list_tags(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "tags": tags })))
+}
+
+async fn thread_tags_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = body.name;
+    let (created, tags) = with_tag_conn(db, "thread tags create", move |conn| {
+        let created = crate::thread_tags_api::create_tag(conn, &auth.account_id, &name)?;
+        let tags = crate::thread_tags_api::list_tags(conn, &auth.account_id)?;
+        Ok((created, tags))
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "name": created, "tags": tags })))
+}
+
+async fn thread_tags_rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagRenameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let (name, tags) = with_tag_conn(db, "thread tags rename", move |conn| {
+        let name =
+            crate::thread_tags_api::rename_tag(conn, &auth.account_id, &body.from, &body.to)?;
+        let tags = crate::thread_tags_api::list_tags(conn, &auth.account_id)?;
+        Ok((name, tags))
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "name": name, "tags": tags })))
+}
+
+async fn thread_tags_delete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let tags = with_tag_conn(db, "thread tags delete", move |conn| {
+        crate::thread_tags_api::delete_tag(conn, &auth.account_id, &body.name)?;
+        crate::thread_tags_api::list_tags(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "tags": tags })))
+}
+
+async fn thread_tags_members_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ThreadTagMembersQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = query.name.clone();
+    let member_conversation_ids = with_tag_conn(db, "thread tags members", move |conn| {
+        crate::thread_tags_api::list_tag_member_ids(conn, &auth.account_id, &name)
+    })
+    .await?;
+    Ok(Json(serde_json::json!({
+        "name": query.name,
+        "memberConversationIds": member_conversation_ids,
+    })))
+}
+
+async fn thread_tags_membership_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagMembershipBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let changed = with_tag_conn(db, "thread tags membership", move |conn| {
+        crate::thread_tags_api::set_conversations_tag_membership(
             conn,
             &auth.account_id,
             &body.ids,

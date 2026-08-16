@@ -172,6 +172,12 @@ pub struct ParsedSearchQuery {
     pub context: u32,
     pub sort: SortOrder,
     pub within: Option<String>,
+    /// Hide threads that involve this contact group (`-people:`).
+    pub exclude_people: Option<String>,
+    /// Thread tag include (`tag:`).
+    pub tag: Option<String>,
+    /// Hide threads that have this tag (`-tag:`).
+    pub exclude_tag: Option<String>,
     pub handle: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
@@ -213,6 +219,9 @@ impl Default for ParsedSearchQuery {
             context: 0,
             sort: SortOrder::DateDesc,
             within: None,
+            exclude_people: None,
+            tag: None,
+            exclude_tag: None,
             handle: None,
             first_name: None,
             last_name: None,
@@ -815,10 +824,10 @@ fn parse_operator(token: &str) -> Option<(&str, &str)> {
     let op_l = op.to_ascii_lowercase();
     match op_l.as_str() {
         "search" | "with" | "from" | "to" | "subject" | "text" | "has" | "after" | "before"
-        | "source" | "is" | "within" | "label" | "in" | "show" | "handle" | "filename"
-        | "filetype" | "larger" | "smaller" | "group-count" | "message-count" | "group"
-        | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last" | "phone"
-        | "conversation" => Some((op, value)),
+        | "source" | "is" | "within" | "label" | "people" | "tag" | "in" | "show" | "handle"
+        | "filename" | "filetype" | "larger" | "smaller" | "group-count" | "message-count"
+        | "group" | "context" | "sort" | "last-contact" | "first-contact" | "first" | "last"
+        | "phone" | "conversation" => Some((op, value)),
         _ => None,
     }
 }
@@ -837,7 +846,16 @@ pub fn parse_search_query(input: &str) -> Result<ParsedSearchQuery, FtsParseErro
     let mut fts_lexemes = Vec::new();
 
     for raw in tokenize(input) {
-        if let Some((op_raw, value_raw)) = parse_operator(&raw) {
+        let (negated, token) = if let Some(rest) = raw.strip_prefix('-') {
+            if rest.contains(':') {
+                (true, rest)
+            } else {
+                (false, raw.as_str())
+            }
+        } else {
+            (false, raw.as_str())
+        };
+        if let Some((op_raw, value_raw)) = parse_operator(token) {
             let op = op_raw.to_ascii_lowercase();
             let value = strip_surrounding_quotes(value_raw).trim();
             if value.is_empty() && op != "has" {
@@ -883,7 +901,20 @@ pub fn parse_search_query(input: &str) -> Result<ParsedSearchQuery, FtsParseErro
                         out.no_last_name = true;
                     }
                 }
-                "within" | "label" => out.within = Some(value.to_string()),
+                "within" | "label" | "people" => {
+                    if negated {
+                        out.exclude_people = Some(value.to_string());
+                    } else {
+                        out.within = Some(value.to_string());
+                    }
+                }
+                "tag" => {
+                    if negated {
+                        out.exclude_tag = Some(value.to_string());
+                    } else {
+                        out.tag = Some(value.to_string());
+                    }
+                }
                 "handle" => out.handle = Some(value.to_string()),
                 "first" => out.first_name = Some(value.to_string()),
                 "last" => out.last_name = Some(value.to_string()),

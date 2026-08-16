@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  createContactGroup,
-  deleteContactGroup,
-  groupSlug,
-  isReservedGroupName,
-  renameContactGroup,
-  reservedGroupError,
-} from "../lib/contactGroups";
+  createThreadTag,
+  deleteThreadTag,
+  isReservedTagName,
+  renameThreadTag,
+  reservedTagError,
+  tagSlug,
+} from "../lib/threadTags";
 import GroupNameDialog from "./GroupNameDialog";
-import { EllipsisIcon, PeopleGroupIcon, PersonIcon, PlusIcon } from "./icons";
+import { EllipsisIcon, PlusIcon, TagIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
   return `group relative flex w-full items-center rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
@@ -37,7 +37,7 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return match[1] || fallback;
 }
 
-export default function GroupsNav({ groups }: { groups: string[] }) {
+export default function ThreadTagsNav({ tags }: { tags: string[] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -50,62 +50,62 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
     if (!menuFor) return;
     const onPointerDown = (e: MouseEvent) => {
       const t = e.target;
-      if (t instanceof Element && t.closest("[data-group-row-menu]")) return;
+      if (t instanceof Element && t.closest("[data-tag-row-menu]")) return;
       setMenuFor(null);
     };
     document.addEventListener("mousedown", onPointerDown, true);
     return () => document.removeEventListener("mousedown", onPointerDown, true);
   }, [menuFor]);
 
-  const createGroup = async (name: string) => {
-    if (isReservedGroupName(name)) {
-      setError(reservedGroupError(name));
+  const createTag = async (name: string) => {
+    if (isReservedTagName(name)) {
+      setError(reservedTagError(name));
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const created = await createContactGroup(name);
+      const created = await createThreadTag(name);
       setCreateOpen(false);
-      navigate(`/group/${groupSlug(created)}`);
+      navigate(`/tag/${tagSlug(created)}`);
     } catch (err) {
-      setError(apiErrorMessage(err, "Could not create group"));
+      setError(apiErrorMessage(err, "Could not create tag"));
     } finally {
       setBusy(false);
     }
   };
 
-  const renameGroup = async (from: string, to: string) => {
-    if (isReservedGroupName(to)) {
-      setError(reservedGroupError(to));
+  const renameTag = async (from: string, to: string) => {
+    if (isReservedTagName(to)) {
+      setError(reservedTagError(to));
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const next = await renameContactGroup(from, to);
+      const next = await renameThreadTag(from, to);
       setRenameFor(null);
-      if (location.pathname === `/group/${groupSlug(from)}`) {
-        navigate(`/group/${groupSlug(next)}`);
+      if (location.pathname === `/tag/${tagSlug(from)}`) {
+        navigate(`/tag/${tagSlug(next)}`);
       }
     } catch (err) {
-      setError(apiErrorMessage(err, "Could not rename group"));
+      setError(apiErrorMessage(err, "Could not rename tag"));
     } finally {
       setBusy(false);
     }
   };
 
-  const removeGroup = async (name: string) => {
+  const removeTag = async (name: string) => {
     setBusy(true);
     setError(null);
     setMenuFor(null);
     try {
-      await deleteContactGroup(name);
-      if (location.pathname === `/group/${groupSlug(name)}`) {
-        navigate("/contacts");
+      await deleteThreadTag(name);
+      if (location.pathname === `/tag/${tagSlug(name)}`) {
+        navigate("/");
       }
     } catch (err) {
-      setError(apiErrorMessage(err, "Could not delete group"));
+      setError(apiErrorMessage(err, "Could not delete tag"));
     } finally {
       setBusy(false);
     }
@@ -115,11 +115,11 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
     <div className="p-3">
       <div className="mb-1 flex items-center justify-between">
         <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
-          Contact groups
+          Thread tags
         </span>
         <button
           type="button"
-          aria-label="Create group"
+          aria-label="Create tag"
           disabled={busy}
           onClick={() => {
             setMenuFor(null);
@@ -132,8 +132,8 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
         </button>
       </div>
 
-      {groups.map((name) => {
-        const href = `/group/${groupSlug(name)}`;
+      {tags.map((name) => {
+        const href = `/tag/${tagSlug(name)}`;
         const active = location.pathname === href;
         const menuOpen = menuFor === name;
         return (
@@ -144,12 +144,12 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
                 onClick={() => navigate(href)}
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
               >
-                <PeopleGroupIcon size={15} />
+                <TagIcon size={15} />
                 <span className="truncate">{name}</span>
               </button>
               <button
                 type="button"
-                aria-label={`Group options for ${name}`}
+                aria-label={`Tag options for ${name}`}
                 aria-expanded={menuOpen}
                 disabled={busy}
                 onClick={(e) => {
@@ -168,7 +168,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
             </div>
             {menuOpen ? (
               <div
-                data-group-row-menu=""
+                data-tag-row-menu=""
                 data-mv-overlay=""
                 className="absolute top-full right-0 z-[80] mt-0.5 min-w-[7.5rem] rounded-lg border border-border bg-popover py-1 shadow-xl"
               >
@@ -187,7 +187,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
                   type="button"
                   disabled={busy}
                   className="block w-full cursor-pointer border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-40"
-                  onClick={() => void removeGroup(name)}
+                  onClick={() => void removeTag(name)}
                 >
                   Delete
                 </button>
@@ -199,19 +199,19 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
 
       <button
         type="button"
-        onClick={() => navigate("/no-group")}
-        className={navRowClass(location.pathname === "/no-group")}
+        onClick={() => navigate("/no-tag")}
+        className={navRowClass(location.pathname === "/no-tag")}
       >
-        <PersonIcon size={15} />
-        <span className="truncate">No group</span>
+        <TagIcon size={15} />
+        <span className="truncate">No tag</span>
       </button>
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create group"
+          title="Create tag"
           error={error}
           busy={busy}
-          onSave={createGroup}
+          onSave={createTag}
           onCancel={() => {
             setCreateOpen(false);
             setError(null);
@@ -220,11 +220,11 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
       ) : null}
       {renameFor ? (
         <GroupNameDialog
-          title="Rename group"
+          title="Rename tag"
           initial={renameFor}
           error={error}
           busy={busy}
-          onSave={(to) => renameGroup(renameFor, to)}
+          onSave={(to) => renameTag(renameFor, to)}
           onCancel={() => {
             setRenameFor(null);
             setError(null);

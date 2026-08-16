@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isReservedGroupName,
   reservedGroupError,
 } from "../lib/contactGroups";
+import type { MembershipCheckState } from "../lib/membershipChecks";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
 import { PeopleGroupIcon } from "./icons";
 
-export type GroupCheckState = "on" | "off" | "mixed";
+export type GroupCheckState = MembershipCheckState;
 
-/** Assign or remove groups on the selected contact. */
+/** Assign or remove groups (or tags) on the selected rows. */
 export default function GroupsMenu({
   allGroups,
   checks,
@@ -17,6 +18,15 @@ export default function GroupsMenu({
   onCreate,
   onClearAll,
   disabled = false,
+  ariaLabel = "Groups",
+  title = "Groups",
+  searchPlaceholder = "Search groups…",
+  emptyText = "No groups",
+  createButtonLabel = "Create group",
+  createTitle = "Create group",
+  isReserved = isReservedGroupName,
+  reservedError = reservedGroupError,
+  icon,
 }: {
   allGroups: string[];
   checks: Record<string, GroupCheckState>;
@@ -24,6 +34,15 @@ export default function GroupsMenu({
   onCreate?: (name: string) => void;
   onClearAll?: () => void;
   disabled?: boolean;
+  ariaLabel?: string;
+  title?: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  createButtonLabel?: string;
+  createTitle?: string;
+  isReserved?: (name: string) => boolean;
+  reservedError?: (name: string) => string;
+  icon?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "create">("list");
@@ -71,8 +90,8 @@ export default function GroupsMenu({
     if (disabled || !onCreate) return;
     const name = newName.trim();
     if (!name) return;
-    if (isReservedGroupName(name)) {
-      setCreateError(reservedGroupError(name));
+    if (isReserved(name)) {
+      setCreateError(reservedError(name));
       return;
     }
     onCreate(name);
@@ -84,10 +103,10 @@ export default function GroupsMenu({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        aria-label="Groups"
+        aria-label={ariaLabel}
         aria-expanded={open}
         disabled={disabled}
-        title="Groups"
+        title={title}
         onClick={() => {
           if (disabled) return;
           setOpen((v) => !v);
@@ -97,7 +116,7 @@ export default function GroupsMenu({
           open ? "text-accent" : ""
         }`}
       >
-        <PeopleGroupIcon size={16} />
+        {icon ?? <PeopleGroupIcon size={16} />}
       </button>
       {open && mode === "list" ? (
         <div
@@ -110,13 +129,13 @@ export default function GroupsMenu({
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search groups…"
+              placeholder={searchPlaceholder}
               className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none"
             />
           </div>
           <div className="max-h-56 overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[0.75rem] text-muted">No groups</p>
+              <p className="px-3 py-2 text-[0.75rem] text-muted">{emptyText}</p>
             ) : (
               filtered.map((name) => {
                 const state = checks[name] ?? "off";
@@ -128,6 +147,9 @@ export default function GroupsMenu({
                     <input
                       type="checkbox"
                       checked={state === "on"}
+                      ref={(el) => {
+                        if (el) el.indeterminate = state === "mixed";
+                      }}
                       disabled={disabled}
                       onChange={() => onToggle?.(name)}
                       className="size-3.5 accent-accent"
@@ -146,7 +168,7 @@ export default function GroupsMenu({
               className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-50"
             >
               <span className="text-muted">+</span>
-              Create group
+              {createButtonLabel}
             </button>
             {onClearAll ? (
               <button
@@ -166,7 +188,7 @@ export default function GroupsMenu({
           data-mv-overlay=""
           className={`absolute top-full right-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover p-3 ${popupShadow}`}
         >
-          <h3 className="text-[0.875rem] font-semibold text-text">Create group</h3>
+          <h3 className="text-[0.875rem] font-semibold text-text">{createTitle}</h3>
           <input
             ref={nameRef}
             type="text"

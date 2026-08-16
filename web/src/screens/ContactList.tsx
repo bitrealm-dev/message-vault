@@ -3,6 +3,7 @@ import { apiClient } from "../lib/api";
 import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
+import { checksFromMembers } from "../lib/membershipChecks";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
 import { highlightText } from "../lib/highlightText";
 import {
@@ -148,6 +149,7 @@ export default function ContactList({
   const [nameSort, setNameSort] = useState<ContactNameSortState>(() =>
     loadContactNameSort(),
   );
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
   const catalogCompleteRef = useRef(false);
   const { groups: allGroups } = useContactGroups();
 
@@ -197,6 +199,10 @@ export default function ContactList({
     hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
 
   useEffect(() => {
+    setCheckedIds(new Set());
+  }, [filter, groupFilter]);
+
+  useEffect(() => {
     setGroupOverrides({});
     const combined = groupListQuery(groupFilter, filter);
     // Empty filter: load the full catalog.
@@ -243,35 +249,41 @@ export default function ContactList({
 
   const selectedContact =
     displayContacts.find((c) => c.id === selectedId) ?? null;
-  const selectedNumericId = selectedContact ? Number(selectedContact.id) : NaN;
-  const selectedGroups = useMemo(
-    () => selectedContact?.groups ?? [],
-    [selectedContact],
-  );
-  const groupChecks = useMemo(() => {
-    const checks: Record<string, "on" | "off"> = {};
-    for (const name of allGroups) {
-      checks[name] = selectedGroups.some(
-        (g) => g.toLowerCase() === name.toLowerCase(),
-      )
-        ? "on"
-        : "off";
+  const targetContacts = useMemo(() => {
+    if (checkedIds.size > 0) {
+      return displayContacts.filter((c) => checkedIds.has(c.id));
     }
-    return checks;
-  }, [allGroups, selectedGroups]);
+    return selectedContact ? [selectedContact] : [];
+  }, [checkedIds, displayContacts, selectedContact]);
+  const groupChecks = useMemo(
+    () =>
+      checksFromMembers(
+        allGroups,
+        targetContacts.map((c) => c.groups ?? []),
+      ),
+    [allGroups, targetContacts],
+  );
 
   const applyMembership = async (name: string, enable: boolean) => {
-    if (!Number.isFinite(selectedNumericId) || selectedNumericId <= 0) return;
-    await setContactGroupMembership([selectedNumericId], name, enable);
-    invalidateContactDetail(String(selectedNumericId));
+    const ids = targetContacts
+      .map((c) => Number(c.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length === 0) return;
+    await setContactGroupMembership(ids, name, enable);
+    for (const id of ids) {
+      invalidateContactDetail(String(id));
+    }
     setGroupOverrides((prev) => {
-      const current = prev[String(selectedNumericId)] ?? selectedGroups;
-      const next = enable
-        ? current.some((g) => g.toLowerCase() === name.toLowerCase())
-          ? current
-          : [...current, name]
-        : current.filter((g) => g.toLowerCase() !== name.toLowerCase());
-      return { ...prev, [String(selectedNumericId)]: next };
+      const next = { ...prev };
+      for (const c of targetContacts) {
+        const current = next[c.id] ?? c.groups ?? [];
+        next[c.id] = enable
+          ? current.some((g) => g.toLowerCase() === name.toLowerCase())
+            ? current
+            : [...current, name]
+          : current.filter((g) => g.toLowerCase() !== name.toLowerCase());
+      }
+      return next;
     });
     if (groupActive) {
       setMembershipRev((n) => n + 1);
@@ -309,7 +321,7 @@ export default function ContactList({
           <GroupsMenu
             allGroups={allGroups}
             checks={groupChecks}
-            disabled={!selectedContact}
+            disabled={targetContacts.length === 0}
             onToggle={(name) => {
               const on = groupChecks[name] === "on";
               void applyMembership(name, !on);
@@ -326,8 +338,12 @@ export default function ContactList({
               })();
             }}
             onClearAll={() => {
+              const names = new Set<string>();
+              for (const c of targetContacts) {
+                for (const g of c.groups ?? []) names.add(g);
+              }
               void (async () => {
-                for (const name of selectedGroups) {
+                for (const name of names) {
                   await applyMembership(name, false);
                 }
               })();
@@ -367,6 +383,22 @@ export default function ContactList({
           : [];
         return (
           <>
+            <input
+              type="checkbox"
+              checked={checkedIds.has(c.id)}
+              aria-label={`Select ${c.name}`}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                e.stopPropagation();
+                setCheckedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(c.id)) next.delete(c.id);
+                  else next.add(c.id);
+                  return next;
+                });
+              }}
+              className="mt-2 size-3.5 shrink-0 self-start accent-accent"
+            />
             <span className="flex h-7 w-7 shrink-0 items-center justify-center self-center">
               <ContactInitialCircle
                 displayName={c.name}

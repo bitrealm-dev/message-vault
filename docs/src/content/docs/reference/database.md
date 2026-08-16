@@ -31,6 +31,8 @@ erDiagram
     contacts ||--o{ contact_handles : "has"
     contacts ||--o{ contact_group_members : "in"
     contact_groups ||--o{ contact_group_members : "has"
+    conversations ||--o{ conversation_tag_members : "tagged"
+    conversation_tags ||--o{ conversation_tag_members : "has"
     participants }o--o| contacts : "contact_id"
 ```
 
@@ -105,6 +107,12 @@ for that handle.
 
 Named groups and membership. Groups are ordinary memberships with no reserved
 status names.
+
+### `conversation_tags` / `conversation_tag_members`
+
+Named stamps on whole conversation threads (not on individual messages). A
+thread can have several tags. New messages in a tagged thread stay under that
+tag. A new thread is untagged until someone adds a tag.
 
 ## How chats meet people
 

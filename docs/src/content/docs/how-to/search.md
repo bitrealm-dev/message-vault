@@ -16,7 +16,7 @@ Typing plain words in the search box runs a **Messages** search.
 
 Clicking a message result opens the conversation so you can read the matching thread. Use in-conversation find when you need to step through highlights inside a long chat.
 
-Save a query under **Saved Groups** in the sidebar — [Saved searches](/how-to/saved-searches/).
+Save a query under **Saved searches** in the sidebar — [Saved searches](/how-to/saved-searches/).
 
 ## Query operators
 
@@ -47,7 +47,12 @@ The search box accepts operators (the advanced form composes many of these for y
 | `context:2` | Include N surrounding messages when showing/opening a hit |
 | `sort:date-asc` / `sort:relevance` | Oldest first, or FTS best-match (default newest first) |
 | `in:title` | Restrict to a conversation by title or handle |
-| `within:label` | Only contacts with this label |
+| `people:Family` | Threads that involve at least one contact in that contact group. Aliases: `within:`, `label:` |
+| `-people:Family` | Hide threads that involve that contact group |
+| `tag:Holiday` | Threads that have this thread tag. Quote names with spaces: `tag:"Work Friends"` |
+| `-tag:Holiday` | Hide threads that have this thread tag |
+| `tag:none` | Threads with no thread tags |
+| `within:Family` | Same as `people:` (older spelling) |
 | `search:contacts` | Switch to Contacts search |
 | `handle:text` | (Contacts) combined name or number contains text |
 | `first-contact:>=2019` / `last-contact:<2022` | (Contacts) first / last message dates |

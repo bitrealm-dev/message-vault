@@ -116,7 +116,9 @@ It does **not** run the web UI’s full-text `messages_fts` path.
 - `from:`, `with:` / `to:`, `subject:`, `has:attachment`
 - `after:YYYY-MM-DD`, `before:YYYY-MM-DD` (year-only `YYYY` → `YYYY-01-01`)
 - `source:`, `is:group`, `is:direct` (individual)
-- `within:` / `label:` (contacts on a label)
+- `people:` / `within:` / `label:` (threads that involve a contact group)
+- `-people:` (hide those threads)
+- `tag:` / `-tag:` (thread tags; `tag:none` for untagged threads)
 - Trash is always excluded; legacy `in:trash` is ignored
 
 ### `GET /v1/assets/{sha256}`

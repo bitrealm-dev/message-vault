@@ -1,9 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiClient } from "../lib/api";
 import type { Conversation } from "../lib/types";
 import ConversationRow from "../components/ConversationRow";
+import { checksFromMembers } from "../lib/membershipChecks";
 import ListRangeHeader from "../components/ListRangeHeader";
+import TagsMenu from "../components/TagsMenu";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
+import {
+  createThreadTag,
+  setConversationTagMembership,
+} from "../lib/threadTags";
+import { useThreadTags } from "../lib/useThreadTags";
 import {
   formatVisibleRange,
   usePagedList,
@@ -30,10 +37,23 @@ export default function ConversationList({
 }) {
   const [debouncedQ, setDebouncedQ] = useState(query);
   const [visibleRange, setVisibleRange] = useState<VisibleRange>({ start: 0, end: 0 });
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  const [tagOverrides, setTagOverrides] = useState<Record<string, string[]>>({});
+  const [membershipRev, setMembershipRev] = useState(0);
+  const { tags: allTags } = useThreadTags();
+
+  useEffect(() => {
+    setCheckedIds(new Set());
+    setTagOverrides({});
+  }, [query]);
 
   useEffect(() => {
     // Filters like contact: and handle: apply immediately so the list does not flash empty.
-    if (/\b(contact:|handle:|import:|is:direct|is:group|is:trash|participants:)\b/i.test(query)) {
+    if (
+      /\b(contact:|handle:|import:|is:direct|is:group|is:trash|participants:|tag:|people:|within:|label:)\b/i.test(
+        query,
+      )
+    ) {
       setDebouncedQ(query);
       return;
     }
@@ -69,7 +89,55 @@ export default function ConversationList({
     error,
     hasMore,
     loadMore,
-  } = usePagedList(debouncedQ, fetchPage);
+  } = usePagedList(`${debouncedQ}#${membershipRev}`, fetchPage);
+
+  const displayConversations = useMemo(
+    () =>
+      conversations.map((c) =>
+        tagOverrides[c.id] ? { ...c, tags: tagOverrides[c.id] } : c,
+      ),
+    [conversations, tagOverrides],
+  );
+
+  const selectedConversation =
+    displayConversations.find((c) => c.id === selectedId) ?? null;
+  const targetConversations = useMemo(() => {
+    if (checkedIds.size > 0) {
+      return displayConversations.filter((c) => checkedIds.has(c.id));
+    }
+    return selectedConversation ? [selectedConversation] : [];
+  }, [checkedIds, displayConversations, selectedConversation]);
+  const tagChecks = useMemo(
+    () =>
+      checksFromMembers(
+        allTags,
+        targetConversations.map((c) => c.tags ?? []),
+      ),
+    [allTags, targetConversations],
+  );
+
+  const applyMembership = async (name: string, enable: boolean) => {
+    const ids = targetConversations
+      .map((c) => Number(c.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length === 0) return;
+    await setConversationTagMembership(ids, name, enable);
+    setTagOverrides((prev) => {
+      const next = { ...prev };
+      for (const c of targetConversations) {
+        const current = next[c.id] ?? c.tags ?? [];
+        next[c.id] = enable
+          ? current.some((t) => t.toLowerCase() === name.toLowerCase())
+            ? current
+            : [...current, name]
+          : current.filter((t) => t.toLowerCase() !== name.toLowerCase());
+      }
+      return next;
+    });
+    if (/\b(?:-?tag:|-?people:|within:|label:)/i.test(query)) {
+      setMembershipRev((n) => n + 1);
+    }
+  };
 
   const rangeLabel =
     loading && conversations.length === 0
@@ -95,9 +163,42 @@ export default function ConversationList({
         rangeLabel={rangeLabel}
         refreshing={refreshing}
         filling={filling}
+        actions={
+          <TagsMenu
+            allTags={allTags}
+            checks={tagChecks}
+            disabled={targetConversations.length === 0}
+            onToggle={(name) => {
+              const on = tagChecks[name] === "on";
+              void applyMembership(name, !on);
+            }}
+            onCreate={(name) => {
+              void (async () => {
+                const existing = allTags.find(
+                  (t) => t.toLowerCase() === name.toLowerCase(),
+                );
+                if (!existing) {
+                  await createThreadTag(name);
+                }
+                await applyMembership(existing ?? name, true);
+              })();
+            }}
+            onClearAll={() => {
+              const names = new Set<string>();
+              for (const c of targetConversations) {
+                for (const t of c.tags ?? []) names.add(t);
+              }
+              void (async () => {
+                for (const name of names) {
+                  await applyMembership(name, false);
+                }
+              })();
+            }}
+          />
+        }
       />
       <VirtualList
-        count={conversations.length}
+        count={displayConversations.length}
         estimateSize={64}
         dynamicSize
         onVisibleRangeChange={setVisibleRange}
@@ -112,13 +213,22 @@ export default function ConversationList({
           ) : null
         }
         renderItem={(index) => {
-          const c = conversations[index];
+          const c = displayConversations[index];
           if (!c) return null;
           return (
             <ConversationRow
               conversation={c}
               isSelected={c.id === selectedId}
               onClick={() => onSelect(c)}
+              checked={checkedIds.has(c.id)}
+              onCheckChange={(id) => {
+                setCheckedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
             />
           );
         }}

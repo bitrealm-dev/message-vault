@@ -8,6 +8,8 @@
     "vault_imports",
     "vault_import_issues",
     "conversations",
+    "conversation_tags",
+    "conversation_tag_members",
     "participants",
     "messages",
     "attachments",

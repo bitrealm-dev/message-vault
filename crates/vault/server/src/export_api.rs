@@ -658,6 +658,18 @@ fn build_message_filters(
         let ids = list_group_member_contact_ids(conn, account_id, within)?;
         where_parts.push(involves_contacts_sql(&ids));
     }
+    if let Some(people) = &parsed.exclude_people {
+        let ids = list_group_member_contact_ids(conn, account_id, people)?;
+        where_parts.push(format!("NOT {}", involves_contacts_sql(&ids)));
+    }
+    if let Some(tag) = &parsed.tag {
+        where_parts.push(has_thread_tag_sql(false));
+        params.push(tag.clone().into());
+    }
+    if let Some(tag) = &parsed.exclude_tag {
+        where_parts.push(has_thread_tag_sql(true));
+        params.push(tag.clone().into());
+    }
 
     if !parsed.first_contact.is_empty() {
         let ids = contact_ids_within_day_bounds(conn, account_id, "first", &parsed.first_contact)?;
@@ -797,6 +809,19 @@ fn metadata_term_matches_sql(
 /// Quote a free-text token for full-text search so operators and punctuation are treated as literal text.
 fn fts5_literal_query(term: &str) -> String {
     format!("\"{}\"", term.replace('"', "\"\""))
+}
+
+fn has_thread_tag_sql(exclude: bool) -> String {
+    let exists = if exclude { "NOT EXISTS" } else { "EXISTS" };
+    format!(
+        "{exists} (
+           SELECT 1 FROM conversation_tag_members ctm
+           JOIN conversation_tags ct ON ct.id = ctm.tag_id
+           WHERE ctm.conversation_id = c.id
+             AND ct.account_id = c.account_id
+             AND ct.name = ? COLLATE NOCASE
+         )"
+    )
 }
 
 fn involves_contacts_sql(contact_ids: &[i64]) -> String {

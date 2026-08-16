@@ -23,11 +23,11 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
       onOpenChange={(o) => {
         if (!o) onCancel();
       }}
-      label={initial ? "Edit saved group" : "New saved group"}
+      label={initial ? "Edit saved search" : "New saved search"}
       maxWidth="25rem"
     >
       <h3 className="mb-4 text-[1rem] text-text">
-        {initial ? "Edit saved group" : "New saved group"}
+        {initial ? "Edit saved search" : "New saved search"}
       </h3>
 
       <label className="mb-1 block text-[0.813rem] font-medium text-text">

@@ -86,6 +86,16 @@ export function PeopleGroupIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Price-tag shape — a thread tag. */
+export function TagIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="M20.6 13.4 12 22l-8.6-8.6a2 2 0 0 1 0-2.8L11.2 3H21v9.8a2 2 0 0 1-.4 1.6Z" />
+      <circle cx="16.5" cy="7.5" r="1.2" />
+    </IconShell>
+  );
+}
+
 /** One person — contacts with no group. */
 export function PersonIcon({ size, className, ...rest }: IconProps) {
   return (

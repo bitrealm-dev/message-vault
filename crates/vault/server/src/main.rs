@@ -23,6 +23,7 @@ mod profile;
 mod reset_demo;
 mod search_query;
 mod server;
+mod thread_tags_api;
 
 use crate::db::{account_profile, contacts as contacts_db};
 

@@ -11,7 +11,9 @@ import {
   SAVED_GROUPS_CHANGED_EVENT,
 } from "../lib/savedGroups";
 import { useContactGroups } from "../lib/useContactGroups";
+import { useThreadTags } from "../lib/useThreadTags";
 import GroupsNav from "./GroupsNav";
+import ThreadTagsNav from "./ThreadTagsNav";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
 
@@ -89,7 +91,7 @@ function linkClass(active: boolean): string {
 
 export default function LeftPanel({
   onSearchChange,
-  onSearch,
+  onSearch: _onSearch,
 }: {
   onSearchChange: (v: string) => void;
   onSearch: (q: string) => void;
@@ -100,7 +102,14 @@ export default function LeftPanel({
   const { profile } = useAccountProfile();
 
   function isActive(path: string): boolean {
-    if (path === "/") return location.pathname === "/" || location.pathname.startsWith("/messages/");
+    if (path === "/") {
+      return (
+        location.pathname === "/" ||
+        location.pathname.startsWith("/messages/") ||
+        location.pathname.startsWith("/tag/") ||
+        location.pathname === "/no-tag"
+      );
+    }
     return location.pathname.startsWith(path);
   }
 
@@ -109,6 +118,7 @@ export default function LeftPanel({
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
   const { groups: contactGroups } = useContactGroups();
+  const { tags: threadTags } = useThreadTags();
 
   useEffect(() => {
     const refresh = () => setGroups(listGroups());
@@ -154,52 +164,58 @@ export default function LeftPanel({
         </div>
       )}
 
-      <div className="mx-3 border-t border-border" />
+      <div className="min-h-0 flex-1 overflow-auto">
+        <GroupsNav groups={contactGroups} />
 
-      {/* Saved conversation searches (import shortcuts). Contact groups are below. */}
-      <div className="shrink-0 px-3 pt-3">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
-            Saved Groups
-          </span>
-          <button
-            onClick={() => setShowGroupForm(true)}
-            className="cursor-pointer border-none bg-none p-0 text-[0.688rem] text-accent"
-          >
-            + New
-          </button>
+        <div className="mx-3 border-t border-border" />
+
+        {/* Named search queries stored in the browser. Not contact membership. */}
+        <div className="shrink-0 px-3 pt-3">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
+              Saved searches
+            </span>
+            <button
+              onClick={() => setShowGroupForm(true)}
+              className="cursor-pointer border-none bg-none p-0 text-[0.688rem] text-accent"
+            >
+              + New
+            </button>
+          </div>
+          {groups.length === 0 ? (
+            <div className="py-1 text-[0.813rem] text-muted">No saved searches</div>
+          ) : (
+            groups.map((g) => (
+              <div key={g.id} className="flex items-center justify-between">
+                <button
+                  onClick={() => {
+                    onSearchChange(g.query);
+                    navigate(`/?q=${encodeURIComponent(g.query)}`);
+                  }}
+                  className="block flex-1 cursor-pointer truncate border-none bg-transparent py-1 text-left text-[0.813rem] text-text"
+                >
+                  {g.name}
+                </button>
+                <button
+                  onClick={() => {
+                    removeGroup(g.id);
+                    setGroups(listGroups());
+                  }}
+                  title="Delete saved search"
+                  aria-label={`Delete saved search ${g.name}`}
+                  className="shrink-0 cursor-pointer border-none bg-transparent p-1 text-muted hover:text-danger"
+                >
+                  <TrashIcon size={13} />
+                </button>
+              </div>
+            ))
+          )}
         </div>
-        {groups.length === 0 ? (
-          <div className="py-1 text-[0.813rem] text-muted">No saved groups</div>
-        ) : (
-          groups.map((g) => (
-            <div key={g.id} className="flex items-center justify-between">
-              <button
-                onClick={() => {
-                  onSearchChange(g.query);
-                  onSearch(g.query);
-                }}
-                className="block flex-1 cursor-pointer truncate border-none bg-transparent py-1 text-left text-[0.813rem] text-text"
-              >
-                {g.name}
-              </button>
-              <button
-                onClick={() => {
-                  removeGroup(g.id);
-                  setGroups(listGroups());
-                }}
-                title="Delete saved group"
-                aria-label={`Delete saved group ${g.name}`}
-                className="shrink-0 cursor-pointer border-none bg-transparent p-1 text-muted hover:text-danger"
-              >
-                <TrashIcon size={13} />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
 
-      <GroupsNav groups={contactGroups} />
+        <div className="mx-3 border-t border-border" />
+
+        <ThreadTagsNav tags={threadTags} />
+      </div>
 
       {/* Settings */}
       <div className="border-t border-border px-3 py-2">
