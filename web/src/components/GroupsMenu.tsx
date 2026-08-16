@@ -30,6 +30,10 @@ export default function GroupsMenu({
   icon,
   /** Show "Groups" (or ariaLabel) plus the assign-groups icon. Off for icon-only tags. */
   labeled = true,
+  open: openProp,
+  onOpenChange,
+  /** When set, checkboxes stay clickable even if the trigger is disabled. */
+  checksDisabled,
 }: {
   allGroups: string[];
   checks: Record<string, GroupCheckState>;
@@ -48,8 +52,17 @@ export default function GroupsMenu({
   reservedError?: (name: string) => string;
   icon?: ReactNode;
   labeled?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  checksDisabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
+  const boxesDisabled = checksDisabled ?? disabled;
   const [mode, setMode] = useState<"list" | "create">("list");
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
@@ -65,9 +78,18 @@ export default function GroupsMenu({
       setOpen(false);
       setMode("list");
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      setMode("list");
+    };
     document.addEventListener("mousedown", onPointerDown, true);
-    return () => document.removeEventListener("mousedown", onPointerDown, true);
-  }, [open]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, openProp, onOpenChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -117,7 +139,7 @@ export default function GroupsMenu({
         title={title}
         onClick={() => {
           if (disabled) return;
-          setOpen((v) => !v);
+          setOpen(!open);
           setMode("list");
         }}
         className={
@@ -167,7 +189,7 @@ export default function GroupsMenu({
                       ref={(el) => {
                         if (el) el.indeterminate = state === "mixed";
                       }}
-                      disabled={disabled}
+                      disabled={boxesDisabled}
                       onChange={() => onToggle?.(name)}
                       className="size-3.5 accent-accent"
                     />
@@ -180,7 +202,7 @@ export default function GroupsMenu({
           <div className="border-t border-border py-1">
             <button
               type="button"
-              disabled={disabled}
+              disabled={boxesDisabled}
               onClick={() => setMode("create")}
               className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-50"
             >
@@ -190,7 +212,7 @@ export default function GroupsMenu({
             {onClearAll ? (
               <button
                 type="button"
-                disabled={disabled || !hasAnyMembership}
+                disabled={boxesDisabled || !hasAnyMembership}
                 onClick={() => onClearAll()}
                 className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover disabled:opacity-50"
               >

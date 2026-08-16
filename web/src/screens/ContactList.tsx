@@ -147,6 +147,20 @@ function groupsForContact(
   );
 }
 
+/** Add or remove one group name, matching letter case the same way the list does. */
+function withGroupMembership(
+  groups: string[],
+  name: string,
+  enable: boolean,
+): string[] {
+  if (enable) {
+    return groups.some((g) => g.toLowerCase() === name.toLowerCase())
+      ? groups
+      : [...groups, name];
+  }
+  return groups.filter((g) => g.toLowerCase() !== name.toLowerCase());
+}
+
 export default function ContactList({
   filter = "",
   groupFilter = null,
@@ -163,7 +177,6 @@ export default function ContactList({
   onCheckedChange?: (contacts: Contact[]) => void;
 }) {
   const [serverQ, setServerQ] = useState("");
-  const [membershipRev, setMembershipRev] = useState(0);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, string[]>>(
     {},
   );
@@ -171,6 +184,11 @@ export default function ContactList({
     loadContactNameSort(),
   );
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  const [groupsMenuOpen, setGroupsMenuOpen] = useState(false);
+  /** Last contacts the Groups menu assigned to, so a list filter change does not disable an open menu. */
+  const assignTargetsRef = useRef<Contact[]>([]);
+  const groupOverridesRef = useRef(groupOverrides);
+  groupOverridesRef.current = groupOverrides;
   /** Ignores the row click that follows a checkbox press (nested control). */
   const skipRowSelectRef = useRef(false);
   const catalogCompleteRef = useRef(false);
@@ -212,7 +230,7 @@ export default function ContactList({
     error,
     hasMore,
     loadMore: requestMore,
-  } = usePagedList(`${serverQ}#${membershipRev}`, fetchPage, {
+  } = usePagedList(serverQ, fetchPage, {
     firstPageSize: serverQ.trim() ? PAGE_SIZE_FIRST : PAGE_SIZE_CONTACTS_FIRST,
   });
 
@@ -296,6 +314,11 @@ export default function ContactList({
     if (checkedContacts.length > 0) return checkedContacts;
     return selectedContact ? [selectedContact] : [];
   }, [checkedContacts, selectedContact]);
+  if (targetContacts.length > 0) {
+    assignTargetsRef.current = targetContacts;
+  }
+  const assignTargets =
+    targetContacts.length > 0 ? targetContacts : assignTargetsRef.current;
 
   useEffect(() => {
     onCheckedChange?.(checkedContacts);
@@ -317,42 +340,58 @@ export default function ContactList({
     () =>
       checksFromMembers(
         allGroups,
-        targetContacts.map((c) => groupsForContact(c, groupOverrides)),
+        assignTargets.map((c) => groupsForContact(c, groupOverrides)),
       ),
-    [allGroups, groupOverrides, targetContacts],
+    [allGroups, assignTargets, groupOverrides],
   );
 
   const applyMembership = useCallback(async (name: string, enable: boolean) => {
-    const ids = targetContacts
+    const targets = assignTargetsRef.current;
+    const ids = targets
       .map((c) => Number(c.id))
       .filter((id) => Number.isFinite(id) && id > 0);
     if (ids.length === 0) return;
-    await setContactGroupMembership(ids, name, enable);
-    setGroupOverrides((prev) => {
-      const next = { ...prev };
-      for (const c of targetContacts) {
-        const current = groupsForContact(c, next);
-        const groups = enable
-          ? current.some((g) => g.toLowerCase() === name.toLowerCase())
-            ? current
-            : [...current, name]
-          : current.filter((g) => g.toLowerCase() !== name.toLowerCase());
-        next[c.id] = groups;
+    const nextOverrides = { ...groupOverridesRef.current };
+    for (const c of targets) {
+      const groups = withGroupMembership(
+        groupsForContact(c, nextOverrides),
+        name,
+        enable,
+      );
+      nextOverrides[c.id] = groups;
+      updateCachedContactGroups(c.id, groups);
+    }
+    groupOverridesRef.current = nextOverrides;
+    setGroupOverrides(nextOverrides);
+    try {
+      await setContactGroupMembership(ids, name, enable);
+    } catch {
+      const reverted = { ...groupOverridesRef.current };
+      for (const c of targets) {
+        const groups = withGroupMembership(
+          groupsForContact(c, reverted),
+          name,
+          !enable,
+        );
+        reverted[c.id] = groups;
         updateCachedContactGroups(c.id, groups);
       }
-      return next;
-    });
-    if (groupActive) {
-      setMembershipRev((n) => n + 1);
+      groupOverridesRef.current = reverted;
+      setGroupOverrides(reverted);
     }
-  }, [groupActive, targetContacts]);
+  }, []);
+
+  const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 
   useEffect(() => {
     setRightToolbar(
       <GroupsMenu
         allGroups={allGroups}
         checks={groupChecks}
-        disabled={targetContacts.length === 0}
+        open={groupsMenuOpen}
+        onOpenChange={setGroupsMenuOpen}
+        disabled={menuDisabled}
+        checksDisabled={menuDisabled}
         onToggle={(name) => {
           const on = groupChecks[name] === "on";
           void applyMembership(name, !on);
@@ -370,8 +409,8 @@ export default function ContactList({
         }}
         onClearAll={() => {
           const names = new Set<string>();
-          for (const c of targetContacts) {
-            for (const g of c.groups ?? []) names.add(g);
+          for (const c of assignTargets) {
+            for (const g of groupsForContact(c, groupOverrides)) names.add(g);
           }
           void (async () => {
             for (const name of names) {
@@ -381,8 +420,18 @@ export default function ContactList({
         }}
       />,
     );
-    return () => setRightToolbar(null);
-  }, [allGroups, applyMembership, groupChecks, setRightToolbar, targetContacts]);
+  }, [
+    allGroups,
+    applyMembership,
+    assignTargets,
+    groupChecks,
+    groupOverrides,
+    groupsMenuOpen,
+    menuDisabled,
+    setRightToolbar,
+  ]);
+
+  useEffect(() => () => setRightToolbar(null), [setRightToolbar]);
 
   const localSlice =
     !advancedActive &&
