@@ -9,7 +9,8 @@ import {
   reservedGroupError,
 } from "../lib/contactGroups";
 import GroupNameDialog from "./GroupNameDialog";
-import { EllipsisIcon, PeopleGroupIcon, PersonIcon, PlusIcon } from "./icons";
+import NavCollapsibleSection from "./NavCollapsibleSection";
+import { EllipsisIcon, PeopleGroupIcon, PersonIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
   return `group relative flex w-full cursor-pointer items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
@@ -112,26 +113,18 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
   };
 
   return (
-    <div className="p-3">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
-          Contact groups
-        </span>
-        <button
-          type="button"
-          aria-label="Create group"
-          disabled={busy}
-          onClick={() => {
-            setMenuFor(null);
-            setError(null);
-            setCreateOpen(true);
-          }}
-          className="cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-accent disabled:opacity-40"
-        >
-          <PlusIcon size={14} />
-        </button>
-      </div>
-
+    <>
+    <NavCollapsibleSection
+      id="contact-groups"
+      title="Contact Groups"
+      addLabel="Create group"
+      addDisabled={busy}
+      onAdd={() => {
+        setMenuFor(null);
+        setError(null);
+        setCreateOpen(true);
+      }}
+    >
       {groups.map((name) => {
         const href = `/group/${groupSlug(name)}`;
         const active = location.pathname === href;
@@ -203,6 +196,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
         <PersonIcon size={15} />
         <span className="truncate">No group</span>
       </button>
+    </NavCollapsibleSection>
 
       {createOpen ? (
         <GroupNameDialog
@@ -229,6 +223,6 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }

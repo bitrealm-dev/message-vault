@@ -9,10 +9,11 @@ import {
   tagSlug,
 } from "../lib/threadTags";
 import GroupNameDialog from "./GroupNameDialog";
-import { EllipsisIcon, PlusIcon, TagIcon } from "./icons";
+import NavCollapsibleSection from "./NavCollapsibleSection";
+import { EllipsisIcon, TagIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+  return `group relative flex w-full items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
     active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }
@@ -112,26 +113,18 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
   };
 
   return (
-    <div className="p-3">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
-          Thread tags
-        </span>
-        <button
-          type="button"
-          aria-label="Create tag"
-          disabled={busy}
-          onClick={() => {
-            setMenuFor(null);
-            setError(null);
-            setCreateOpen(true);
-          }}
-          className="cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-accent disabled:opacity-40"
-        >
-          <PlusIcon size={14} />
-        </button>
-      </div>
-
+    <>
+    <NavCollapsibleSection
+      id="thread-tags"
+      title="Thread Tags"
+      addLabel="Create tag"
+      addDisabled={busy}
+      onAdd={() => {
+        setMenuFor(null);
+        setError(null);
+        setCreateOpen(true);
+      }}
+    >
       {tags.map((name) => {
         const href = `/tag/${tagSlug(name)}`;
         const active = location.pathname === href;
@@ -205,6 +198,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
         <TagIcon size={15} />
         <span className="truncate">No tag</span>
       </button>
+    </NavCollapsibleSection>
 
       {createOpen ? (
         <GroupNameDialog
@@ -231,6 +225,6 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }

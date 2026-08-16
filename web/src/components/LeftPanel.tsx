@@ -15,6 +15,7 @@ import { useThreadTags } from "../lib/useThreadTags";
 import GroupsNav from "./GroupsNav";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
 import ThreadTagsNav from "./ThreadTagsNav";
+import NavCollapsibleSection from "./NavCollapsibleSection";
 import SavedGroupForm from "./SavedGroupForm";
 import { TrashIcon } from "./icons";
 
@@ -80,8 +81,8 @@ function ExportIcon() {
   );
 }
 
-/** Sidebar header for each nav group (padding 0.25rem 0.75rem 0.375rem). */
-const sectionHeaderClass = "px-3 pt-1 pb-1.5 text-[0.875rem] font-bold text-text";
+/** Sidebar header for each nav group. */
+const sectionHeaderClass = "pt-1 pb-1.5 text-[0.875rem] font-bold text-text";
 
 /** Nav button: selected and hovered rows share the list hover tint. */
 function linkClass(active: boolean): string {
@@ -133,58 +134,47 @@ export default function LeftPanel({
       <div className="min-h-0 flex-1 overflow-auto">
       {/* Browse */}
       <div className="px-3 py-2">
-        <div className="pl-3">
-          <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
-            <ConversationsIcon />
-            Threads
-          </button>
-          <button className={linkClass(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
-            <ContactsIcon />
-            Contacts
-          </button>
-          <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
-            <TrashIcon size={15} />
-            Trash
-          </button>
-        </div>
+        <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
+          <ConversationsIcon />
+          Messages
+        </button>
+        <button className={linkClass(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
+          <ContactsIcon />
+          Contacts
+        </button>
+        <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
+          <TrashIcon size={15} />
+          Trash
+        </button>
       </div>
 
       {/* Import/Export — desktop app only, never on a guest session */}
       {canUseImportExportWithProfile(isTauri(), profile) && (
-        <div className="border-t border-border px-3 py-2">
+        <div className="px-3 py-2">
           <div className={sectionHeaderClass}>Messages</div>
-          <div className="pl-3">
-            <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
-              <ImportIcon />
-              Import
-            </button>
-            <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
-              <ExportIcon />
-              Export
-            </button>
-          </div>
+          <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
+            <ImportIcon />
+            Import
+          </button>
+          <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
+            <ExportIcon />
+            Export
+          </button>
         </div>
       )}
 
         <GroupsNav groups={contactGroups} />
 
-        <div className="mx-3 border-t border-border" />
-
         {/* Named search queries stored in the browser. Not contact membership. */}
-        <div className="shrink-0 px-3 pt-3">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[0.688rem] font-semibold uppercase tracking-[0.05em] text-muted">
-              Saved searches
-            </span>
-            <button
-              onClick={() => setShowGroupForm(true)}
-              className="cursor-pointer border-none bg-none p-0 text-[0.688rem] text-accent"
-            >
-              + New
-            </button>
-          </div>
+        <NavCollapsibleSection
+          id="saved-searches"
+          title="Saved Searches"
+          addLabel="Create saved search"
+          onAdd={() => setShowGroupForm(true)}
+          className="px-3 pt-3"
+        >
           {groups.length === 0 ? (
-            <div className="py-1 text-[0.813rem] text-muted">No saved searches</div>
+            <div className="px-3 py-1.5 text-[0.813rem] text-muted">No saved searches</div>
           ) : (
             groups.map((g) => (
               <div key={g.id} className="flex items-center justify-between">
@@ -211,15 +201,13 @@ export default function LeftPanel({
               </div>
             ))
           )}
-        </div>
-
-        <div className="mx-3 border-t border-border" />
+        </NavCollapsibleSection>
 
         <ThreadTagsNav tags={threadTags} />
       </div>
 
       {/* Settings */}
-      <div className="border-t border-border px-3 py-2">
+      <div className="px-3 py-2">
         <button className={linkClass(isActive("/settings"))} onClick={() => navigate("/settings")}>
           Settings
         </button>

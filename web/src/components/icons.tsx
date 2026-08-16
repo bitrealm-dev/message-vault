@@ -63,6 +63,15 @@ export function PlusIcon({ size, className, ...rest }: IconProps) {
   );
 }
 
+/** Chevron pointing right; rotate 90° when a section is open. */
+export function ChevronRightIcon({ size, className, ...rest }: IconProps) {
+  return (
+    <IconShell size={size} className={className} {...rest}>
+      <path d="m9 6 6 6-6 6" />
+    </IconShell>
+  );
+}
+
 /** Three dots for a row menu. */
 export function EllipsisIcon({ size, className, ...rest }: IconProps) {
   return (
