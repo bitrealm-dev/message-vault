@@ -1,0 +1,7 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "src-tauri/Cargo.toml"
+  ],
+  "rust-analyzer.check.command": "clippy"
+}
