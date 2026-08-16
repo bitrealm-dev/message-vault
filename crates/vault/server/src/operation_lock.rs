@@ -5,7 +5,8 @@
 //! for the life of either operation.
 
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -67,4 +68,48 @@ fn lock_path(db: &Path) -> PathBuf {
     let mut name: OsString = db.as_os_str().to_owned();
     name.push(".operation.lock");
     PathBuf::from(name)
+}
+
+/// `vault.ready` next to `vault.db`. sqlite-web waits for this file.
+pub(crate) fn ready_path(db: &Path) -> PathBuf {
+    db.with_file_name("vault.ready")
+}
+
+/// Remove `vault.ready` so waiters know the database is being rebuilt.
+pub(crate) fn clear_ready(db: &Path) -> Result<()> {
+    let path = ready_path(db);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
+/// Create `vault.ready` after the database has a usable schema.
+pub(crate) fn mark_ready(db: &Path) -> Result<()> {
+    let path = ready_path(db);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create ready directory {}", parent.display()))?;
+    }
+    fs::write(&path, []).with_context(|| format!("write {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clear_ready, mark_ready, ready_path};
+
+    #[test]
+    fn ready_sentinel_is_cleared_and_written_beside_the_database() {
+        let temp = tempfile::tempdir().expect("create test directory");
+        let db = temp.path().join("vault.db");
+        let ready = ready_path(&db);
+        assert_eq!(ready, temp.path().join("vault.ready"));
+
+        clear_ready(&db).expect("clear missing ready file");
+        mark_ready(&db).expect("write ready file");
+        assert!(ready.is_file());
+        clear_ready(&db).expect("remove ready file");
+        assert!(!ready.exists());
+    }
 }

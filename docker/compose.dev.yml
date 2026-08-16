@@ -51,7 +51,8 @@ services:
       - "127.0.0.1:8081:8080"
     volumes:
       - ../data:/data
-    command: /data/vault.db
+      - ./wait-for-vault-db.sh:/wait-for-vault-db.sh:ro
+    entrypoint: ["/bin/sh", "/wait-for-vault-db.sh"]
     restart: unless-stopped
 
 volumes:

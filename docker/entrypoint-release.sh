@@ -24,6 +24,9 @@ demo_data_requested() {
 }
 
 seed_if_needed() {
+  if [[ ! -f data/vault.db ]]; then
+    rm -f data/vault.ready
+  fi
   if [[ -f data/vault.db ]]; then
     echo "Vault DB present; skipping seed (DEMO_DATA=${DEMO_DATA})."
     ensure_docker_config

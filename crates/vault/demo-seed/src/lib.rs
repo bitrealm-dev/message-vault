@@ -473,7 +473,8 @@ fn write_readme(
     let body = format!(
         r#"# Message Vault demo dataset
 
-Committed message-ir JSONL bundle for local browsing without a real phone backup.
+Generated message-ir JSONL bundle for local browsing without a real phone backup.
+`staging/` is written by `demo-seed` / `reset-demo` and is not stored in git.
 
 Three staging trees simulate separate backups:
 

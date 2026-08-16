@@ -449,6 +449,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let db_conn = schema::open_configured(&cfg.paths.db)?;
     let _: i64 = db_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))?;
     schema::ensure_vault_schema(&db_conn)?;
+    crate::operation_lock::mark_ready(&cfg.paths.db)?;
     let mode: String = db_conn
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .unwrap_or_else(|_| "unknown".into());
