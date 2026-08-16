@@ -15,6 +15,7 @@ import {
 } from "../lib/contactSort";
 import {
   GROUP_FILTER_TOKEN_RE,
+  contactBelongsToGroup,
   createContactGroup,
   groupListQuery,
   hasGroupFilterToken,
@@ -156,6 +157,8 @@ export default function ContactList({
   /** Ignores the row click that follows a checkbox press (nested control). */
   const skipRowSelectRef = useRef(false);
   const catalogCompleteRef = useRef(false);
+  /** Unfiltered contact list, so group clicks can filter in the browser. */
+  const fullCatalogRef = useRef<Contact[] | null>(null);
   const { groups: allGroups } = useContactGroups();
 
   const onNameSortChange = (next: ContactNameSortState) => {
@@ -198,6 +201,9 @@ export default function ContactList({
   const catalogComplete =
     !loading && !refreshing && contacts.length >= total && (total > 0 || contacts.length === 0);
   catalogCompleteRef.current = catalogComplete && !serverQ.trim();
+  if (catalogCompleteRef.current) {
+    fullCatalogRef.current = contacts;
+  }
 
   const groupActive = Boolean(groupFilter);
   const advancedActive =
@@ -215,13 +221,17 @@ export default function ContactList({
       setServerQ("");
       return;
     }
-    // Group pages and advanced tokens always go to the server.
-    if (groupActive || advancedActive) {
-      const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
-      return () => window.clearTimeout(t);
+    // The full catalog is already in memory, so filter it in the browser.
+    if (fullCatalogRef.current && !advancedActive) {
+      setServerQ("");
+      return;
     }
-    // The full catalog is already in memory, so filter it locally.
-    if (catalogCompleteRef.current) return;
+    // Group-page click: do not wait for the search debounce.
+    if (groupActive && !filter.trim()) {
+      setServerQ(combined);
+      return;
+    }
+    if (catalogCompleteRef.current && !advancedActive) return;
 
     const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
@@ -246,10 +256,11 @@ export default function ContactList({
         .map((c) =>
           groupOverrides[c.id] ? { ...c, groups: groupOverrides[c.id] } : c,
         )
+        .filter((c) => contactBelongsToGroup(c.groups, groupFilter))
         .sort((a, b) =>
           compareContactsByName(a.name, b.name, nameSort.sort, nameSort.order),
         ),
-    [filteredContacts, nameSort, groupOverrides],
+    [filteredContacts, nameSort, groupOverrides, groupFilter],
   );
 
   const selectedContact =
@@ -314,12 +325,11 @@ export default function ContactList({
     }
   };
 
-  const rangeTotal =
-    filterActive &&
+  const localSlice =
     !advancedActive &&
-    (catalogCompleteRef.current || !serverQ.trim())
-      ? displayContacts.length
-      : total;
+    (catalogCompleteRef.current || !serverQ.trim()) &&
+    (filterActive || groupActive);
+  const rangeTotal = localSlice ? displayContacts.length : total;
 
   return (
     <InfiniteOffsetList

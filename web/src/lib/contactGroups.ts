@@ -93,6 +93,17 @@ export function hasGroupFilterToken(raw: string): boolean {
   return GROUP_FILTER_TOKEN_RE.test(raw);
 }
 
+/** True when this contact should appear on the given group page. */
+export function contactBelongsToGroup(
+  groups: readonly string[] | undefined,
+  groupFilter: string | "none" | null,
+): boolean {
+  if (!groupFilter) return true;
+  if (groupFilter === "none") return !groups || groups.length === 0;
+  const needle = groupFilter.toLowerCase();
+  return (groups ?? []).some((g) => g.toLowerCase() === needle);
+}
+
 /** Build the contact-list query for a group page plus optional typed search. */
 export function groupListQuery(
   group: string | "none" | null,

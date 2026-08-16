@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  contactBelongsToGroup,
   groupFromSlug,
   groupListQuery,
   groupSlug,
@@ -31,6 +32,24 @@ describe("reserved groups", () => {
     expect(isReservedGroupName("no group")).toBe(true);
     expect(reservedGroupError("Trash")).toBe("Trash is a reserved group");
     expect(isReservedGroupName("Family")).toBe(false);
+  });
+});
+
+describe("contactBelongsToGroup", () => {
+  it("keeps every contact when no group page is active", () => {
+    expect(contactBelongsToGroup(["Family"], null)).toBe(true);
+    expect(contactBelongsToGroup([], null)).toBe(true);
+  });
+
+  it("matches group names without regard to letter case", () => {
+    expect(contactBelongsToGroup(["Family"], "family")).toBe(true);
+    expect(contactBelongsToGroup(["Work"], "Family")).toBe(false);
+  });
+
+  it("treats none as contacts with no groups", () => {
+    expect(contactBelongsToGroup([], "none")).toBe(true);
+    expect(contactBelongsToGroup(undefined, "none")).toBe(true);
+    expect(contactBelongsToGroup(["Family"], "none")).toBe(false);
   });
 });
 
