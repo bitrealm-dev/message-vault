@@ -22,6 +22,7 @@ services:
       dockerfile: docker/Dockerfile
     ports:
       - "0.0.0.0:8080:8080"
+    user: "${UID}:${GID}"
     environment:
       DEMO_DATA: ${DEMO_DATA:-true}
       VAULT_AUTH: ${VAULT_AUTH:-local}
