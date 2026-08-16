@@ -139,7 +139,7 @@ let inflight: Promise<string[]> | null = null;
 
 /** Load group names for the signed-in account. Reuses an in-flight request. */
 export async function fetchContactGroups(signal?: AbortSignal): Promise<string[]> {
-  if (cachedGroups && !signal) return cachedGroups;
+  if (cachedGroups !== null && !signal) return cachedGroups;
   if (inflight && !signal) return inflight;
   const req = apiClient
     .get<GroupsResponse>("/v1/contact-groups", { signal })

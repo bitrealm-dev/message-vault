@@ -302,20 +302,22 @@ export default function ContactDrawer({
                   Contact groups
                 </span>
               </div>
-              {(detail!.groups ?? []).length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {(detail!.groups ?? []).map((name) => (
+              <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+                {(detail!.groups ?? []).length > 0 ? (
+                  (detail!.groups ?? []).map((name) => (
                     <span
                       key={name}
-                      className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] text-text"
+                      className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"
                     >
                       {name}
                     </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="m-0 text-[0.813rem] text-muted">No groups</p>
-              )}
+                  ))
+                ) : (
+                  <span className="py-0.5 text-[0.75rem] leading-4 text-muted">
+                    No groups
+                  </span>
+                )}
+              </div>
             </div>
           ) : null
         }

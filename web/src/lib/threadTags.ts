@@ -68,7 +68,7 @@ let cachedTags: string[] | null = null;
 let inflight: Promise<string[]> | null = null;
 
 export async function fetchThreadTags(signal?: AbortSignal): Promise<string[]> {
-  if (cachedTags && !signal) return cachedTags;
+  if (cachedTags !== null && !signal) return cachedTags;
   if (inflight && !signal) return inflight;
   const req = apiClient
     .get<TagsResponse>("/v1/thread-tags", { signal })

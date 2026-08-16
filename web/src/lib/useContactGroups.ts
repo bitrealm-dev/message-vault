@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "./auth";
 import {
   CONTACT_GROUPS_CHANGED_EVENT,
   fetchContactGroups,
@@ -10,6 +11,7 @@ export function useContactGroups(): {
   loading: boolean;
   refresh: () => Promise<void>;
 } {
+  const { isAuthenticated, token } = useAuth();
   const [groups, setGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -25,6 +27,7 @@ export function useContactGroups(): {
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated || !token) return;
     void refresh();
     const onChange = () => {
       void refresh();
@@ -33,7 +36,7 @@ export function useContactGroups(): {
     return () => {
       globalThis.removeEventListener(CONTACT_GROUPS_CHANGED_EVENT, onChange);
     };
-  }, [refresh]);
+  }, [isAuthenticated, refresh, token]);
 
   return { groups, loading, refresh };
 }

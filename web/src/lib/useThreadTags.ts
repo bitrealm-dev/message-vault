@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "./auth";
 import { THREAD_TAGS_CHANGED_EVENT, fetchThreadTags } from "./threadTags";
 
 /** Live list of thread tags for the signed-in account. */
@@ -7,6 +8,7 @@ export function useThreadTags(): {
   loading: boolean;
   refresh: () => Promise<void>;
 } {
+  const { isAuthenticated, token } = useAuth();
   const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -15,13 +17,14 @@ export function useThreadTags(): {
       const next = await fetchThreadTags();
       setTags(next);
     } catch {
-      setTags([]);
+      /* Keep the last good list. A failed refresh must not hide existing tags. */
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated || !token) return;
     void refresh();
     const onChange = () => {
       void refresh();
@@ -30,7 +33,7 @@ export function useThreadTags(): {
     return () => {
       globalThis.removeEventListener(THREAD_TAGS_CHANGED_EVENT, onChange);
     };
-  }, [refresh]);
+  }, [isAuthenticated, refresh, token]);
 
   return { tags, loading, refresh };
 }

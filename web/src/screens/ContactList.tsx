@@ -381,6 +381,43 @@ export default function ContactList({
     }
   }, []);
 
+  /** Drop every group on the selected contacts in one paint, then tell the server in parallel. */
+  const clearAllMembership = useCallback(async () => {
+    const targets = assignTargetsRef.current;
+    const ids = targets
+      .map((c) => Number(c.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length === 0) return;
+    const priorById: Record<string, string[]> = {};
+    const names = new Set<string>();
+    const nextOverrides = { ...groupOverridesRef.current };
+    for (const c of targets) {
+      const current = groupsForContact(c, nextOverrides);
+      priorById[c.id] = current;
+      for (const g of current) names.add(g);
+      nextOverrides[c.id] = [];
+      updateCachedContactGroups(c.id, []);
+    }
+    if (names.size === 0) return;
+    groupOverridesRef.current = nextOverrides;
+    setGroupOverrides(nextOverrides);
+    const results = await Promise.allSettled(
+      [...names].map((name) => setContactGroupMembership(ids, name, false)),
+    );
+    const failed = [...names].filter((_, i) => results[i].status === "rejected");
+    if (failed.length === 0) return;
+    const reverted = { ...groupOverridesRef.current };
+    for (const c of targets) {
+      const groups = priorById[c.id].filter((g) =>
+        failed.some((name) => name.toLowerCase() === g.toLowerCase()),
+      );
+      reverted[c.id] = groups;
+      updateCachedContactGroups(c.id, groups);
+    }
+    groupOverridesRef.current = reverted;
+    setGroupOverrides(reverted);
+  }, []);
+
   const menuDisabled = assignTargets.length === 0 && !groupsMenuOpen;
 
   useEffect(() => {
@@ -408,15 +445,7 @@ export default function ContactList({
           })();
         }}
         onClearAll={() => {
-          const names = new Set<string>();
-          for (const c of assignTargets) {
-            for (const g of groupsForContact(c, groupOverrides)) names.add(g);
-          }
-          void (async () => {
-            for (const name of names) {
-              await applyMembership(name, false);
-            }
-          })();
+          void clearAllMembership();
         }}
       />,
     );
@@ -424,8 +453,8 @@ export default function ContactList({
     allGroups,
     applyMembership,
     assignTargets,
+    clearAllMembership,
     groupChecks,
-    groupOverrides,
     groupsMenuOpen,
     menuDisabled,
     setRightToolbar,

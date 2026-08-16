@@ -9,6 +9,8 @@ import {
 } from "react";
 import { setBaseUrl, setToken, apiClient } from "./api";
 import { clearContactDetailCache } from "./contactDetailCache";
+import { invalidateContactGroups } from "./contactGroups";
+import { invalidateThreadTags } from "./threadTags";
 import { parsePersistedAuth } from "./authGuards";
 
 interface AuthState {
@@ -102,6 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       persisted?.accountId &&
       typeof persisted.serverUrl === "string"
     ) {
+      // Apply before children mount. Otherwise Contact Groups loads without
+      // a token, fails, and the sidebar stays on "No group" only.
+      setBaseUrl(persisted.serverUrl);
+      setToken(persisted.token);
       return {
         serverUrl: persisted.serverUrl,
         token: persisted.token,
@@ -118,6 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       needsOnboarding: false,
     };
   });
+
+  useEffect(() => {
+    setBaseUrl(state.serverUrl);
+    setToken(state.token);
+  }, [state.serverUrl, state.token]);
 
   // Check that the restored token still works.
   useEffect(() => {
@@ -180,6 +191,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (serverUrl: string, token: string, accountId: string) => {
       const epoch = ++authEpoch.current;
       clearContactDetailCache();
+      invalidateContactGroups();
+      invalidateThreadTags();
       setBaseUrl(serverUrl);
       setToken(token);
 
@@ -224,6 +237,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void apiClient.post("/v1/auth/logout", {}).catch(() => {});
     setToken(null);
     clearContactDetailCache();
+    invalidateContactGroups();
+    invalidateThreadTags();
     clearPersisted();
     setState((s) => ({
       ...s,
