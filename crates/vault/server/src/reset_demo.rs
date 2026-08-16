@@ -107,9 +107,8 @@ fn rename_prepared_path(source: &Path, destination: &Path) -> Result<()> {
                 )
             })
         }
-        Err(error) => Err(error).with_context(|| {
-            format!("rename {} to {}", source.display(), destination.display())
-        }),
+        Err(error) => Err(error)
+            .with_context(|| format!("rename {} to {}", source.display(), destination.display())),
     }
 }
 
@@ -123,9 +122,8 @@ fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
             fs::create_dir_all(parent)
                 .with_context(|| format!("create parent {}", parent.display()))?;
         }
-        fs::copy(source, destination).with_context(|| {
-            format!("copy {} to {}", source.display(), destination.display())
-        })?;
+        fs::copy(source, destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
         fs::remove_file(source)
             .with_context(|| format!("remove copied file {}", source.display()))?;
     }
@@ -133,8 +131,7 @@ fn move_across_devices(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination)
-        .with_context(|| format!("create {}", destination.display()))?;
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
     for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
         let entry = entry?;
         let from = entry.path();
