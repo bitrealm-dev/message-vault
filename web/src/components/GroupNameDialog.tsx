@@ -5,6 +5,8 @@ import ModalShell from "./ModalShell";
 /** Small name form used to create or rename a contact group. */
 export default function GroupNameDialog({
   title,
+  placeholder = "Name",
+  confirmLabel = "Save",
   initial = "",
   error = null,
   busy = false,
@@ -12,6 +14,8 @@ export default function GroupNameDialog({
   onCancel,
 }: {
   title: string;
+  placeholder?: string;
+  confirmLabel?: string;
   initial?: string;
   error?: string | null;
   busy?: boolean;
@@ -46,7 +50,7 @@ export default function GroupNameDialog({
             submit();
           }
         }}
-        placeholder="Name"
+        placeholder={placeholder}
         disabled={busy}
         autoFocus
         className="mb-2 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
@@ -66,7 +70,7 @@ export default function GroupNameDialog({
           disabled={busy || !name.trim()}
           className="!px-4 !py-1.5"
         >
-          Save
+          {confirmLabel}
         </Button>
       </div>
     </ModalShell>

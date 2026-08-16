@@ -117,7 +117,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
     <NavCollapsibleSection
       id="contact-groups"
       title="Contact Groups"
-      addLabel="Create group"
+      addLabel="Create contact group"
       addDisabled={busy}
       onAdd={() => {
         setMenuFor(null);
@@ -200,7 +200,9 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create group"
+          title="Create contact group"
+          placeholder="Group name"
+          confirmLabel="Create"
           error={error}
           busy={busy}
           onSave={createGroup}
@@ -213,6 +215,7 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
       {renameFor ? (
         <GroupNameDialog
           title="Rename group"
+          placeholder="Group name"
           initial={renameFor}
           error={error}
           busy={busy}

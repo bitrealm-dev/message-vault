@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect } from "react";
 import { apiClient } from "../lib/api";
 import {
+  CONTACT_DETAIL_CHANGED_EVENT,
   fetchContactDetail,
   getCachedContactDetail,
   invalidateContactDetail,
@@ -152,6 +153,23 @@ export default function ContactDrawer({
         });
     }
     return () => ac.abort();
+  }, [contactId]);
+
+  useEffect(() => {
+    if (!contactId) return;
+    const onChange = (e: Event) => {
+      const ce = e as CustomEvent<{ id?: string; groups?: string[] }>;
+      if (String(ce.detail?.id) !== String(contactId)) return;
+      const groups = ce.detail?.groups;
+      if (!groups) return;
+      setDetail((prev) => {
+        if (!prev || String(prev.id) !== String(contactId)) return prev;
+        return { ...prev, groups };
+      });
+    };
+    globalThis.addEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
+    return () =>
+      globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
   }, [contactId]);
 
   useEffect(() => {

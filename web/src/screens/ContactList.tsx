@@ -23,7 +23,10 @@ import {
   setContactGroupMembership,
 } from "../lib/contactGroups";
 import { useContactGroups } from "../lib/useContactGroups";
-import { invalidateContactDetail } from "../lib/contactDetailCache";
+import {
+  getCachedContactDetail,
+  updateCachedContactGroups,
+} from "../lib/contactDetailCache";
 import {
   PAGE_SIZE_CONTACTS_FIRST,
   PAGE_SIZE_FIRST,
@@ -129,6 +132,19 @@ function normalizeContacts(
     handles: c.handles ?? [],
     groups: c.groups ?? [],
   }));
+}
+
+/** Prefer a local override, then the open-drawer cache, then the list row. */
+function groupsForContact(
+  c: Contact,
+  overrides: Record<string, string[]>,
+): string[] {
+  return (
+    overrides[c.id] ??
+    getCachedContactDetail(c.id)?.groups ??
+    c.groups ??
+    []
+  );
 }
 
 export default function ContactList({
@@ -301,9 +317,9 @@ export default function ContactList({
     () =>
       checksFromMembers(
         allGroups,
-        targetContacts.map((c) => c.groups ?? []),
+        targetContacts.map((c) => groupsForContact(c, groupOverrides)),
       ),
-    [allGroups, targetContacts],
+    [allGroups, groupOverrides, targetContacts],
   );
 
   const applyMembership = useCallback(async (name: string, enable: boolean) => {
@@ -312,18 +328,17 @@ export default function ContactList({
       .filter((id) => Number.isFinite(id) && id > 0);
     if (ids.length === 0) return;
     await setContactGroupMembership(ids, name, enable);
-    for (const id of ids) {
-      invalidateContactDetail(String(id));
-    }
     setGroupOverrides((prev) => {
       const next = { ...prev };
       for (const c of targetContacts) {
-        const current = next[c.id] ?? c.groups ?? [];
-        next[c.id] = enable
+        const current = groupsForContact(c, next);
+        const groups = enable
           ? current.some((g) => g.toLowerCase() === name.toLowerCase())
             ? current
             : [...current, name]
           : current.filter((g) => g.toLowerCase() !== name.toLowerCase());
+        next[c.id] = groups;
+        updateCachedContactGroups(c.id, groups);
       }
       return next;
     });

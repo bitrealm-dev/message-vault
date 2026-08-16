@@ -117,7 +117,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
     <NavCollapsibleSection
       id="thread-tags"
       title="Thread Tags"
-      addLabel="Create tag"
+      addLabel="Create thread tag"
       addDisabled={busy}
       onAdd={() => {
         setMenuFor(null);
@@ -202,7 +202,9 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
 
       {createOpen ? (
         <GroupNameDialog
-          title="Create tag"
+          title="Create thread tag"
+          placeholder="Tag name"
+          confirmLabel="Create"
           error={error}
           busy={busy}
           onSave={createTag}
@@ -215,6 +217,7 @@ export default function ThreadTagsNav({ tags }: { tags: string[] }) {
       {renameFor ? (
         <GroupNameDialog
           title="Rename tag"
+          placeholder="Tag name"
           initial={renameFor}
           error={error}
           busy={busy}

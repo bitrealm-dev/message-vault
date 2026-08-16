@@ -4,6 +4,7 @@ import {
   fetchContactDetail,
   getCachedContactDetail,
   invalidateContactDetail,
+  updateCachedContactGroups,
   type CachedContactDetail,
 } from "./contactDetailCache";
 
@@ -62,6 +63,13 @@ describe("contactDetailCache", () => {
     const again = await fetchContactDetail("2", get);
     expect(again.name).toBe("Renamed");
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("updateCachedContactGroups writes groups onto a cached contact", async () => {
+    const get = vi.fn(async () => detail("5"));
+    await fetchContactDetail("5", get);
+    updateCachedContactGroups("5", ["College"]);
+    expect(getCachedContactDetail("5")?.groups).toEqual(["College"]);
   });
 
   it("clear wipes all entries", async () => {

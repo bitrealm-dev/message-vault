@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
+import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
 import GlobalSearch from "./GlobalSearch";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
@@ -31,9 +32,9 @@ export default function AppHeader({
   }, [showAdvancedSearch, isContacts]);
 
   return (
-    <header className="flex shrink-0 items-center border-b border-border bg-panel">
+    <header className="relative z-20 flex shrink-0 items-center border-b border-border bg-panel">
       <div className="flex h-12 w-[220px] shrink-0 items-center px-3">
-        <span className="text-[0.875rem] font-bold text-text">Message Vault</span>
+        <AppAccountMenu />
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-center px-3 py-2">
         <div className="w-full max-w-xl">

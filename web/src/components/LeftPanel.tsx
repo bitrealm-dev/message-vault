@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../lib/auth";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
 import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
@@ -100,7 +99,6 @@ export default function LeftPanel({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const { profile } = useAccountProfile();
 
   function isActive(path: string): boolean {
@@ -114,8 +112,6 @@ export default function LeftPanel({
     }
     return location.pathname.startsWith(path);
   }
-
-  const signOutClass = `${linkClass(false)} mt-1 font-normal text-danger`;
 
   const [groups, setGroups] = useState(() => listGroups());
   const [showGroupForm, setShowGroupForm] = useState(false);
@@ -204,16 +200,6 @@ export default function LeftPanel({
         </NavCollapsibleSection>
 
         <ThreadTagsNav tags={threadTags} />
-      </div>
-
-      {/* Settings */}
-      <div className="px-3 py-2">
-        <button className={linkClass(isActive("/settings"))} onClick={() => navigate("/settings")}>
-          Settings
-        </button>
-        <button onClick={logout} className={signOutClass}>
-          Sign out
-        </button>
       </div>
 
       {/* Saved group form modal */}

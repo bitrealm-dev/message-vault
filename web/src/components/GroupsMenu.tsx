@@ -18,15 +18,18 @@ export default function GroupsMenu({
   onCreate,
   onClearAll,
   disabled = false,
-  ariaLabel = "Groups",
-  title = "Groups",
+  ariaLabel = "Contact Groups",
+  title = "Contact Groups",
   searchPlaceholder = "Search groups…",
   emptyText = "No groups",
   createButtonLabel = "Create group",
-  createTitle = "Create group",
+  createTitle = "Create contact group",
+  createPlaceholder = "Group name",
   isReserved = isReservedGroupName,
   reservedError = reservedGroupError,
   icon,
+  /** Show "Groups" (or ariaLabel) plus the assign-groups icon. Off for icon-only tags. */
+  labeled = true,
 }: {
   allGroups: string[];
   checks: Record<string, GroupCheckState>;
@@ -40,9 +43,11 @@ export default function GroupsMenu({
   emptyText?: string;
   createButtonLabel?: string;
   createTitle?: string;
+  createPlaceholder?: string;
   isReserved?: (name: string) => boolean;
   reservedError?: (name: string) => string;
   icon?: ReactNode;
+  labeled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"list" | "create">("list");
@@ -68,19 +73,22 @@ export default function GroupsMenu({
     if (!open) return;
     if (mode === "list") {
       setQuery("");
-      requestAnimationFrame(() => searchRef.current?.focus());
+      if (!labeled) {
+        requestAnimationFrame(() => searchRef.current?.focus());
+      }
     } else {
       setNewName("");
       setCreateError(null);
       requestAnimationFrame(() => nameRef.current?.focus());
     }
-  }, [open, mode]);
+  }, [open, mode, labeled]);
 
-  const filtered = useMemo(() => {
+  const visibleGroups = useMemo(() => {
+    if (labeled) return allGroups;
     const q = query.trim().toLowerCase();
     if (!q) return allGroups;
     return allGroups.filter((g) => g.toLowerCase().includes(q));
-  }, [allGroups, query]);
+  }, [allGroups, labeled, query]);
 
   const hasAnyMembership = Object.values(checks).some(
     (state) => state === "on" || state === "mixed",
@@ -112,10 +120,17 @@ export default function GroupsMenu({
           setOpen((v) => !v);
           setMode("list");
         }}
-        className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:cursor-default disabled:opacity-40 ${
-          open ? "text-accent" : ""
-        }`}
+        className={
+          labeled
+            ? `inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-elevated px-2.5 text-[0.75rem] font-medium text-muted hover:text-text disabled:cursor-default disabled:opacity-40 ${
+                open ? "text-accent" : ""
+              }`
+            : `flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border bg-elevated text-muted hover:text-text disabled:cursor-default disabled:opacity-40 ${
+                open ? "text-accent" : ""
+              }`
+        }
       >
+        {labeled ? <span>{title}</span> : null}
         {icon ?? <PeopleGroupIcon size={16} />}
       </button>
       {open && mode === "list" ? (
@@ -123,21 +138,23 @@ export default function GroupsMenu({
           data-mv-overlay=""
           className={`absolute top-full right-0 z-[100] mt-1 w-64 rounded-xl border border-border bg-popover ${popupShadow}`}
         >
-          <div className="border-b border-border p-2">
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={searchPlaceholder}
-              className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none"
-            />
-          </div>
+          {labeled ? null : (
+            <div className="border-b border-border p-2">
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={searchPlaceholder}
+                className="box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text outline-none"
+              />
+            </div>
+          )}
           <div className="max-h-56 overflow-y-auto py-1">
-            {filtered.length === 0 ? (
+            {visibleGroups.length === 0 ? (
               <p className="px-3 py-2 text-[0.75rem] text-muted">{emptyText}</p>
             ) : (
-              filtered.map((name) => {
+              visibleGroups.map((name) => {
                 const state = checks[name] ?? "off";
                 return (
                   <label
@@ -200,7 +217,7 @@ export default function GroupsMenu({
                 saveNew();
               }
             }}
-            placeholder="Name"
+            placeholder={createPlaceholder}
             disabled={disabled}
             className="mt-2 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text"
           />
@@ -214,7 +231,7 @@ export default function GroupsMenu({
               onClick={saveNew}
               className="cursor-pointer rounded-md bg-accent px-3 py-1 text-[0.813rem] font-medium text-[#1c1c1e] disabled:opacity-40"
             >
-              Save
+              Create
             </button>
             <button
               type="button"

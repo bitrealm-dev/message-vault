@@ -32,10 +32,12 @@ export default function TagsMenu({
       searchPlaceholder="Search tags…"
       emptyText="No tags"
       createButtonLabel="Create tag"
-      createTitle="Create tag"
+      createTitle="Create thread tag"
+      createPlaceholder="Tag name"
       isReserved={isReservedTagName}
       reservedError={reservedTagError}
       icon={<TagIcon size={16} />}
+      labeled={false}
     />
   );
 }

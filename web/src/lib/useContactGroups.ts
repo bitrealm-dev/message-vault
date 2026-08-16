@@ -18,7 +18,7 @@ export function useContactGroups(): {
       const next = await fetchContactGroups();
       setGroups(next);
     } catch {
-      setGroups([]);
+      /* Keep the last good list. A failed refresh must not hide existing groups. */
     } finally {
       setLoading(false);
     }
