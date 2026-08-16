@@ -12,7 +12,7 @@ import GroupNameDialog from "./GroupNameDialog";
 import { EllipsisIcon, PeopleGroupIcon, PersonIcon, PlusIcon } from "./icons";
 
 function navRowClass(active: boolean): string {
-  return `group relative flex w-full items-center rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
+  return `group relative flex w-full cursor-pointer items-center gap-2 rounded border-none px-3 py-1.5 text-left text-[0.875rem] text-text hover:bg-hover ${
     active ? "bg-hover font-semibold" : "bg-transparent font-normal"
   }`;
 }
@@ -137,35 +137,33 @@ export default function GroupsNav({ groups }: { groups: string[] }) {
         const active = location.pathname === href;
         const menuOpen = menuFor === name;
         return (
-          <div key={name} className="relative">
-            <div className={navRowClass(active)}>
-              <button
-                type="button"
-                onClick={() => navigate(href)}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-inherit"
-              >
-                <PeopleGroupIcon size={15} />
-                <span className="truncate">{name}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Group options for ${name}`}
-                aria-expanded={menuOpen}
-                disabled={busy}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setMenuFor(menuOpen ? null : name);
-                }}
-                className={`shrink-0 cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-text ${
-                  active || menuOpen
-                    ? "opacity-100"
-                    : "opacity-0 group-hover:opacity-100"
-                }`}
-              >
-                <EllipsisIcon size={15} />
-              </button>
-            </div>
+          <div key={name} className="group relative">
+            <button
+              type="button"
+              onClick={() => navigate(href)}
+              className={`${navRowClass(active)} pr-8`}
+            >
+              <PeopleGroupIcon size={15} />
+              <span className="min-w-0 flex-1 truncate">{name}</span>
+            </button>
+            <button
+              type="button"
+              aria-label={`Group options for ${name}`}
+              aria-expanded={menuOpen}
+              disabled={busy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenuFor(menuOpen ? null : name);
+              }}
+              className={`absolute top-1/2 right-3 z-10 -translate-y-1/2 cursor-pointer border-none bg-transparent p-0.5 text-muted hover:text-text ${
+                active || menuOpen
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+              }`}
+            >
+              <EllipsisIcon size={15} />
+            </button>
             {menuOpen ? (
               <div
                 data-group-row-menu=""
