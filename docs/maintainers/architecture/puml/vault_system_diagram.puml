@@ -15,8 +15,8 @@ System(server, "Message Vault Server", "Local HTTP API and static files on 127.0
 
 Rel_R(user, desktop, "Uses")
 Rel_R(user, webpage, "Uses")
-Rel_R(desktop, server, "Calls HTTP /v1", "http://127.0.0.1:8080")
-Rel_R(webpage, server, "Calls GET / and /v1", "http://127.0.0.1:8080")
+Rel_R(desktop, server, "Calls HTTP /v1", "127.0.0.1:8080")
+Rel_R(webpage, server, "Calls GET / and /v1", "127.0.0.1:8080")
 Lay_D(desktop, webpage)
 
 @enduml
