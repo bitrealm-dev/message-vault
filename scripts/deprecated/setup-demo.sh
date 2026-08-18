@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # setup-demo.sh — first-time demo bootstrap without Docker
 #
-# Deprecated: development targets Docker. `docker compose up` seeds the same
-# demo data on an empty database unless DEMO_DATA=false.
+# Deprecated: use ./scripts/run-vault-dev.sh --reset-demo from the repo root.
 #
 # Usage:
 #   ./scripts/deprecated/setup-demo.sh

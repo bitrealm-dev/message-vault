@@ -60,4 +60,4 @@ Sign out. Create your own account on **this same vault** — not a second contai
 
 ## Build from source instead
 
-Compiling the vault and the desktop app: [Run from source](/developer/run-from-source/). Compose from a git checkout: [Operator Docker](/developer/docker-compose/).
+Compiling the vault and the desktop app: [Run from source](/developer/run-from-source/). A release-shaped image from a git checkout: [Operator Docker](/developer/docker-compose/).

@@ -132,18 +132,21 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 ### Vault server (message-vault-server)
 
-The Push/Pull/Export/Import screens require a Message Vault server. The server is part of this workspace under `crates/vault/server/` and runs as a Docker container:
+The Push/Pull/Export/Import screens require a Message Vault server. The server is part of this workspace under `crates/vault/server/`. From a clone, run it on the host:
 
 ```bash
-# Dev mode (bind-mounts repo for hot reload; includes SQLite browser on port 8081)
-docker compose up
-
-# Release mode (production-shaped image from this checkout)
-docker compose -f docker/compose.release.yml up --build
-
-# Start with an empty vault instead of seeding demo data
-DEMO_DATA=false docker compose up
+./scripts/run-vault-dev.sh                 # API at http://127.0.0.1:8080
+./scripts/run-vault-dev.sh --reset-demo    # wipe data/, seed sample inbox
+cd web && npm run dev                      # website at http://localhost:5173
 ```
+
+A release-shaped image from this checkout:
+
+```bash
+docker compose -f docker/compose.release.yml up --build
+```
+
+An empty vault (no sample inbox): `./scripts/run-vault-dev.sh --reset`, or `DEMO_DATA=false` with the release Compose file.
 
 The server exposes HTTP API + Web UI at `http://localhost:8080`. Create an account through the web UI, then use the Import API token from Settings for Push operations.
 

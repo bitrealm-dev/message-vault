@@ -11,7 +11,7 @@ cargo test -p message-vault-server
 cargo run --release -p message-vault-server -- serve
 ```
 
-Docker: `docker compose up` from the repository root (website and API on http://localhost:8080). Compose files live under `docker/`. Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
+Docker (release-shaped image from this checkout): `docker compose -f docker/compose.release.yml up --build`. Day-to-day from a clone: `./scripts/run-vault-dev.sh` (see [CONTRIBUTING.md](../../../CONTRIBUTING.md)). Published image: [Try the vault](https://bitrealm.dev/get-started/try-the-vault/).
 
 ## Docs
 

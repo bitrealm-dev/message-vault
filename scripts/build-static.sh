@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Build the Vite SPA into static/, which the server hands out at GET /.
 #
-# For the dev container (docker/compose.dev.yml bind-mounts this repo at /app, and
-# docker/Dockerfile.dev builds no frontend) and for running the server directly.
-# `ln -s web/dist static` works too. Not needed for the release image, which
-# builds web/ in its own stage, or for Tauri, which builds it via
-# beforeBuildCommand.
+# Used when running message-vault-server on the host (./scripts/run-vault-dev.sh
+# or cargo run … serve). `ln -s web/dist static` works too. Not needed for the
+# release image, which builds web/ in its own stage, or for Tauri, which builds
+# it via beforeBuildCommand.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,5 +17,5 @@ echo "Copying dist/ to $REPO_ROOT/static/…"
 rm -rf "$REPO_ROOT/static"
 cp -r "$REPO_ROOT/web/dist" "$REPO_ROOT/static"
 
-echo "Done. Served at http://localhost:8080/ by the dev container, or by"
-echo "cargo run --release -p message-vault-server -- serve"
+echo "Done. Served at http://127.0.0.1:8080/ by"
+echo "./scripts/run-vault-dev.sh or cargo run -p message-vault-server -- serve"
