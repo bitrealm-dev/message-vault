@@ -37,6 +37,9 @@ config/config.toml
 /docs/dist/
 /docs/node_modules/
 
+# PlantUML extension default dump (workspace export goes to docs/maintainers/architecture/puml/img)
+/out/
+
 # Local release packaging output
 /dist/
 
