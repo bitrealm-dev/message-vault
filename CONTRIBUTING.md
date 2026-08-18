@@ -98,13 +98,18 @@ Use a release build when testing real exports. Debug builds compile faster, but 
 
 ### Vault server
 
-The vault server (`message-vault-server`) is built from this repo and runs in Docker. From the repository root:
+The vault API runs on this machine; the website is Vite or Tauri on the host. Rust and FFmpeg on PATH are enough.
 
 ```bash
-docker compose up
+./scripts/run-vault-dev.sh                 # API at http://127.0.0.1:8080; keep data/ if present
+./scripts/run-vault-dev.sh --reset          # wipe data/, empty vault
+./scripts/run-vault-dev.sh --reset-demo     # wipe data/, seed sample inbox
+./scripts/run-vault-dev.sh --sqlweb         # SQLite browser at http://127.0.0.1:8081 (`sqlite_web` on PATH)
+cd web && npm run dev                   # website at http://localhost:5173 (proxies /v1)
+# cargo tauri dev                       # desktop window instead of a browser
 ```
 
-That uses `docker/compose.dev.yml` (set in `.env`). The website and the import API share **http://localhost:8080**. Create an account through the web UI. For CLI import and export, create an API token under **Settings → Account**. Published-image Compose (no clone): [Try the vault](https://bitrealm.dev/get-started/try-the-vault/). Checkout profiles: [Operator Docker](https://bitrealm.dev/developer/docker-compose/).
+Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://bitrealm.dev/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://bitrealm.dev/developer/docker-compose/).
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 

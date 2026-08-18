@@ -23,10 +23,14 @@ cd message-vault
 ## Run the vault
 
 ```bash
-cargo run --release -p message-vault-server -- serve
+./scripts/run-vault-dev.sh                 # API at http://127.0.0.1:8080; keep data/ if present
+./scripts/run-vault-dev.sh --reset-demo    # wipe data/, seed sample inbox
+cd web && npm run dev                      # website at http://localhost:5173 (proxies /v1)
 ```
 
-Open **http://localhost:8080**. Copy `config/config.toml.example` to `config/config.toml` if the server asks for a config file. Docker Compose from a checkout is on [Operator Docker](/developer/docker-compose/). Trying the published image without compiling is on [Try the vault](/get-started/try-the-vault/).
+Open **http://localhost:5173** for the Vite UI, or **http://127.0.0.1:8080** if `static/` was built with `./scripts/build-static.sh`. `--reset` wipes `data/` without seeding. `--sqlweb` starts a SQLite browser on port **8081** when `sqlite_web` is on `PATH`.
+
+A release-shaped Docker image from this checkout is on [Operator Docker](/developer/docker-compose/). Trying the published image without compiling is on [Try the vault](/get-started/try-the-vault/).
 
 ## Run the desktop app
 
