@@ -1,0 +1,36 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title Components: Vault Server (from source)
+
+Container(desktop, "Desktop App", "Tauri v2", "Push/import with an API token. Extract and Format stay in this process.")
+Container(spa, "Webpage", "React SPA", "Login, browse, search, contacts. Browser or WebView.")
+
+Container_Boundary(server, "Vault Server") {
+    Component(static_web, "Static website", "tower-http ServeDir", "GET / serves the built React SPA from static/")
+    Component(auth, "Auth", "auth.rs, api_tokens_api.rs", "Registration, login, session cookies/tokens, named import/export API tokens")
+    Component(import, "Import", "import.rs", "POST /v1/import. Accepts conversations from vault-push and records import sessions")
+    Component(browse, "Browse and export", "conversations_api.rs, export_api.rs, contacts_api.rs", "Read APIs: threads, messages, search, contacts")
+    Component(assets, "Assets", "assets.rs, asset_uploads.rs", "POST /v1/assets and downloads for content-addressed attachments")
+}
+
+ContainerDb(db, "Database", "SQLite, data/vault.db", "Schema in schema/sql/. Opened with rusqlite; no separate database process")
+
+Rel(desktop, server, "HTTP", "http://127.0.0.1:8080")
+Rel(spa, server, "HTTP", "http://127.0.0.1:8080")
+Rel(spa, static_web, "GET /")
+Rel(spa, auth, "Login and session")
+Rel(spa, browse, "/v1 browse, search, contacts")
+Rel(spa, assets, "Download attachments")
+Rel(desktop, auth, "API token")
+Rel(desktop, import, "POST /v1/import")
+Rel(desktop, assets, "POST /v1/assets")
+Rel(auth, db, "rusqlite")
+Rel(import, db, "rusqlite")
+Rel(browse, db, "rusqlite")
+Rel(assets, db, "rusqlite")
+
+@enduml
