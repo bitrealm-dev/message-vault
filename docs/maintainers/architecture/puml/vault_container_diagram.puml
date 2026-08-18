@@ -1,0 +1,39 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+' uncomment the following line and comment the first to use locally
+' !include C4_Container.puml
+
+' LAYOUT_TOP_DOWN()
+LAYOUT_LEFT_RIGHT()
+' LAYOUT_AS_SKETCH()
+LAYOUT_WITH_LEGEND()
+
+' new C4-Plantuml version details (incl. PlantUML version) as table
+C4VersionDetails()
+
+title Container diagram: Message Vault from source
+System_Ext(backups, "Phone backup files", "On the user's computer")
+Person(user, "User", "A user with messages to back up")
+System_Boundary(vault, "Message Vault") {
+    Container(desktop, "Desktop App", "Tauri, React, src-tauri/ and web/", "Native window. Extract and Format write files on disk. Import and browse call the API.")
+    Container(spa, "Webpage", "React + Vite, web/", "Same SPA in the browser at http://127.0.0.1:8080 and inside the Tauri WebView")
+    Container(server, "Vault Server", "Rust, Axum", "cargo run -p message-vault-server -- serve. Serves static/ and /v1 on 127.0.0.1:8080")
+    
+    System_Boundary(filesystem, "File system") {
+        ContainerDb(db, "Database", "SQLite, data.db", "data/vault.db. Attachment files under data/. Not a separate process.")
+        Container(attachments, "Attachments", "SQLite", "data/vault.db. Attachment files under data/. Not a separate process.")
+    }
+}
+
+Rel(user, desktop, "Uses", "https")
+Rel_U(user, spa, "Uses", "https")
+Rel(desktop, spa, "Embeds in WebView")
+Rel(desktop, backups, "Reads during Extract")
+Rel(desktop, server, "HTTP /v1")
+Rel(spa, server, "GET / and /v1")
+Rel(server, db, "Reads and writes")
+
+
+' ' version functions used in e.g. footer
+footer drawn with PlantUML v. %version() and C4-PlantUML v. C4Version()
+@enduml
