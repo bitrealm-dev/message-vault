@@ -1,0 +1,22 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_LANDSCAPE()
+left to right direction
+LAYOUT_WITH_LEGEND()
+
+title System Context: Message Vault Server
+
+Person(user, "User", "Extracts phone backups, imports them into the vault, and browses messages on this machine. No cloud account.")
+
+System_Ext(desktop, "Desktop app", "Tauri native window. Extract and Format write files on disk. Import and browse call the vault HTTP API.")
+System_Ext(webpage, "Webpage", "Same React SPA in a browser at http://127.0.0.1:8080.")
+System(server, "Message Vault Server", "Local HTTP API and static files on 127.0.0.1:8080. Started with cargo run -p message-vault-server -- serve.")
+
+Rel_R(user, desktop, "Uses")
+Rel_R(user, webpage, "Uses")
+Rel_R(desktop, server, "Calls HTTP /v1", "http://127.0.0.1:8080")
+Rel_R(webpage, server, "Calls GET / and /v1", "http://127.0.0.1:8080")
+Lay_D(desktop, webpage)
+
+@enduml
