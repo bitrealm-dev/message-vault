@@ -1,10 +1,6 @@
 <a id="readme-top"></a>
-<!--
-*** Thanks for checking out the Best-README-Template. If you have a suggestion
-*** that would make this better, please fork the repo and create a pull request
-*** or simply open an issue with the tag "enhancement".
-*** Don't forget to give the project a star!
-*** Thanks again! Now go create something AMAZING! :D
+<!-- Template inspired by the Best-README-Template
+     https://github.com/blackwell-systems/oss-kit/blob/main/templates/README.template.md
 -->
 
 
@@ -16,14 +12,15 @@
 *** for contributors-url, forks-url, etc. This is an optional, concise syntax you may use.
 *** https://www.markdownguide.org/basic-syntax/#reference-style-links
 -->
-<!-- [![Contributors][contributors-shield]][contributors-url]
+
+<!-- 
+[![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url] -->
+[![Stargazers][stars-shield]][stars-url]
+-->
 [![Issues][issues-shield]][issues-url]
 [![project_license][license-shield]][license-url]
 [![LinkedIn][linkedin-shield]][linkedin-url]
-
-
 
 <!-- PROJECT LOGO -->
 <br />
@@ -78,6 +75,8 @@
 
 # Message Vault
 
+![Logo](docs/message-vault-log.jpg)
+
 Extract messages from phone backups, import them into a local vault, and browse them in a website you control.
 
 ## What it is
@@ -130,29 +129,15 @@ Here's a blank template to get started. To avoid retyping too much info, do a se
 
 ### Built With
 
-<!-- * [![Next][Next.js]][Next-url] -->
 [![Rust][Rust-dev]][Rust-url] [![React][React.js]][React-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url] [![SQLite][SQLite]][SQLite-url] [![Docker][Docker]][Docker-url]
 
 
-<!-- GETTING STARTED -->
 ## Getting Started
 
 See tutorial docs for a basic setup and run, or see contributing.md to setup a local dev environment and compile from source.
 
 This is an example of how you may give instructions on setting up your project locally.
 To get a local copy up and running follow these simple example steps.
-
-<!-- ROADMAP -->
-<!-- ## Roadmap
-
-- [ ] Feature 1
-- [ ] Feature 2
-- [ ] Feature 3
-    - [ ] Nested Feature
-
-See the [open issues](https://github.com/github_username/repo_name/issues) for a full list of proposed features (and known issues).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p> -->
 
 ## Contributing
 
