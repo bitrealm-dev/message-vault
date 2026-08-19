@@ -1,0 +1,2 @@
+# Disables the "Open a blank issue" button, forcing users to pick a template
+blank_issues_enabled: false
