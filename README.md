@@ -20,7 +20,6 @@
 -->
 [![Issues][issues-shield]][issues-url]
 [![project_license][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -41,7 +40,7 @@
     &middot;
     <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
     &middot;
-    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
   </p>
 </div>
 
@@ -124,7 +123,7 @@ This project is intended for {target user} who wants to {user objective}.
 
 [![Product Name Screen Shot][product-screenshot]](https://example.com)
 
-Here's a blank template to get started. To avoid retyping too much info, do a search and replace with your text editor for the following: `github_username`, `repo_name`, `twitter_handle`, `linkedin_username`, `email_client`, `email`, `project_title`, `project_description`, `project_license`
+Extract messages from phone backups, import them into a local vault, and browse them in a website you control. Full guide: https://bitrealm.dev/
 
 
 ### Built With
@@ -143,7 +142,7 @@ To get a local copy up and running follow these simple example steps.
 
 Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
+If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also [open a feature request](https://github.com/bitrealm-dev/message-vault/issues/new?labels=enhancement&template=feature_request.md).
 Don't forget to give the project a star! Thanks again!
 
 1. Fork the Project
@@ -196,18 +195,16 @@ Matt Beisser - [message.vault@bitrealm.dev](message.vault@bitrealm.dev)
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-[contributors-shield]: https://img.shields.io/github/contributors/github_username/repo_name.svg?style=for-the-badge
-[contributors-url]: https://github.com/github_username/repo_name/graphs/contributors
-<!-- [forks-shield]: https://img.shields.io/github/forks/github_username/repo_name.svg?style=for-the-badge
-[forks-url]: https://github.com/github_username/repo_name/network/members
-[stars-shield]: https://img.shields.io/github/stars/github_username/repo_name.svg?style=for-the-badge
-[stars-url]: https://github.com/github_username/repo_name/stargazers -->
-[issues-shield]: https://img.shields.io/github/issues/github_username/repo_name.svg?style=for-the-badge
-[issues-url]: https://github.com/github_username/repo_name/issues
-[license-shield]: https://img.shields.io/github/license/github_username/repo_name.svg?style=for-the-badge
-[license-url]: https://github.com/github_username/repo_name/blob/master/LICENSE.txt
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/linkedin_username
+[contributors-shield]: https://img.shields.io/github/contributors/bitrealm-dev/message-vault.svg?style=for-the-badge
+[contributors-url]: https://github.com/bitrealm-dev/message-vault/graphs/contributors
+<!-- [forks-shield]: https://img.shields.io/github/forks/bitrealm-dev/message-vault.svg?style=for-the-badge
+[forks-url]: https://github.com/bitrealm-dev/message-vault/network/members
+[stars-shield]: https://img.shields.io/github/stars/bitrealm-dev/message-vault.svg?style=for-the-badge
+[stars-url]: https://github.com/bitrealm-dev/message-vault/stargazers -->
+[issues-shield]: https://img.shields.io/github/issues/bitrealm-dev/message-vault.svg?style=for-the-badge
+[issues-url]: https://github.com/bitrealm-dev/message-vault/issues
+[license-shield]: https://img.shields.io/github/license/bitrealm-dev/message-vault.svg?style=for-the-badge
+[license-url]: https://github.com/bitrealm-dev/message-vault/blob/main/LICENSE
 [product-screenshot]: images/screenshot.png
 
 <!-- Shields.io badges. You can a comprehensive list with many more badges at: https://github.com/inttter/md-badges -->
