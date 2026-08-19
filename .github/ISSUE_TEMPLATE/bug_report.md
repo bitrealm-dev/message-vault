@@ -1,3 +1,11 @@
+---
+name: Bug report
+about: Report unexpected behavior, a crash, or incorrect output
+title: "[Bug] "
+labels: bug
+assignees: ""
+---
+
 # Bug Report Template
 
 > If you need more information about how to fill in this template, read the accompanying [guide](guide_bug-report.md).
