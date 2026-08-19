@@ -1,5 +1,6 @@
 # Contributing
 
+Contributions to the Message Vault are welcome.
 How to set up, build, run, and contribute to Message Vault.
 
 This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
