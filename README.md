@@ -74,7 +74,7 @@
 
 # Message Vault
 
-![Logo](docs/message-vault.jpg)
+![Logo](docs/img/message-vault.jpg)
 
 Extract messages from phone backups, import them into a local vault, and browse them in a website you control.
 
