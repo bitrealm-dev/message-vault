@@ -15,7 +15,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://vault.bitrealm.dev/developer/reference/cli/openextract-exporter/
+Command-line options: https://bitrealm.dev/vault/developer/reference/cli/openextract-exporter/
 
 ## License
 

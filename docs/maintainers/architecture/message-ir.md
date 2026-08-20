@@ -1,6 +1,6 @@
 # Common message (schema / JSON / JSONL)
 
-**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [What’s inside an export](../../src/content/docs/developer/reference/export-structure.md).
+**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [What’s inside an export](../../src/content/docs/vault/developer/reference/export-structure.md).
 
 Three crates:
 
@@ -125,7 +125,7 @@ Line 1 is the header (includes `conversation.stats`; no `messages` array). Each 
 
 **Directory convert:** [`message-reexport`](../../../crates/libs/reexport/) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
 
-**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://vault.bitrealm.dev/developer/formats/sms-backup-restore-xml/).
+**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://bitrealm.dev/vault/developer/formats/sms-backup-restore-xml/).
 
 ## Content round-trip
 
@@ -133,7 +133,7 @@ Library APIs support content-preserving cycles:
 
 `ConversationDocument` → CSV \| EML \| MBOX \| JSON \| JSONL → `ConversationDocument`
 
-Use the [`message-reexporter` command](https://vault.bitrealm.dev/developer/formats/convert/) to convert a whole export directory between formats.
+Use the [`message-reexporter` command](https://bitrealm.dev/vault/developer/formats/convert/) to convert a whole export directory between formats.
 
 XML is **lossy** for non-Android common messages (Apple bags omitted). SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
 
@@ -147,11 +147,11 @@ After `normalize_document_for_compare`:
 
 **Not required:** filename stem / pretty-print identity, packaging suffix in the JSON body, embedding attachment bytes in JSON. EML `X-ME-Attachment-Meta` currently omits on-disk `path` (bytes may still round-trip in memory for re-export).
 
-CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](../../src/content/docs/developer/reference/csv-columns.md).
+CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](../../src/content/docs/vault/developer/reference/csv-columns.md).
 
 ## Related
 
-- [Mail archive format](https://vault.bitrealm.dev/developer/formats/mail-archive/) — EML/MBOX packaging
-- [SMS Backup & Restore XML output](https://vault.bitrealm.dev/developer/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
-- [CSV columns](../../src/content/docs/developer/reference/csv-columns.md) — user-facing CSV conventions
-- [Converter capabilities](https://vault.bitrealm.dev/developer/formats/)
+- [Mail archive format](https://bitrealm.dev/vault/developer/formats/mail-archive/) — EML/MBOX packaging
+- [SMS Backup & Restore XML output](https://bitrealm.dev/vault/developer/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
+- [CSV columns](../../src/content/docs/vault/developer/reference/csv-columns.md) — user-facing CSV conventions
+- [Converter capabilities](https://bitrealm.dev/vault/developer/formats/)

@@ -30,7 +30,7 @@
 //!   swallows the next short-integer header; readers stop before known MMS field bytes.
 //! - **Application headers** (Token-text name) land in
 //!   [`StructuredMms::application_headers`] and CSV as `app:<name>` (see
-//!   https://vault.bitrealm.dev/developer/formats/go-sms-pro/mapping/).
+//!   https://bitrealm.dev/vault/developer/formats/go-sms-pro/mapping/).
 
 use std::collections::{BTreeMap, HashMap};
 

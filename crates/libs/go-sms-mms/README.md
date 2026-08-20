@@ -14,7 +14,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-This crate is a library. Field mapping: https://vault.bitrealm.dev/developer/formats/go-sms-pro/mapping/
+This crate is a library. Field mapping: https://bitrealm.dev/vault/developer/formats/go-sms-pro/mapping/
 
 ## License
 
