@@ -26,10 +26,10 @@
     <img src="images/logo.png" alt="Logo" width="80" height="80">
   </a>
 
-<h3 align="center">Message Vault</h3>
+<h2 align="center">Message Vault</h2>
 
   <p align="center">
-    Keep your text messages on a computer you control.
+    Pry digitial conversations out of apps and store them in your own self-hosted vault.
     <br />
     <a href="https://bitrealm.dev/"><strong>Explore the docs »</strong></a>
     <br />
@@ -42,26 +42,27 @@
   </p>
 </div>
 
-- [Message Vault](#message-vault)
-  - [About The Project](#about-the-project)
-  - [Who The Project Is For](#who-the-project-is-for)
-  - [Getting Started](#getting-started)
-  - [Contributing](#contributing)
-  - [Additional documentation](#additional-documentation)
-  - [License](#license)
-  - [Project Status](#project-status)
-  - [Maintainers](#maintainers)
-  - [Related Projects](#related-projects)
+<!-- TABLE OF CONTENTS -->
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about-the-project">About The Project</a></li>
+    <li><a href="#who-the-project-is-for">Who The Project Is For</a></li>
+    <li><a href="#getting-started">Getting Started</a></li>
+    <li><a href="#contributing">Contributing</a></li>
+    <li><a href="#additional-documentation">Additional documentation</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#project-status">Project Status</a></li>
+    <li><a href="#maintainers">Maintainers</a></li>
+    <li><a href="#related-projects">Related Projects</a></li>
+  </ol>
+</details>
 
-# Message Vault
+## About The Project
 
 <p align="center">
   <img src="docs/img/message-vault.jpg" width="50%" />
 </p>
-
-Pry digitial conversations out of apps and store them in your own self-hosted vault.
-
-## About The Project
 
 [![Docker][Docker]][Docker-url] [![React][React.js]][React-url] [![Rust][Rust-dev]][Rust-url] [![SQLite][SQLite]][SQLite-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url]
 
@@ -125,7 +126,7 @@ Don't forget to give the project a star! Thanks again!
 
 ## Additional documentation
 
-See [https://bitrealm.dev] for the [User Guide](https://bitrealm.dev) and [Developer Details](https://bitrealm.dev/developer).
+See [https://bitrealm.dev](https://bitrealm.dev) for the [User Guide](https://bitrealm.dev) and [Developer Details](https://bitrealm.dev/developer).
 
 <!-- ## How to get help
 
