@@ -1,7 +1,11 @@
-<a id="readme-top"></a>
+{{< /*<!-- markdownlint-disable MD041 First line heading-->*/ >}}
+{{< /*<!-- markdownlint-disable MD033 No bare URLs-->*/ >}}
+
 <!-- Template inspired by the Best-README-Template
      https://github.com/blackwell-systems/oss-kit/blob/main/templates/README.template.md
 -->
+
+<a id="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
 <!--
@@ -23,16 +27,15 @@
 <br />
 <div align="center">
   <a href="https://github.com/bitrealm-dev/message-vault">
-    <img src="images/logo.png" alt="Logo" width="80" height="80">
+    <img src="img/vault_icon.png" alt="Icon" width="250" height="250">
   </a>
 
-<h2 align="center">Message Vault</h2>
-
+<h1 align="center">Message Vault</h1>
   <p align="center">
     Pry digitial conversations out of apps and store them in your own self-hosted vault.
     <br />
-    <a href="https://bitrealm.dev/"><strong>Explore the docs »</strong></a>
     <br />
+    <a href="https://bitrealm.dev/"><strong>Explore the docs »</strong></a>
     <br />
     <a href="https://github.com/bitrealm-dev/message-vault">View Demo</a>
     &middot;
@@ -60,34 +63,25 @@
 
 ## About The Project
 
-<p align="center">
+<!-- <p align="center">
   <img src="docs/img/message-vault.jpg" width="50%" />
-</p>
+</p> -->
 
 [![Docker][Docker]][Docker-url] [![React][React.js]][React-url] [![Rust][Rust-dev]][Rust-url] [![SQLite][SQLite]][SQLite-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url]
 
-Chat apps make sending a message easy. They make owning that message hard.
+You own your phone. You installed the apps. You wrote the messages. So why don't you own them?
 
-You already paid for the phone. You already pay for the plan. Many people also pay for extra cloud storage so chats are “backed up.” That backup usually only works one way. You can put it back onto a phone the company still controls. You often cannot open it on a computer, search years of history, or take it with you when you switch apps.
+Digital messages are locked in proprietary formats, trapped inside closed platforms, inaccessible once you leave. Email solved this decades ago with open standards that let you download, search, and migrate freely. Messaging apps never did. Every platform is a silo, and your conversations are held hostage.
 
-That is not how email works. You can download every message. You can change providers. You can keep a copy on your computer and still read it in any mail program. The mail is yours.
+This project changes that. It aggregates the messages you wrote, on a platform you control, by rules you set.
 
-Texts should work the same way. They do not.
+### Project Details
 
-This project started after I left Google’s mail service. I merged three old email addresses into one new inbox. I deleted years of junk. What was left was a clean record of twenty-two years of contacts and mail. I wanted the same thing for my texts: one place, one history, and no leftover accounts.
+The Message Vault software has three parts:
 
-Getting there was a mess. Old Android phones. Apple Messages on a Mac. WhatsApp on top of that. Each app kept its own copy and had its own rules. Some backups only worked if you restored them onto a phone. Some exports were missing pieces. Some files were almost impossible to read. There was no simple “download all my messages” button.
-
-Message Vault is the tool that was missing then.
-
-A vault here means a private store of your messages on a computer you control. Nothing is sent to a Message Vault company server. There is no Message Vault cloud account. You sign in on your own machine.
-
-The software has two parts:
-
-- **The vault** — the backed that runs on your computer. Sign in, read conversations, search, and look at contacts and photos.
-- **The desktop app** — a program on the same computer. Point it at a backup you already made. It reads the chats and puts them into the vault.
-
-The website is enough to look around. Putting your own messages in needs the desktop app and a backup file or folder from your phone.
+- **Backend** - The core system that runs on your computer. It keeps you signed in, stores your messages, and powers the search feature.
+- **Desktop App** - A program that imports your messages into the vault from phone backups and app exports. You can also view, organize, and export your messages from here.
+- **Webpage** - A read only version of the desktop app running in a web browser.
 
 You can bring in:
 
@@ -99,13 +93,10 @@ A few older export files can still be brought in if that is all you have left.
 
 Once messages are in the vault you can:
 
-- Read threads the way you would on a phone, including group chats
+- Read threads the way you would in an app or on a phone, including group chats. Photos, videos, and other attachments are included.
 - Search across years of conversations
-- Keep photos, videos, and other attachments with the messages
 - Save a copy back out as ordinary files if you want a folder on disk
 - Combine texts from more than one phone or app into one archive
-
-Full guide: **https://bitrealm.dev/**
 
 ## Who The Project Is For
 
@@ -196,4 +187,4 @@ Matt Beisser - [message.vault@bitrealm.dev](message.vault@bitrealm.dev)
 [Docker]: https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=fff
 [Docker-url]: https://www.docker.com/
 
-> Like this `README.md`? Don't forget to explore other templates from [The Good Docs Project](https://thegooddocsproject.dev/).
+> Like this `README.md`? Explore other templates from [The Good Docs Project](https://thegooddocsproject.dev/).
