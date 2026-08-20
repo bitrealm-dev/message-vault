@@ -41,4 +41,4 @@ Reads offline `.eml` files, not a live email account. SMS Backup+ was an older A
 - **What you need**: the `.eml` files from a local backup, owner phone numbers, and owner email addresses
 - **Known gaps**: sent-message detection depends on correct owner identity. Some MMS content and group threading may be incomplete
 
-Field-level mapping: [Formats](/formats/).
+Field-level mapping: [Formats](/developer/formats/).

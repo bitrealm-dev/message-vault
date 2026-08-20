@@ -27,4 +27,4 @@ The desktop app runs `wtsexporter` to extract WhatsApp messages from the backup,
 
 ## Next step
 
-Open **Import**, set the source to **WhatsApp - iOS**, and point it at the backup. See [Import from a backup](/import-from-a-backup/).
+Open **Import**, set the source to **WhatsApp - iOS**, and point it at the backup. See [Import from a backup](/user/import-from-a-backup/).

@@ -26,4 +26,4 @@ The desktop path uses the same machinery as the `vault-pull` command: messages a
 
 ## From the terminal
 
-Use [`vault-pull`](/reference/cli/vault-pull/) with the vault base URL and an API token from [Settings → Account](/how-to/settings/).
+Use [`vault-pull`](/developer/reference/cli/vault-pull/) with the vault base URL and an API token from [Settings → Account](/user/how-to/settings/).

@@ -16,7 +16,7 @@ Typing plain words in the search box runs a **Messages** search.
 
 Clicking a message result opens the conversation so you can read the matching thread. Use in-conversation find when you need to step through highlights inside a long chat.
 
-Save a query under **Saved searches** in the sidebar — [Saved searches](/how-to/saved-searches/).
+Save a query under **Saved searches** in the sidebar — [Saved searches](/user/how-to/saved-searches/).
 
 ## Query operators
 

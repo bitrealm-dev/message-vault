@@ -5,7 +5,7 @@ description: "EML and MBOX layout and X-ME headers used when Message Vault write
 
 Design for a human-viewable export: **one folder per conversation**, **one `.eml` per message**, with structured `X-ME-*` headers for machine fidelity. Intended as an archive / interchange path before vault exists. Mail clients can open individual messages; translators can recover SMS, group MMS, and (later) iMessage semantics without relying on CSV.
 
-**Status:** Writer in [`message-mail`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](/reference/export-structure/) ([`message-ir`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir/)) → output format (see [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](/reference/csv-columns/).
+**Status:** Writer in [`message-mail`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/mail/). All GUI exporters support `--format eml` / `mbox`. All exporters (including iMessage via [`imessage-ir-exporter`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/exporters/imessage-ir-exporter/)) go backup → [shared conversation structure](/developer/reference/export-structure/) ([`message-ir`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir/)) → output format (see [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md)). JSON is the default format. iMessage writes extension headers; handwriting attaches SVG. See also [CSV columns](/developer/reference/csv-columns/).
 
 ## Goals
 
@@ -54,7 +54,7 @@ Each file is one RFC 5322 message. Prefer writing via a MIME builder (e.g. `mail
 
 ### Explicit anti-pattern: SMS Backup+ archive EML
 
-Do **not** pack many SMS into one MIME body with order-based attachment assignment (SMS Backup+ `Subject: SMS archive …`). Perfect pairing is impossible; see [Plus FORMAT.md](/formats/sms-backup-plus/format/) and `archive.rs` heuristics.
+Do **not** pack many SMS into one MIME body with order-based attachment assignment (SMS Backup+ `Subject: SMS archive …`). Perfect pairing is impossible; see [Plus FORMAT.md](/developer/formats/sms-backup-plus/format/) and `archive.rs` heuristics.
 
 ## Lessons from SMS Backup+ (do not repeat)
 
@@ -346,7 +346,7 @@ Normal sticker sends: image MIME part + `X-ME-Attachment-Meta` (`is_sticker`, `s
 
 ## Related docs
 
-- [CSV output conventions](/reference/csv-columns/)
-- [Exporter capability matrix](/formats/)
-- [SMS Backup+ EML input notes](/formats/sms-backup-plus/format/)
-- [SMS Backup & Restore import mapping](/formats/sms-backup-restore/mapping/)
+- [CSV output conventions](/developer/reference/csv-columns/)
+- [Exporter capability matrix](/developer/formats/)
+- [SMS Backup+ EML input notes](/developer/formats/sms-backup-plus/format/)
+- [SMS Backup & Restore import mapping](/developer/formats/sms-backup-restore/mapping/)

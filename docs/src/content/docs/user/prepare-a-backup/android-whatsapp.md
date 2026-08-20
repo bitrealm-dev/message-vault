@@ -42,4 +42,4 @@ The app can also read WhatsApp Business databases — enable that in advanced op
 
 ## Next step
 
-Open **Import**, set the source to **WhatsApp - Android**, and fill in the backup path and key. See [Import from a backup](/import-from-a-backup/).
+Open **Import**, set the source to **WhatsApp - Android**, and fill in the backup path and key. See [Import from a backup](/user/import-from-a-backup/).

@@ -5,12 +5,12 @@ description: "How SMS Backup+ EML fields become the shared conversation structur
 
 How flat and archive `.eml` messages become shared `ConversationDocument` values, including identity resolution, deduplication, and retained source data.
 
-Input layouts: [format](/formats/sms-backup-plus/format/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
+Input layouts: [format](/developer/formats/sms-backup-plus/format/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/developer/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
 
 ## Goal / non-goal
 
 - **Goal:** Document how SMS Backup+ fields fill shared conversation fields and the retained source-data bag.
-- **Non-goal:** Define EML source layouts or a private CSV schema. Source layout belongs in [format](/formats/sms-backup-plus/format/), and every output format is projected from the shared model.
+- **Non-goal:** Define EML source layouts or a private CSV schema. Source layout belongs in [format](/developer/formats/sms-backup-plus/format/), and every output format is projected from the shared model.
 
 ## Pipeline / output
 

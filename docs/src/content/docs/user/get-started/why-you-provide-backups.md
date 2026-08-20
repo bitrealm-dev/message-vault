@@ -23,4 +23,4 @@ Every tool that works with message history works this way today. If a supported 
 
 ## Where to start
 
-[Try the vault](/get-started/try-the-vault/) first if you have not seen the product yet. When you are ready for your own data, [prepare a backup](/prepare-a-backup/).
+[Try the vault](/user/get-started/try-the-vault/) first if you have not seen the product yet. When you are ready for your own data, [prepare a backup](/user/prepare-a-backup/).

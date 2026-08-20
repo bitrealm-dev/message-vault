@@ -9,7 +9,7 @@ Open **Contacts** in the sidebar to see people and handles discovered from impor
 
 - Filter the list with the contacts filter control
 - Open a contact to see related conversations and details
-- Use [search](/how-to/search/) in **Contacts** mode for name and handle queries
+- Use [search](/user/how-to/search/) in **Contacts** mode for name and handle queries
 
 The vault keeps display names, handles (E.164 phone numbers where possible), and labels. It is not a full address-book manager (no synced VCF photos or notes).
 
@@ -27,4 +27,4 @@ Some backup types also accept a contacts file (VCF or contacts CSV) on the Impor
 
 When labels exist for your account, they help organize contacts and can be used in search (`within:label`).
 
-Loading a VCF into the vault from the terminal is a Developer command: [Server CLI](/reference/server-cli/).
+Loading a VCF into the vault from the terminal is a Developer command: [Server CLI](/developer/reference/server-cli/).

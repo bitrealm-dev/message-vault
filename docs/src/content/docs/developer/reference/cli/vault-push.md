@@ -34,7 +34,7 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 | `--input` | | JSONL export directory |
 | `--mode append\|replace` | | Default `append` (resume-safe) |
 | `--continue-on-error` | | Keep going after a failed conversation (default true) |
-| `--force` | | Force reprocessing: ignore the local journal and send again (append + server dedupe; does not wipe the vault). See [Import from a backup](/import-from-a-backup/) and [Extract to files](/how-to/extract-to-files/). |
+| `--force` | | Force reprocessing: ignore the local journal and send again (append + server dedupe; does not wipe the vault). See [Import from a backup](/user/import-from-a-backup/) and [Extract to files](/user/how-to/extract-to-files/). |
 | `--skip-attachments` | | Import messages without uploading attachments |
 | `--max-retries N` | | Transient HTTP retries (default 3) |
 | `--batch-size N` | | Target messages per import request across conversations (default 1000; requests also flush near 8 MiB, under Cloudflare’s ~100 MB limit) |
@@ -45,4 +45,4 @@ Progress and a durable journal (`.vault-import-state.jsonl`) live under the inpu
 
 ### See also
 
-The desktop app **Import** screen, or [Import from a backup](/import-from-a-backup/) and [Extract to files](/how-to/extract-to-files/).
+The desktop app **Import** screen, or [Import from a backup](/user/import-from-a-backup/) and [Extract to files](/user/how-to/extract-to-files/).

@@ -33,4 +33,4 @@ The desktop app reads SMS and MMS from the XML, resolves contacts when you provi
 
 ## Next step
 
-Open **Import**, set the source to **SMS Backup & Restore**, enter the owner phone numbers, and point at the XML file or folder. See [Import from a backup](/import-from-a-backup/).
+Open **Import**, set the source to **SMS Backup & Restore**, enter the owner phone numbers, and point at the XML file or folder. See [Import from a backup](/user/import-from-a-backup/).

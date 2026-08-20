@@ -3,7 +3,7 @@ title: "Converter capabilities"
 description: "What each backup converter writes, where it falls short, and links to input-format and mapping pages."
 ---
 
-These pages are Developer docs (CLI converters and field mapping). Day-to-day Import from a phone backup is in the [User Guide](/import-from-a-backup/).
+These pages are Developer docs (CLI converters and field mapping). Day-to-day Import from a phone backup is in the [User Guide](/user/import-from-a-backup/).
 
 What each converter writes (and where it falls short). Marks: **yes** / **partial** / **no**.
 
@@ -66,14 +66,14 @@ Discord, Signal, Telegram, and Slack are recognized services in the shared model
 
 | Exporter | Mapping / design |
 |---|---|
-| GO SMS Pro | [Import mapping](/formats/go-sms-pro/mapping/) |
-| SMS Backup & Restore | [Input format](/formats/sms-backup-restore/input/) · [Import mapping](/formats/sms-backup-restore/mapping/) |
-| SMS Backup+ | [Format](/formats/sms-backup-plus/format/) · [Import mapping](/formats/sms-backup-plus/mapping/) |
-| OpenExtract | [CLI](https://bitrealm.dev/reference/cli/openextract-exporter/) |
-| iMazing | [Input format](/formats/imazing/input/) · [Design](/formats/imazing/design/) |
-| WhatsApp | [CLI](https://bitrealm.dev/reference/cli/whatsapp-exporter/) |
-| iMessage | [CLI](https://bitrealm.dev/reference/cli/imessage-ir-exporter/) |
+| GO SMS Pro | [Import mapping](/developer/formats/go-sms-pro/mapping/) |
+| SMS Backup & Restore | [Input format](/developer/formats/sms-backup-restore/input/) · [Import mapping](/developer/formats/sms-backup-restore/mapping/) |
+| SMS Backup+ | [Format](/developer/formats/sms-backup-plus/format/) · [Import mapping](/developer/formats/sms-backup-plus/mapping/) |
+| OpenExtract | [CLI](https://vault.bitrealm.dev/developer/reference/cli/openextract-exporter/) |
+| iMazing | [Input format](/developer/formats/imazing/input/) · [Design](/developer/formats/imazing/design/) |
+| WhatsApp | [CLI](https://vault.bitrealm.dev/developer/reference/cli/whatsapp-exporter/) |
+| iMessage | [CLI](https://vault.bitrealm.dev/developer/reference/cli/imessage-ir-exporter/) |
 
-**Common message:** end-user [export structure](/reference/export-structure/); schema [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](/formats/mail-archive/) and [SMS Backup & Restore XML](/formats/sms-backup-restore-xml/). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
+**Common message:** end-user [export structure](/developer/reference/export-structure/); schema [message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). All exporters parse to `ConversationDocument` then project via `message_ir_format::FormatSink` (per-chat JSON/JSONL/CSV/EML/MBOX, or one SyncTech `smses.xml` with `--format xml`). Output formats: [mail archives](/developer/formats/mail-archive/) and [SMS Backup & Restore XML](/developer/formats/sms-backup-restore-xml/). Attachment modes (none / copy / convert / compress) and obfuscate apply through `FormatSink` for every format.
 
-**Convert:** the [`message-reexporter` command](/formats/convert/), owned by `message-reexport`, converts an existing Message Vault output directory to another format (auto-detect input; desktop app **Format** tab). Not a vendor backup source.
+**Convert:** the [`message-reexporter` command](/developer/formats/convert/), owned by `message-reexport`, converts an existing Message Vault output directory to another format (auto-detect input; desktop app **Format** tab). Not a vendor backup source.

@@ -5,7 +5,7 @@ description: Change an export folder from one format to another without re-readi
 
 **Format** reads a Message Vault export folder and writes it in a different format. Open Format from the desktop app **login screen** without signing into a vault (offline Format action).
 
-Happy-path [Import](/import-from-a-backup/) does not require this step.
+Happy-path [Import](/user/import-from-a-backup/) does not require this step.
 
 ## What Format reads
 
@@ -24,7 +24,7 @@ Create an empty output folder. Input and output cannot be the same.
 
 | Format | Shape | Media |
 |---|---|---|
-| **CSV** | One `.csv` per conversation | `attachments/` folder. Columns: [CSV columns](/reference/csv-columns/) |
+| **CSV** | One `.csv` per conversation | `attachments/` folder. Columns: [CSV columns](/developer/reference/csv-columns/) |
 | **JSON** | One indented `.json` per conversation | `attachments/` folder |
 | **JSONL** | One `.jsonl` per conversation | `attachments/` folder |
 | **EML** | One folder per conversation, one `.eml` per message | Embedded |
@@ -37,7 +37,7 @@ Create an empty output folder. Input and output cannot be the same.
 2. Select the **Input directory**
 3. Choose the **Output format**
 4. Choose a different **Output directory**
-5. Pick the attachment mode — **Copy** keeps media when present. Details: [Media and privacy](/how-to/media-and-privacy/)
+5. Pick the attachment mode — **Copy** keeps media when present. Details: [Media and privacy](/user/how-to/media-and-privacy/)
 6. Optionally enable obfuscation
 7. Start the run and watch the on-screen log
 
@@ -48,4 +48,4 @@ The detector identifies the input format automatically. It ignores `attachments/
 - Conversion can only carry media that is still present in the source folder
 - Android XML cannot store Apple-only fields — use JSON or JSONL when preserving iMessage detail matters
 
-Command line: [`message-reexporter`](/reference/cli/message-reexporter/).
+Command line: [`message-reexporter`](/developer/reference/cli/message-reexporter/).

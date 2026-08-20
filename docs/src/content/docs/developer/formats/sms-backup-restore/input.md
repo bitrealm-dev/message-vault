@@ -3,7 +3,7 @@ title: "SMS Backup & Restore input format"
 description: "SMS and MMS XML structures that the SMS Backup & Restore converter reads."
 ---
 
-This reference describes the SMS and MMS XML structures consumed and preserved by the importer. It is not a replacement for SyncTech’s complete schema. Import behavior is documented in [import mapping](/formats/sms-backup-restore/mapping/).
+This reference describes the SMS and MMS XML structures consumed and preserved by the importer. It is not a replacement for SyncTech’s complete schema. Import behavior is documented in [import mapping](/developer/formats/sms-backup-restore/mapping/).
 
 Source: SyncTech’s [Fields in XML backup files](https://www.synctech.com.au/sms-backup-restore/fields-in-xml-backup-files/). Related SyncTech links:
 

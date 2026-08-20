@@ -5,13 +5,13 @@ description: Use the desktop app Import screen to read a phone backup and store 
 
 **Import** is in the desktop app sidebar after you sign in. It is not shown in the browser-only UI. Pick a backup source, point at the file or folder, and start the run. The app extracts from that backup and pushes into the vault in one flow.
 
-JSONL (JSON Lines) folders on disk are a later task: [Extract to files](/how-to/extract-to-files/).
+JSONL (JSON Lines) folders on disk are a later task: [Extract to files](/user/how-to/extract-to-files/).
 
 ## Before you start
 
-- A vault that is running — [Try the vault](/get-started/try-the-vault/)
+- A vault that is running — [Try the vault](/user/get-started/try-the-vault/)
 - The desktop app signed in as **your** account (not `demo`), server URL such as `http://localhost:8080`
-- A prepared backup — [Prepare a backup](/prepare-a-backup/)
+- A prepared backup — [Prepare a backup](/user/prepare-a-backup/)
 
 ## Run Import
 
@@ -27,10 +27,10 @@ JSONL (JSON Lines) folders on disk are a later task: [Extract to files](/how-to/
    | **WhatsApp - Android** | `msgstore.db` or `msgstore.db.crypt*` plus key |
    | **SMS Backup & Restore** | SyncTech XML |
 
-   Rescue sources (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) are documented under [rescue imports](/how-to/rescue-imports/).
+   Rescue sources (GO SMS Pro, iMazing, OpenExtract, SMS Backup+) are documented under [rescue imports](/user/how-to/rescue-imports/).
 
 4. Fill in paths, passwords, keys, or owner phone numbers for that source
-5. Optionally set how contact names should be filled from vault contacts ([Contacts and labels](/how-to/contacts-and-labels/))
+5. Optionally set how contact names should be filled from vault contacts ([Contacts and labels](/user/how-to/contacts-and-labels/))
 6. Start the run and watch the on-screen progress and log
 
 ## Resume and force reprocessing
@@ -43,6 +43,6 @@ Turn force reprocessing on when a previous run left messages without attachments
 
 ## After the run
 
-Use the on-screen log for successes, failures, and the end summary. Then open **Conversations** — [Browse your messages](/browse-your-messages/).
+Use the on-screen log for successes, failures, and the end summary. Then open **Conversations** — [Browse your messages](/user/browse-your-messages/).
 
-API tokens under **Settings → Account** are for command-line tools, not for this screen. Desktop Import uses the signed-in session. See [Command-line tools](/reference/cli/) if you need `vault-push`.
+API tokens under **Settings → Account** are for command-line tools, not for this screen. Desktop Import uses the signed-in session. See [Command-line tools](/developer/reference/cli/) if you need `vault-push`.

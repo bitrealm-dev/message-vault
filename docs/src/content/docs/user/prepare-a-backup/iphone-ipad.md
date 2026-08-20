@@ -36,8 +36,8 @@ The desktop app reads SMS, iMessage, and attachments. It can identify participan
 ## Known limitations
 
 - You need the device or a Mac with Messages signed in. There is no cloud access.
-- Android XML cannot store Apple-only fields like message effects and Tapbacks. That matters only if you later [convert](/how-to/convert-formats/) to XML.
+- Android XML cannot store Apple-only fields like message effects and Tapbacks. That matters only if you later [convert](/user/how-to/convert-formats/) to XML.
 
 ## Next step
 
-Open the desktop app, sign in to the vault, and go to **Import**. Choose **iPhone - iOS** for a device backup folder, or **iMessage - macOS** for `chat.db`. See [Import from a backup](/import-from-a-backup/).
+Open the desktop app, sign in to the vault, and go to **Import**. Choose **iPhone - iOS** for a device backup folder, or **iMessage - macOS** for `chat.db`. See [Import from a backup](/user/import-from-a-backup/).

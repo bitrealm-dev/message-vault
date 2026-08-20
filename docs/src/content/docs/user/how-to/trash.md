@@ -9,4 +9,4 @@ The unified website shows **Trash** in the navigation. Soft-delete **restore** a
 
 For day-to-day browsing, use **Conversations** and **Contacts**. To remove all message content for an account, use **Settings → Account** danger-zone actions (delete messages).
 
-See [Settings](/how-to/settings/).
+See [Settings](/user/how-to/settings/).

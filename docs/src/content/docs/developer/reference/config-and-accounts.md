@@ -60,7 +60,7 @@ Rows are scoped by `account_id` in a shared `vault.db`.
   an empty password. On a hosted vault with the guest pool on, that account is the
   clone template; visitors use **Try it** instead of signing in as `demo`.
 
-See [Settings](/how-to/settings/).
+See [Settings](/user/how-to/settings/).
 
 ## Guest demo pool
 

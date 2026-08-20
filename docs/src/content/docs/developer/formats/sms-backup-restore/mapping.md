@@ -5,7 +5,7 @@ description: "How SyncTech SMS and MMS fields become the shared conversation str
 
 How SyncTech `<sms>` and `<mms>` elements become `ConversationDocument` values, including validation, skipped records, and the source-specific data retained for later output.
 
-Input structure and attribute meanings: [input format](/formats/sms-backup-restore/input/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/reference/csv-columns/).
+Input structure and attribute meanings: [input format](/developer/formats/sms-backup-restore/input/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/developer/reference/csv-columns/).
 
 ## Pipeline
 
@@ -85,4 +85,4 @@ Example group address string: `+15555550101~+15555550102` with two From/To addrs
 
 For each `<part>` that has a `data` attribute, the bag stores `data_len` and `data_sha256` of the **decoded** bytes and **omits** the base64 `data` string (binaries live under `attachments/` or are embedded for mail/Xml). Other part attributes (`seq`, `ct`, `name`, `cl`, `chset`, `text`, …) are kept as-is.
 
-The reverse `ConversationDocument` → `smses.xml` rules are documented in [SMS Backup & Restore XML output](/formats/sms-backup-restore-xml/).
+The reverse `ConversationDocument` → `smses.xml` rules are documented in [SMS Backup & Restore XML output](/developer/formats/sms-backup-restore-xml/).

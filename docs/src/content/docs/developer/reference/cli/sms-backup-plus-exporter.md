@@ -115,10 +115,10 @@ sms-backup-plus-exporter -v convert \
 
 ## NOTES
 
-Limited rescue import in the desktop app. Attachment→message pairing in archives is heuristic. EML layouts: [FORMAT.md](/formats/sms-backup-plus/format/). Field mapping: [IMPORT_MAPPING.md](/formats/sms-backup-plus/mapping/).
+Limited rescue import in the desktop app. Attachment→message pairing in archives is heuristic. EML layouts: [FORMAT.md](/developer/formats/sms-backup-plus/format/). Field mapping: [IMPORT_MAPPING.md](/developer/formats/sms-backup-plus/mapping/).
 
 ## SEE ALSO
 
 - [SMS Backup+ user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/sms-backup-plus/)
-- [Input EML format](/formats/sms-backup-plus/format/)
-- [Import mapping](/formats/sms-backup-plus/mapping/)
+- [Input EML format](/developer/formats/sms-backup-plus/format/)
+- [Import mapping](/developer/formats/sms-backup-plus/mapping/)

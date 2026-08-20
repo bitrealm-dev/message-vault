@@ -37,7 +37,7 @@ pip install 'whatsapp-chat-exporter[android_backup,crypt15]'
 
 **"Input and output must differ" (Format).** Choose a new empty output folder.
 
-**Some messages are missing from a rescue import.** Limited formats cannot preserve everything. See [Rescue imports](/how-to/rescue-imports/).
+**Some messages are missing from a rescue import.** Limited formats cannot preserve everything. See [Rescue imports](/user/how-to/rescue-imports/).
 
 ## Reaching the vault
 
@@ -69,7 +69,7 @@ Stop the other process. From a clone, `./scripts/run-vault-dev.sh` and a Compose
 
 ## Command-line import errors
 
-Schema version, `vault-push`, and HTTP status codes: [HTTP API](/reference/api/) and [`vault-push`](/reference/cli/vault-push/).
+Schema version, `vault-push`, and HTTP status codes: [HTTP API](/developer/reference/api/) and [`vault-push`](/developer/reference/cli/vault-push/).
 
 ## Getting help
 

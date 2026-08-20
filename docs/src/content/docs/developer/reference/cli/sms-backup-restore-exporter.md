@@ -109,10 +109,10 @@ cargo run --release -p sms-backup-restore-exporter -- \
 
 ## NOTES
 
-Input XML reference: [INPUT_FORMAT.md](/formats/sms-backup-restore/input/). Source → common-message mapping: [IMPORT_MAPPING.md](/formats/sms-backup-restore/mapping/).
+Input XML reference: [INPUT_FORMAT.md](/developer/formats/sms-backup-restore/input/). Source → common-message mapping: [IMPORT_MAPPING.md](/developer/formats/sms-backup-restore/mapping/).
 
 ## SEE ALSO
 
 - [Android text-message user guide](https://bitrealm-dev.github.io/message-vault/android/text-messages/)
-- [Input format](/formats/sms-backup-restore/input/)
-- [Import mapping](/formats/sms-backup-restore/mapping/)
+- [Input format](/developer/formats/sms-backup-restore/input/)
+- [Import mapping](/developer/formats/sms-backup-restore/mapping/)

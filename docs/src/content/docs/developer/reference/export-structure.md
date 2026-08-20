@@ -33,6 +33,6 @@ Schema version 3 only. New versions may add fields but will not remove or rename
 
 ## Related
 
-- [CSV columns reference](/reference/csv-columns/)
-- [Import API reference](/reference/api/)
-- [`vault-push` CLI reference](/reference/cli/vault-push/)
+- [CSV columns reference](/developer/reference/csv-columns/)
+- [Import API reference](/developer/reference/api/)
+- [`vault-push` CLI reference](/developer/reference/cli/vault-push/)

@@ -46,4 +46,4 @@ Compiling the app and the vault from a git checkout: [Run from source](/develope
 
 ## Next
 
-Sign in with **http://127.0.0.1:8080** and your vault username and password, then [Import from a backup](/import-from-a-backup/). The desktop app uses the IPv4 address because `localhost` can resolve to IPv6, which a local Docker vault does not listen on.
+Sign in with **http://127.0.0.1:8080** and your vault username and password, then [Import from a backup](/user/import-from-a-backup/). The desktop app uses the IPv4 address because `localhost` can resolve to IPv6, which a local Docker vault does not listen on.

@@ -5,7 +5,7 @@ description: Create an account on the same vault you used for demo, then import 
 
 A personal archive is a **second account** on the vault that is already running. Do not delete the Docker volume or start a second container to “go personal.” Sign out of `demo`, register, then import.
 
-If the vault is not running yet, start it with the command on [Try the vault](/get-started/try-the-vault/), then come back here instead of signing in as `demo`.
+If the vault is not running yet, start it with the command on [Try the vault](/user/get-started/try-the-vault/), then come back here instead of signing in as `demo`.
 
 ## 1. Create an account
 
@@ -15,12 +15,12 @@ On first sign-in the site asks for a **display name** and **handles** (phone num
 
 ## 2. Prepare a backup
 
-Follow [Prepare a backup](/prepare-a-backup/) for your phone and app.
+Follow [Prepare a backup](/user/prepare-a-backup/) for your phone and app.
 
 ## 3. Install the desktop app
 
-Import is not in the browser. [Install the desktop app](/get-started/install-the-desktop-app/), then sign in with the same server URL (`http://127.0.0.1:8080`) and the account you just created.
+Import is not in the browser. [Install the desktop app](/user/get-started/install-the-desktop-app/), then sign in with the same server URL (`http://127.0.0.1:8080`) and the account you just created.
 
 ## 4. Import and browse
 
-[Import from a backup](/import-from-a-backup/), then [browse your messages](/browse-your-messages/).
+[Import from a backup](/user/import-from-a-backup/), then [browse your messages](/user/browse-your-messages/).

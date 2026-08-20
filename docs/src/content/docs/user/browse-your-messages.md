@@ -5,7 +5,7 @@ description: Open Conversations after the first import — the same website in t
 
 After Import finishes, open **Conversations** in the sidebar (browser at **http://localhost:8080** or the desktop app). Select a thread to read messages and view attachments.
 
-Group chats appear in the same list as one-to-one threads. Search with `is:group` when you only want multi-party conversations — [Search](/how-to/search/).
+Group chats appear in the same list as one-to-one threads. Search with `is:group` when you only want multi-party conversations — [Search](/user/how-to/search/).
 
 ## Sidebar
 
@@ -13,16 +13,16 @@ Group chats appear in the same list as one-to-one threads. Search with `is:group
 |-------|---------|
 | **Conversations** | Message threads |
 | **Contacts** | People and handles from imports |
-| **Trash** | Soft-deleted items ([Trash](/how-to/trash/)) |
+| **Trash** | Soft-deleted items ([Trash](/user/how-to/trash/)) |
 | **Import** | Push a backup into the vault (desktop app only) |
-| **Export** | Pull messages to disk (desktop app only) — [Export from the vault](/how-to/export-from-the-vault/) |
+| **Export** | Pull messages to disk (desktop app only) — [Export from the vault](/user/how-to/export-from-the-vault/) |
 | **Settings** | Account, profile, storage, appearance |
 | **Sign out** | End the session |
 
-**Saved groups** under the sidebar store search queries. Create one with **+ New**, then click a name to run that search again — [Saved searches](/how-to/saved-searches/).
+**Saved groups** under the sidebar store search queries. Create one with **+ New**, then click a name to run that search again — [Saved searches](/user/how-to/saved-searches/).
 
 Imports are tagged with a **source** (for example iMessage or WhatsApp). Search can limit results with `source:…`.
 
 ## What next
 
-The tutorial ends here. The [How do I…](/how-to/search/) pages cover search, contacts, convert, extract to files, and settings.
+The tutorial ends here. The [How do I…](/user/how-to/search/) pages cover search, contacts, convert, extract to files, and settings.

@@ -5,11 +5,11 @@ description: Write a JSONL (JSON Lines) folder from a backup without importing i
 
 **Extract** on the desktop app **login screen** reads a phone backup and writes JSONL (JSON Lines) plus an `attachments/` folder when media copying is on. You do not need a vault URL.
 
-[Import](/import-from-a-backup/) already extracts and pushes in one run. Use this page when you want files on disk — scripts, [Format](/how-to/convert-formats/), or a later CLI push.
+[Import](/user/import-from-a-backup/) already extracts and pushes in one run. Use this page when you want files on disk — scripts, [Format](/user/how-to/convert-formats/), or a later CLI push.
 
 ## Before you start
 
-- The backup file or folder ([Prepare a backup](/prepare-a-backup/))
+- The backup file or folder ([Prepare a backup](/user/prepare-a-backup/))
 - Any password, key, or owner phone numbers required by that backup type
 - An empty folder for the output — do not use the same folder as the source
 
@@ -23,10 +23,10 @@ description: Write a JSONL (JSON Lines) folder from a backup without importing i
 
 Extract always writes **JSONL**. Use **Format** afterward for CSV, EML, MBOX, JSON, or Android XML.
 
-Most outputs are one file per conversation. Android XML (after Format) is one `smses.xml`. Folder layout: [Export structure](/reference/export-structure/).
+Most outputs are one file per conversation. Android XML (after Format) is one `smses.xml`. Folder layout: [Export structure](/developer/reference/export-structure/).
 
 ## Cancellation
 
 Use **Cancel** when it appears. Cancellation is cooperative. The desktop app cannot stop the external WhatsApp helper mid-run. Wait for it to finish or stop it manually.
 
-Command line: the per-source exporters under [Command-line tools](/reference/cli/). To push an existing JSONL folder into the vault, use [`vault-push`](/reference/cli/vault-push/) with an API token from [Settings → Account](/how-to/settings/).
+Command line: the per-source exporters under [Command-line tools](/developer/reference/cli/). To push an existing JSONL folder into the vault, use [`vault-push`](/developer/reference/cli/vault-push/) with an API token from [Settings → Account](/user/how-to/settings/).

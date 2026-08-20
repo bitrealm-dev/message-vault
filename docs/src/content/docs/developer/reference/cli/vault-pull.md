@@ -32,7 +32,7 @@ Authenticates with the vault, pages matching messages, writes per-conversation J
 
 Create a named API token under **Settings → Account** in the vault UI. The vault base URL is the same origin as the web UI (for example `http://127.0.0.1:8080`).
 
-Prefer the desktop app **Export** screen for a GUI. See [Export from the vault](/how-to/export-from-the-vault/).
+Prefer the desktop app **Export** screen for a GUI. See [Export from the vault](/user/how-to/export-from-the-vault/).
 
 ### Options
 
@@ -53,4 +53,4 @@ Use `vault-pull --help` for the full flag list.
 
 ### See also
 
-The desktop app **Export** screen, or [Export from the vault](/how-to/export-from-the-vault/). [`vault-push`](/reference/cli/vault-push/) imports in the other direction.
+The desktop app **Export** screen, or [Export from the vault](/user/how-to/export-from-the-vault/). [`vault-push`](/developer/reference/cli/vault-push/) imports in the other direction.

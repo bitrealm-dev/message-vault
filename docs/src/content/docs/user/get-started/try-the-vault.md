@@ -11,13 +11,13 @@ If the vault is already on a public URL, open that URL in a browser and click **
 
 **Try it** signs in to a private copy of the sample conversations. The copy lasts 24 hours, or until sign-out. Import and Export are not in the browser.
 
-To keep a personal archive on that same vault, create an account and continue at [Use your own messages](/get-started/your-own-messages/).
+To keep a personal archive on that same vault, create an account and continue at [Use your own messages](/user/get-started/your-own-messages/).
 
 ## Self-hosted vault
 
-Connect with the **website**. Importing your own messages later needs the [desktop app](/get-started/install-the-desktop-app/) — more on that when you [use your own messages](/get-started/your-own-messages/).
+Connect with the **website**. Importing your own messages later needs the [desktop app](/user/get-started/install-the-desktop-app/) — more on that when you [use your own messages](/user/get-started/your-own-messages/).
 
-Already sure you want your own data? Skip to [Use your own messages](/get-started/your-own-messages/).
+Already sure you want your own data? Skip to [Use your own messages](/user/get-started/your-own-messages/).
 
 ## Prerequisites
 
@@ -52,11 +52,11 @@ Edit the Compose file to change the published port, set `DEMO_DATA=false` for an
 
 Open **http://localhost:8080**. Sign in with username `demo` and an empty password.
 
-`demo` is a read-only sample account on this vault. Browse **Conversations**, open a thread, try [search](/how-to/search/).
+`demo` is a read-only sample account on this vault. Browse **Conversations**, open a thread, try [search](/user/how-to/search/).
 
 ## After you have looked around
 
-Sign out. Create your own account on **this same vault** — not a second container. Continue at [Use your own messages](/get-started/your-own-messages/).
+Sign out. Create your own account on **this same vault** — not a second container. Continue at [Use your own messages](/user/get-started/your-own-messages/).
 
 ## Build from source instead
 

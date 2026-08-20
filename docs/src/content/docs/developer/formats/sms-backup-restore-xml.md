@@ -17,7 +17,7 @@ Root structure:
 </smses>
 ```
 
-This is the same family of files that [SMS Backup & Restore](https://www.synctech.com.au/sms-backup-restore/) reads. The importer’s source-format reference is [SMS Backup & Restore input format](/formats/sms-backup-restore/input/).
+This is the same family of files that [SMS Backup & Restore](https://www.synctech.com.au/sms-backup-restore/) reads. The importer’s source-format reference is [SMS Backup & Restore input format](/developer/formats/sms-backup-restore/input/).
 
 **Motivation:** Android compatibility. Full-device Android backup/restore without third-party tooling requires root and often an unlocked bootloader; the SMS Backup & Restore app restores `smses.xml` without either, so this format is the practical path for putting messages back onto an Android phone.
 
@@ -42,5 +42,5 @@ Exporters use `FormatSink::open` → `write_document` per conversation → `fini
 ## Related
 
 - [Message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md) — shared model and projectors
-- [What’s inside an export](/reference/export-structure/) — end-user workflow
-- [SMS Backup & Restore import mapping](/formats/sms-backup-restore/mapping/) — XML source → shared model
+- [What’s inside an export](/developer/reference/export-structure/) — end-user workflow
+- [SMS Backup & Restore import mapping](/developer/formats/sms-backup-restore/mapping/) — XML source → shared model

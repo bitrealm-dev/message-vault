@@ -16,7 +16,7 @@ The vault you run has a **local** username and password. That login is not a Bit
 
 ## What you can do
 
-- **Try sample conversations** by signing in as `demo` (see [Try the vault](/get-started/try-the-vault/))
+- **Try sample conversations** by signing in as `demo` (see [Try the vault](/user/get-started/try-the-vault/))
 - **Import** your own backups with the desktop app
 - **Browse and search** conversations, contacts, and media in the browser or the app
 - **Convert** exports between JSONL (JSON Lines), JSON, CSV, EML, MBOX, and XML when you need files on disk
@@ -24,6 +24,6 @@ The vault you run has a **local** username and password. That login is not a Bit
 
 ## Where to go next
 
-- [Why you provide backups](/get-started/why-you-provide-backups/)
-- [Try the vault](/get-started/try-the-vault/)
-- [Use your own messages](/get-started/your-own-messages/) if the sample data is enough to skip ahead
+- [Why you provide backups](/user/get-started/why-you-provide-backups/)
+- [Try the vault](/user/get-started/try-the-vault/)
+- [Use your own messages](/user/get-started/your-own-messages/) if the sample data is enough to skip ahead
