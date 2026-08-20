@@ -1,9 +1,20 @@
-# Contributing
+# Contributing Guide
+
+Welcome to the Message Vault Contributing Guide, and thank you for your interest. To learn more about the Message Vault consult the [README.md](README.md).
+
+############################################
+TODO: Everything here and below should go in developer documentation.
+
+
+## Ground Rules
+
+Before contributing, read the [Code of Conduct](CODE_OF_CONDUCT.md) to learn more about our community guidelines and expectations.
+
+## Environment Setup
 
 Contributions to the Message Vault are welcome.
 How to set up, build, run, and contribute to Message Vault.
 
-This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
