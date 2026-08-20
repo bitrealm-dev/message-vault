@@ -1,0 +1,62 @@
+---
+title: Message Vault
+description: Extract messages from phone backups, import them into a local vault, and browse them in a website you control.
+template: splash
+hero:
+  title: Your messages, your way
+  tagline: Extract messages from Apple and Android phone backups. Import them into a local SQLite vault. Browse, search, and export in formats you can keep.
+  actions:
+    - text: Try the vault
+      link: /vault/user/get-started/try-the-vault/
+      icon: right-arrow
+      variant: primary
+    - text: Use your own messages
+      link: /vault/user/get-started/your-own-messages/
+      icon: right-arrow
+      variant: secondary
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components';
+
+## How it works
+
+```text
+1. Try it     Open the vault and click Try it
+              (sample conversations — no phone backup yet)
+
+2. Your data  Create an account on that same vault, prepare a backup,
+              import with the desktop app
+
+3. Browse     Search and read threads on the website you control
+```
+
+Your messages stay in a SQLite database on a machine you control. They are not uploaded to a cloud service by this project. The vault login is local — not a Bitrealm cloud account.
+
+Already sure you want your own data? Skip the sample account and go to [Use your own messages](/vault/user/get-started/your-own-messages/).
+
+## Choose a chapter
+
+<CardGrid>
+  <Card title="What is Message Vault?">
+    The vault and the desktop app, and what stays on your machine. [What is Message Vault?](/vault/user/get-started/what-is-message-vault/)
+  </Card>
+  <Card title="Try sample conversations">
+    Hosted: click Try it. Self-hosted: one Docker command, then sign in as `demo`. [Try the vault](/vault/user/get-started/try-the-vault/)
+  </Card>
+  <Card title="Prepare a backup">
+    iPhone, Android SMS, WhatsApp. [Prepare a backup](/vault/user/prepare-a-backup/)
+  </Card>
+  <Card title="Import">
+    Desktop app, signed in, from a phone backup. [Import from a backup](/vault/user/import-from-a-backup/)
+  </Card>
+  <Card title="How do I…">
+    Search, convert formats, extract to files, settings. [Search](/vault/user/how-to/search/)
+  </Card>
+  <Card title="Developer">
+    CLI, HTTP API, Compose, formats. [Run from source](/vault/developer/run-from-source/)
+  </Card>
+</CardGrid>
+
+<Aside title="Supported paths and limited rescue imports">
+  The supported paths are Apple Messages from chat.db or an iPhone backup, Android SMS/MMS from SMS Backup & Restore XML, and WhatsApp through wtsexporter. GO SMS Pro, iMazing, OpenExtract, and SMS Backup+ are rescue imports for files you already have. [Rescue imports](/vault/user/how-to/rescue-imports/).
+</Aside>

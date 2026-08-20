@@ -121,7 +121,7 @@ cd web && npm run dev                   # website at http://localhost:5173 (prox
 # cargo tauri dev                       # desktop window instead of a browser
 ```
 
-Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://vault.bitrealm.dev/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://vault.bitrealm.dev/developer/docker-compose/).
+Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://bitrealm.dev/vault/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://bitrealm.dev/vault/developer/docker-compose/).
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
@@ -191,7 +191,7 @@ npm run dev
 
 Before publishing doc changes: `npm run check` and `npm run build`.
 
-Command-line reference pages live under `docs/src/content/docs/developer/reference/cli/`. Edit those files directly, then:
+Command-line reference pages live under `docs/src/content/docs/vault/developer/reference/cli/`. Edit those files directly, then:
 
 ```bash
 cd docs
@@ -201,20 +201,14 @@ npm run build
 
 ### Publishing / custom domain
 
-GitHub Pages on this repo serves the built site. Custom domain is `bitrealm.dev` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. Cloudflare DNS for the apex should keep pointing at GitHub Pages; add a verification TXT record only if GitHub’s Pages settings request one.
+GitHub Pages on this repo serves the built site. The custom domain is `bitrealm.dev` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. The `bitrealm.dev` A records should keep pointing at GitHub Pages. Add a verification TXT record only if GitHub’s Pages settings request one.
 
-### Product hostname (`vault.bitrealm.dev`)
+Guides live at:
 
-The same GitHub Pages deploy answers on `vault.bitrealm.dev` through Cloudflare.
-Pages still has one custom domain: `bitrealm.dev` (`docs/public/CNAME`). Do not
-put `vault.bitrealm.dev` in that file.
+- User Guide: `https://bitrealm.dev/vault/user/`
+- Developer docs: `https://bitrealm.dev/vault/developer/`
 
-1. Cloudflare: CNAME `vault` → `bitrealm.dev`, proxied (orange cloud). Leave
-   `api`, `app`, and R2 alone. A grey-cloud CNAME to `*.github.io` will not
-   work — Pages does not bind that hostname.
-2. Cloudflare Redirect Rule: `https://vault.bitrealm.dev/` →
-   `https://bitrealm.dev/`. Match the hostname root only. Do not match
-   `/user` or `/developer`.
+Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.dev`. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
 
 ## Workspace map
 
@@ -233,7 +227,7 @@ This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-
 3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there. If you touched `web/`, also run `npm run lint` and `npm test` there.
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
 5. **Respect licenses.** This project is AGPL-3.0. Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls `imessage-database` into new binaries.
-6. **Document CLI changes** on the matching page under `docs/src/content/docs/developer/reference/cli/`.
+6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
 7. **Put design depth in maintainer docs**, not in this file. Architecture, format contracts, GUI option matrices, releases, and signing stay under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Troubleshooting
@@ -250,6 +244,6 @@ This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-
 
 - [Maintainer documentation index](docs/maintainers/README.md)
 - [Development and releases](docs/maintainers/developing.md)
-- [Converter capabilities](https://vault.bitrealm.dev/developer/formats/)
+- [Converter capabilities](https://bitrealm.dev/vault/developer/formats/)
 - [Code signing](docs/maintainers/signing.md)
 - End-user docs: <https://bitrealm.dev/>
