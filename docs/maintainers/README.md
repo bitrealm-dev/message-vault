@@ -22,9 +22,9 @@ This directory contains implementation and release documentation for contributor
 
 Shared libraries live under `crates/libs/` (`message-ir`, `contacts`, `media`, `go-sms-mms`, …). Exporter crates live under `crates/exporters/<name>/`. Command-line reference pages are edited on the docs site:
 
-`docs/src/content/docs/reference/cli/<command>.md`
+`docs/src/content/docs/developer/reference/cli/<command>.md`
 
-Input-format and mapping pages are edited under `docs/src/content/docs/formats/`.
+Input-format and mapping pages are edited under `docs/src/content/docs/developer/formats/`.
 
 After changing those pages:
 

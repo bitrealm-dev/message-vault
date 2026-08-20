@@ -2,7 +2,7 @@
 
 For local setup and build, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-End-user documentation lives in the [Starlight source](../src/content/docs/) (start with [Export structure](../src/content/docs/reference/export-structure.md)). Use the [maintainer index](README.md) to find architecture, GUI, exporter, and format documentation.
+End-user documentation lives in the [Starlight source](../src/content/docs/) (start with [Export structure](../src/content/docs/developer/reference/export-structure.md)). Use the [maintainer index](README.md) to find architecture, GUI, exporter, and format documentation.
 
 ## Cutting a release
 

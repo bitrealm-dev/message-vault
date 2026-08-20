@@ -191,7 +191,7 @@ npm run dev
 
 Before publishing doc changes: `npm run check` and `npm run build`.
 
-Command-line reference pages live under `docs/src/content/docs/reference/cli/`. Edit those files directly, then:
+Command-line reference pages live under `docs/src/content/docs/developer/reference/cli/`. Edit those files directly, then:
 
 ```bash
 cd docs
@@ -233,7 +233,7 @@ This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-
 3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there. If you touched `web/`, also run `npm run lint` and `npm test` there.
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
 5. **Respect licenses.** This project is AGPL-3.0. Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls `imessage-database` into new binaries.
-6. **Document CLI changes** on the matching page under `docs/src/content/docs/reference/cli/`.
+6. **Document CLI changes** on the matching page under `docs/src/content/docs/developer/reference/cli/`.
 7. **Put design depth in maintainer docs**, not in this file. Architecture, format contracts, GUI option matrices, releases, and signing stay under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Troubleshooting
