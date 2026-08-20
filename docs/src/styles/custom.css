@@ -73,3 +73,60 @@
     transform: none;
   }
 }
+
+.bitrealm-home {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--sl-font);
+  background: var(--sl-color-black);
+  color: var(--sl-color-white);
+}
+
+.bitrealm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.75rem;
+}
+
+.bitrealm-header nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.bitrealm-header a,
+.bitrealm-card-links a {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+  font-weight: 550;
+}
+
+.bitrealm-mark {
+  color: var(--sl-color-white);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.bitrealm-main {
+  max-width: 40rem;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+}
+
+.bitrealm-lede {
+  color: var(--sl-color-gray-2);
+  max-width: 36ch;
+}
+
+.bitrealm-card {
+  margin-top: 2.5rem;
+  padding: 1.5rem 1.5rem 1.25rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-top: 3px solid var(--sl-color-accent);
+  border-radius: 0.5rem;
+}
+
+.bitrealm-card-links {
+  display: flex;
+  gap: 1.25rem;
+}

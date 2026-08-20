@@ -30,7 +30,7 @@ cd web && npm run dev                      # website at http://localhost:5173 (p
 
 Open **http://localhost:5173** for the Vite UI, or **http://127.0.0.1:8080** if `static/` was built with `./scripts/build-static.sh`. `--reset` wipes `data/` without seeding. `--sqlweb` starts a SQLite browser on port **8081** when `sqlite_web` is on `PATH`.
 
-A release-shaped Docker image from this checkout is on [Operator Docker](/developer/docker-compose/). Trying the published image without compiling is on [Try the vault](/get-started/try-the-vault/).
+A release-shaped Docker image from this checkout is on [Operator Docker](/developer/docker-compose/). Trying the published image without compiling is on [Try the vault](/user/get-started/try-the-vault/).
 
 ## Run the desktop app
 
@@ -60,5 +60,5 @@ On Linux the desktop app also needs WebKit2GTK and GTK3 at build and runtime. Th
 ## Next
 
 - [CONTRIBUTING.md](https://github.com/bitrealm-dev/message-vault/blob/main/CONTRIBUTING.md) — tests, formatting, Linux packages, WSL
-- [Command-line tools](/reference/cli/) — exporter and vault-push/pull binaries
-- [Install the desktop app](/get-started/install-the-desktop-app/) — GitHub Releases instead of compiling
+- [Command-line tools](/developer/reference/cli/) — exporter and vault-push/pull binaries
+- [Install the desktop app](/user/get-started/install-the-desktop-app/) — GitHub Releases instead of compiling

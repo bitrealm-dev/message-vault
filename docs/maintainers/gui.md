@@ -165,7 +165,7 @@ output folder to another packaging format (via the common message).
 
 Persists under `[format]` in `export.ini` (loads legacy `[message-reexport]` if
 present). Mixed or unrecognized input dirs fail with a clear error. See
-[`message-reexporter` CLI](https://bitrealm.dev/reference/cli/message-reexporter/).
+[`message-reexporter` CLI](https://vault.bitrealm.dev/developer/reference/cli/message-reexporter/).
 
 ### Guided Import Messages
 
@@ -232,10 +232,10 @@ under the export/staging tree. Reprocessing retries the asset upload; a successf
 digest on the vault fills the gap. It cannot repair attachments that are missing
 from disk, or media omitted by skip-attachments / text-only import.
 
-End-user write-up: [Import from a backup](../src/content/docs/import-from-a-backup.md).
+End-user write-up: [Import from a backup](../src/content/docs/user/import-from-a-backup.md).
 
 Persists under `[vault]` in `export.ini`. See
-[`vault-push` CLI reference](https://bitrealm.dev/reference/cli/vault-push/).
+[`vault-push` CLI reference](https://vault.bitrealm.dev/developer/reference/cli/vault-push/).
 
 ## Shared / global controls
 
@@ -281,7 +281,7 @@ GUI collects fields explicitly.
 no-op for files; the control is still shown.
 
 Extract Messages always packages as **JSONL**. Schema v3 applies to every
-exporter. See [What’s inside an export](../src/content/docs/reference/export-structure.md)
+exporter. See [What’s inside an export](../src/content/docs/developer/reference/export-structure.md)
 and the [message-ir architecture](architecture/message-ir.md). Attachment modes
 and obfuscate apply to every output format via `FormatSink` (including Format-tab
 re-exports).
@@ -321,7 +321,7 @@ Product: [SMS Backup & Restore](https://www.synctech.com.au/sms-backup-restore/)
 | Attachments | enum | no | `--media-mode` (+ compress flags; same as GO SMS Pro); all formats |
 
 Encrypted ZIP backups must be unlocked/extracted before selecting input. The
-exporter builds the [shared conversation structure](../src/content/docs/reference/export-structure.md),
+exporter builds the [shared conversation structure](../src/content/docs/developer/reference/export-structure.md),
 then writes JSONL (or the Format-tab target). Media modes and obfuscate apply
 through FormatSink for every format.
 
@@ -371,7 +371,7 @@ Product: [iMazing](https://imazing.com/)
 
 Media modes and obfuscate apply through FormatSink for every format. WhatsApp
 chats use the `__whatsapp` stem suffix. See
-[`iMazing importer design`](https://bitrealm.dev/formats/imazing/design/).
+[`iMazing importer design`](https://vault.bitrealm.dev/developer/formats/imazing/design/).
 
 ### WhatsApp — `whatsapp-exporter`
 
@@ -473,7 +473,7 @@ Tabs: Extract Messages | Format | Vault | Contacts | Log
   Contacts → contacts file, USA checkbox → Check / Update / Cancel → log
 ```
 
-End-user walkthrough: [Extract to files](../src/content/docs/how-to/extract-to-files.md).
+End-user walkthrough: [Extract to files](../src/content/docs/user/how-to/extract-to-files.md).
 
 ## Known gaps
 

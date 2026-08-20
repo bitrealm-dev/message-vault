@@ -1,0 +1,49 @@
+---
+import "../styles/custom.css";
+
+const userGuide = "https://vault.bitrealm.dev/user/";
+const developer = "https://vault.bitrealm.dev/developer/";
+const github = "https://github.com/bitrealm-dev/message-vault";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bitrealm</title>
+    <meta
+      name="description"
+      content="Local software you run. Not a cloud account."
+    />
+    <link rel="canonical" href="https://bitrealm.dev/" />
+  </head>
+  <body class="bitrealm-home">
+    <header class="bitrealm-header">
+      <a class="bitrealm-mark" href="/">Bitrealm</a>
+      <nav>
+        <a href={userGuide}>User Guide</a>
+        <a href={developer}>Developer</a>
+        <a href={github}>GitHub</a>
+      </nav>
+    </header>
+    <main class="bitrealm-main">
+      <h1>Bitrealm</h1>
+      <p class="bitrealm-lede">
+        Local software you run on a machine you control. Not a cloud account.
+      </p>
+      <article class="bitrealm-card">
+        <h2>Message Vault</h2>
+        <p>
+          Extract messages from Apple and Android phone backups. Import them
+          into a local SQLite vault. Browse, search, and export in formats you
+          can keep.
+        </p>
+        <p class="bitrealm-card-links">
+          <a href={userGuide}>User Guide</a>
+          <a href={developer}>Developer</a>
+          <a href={github}>GitHub</a>
+        </p>
+      </article>
+    </main>
+  </body>
+</html>

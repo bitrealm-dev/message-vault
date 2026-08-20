@@ -15,9 +15,9 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.dev/reference/cli/go-sms-pro-exporter/
+Command-line options: https://vault.bitrealm.dev/developer/reference/cli/go-sms-pro-exporter/
 
-Import mapping: https://bitrealm.dev/formats/go-sms-pro/mapping/
+Import mapping: https://vault.bitrealm.dev/developer/formats/go-sms-pro/mapping/
 
 ## License
 

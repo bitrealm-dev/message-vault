@@ -5,7 +5,7 @@ description: Build a release-shaped vault image from a git checkout, or run the 
 
 Day-to-day work from a clone uses [`./scripts/run-vault-dev.sh`](https://github.com/bitrealm-dev/message-vault/blob/main/scripts/run-vault-dev.sh) on the host — see [Run from source](/developer/run-from-source/). This page is Docker: a checkout that should look like a shipped install, or the published Hub image without compiling.
 
-To try the published image without cloning, save [`docker/compose.yml`](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) as described on [Try the vault](/get-started/try-the-vault/). That sample pulls `bitrealm/message-vault`.
+To try the published image without cloning, save [`docker/compose.yml`](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) as described on [Try the vault](/user/get-started/try-the-vault/). That sample pulls `bitrealm/message-vault`.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ Serves the vault on port **8080**. Do not run this stack and the published-image
 
 ## Published image
 
-The image `bitrealm/message-vault:latest` is the User Guide path. Sample data seeds on first boot when `DEMO_DATA=true` and the volume is empty. Creating a second account on that instance is [Use your own messages](/get-started/your-own-messages/). Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
+The image `bitrealm/message-vault:latest` is the User Guide path. Sample data seeds on first boot when `DEMO_DATA=true` and the volume is empty. Creating a second account on that instance is [Use your own messages](/user/get-started/your-own-messages/). Changing `DEMO_DATA` on an existing volume does not add or remove accounts.
 
 ## What is in the container
 
@@ -42,5 +42,5 @@ The image `bitrealm/message-vault:latest` is the User Guide path. Sample data se
 ## Related
 
 - [Run from source](/developer/run-from-source/)
-- [HTTP API](/reference/api/)
-- [Config and accounts](/reference/config-and-accounts/)
+- [HTTP API](/developer/reference/api/)
+- [Config and accounts](/developer/reference/config-and-accounts/)

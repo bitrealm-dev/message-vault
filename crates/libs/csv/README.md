@@ -14,7 +14,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-This crate is a library. CSV column list for users: https://bitrealm.dev/reference/csv-columns/
+This crate is a library. CSV column list for users: https://vault.bitrealm.dev/developer/reference/csv-columns/
 
 ## License
 
