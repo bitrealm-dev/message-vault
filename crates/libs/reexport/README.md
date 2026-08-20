@@ -15,9 +15,9 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.dev/reference/cli/message-reexporter/
+Command-line options: https://vault.bitrealm.dev/developer/reference/cli/message-reexporter/
 
-How conversion works: https://bitrealm.dev/formats/convert/
+How conversion works: https://vault.bitrealm.dev/developer/formats/convert/
 
 ## License
 

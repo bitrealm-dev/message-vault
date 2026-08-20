@@ -97,7 +97,7 @@ User-facing docs use [Astro Starlight](https://starlight.astro.build/) under [`d
 1. Repo **Settings → Pages**.
 2. **Build and deployment → Source** → **GitHub Actions** (not “Deploy from a branch”).
 3. Push to `main` or run the **Docs** workflow under **Actions**.
-4. Site URL: `https://bitrealm.dev/vault/`.
+4. Site URL: `https://vault.bitrealm.dev/user/`.
 
 Local preview:
 

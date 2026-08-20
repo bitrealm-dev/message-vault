@@ -121,7 +121,7 @@ cd web && npm run dev                   # website at http://localhost:5173 (prox
 # cargo tauri dev                       # desktop window instead of a browser
 ```
 
-Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://bitrealm.dev/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://bitrealm.dev/developer/docker-compose/).
+Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To run the published image without compiling: [Try the vault](https://vault.bitrealm.dev/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](https://vault.bitrealm.dev/developer/docker-compose/).
 
 Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
 
@@ -203,6 +203,19 @@ npm run build
 
 GitHub Pages on this repo serves the built site. Custom domain is `bitrealm.dev` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from `bitrealm-dev/bitrealm-dev.github.io` so only one Pages site claims it. Cloudflare DNS for the apex should keep pointing at GitHub Pages; add a verification TXT record only if GitHub’s Pages settings request one.
 
+### Product hostname (`vault.bitrealm.dev`)
+
+The same GitHub Pages deploy answers on `vault.bitrealm.dev` through Cloudflare.
+Pages still has one custom domain: `bitrealm.dev` (`docs/public/CNAME`). Do not
+put `vault.bitrealm.dev` in that file.
+
+1. Cloudflare: CNAME `vault` → `bitrealm.dev`, proxied (orange cloud). Leave
+   `api`, `app`, and R2 alone. A grey-cloud CNAME to `*.github.io` will not
+   work — Pages does not bind that hostname.
+2. Cloudflare Redirect Rule: `https://vault.bitrealm.dev/` →
+   `https://bitrealm.dev/`. Match the hostname root only. Do not match
+   `/user` or `/developer`.
+
 ## Workspace map
 
 - **Libraries:** under `crates/libs/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
@@ -237,6 +250,6 @@ This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-
 
 - [Maintainer documentation index](docs/maintainers/README.md)
 - [Development and releases](docs/maintainers/developing.md)
-- [Converter capabilities](https://bitrealm.dev/formats/)
+- [Converter capabilities](https://vault.bitrealm.dev/developer/formats/)
 - [Code signing](docs/maintainers/signing.md)
 - End-user docs: <https://bitrealm.dev/>

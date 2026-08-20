@@ -165,7 +165,7 @@ output folder to another packaging format (via the common message).
 
 Persists under `[format]` in `export.ini` (loads legacy `[message-reexport]` if
 present). Mixed or unrecognized input dirs fail with a clear error. See
-[`message-reexporter` CLI](https://bitrealm.dev/reference/cli/message-reexporter/).
+[`message-reexporter` CLI](https://vault.bitrealm.dev/developer/reference/cli/message-reexporter/).
 
 ### Guided Import Messages
 
@@ -235,7 +235,7 @@ from disk, or media omitted by skip-attachments / text-only import.
 End-user write-up: [Import from a backup](../src/content/docs/import-from-a-backup.md).
 
 Persists under `[vault]` in `export.ini`. See
-[`vault-push` CLI reference](https://bitrealm.dev/reference/cli/vault-push/).
+[`vault-push` CLI reference](https://vault.bitrealm.dev/developer/reference/cli/vault-push/).
 
 ## Shared / global controls
 
@@ -371,7 +371,7 @@ Product: [iMazing](https://imazing.com/)
 
 Media modes and obfuscate apply through FormatSink for every format. WhatsApp
 chats use the `__whatsapp` stem suffix. See
-[`iMazing importer design`](https://bitrealm.dev/formats/imazing/design/).
+[`iMazing importer design`](https://vault.bitrealm.dev/developer/formats/imazing/design/).
 
 ### WhatsApp — `whatsapp-exporter`
 

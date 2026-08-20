@@ -125,7 +125,7 @@ Line 1 is the header (includes `conversation.stats`; no `messages` array). Each 
 
 **Directory convert:** [`message-reexport`](../../../crates/libs/reexport/) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
 
-**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/).
+**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://vault.bitrealm.dev/developer/formats/sms-backup-restore-xml/).
 
 ## Content round-trip
 
@@ -133,7 +133,7 @@ Library APIs support content-preserving cycles:
 
 `ConversationDocument` → CSV \| EML \| MBOX \| JSON \| JSONL → `ConversationDocument`
 
-Use the [`message-reexporter` command](https://bitrealm.dev/formats/convert/) to convert a whole export directory between formats.
+Use the [`message-reexporter` command](https://vault.bitrealm.dev/developer/formats/convert/) to convert a whole export directory between formats.
 
 XML is **lossy** for non-Android common messages (Apple bags omitted). SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
 
@@ -151,7 +151,7 @@ CSV nested bags use empty string when absent (never literal `null`). See [CSV co
 
 ## Related
 
-- [Mail archive format](https://bitrealm.dev/formats/mail-archive/) — EML/MBOX packaging
-- [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
+- [Mail archive format](https://vault.bitrealm.dev/developer/formats/mail-archive/) — EML/MBOX packaging
+- [SMS Backup & Restore XML output](https://vault.bitrealm.dev/developer/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
 - [CSV columns](../../src/content/docs/reference/csv-columns.md) — user-facing CSV conventions
-- [Converter capabilities](https://bitrealm.dev/formats/)
+- [Converter capabilities](https://vault.bitrealm.dev/developer/formats/)

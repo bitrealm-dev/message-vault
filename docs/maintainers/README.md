@@ -8,15 +8,15 @@ This directory contains implementation and release documentation for contributor
 - [Develop and publish releases](developing.md) — release workflow, documentation build, and local preview.
 - [Code signing (Windows / macOS)](signing.md) — certificates, GitHub secrets, and gated release workflow steps.
 - [GUI design](gui.md) — Desktop app architecture: Tauri v2 shell with React + Vite frontend, Tauri commands wrapping exporter crates, and progress events.
-- [Converter capabilities](https://bitrealm.dev/formats/) — supported inputs, known source limitations, and format mapping pages.
+- [Converter capabilities](https://vault.bitrealm.dev/developer/formats/) — supported inputs, known source limitations, and format mapping pages.
 
 ## Architecture and output formats
 
 - [C4 diagrams](architecture/puml/) — from-source system, container, and deployment views. Preview the `.puml` files with current C4-PlantUML.
 - [Developer session sequences](architecture/sequence_diagram.md) — four Mermaid diagrams: start the vault, sign in, import a backup, export from the vault. Desktop App (Tauri), Vite `:5173`, and Vault `:8080` are participants.
 - [Shared message model](architecture/message-ir.md) — `ConversationDocument`, common fields, source-specific data, and output projectors.
-- [Mail archive format](https://bitrealm.dev/formats/mail-archive/) — EML/MBOX layout and `X-ME-*` metadata.
-- [SMS Backup & Restore XML output](https://bitrealm.dev/formats/sms-backup-restore-xml/) — Android-compatible `smses.xml` output and mapping rules.
+- [Mail archive format](https://vault.bitrealm.dev/developer/formats/mail-archive/) — EML/MBOX layout and `X-ME-*` metadata.
+- [SMS Backup & Restore XML output](https://vault.bitrealm.dev/developer/formats/sms-backup-restore-xml/) — Android-compatible `smses.xml` output and mapping rules.
 
 ## Crate-specific documentation
 
