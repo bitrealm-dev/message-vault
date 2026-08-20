@@ -6,7 +6,7 @@ FCL-1.0-ALv2
 
 ## Notice
 
-Copyright ${year} ${licensor name}
+Copyright 2026 Bitrealm
 
 ## Terms and Conditions
 

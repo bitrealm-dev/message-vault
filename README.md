@@ -44,65 +44,32 @@
   </p>
 </div>
 
-
-
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details>
+- [Message Vault](#message-vault)
+  - [About The Project](#about-the-project)
+  - [Who The Project Is For](#who-the-project-is-for)
+  - [Getting Started](#getting-started)
+  - [Contributing](#contributing)
+  - [Additional documentation](#additional-documentation)
+  - [License](#license)
+  - [Project Status](#project-status)
+  - [Maintainers](#maintainers)
+  - [Related Projects](#related-projects)
 
 # Message Vault
 
-![Logo](docs/img/message-vault.jpg)
+<p align="center">
+  <img src="docs/img/message-vault.jpg" width="50%" />
+</p>
 
-Extract messages from phone backups, import them into a local vault, and browse them in a website you control.
+Pry digitial conversations out of apps and store them in 
 
-## What it is
+## About The Project
 
-Message Vault has two parts that run on a machine you control:
+[![Docker][Docker]][Docker-url] [![React][React.js]][React-url] [![Rust][Rust-dev]][Rust-url] [![SQLite][SQLite]][SQLite-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url]  
 
-- **The vault** — a Docker container with a REST API and a SQLite database. It stores your messages and serves them through a website in your browser.
-- **The desktop app** — a program that extracts messages from Apple and Android phone backups, converts them between formats, and imports them into the vault.
+[![Product Name Screen Shot][product-screenshot]](https://example.com)
 
-There is no cloud account. Messages are not uploaded to a Message Vault service. The vault you run has a local login (the demo user, or an account you create).
-
-## Who it is for
-
-People who have phone backups and want to extract, convert, and browse those messages locally.
-
-
-## What you can do
-
-- **Extract** Apple Messages (`chat.db` or an iPhone backup), Android SMS/MMS from SMS Backup & Restore XML, and WhatsApp. GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+ are limited rescue imports for files you already have.
-- **Convert** an existing Message Vault folder between JSON Lines, JSON, CSV, EML, MBOX, and XML.
-- **Import, browse, and export** using the desktop app and the vault.
-
-Full guide: **https://bitrealm.dev/**
-
-Converter and mapping details: [Formats](https://bitrealm.dev/formats/) (Developer).
-
-## Project description
+Extract messages from phone backups, import them into a local vault, and browse them in a website you control. Full guide: https://bitrealm.dev/
 
 {The README template guide includes information on how to write a project description and a project description. Here are some examples of effective phrases for describing a project.}
 
@@ -114,22 +81,27 @@ Unlike *{alternative}*, *{Project Name}* *{verb}* *{noun}*...
 
 {Include screenshots and/or demo videos if applicable}
 
-## Who this project is for
+- **Extract** Apple Messages (`chat.db` or an iPhone backup), Android SMS/MMS from SMS Backup & Restore XML, and WhatsApp. GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+ are limited rescue imports for files you already have.
+- **Convert** an existing Message Vault folder between JSON Lines, JSON, CSV, EML, MBOX, and XML.
+- **Import, browse, and export** using the desktop app and the vault.
 
+Full guide: **https://bitrealm.dev/**
+
+Converter and mapping details: [Formats](https://bitrealm.dev/formats/) (Developer).
+
+<!-- ## What it is
+
+Message Vault has two parts that run on a machine you control:
+
+- **The vault** — a Docker container with a REST API and a SQLite database. It stores your messages and serves them through a website in your browser.
+- **The desktop app** — a program that extracts messages from Apple and Android phone backups, converts them between formats, and imports them into the vault.
+
+There is no cloud account. Messages are not uploaded to a Message Vault service. The vault you run has a local login (the demo user, or an account you create). -->
+
+## Who The Project Is For
+
+People who have phone backups and want to extract, convert, and browse those messages locally.
 This project is intended for {target user} who wants to {user objective}.
-
-
-## About The Project
-
-[![Product Name Screen Shot][product-screenshot]](https://example.com)
-
-Extract messages from phone backups, import them into a local vault, and browse them in a website you control. Full guide: https://bitrealm.dev/
-
-
-### Built With
-
-[![Rust][Rust-dev]][Rust-url] [![React][React.js]][React-url] [![Tauri][Tauri]][Tauri-url] [![Vite][Vite]][Vite-url] [![SQLite][SQLite]][SQLite-url] [![Docker][Docker]][Docker-url]
-
 
 ## Getting Started
 
@@ -156,13 +128,13 @@ Don't forget to give the project a star! Thanks again!
 Complete documentation, user guide and tutorial bitrealm.dev
 developer and architecture documentation in /docs 
 
-## How to get help
+<!-- ## How to get help
 
 {Include links and brief descriptions for support resources. Examples provided in README template guide.}
 
 - Reference link 1
 - Reference link 2
-- Reference link 3...
+- Reference link 3... -->
 
 ## License
 
@@ -209,7 +181,7 @@ Matt Beisser - [message.vault@bitrealm.dev](message.vault@bitrealm.dev)
 
 <!-- Shields.io badges. You can a comprehensive list with many more badges at: https://github.com/inttter/md-badges -->
 
-[React.js]: https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB
+[React.js]: https://img.shields.io/badge/React-%2320232a.svg?logo=react&logoColor=%2361DAFB
 [React-url]: https://reactjs.org/
 
 [Rust-dev]: https://img.shields.io/badge/Rust-%23000000.svg?e&logo=rust&logoColor=white
