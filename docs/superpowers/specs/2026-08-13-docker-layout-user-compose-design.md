@@ -96,7 +96,7 @@ How users start it (docs + README, after the existing `docker run` one-liner):
 ```bash
 mkdir message-vault && cd message-vault
 curl -fsSL -o compose.yml \
-  https://raw.githubusercontent.com/bitrealm-dev/message-vault/main/docker/compose.yml
+  https://raw.githubusercontent.com/bitrealm-io/message-vault/main/docker/compose.yml
 docker compose up -d
 ```
 

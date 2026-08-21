@@ -7,7 +7,7 @@ The desktop app reads phone backups and imports them into the vault. Browsing ca
 
 ## Download
 
-Open the [latest release on GitHub](https://github.com/bitrealm-dev/message-vault/releases) and download the archive for your operating system.
+Open the [latest release on GitHub](https://github.com/bitrealm-io/message-vault/releases) and download the archive for your operating system.
 
 ### Linux
 

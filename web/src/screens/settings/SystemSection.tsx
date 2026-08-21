@@ -208,7 +208,7 @@ export function SystemSection() {
         <p className="mt-1 text-[0.75rem] text-muted">
           Folder must contain both ffmpeg and ffprobe. Leave blank to use system PATH.{" "}
           <a
-            href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg"
+            href="https://bitrealm.io/vault/user/how-to/media-and-privacy/"
             target="_blank"
             rel="noopener"
             className="text-accent"

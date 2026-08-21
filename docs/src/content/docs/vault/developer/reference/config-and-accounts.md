@@ -5,7 +5,7 @@ description: Instance config.toml, per-account data paths, and multi-tenant acco
 
 ## Instance config
 
-Copy [`config/config.toml.example`](https://github.com/bitrealm-dev/message-vault/blob/main/config/config.toml.example)
+Copy [`config/config.toml.example`](https://github.com/bitrealm-io/message-vault/blob/main/config/config.toml.example)
 to `config/config.toml` (gitignored).
 
 ```toml

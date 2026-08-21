@@ -51,8 +51,8 @@ Use the official [Contributor Covenant 2.1](https://www.contributor-covenant.org
 
 ```text
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by contacting the maintainers of the bitrealm-dev/message-vault
-GitHub repository (https://github.com/bitrealm-dev/message-vault).
+reported by contacting the maintainers of the bitrealm-io/message-vault
+GitHub repository (https://github.com/bitrealm-io/message-vault).
 ```
 
 - [ ] **Step 2: Rewrite `README.md`**
@@ -79,7 +79,7 @@ People who have phone backups and want to extract, convert, and browse those mes
 
 ## Getting started
 
-**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.io/introduction/install/).
+**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-io/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.io/introduction/install/).
 
 **Demo vault:**
 
@@ -329,7 +329,7 @@ description: "<one sentence>"
 ---
 ```
 
-Then the existing body with links rewritten to site paths or `https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/...`.
+Then the existing body with links rewritten to site paths or `https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/...`.
 
 - [ ] **Step 3: Delete sources and retarget links**
 

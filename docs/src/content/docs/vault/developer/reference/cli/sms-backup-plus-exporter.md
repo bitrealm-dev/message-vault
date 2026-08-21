@@ -119,6 +119,6 @@ Limited rescue import in the desktop app. Attachment→message pairing in archiv
 
 ## SEE ALSO
 
-- [SMS Backup+ user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/sms-backup-plus/)
+- [SMS Backup+ user guide](https://bitrealm.io/vault/user/how-to/rescue-imports/)
 - [Input EML format](/vault/developer/formats/sms-backup-plus/format/)
 - [Import mapping](/vault/developer/formats/sms-backup-plus/mapping/)

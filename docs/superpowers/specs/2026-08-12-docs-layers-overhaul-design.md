@@ -160,7 +160,7 @@ Rule updates that must match the later PRs:
 
 ### `CODE_OF_CONDUCT.md`
 
-Add Contributor Covenant 2.1 at the repository root. Enforcement is through GitHub (maintainers of `bitrealm-dev/message-vault`). Do not invent a public email unless one already exists for the project.
+Add Contributor Covenant 2.1 at the repository root. Enforcement is through GitHub (maintainers of `bitrealm-io/message-vault`). Do not invent a public email unless one already exists for the project.
 
 `LICENSE` is unchanged.
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo identity
 
-This repository is named **message-vault**. It was formed by merging the former `message-vault-io` (desktop app + exporter libraries) and `message-vault-rs` (vault server) repos. Many Rust package names still use `message-vault-io` for historical reasons — that is the package namespace, not the repo name. The public docs site and GitHub org remain under `bitrealm-dev`.
+This repository is named **message-vault**. It was formed by merging the former `message-vault-io` (desktop app + exporter libraries) and `message-vault-rs` (vault server) repos. Many Rust package names still use `message-vault-io` for historical reasons — that is the package namespace, not the repo name. The public docs site and GitHub org remain under `bitrealm-io`.
 
 ## Docs site
 
@@ -15,7 +15,7 @@ cd docs && npm ci && npm run dev   # local preview
 cd docs && npm run check && npm run build
 ```
 
-**Domain cutover (one-time, after first merge):** In this repo’s GitHub Settings → Pages, set source to GitHub Actions and custom domain `bitrealm.io`. Remove the custom domain from `bitrealm-dev/bitrealm-dev.github.io`. Keep Cloudflare apex A records pointing at GitHub Pages (`185.199.108–111.153`); add any TXT verification record GitHub shows. Leave `api` / `app` / R2 alone. Then run the Docs workflow once.
+**Domain cutover (one-time, after first merge):** In this repo’s GitHub Settings → Pages, set source to GitHub Actions and custom domain `bitrealm.io`. Remove the custom domain from the retired GitHub Pages project if it still lists `bitrealm.io`. Keep Cloudflare apex A records pointing at GitHub Pages (`185.199.108–111.153`); add any TXT verification record GitHub shows. Leave `api` / `app` / R2 alone. Then run the Docs workflow once.
 
 ## Quick start
 
@@ -116,7 +116,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 
 - **JSONL is the canonical Extract Messages output.** The Extract Messages tab always writes JSONL. Users convert to other formats via the Format tab (`message-reexport`), which reads JSONL back through the common message model and writes the target format. This keeps the core pipeline simple and makes format conversion reproducible without re-parsing the backup.
 
-- **Exporters are libraries, not subprocesses.** The GUI links every exporter crate with `default-features = false` (no `cli`/`clap`). Exporter CLIs ship from a separate [message-exporters](https://github.com/bitrealm-dev/message-exporters) repo. Only `wtsexporter` (WhatsApp, Python) and `ffmpeg`/`ffprobe` run as external processes.
+- **Exporters are libraries, not subprocesses.** The GUI links every exporter crate with `default-features = false` (no `cli`/`clap`). Exporter CLIs ship from a separate [message-exporters](https://github.com/bitrealm-io/message-exporters) repo. Only `wtsexporter` (WhatsApp, Python) and `ffmpeg`/`ffprobe` run as external processes.
 
 - **Schema version 3 only.** The code makes no attempt to read older common-message JSON. Breaking changes to the schema are handled by regenerating exports.
 

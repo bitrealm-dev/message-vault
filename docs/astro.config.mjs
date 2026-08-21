@@ -129,13 +129,13 @@ export default defineConfig({
         'Extract messages from phone backups, import them into a local vault, and browse them in a website you control.',
       editLink: {
         baseUrl:
-          'https://github.com/bitrealm-dev/message-vault/edit/main/docs/',
+          'https://github.com/bitrealm-io/message-vault/edit/main/docs/',
       },
       social: [
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/bitrealm-dev/message-vault',
+          href: 'https://github.com/bitrealm-io/message-vault',
         },
       ],
       customCss: ['./src/styles/custom.css'],

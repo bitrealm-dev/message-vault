@@ -925,10 +925,10 @@ impl OwnerHandleSet {
 - [ ] **Step 3: Add `HandleType` dependency to `phone` crate's Cargo.toml**
 
 ```toml
-message-ir = { git = "https://github.com/bitrealm-dev/message-exporters", package = "message-ir" }
+message-ir = { git = "https://github.com/bitrealm-io/message-exporters", package = "message-ir" }
 ```
 
-Wait — `phone` is a shared crate pulled by the server from `bitrealm-dev/message-exporters`. But in the client repo it's at `crates/message/phone/`. Let me check which one this task modifies.
+Wait — `phone` is a shared crate pulled by the server from `bitrealm-io/message-exporters`. But in the client repo it's at `crates/message/phone/`. Let me check which one this task modifies.
 
 Actually, `phone` is in the client repo at `crates/message/phone/`. The server pulls it via git. So this task modifies the client repo.
 

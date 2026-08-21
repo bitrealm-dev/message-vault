@@ -25,7 +25,7 @@ This is the same family of files that [SMS Backup & Restore](https://www.synctec
 
 | Piece | Crate / API |
 |-------|-------------|
-| XML codec (streaming read/write, SMIL, MMS media) | [`message-sbr`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/sbr/) |
+| XML codec (streaming read/write, SMIL, MMS media) | [`message-sbr`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/sbr/) |
 | SBR → common message | [`message_ir_format::read_sbr_documents`](../../../crates/libs/ir-format/src/read_sbr.rs) |
 | Common message → SBR + export sink | [`message_ir_format::FormatSink`](../../../crates/libs/ir-format/) (XML uses `SbrBackupSession` internally) |
 | CLI / GUI | `--format xml` / `OutputFormat::Xml` |
@@ -41,6 +41,6 @@ Exporters use `FormatSink::open` → `write_document` per conversation → `fini
 
 ## Related
 
-- [Message-ir architecture](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md) — shared model and projectors
+- [Message-ir architecture](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/message-ir.md) — shared model and projectors
 - [What’s inside an export](/vault/developer/reference/export-structure/) — end-user workflow
 - [SMS Backup & Restore import mapping](/vault/developer/formats/sms-backup-restore/mapping/) — XML source → shared model

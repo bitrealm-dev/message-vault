@@ -47,7 +47,7 @@ Two audiences, two tones:
 | JSONL (JSON Lines) | message-ir, message-ir JSONL |
 
 - Project name: "Message Vault" (two words, title case)
-- Repo URL: `github.com/bitrealm-dev/message-vault` (one URL, no old repo links)
+- Repo URL: `github.com/bitrealm-io/message-vault` (one URL, no old repo links)
 - User pages: "extract" or "export"; never "parse," "run the exporter,"
   "FormatSink"
 - Reference: real binary names; link to Reference from user pages for CLI
@@ -142,7 +142,7 @@ audience through the server CLI.
 - Purge "message-ir" from all user-facing pages; keep it only in the Reference
   export structure page as a parenthetical "(also called message-ir internally)"
   if needed for CLI-compatibility context
-- Replace repo links with `github.com/bitrealm-dev/message-vault`
+- Replace repo links with `github.com/bitrealm-io/message-vault`
 - Rewrite every page in the new voice — not find-and-replace, full rewrite
 - Existing screenshots may need updating if they show old branding or app names
 

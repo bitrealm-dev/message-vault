@@ -17,7 +17,7 @@ Starlight user and developer guides stay under `/vault/user/` and `/vault/develo
 - Writing full FAQ / About / Contact / Changelog editorial content beyond stubs
 - Refreshing outdated GitHub Release binaries
 - Legal entity / copyright footer copy (no © line)
-- Bulk rename of remaining `bitrealm-dev` links across the whole docs tree (landing and new stubs use `bitrealm-io`; broader cleanup is separate)
+- Bulk rename of remaining `bitrealm-io` links across the whole docs tree (landing and new stubs use `bitrealm-io`; broader cleanup is separate)
 
 ## Page architecture (`/`)
 

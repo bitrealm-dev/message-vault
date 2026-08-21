@@ -111,5 +111,5 @@ Limited rescue import in the desktop app. Field mapping and skip counters: [IMPO
 
 ## SEE ALSO
 
-- [GO SMS Pro user guide](https://bitrealm-dev.github.io/message-vault/other-app-exports/go-sms-pro/)
+- [GO SMS Pro user guide](https://bitrealm.io/vault/user/how-to/rescue-imports/)
 - [Import mapping](/vault/developer/formats/go-sms-pro/mapping/)

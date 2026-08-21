@@ -21,7 +21,7 @@ The named volume keeps the database and assets. `DEMO_DATA` only controls seedin
 
 Copy the database and `data/` directory somewhere safe before you upgrade.
 
-If you started from [docker/compose.yml](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml), upgrade in that same folder:
+If you started from [docker/compose.yml](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml), upgrade in that same folder:
 
 ```bash
 docker compose pull
@@ -32,7 +32,7 @@ A release-shaped image from a git checkout: [Operator Docker](/vault/developer/d
 
 ## Updating the desktop app
 
-Download the new [release archive](https://github.com/bitrealm-dev/message-vault/releases) for your platform. Extract it to the same folder you use now — keep all the files together.
+Download the new [release archive](https://github.com/bitrealm-io/message-vault/releases) for your platform. Extract it to the same folder you use now — keep all the files together.
 
 If you use Import, the `.vault-import-state.jsonl` journal in the work directory is forward-compatible.
 
@@ -40,4 +40,4 @@ If you use Import, the `.vault-import-state.jsonl` journal in the work directory
 
 The vault and the desktop app share JSONL schema version 3. New versions may add fields but will not remove or rename existing ones.
 
-The Docker tag `latest` points at the most recent release. For a specific version, use `bitrealm/message-vault:0.7.3` (no `v` prefix) or a tag from [Releases](https://github.com/bitrealm-dev/message-vault/releases).
+The Docker tag `latest` points at the most recent release. For a specific version, use `bitrealm/message-vault:0.7.3` (no `v` prefix) or a tag from [Releases](https://github.com/bitrealm-io/message-vault/releases).

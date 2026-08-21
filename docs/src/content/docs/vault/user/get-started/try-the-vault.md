@@ -33,12 +33,12 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
-Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-dev/message-vault/blob/main/docker/compose.yml) and start it:
+Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) and start it:
 
 ```bash
 mkdir message-vault && cd message-vault
 curl -fsSL -o compose.yml \
-  https://raw.githubusercontent.com/bitrealm-dev/message-vault/main/docker/compose.yml
+  https://raw.githubusercontent.com/bitrealm-io/message-vault/main/docker/compose.yml
 docker compose up -d
 ```
 

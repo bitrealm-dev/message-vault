@@ -4,7 +4,7 @@
 
 **Goal:** Rewrite root-level README and CONTRIBUTING, fix the landing page index.mdx, update broken links and outdated references across all user-facing and maintainer docs, and ensure a unified voice for two audiences (users and developers).
 
-**Architecture:** The message-vault repo is the unified project (was `message-vault-io` + `message-vault-rs`). User-facing docs live under `docs/src/content/docs/` and are published via the `bitrealm-dev.github.io` hub. Maintainer docs live under `docs/maintainers/`. This plan fixes all files — user-facing pages get plain-language rewrites; maintainer docs get corrected repo URLs, docs URLs, and paths while keeping technical precision.
+**Architecture:** The message-vault repo is the unified project (was `message-vault-io` + `message-vault-rs`). User-facing docs live under `docs/src/content/docs/` and are published via the `bitrealm-io.github.io` hub. Maintainer docs live under `docs/maintainers/`. This plan fixes all files — user-facing pages get plain-language rewrites; maintainer docs get corrected repo URLs, docs URLs, and paths while keeping technical precision.
 
 **Tech Stack:** Markdown/MDX (Astro Starlight). No code changes — documentation only.
 
@@ -13,8 +13,8 @@
 - Design spec: `docs/superpowers/specs/2026-08-07-docs-rewrite-design.md` — follow voice/naming rules, IA, and migration rules verbatim
 - User-facing voice: plain language, no internal jargon ("message-ir" → "JSONL", "FormatSink" → never use, "exporter crate" → never use)
 - Developer voice: technical precision OK; crate names like `message-vault-io-gui` are legitimate internal names
-- All repo URLs: `github.com/bitrealm-dev/message-vault` (never `message-vault-io`, `message-vault-rs`, `message-vault-server`)
-- All docs URLs: `bitrealm.io/vault/` or `bitrealm-dev.github.io/vault/` (never `.../message-vault-io/`, `.../message-vault-rs/`, `.../exporters/`)
+- All repo URLs: `github.com/bitrealm-io/message-vault` (never `message-vault-io`, `message-vault-rs`, `message-vault-server`)
+- All docs URLs: `bitrealm.io/vault/` or `bitrealm-io.github.io/vault/` (never `.../message-vault-io/`, `.../message-vault-rs/`, `.../exporters/`)
 - Project name: "Message Vault" (two words, title case)
 - Binary name: `message-vault` (the desktop app binary — was `message-vault-io`)
 - Verify: `cd docs && npm run build` passes with no broken links after all changes
@@ -53,11 +53,11 @@ Read the full guide (install, desktop app, supported backups, formats, API):
 
 **https://bitrealm.io/vault/**
 
-Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
+Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-io/bitrealm-io.github.io).
 
 ## Quick start
 
-**Desktop app:** Download the platform archive from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it and keep every file in the same folder. Run `message-vault`.
+**Desktop app:** Download the platform archive from the latest [Release](https://github.com/bitrealm-io/message-vault/releases). Extract it and keep every file in the same folder. Run `message-vault`.
 
 **Vault server (Docker):**
 
@@ -150,7 +150,7 @@ Setup, build, run, test, and contribution rules: [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Releases
 
-Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives — **GUI only** plus `lib/` (ffmpeg/ffprobe), `cli/wtsexporter`, and `licenses/`: [Releases](https://github.com/bitrealm-dev/message-vault/releases).
+Prebuilt Linux (`.tgz`), Windows, and macOS Apple Silicon (`.zip`) archives — **GUI only** plus `lib/` (ffmpeg/ffprobe), `cli/wtsexporter`, and `licenses/`: [Releases](https://github.com/bitrealm-io/message-vault/releases).
 
 Maintainer documentation (architecture, GUI design, signing): [`docs/maintainers/`](docs/maintainers/README.md). Release steps: [Development and releases](docs/maintainers/developing.md).
 
@@ -161,7 +161,7 @@ Most converters are MIT — see [LICENSE](LICENSE). `imessage-ir-exporter` is GP
 
 - [ ] **Step 2: Verify no old references remain**
 
-Run: `grep -n 'message-vault-io\|message-vault-rs\|bitrealm-dev.github.io/message-vault-io\|bitrealm-dev.github.io/message-vault-rs\|bitrealm-dev.github.io/exporters' README.md`
+Run: `grep -n 'message-vault-io\|message-vault-rs\|bitrealm-io.github.io/message-vault-io\|bitrealm-io.github.io/message-vault-rs\|bitrealm-io.github.io/exporters' README.md`
 Expected: No output (except `message-vault-io-gui` crate name which is legitimate)
 
 - [ ] **Step 3: Commit**
@@ -237,7 +237,7 @@ sudo dnf install \
 ## Clone and build
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault.git
+git clone https://github.com/bitrealm-io/message-vault.git
 cd message-vault
 cargo build --workspace
 ```
@@ -318,7 +318,7 @@ Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI 
 Local options:
 
 - Install WhatsApp helper: `pip install 'whatsapp-chat-exporter>=0.13'`
-- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-dev/message-vault/releases) next to your built GUI
+- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-io/message-vault/releases) next to your built GUI
 - After `cargo build --workspace --release`, point helpers at the build output:
 
 ```powershell
@@ -411,7 +411,7 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 
 - [ ] **Step 2: Verify no old references remain**
 
-Run: `grep -n 'message-vault-io.git\|message-vault-server.git\|bitrealm-dev.github.io/message-vault-io\|message-exporters/releases' CONTRIBUTING.md`
+Run: `grep -n 'message-vault-io.git\|message-vault-server.git\|bitrealm-io.github.io/message-vault-io\|message-exporters/releases' CONTRIBUTING.md`
 Expected: No output
 
 - [ ] **Step 3: Commit**
@@ -609,13 +609,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - Modify: `docs/maintainers/formats/mail-archive.md`
 
 **Interfaces:**
-- Consumes: Correct repo URL (`bitrealm-dev/message-vault`), docs URL (`bitrealm.io/vault/`), new doc paths
+- Consumes: Correct repo URL (`bitrealm-io/message-vault`), docs URL (`bitrealm.io/vault/`), new doc paths
 - Produces: Maintainer docs with accurate references while keeping internal technical names
 
 - [ ] **Step 1: Fix maintainers/README.md — one URL fix**
 
 Edit `docs/maintainers/README.md` line 3:
-From: `<https://bitrealm-dev.github.io/message-vault-io/>`
+From: `<https://bitrealm.io/vault/user/>`
 To: `<https://bitrealm.io/vault/>`
 
 - [ ] **Step 2: Fix maintainers/developing.md — old URLs, release filenames, docs references**
@@ -629,11 +629,11 @@ To: `(start with [Export structure](../src/content/docs/reference/export-structu
 Lines 17, 21, 70, 72, 75 — `message-vault-io-gui` crate references are legitimate internal names; keep them.
 
 Lines 22, 26 — old repo URLs:
-From: `https://github.com/bitrealm-dev/message-vault-io/actions/workflows/release.yml`
-To: `https://github.com/bitrealm-dev/message-vault/actions/workflows/release.yml`
+From: `https://github.com/bitrealm-io/message-vault/actions/workflows/release.yml`
+To: `https://github.com/bitrealm-io/message-vault/actions/workflows/release.yml`
 
-From: `https://github.com/bitrealm-dev/message-vault-io/releases`
-To: `https://github.com/bitrealm-dev/message-vault/releases`
+From: `https://github.com/bitrealm-io/message-vault/releases`
+To: `https://github.com/bitrealm-io/message-vault/releases`
 
 Lines 36-38 — archive filenames (keep `message-vault-io` in filenames if they reflect actual release artifact names):
 These archive names reflect the current crate name `message-vault-io-gui`. Keep them for now — they're factual.
@@ -646,7 +646,7 @@ Lines 58-60 — message-exporters reference (this is factually correct — stand
 Keep this reference but update URL to current if needed.
 
 Line 92 — docs URL:
-From: `https://bitrealm-dev.github.io/message-vault-io/`
+From: `https://bitrealm.io/vault/user/`
 To: `https://bitrealm.io/vault/`
 
 - [ ] **Step 3: Fix maintainers/development.md — old repo references, Next.js mentions**
@@ -654,7 +654,7 @@ To: `https://bitrealm.io/vault/`
 Apply these edits to `docs/maintainers/development.md`:
 
 Line 4 — old docs URL:
-From: `<https://bitrealm-dev.github.io/message-vault-rs/>`
+From: `<https://bitrealm.io/vault/developer/>`
 To: `<https://bitrealm.io/vault/>`
 
 Line 11 — Next.js mention:
@@ -673,7 +673,7 @@ Lines 169-170 — message-exporters reference and message-ir jargon:
 From:
 ```
 Keep the import API running while pushing a message-ir export from
-[message-exporters](https://bitrealm-dev.github.io/message-exporters/)
+[message-exporters](https://github.com/bitrealm-io/message-exporters)
 ```
 To:
 ```
@@ -686,7 +686,7 @@ desktop app or vault-push CLI.
 Apply these edits to `docs/maintainers/roadmap.md`:
 
 Line 14 — message-exporters reference:
-From: `[Message Exporters](https://bitrealm-dev.github.io/message-exporters/)`
+From: `[Message Exporters](https://github.com/bitrealm-io/message-exporters)`
 To: `the desktop app`
 
 Line 121 — Next.js mention:
@@ -706,8 +706,8 @@ From: `Matches message-vault-rs Fastmail-style seeds.`
 To: `Matches the vault server Fastmail-style search seeds.`
 
 Line 415 — old repo URL:
-From: `[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter)`
-To: `[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault/tree/main/crates/exporters/imessage-ir-exporter)`
+From: `[imessage-ir-exporter](https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter)`
+To: `[imessage-ir-exporter](https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter)`
 
 Search for and fix any remaining `message-vault-io` URLs in the file that reference the old repo location (not crate names).
 
@@ -751,7 +751,7 @@ To: `@message-vault.local`
 
 Run:
 ```bash
-grep -rn 'bitrealm-dev.github.io/message-vault-io\|bitrealm-dev.github.io/message-vault-rs\|/understand-output/\|Next\.\?[Jj]s' docs/maintainers/
+grep -rn 'bitrealm-io.github.io/message-vault-io\|bitrealm-io.github.io/message-vault-rs\|/understand-output/\|Next\.\?[Jj]s' docs/maintainers/
 ```
 Expected: No output (except legitimate `message-vault-io-gui` crate references which should be reviewed case-by-case)
 
@@ -762,7 +762,7 @@ git add docs/maintainers/
 git commit -m "docs: fix outdated URLs and references in maintainer docs
 
 Update docs URLs to bitrealm.io/vault/. Fix old repo URLs to
-bitrealm-dev/message-vault. Replace Next.js references with
+bitrealm-io/message-vault. Replace Next.js references with
 'web UI' or 'web interface'. Fix old understand-output/ doc paths
 to reference/. Update binary names in signing docs.
 
@@ -958,7 +958,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 1: Fix crates/cli/vault-push/README.md — old repo URL**
 
 Line 3 — old repo reference:
-From: `Push a Message Vault **JSONL** export folder into [Message Vault](https://github.com/bitrealm-dev/message-vault-rs).`
+From: `Push a Message Vault **JSONL** export folder into [Message Vault](https://github.com/bitrealm-io/message-vault).`
 To: `Push a Message Vault **JSONL** export folder into a running Message Vault server.`
 
 - [ ] **Step 2: Fix crates/cli/vault-push/docs/MANPAGE.md — Next.js reference**
@@ -1078,7 +1078,7 @@ grep -rn 'message-vault-rs' docs/src/content/docs/ README.md CONTRIBUTING.md doc
 Expected: No output
 
 ```bash
-grep -rn 'bitrealm-dev.github.io/message-vault-io\|bitrealm-dev.github.io/message-vault-rs\|bitrealm-dev.github.io/exporters' docs/src/content/docs/ README.md CONTRIBUTING.md docs/maintainers/ 2>/dev/null
+grep -rn 'bitrealm-io.github.io/message-vault-io\|bitrealm-io.github.io/message-vault-rs\|bitrealm-io.github.io/exporters' docs/src/content/docs/ README.md CONTRIBUTING.md docs/maintainers/ 2>/dev/null
 ```
 Expected: No output
 
