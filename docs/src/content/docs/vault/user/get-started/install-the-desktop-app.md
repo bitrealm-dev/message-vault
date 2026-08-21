@@ -42,7 +42,7 @@ If you move the app without its helpers, media conversion and WhatsApp extractio
 
 ## Build from source
 
-Compiling the app and the vault from a git checkout: [Run from source](/vault/developer/run-from-source/). Linux system libraries and WSL notes stay in [CONTRIBUTING.md](https://github.com/bitrealm-dev/message-vault/blob/main/CONTRIBUTING.md).
+Compiling the app and the vault from a git checkout: [Run from source](/vault/developer/run-from-source/). Linux system libraries and WSL notes are on [Contributing](/vault/developer/contributing/).
 
 ## Next
 

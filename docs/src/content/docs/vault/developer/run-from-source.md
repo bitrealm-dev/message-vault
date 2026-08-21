@@ -3,7 +3,7 @@ title: Run from source
 description: Build and run the vault and the desktop app from a git checkout.
 ---
 
-This page is enough to run Message Vault from a clone. Linux packages, WSL, tests, and pull-request rules stay in [CONTRIBUTING.md](https://github.com/bitrealm-dev/message-vault/blob/main/CONTRIBUTING.md).
+This page is enough to run Message Vault from a clone. Linux packages, WSL, tests, and pull-request rules are on [Contributing](/vault/developer/contributing/).
 
 ## Prerequisites
 
@@ -55,10 +55,10 @@ cargo build --release --workspace
 ./target/release/message-vault
 ```
 
-On Linux the desktop app also needs WebKit2GTK and GTK3 at build and runtime. The package lists are in CONTRIBUTING.md.
+On Linux the desktop app also needs WebKit2GTK and GTK3 at build and runtime. The package lists are on [Contributing](/vault/developer/contributing/#linux-packages).
 
 ## Next
 
-- [CONTRIBUTING.md](https://github.com/bitrealm-dev/message-vault/blob/main/CONTRIBUTING.md) — tests, formatting, Linux packages, WSL
+- [Contributing](/vault/developer/contributing/) — tests, formatting, Linux packages, WSL, pull requests
 - [Command-line tools](/vault/developer/reference/cli/) — exporter and vault-push/pull binaries
 - [Install the desktop app](/vault/user/get-started/install-the-desktop-app/) — GitHub Releases instead of compiling
