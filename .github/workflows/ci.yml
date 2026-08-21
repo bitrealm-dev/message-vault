@@ -4,9 +4,33 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # Tag pushes still run (path filters do not apply to tags). Skip the
+    # full Rust workspace on docs-only / markdown-only commits to main.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".cursor/**"
+      - "LICENSE*"
+      - ".gitignore"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".cursor/**"
+      - "LICENSE*"
+      - ".gitignore"
   workflow_dispatch:
+
+# A new push to the same branch cancels the previous run. That stops
+# queued Rust jobs from sitting until the 6-hour default timeout.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 permissions:
   contents: write
@@ -17,6 +41,7 @@ jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -34,6 +59,7 @@ jobs:
   test:
     name: Build & Test (Rust)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -66,6 +92,7 @@ jobs:
   web-lint:
     name: Lint (web)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -86,6 +113,7 @@ jobs:
   web-test:
     name: Test (web)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -108,6 +136,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [fmt, test]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -156,6 +185,7 @@ jobs:
     name: Desktop App (${{ matrix.label }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [fmt, test]
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -259,6 +289,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
