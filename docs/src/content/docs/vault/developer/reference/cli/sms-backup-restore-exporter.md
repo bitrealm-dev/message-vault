@@ -113,6 +113,6 @@ Input XML reference: [INPUT_FORMAT.md](/vault/developer/formats/sms-backup-resto
 
 ## SEE ALSO
 
-- [Android text-message user guide](https://bitrealm.io/vault/user/prepare-a-backup/android-sms/)
+- [Android text-message user guide](/vault/user/prepare-a-backup/android-sms/)
 - [Input format](/vault/developer/formats/sms-backup-restore/input/)
 - [Import mapping](/vault/developer/formats/sms-backup-restore/mapping/)
