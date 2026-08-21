@@ -51,7 +51,7 @@ Rules from the 2026-08-07 spec stay on User Guide pages:
 | the desktop app | `message-vault-io`, the GUI, the Tauri app |
 | JSONL (JSON Lines) | message-ir, message-ir JSONL |
 
-Project name: Message Vault (two words, title case). Repo: `github.com/bitrealm-dev/message-vault`.
+Project name: Message Vault (two words, title case). Repo: `github.com/bitrealm-io/message-vault`.
 
 Developer pages may name binaries, crate folders, HTTP paths, and vendor field names.
 

@@ -344,7 +344,7 @@ EOF
 ---
 const userGuide = "https://vault.bitrealm.io/user/";
 const developer = "https://vault.bitrealm.io/developer/";
-const github = "https://github.com/bitrealm-dev/message-vault";
+const github = "https://github.com/bitrealm-io/message-vault";
 ---
 
 <html lang="en">

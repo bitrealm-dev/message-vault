@@ -101,7 +101,7 @@ impl Exporter {
             Self::OpenExtract => "https://www.openextract.app/",
             Self::Imazing => "https://imazing.com/",
             Self::Imessage => {
-                "https://github.com/bitrealm-dev/message-vault-io/tree/main/crates/exporters/imessage-ir-exporter"
+                "https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter"
             }
             Self::Whatsapp => "https://github.com/KnugiHK/WhatsApp-Chat-Exporter",
         }

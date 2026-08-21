@@ -57,7 +57,7 @@ Custom Astro page. Colors from `docs/src/styles/custom.css`. Not Starlight’s s
 
 - User Guide → `https://vault.bitrealm.io/user/`
 - Developer → `https://vault.bitrealm.io/developer/`
-- GitHub → `https://github.com/bitrealm-dev/message-vault`
+- GitHub → `https://github.com/bitrealm-io/message-vault`
 
 **Body, in order:**
 

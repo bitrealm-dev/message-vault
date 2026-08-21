@@ -26,7 +26,7 @@
 <!-- PROJECT LOGO -->
 <br />
 <div align="center">
-  <a href="https://github.com/bitrealm-dev/message-vault">
+  <a href="https://github.com/bitrealm-io/message-vault">
     <img src="docs/img/vault_icon.png" alt="Icon" width="250" height="250">
   </a>
 
@@ -37,11 +37,11 @@
     <br />
     <a href="https://bitrealm.io/vault/user/"><strong>Explore the docs »</strong></a>
     <br />
-    <a href="https://github.com/bitrealm-dev/message-vault">View Demo</a>
+    <a href="https://github.com/bitrealm-io/message-vault">View Demo</a>
     &middot;
-    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
+    <a href="https://github.com/bitrealm-io/message-vault/issues/new?labels=bug&template=bug_report.md">Report Bug</a>
     &middot;
-    <a href="https://github.com/bitrealm-dev/message-vault/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
+    <a href="https://github.com/bitrealm-io/message-vault/issues/new?labels=enhancement&template=feature_request.md">Request Feature</a>
   </p>
 </div>
 
@@ -159,16 +159,16 @@ Matt Beisser - [vault@bitrealm.io](vault@bitrealm.io)
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-<!-- [contributors-shield]: https://img.shields.io/github/contributors/bitrealm-dev/message-vault.svg?style=for-the-badge
-[contributors-url]: https://github.com/bitrealm-dev/message-vault/graphs/contributors -->
-<!-- [forks-shield]: https://img.shields.io/github/forks/bitrealm-dev/message-vault.svg?style=for-the-badge
-[forks-url]: https://github.com/bitrealm-dev/message-vault/network/members
-[stars-shield]: https://img.shields.io/github/stars/bitrealm-dev/message-vault.svg?style=for-the-badge
-[stars-url]: https://github.com/bitrealm-dev/message-vault/stargazers -->
-[issues-shield]: https://img.shields.io/github/issues/bitrealm-dev/message-vault.svg
-[issues-url]: https://github.com/bitrealm-dev/message-vault/issues
+<!-- [contributors-shield]: https://img.shields.io/github/contributors/bitrealm-io/message-vault.svg?style=for-the-badge
+[contributors-url]: https://github.com/bitrealm-io/message-vault/graphs/contributors -->
+<!-- [forks-shield]: https://img.shields.io/github/forks/bitrealm-io/message-vault.svg?style=for-the-badge
+[forks-url]: https://github.com/bitrealm-io/message-vault/network/members
+[stars-shield]: https://img.shields.io/github/stars/bitrealm-io/message-vault.svg?style=for-the-badge
+[stars-url]: https://github.com/bitrealm-io/message-vault/stargazers -->
+[issues-shield]: https://img.shields.io/github/issues/bitrealm-io/message-vault.svg
+[issues-url]: https://github.com/bitrealm-io/message-vault/issues
 [license-shield]: https://img.shields.io/badge/license-FCL_1.0-blue
-[license-url]: https://github.com/bitrealm-dev/message-vault/blob/main/LICENSE.md
+[license-url]: https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md
 
 <!-- Shields.io badges. You can a comprehensive list with many more badges at: https://github.com/inttter/md-badges -->
 

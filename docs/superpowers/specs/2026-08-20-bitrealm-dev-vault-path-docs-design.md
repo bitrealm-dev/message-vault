@@ -6,12 +6,12 @@ This spec replaces the hostname plan in `2026-08-20-bitrealm-company-page-and-va
 
 The docs site is one Astro Starlight app under `docs/`, published by `.github/workflows/docs.yml` to GitHub Pages.
 
-Verified 2026-08-20 against [Managing a custom domain for your GitHub Pages site](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site), [Troubleshooting custom domains](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages), and `GET /repos/bitrealm-dev/message-vault/pages`:
+Verified 2026-08-20 against [Managing a custom domain for your GitHub Pages site](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site), [Troubleshooting custom domains](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages), and `GET /repos/bitrealm-io/message-vault/pages`:
 
 - The Pages custom domain is a single field. Live value: `bitrealm.io`.
 - Publish source is a GitHub Actions workflow, so `docs/public/CNAME` is ignored. The Pages settings field is the source of truth.
 - GitHub does not support both a root domain and a second custom subdomain on one site. The documented unsupported example is `example.com` and `docs.example.com`.
-- A subdomain CNAME must point at `bitrealm-dev.github.io`, not at `bitrealm.io`. Pointing a subdomain at the root domain breaks HTTPS.
+- A subdomain CNAME must point at `bitrealm-io.github.io`, not at `bitrealm.io`. Pointing a subdomain at the root domain breaks HTTPS.
 - Extra DNS names that try to use Pages can block the `bitrealm.io` certificate. At spec time the certificate state was `dns_changed` and Enforce HTTPS was off.
 - GitHub’s extra-name option is a **redirect** (the address bar changes). A Cloudflare Worker can keep a second name in the address bar, but that is not a GitHub Pages feature.
 

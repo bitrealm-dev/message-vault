@@ -5,7 +5,7 @@ description: "How SMS Backup+ EML fields become the shared conversation structur
 
 How flat and archive `.eml` messages become shared `ConversationDocument` values, including identity resolution, deduplication, and retained source data.
 
-Input layouts: [format](/vault/developer/formats/sms-backup-plus/format/). Shared model: [message-ir](https://github.com/bitrealm-dev/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-dev/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
+Input layouts: [format](/vault/developer/formats/sms-backup-plus/format/). Shared model: [message-ir](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/message-ir.md). CSV projection: [CSV columns](/vault/developer/reference/csv-columns/) and [`message_ir_format::CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs).
 
 ## Goal / non-goal
 

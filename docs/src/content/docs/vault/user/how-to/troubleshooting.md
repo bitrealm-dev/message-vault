@@ -73,4 +73,4 @@ Schema version, `vault-push`, and HTTP status codes: [HTTP API](/vault/developer
 
 ## Getting help
 
-Open an issue on [GitHub](https://github.com/bitrealm-dev/message-vault/issues). Include the operating system, Docker vs from-source, the backup source, and the error text. Do not include passwords, API tokens, phone numbers, or message content.
+Open an issue on [GitHub](https://github.com/bitrealm-io/message-vault/issues). Include the operating system, Docker vs from-source, the backup source, and the error text. Do not include passwords, API tokens, phone numbers, or message content.

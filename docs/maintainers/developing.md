@@ -27,11 +27,11 @@ The release version is **`crates/message-vault-io-gui/Cargo.toml` → `version`*
 ### Steps
 
 1. Bump `version` in [`crates/message-vault-io-gui/Cargo.toml`](../../crates/message-vault-io-gui/Cargo.toml) and merge whatever should ship onto `main` (or the branch you intend to build; the workflow checks out the branch you select when you run it).
-2. Open [Actions → Release](https://github.com/bitrealm-dev/message-vault/actions/workflows/release.yml).
+2. Open [Actions → Release](https://github.com/bitrealm-io/message-vault/actions/workflows/release.yml).
 3. Click **Run workflow**.
 4. Choose the branch to build from (usually `main`).
 5. Wait for all three OS jobs (Linux, Windows, macOS) to finish and for the release job to create the GitHub Release.
-6. Confirm the release at [Releases](https://github.com/bitrealm-dev/message-vault/releases). The tag will be `v` plus the Cargo.toml version (`0.4.0` → `v0.4.0`). The workflow fills release notes (Highlights, Upgrade notes, Archives, Layout) from [`.github/workflows/release.yml`](../../.github/workflows/release.yml); edit that `--notes` block when the next cut needs different copy.
+6. Confirm the release at [Releases](https://github.com/bitrealm-io/message-vault/releases). The tag will be `v` plus the Cargo.toml version (`0.4.0` → `v0.4.0`). The workflow fills release notes (Highlights, Upgrade notes, Archives, Layout) from [`.github/workflows/release.yml`](../../.github/workflows/release.yml); edit that `--notes` block when the next cut needs different copy.
 
 You need write access to the repository (to run workflows that create releases and tags).
 
@@ -64,7 +64,7 @@ Layout (same on every platform):
 - `LICENSE`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_WTSEXPORTER.LICENSE`, `THIRD_PARTY_FFMPEG.LICENSE`
 
 Standalone exporter CLIs (`*-exporter`, `message-reexport`, `vault-push`) ship from
-[message-exporters](https://github.com/bitrealm-dev/message-exporters) releases, not
+[message-exporters](https://github.com/bitrealm-io/message-exporters) releases, not
 this product. The GUI finds `ffmpeg`/`ffprobe` under `lib/` and `wtsexporter` under
 `cli/`. Keep the extracted archive together.
 

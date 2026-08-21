@@ -412,7 +412,7 @@ temp dir under Output.
 ### iPhone backup — `imessage-ir-exporter`
 
 Form link label: **imessage-ir-exporter** →
-[imessage-ir-exporter](https://github.com/bitrealm-dev/message-vault/tree/main/crates/exporters/imessage-ir-exporter).
+[imessage-ir-exporter](https://github.com/bitrealm-io/message-vault/tree/main/crates/exporters/imessage-ir-exporter).
 Dropdown stays **iPhone backup**.
 
 GUI defaults: JSONL for Extract Messages, `--copy-method clone` (or `disabled`),

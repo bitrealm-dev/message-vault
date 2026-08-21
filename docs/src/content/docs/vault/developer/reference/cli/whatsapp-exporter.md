@@ -134,5 +134,5 @@ Supported exporter. Android needs an already extracted / decryptable database or
 
 ## SEE ALSO
 
-- [Android WhatsApp user guide](https://bitrealm-dev.github.io/message-vault/android/whatsapp/)
-- [Apple WhatsApp user guide](https://bitrealm-dev.github.io/message-vault/apple/whatsapp/)
+- [Android WhatsApp user guide](https://bitrealm.io/vault/user/prepare-a-backup/android-whatsapp/)
+- [Apple WhatsApp user guide](https://bitrealm.io/vault/user/prepare-a-backup/iphone-whatsapp/)

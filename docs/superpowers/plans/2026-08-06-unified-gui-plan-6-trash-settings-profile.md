@@ -223,7 +223,7 @@ export default function SettingsScreen() {
           </FormRow>
           <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "0.25rem" }}>
             Leave blank to use system PATH. Set a custom path if ffmpeg is installed in a non-standard location.{" "}
-            <a href="https://bitrealm-dev.github.io/message-vault-io/ffmpeg" target="_blank" rel="noopener" style={{ color: "#2563eb" }}>
+            <a href="https://bitrealm.io/vault/user/how-to/media-and-privacy/" target="_blank" rel="noopener" style={{ color: "#2563eb" }}>
               Install help
             </a>
           </p>

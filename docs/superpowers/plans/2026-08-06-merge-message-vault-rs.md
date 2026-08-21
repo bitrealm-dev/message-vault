@@ -731,9 +731,9 @@ git push origin merge/message-vault-rs
 - [ ] **Step 6: (Manual, post-merge) Rename GitHub repo**
 
 This step cannot be automated — it's a GitHub settings action:
-1. Go to `github.com/bitrealm-dev/message-vault-io` → Settings
+1. Go to `github.com/bitrealm-io/message-vault` → Settings
 2. Rename to `message-vault`
-3. Update local remotes: `git remote set-url origin git@github.com:bitrealm-dev/message-vault.git`
+3. Update local remotes: `git remote set-url origin git@github.com:bitrealm-io/message-vault.git`
 
 ---
 
