@@ -1,5 +1,5 @@
-{{< /*<!-- markdownlint-disable MD041 First line heading-->*/ >}}
-{{< /*<!-- markdownlint-disable MD033 No bare URLs-->*/ >}}
+<!-- markdownlint-disable MD041 First line heading-->
+<!-- markdownlint-disable MD033 No bare URLs-->
 
 <!-- Template inspired by the Best-README-Template
      https://github.com/blackwell-systems/oss-kit/blob/main/templates/README.template.md
@@ -27,7 +27,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/bitrealm-dev/message-vault">
-    <img src="img/vault_icon.png" alt="Icon" width="250" height="250">
+    <img src="docs/img/vault_icon.png" alt="Icon" width="250" height="250">
   </a>
 
 <h1 align="center">Message Vault</h1>
@@ -165,7 +165,7 @@ Matt Beisser - [message.vault@bitrealm.dev](message.vault@bitrealm.dev)
 [forks-url]: https://github.com/bitrealm-dev/message-vault/network/members
 [stars-shield]: https://img.shields.io/github/stars/bitrealm-dev/message-vault.svg?style=for-the-badge
 [stars-url]: https://github.com/bitrealm-dev/message-vault/stargazers -->
-[issues-shield]: https://img.shields.io/github/issues/bitrealm-dev/message-vault.svg?style=for-the-badge
+[issues-shield]: https://img.shields.io/github/issues/bitrealm-dev/message-vault.svg
 [issues-url]: https://github.com/bitrealm-dev/message-vault/issues
 [license-shield]: https://img.shields.io/badge/license-FCL_1.0-blue
 [license-url]: https://github.com/bitrealm-dev/message-vault/blob/main/LICENSE.md
