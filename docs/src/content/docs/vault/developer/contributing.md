@@ -3,27 +3,31 @@ title: Contributing
 description: Set up a development environment, run tests, and open pull requests for Message Vault.
 ---
 
-Welcome. Product overview and install paths are in the [User Guide](/vault/user/) and the repository [README](https://github.com/bitrealm-io/message-vault/blob/main/README.md). Architecture and release notes for maintainers live under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
+Thank you for contributing to Message Vault.
+
+- **Product overview and install paths:** [User Guide](/vault/user/) and the repository [README](https://github.com/bitrealm-io/message-vault/blob/main/README.md)
+- **Clone and run without the full checklist:** [Run from source](/vault/developer/run-from-source/)
+- **Release-shaped Docker / published image:** [Operator Docker](/vault/developer/docker-compose/)
+- **Architecture and maintainer notes:** [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
 
 Before contributing, read the [Code of Conduct](https://github.com/bitrealm-io/message-vault/blob/main/CODE_OF_CONDUCT.md).
-
-For a short “clone and run” path without the full contributor checklist, see [Run from source](/vault/developer/run-from-source/).
 
 ## Prerequisites
 
 | Tool | Notes |
 |------|--------|
-| **Rust** | Stable toolchain via [rustup](https://rustup.rs/). This workspace uses Rust edition **2024**, which needs **Rust 1.85+**. CI builds with the latest stable. |
+| **Rust** | Stable toolchain via [rustup](https://rustup.rs/). Edition **2024** needs **Rust 1.85+**. CI uses the latest stable. |
 | **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
 | **macOS** | Xcode Command Line Tools (`xcode-select --install`). |
-| **Linux** | C toolchain plus GUI system libs (see [Linux packages](#linux-packages) below). |
-| **Node.js 22+** | For the desktop app frontend (`web/`) and the docs site (`docs/`). |
+| **Linux** | C toolchain plus GUI system libraries (see [Linux packages](#linux-packages)). |
+| **Node.js 22+** | Desktop frontend (`web/`) and the docs site (`docs/`). |
+| **tauri-cli 2.x** | `cargo install tauri-cli --version "^2"` for `cargo tauri dev` / `cargo tauri build`. |
 
-Optional for full WhatsApp / media features while developing: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
+Optional while developing WhatsApp extract or media convert/compress: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
 
 ### Linux packages
 
-The Tauri desktop app needs a C toolchain and WebKit2GTK system libraries at **build time** and **runtime**. On Debian/Ubuntu:
+The Tauri desktop app needs a C toolchain and WebKit2GTK at **build time** and **runtime**. On Debian/Ubuntu:
 
 ```bash
 sudo apt update
@@ -46,16 +50,20 @@ sudo dnf install \
 
 ### WSL2
 
-Use WSL2 with WSLg enabled (Windows 11) or an X server like VcXsrv (Windows 10). Keep the repository in the Linux filesystem (`~/repo/...`), not under `/mnt/c`. Install Rust and Node.js inside WSL rather than invoking Windows `cargo` or `npm.cmd`.
+Use WSL2 with WSLg (Windows 11) or an X server such as VcXsrv (Windows 10). Keep the repository under the Linux filesystem (`~/…`), not `/mnt/c`. Install Rust and Node.js inside WSL; do not call Windows `cargo` or `npm.cmd` from a Linux checkout.
 
-Set `DISPLAY` if using a standalone X server:
+If a standalone X server is required:
 
 ```bash
 export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
 cargo tauri dev
 ```
 
-## Clone and build
+## Build and run (contributor path)
+
+Day-to-day vault + website steps are on [Run from source](/vault/developer/run-from-source/) (`./scripts/run-vault-dev.sh`, `cd web && npm run dev`, `cargo tauri dev`).
+
+Workspace compile (first run can take several minutes):
 
 ```bash
 git clone https://github.com/bitrealm-io/message-vault.git
@@ -63,66 +71,24 @@ cd message-vault
 cargo build --workspace
 ```
 
-The first build compiles every workspace crate and can take several minutes.
-
-Release profile:
+`src-tauri/` is **not** a workspace member. Format and build it separately when changing the desktop shell:
 
 ```bash
-cargo build --workspace --release
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo build --manifest-path src-tauri/Cargo.toml
 ```
 
-Release packaging uses `cargo tauri build`, which bundles the desktop app frontend, Rust backend, and all exporter libraries into a single platform installer. Exporters are linked as libraries. Standalone exporter CLIs can be built from this repo as well.
+Desktop packaging for installers is `cargo tauri build` (not a substitute for `cargo build --workspace`). The Tauri package name is `message-vault-io-tauri`; after a release-profile Tauri build, the binary under `src-tauri`’s target directory is named from that package (not a top-level `message-vault` crate).
 
-## Run the app
-
-### One-time setup
-
-```bash
-cargo install tauri-cli --version "^2"
-cd web && npm ci && cd ..
-```
-
-### Dev mode (hot reload)
-
-```bash
-cargo tauri dev
-```
-
-This starts the Vite dev server on `localhost:5173` and opens a native window. Editing files under `web/src/` triggers instant reload; changes to Rust code under `src-tauri/` recompile and restart the backend.
-
-### Release mode (no hot reload, faster exports)
-
-```bash
-cargo build --release --workspace
-./target/release/message-vault
-```
-
-Use a release build when testing real exports. Debug builds compile faster, but parsing, attachment hashing, and JSON serialization can be substantially slower.
-
-### Vault server
-
-The vault API runs on this machine; the website is Vite or Tauri on the host. Rust and FFmpeg on PATH are enough.
-
-```bash
-./scripts/run-vault-dev.sh                 # API at http://127.0.0.1:8080; keep data/ if present
-./scripts/run-vault-dev.sh --reset          # wipe data/, empty vault
-./scripts/run-vault-dev.sh --reset-demo     # wipe data/, seed sample inbox
-./scripts/run-vault-dev.sh --sqlweb         # SQLite browser at http://127.0.0.1:8081 (`sqlite_web` on PATH)
-cd web && npm run dev                   # website at http://localhost:5173 (proxies /v1)
-# cargo tauri dev                       # desktop window instead of a browser
-```
-
-Create an account in the website when the vault is empty. For CLI import and export, create an API token under **Settings → Account**. To try the published image without compiling: [Try the vault](/vault/user/get-started/try-the-vault/). To build a release-shaped image from this checkout: [Operator Docker](/vault/developer/docker-compose/).
-
-Settings persist in `export.ini` (working directory or next to the binary). Template: [`crates/core/message-vault-io-core/export.example.ini`](https://github.com/bitrealm-io/message-vault/blob/main/crates/core/message-vault-io-core/export.example.ini). Backup passwords are never written.
+Use a **release** profile when timing real exports. Debug builds compile faster but parsing, hashing, and serialization are slower.
 
 ## Helper binaries and environment variables
 
-Most export work runs in-process as Rust libraries. A few features still shell out to sibling tools:
+Most export work runs in-process as Rust libraries. A few features still shell out:
 
 | Helper | Used for |
 |--------|----------|
-| `wtsexporter` | WhatsApp extract step |
+| `wtsexporter` | WhatsApp extract |
 | `ffmpeg` / `ffprobe` | Media convert / compress |
 
 Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI (or `../lib/` from `cli/`) → legacy one directory up → directory in `MESSAGE_VAULT_IO_BIN` → `PATH`. WhatsApp also accepts an explicit `WTSEXPORTER` path.
@@ -135,44 +101,49 @@ Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI 
 Local options:
 
 - Install WhatsApp helper: `pip install 'whatsapp-chat-exporter>=0.13'`
-- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-io/message-vault/releases) next to your built GUI
-- After `cargo build --workspace --release`, point helpers at the build output:
-
-```powershell
-# Windows PowerShell
-$env:MESSAGE_VAULT_IO_BIN = "$PWD\target\release"
-./target/release/message-vault.exe
-```
+- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-io/message-vault/releases) next to the built GUI
+- After a release build, point helpers at the directory that holds those binaries, for example:
 
 ```bash
-# Linux / macOS
 export MESSAGE_VAULT_IO_BIN="$PWD/target/release"
-./target/release/message-vault
 ```
 
-## Test
+Desktop form settings persist in `export.ini` (working directory or next to the binary). Passwords are never written. Example layout: [`crates/message-vault-io-gui/export.example.ini`](https://github.com/bitrealm-io/message-vault/blob/main/crates/message-vault-io-gui/export.example.ini) (legacy Slint GUI example; field names still illustrate the ini shape).
+
+## Test before a pull request
 
 ```bash
+cargo fmt --all -- --check
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo build --workspace
 cargo test --workspace
 ```
 
-Run a single crate:
+Single crate:
 
 ```bash
 cargo test -p go-sms-pro-exporter
 ```
 
-Exporter smoke tests under `crates/*/tests/convert_smoke.rs` use committed fixtures. Personal phone backups are not required to run the suite.
+Exporter smoke tests under `crates/*/tests/convert_smoke.rs` use committed fixtures. Personal phone backups are not required.
 
-Frontend (`web/`):
+If `web/` changed:
 
 ```bash
 cd web && npm ci && npm run lint && npm test
 ```
 
-## Docs site (optional)
+If `docs/` changed:
 
-User-facing docs are Astro Starlight under `docs/`, published to **https://bitrealm.io/** by `.github/workflows/docs.yml` (manual dispatch or push to `main` that touches `docs/**`).
+```bash
+cd docs && npm ci && npm run check && npm run build
+```
+
+CI on `main` runs the Rust fmt/build/test path above (including `src-tauri` fmt) and the web lint/test jobs when those trees change. Docs deploy from [`.github/workflows/docs.yml`](https://github.com/bitrealm-io/message-vault/blob/main/.github/workflows/docs.yml).
+
+## Docs site
+
+The public site is Astro Starlight under `docs/`, with guidebook pages under `docs/src/content/docs/vault/…` (URLs such as `/vault/user/` and `/vault/developer/`). The company splash at `/` is `docs/src/pages/index.astro`. Published origin: **https://bitrealm.io/**.
 
 ```bash
 cd docs
@@ -180,65 +151,55 @@ npm ci
 npm run dev
 ```
 
-With the current site layout, the local site is under **http://localhost:4321/vault/** (and related `/vault/user/` and `/vault/developer/` paths), not `/`.
+Local preview: **http://localhost:4321/** (company page) and **http://localhost:4321/vault/developer/** (and other `/vault/…` paths). Run `npm run check` and `npm run build` before merging doc edits.
 
-Before publishing doc changes: `npm run check` and `npm run build`.
+CLI reference pages live under `docs/src/content/docs/vault/developer/reference/cli/`. Edit those files directly.
 
-Command-line reference pages live under `docs/src/content/docs/vault/developer/reference/cli/`. Edit those files directly, then:
-
-```bash
-cd docs
-npm run check
-npm run build
-```
-
-### Publishing / custom domain
-
-GitHub Pages on this repo serves the built site. The custom domain is `bitrealm.io` (`docs/public/CNAME`). After enabling Pages (source: GitHub Actions) and setting the domain, remove the same custom domain from any older Pages site that still claims it. The `bitrealm.io` A records should keep pointing at GitHub Pages. Add a verification TXT record only if GitHub’s Pages settings request one.
-
-Guides live at:
-
-- User Guide: `https://bitrealm.io/vault/user/`
-- Developer docs: `https://bitrealm.io/vault/developer/`
-
-Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.io`. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
+Pages custom domain and DNS cutover notes belong in maintainer ops, not in every PR. The committed apex name is `docs/public/CNAME` (`bitrealm.io`).
 
 ## Workspace map
 
-- **Libraries:** under `crates/libs/` — `ir`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`; plus `message-vault-io-core`
-- **Exporter crates:** under `crates/exporters/` — `imessage-ir-exporter`, `whatsapp-exporter`, `sms-backup-restore-exporter`, and experimental converters (GO SMS Pro, iMazing, OpenExtract, SMS Backup+)
-- **GUI:** Tauri v2 app in `src-tauri/` with React + Vite frontend in `web/`
-- **Server:** `message-vault-server` crate — the vault REST API, SQLite database, and web UI
-- **CLI tools:** `vault-push`, `vault-pull`, `message-reexport` (package `message-reexport`), and individual exporter CLIs — built from this repo
+- **`crates/libs/`** — shared libraries (`ir`, `ir-format`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`, …)
+- **`crates/exporters/`** — backup converters (iMessage, WhatsApp, SMS Backup & Restore, plus experimental sources)
+- **`crates/core/message-vault-io-core/`** — shared config, jobs, and GUI/CLI form model
+- **`crates/cli/`** — `vault-push`, `vault-pull` (libraries + optional CLI binaries)
+- **`crates/vault/server/`** — `message-vault-server` (HTTP API + SQLite)
+- **`crates/vault/demo-seed/`** — sample data for demo reset
+- **`src-tauri/`** + **`web/`** — Tauri v2 desktop shell and Vite SPA (shell excluded from the workspace)
+- **`crates/message-vault-io-gui/`** — legacy Slint GUI (still in the tree; not the primary desktop path)
 
-This project is **AGPL-3.0**. `imessage-ir-exporter` still depends on `imessage-database` (**GPL-3.0-or-later**). Combined binaries are AGPL-3.0.
+## License
+
+[`LICENSE.md`](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) is the **Fair Core License** (FCL-1.0-ALv2). Some `Cargo.toml` files still declare `AGPL-3.0-only` from earlier packaging; treat `LICENSE.md` as the repository license text until those crate metadata lines are aligned.
+
+`imessage-ir-exporter` still depends on `imessage-database` / related GPL-licensed crates. Call that out when changing that exporter or anything that links those libraries into new binaries.
 
 ## Contribution rules
 
-1. **Keep changes focused.** Prefer small PRs that do one job over mixed refactors and features.
-2. **Match existing style.** Follow patterns already used in nearby crates; do not add drive-by renames or unrelated edits.
-3. **Verify before you open a PR.** At minimum: `cargo fmt --all -- --check`, `cargo build --workspace`, and `cargo test --workspace`. If you touched docs under `docs/`, also run `npm run check` there. If you touched `web/`, also run `npm run lint` and `npm test` there.
-4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, `.env` files with credentials, or real message backups. Use fixtures under `crates/*/tests/fixtures/` for test data.
-5. **Respect licenses.** This project is AGPL-3.0. Call out GPL implications when changing `imessage-ir-exporter` or anything that pulls `imessage-database` into new binaries.
+1. **Keep changes focused.** Prefer small PRs that do one job.
+2. **Match existing style.** Follow nearby crates; avoid drive-by renames.
+3. **Verify before opening a PR.** Use the checklist in [Test before a pull request](#test-before-a-pull-request).
+4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
+5. **Respect licenses.** See [License](#license).
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
-7. **Put design depth in maintainer docs**, not on this page. Architecture, format contracts, GUI option matrices, and releases stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
-8. **Use a pull request template.** GitHub offers a default form plus feature and bug-fix templates under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
+7. **Put design depth in maintainer docs.** Architecture and long format contracts stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
+8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
 
 ## Troubleshooting
 
 | Symptom | What to try |
 |---------|-------------|
-| `webkit2gtk` / `libsoup` not found | Install WebKit2GTK and GTK3 dev packages; see [Linux packages](#linux-packages) |
+| `webkit2gtk` / `libsoup` not found | Install the packages under [Linux packages](#linux-packages) |
 | "Could not find wtsexporter / ffmpeg / ffprobe" | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
 | Windows linker / `link.exe` errors | Install MSVC Build Tools with the C++ desktop workload |
-| `cargo tauri` not found | Install with `cargo install tauri-cli --version "^2"` |
-| Frontend not loading in dev mode | Run `cd web && npm ci` first, then `cargo tauri dev` |
+| `cargo tauri` not found | `cargo install tauri-cli --version "^2"` |
+| Frontend blank in `cargo tauri dev` | `cd web && npm ci`, then retry |
+| Docs links 404 locally | Open `/vault/…` paths (or `/`), not only the old apex article paths |
 
 ## Further reading
 
 - [Run from source](/vault/developer/run-from-source/)
 - [Operator Docker](/vault/developer/docker-compose/)
-- [Maintainer documentation index](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
-- [Development and releases](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/developing.md)
-- [Converter capabilities](/vault/developer/formats/)
+- [Formats](/vault/developer/formats/)
+- [Maintainer index](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
 - [User Guide](/vault/user/)

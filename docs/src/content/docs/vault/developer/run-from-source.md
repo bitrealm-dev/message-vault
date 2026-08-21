@@ -16,7 +16,7 @@ Optional while developing WhatsApp and media convert: Python for `wtsexporter`, 
 ## Clone
 
 ```bash
-git clone https://github.com/bitrealm-dev/message-vault.git
+git clone https://github.com/bitrealm-io/message-vault.git
 cd message-vault
 ```
 
@@ -48,12 +48,7 @@ cargo tauri dev
 
 Point the app at **http://127.0.0.1:8080** (or the URL where the vault is listening).
 
-A release-shaped binary (faster on real backups):
-
-```bash
-cargo build --release --workspace
-./target/release/message-vault
-```
+A release-shaped desktop binary (faster on real backups) is produced with `cargo tauri build`, or a release build of the Tauri package (`message-vault-io-tauri`). Prefer `cargo tauri build` when packaging installers.
 
 On Linux the desktop app also needs WebKit2GTK and GTK3 at build and runtime. The package lists are on [Contributing](/vault/developer/contributing/#linux-packages).
 
