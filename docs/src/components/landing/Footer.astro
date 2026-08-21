@@ -1,0 +1,42 @@
+---
+import { landingLinks } from "../../lib/landing-links";
+---
+
+<footer class="mv-footer">
+  <div class="mv-footer-inner">
+    <div class="mv-footer-brand">
+      <a class="mv-mark" href={landingLinks.home}>Message Vault</a>
+      <p>
+        Extract messages from phone backups into a vault you run. Browse, search,
+        and export on your terms.
+      </p>
+    </div>
+    <div class="mv-footer-cols">
+      <div>
+        <h2>Product</h2>
+        <ul>
+          <li><a href={landingLinks.features}>Features</a></li>
+          <li><a href={landingLinks.download}>Download</a></li>
+          <li><a href={landingLinks.changelog}>Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Resources</h2>
+        <ul>
+          <li><a href={landingLinks.docs}>Getting started</a></li>
+          <li>
+            <a href={landingLinks.developer}>Developer documentation</a>
+          </li>
+          <li><a href={landingLinks.faq}>FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Company</h2>
+        <ul>
+          <li><a href={landingLinks.about}>About</a></li>
+          <li><a href={landingLinks.contact}>Contact</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</footer>

@@ -143,7 +143,7 @@ CI on `main` runs the Rust fmt/build/test path above (including `src-tauri` fmt)
 
 ## Docs site
 
-The public site is Astro Starlight under `docs/`, with guidebook pages under `docs/src/content/docs/vault/…` (URLs such as `/vault/user/` and `/vault/developer/`). The company splash at `/` is `docs/src/pages/index.astro`. Published origin: **https://bitrealm.io/**.
+The public site is Astro Starlight under `docs/`, with guidebook pages under `docs/src/content/docs/vault/…` (URLs such as `/vault/user/` and `/vault/developer/`). The Message Vault product landing at `/` is `docs/src/pages/index.astro`. Published origin: **https://bitrealm.io/**.
 
 ```bash
 cd docs

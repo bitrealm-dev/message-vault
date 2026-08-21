@@ -1,0 +1,36 @@
+---
+import LandingLayout from "../layouts/LandingLayout.astro";
+import { landingLinks } from "../lib/landing-links";
+---
+
+<LandingLayout
+  title="Changelog · Message Vault"
+  description="Release history for Message Vault."
+  canonicalPath="/changelog/"
+>
+  <main class="mv-stub">
+    <h1>Changelog</h1>
+    <p>
+      Project history is tracked in
+      <code>CHANGELOG.md</code>
+      in the repository. Installable builds live on GitHub Releases.
+    </p>
+
+    <div class="mv-stub-block">
+      <h2>Unreleased</h2>
+      <p>
+        Changes for the next cut will be listed here and in the repo changelog
+        file. Nothing is recorded for a numbered release yet on this page.
+      </p>
+    </div>
+
+    <div class="mv-stub-block">
+      <h2>Links</h2>
+      <p>
+        <a href={landingLinks.githubChangelog}>CHANGELOG.md on GitHub</a>
+        ·
+        <a href={landingLinks.download}>GitHub Releases</a>
+      </p>
+    </div>
+  </main>
+</LandingLayout>
