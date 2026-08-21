@@ -86,4 +86,4 @@ Experimental in the GUI. Thin source format: no groups, no media extraction; con
 
 ## SEE ALSO
 
-- [OpenExtract user guide](https://bitrealm.io/vault/user/how-to/rescue-imports/)
+- [OpenExtract user guide](/vault/user/how-to/rescue-imports/)

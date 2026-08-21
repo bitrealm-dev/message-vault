@@ -101,4 +101,4 @@ This exporter uses the GPL-3.0-or-later `imessage-database` implementation. Andr
 
 ## SEE ALSO
 
-- [Apple Messages user guide](https://bitrealm.io/vault/user/prepare-a-backup/iphone-ipad/)
+- [Apple Messages user guide](/vault/user/prepare-a-backup/iphone-ipad/)
