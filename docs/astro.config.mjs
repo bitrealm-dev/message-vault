@@ -53,6 +53,7 @@ const userGuideItems = [
 
 const developerItems = [
   'vault/developer',
+  'vault/developer/contributing',
   'vault/developer/run-from-source',
   'vault/developer/docker-compose',
   {

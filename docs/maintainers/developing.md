@@ -1,6 +1,6 @@
 # Development and releases
 
-For local setup and build, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
+For local setup and build, see [Contributing](https://bitrealm.io/vault/developer/contributing/) (repo pointer: [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 
 End-user documentation lives in the [Starlight source](../src/content/docs/) (start with [Export structure](../src/content/docs/vault/developer/reference/export-structure.md)). Use the [maintainer index](README.md) to find architecture, GUI, exporter, and format documentation.
 

@@ -4,7 +4,7 @@ This directory contains implementation and release documentation for contributor
 
 ## Start here
 
-- [Setup, build, and contributing](../../CONTRIBUTING.md) — prerequisites, workspace build, helpers, tests, and PR rules.
+- [Setup, build, and contributing](https://bitrealm.io/vault/developer/contributing/) — prerequisites, workspace build, helpers, tests, and PR rules. Short pointer in the repo: [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 - [Develop and publish releases](developing.md) — release workflow, documentation build, and local preview.
 - [Code signing (Windows / macOS)](signing.md) — certificates, GitHub secrets, and gated release workflow steps.
 - [GUI design](gui.md) — Desktop app architecture: Tauri v2 shell with React + Vite frontend, Tauri commands wrapping exporter crates, and progress events.
