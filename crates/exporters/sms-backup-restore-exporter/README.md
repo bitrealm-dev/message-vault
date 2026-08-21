@@ -15,11 +15,11 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.dev/vault/developer/reference/cli/sms-backup-restore-exporter/
+Command-line options: https://bitrealm.io/vault/developer/reference/cli/sms-backup-restore-exporter/
 
-Input format: https://bitrealm.dev/vault/developer/formats/sms-backup-restore/input/
+Input format: https://bitrealm.io/vault/developer/formats/sms-backup-restore/input/
 
-Import mapping: https://bitrealm.dev/vault/developer/formats/sms-backup-restore/mapping/
+Import mapping: https://bitrealm.io/vault/developer/formats/sms-backup-restore/mapping/
 
 ## License
 

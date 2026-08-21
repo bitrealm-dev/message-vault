@@ -41,7 +41,7 @@ git mv scripts/docker-entrypoint-dev.sh docker/entrypoint-dev.sh
 
 ```yaml
 # Published vault image. Save this file and run: docker compose up -d
-# Docs: https://bitrealm.dev/get-started/try-the-vault/
+# Docs: https://bitrealm.io/get-started/try-the-vault/
 #
 # Pin a release: change :latest to :0.7.3 (no "v").
 # Empty vault: DEMO_DATA=false docker compose up -d

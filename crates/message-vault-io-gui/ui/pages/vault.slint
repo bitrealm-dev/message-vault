@@ -28,11 +28,11 @@ export component VaultPage inherits AnchoredScrollPage {
     LabeledLineEdit {
         label: "Vault URL";
         required: true;
-        placeholder: "http://127.0.0.1:8080 or https://app.bitrealm.dev";
+        placeholder: "http://127.0.0.1:8080 or https://app.bitrealm.io";
         value <=> VaultAdapter.url;
     }
     Hint {
-        message: "Include the port when needed (local serve is usually http://127.0.0.1:8080). Hosted TLS can omit it (https://app.bitrealm.dev).";
+        message: "Include the port when needed (local serve is usually http://127.0.0.1:8080). Hosted TLS can omit it (https://app.bitrealm.io).";
     }
     LabeledLineEdit {
         label: "API token";

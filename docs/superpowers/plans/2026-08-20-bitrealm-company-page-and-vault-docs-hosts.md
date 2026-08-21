@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `https://bitrealm.dev/` a Bitrealm company chooser and move every guidebook page under `/user/…` or `/developer/…` for the `vault.bitrealm.dev` product host.
+**Goal:** Make `https://bitrealm.io/` a Bitrealm company chooser and move every guidebook page under `/user/…` or `/developer/…` for the `vault.bitrealm.io` product host.
 
-**Architecture:** One Astro app. `src/pages/index.astro` owns `/`. Starlight content moves to `docs/src/content/docs/user/` and `docs/src/content/docs/developer/`. `site` becomes `https://vault.bitrealm.dev`. In-repo guidebook URLs are rewritten. Cloudflare CNAME plus a root-only redirect are operator steps documented in `CONTRIBUTING.md`, not automated.
+**Architecture:** One Astro app. `src/pages/index.astro` owns `/`. Starlight content moves to `docs/src/content/docs/user/` and `docs/src/content/docs/developer/`. `site` becomes `https://vault.bitrealm.io`. In-repo guidebook URLs are rewritten. Cloudflare CNAME plus a root-only redirect are operator steps documented in `CONTRIBUTING.md`, not automated.
 
 **Tech Stack:** Astro 7, Starlight 0.41, `starlight-sidebar-topics` 0.8.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - No HTTP redirects for today’s apex guidebook paths (`/get-started/…`, `/how-to/…`, `/formats/…`, `/reference/…`).
-- Do not put `vault.bitrealm.dev` in `docs/public/CNAME`. That file stays `bitrealm.dev`.
+- Do not put `vault.bitrealm.io` in `docs/public/CNAME`. That file stays `bitrealm.io`.
 - Do not change `api`, `app`, or R2 DNS from this repo.
 - Do not rewrite `docs/superpowers/` historical specs and plans.
 - Do not rewrite User Guide chapter copy except links and the splash move.
@@ -107,7 +107,7 @@ These pages are for people who compile the vault, run Compose, or call the HTTP 
 
 - [ ] **Step 5: Replace `userGuideItems` and `developerItems` and topic links in `docs/astro.config.mjs`**
 
-Set `site` to `'https://vault.bitrealm.dev'`.
+Set `site` to `'https://vault.bitrealm.io'`.
 
 User Guide topic: `link: '/user/'`. Developer topic: `link: '/developer/'`.
 
@@ -254,7 +254,7 @@ EOF
 ### Task 2: Rewrite in-content Markdown links
 
 **Files:**
-- Modify: every `.md` / `.mdx` under `docs/src/content/docs/` that contains `](/get-started/`, `](/how-to/`, `](/prepare-a-backup`, `](/import-from-a-backup`, `](/browse-your-messages`, `](/glossary`, `](/formats/`, `](/reference/`, or `https://bitrealm.dev/reference/` / `https://bitrealm.dev/formats/`
+- Modify: every `.md` / `.mdx` under `docs/src/content/docs/` that contains `](/get-started/`, `](/how-to/`, `](/prepare-a-backup`, `](/import-from-a-backup`, `](/browse-your-messages`, `](/glossary`, `](/formats/`, `](/reference/`, or `https://bitrealm.io/reference/` / `https://bitrealm.io/formats/`
 
 **Interfaces:**
 - Consumes: file tree from Task 1
@@ -270,8 +270,8 @@ from pathlib import Path
 
 root = Path("docs/src/content/docs")
 subs = [
-    ("https://bitrealm.dev/reference/", "https://vault.bitrealm.dev/developer/reference/"),
-    ("https://bitrealm.dev/formats/", "https://vault.bitrealm.dev/developer/formats/"),
+    ("https://bitrealm.io/reference/", "https://vault.bitrealm.io/developer/reference/"),
+    ("https://bitrealm.io/formats/", "https://vault.bitrealm.io/developer/formats/"),
     ("](/formats/", "](/developer/formats/"),
     ("](/reference/", "](/developer/reference/"),
     ("](/get-started/", "](/user/get-started/"),
@@ -336,14 +336,14 @@ EOF
 
 **Interfaces:**
 - Consumes: `--sl-color-*` variables already in `custom.css`; splash tagline from the old `index.mdx` hero
-- Produces: `/` HTML with canonical `https://bitrealm.dev/` and three absolute docs links on `https://vault.bitrealm.dev`
+- Produces: `/` HTML with canonical `https://bitrealm.io/` and three absolute docs links on `https://vault.bitrealm.io`
 
 - [ ] **Step 1: Write `docs/src/pages/index.astro`**
 
 ```astro
 ---
-const userGuide = "https://vault.bitrealm.dev/user/";
-const developer = "https://vault.bitrealm.dev/developer/";
+const userGuide = "https://vault.bitrealm.io/user/";
+const developer = "https://vault.bitrealm.io/developer/";
 const github = "https://github.com/bitrealm-dev/message-vault";
 ---
 
@@ -356,7 +356,7 @@ const github = "https://github.com/bitrealm-dev/message-vault";
       name="description"
       content="Local software you run. Not a cloud account."
     />
-    <link rel="canonical" href="https://bitrealm.dev/" />
+    <link rel="canonical" href="https://bitrealm.io/" />
     <link rel="stylesheet" href="/src/styles/custom.css" />
   </head>
   <body class="bitrealm-home">
@@ -468,7 +468,7 @@ and drop the `<link rel="stylesheet">`. Prefer the import if the link fails.
 cd docs && npm run check && npm run build
 ```
 
-Expected: `docs/dist/index.html` contains `Bitrealm` and `vault.bitrealm.dev/user`. It does not contain `Your messages, your way`. `docs/dist/user/index.html` contains `Your messages, your way`.
+Expected: `docs/dist/index.html` contains `Bitrealm` and `vault.bitrealm.io/user`. It does not contain `Your messages, your way`. `docs/dist/user/index.html` contains `Your messages, your way`.
 
 - [ ] **Step 4: Commit**
 
@@ -500,39 +500,39 @@ EOF
 
 **Interfaces:**
 - Consumes: URL map in the spec
-- Produces: no remaining `https://bitrealm.dev/get-started/`, `/how-to/`, `/formats/`, or `/reference/` strings outside `docs/superpowers/`
+- Produces: no remaining `https://bitrealm.io/get-started/`, `/how-to/`, `/formats/`, or `/reference/` strings outside `docs/superpowers/`
 
 Exact replacements (apply with search-and-replace per file, or one Python walk that skips `docs/superpowers`):
 
 | Find | Replace |
 |------|---------|
-| `https://bitrealm.dev/get-started/` | `https://vault.bitrealm.dev/user/get-started/` |
-| `https://bitrealm.dev/how-to/` | `https://vault.bitrealm.dev/user/how-to/` |
-| `https://bitrealm.dev/browse-your-messages/` | `https://vault.bitrealm.dev/user/browse-your-messages/` |
-| `https://bitrealm.dev/formats/` | `https://vault.bitrealm.dev/developer/formats/` |
-| `https://bitrealm.dev/reference/` | `https://vault.bitrealm.dev/developer/reference/` |
-| `https://bitrealm.dev/developer/docker-compose/` | `https://vault.bitrealm.dev/developer/docker-compose/` |
-| `https://bitrealm.dev/developer/run-from-source/` | `https://vault.bitrealm.dev/developer/run-from-source/` |
-| `https://bitrealm.dev/developer` (README, no trailing path) | `https://vault.bitrealm.dev/developer/` |
+| `https://bitrealm.io/get-started/` | `https://vault.bitrealm.io/user/get-started/` |
+| `https://bitrealm.io/how-to/` | `https://vault.bitrealm.io/user/how-to/` |
+| `https://bitrealm.io/browse-your-messages/` | `https://vault.bitrealm.io/user/browse-your-messages/` |
+| `https://bitrealm.io/formats/` | `https://vault.bitrealm.io/developer/formats/` |
+| `https://bitrealm.io/reference/` | `https://vault.bitrealm.io/developer/reference/` |
+| `https://bitrealm.io/developer/docker-compose/` | `https://vault.bitrealm.io/developer/docker-compose/` |
+| `https://bitrealm.io/developer/run-from-source/` | `https://vault.bitrealm.io/developer/run-from-source/` |
+| `https://bitrealm.io/developer` (README, no trailing path) | `https://vault.bitrealm.io/developer/` |
 
-`README.md` “Explore the docs” may stay `https://bitrealm.dev/` (chooser) or become `https://vault.bitrealm.dev/user/`. Use `https://vault.bitrealm.dev/user/` so that button opens the guidebook.
+`README.md` “Explore the docs” may stay `https://bitrealm.io/` (chooser) or become `https://vault.bitrealm.io/user/`. Use `https://vault.bitrealm.io/user/` so that button opens the guidebook.
 
-`docs/maintainers/developing.md` line `https://bitrealm.dev/vault/` becomes `https://vault.bitrealm.dev/user/`.
+`docs/maintainers/developing.md` line `https://bitrealm.io/vault/` becomes `https://vault.bitrealm.io/user/`.
 
 **CONTRIBUTING.md publishing section** — keep the existing apex/`CNAME` paragraph, then append:
 
 ```markdown
-### Product hostname (`vault.bitrealm.dev`)
+### Product hostname (`vault.bitrealm.io`)
 
-The same GitHub Pages deploy answers on `vault.bitrealm.dev` through Cloudflare.
-Pages still has one custom domain: `bitrealm.dev` (`docs/public/CNAME`). Do not
-put `vault.bitrealm.dev` in that file.
+The same GitHub Pages deploy answers on `vault.bitrealm.io` through Cloudflare.
+Pages still has one custom domain: `bitrealm.io` (`docs/public/CNAME`). Do not
+put `vault.bitrealm.io` in that file.
 
-1. Cloudflare: CNAME `vault` → `bitrealm.dev`, proxied (orange cloud). Leave
+1. Cloudflare: CNAME `vault` → `bitrealm.io`, proxied (orange cloud). Leave
    `api`, `app`, and R2 alone. A grey-cloud CNAME to `*.github.io` will not
    work — Pages does not bind that hostname.
-2. Cloudflare Redirect Rule: `https://vault.bitrealm.dev/` →
-   `https://bitrealm.dev/`. Match the hostname root only. Do not match
+2. Cloudflare Redirect Rule: `https://vault.bitrealm.io/` →
+   `https://bitrealm.io/`. Match the hostname root only. Do not match
    `/user` or `/developer`.
 ```
 
@@ -583,14 +583,14 @@ rg -n 'https://bitrealm\.dev/(get-started|how-to|formats|reference|browse-your-m
   --glob '!docs/superpowers/**'
 ```
 
-Expected: no matches. (`https://bitrealm.dev/` alone is allowed.)
+Expected: no matches. (`https://bitrealm.io/` alone is allowed.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add README.md CONTRIBUTING.md CLAUDE.md docker/compose.yml .github/workflows/ci.yml web-next/README.md docs/maintainers crates
 git commit -m "$(cat <<'EOF'
-docs: point in-repo guidebook URLs at vault.bitrealm.dev
+docs: point in-repo guidebook URLs at vault.bitrealm.io
 
 Old apex paths will 404; crate READMEs and rustdoc have to cite /user and /developer on the product host.
 EOF
@@ -637,12 +637,12 @@ Do not run Cloudflare from this repo. After merge and Pages deploy, the human ad
 | `/user/` is today’s splash | Task 1 + Task 2 (hero links) |
 | `/developer/` short index | Task 1 Step 4 |
 | Prefix every guidebook page | Task 1 |
-| `site` = `https://vault.bitrealm.dev` | Task 1 |
-| Canonical company URL `https://bitrealm.dev/` | Task 3 |
+| `site` = `https://vault.bitrealm.io` | Task 1 |
+| Canonical company URL `https://bitrealm.io/` | Task 3 |
 | Absolute vault. host on company buttons | Task 3 |
 | No old-path redirects | all tasks |
 | In-repo link rewrite | Task 2 + Task 4 |
 | Skip `docs/superpowers/` | Task 4 |
 | CONTRIBUTING DNS + root redirect | Task 4 |
-| `CNAME` stays `bitrealm.dev` | Task 4 (do not edit `docs/public/CNAME`) |
+| `CNAME` stays `bitrealm.io` | Task 4 (do not edit `docs/public/CNAME`) |
 | `npm run check && npm run build` | Tasks 2, 3, 5 |

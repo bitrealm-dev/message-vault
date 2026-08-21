@@ -120,7 +120,7 @@ const developerItems = [
 ];
 
 export default defineConfig({
-  site: 'https://bitrealm.dev',
+  site: 'https://bitrealm.io',
   integrations: [
     starlight({
       title: 'Message Vault',
