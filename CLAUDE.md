@@ -8,14 +8,14 @@ This repository is named **message-vault**. It was formed by merging the former 
 
 ## Docs site
 
-The public docs site is the Astro Starlight project under `docs/`. The company page is at **https://bitrealm.dev/**; the Message Vault guidebook is at **https://bitrealm.dev/vault/user/** and **https://bitrealm.dev/vault/developer/**. Edit content in `docs/src/content/docs/`. GitHub Pages deploys from this repo via `.github/workflows/docs.yml` on `workflow_dispatch` or when `docs/**` (or that workflow) changes on `main`.
+The public docs site is the Astro Starlight project under `docs/`. The company page is at **https://bitrealm.io/**; the Message Vault guidebook is at **https://bitrealm.io/vault/user/** and **https://bitrealm.io/vault/developer/**. Edit content in `docs/src/content/docs/`. GitHub Pages deploys from this repo via `.github/workflows/docs.yml` on `workflow_dispatch` or when `docs/**` (or that workflow) changes on `main`.
 
 ```bash
 cd docs && npm ci && npm run dev   # local preview
 cd docs && npm run check && npm run build
 ```
 
-**Domain cutover (one-time, after first merge):** In this repo’s GitHub Settings → Pages, set source to GitHub Actions and custom domain `bitrealm.dev`. Remove the custom domain from `bitrealm-dev/bitrealm-dev.github.io`. Keep Cloudflare apex A records pointing at GitHub Pages (`185.199.108–111.153`); add any TXT verification record GitHub shows. Leave `api` / `app` / R2 alone. Then run the Docs workflow once.
+**Domain cutover (one-time, after first merge):** In this repo’s GitHub Settings → Pages, set source to GitHub Actions and custom domain `bitrealm.io`. Remove the custom domain from `bitrealm-dev/bitrealm-dev.github.io`. Keep Cloudflare apex A records pointing at GitHub Pages (`185.199.108–111.153`); add any TXT verification record GitHub shows. Leave `api` / `app` / R2 alone. Then run the Docs workflow once.
 
 ## Quick start
 
@@ -78,7 +78,7 @@ This is a Rust workspace that converts phone message backups into a shared conve
 4. **Exporter crates** under `crates/exporters/` — Each parses one backup source into `ConversationDocument` and feeds it to `FormatSink`. The GUI links them as libraries (`default-features = false` in GUI Cargo.toml, which drops the `cli` feature). Each crate has a `cli` feature (default on) that gates the standalone binary behind `dep:clap`. Three tiers:
    - **Primary**: iMessage (`imessage-ir-exporter`), WhatsApp (`whatsapp-exporter`, shells out to `wtsexporter`), SMS Backup & Restore (`sms-backup-restore-exporter`)
    - **Experimental**: GO SMS Pro, iMazing, OpenExtract, SMS Backup+
-   - See https://bitrealm.dev/vault/developer/formats/ for per-converter capability gaps
+   - See https://bitrealm.io/vault/developer/formats/ for per-converter capability gaps
 
 5. **`crates/core/message-vault-io-core/`** — Shared form model (`ExporterConfig`, `Exporter` enum, `Form` trait for GUI validation), job spawning (`spawn_job` with `CancelFlag` + `mpsc::Sender<ProcessEvent>`), and ini persistence (`ExportIniState`).
 

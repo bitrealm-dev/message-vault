@@ -2,7 +2,7 @@
 
 ## Context
 
-The vault ships as the Docker Hub image `bitrealm/message-vault`. People who want to try it today copy a `docker run` command from the README or [Try the vault](https://bitrealm.dev/get-started/try-the-vault/). Docker Compose lives only in this repository, and both files **build** from the checkout:
+The vault ships as the Docker Hub image `bitrealm/message-vault`. People who want to try it today copy a `docker run` command from the README or [Try the vault](https://bitrealm.io/get-started/try-the-vault/). Docker Compose lives only in this repository, and both files **build** from the checkout:
 
 | File today | What it does |
 |---|---|
@@ -57,7 +57,7 @@ People save this file in a folder they own. They do not need this repository.
 
 ```yaml
 # Published vault image. Save this file and run: docker compose up -d
-# Docs: https://bitrealm.dev/get-started/try-the-vault/
+# Docs: https://bitrealm.io/get-started/try-the-vault/
 #
 # Pin a release: change :latest to :0.7.3 (no "v").
 # Empty vault: DEMO_DATA=false docker compose up -d

@@ -14,7 +14,7 @@
 - User-facing voice: plain language, no internal jargon ("message-ir" → "JSONL", "FormatSink" → never use, "exporter crate" → never use)
 - Developer voice: technical precision OK; crate names like `message-vault-io-gui` are legitimate internal names
 - All repo URLs: `github.com/bitrealm-dev/message-vault` (never `message-vault-io`, `message-vault-rs`, `message-vault-server`)
-- All docs URLs: `bitrealm.dev/vault/` or `bitrealm-dev.github.io/vault/` (never `.../message-vault-io/`, `.../message-vault-rs/`, `.../exporters/`)
+- All docs URLs: `bitrealm.io/vault/` or `bitrealm-dev.github.io/vault/` (never `.../message-vault-io/`, `.../message-vault-rs/`, `.../exporters/`)
 - Project name: "Message Vault" (two words, title case)
 - Binary name: `message-vault` (the desktop app binary — was `message-vault-io`)
 - Verify: `cd docs && npm run build` passes with no broken links after all changes
@@ -51,7 +51,7 @@ Your messages stay on your own machine — nothing is uploaded to a cloud servic
 
 Read the full guide (install, desktop app, supported backups, formats, API):
 
-**https://bitrealm.dev/vault/**
+**https://bitrealm.io/vault/**
 
 Source Markdown lives in [`docs/src/content/docs/`](docs/src/content/docs/) and is published from the [unified docs hub](https://github.com/bitrealm-dev/bitrealm-dev.github.io).
 
@@ -138,7 +138,7 @@ More Linux package details and optional helpers such as `ffmpeg` are documented 
 | SMS Backup & Restore (SyncTech XML) | `sms-backup-restore-exporter` |
 | WhatsApp (native DB / crypt) | `whatsapp-exporter` |
 
-Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.dev/vault/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
+Experimental converters also ship in the desktop app: GO SMS Pro, iMazing CSV, OpenExtract, and SMS Backup+. Use those when they are the only backup on hand. Details: the [docs site](https://bitrealm.io/vault/) and [exporter capability matrix](docs/maintainers/exporter-matrix.md).
 
 Already exported? The desktop app **Format** tab converts a prior output folder to another format (CSV ↔ EML ↔ MBOX ↔ JSON ↔ JSONL ↔ XML).
 
@@ -171,7 +171,7 @@ git add README.md
 git commit -m "docs: rewrite README for unified message-vault project
 
 Replace all message-vault-io references with message-vault. Update
-docs URLs to bitrealm.dev/vault/. Add vault server quick-start.
+docs URLs to bitrealm.io/vault/. Add vault server quick-start.
 Remove references to separate message-exporters repo.
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -197,7 +197,7 @@ The current file references `message-vault-io` throughout, has old clone URLs, r
 
 How to set up, build, run, and contribute to Message Vault.
 
-End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.dev/vault/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
+End-user guides (install, first export, formats) live on the [docs site](https://bitrealm.io/vault/). Architecture, releases, signing, and GUI design notes live under [`docs/maintainers/`](docs/maintainers/README.md).
 
 ## Prerequisites
 
@@ -406,7 +406,7 @@ Most crates are MIT. `imessage-ir-exporter` is **GPL-3.0-or-later** (via `imessa
 - [Development and releases](docs/maintainers/developing.md)
 - [Exporter capability matrix](docs/maintainers/exporter-matrix.md)
 - [Code signing](docs/maintainers/signing.md)
-- End-user docs: <https://bitrealm.dev/vault/>
+- End-user docs: <https://bitrealm.io/vault/>
 ```
 
 - [ ] **Step 2: Verify no old references remain**
@@ -422,7 +422,7 @@ git commit -m "docs: rewrite CONTRIBUTING for unified message-vault project
 
 Replace all message-vault-io references. Remove separate vault-server
 repo instructions (now built from this repo). Update docs URLs to
-bitrealm.dev/vault/. Remove references to separate message-exporters
+bitrealm.io/vault/. Remove references to separate message-exporters
 repo.
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -609,14 +609,14 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - Modify: `docs/maintainers/formats/mail-archive.md`
 
 **Interfaces:**
-- Consumes: Correct repo URL (`bitrealm-dev/message-vault`), docs URL (`bitrealm.dev/vault/`), new doc paths
+- Consumes: Correct repo URL (`bitrealm-dev/message-vault`), docs URL (`bitrealm.io/vault/`), new doc paths
 - Produces: Maintainer docs with accurate references while keeping internal technical names
 
 - [ ] **Step 1: Fix maintainers/README.md — one URL fix**
 
 Edit `docs/maintainers/README.md` line 3:
 From: `<https://bitrealm-dev.github.io/message-vault-io/>`
-To: `<https://bitrealm.dev/vault/>`
+To: `<https://bitrealm.io/vault/>`
 
 - [ ] **Step 2: Fix maintainers/developing.md — old URLs, release filenames, docs references**
 
@@ -647,7 +647,7 @@ Keep this reference but update URL to current if needed.
 
 Line 92 — docs URL:
 From: `https://bitrealm-dev.github.io/message-vault-io/`
-To: `https://bitrealm.dev/vault/`
+To: `https://bitrealm.io/vault/`
 
 - [ ] **Step 3: Fix maintainers/development.md — old repo references, Next.js mentions**
 
@@ -655,7 +655,7 @@ Apply these edits to `docs/maintainers/development.md`:
 
 Line 4 — old docs URL:
 From: `<https://bitrealm-dev.github.io/message-vault-rs/>`
-To: `<https://bitrealm.dev/vault/>`
+To: `<https://bitrealm.io/vault/>`
 
 Line 11 — Next.js mention:
 From: `- a Next.js application in `web/` for browsing the SQLite vault.`
@@ -761,7 +761,7 @@ Expected: No output (except legitimate `message-vault-io-gui` crate references w
 git add docs/maintainers/
 git commit -m "docs: fix outdated URLs and references in maintainer docs
 
-Update docs URLs to bitrealm.dev/vault/. Fix old repo URLs to
+Update docs URLs to bitrealm.io/vault/. Fix old repo URLs to
 bitrealm-dev/message-vault. Replace Next.js references with
 'web UI' or 'web interface'. Fix old understand-output/ doc paths
 to reference/. Update binary names in signing docs.
@@ -964,8 +964,8 @@ To: `Push a Message Vault **JSONL** export folder into a running Message Vault s
 - [ ] **Step 2: Fix crates/cli/vault-push/docs/MANPAGE.md — Next.js reference**
 
 Line 23 — obsolete Next.js caveat:
-From: `| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`), **not** the Next.js UI on `:3000` |`
-To: `| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`), **not** the web UI on `:3000` |`
+From: `| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.io`), **not** the Next.js UI on `:3000` |`
+To: `| `--url` | `VAULT_URL` | Base URL of `message-vault-server serve` (e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.io`), **not** the web UI on `:3000` |`
 
 Line 15 — "message-ir schema v3": this is a technical schema reference in a MANPAGE, acceptable to keep as-is.
 

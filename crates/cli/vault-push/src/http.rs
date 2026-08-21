@@ -842,9 +842,9 @@ mod tests {
 
     #[test]
     fn unauthorized_http_to_https_redirect_asks_for_https() {
-        let requested = reqwest::Url::parse("http://app.bitrealm.dev").unwrap();
-        let final_url = reqwest::Url::parse("https://app.bitrealm.dev/v1/auth/check").unwrap();
-        let err = classify_unauthorized("http://app.bitrealm.dev", &requested, &final_url);
+        let requested = reqwest::Url::parse("http://app.bitrealm.io").unwrap();
+        let final_url = reqwest::Url::parse("https://app.bitrealm.io/v1/auth/check").unwrap();
+        let err = classify_unauthorized("http://app.bitrealm.io", &requested, &final_url);
         assert_eq!(err.kind(), "https_required");
         assert!(err.user_message().contains("https://"));
         assert!(err.detail().contains("Authorization"));
@@ -852,9 +852,9 @@ mod tests {
 
     #[test]
     fn unauthorized_same_scheme_is_invalid_key() {
-        let requested = reqwest::Url::parse("https://app.bitrealm.dev").unwrap();
-        let final_url = reqwest::Url::parse("https://app.bitrealm.dev/v1/auth/check").unwrap();
-        let err = classify_unauthorized("https://app.bitrealm.dev", &requested, &final_url);
+        let requested = reqwest::Url::parse("https://app.bitrealm.io").unwrap();
+        let final_url = reqwest::Url::parse("https://app.bitrealm.io/v1/auth/check").unwrap();
+        let err = classify_unauthorized("https://app.bitrealm.io", &requested, &final_url);
         assert_eq!(err.kind(), "invalid_key");
     }
 

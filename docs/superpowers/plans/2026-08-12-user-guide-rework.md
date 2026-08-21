@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the bitrealm.dev User Guide with a try-it tutorial plus a “How do I…” handbook, and move CLI, formats, Compose, and internals under a Developer header topic.
+**Goal:** Replace the bitrealm.io User Guide with a try-it tutorial plus a “How do I…” handbook, and move CLI, formats, Compose, and internals under a Developer header topic.
 
 **Architecture:** New Markdown under `docs/src/content/docs/get-started/`, `prepare-a-backup/`, `how-to/`, and `developer/`. `docs/astro.config.mjs` lists User Guide then Developer. `/formats/` and `/reference/` URLs stay. Old User Guide files are deleted with no redirects.
 

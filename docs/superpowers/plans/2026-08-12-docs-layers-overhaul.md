@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make https://bitrealm.dev/ the only full copy of CLI and format docs, rewrite the GitHub root and crate READMEs as short front doors, and ship the work as four reviewable commits matching the four PRs in the spec.
+**Goal:** Make https://bitrealm.io/ the only full copy of CLI and format docs, rewrite the GitHub root and crate READMEs as short front doors, and ship the work as four reviewable commits matching the four PRs in the spec.
 
-**Architecture:** Root files and crate READMEs stay on GitHub. CLI manpages become committed Starlight pages under `docs/src/content/docs/reference/cli/`. Format and mapping docs become a second Starlight topic under `/formats/`. Crate `docs/` folders and the three maintainer format/matrix files are deleted. In-repo links (including rustdoc) point at bitrealm.dev.
+**Architecture:** Root files and crate READMEs stay on GitHub. CLI manpages become committed Starlight pages under `docs/src/content/docs/reference/cli/`. Format and mapping docs become a second Starlight topic under `/formats/`. Crate `docs/` folders and the three maintainer format/matrix files are deleted. In-repo links (including rustdoc) point at bitrealm.io.
 
 **Tech Stack:** Astro Starlight 0.41, `starlight-sidebar-topics`, GitHub Markdown, Contributor Covenant 2.1.
 
@@ -42,7 +42,7 @@
 - Test: visual review of the three files; no docs-site build required unless `docs/` is untouched (it is)
 
 **Interfaces:**
-- Consumes: guidebook facts at https://bitrealm.dev/ (install, quick start, Settings → Account, port 8080)
+- Consumes: guidebook facts at https://bitrealm.io/ (install, quick start, Settings → Account, port 8080)
 - Produces: CoC for later crate/root links; CONTRIBUTING still documents `sync:cli` until Task 2; README may still link `docs/maintainers/exporter-matrix.md` until Task 3
 
 - [ ] **Step 1: Write `CODE_OF_CONDUCT.md`**
@@ -79,7 +79,7 @@ People who have phone backups and want to extract, convert, and browse those mes
 
 ## Getting started
 
-**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.dev/introduction/install/).
+**Desktop app:** Download the archive for your operating system from the latest [Release](https://github.com/bitrealm-dev/message-vault/releases). Extract it, keep every file in the same folder, and run the app. Install steps: [Install the desktop app](https://bitrealm.io/introduction/install/).
 
 **Demo vault:**
 
@@ -91,7 +91,7 @@ docker run -d --name message-vault \
   bitrealm/message-vault:latest
 ```
 
-Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Quick start](https://bitrealm.dev/introduction/quick-start/).
+Open **http://localhost:8080** and sign in with username `demo` and an empty password. The website and the API share that origin. More: [Quick start](https://bitrealm.io/introduction/quick-start/).
 
 ## What you can do
 
@@ -99,7 +99,7 @@ Open **http://localhost:8080** and sign in with username `demo` and an empty pas
 - **Convert** an existing Message Vault folder between JSON Lines, JSON, CSV, EML, MBOX, and XML.
 - **Import, browse, and export** using the desktop app and the vault.
 
-Full guide: **https://bitrealm.dev/**
+Full guide: **https://bitrealm.io/**
 
 Converter capability details today: [exporter capability matrix](docs/maintainers/exporter-matrix.md) (moves to the Format Reference topic in a later change).
 
@@ -206,7 +206,7 @@ Replace “edit crate manpage then sync” with: edit `docs/src/content/docs/ref
 
 - [ ] **Step 6: Rewrite CLI crate READMEs**
 
-Each file: what it is, `cargo test -p <pkg>` and `cargo run -p <pkg> -- --help`, link `https://bitrealm.dev/reference/cli/<slug>/`, license. No flag lists. No `docs/MANPAGE.md`.
+Each file: what it is, `cargo test -p <pkg>` and `cargo run -p <pkg> -- --help`, link `https://bitrealm.io/reference/cli/<slug>/`, license. No flag lists. No `docs/MANPAGE.md`.
 
 Packages and slugs:
 
@@ -243,7 +243,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-Command-line options: https://bitrealm.dev/reference/cli/sms-backup-restore-exporter/
+Command-line options: https://bitrealm.io/reference/cli/sms-backup-restore-exporter/
 
 ## License
 
@@ -286,9 +286,9 @@ Do not add unrelated untracked files (`.cursor/skills/`).
 
 **Files:**
 - Create: pages under `docs/src/content/docs/formats/` as in the spec table
-- Modify: `docs/astro.config.mjs` (install and configure `starlight-sidebar-topics`), `docs/package.json` / lockfile, `README.md` (matrix link → https://bitrealm.dev/formats/), `CONTRIBUTING.md`, `docs/maintainers/README.md`, `docs/maintainers/architecture/message-ir.md`, `crates/libs/mail/src/lib.rs`, `crates/libs/sbr/src/lib.rs`, `crates/core/message-vault-io-core/src/config.rs` (comment URL only)
+- Modify: `docs/astro.config.mjs` (install and configure `starlight-sidebar-topics`), `docs/package.json` / lockfile, `README.md` (matrix link → https://bitrealm.io/formats/), `CONTRIBUTING.md`, `docs/maintainers/README.md`, `docs/maintainers/architecture/message-ir.md`, `crates/libs/mail/src/lib.rs`, `crates/libs/sbr/src/lib.rs`, `crates/core/message-vault-io-core/src/config.rs` (comment URL only)
 - Delete: remaining crate `docs/` files and directories; `docs/maintainers/exporter-matrix.md`; `docs/maintainers/formats/mail-archive.md`; `docs/maintainers/formats/sms-backup-restore-xml.md`; empty `docs/maintainers/formats/`
-- Update CLI crate READMEs that now have format pages to add the extra bitrealm.dev links
+- Update CLI crate READMEs that now have format pages to add the extra bitrealm.io links
 
 **Site paths (create with Starlight frontmatter `title` + `description`):**
 
@@ -337,9 +337,9 @@ Delete crate `docs/` directories that become empty. Delete the three maintainer 
 
 Replace in-repo references:
 
-- `docs/maintainers/exporter-matrix.md` → https://bitrealm.dev/formats/
-- `docs/maintainers/formats/mail-archive.md` → https://bitrealm.dev/formats/mail-archive/
-- `docs/maintainers/formats/sms-backup-restore-xml.md` → https://bitrealm.dev/formats/sms-backup-restore-xml/
+- `docs/maintainers/exporter-matrix.md` → https://bitrealm.io/formats/
+- `docs/maintainers/formats/mail-archive.md` → https://bitrealm.io/formats/mail-archive/
+- `docs/maintainers/formats/sms-backup-restore-xml.md` → https://bitrealm.io/formats/sms-backup-restore-xml/
 
 including rustdoc in `crates/libs/mail/src/lib.rs` and `crates/libs/sbr/src/lib.rs`.
 
@@ -398,8 +398,8 @@ Shared message types: [docs/maintainers/architecture/message-ir.md](../../../doc
 
 Vault server README points at:
 
-- https://bitrealm.dev/set-up-the-server/docker-install/
-- https://bitrealm.dev/reference/server-cli/
+- https://bitrealm.io/set-up-the-server/docker-install/
+- https://bitrealm.io/reference/server-cli/
 - `cargo test -p message-vault-server`
 
 `message-vault-io-gui`: deprecated banner, do not develop, pointer to the Tauri desktop app (`src-tauri/` + `web/`), keep `cargo run -p message-vault-io-gui` for historical reference, strip the Slint look-and-feel essay.

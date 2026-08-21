@@ -2,7 +2,7 @@
 
 ## Context
 
-The public site at https://bitrealm.dev/ is an Astro Starlight project under `docs/`. The User Guide (Introduction through Browse) was written against the 2026-08-07 unified-guidebook spec. That spec assumed two product stories: a demo vault (`DEMO_DATA=true`) and a separate empty personal vault (`DEMO_DATA=false`). It also treated Extract-to-JSONL and Import as equal first-run steps, and it mixed CLI, HTTP API, Compose, and format mapping into the same sidebar as “open the website and look around.”
+The public site at https://bitrealm.io/ is an Astro Starlight project under `docs/`. The User Guide (Introduction through Browse) was written against the 2026-08-07 unified-guidebook spec. That spec assumed two product stories: a demo vault (`DEMO_DATA=true`) and a separate empty personal vault (`DEMO_DATA=false`). It also treated Extract-to-JSONL and Import as equal first-run steps, and it mixed CLI, HTTP API, Compose, and format mapping into the same sidebar as “open the website and look around.”
 
 The product is one vault process, one SQLite database, many accounts. Username `demo` (empty password, read-only sample conversations) is a login on that instance. A personal archive is a second account the reader creates after signing out. The website is enough to browse. Importing a phone backup needs the desktop app. The signed-in **Import** screen can read a backup and push in one run. Writing JSONL (JSON Lines) folders to disk, converting formats, and exporting from the vault are later tasks.
 

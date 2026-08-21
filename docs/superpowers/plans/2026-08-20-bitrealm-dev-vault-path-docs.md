@@ -1,10 +1,10 @@
-# Guides under bitrealm.dev/vault Implementation Plan
+# Guides under bitrealm.io/vault Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Put the User Guide at `https://bitrealm.dev/vault/user/` and Developer docs at `https://bitrealm.dev/vault/developer/`, keep the company page at `https://bitrealm.dev/`, and stop using `vault.bitrealm.dev`.
+**Goal:** Put the User Guide at `https://bitrealm.io/vault/user/` and Developer docs at `https://bitrealm.io/vault/developer/`, keep the company page at `https://bitrealm.io/`, and stop using `vault.bitrealm.io`.
 
-**Architecture:** One Astro app. Starlight files move under `docs/src/content/docs/vault/`. `site` is `https://bitrealm.dev`. No Astro `base: '/vault'`. No redirects. No Worker. Operator deletes the Cloudflare `vault` DNS record (not in this repo).
+**Architecture:** One Astro app. Starlight files move under `docs/src/content/docs/vault/`. `site` is `https://bitrealm.io`. No Astro `base: '/vault'`. No redirects. No Worker. Operator deletes the Cloudflare `vault` DNS record (not in this repo).
 
 **Tech Stack:** Astro Starlight, GitHub Pages, Markdown/MDX.
 
@@ -13,7 +13,7 @@
 - No HTTP redirects of any kind.
 - Do not set Astro `base` to `/vault`.
 - Do not add a Cloudflare Worker or Redirect Rule in the repo.
-- Do not put `vault.bitrealm.dev` in Pages settings or `docs/public/CNAME`.
+- Do not put `vault.bitrealm.io` in Pages settings or `docs/public/CNAME`.
 - Do not rewrite `docs/superpowers/` historical specs and plans (except this plan file).
 - Do not change `api`, `app`, or `cdn` DNS from this repo.
 - Do not rewrite User Guide chapter copy except links and file moves.
@@ -51,7 +51,7 @@ git mv docs/src/content/docs/developer docs/src/content/docs/vault/developer
 
 - [ ] **Step 2: Update `docs/astro.config.mjs`**
 
-Set `site: 'https://bitrealm.dev'`.
+Set `site: 'https://bitrealm.io'`.
 
 User Guide `link: '/vault/user/'`. Developer `link: '/vault/developer/'`.
 
@@ -140,42 +140,42 @@ git commit -m "docs: retarget Starlight links under /vault"
 
 **Files:**
 - Modify: `docs/src/pages/index.astro`
-- Modify: `CONTRIBUTING.md` (replace the Worker / `vault.bitrealm.dev` section)
+- Modify: `CONTRIBUTING.md` (replace the Worker / `vault.bitrealm.io` section)
 - Modify: `CLAUDE.md`, `README.md`, crate READMEs, rustdoc, `docs/maintainers/*.md`, `docker/compose.yml`, `.github/workflows/ci.yml`, `web-next/README.md`
 
 **Interfaces:**
-- Consumes: `https://vault.bitrealm.dev/user/` and `/developer/`
-- Produces: `https://bitrealm.dev/vault/user/` and `https://bitrealm.dev/vault/developer/`
+- Consumes: `https://vault.bitrealm.io/user/` and `/developer/`
+- Produces: `https://bitrealm.io/vault/user/` and `https://bitrealm.io/vault/developer/`
 
 - [ ] **Step 1: Company page**
 
 In `docs/src/pages/index.astro`:
 
 ```javascript
-const userGuide = "https://bitrealm.dev/vault/user/";
-const developer = "https://bitrealm.dev/vault/developer/";
+const userGuide = "https://bitrealm.io/vault/user/";
+const developer = "https://bitrealm.io/vault/developer/";
 ```
 
-Keep `canonical` as `https://bitrealm.dev/`.
+Keep `canonical` as `https://bitrealm.io/`.
 
 - [ ] **Step 2: Replace `CONTRIBUTING.md` product-host section**
 
-Delete the whole `### Set up vault.bitrealm.dev` section (Worker steps included). After `### Publishing / custom domain`, add:
+Delete the whole `### Set up vault.bitrealm.io` section (Worker steps included). After `### Publishing / custom domain`, add:
 
 ```markdown
 Guides live at:
 
-- User Guide: `https://bitrealm.dev/vault/user/`
-- Developer docs: `https://bitrealm.dev/vault/developer/`
+- User Guide: `https://bitrealm.io/vault/user/`
+- Developer docs: `https://bitrealm.io/vault/developer/`
 
-Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.dev`. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
+Do not add a DNS name `vault`. GitHub Pages uses one custom domain: `bitrealm.io`. After GitHub shows a valid certificate, turn on **Enforce HTTPS** in the repository Pages settings. Leave the DNS records named `api`, `app`, and `cdn` alone.
 ```
 
-Also update other `https://vault.bitrealm.dev` links in that file (Try the vault, Operator Docker, Converter capabilities) to the matching `https://bitrealm.dev/vault/…` URLs. CLI edit path stays `docs/src/content/docs/developer/reference/cli/` until the move in Task 1; after the move it is `docs/src/content/docs/vault/developer/reference/cli/`.
+Also update other `https://vault.bitrealm.io` links in that file (Try the vault, Operator Docker, Converter capabilities) to the matching `https://bitrealm.io/vault/…` URLs. CLI edit path stays `docs/src/content/docs/developer/reference/cli/` until the move in Task 1; after the move it is `docs/src/content/docs/vault/developer/reference/cli/`.
 
-- [ ] **Step 3: Rewrite remaining live `https://vault.bitrealm.dev` URLs**
+- [ ] **Step 3: Rewrite remaining live `https://vault.bitrealm.io` URLs**
 
-Replace `https://vault.bitrealm.dev/user` with `https://bitrealm.dev/vault/user` and `https://vault.bitrealm.dev/developer` with `https://bitrealm.dev/vault/developer` in live files. Exclude `docs/superpowers/`.
+Replace `https://vault.bitrealm.io/user` with `https://bitrealm.io/vault/user` and `https://vault.bitrealm.io/developer` with `https://bitrealm.io/vault/developer` in live files. Exclude `docs/superpowers/`.
 
 Also fix maintainer relative paths that still point at `src/content/docs/user` or `src/content/docs/developer` so they include `vault/`.
 
@@ -196,8 +196,8 @@ test ! -e dist/user
 test ! -e dist/developer
 ! grep -q 'Your messages, your way' dist/index.html
 grep -q 'Your messages, your way' dist/vault/user/index.html
-grep -q 'bitrealm.dev/vault/user' dist/index.html
-! grep -q 'vault.bitrealm.dev' dist/index.html
+grep -q 'bitrealm.io/vault/user' dist/index.html
+! grep -q 'vault.bitrealm.io' dist/index.html
 ```
 
 Expected: all succeed.
@@ -207,14 +207,14 @@ Expected: all succeed.
 ```bash
 git add docs/src/pages/index.astro CONTRIBUTING.md CLAUDE.md README.md \
   crates docs/maintainers docker/compose.yml .github/workflows/ci.yml web-next/README.md
-git commit -m "docs: publish guides at bitrealm.dev/vault"
+git commit -m "docs: publish guides at bitrealm.io/vault"
 ```
 
 ---
 
 ### Task 4: Operator note (no code)
 
-Tell the operator: in Cloudflare, delete the `vault` DNS record. Leave `api`, `app`, and `cdn`. After GitHub finishes the `bitrealm.dev` certificate, turn on Enforce HTTPS. Do not add a Worker.
+Tell the operator: in Cloudflare, delete the `vault` DNS record. Leave `api`, `app`, and `cdn`. After GitHub finishes the `bitrealm.io` certificate, turn on Enforce HTTPS. Do not add a Worker.
 
 ---
 
@@ -224,7 +224,7 @@ Tell the operator: in Cloudflare, delete the `vault` DNS record. Leave `api`, `a
 |---|---|
 | Company page at `/` | already there; Task 3 buttons |
 | `/vault/user/` and `/vault/developer/` | Task 1 |
-| `site` = `https://bitrealm.dev` | Task 1 |
+| `site` = `https://bitrealm.io` | Task 1 |
 | No `base: '/vault'` | Task 1 |
 | No redirects | all tasks |
 | No Worker | Task 3 CONTRIBUTING |

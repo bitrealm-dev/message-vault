@@ -8,9 +8,9 @@ Message Vault documentation lives in three places that do not share one source o
 
 2. **Crate pages on GitHub** — Each crate under `crates/` is its own folder. Some have a `README.md`. Some also have a `docs/` folder with command manpages, vendor input-format notes, and field-mapping tables. Opening `crates/exporters/sms-backup-restore-exporter/` on GitHub is a different experience from opening `crates/libs/ir/`, which has no README.
 
-3. **The public site** — Astro Starlight under `docs/`, live at https://bitrealm.dev/. That site is the user guidebook from [the 2026-08-07 rewrite](2026-08-07-docs-rewrite-design.md). The sidebar already lists per-command CLI pages, but those files are generated at build time from crate manpages and are not committed (they are gitignored except `reference/cli/index.md`). Format details still live in crate `docs/` folders and in `docs/maintainers/exporter-matrix.md`, which is not on the public site.
+3. **The public site** — Astro Starlight under `docs/`, live at https://bitrealm.io/. That site is the user guidebook from [the 2026-08-07 rewrite](2026-08-07-docs-rewrite-design.md). The sidebar already lists per-command CLI pages, but those files are generated at build time from crate manpages and are not committed (they are gitignored except `reference/cli/index.md`). Format details still live in crate `docs/` folders and in `docs/maintainers/exporter-matrix.md`, which is not on the public site.
 
-A visitor who starts on GitHub and a visitor who starts on bitrealm.dev do not see the same facts. Crate READMEs point at `docs/MANPAGE.md`. The root README mixes release download, Docker demo, and WSL contributor setup. Several crate READMEs still describe the old Slint GUI or tools that are no longer how the product is named.
+A visitor who starts on GitHub and a visitor who starts on bitrealm.io do not see the same facts. Crate READMEs point at `docs/MANPAGE.md`. The root README mixes release download, Docker demo, and WSL contributor setup. Several crate READMEs still describe the old Slint GUI or tools that are no longer how the product is named.
 
 This overhaul makes the public site the only full copy of converter, format, and CLI documentation. Crate `docs/` folders are removed after that content is on the site. Root files and crate READMEs become short GitHub front doors that point at the site. Work follows [The Good Docs Project](https://www.thegooddocsproject.dev/template) for README, contributing, and code-of-conduct files.
 
@@ -18,7 +18,7 @@ This spec does not replace the 2026-08-07 guidebook. User Guide pages and URLs s
 
 ## Goals
 
-- One full copy of CLI, format, and converter-capability documentation: https://bitrealm.dev/
+- One full copy of CLI, format, and converter-capability documentation: https://bitrealm.io/
 - A GitHub visitor can start from the root README or any workspace crate folder without hitting a dead `docs/MANPAGE.md` link
 - Root `README.md` matches the product as it works today (vault + desktop app, local login, current install paths)
 - Every Cargo workspace crate has a short, fact-checked README
@@ -46,7 +46,7 @@ Crate folder         README.md only
                      What the crate is, how to test it, link to the site
                      or “library used by …”. No docs/ folder.
 
-bitrealm.dev         User Guide (unchanged IA)
+bitrealm.io         User Guide (unchanged IA)
                      Reference → CLI (committed manpage pages)
                      Format Reference (new topic)
 ```
@@ -124,7 +124,7 @@ After the Format Reference pages exist, delete:
 
 and the empty `docs/maintainers/formats/` directory.
 
-Retarget every in-repo link to the matching https://bitrealm.dev/formats/… URL. That includes `README.md`, `CONTRIBUTING.md`, `docs/maintainers/README.md`, `docs/maintainers/architecture/message-ir.md`, and rustdoc comments in `crates/libs/mail` and `crates/libs/sbr`.
+Retarget every in-repo link to the matching https://bitrealm.io/formats/… URL. That includes `README.md`, `CONTRIBUTING.md`, `docs/maintainers/README.md`, `docs/maintainers/architecture/message-ir.md`, and rustdoc comments in `crates/libs/mail` and `crates/libs/sbr`.
 
 Do not leave pointer files at the old paths. GitHub blob URLs on `main` for those files will 404. That is accepted.
 
@@ -140,8 +140,8 @@ The rewritten README follows the Good Docs README shape and matches the guideboo
 
 1. **What it is** — vault + desktop app; messages stay on a machine you control. There is no cloud account. The vault you run has a local login (demo, or an account you create).
 2. **Who it is for** — people with phone backups who want to extract, convert, and browse locally.
-3. **Getting started** — two short paths only: download the desktop app from GitHub Releases (link [Install](https://bitrealm.dev/introduction/install/)), and run the demo vault with the same `docker run` the quick-start page already uses. No WSL, rustup, nvm, or apt lists.
-4. **What you can do** — extract (Apple Messages, SMS Backup & Restore, WhatsApp; rescue imports named as limited), convert formats, import/browse/export. User-facing names, not crate names. Link https://bitrealm.dev/ for the long guide. After Format Reference exists, link `/formats/` instead of `docs/maintainers/exporter-matrix.md`.
+3. **Getting started** — two short paths only: download the desktop app from GitHub Releases (link [Install](https://bitrealm.io/introduction/install/)), and run the demo vault with the same `docker run` the quick-start page already uses. No WSL, rustup, nvm, or apt lists.
+4. **What you can do** — extract (Apple Messages, SMS Backup & Restore, WhatsApp; rescue imports named as limited), convert formats, import/browse/export. User-facing names, not crate names. Link https://bitrealm.io/ for the long guide. After Format Reference exists, link `/formats/` instead of `docs/maintainers/exporter-matrix.md`.
 5. **From source** — one sentence and a link to `CONTRIBUTING.md`.
 6. **Get involved** — `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 7. **License** — AGPL-3.0. `imessage-ir-exporter` still depends on `imessage-database` (GPL-3.0-or-later); combined binaries are AGPL-3.0.
@@ -243,11 +243,11 @@ No new Cargo tests. This overhaul does not change runtime behavior.
 
 2. **CLI on the site** — Commit per-command pages. Remove sync. Rewrite or add READMEs for crates that have a CLI (including `message-reexport`) so they point at `/reference/cli/...`. Delete those manpages. `npm run check` passes without `sync:cli`.
 
-3. **Format Reference** — Add `starlight-sidebar-topics`. Add `/formats/` pages. Delete remaining crate `docs/` folders and the three maintainer format/matrix files. Retarget in-repo links (including rustdoc) to bitrealm.dev. Point the root README at `/formats/`.
+3. **Format Reference** — Add `starlight-sidebar-topics`. Add `/formats/` pages. Delete remaining crate `docs/` folders and the three maintainer format/matrix files. Retarget in-repo links (including rustdoc) to bitrealm.io. Point the root README at `/formats/`.
 
 4. **Remaining crate READMEs** — Libraries, vault server, demo-seed, `message-vault-io-core`, deprecated Slint GUI. Fact-check against current code. No new public pages.
 
-Done means: a GitHub visitor can start from the root README or any crate folder without a dead manpage link; bitrealm.dev has working CLI pages and a Format topic; `cd docs && npm run check && npm run build` succeeds; crate `docs/` folders and the three maintainer format/matrix files are gone.
+Done means: a GitHub visitor can start from the root README or any crate folder without a dead manpage link; bitrealm.io has working CLI pages and a Format topic; `cd docs && npm run check && npm run build` succeeds; crate `docs/` folders and the three maintainer format/matrix files are gone.
 
 ## Relationship to the 2026-08-07 guidebook spec
 

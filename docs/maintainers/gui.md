@@ -165,7 +165,7 @@ output folder to another packaging format (via the common message).
 
 Persists under `[format]` in `export.ini` (loads legacy `[message-reexport]` if
 present). Mixed or unrecognized input dirs fail with a clear error. See
-[`message-reexporter` CLI](https://bitrealm.dev/vault/developer/reference/cli/message-reexporter/).
+[`message-reexporter` CLI](https://bitrealm.io/vault/developer/reference/cli/message-reexporter/).
 
 ### Guided Import Messages
 
@@ -205,7 +205,7 @@ Top tab. Two-step workflow after Extract Messages: push message-ir v3 JSONL +
 
 | Control | Type | Required | Notes |
 |---------|------|:--------:|-------|
-| Vault URL | text | yes | Full origin including port when needed, e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.dev`. |
+| Vault URL | text | yes | Full origin including port when needed, e.g. `http://127.0.0.1:8080` or `https://app.bitrealm.io`. |
 | Vault key (`[vault] key`) | text | yes | Named API token (`mv-api-…`) from Vault Settings → Account; saved to `export.ini` as `[vault] key` (plain text). On Linux/macOS the file is written mode `0600` (owner read/write only). |
 | Input directory | folder | yes | JSONL export folder (prefills from last Extract Messages output when empty) |
 | Continue on error | checkbox | no | Default on |
@@ -235,7 +235,7 @@ from disk, or media omitted by skip-attachments / text-only import.
 End-user write-up: [Import from a backup](../src/content/docs/vault/user/import-from-a-backup.md).
 
 Persists under `[vault]` in `export.ini`. See
-[`vault-push` CLI reference](https://bitrealm.dev/vault/developer/reference/cli/vault-push/).
+[`vault-push` CLI reference](https://bitrealm.io/vault/developer/reference/cli/vault-push/).
 
 ## Shared / global controls
 
@@ -371,7 +371,7 @@ Product: [iMazing](https://imazing.com/)
 
 Media modes and obfuscate apply through FormatSink for every format. WhatsApp
 chats use the `__whatsapp` stem suffix. See
-[`iMazing importer design`](https://bitrealm.dev/vault/developer/formats/imazing/design/).
+[`iMazing importer design`](https://bitrealm.io/vault/developer/formats/imazing/design/).
 
 ### WhatsApp — `whatsapp-exporter`
 
