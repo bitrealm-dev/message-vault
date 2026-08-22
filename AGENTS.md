@@ -3,7 +3,7 @@
 ## Communication Style
 
 - Write instructions in plain, direct English at high school reading level.
-- Avoid clever wording, metaphors, or obtuse language.
+- Avoid jargon, obtuse language, and clever diction.
 - Explain what you're doing and why in simple terms.
 - If something is complex, break it into clear steps.
 - Use concrete examples instead of abstract descriptions.
