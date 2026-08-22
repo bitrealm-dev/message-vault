@@ -25,7 +25,7 @@ description: Fix common problems with the desktop app and reaching the vault in 
 
 **wtsexporter not found.** The WhatsApp path needs the helper in `cli/wtsexporter` next to the app binary. Building from source: install with pip and see [Run from source](/vault/developer/run-from-source/).
 
-```bash
+```bash title="Install wtsexporter"
 pip install 'whatsapp-chat-exporter[android_backup,crypt15]'
 ```
 
@@ -49,7 +49,7 @@ The website and API share **port 8080**. Use `http://localhost:8080`. Confirm th
 
 The `data/` directory inside the volume may be owned by `root` while the container runs as a non-root user. On Linux:
 
-```bash
+```bash title="Fix volume ownership"
 docker run --rm -v message-vault-data:/data alpine chown -R 1000:1000 /data
 ```
 
@@ -57,7 +57,7 @@ Then restart the container. This is a one-time fix when you first create a named
 
 ### Port already in use
 
-```bash
+```bash title="Find what is using port 8080"
 # Linux / macOS
 lsof -i :8080
 

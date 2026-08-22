@@ -25,7 +25,7 @@ Design for a human-viewable export: **one folder per conversation**, **one `.eml
 
 ## Packaging
 
-```text
+```text title="EML packaging"
 output/
   <conversation-stem>/
     000001_<yyyy-mm-dd>_<hhmmss>_<guid8>.eml
@@ -173,7 +173,7 @@ SMS writers use `sms` / `mms` only. Absence of iMessage-only headers means “no
 
 `X-ME-Attachment-Meta` JSON array (CSV `AttachmentCell`-aligned):
 
-```json
+```json title="X-ME-Attachment-Meta"
 [
   {
     "path": null,
@@ -240,7 +240,7 @@ Sticker tapback: include sticker image MIME part + `X-ME-Attachment-Meta` with `
 
 **Optional aggregate on parent** (translator cache only):
 
-```http
+```http title="X-ME-Tapbacks"
 X-ME-Tapbacks: [{"part_index":0,"kind":"loved","reactor_handle":"+1555…","reactor_display_name":"Alex"}]
 ```
 
@@ -248,7 +248,7 @@ Readers SHOULD prefer per-message tapback EMLs. Do **not** store reactions only 
 
 ### Multipart bubbles (`X-ME-Parts`)
 
-```http
+```http title="X-ME-Parts"
 X-ME-Parts: [{"index":0,"kind":"text","text":"Hi","attachment_indices":[],"effects":[]},{"index":1,"kind":"attachment","attachment_indices":[0],"effects":[]}]
 ```
 

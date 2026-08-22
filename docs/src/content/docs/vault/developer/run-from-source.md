@@ -15,14 +15,14 @@ Optional while developing WhatsApp and media convert: Python for `wtsexporter`, 
 
 ## Clone
 
-```bash
+```bash title="Clone the repository"
 git clone https://github.com/bitrealm-io/message-vault.git
 cd message-vault
 ```
 
 ## Run the vault
 
-```bash
+```bash title="Start the vault"
 ./scripts/run-vault-dev.sh                 # API at http://127.0.0.1:8080; keep data/ if present
 ./scripts/run-vault-dev.sh --reset-demo    # wipe data/, seed sample inbox
 cd web && npm run dev                      # website at http://localhost:5173 (proxies /v1)
@@ -36,13 +36,13 @@ A release-shaped Docker image from this checkout is on [Operator Docker](/vault/
 
 One-time frontend install:
 
-```bash
+```bash title="Install frontend packages"
 cd web && npm ci && cd ..
 ```
 
 Dev window (hot reload):
 
-```bash
+```bash title="Start the desktop app"
 cargo tauri dev
 ```
 

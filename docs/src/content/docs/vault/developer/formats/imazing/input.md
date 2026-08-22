@@ -11,7 +11,7 @@ Conversion behavior and parser decisions are documented in [design](/vault/devel
 
 A full device export root typically contains:
 
-```text
+```text title="Device export tree"
 Device-Info.txt
 Contacts/.../Contacts - {stamp}.csv
 Messages/{YYYY-MM-DD HH MM SS} - {label}/Messages - {export-stamp} - {label}.csv
@@ -20,7 +20,7 @@ WhatsApp/{YYYY-MM-DD HH MM SS} - {label}/WhatsApp - {export-stamp} - {label}.csv
 
 Media files sit beside the CSV in each chat folder. There is no `Attachments/` subdirectory. Filenames often use:
 
-```text
+```text title="Attachment filename"
 {message timestamp} - {truncated chat label} - {original basename}
 ```
 
@@ -46,7 +46,7 @@ Discovery does not follow directory symbolic links. The importer sorts discovere
 
 The verified layout contains 17 columns:
 
-```text
+```text title="Messages CSV headers"
 Chat Session, Message Date, Delivered Date, Read Date, Edited Date, Deleted Date,
 Service, Type, Sender ID, Sender Name, Status, Replying to, Subject, Text, Reactions,
 Attachment, Attachment type
@@ -58,7 +58,7 @@ Observed `Service` values are `SMS` and `iMessage`. One chat can contain both va
 
 The verified layout contains 14 columns:
 
-```text
+```text title="WhatsApp CSV headers"
 Chat Session, Message Date, Sent Date, Type, Sender ID, Sender Name, Status, Forwarded,
 Replying to, Text, Reactions, Attachment, Attachment type, Attachment info
 ```

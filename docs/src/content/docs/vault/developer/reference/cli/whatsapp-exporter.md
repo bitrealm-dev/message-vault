@@ -12,7 +12,7 @@ whatsapp-exporter - convert WhatsApp DB/backup (via wtsexporter) via common mess
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 whatsapp-exporter --output <DIR> --platform android|ios
     [--format json|jsonl|csv|eml|mbox|xml]
     [--input <PATH>] [--json <PATH>]
@@ -108,7 +108,7 @@ Non-zero if `wtsexporter` is missing/fails, JSON is missing, convert fails, or m
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 ## Android crypt15
 whatsapp-exporter \
   --platform android \

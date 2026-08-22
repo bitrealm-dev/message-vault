@@ -25,7 +25,7 @@ Already sure you want your own data? Skip to [Use your own messages](/vault/user
 
 ## Start the vault
 
-```bash
+```bash title="Start with docker run"
 docker run -d --name message-vault \
   -p 8080:8080 \
   -e DEMO_DATA=true \
@@ -35,7 +35,7 @@ docker run -d --name message-vault \
 
 Or with Compose — save [docker/compose.yml](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) and start it:
 
-```bash
+```bash title="Start with Compose"
 mkdir message-vault && cd message-vault
 curl -fsSL -o compose.yml \
   https://raw.githubusercontent.com/bitrealm-io/message-vault/main/docker/compose.yml

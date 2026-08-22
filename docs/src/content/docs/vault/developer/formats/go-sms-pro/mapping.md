@@ -22,7 +22,7 @@ Diagnostic skip lists (`skipped_invalid_address.csv`, `skipped_empty_pdu.csv`, `
 
 ## XML structure
 
-```xml
+```xml title="gosms XML"
 <GoSms>
   <SMSCount>…</SMSCount>
   <SMS>

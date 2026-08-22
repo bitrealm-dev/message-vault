@@ -12,7 +12,7 @@ openextract-exporter - convert OpenExtract conversation CSV (+ VCF) via common m
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 openextract-exporter --input <PATH> --output <DIR>
     [--format json|jsonl|csv|eml|mbox|xml]
     [--vcf <PATH> | --contacts <PATH>]
@@ -73,7 +73,7 @@ None required beyond a normal process environment.
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 openextract-exporter \
   --input /path/to/openextract_csv_dir \
   --output ./staging/openextract \

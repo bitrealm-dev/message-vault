@@ -64,7 +64,7 @@ are not inline** — fetch them with `GET /v1/assets/{sha256}`.
 
 Response shape:
 
-```json
+```json title="GET /v1/export/messages"
 {
   "ok": true,
   "query": "has:attachment after:2020-01-01",
@@ -92,7 +92,7 @@ this for a cheap preview before a full export.
 
 Response shape:
 
-```json
+```json title="GET /v1/export/messages/count"
 {
   "ok": true,
   "query": "has:attachment after:2020-01-01",
@@ -146,14 +146,14 @@ Request body limit: 512 MiB.
 
 ## Verify a token
 
-```bash
+```bash title="Verify a token"
 curl -sS "http://127.0.0.1:8080/v1/auth/check" \
   -H "Authorization: Bearer <import-api-token-from-settings>"
 ```
 
 ## Smoke tests
 
-```bash
+```bash title="Smoke tests"
 ./scripts/test/smoke-import-api.sh
 ./scripts/test/smoke-vault-push.sh
 ./scripts/test/smoke-export-api.sh
@@ -169,7 +169,7 @@ Large attachments (over ~90 MiB) are uploaded in parts. The server advertises a 
 
 Start a multipart upload session. Request body:
 
-```json
+```json title="POST /v1/assets/{sha256}/uploads"
 { "mime": "image/jpeg", "bytes": 268435456 }
 ```
 
@@ -180,7 +180,7 @@ Start a multipart upload session. Request body:
 
 Response when the asset is not yet stored:
 
-```json
+```json title="Upload session"
 { "ok": true, "upload_id": "…", "part_size": 67108864 }
 ```
 
@@ -188,7 +188,7 @@ Response when the asset is not yet stored:
 
 Response when the asset already exists (SHA-256 match):
 
-```json
+```json title="Asset already stored"
 { "ok": true, "sha256": "…", "assets_path": "…", "already_present": true }
 ```
 
@@ -200,7 +200,7 @@ Upload one part. `part` is 1-indexed and must be at least 1. The body is the raw
 
 Response:
 
-```json
+```json title="PUT part"
 { "ok": true, "part": 1, "bytes": 67108864 }
 ```
 
@@ -212,7 +212,7 @@ Assemble all uploaded parts, verify the SHA-256 of the combined bytes, and store
 
 Response:
 
-```json
+```json title="Complete upload"
 { "ok": true, "sha256": "…", "assets_path": "…", "already_present": false }
 ```
 

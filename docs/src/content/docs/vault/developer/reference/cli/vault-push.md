@@ -12,7 +12,7 @@ Push a Message Vault **JSONL** export folder into a running Message Vault (`mess
 
 ### Synopsis
 
-```bash
+```bash title="Synopsis"
 vault-push --url URL --key TOKEN --input DIR [options]
 ```
 
