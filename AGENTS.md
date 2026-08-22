@@ -228,6 +228,9 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 # Rewrite Rust (workspace + src-tauri) and web/ (Biome)
 ./scripts/format-all.sh
 
+# Clippy (workspace + src-tauri) and web lint (Biome). Warnings do not fail.
+./scripts/lint-all.sh
+
 cargo build --workspace
 cargo test --workspace
 cargo test -p sms-backup-restore-exporter   # one crate
@@ -250,7 +253,7 @@ npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
 
-From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/check-pr.sh` calls that script, then build/test/lint.
+From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace + `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 
@@ -264,9 +267,9 @@ cd docs && npm ci && npm run check && npm run build
 
 #### Not gated by CI
 
-Not gated by CI `web-next/` (`npm run lint` / `npm test` there if that tree is edited). 
+Not gated by CI `web-next/` (`npm run lint` / `npm test` there if that tree is edited).
 
-Clippy is optional locally (`rust-analyzer.check.command` is `clippy` in `.vscode/settings.json`).
+Clippy is not a CI job. Run it locally with `./scripts/lint-all.sh` (`rust-analyzer.check.command` is `clippy` in `.vscode/settings.json`).
 
 ### Releases and versions
 
