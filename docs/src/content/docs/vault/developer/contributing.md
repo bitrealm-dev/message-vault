@@ -179,9 +179,7 @@ git push -u origin feat/short-name
 
 Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
-### Directory map
-
-The product is two processes: the vault (HTTP API and SQLite) and the UI that talks to it. Most first PRs touch one of these:
+Most first PRs touch one of these:
 
 - **Vault API or database** — `crates/vault/server/` and `schema/sql/`
 - **Website or desktop screens** — `web/`
@@ -190,25 +188,11 @@ The product is two processes: the vault (HTTP API and SQLite) and the UI that ta
 
 Do not start in `crates/message-vault-io-gui/` or `web-next/`. Those are old UIs still in the tree.
 
-```text title="Repository layout"
-message-vault
-├── config/                 # copy example → config.toml to run the vault locally
-├── crates/                 # Rust crates Cargo builds together (src-tauri is not in this set)
-│   ├── cli/                # vault-push / vault-pull: load messages into a vault or write them out
-│   ├── core/               # shared import/export job settings used by CLI and the desktop app
-│   ├── exporters/          # parse iMessage, WhatsApp, SMS, and other backups into JSONL
-│   ├── libs/               # shared code those exporters and the vault use (format, contacts, media)
-│   ├── message-vault-io-gui/  # old Slint desktop app — skip for new work
-│   └── vault/              # message-vault-server (API + SQLite) and demo-seed (sample inbox)
-├── docker/                 # image and Compose file that look like a published vault
-├── docs/                   # bitrealm.io (User Guide, Developer docs, landing page)
-├── schema/                 # SQLite CREATE TABLE files the vault embeds
-├── scripts/                # run-vault-dev, check-pr, build-static, schema sync
-├── src-tauri/              # desktop window around web/ (Tauri; built separately from crates/)
-├── tests/                  # tests that span more than one crate; fixtures are fake data, never personal backups
-├── web/                    # website and desktop UI (same React app)
-└── web-next/               # old Next.js browse UI — ignore
-```
+The full folder list is on [Vault Design → Directory map](/vault/developer/vault-design/#directory-map).
+
+Once the vault is running, [Vault Design](/vault/developer/vault-design/) also lists the programs a build creates and shows how the website and the vault talk to each other.
+
+Phone backups do not go into the vault as raw files. A converter reads the backup and writes a folder of chat files (one file per conversation, one message per line). Import loads that folder into the vault. [Message Transfer](/vault/developer/message-transfer/) explains that path and which converters are ready to use.
 
 ### Preview the guidebook
 
@@ -278,7 +262,7 @@ GitHub runs checks. Fix failing checks. Reply to review comments on the same pul
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
 5. **Respect licenses.** See [License](#license).
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
-7. **Put design depth in maintainer docs.** Architecture and long format contracts stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
+7. **Point people at Developer docs for how the product is built.** Folder layout and how the vault talks to the UI are on [Vault Design](/vault/developer/vault-design/). How backups become chat files and then enter the vault is on [Message Transfer](/vault/developer/message-transfer/). Long notes about the shared chat file format stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
 8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
 
 ## License

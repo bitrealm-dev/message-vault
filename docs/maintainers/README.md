@@ -12,8 +12,8 @@ This directory contains implementation and release documentation for contributor
 
 ## Architecture and output formats
 
-- [C4 diagrams](architecture/puml/) — from-source system, container, and deployment views. Preview the `.puml` files with current C4-PlantUML.
-- [Developer session sequences](architecture/sequence_diagram.md) — four Mermaid diagrams: start the vault, sign in, import a backup, export from the vault. Desktop App (Tauri), Vite `:5173`, and Vault `:8080` are participants.
+- [Vault Design](https://bitrealm.io/vault/developer/vault-design/) — tree, binaries, C4 views, and session sequences. PlantUML sources: [`architecture/puml/`](architecture/puml/).
+- [Message Transfer](https://bitrealm.io/vault/developer/message-transfer/) — exporter → JSONL → import, supported vs rescue commands.
 - [Shared message model](architecture/message-ir.md) — `ConversationDocument`, common fields, source-specific data, and output projectors.
 - [Mail archive format](https://bitrealm.io/vault/developer/formats/mail-archive/) — EML/MBOX layout and `X-ME-*` metadata.
 - [SMS Backup & Restore XML output](https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/) — Android-compatible `smses.xml` output and mapping rules.
