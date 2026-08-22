@@ -137,7 +137,7 @@ cargo tauri dev
 
 When the window opens, point it at **http://127.0.0.1:8080**. The first compile of the desktop app also takes several minutes.
 
-**Stopping and restarting**
+#### Stopping and restarting
 
 Ctrl+C in terminal 1 stops the vault (and the SQLite UI if it was started). Ctrl+C in terminal 2 stops the website or the desktop app.
 
@@ -147,7 +147,7 @@ After edits under `crates/vault/server/`, restart terminal 1. After edits under 
 
 Open a GitHub issue before starting the work, so the later pull request can link to it. Use the bug report or feature request form. Do not wait for a reply before coding. If the issue has no reply after 5 business days, comment on that same issue.
 
-**Branch**
+### Branch
 
 Start from the latest `main`. Do not commit on `main`. Name the branch with a prefix:
 
@@ -157,13 +157,13 @@ Start from the latest `main`. Do not commit on `main`. Name the branch with a pr
 
 Keep the branch current with `main` while working (merge or rebase). One pull request should do one job.
 
-**Commits**
+### Commits
 
 Each commit should be one idea. Do not mix a bug fix with a rename, or a feature with formatting of unrelated files.
 
 Prefer `feat:`, `fix:`, or `docs:` at the start of the subject when it fits. Other prefixes are optional. The subject should say what changed. Add a short body when the reason is not obvious. Mention the issue (`Ref: #123`).
 
-**Example**
+### Example
 
 After the fork is cloned, from the repository root:
 
@@ -210,11 +210,25 @@ message-vault
 └── web-next/               # old Next.js browse UI — ignore
 ```
 
+### Preview the guidebook
+
+Edit guidebook pages under `docs/src/content/docs/vault/`. Those pages show up at paths like `/vault/user/` and `/vault/developer/`. The home page at `/` comes from `docs/src/pages/index.astro`. The published site is **https://bitrealm.io/**.
+
+To preview locally:
+
+```bash
+cd docs
+npm ci
+npm run dev
+```
+
+Open **http://localhost:4321/** for the home page, or **http://localhost:4321/vault/developer/** for Developer docs. Before opening a pull request, `./scripts/check-pr.sh` already checks and builds `docs/`.
+
 ## Opening a PR
 
 Run the checks, then open a pull request against `main`. Do this after **Making Code Changes**. The first compile and the first `npm ci` each take several minutes.
 
-**Before it is ready**
+### Before it is ready
 
 From the repository root:
 
@@ -226,7 +240,7 @@ That script applies rustfmt to the workspace and to `src-tauri/` (it rewrites fi
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures. Personal phone backups are not required.
 
-**Keep the branch current**
+### Keep the branch current
 
 If `main` has moved, update the branch before asking for review:
 
@@ -238,7 +252,7 @@ git push
 
 Rebase is allowed. Merge is enough. Do not force-push unless the branch is only used by that one contributor.
 
-**Open the pull request**
+### Open the pull request
 
 A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form. GitHub fills in the default template. That default is enough for most changes. Feature and bug-fix templates also exist; they are not required.
 
@@ -252,42 +266,9 @@ From the repository root, this also works:
 gh pr create --base main --title "feat: add support for x" --body "Ref: #123"
 ```
 
-**After it is open**
+### After it is open
 
 GitHub runs checks. Fix failing checks. Reply to review comments on the same pull request.
-
-## Docs site
-
-The public site is Astro Starlight under `docs/`, with guidebook pages under `docs/src/content/docs/vault/…` (URLs such as `/vault/user/` and `/vault/developer/`). The Message Vault product landing at `/` is `docs/src/pages/index.astro`. Published origin: **https://bitrealm.io/**.
-
-```bash
-cd docs
-npm ci
-npm run dev
-```
-
-Local preview: **http://localhost:4321/** (company page) and **http://localhost:4321/vault/developer/** (and other `/vault/…` paths). Run `npm run check` and `npm run build` before merging doc edits.
-
-CLI reference pages live under `docs/src/content/docs/vault/developer/reference/cli/`. Edit those files directly.
-
-Pages custom domain and DNS cutover notes belong in maintainer ops, not in every PR. The committed apex name is `docs/public/CNAME` (`bitrealm.io`).
-
-## Workspace map
-
-- **`crates/libs/`** — shared libraries (`ir`, `ir-format`, `contacts`, `media`, `mail`, `sbr`, `phone`, `csv`, `obfuscate`, …)
-- **`crates/exporters/`** — backup converters (iMessage, WhatsApp, SMS Backup & Restore, plus experimental sources)
-- **`crates/core/message-vault-io-core/`** — shared config, jobs, and GUI/CLI form model
-- **`crates/cli/`** — `vault-push`, `vault-pull` (libraries + optional CLI binaries)
-- **`crates/vault/server/`** — `message-vault-server` (HTTP API + SQLite)
-- **`crates/vault/demo-seed/`** — sample data for demo reset
-- **`src-tauri/`** + **`web/`** — Tauri v2 desktop shell and Vite SPA (shell excluded from the workspace)
-- **`crates/message-vault-io-gui/`** — legacy Slint GUI (still in the tree; not the primary desktop path)
-
-## License
-
-[`LICENSE.md`](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) is the **Fair Core License** (FCL-1.0-ALv2). Some `Cargo.toml` files still declare `AGPL-3.0-only` from earlier packaging; treat `LICENSE.md` as the repository license text until those crate metadata lines are aligned.
-
-`imessage-ir-exporter` still depends on `imessage-database` / related GPL-licensed crates. Call that out when changing that exporter or anything that links those libraries into new binaries.
 
 ## Contribution rules
 
@@ -299,3 +280,7 @@ Pages custom domain and DNS cutover notes belong in maintainer ops, not in every
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
 7. **Put design depth in maintainer docs.** Architecture and long format contracts stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
 8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
+
+## License
+
+Distributed under the Fair Core License. See [LICENSE.md](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) for the full text.
