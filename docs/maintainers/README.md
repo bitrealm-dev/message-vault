@@ -7,12 +7,12 @@ This directory contains implementation and release documentation for contributor
 - [Setup, build, and contributing](https://bitrealm.io/vault/developer/contributing/) — prerequisites, workspace build, helpers, tests, and PR rules. Short pointer in the repo: [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 - [Develop and publish releases](developing.md) — release workflow, documentation build, and local preview.
 - [Code signing (Windows / macOS)](signing.md) — certificates, GitHub secrets, and gated release workflow steps.
-- [GUI design](gui.md) — Desktop app architecture: Tauri v2 shell with React + Vite frontend, Tauri commands wrapping exporter crates, and progress events.
+- [GUI design](../../crates/message-vault-io-gui/gui.md) — Desktop app architecture: Tauri v2 shell with React + Vite frontend, Tauri commands wrapping exporter crates, and progress events.
 - [Converter capabilities](https://bitrealm.io/vault/developer/formats/) — supported inputs, known source limitations, and format mapping pages.
 
 ## Architecture and output formats
 
-- [Vault Design](https://bitrealm.io/vault/developer/vault-design/) — tree, binaries, C4 views, and session sequences. PlantUML sources: [`architecture/puml/`](architecture/puml/).
+- [Vault Design](https://bitrealm.io/vault/developer/vault-design/) — tree, binaries, C4 views, and session sequences. PlantUML sources: [`architecture/puml/`](architecture/puml/). Mermaid sources: [`architecture/sequence_diagram.md`](architecture/sequence_diagram.md).
 - [Message Transfer](https://bitrealm.io/vault/developer/message-transfer/) — exporter → JSONL → import, supported vs rescue commands.
 - [Shared message model](architecture/message-ir.md) — `ConversationDocument`, common fields, source-specific data, and output projectors.
 - [Mail archive format](https://bitrealm.io/vault/developer/formats/mail-archive/) — EML/MBOX layout and `X-ME-*` metadata.

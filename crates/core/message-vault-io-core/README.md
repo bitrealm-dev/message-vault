@@ -14,7 +14,7 @@ Workspace setup: [CONTRIBUTING.md](../../../CONTRIBUTING.md).
 
 ## Docs
 
-This crate is a library used by the desktop app and the converters. Maintainer GUI notes: [docs/maintainers/gui.md](../../../docs/maintainers/gui.md).
+This crate is a library used by the desktop app and the converters. Maintainer GUI notes: [crates/message-vault-io-gui/gui.md](../../message-vault-io-gui/gui.md).
 
 ## License
 
