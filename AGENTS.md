@@ -225,9 +225,8 @@ Rust formatter is `rustfmt`. CI does not run Clippy. `src-tauri/` is not a works
 cargo fmt --all -- --check
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-# Rewrite files to match rustfmt
-cargo fmt --all
-cargo fmt --manifest-path src-tauri/Cargo.toml
+# Rewrite Rust (workspace + src-tauri) and web/ (Biome; not a CI gate yet)
+./scripts/format-all.sh
 
 cargo build --workspace
 cargo test --workspace
@@ -237,17 +236,21 @@ cargo build --manifest-path src-tauri/Cargo.toml
 
 #### Frontend
 
-Frontend (`web/`) — ESLint (`web/eslint.config.js`) and TypeScript (`npm run build` runs `tsc` then Vite). There is no Prettier job. Lint errors fail CI; warnings do not. Prefer a real fix over `eslint-disable`. Prefix unused bindings with `_`.
+Frontend (`web/`) — ESLint (`web/eslint.config.js`) is still the CI linter. Biome (`web/biome.json`) formats TypeScript, JavaScript, CSS, JSON, and HTML. CI does not check web format yet. Lint errors fail CI; warnings do not. Prefer a real fix over `eslint-disable` or `biome-ignore`. Prefix unused bindings with `_`.
 
 ```bash
 cd web
 npm ci                    # first time, or after package-lock.json changes
-npm run lint              # eslint .
+npm run lint              # eslint . (CI gate)
+npm run format            # biome format --write .
+npm run format:check      # biome format (no write)
 npm test                  # vitest run (src/**/*.{test,spec}.{ts,tsx})
 npm run test:watch
 npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
+
+From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/check-pr.sh` still does not auto-format `web/`.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 
