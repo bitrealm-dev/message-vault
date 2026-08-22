@@ -126,7 +126,7 @@ Open **http://localhost:5173**. Sign in as username `demo` with an empty passwor
 
 Later sessions, skip `npm ci` unless `web/package-lock.json` changed. Skip `--reset-demo` unless the sample message data should be rebuilt.
 
-### Vault flags
+#### Vault flags
 
 First run uses `--reset-demo`. Later sessions, start without flags so `data/` stays:
 
@@ -136,7 +136,7 @@ First run uses `--reset-demo`. Later sessions, start without flags so `data/` st
 
 `--reset` wipes `data/` and starts empty (no sample inbox). Do not combine `--reset` and `--reset-demo`. `--sqlweb` still works with any of these.
 
-### Serve the website from the vault (optional)
+#### Serve the website from the vault (optional)
 
 Vite is the usual UI. To have the vault itself serve the website at **http://127.0.0.1:8080**:
 
