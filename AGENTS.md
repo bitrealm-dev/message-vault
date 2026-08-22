@@ -91,9 +91,8 @@ message-vault
 ├── docs/                   # Astro Starlight site (bitrealm.io)
 │   ├── img/                # images used in README / docs
 │   ├── public/             # CNAME and other files copied as-is
-│   ├── src/                # landing page + User Guide + Developer guidebook
-│   │   └── assets/architecture/  # C4 PlantUML sources and exported SVGs
-│   └── superpowers/        # design specs and implementation plans
+│   └── src/                # landing page + User Guide + Developer guidebook
+│       └── assets/architecture/  # C4 PlantUML sources and exported SVGs
 ├── schema/                 # SQLite schema for the vault
 │   └── sql/                # CREATE TABLE sources embedded by the server
 ├── scripts/                # host helpers (run-vault-dev, build-static, schema sync)
