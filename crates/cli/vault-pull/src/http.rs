@@ -178,6 +178,17 @@ fn export_url(request: ExportUrl<'_>) -> Result<reqwest::Url> {
     Ok(url)
 }
 
+/// Arguments for [`HttpSession::export_messages`].
+pub(crate) struct ExportMessagesArgs<'a> {
+    pub base_url: &'a str,
+    pub key: &'a str,
+    pub q: &'a str,
+    pub limit: usize,
+    pub cursor: Option<&'a str>,
+    pub account: &'a str,
+    pub source: Option<&'a str>,
+}
+
 impl HttpSession {
     /// Blocking HTTP client with a connection pool for worker threads.
     ///
@@ -197,17 +208,16 @@ impl HttpSession {
     /// # Errors
     ///
     /// Returns an error when the request fails or the body is not valid JSON.
-    #[allow(clippy::too_many_arguments)]
-    pub fn export_messages(
-        &self,
-        base_url: &str,
-        key: &str,
-        q: &str,
-        limit: usize,
-        cursor: Option<&str>,
-        account: &str,
-        source: Option<&str>,
-    ) -> Result<ExportMessagesResponse> {
+    pub fn export_messages(&self, args: ExportMessagesArgs<'_>) -> Result<ExportMessagesResponse> {
+        let ExportMessagesArgs {
+            base_url,
+            key,
+            q,
+            limit,
+            cursor,
+            account,
+            source,
+        } = args;
         let url = export_url(ExportUrl {
             base_url,
             path: "/v1/export/messages",

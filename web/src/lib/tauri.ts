@@ -10,18 +10,20 @@ import type {
 /** Start extracting a phone backup on the desktop backend. */
 export async function invokeExtract(config: ExtractConfig): Promise<void> {
   return invoke("extract", {
-    source: config.source,
-    path: config.path,
-    outputDir: config.output_dir,
-    backupPassword: config.backup_password ?? null,
-    attachmentMedia: config.attachment_media ?? null,
-    mediaMaxResolution: config.media_max_resolution ?? null,
-    mediaMaxFps: config.media_max_fps ?? null,
-    mediaMinSize: config.media_min_size ?? null,
-    conversationFilter: config.conversation_filter ?? null,
-    startDate: config.start_date ?? null,
-    endDate: config.end_date ?? null,
-    obfuscate: config.obfuscate ?? null,
+    args: {
+      source: config.source,
+      path: config.path,
+      outputDir: config.output_dir,
+      backupPassword: config.backup_password ?? null,
+      attachmentMedia: config.attachment_media ?? null,
+      mediaMaxResolution: config.media_max_resolution ?? null,
+      mediaMaxFps: config.media_max_fps ?? null,
+      mediaMinSize: config.media_min_size ?? null,
+      conversationFilter: config.conversation_filter ?? null,
+      startDate: config.start_date ?? null,
+      endDate: config.end_date ?? null,
+      obfuscate: config.obfuscate ?? null,
+    },
   });
 }
 
@@ -94,17 +96,19 @@ export interface TauriJobResult {
 /** Upload extracted conversations to a vault server. */
 export async function invokePush(config: PushConfig): Promise<void> {
   return invoke("push", {
-    baseUrl: config.base_url,
-    username: config.username,
-    key: config.key,
-    inputDir: config.input_dir,
-    mode: config.mode,
-    force: config.force,
-    continueOnError: config.continue_on_error,
-    skipAttachments: config.skip_attachments,
-    trustExport: config.trust_export,
-    contactNameMode: config.contact_name_mode ?? "fill_missing",
-    importId: config.import_id ?? null,
+    args: {
+      baseUrl: config.base_url,
+      username: config.username,
+      key: config.key,
+      inputDir: config.input_dir,
+      mode: config.mode,
+      force: config.force,
+      continueOnError: config.continue_on_error,
+      skipAttachments: config.skip_attachments,
+      trustExport: config.trust_export,
+      contactNameMode: config.contact_name_mode ?? "fill_missing",
+      importId: config.import_id ?? null,
+    },
   });
 }
 
@@ -120,12 +124,14 @@ export interface PullConfig {
 /** Download conversations from a vault server into a folder. */
 export async function invokePull(config: PullConfig): Promise<void> {
   return invoke("pull", {
-    baseUrl: config.base_url,
-    username: config.username,
-    key: config.key,
-    outDir: config.out_dir,
-    query: config.query,
-    skipAttachments: config.skip_attachments,
+    args: {
+      baseUrl: config.base_url,
+      username: config.username,
+      key: config.key,
+      outDir: config.out_dir,
+      query: config.query,
+      skipAttachments: config.skip_attachments,
+    },
   });
 }
 

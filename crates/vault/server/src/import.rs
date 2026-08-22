@@ -110,32 +110,35 @@ pub struct ImportOptions<'a> {
     pub contact_name_mode: ContactNameMode,
 }
 
+/// Path/mode fields for [`ImportOptions::fixed`].
+#[derive(Debug, Clone, Copy)]
+pub struct FixedImportArgs<'a> {
+    pub db_path: &'a Path,
+    pub assets_dir: &'a Path,
+    pub asset_root: &'a Path,
+    pub contacts: Option<&'a Path>,
+    pub overwrite_contacts: bool,
+    pub mode: ImportMode,
+    pub source: &'a str,
+    pub account_id: &'a str,
+    pub fill_content_keys: bool,
+    pub import_id: Option<i64>,
+}
+
 impl<'a> ImportOptions<'a> {
     /// HTTP / tests / reset-demo: fixed source + assets dir, copy media.
-    #[allow(clippy::too_many_arguments)]
-    pub fn fixed(
-        db_path: &'a Path,
-        assets_dir: &'a Path,
-        asset_root: &'a Path,
-        contacts: Option<&'a Path>,
-        overwrite_contacts: bool,
-        mode: ImportMode,
-        source: &'a str,
-        account_id: &'a str,
-        fill_content_keys: bool,
-        import_id: Option<i64>,
-    ) -> Self {
+    pub fn fixed(args: FixedImportArgs<'a>) -> Self {
         Self {
-            db_path,
-            assets_dir,
-            asset_root,
-            contacts,
-            overwrite_contacts,
-            mode,
-            source,
-            account_id,
-            fill_content_keys,
-            import_id,
+            db_path: args.db_path,
+            assets_dir: args.assets_dir,
+            asset_root: args.asset_root,
+            contacts: args.contacts,
+            overwrite_contacts: args.overwrite_contacts,
+            mode: args.mode,
+            source: args.source,
+            account_id: args.account_id,
+            fill_content_keys: args.fill_content_keys,
+            import_id: args.import_id,
             source_from_jsonl: false,
             paths: None,
             media: MediaMode::Copy,
@@ -184,58 +187,64 @@ struct PreparedAttachment {
     stored: Option<StoredAsset>,
 }
 
+/// Arguments for [`import_export`].
+#[derive(Debug, Clone, Copy)]
+pub struct ImportExportArgs<'a> {
+    pub export_dir: &'a Path,
+    pub db_path: &'a Path,
+    pub assets_dir: &'a Path,
+    pub contacts: Option<&'a Path>,
+    pub overwrite_contacts: bool,
+    pub mode: ImportMode,
+    pub source: &'a str,
+    pub account_id: &'a str,
+}
+
 /// Import every JSON Lines file (`*.jsonl`, one JSON object per line) under
-/// `export_dir` (CLI staging path — the temporary import area).
+/// `args.export_dir` (CLI staging path — the temporary import area).
 ///
 /// # Errors
 ///
 /// Returns an error when the export directory is missing, a file cannot be
 /// parsed, or a database write fails.
-#[allow(clippy::too_many_arguments)]
-pub fn import_export(
-    export_dir: &Path,
-    db_path: &Path,
-    assets_dir: &Path,
-    contacts: Option<&Path>,
-    overwrite_contacts: bool,
-    mode: ImportMode,
-    source: &str,
-    account_id: &str,
-) -> Result<ImportStats> {
-    if !export_dir.is_dir() {
-        bail!("export directory does not exist: {}", export_dir.display());
+pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
+    if !args.export_dir.is_dir() {
+        bail!(
+            "export directory does not exist: {}",
+            args.export_dir.display()
+        );
     }
 
-    let paths = crate::import_cli::list_jsonl_files(export_dir)?;
+    let paths = crate::import_cli::list_jsonl_files(args.export_dir)?;
 
-    let mut conn = schema::open_configured(db_path)
-        .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    let mut conn = schema::open_configured(args.db_path)
+        .with_context(|| format!("failed to open database {}", args.db_path.display()))?;
     schema::ensure_vault_schema(&conn)?;
-    crate::db::account_profile::ensure_account_row(&conn, account_id)?;
+    crate::db::account_profile::ensure_account_row(&conn, args.account_id)?;
 
     let import_id = vault_imports::start_import(
         &conn,
-        account_id,
-        source,
-        mode.as_str(),
+        args.account_id,
+        args.source,
+        args.mode.as_str(),
         Some("message-vault-server"),
     )?;
 
     let result = import_jsonl_files_on_conn(
         &mut conn,
         &paths,
-        &ImportOptions::fixed(
-            db_path,
-            assets_dir,
-            export_dir,
-            contacts,
-            overwrite_contacts,
-            mode,
-            source,
-            account_id,
-            true,
-            Some(import_id),
-        ),
+        &ImportOptions::fixed(FixedImportArgs {
+            db_path: args.db_path,
+            assets_dir: args.assets_dir,
+            asset_root: args.export_dir,
+            contacts: args.contacts,
+            overwrite_contacts: args.overwrite_contacts,
+            mode: args.mode,
+            source: args.source,
+            account_id: args.account_id,
+            fill_content_keys: true,
+            import_id: Some(import_id),
+        }),
         ImportSchemaMode::AssumeReady,
     );
 
@@ -243,7 +252,7 @@ pub fn import_export(
         Ok(stats) => CompleteImportArgs::succeeded(stats.messages, stats.attachments),
         Err(_) => CompleteImportArgs::failed(),
     };
-    vault_imports::complete_import_or_warn(&conn, account_id, import_id, &complete_args);
+    vault_imports::complete_import_or_warn(&conn, args.account_id, import_id, &complete_args);
 
     result
 }
@@ -867,9 +876,9 @@ pub fn is_orphaned_export(path: &Path) -> bool {
     stem.eq_ignore_ascii_case("orphaned")
 }
 
-fn import_file_to_staging(
-    tx: &Transaction<'_>,
-    stmts: &mut StagingInserts<'_>,
+fn import_file_to_staging<'conn>(
+    tx: &Transaction<'conn>,
+    stmts: &mut StagingInserts<'conn>,
     opts: &ImportOptions<'_>,
     path: &Path,
     asset_stats: &mut AssetStats,
@@ -890,16 +899,16 @@ fn import_file_to_staging(
         match record {
             ExportRecord::Conversation(c) => {
                 if let Some(header) = pending.take() {
-                    stats.merge_file(&import_conversation_to_staging(
+                    stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
                         tx,
                         stmts,
                         opts,
-                        &source_file,
-                        header,
-                        std::mem::take(&mut messages),
+                        source_file: &source_file,
+                        conversation: header,
+                        messages: std::mem::take(&mut messages),
                         asset_stats,
                         media_work,
-                    )?);
+                    })?);
                 }
                 let source = resolve_conversation_source(
                     opts,
@@ -933,16 +942,16 @@ fn import_file_to_staging(
     }
 
     if let Some(header) = pending.take() {
-        stats.merge_file(&import_conversation_to_staging(
+        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
             tx,
             stmts,
             opts,
-            &source_file,
-            header,
+            source_file: &source_file,
+            conversation: header,
             messages,
             asset_stats,
             media_work,
-        )?);
+        })?);
     } else if is_orphaned {
         if opts.source_from_jsonl {
             bail!(
@@ -950,12 +959,12 @@ fn import_file_to_staging(
                 path.display()
             );
         }
-        stats.merge_file(&import_conversation_to_staging(
+        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
             tx,
             stmts,
             opts,
-            &source_file,
-            (
+            source_file: &source_file,
+            conversation: (
                 "orphaned".to_string(),
                 None,
                 "orphaned".to_string(),
@@ -967,7 +976,7 @@ fn import_file_to_staging(
             messages,
             asset_stats,
             media_work,
-        )?);
+        })?);
     } else if messages.is_empty() {
         bail!(
             "{} has no conversation header and no messages",
@@ -983,17 +992,28 @@ fn import_file_to_staging(
     Ok(stats)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn import_conversation_to_staging(
-    tx: &Transaction<'_>,
-    stmts: &mut StagingInserts<'_>,
-    opts: &ImportOptions<'_>,
-    source_file: &str,
+struct ImportConversationArgs<'a, 'conn> {
+    tx: &'a Transaction<'conn>,
+    stmts: &'a mut StagingInserts<'conn>,
+    opts: &'a ImportOptions<'a>,
+    source_file: &'a str,
     conversation: ConversationHeader,
     messages: Vec<MessageRecord>,
-    asset_stats: &mut AssetStats,
-    media_work: &Path,
-) -> Result<ImportStats> {
+    asset_stats: &'a mut AssetStats,
+    media_work: &'a Path,
+}
+
+fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Result<ImportStats> {
+    let ImportConversationArgs {
+        tx,
+        stmts,
+        opts,
+        source_file,
+        conversation,
+        messages,
+        asset_stats,
+        media_work,
+    } = args;
     let (
         chat_identifier,
         platform_service,
@@ -1879,18 +1899,18 @@ mod tests {
         );
         let first_stats = import_jsonl_files(
             &[first],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Replace,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                true,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: true,
+                import_id: None,
+            }),
         )
         .unwrap();
         assert_eq!(first_stats.messages, 2);
@@ -1906,18 +1926,18 @@ mod tests {
         );
         let second_stats = import_jsonl_files(
             &[second],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap();
         assert_eq!(second_stats.messages_appended, 2);
@@ -1977,18 +1997,18 @@ mod tests {
                 r#"{"guid":"g-children","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"original body","attachments":[],"imessage":null,"source":null}"#
             ),
         );
-        let options = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let options = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         import_jsonl_files(&[first], &options).unwrap();
 
         let second = write_jsonl(
@@ -2036,18 +2056,18 @@ mod tests {
 {"guid":"g-fts","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"zzuniqueterm body","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let options = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let options = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
 
         import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
         // Rows of the full-text search index storage: a redundant re-index writes a new
@@ -2154,18 +2174,18 @@ mod tests {
         );
         import_jsonl_files(
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "imessage",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap();
 
@@ -2211,18 +2231,18 @@ mod tests {
         let stats = import_jsonl_files_on_conn(
             &mut conn,
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "imessage",
-                TEST_ACCOUNT,
-                false,
-                Some(import_id),
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: Some(import_id),
+            }),
             ImportSchemaMode::AssumeReady,
         )
         .unwrap();
@@ -2290,18 +2310,18 @@ mod tests {
         let stats = import_jsonl_files_on_conn(
             &mut conn,
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "imessage",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
             ImportSchemaMode::AssumeReady,
         )
         .unwrap();
@@ -2538,18 +2558,18 @@ mod tests {
 {"guid":"g-fill","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let mut opts = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Backup Bob"));
@@ -2568,18 +2588,18 @@ mod tests {
 {"guid":"g-missing","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let mut opts = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
@@ -2598,18 +2618,18 @@ mod tests {
 {"guid":"g-asis","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let mut opts = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         opts.contact_name_mode = ContactNameMode::AsIs;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db), None);
@@ -2628,18 +2648,18 @@ mod tests {
 {"guid":"g-over","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let mut opts = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         opts.contact_name_mode = ContactNameMode::Overwrite;
         import_jsonl_files(&[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
@@ -2698,18 +2718,18 @@ mod tests {
 {"guid":"g-alias1","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"hi","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        let mut opts = ImportOptions::fixed(
-            &db,
-            &assets,
-            tmp.path(),
-            None,
-            false,
-            ImportMode::Append,
-            "imessage",
-            TEST_ACCOUNT,
-            false,
-            None,
-        );
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &db,
+            assets_dir: &assets,
+            asset_root: tmp.path(),
+            contacts: None,
+            overwrite_contacts: false,
+            mode: ImportMode::Append,
+            source: "imessage",
+            account_id: TEST_ACCOUNT,
+            fill_content_keys: false,
+            import_id: None,
+        });
         opts.contact_name_mode = ContactNameMode::FillMissing;
         import_jsonl_files(&[path1], &opts).unwrap();
         assert_eq!(
@@ -2821,18 +2841,18 @@ mod tests {
         );
         let stats = import_jsonl_files(
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap();
         assert_eq!(stats.messages, 1);
@@ -2879,18 +2899,18 @@ mod tests {
 
         let stats = import_jsonl_files(
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                tmp.path(),
-                None,
-                false,
-                ImportMode::Append,
-                "imessage",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: tmp.path(),
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "imessage",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap();
 
@@ -2924,18 +2944,18 @@ mod tests {
         );
         let err = import_jsonl_files(
             &[path],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                &export_dir,
-                None,
-                false,
-                ImportMode::Append,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: &export_dir,
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Append,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap_err();
         assert!(
@@ -2962,18 +2982,18 @@ mod tests {
         );
         import_jsonl_files(
             &[first],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                &export_dir,
-                None,
-                false,
-                ImportMode::Replace,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: &export_dir,
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap();
 
@@ -2986,18 +3006,18 @@ mod tests {
         );
         let err = import_jsonl_files(
             &[bad],
-            &ImportOptions::fixed(
-                &db,
-                &assets,
-                &export_dir,
-                None,
-                false,
-                ImportMode::Replace,
-                "sms-backup-restore",
-                TEST_ACCOUNT,
-                false,
-                None,
-            ),
+            &ImportOptions::fixed(FixedImportArgs {
+                db_path: &db,
+                assets_dir: &assets,
+                asset_root: &export_dir,
+                contacts: None,
+                overwrite_contacts: false,
+                mode: ImportMode::Replace,
+                source: "sms-backup-restore",
+                account_id: TEST_ACCOUNT,
+                fill_content_keys: false,
+                import_id: None,
+            }),
         )
         .unwrap_err();
         assert!(err.to_string().contains("unsafe attachment path"));

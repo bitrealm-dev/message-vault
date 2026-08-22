@@ -125,6 +125,24 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
     Ok(counts)
 }
 
+/// User-facing parameters for the `extract` command (before defaults/parsing).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractArgs {
+    pub source: String,
+    pub path: String,
+    pub output_dir: String,
+    pub backup_password: Option<String>,
+    pub attachment_media: Option<String>,
+    pub media_max_resolution: Option<String>,
+    pub media_max_fps: Option<String>,
+    pub media_min_size: Option<String>,
+    pub conversation_filter: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub obfuscate: Option<bool>,
+}
+
 /// Ask this process to parse a phone backup and write conversation files.
 ///
 /// Returns as soon as the background thread starts. Log lines, progress, and
@@ -137,37 +155,26 @@ fn count_jsonl_output(root: &Path) -> anyhow::Result<JsonlOutputCounts> {
 /// Returns an error if a form field is invalid, the source is unknown, or
 /// another thread panicked while holding the shared state lock. Failures
 /// during the export itself are sent as `extract:error`, not returned here.
-#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn extract(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
-    source: String,
-    path: String,
-    output_dir: String,
-    backup_password: Option<String>,
-    attachment_media: Option<String>,
-    media_max_resolution: Option<String>,
-    media_max_fps: Option<String>,
-    media_min_size: Option<String>,
-    conversation_filter: Option<String>,
-    start_date: Option<String>,
-    end_date: Option<String>,
-    obfuscate: Option<bool>,
+    args: ExtractArgs,
 ) -> Result<(), String> {
     let options = ExtractOptions {
-        backup_password: backup_password.unwrap_or_default(),
-        attachment_media: parse_attachment_media(attachment_media.as_deref())?,
-        media_max_resolution: parse_max_resolution(media_max_resolution.as_deref())?,
-        media_max_fps: media_max_fps.unwrap_or_else(|| "30".into()),
-        media_min_size: media_min_size.unwrap_or_else(|| "20M".into()),
-        conversation_filter: conversation_filter.unwrap_or_default(),
-        start_date: start_date.unwrap_or_default(),
-        end_date: end_date.unwrap_or_default(),
-        obfuscate: obfuscate.unwrap_or(false),
+        backup_password: args.backup_password.unwrap_or_default(),
+        attachment_media: parse_attachment_media(args.attachment_media.as_deref())?,
+        media_max_resolution: parse_max_resolution(args.media_max_resolution.as_deref())?,
+        media_max_fps: args.media_max_fps.unwrap_or_else(|| "30".into()),
+        media_min_size: args.media_min_size.unwrap_or_else(|| "20M".into()),
+        conversation_filter: args.conversation_filter.unwrap_or_default(),
+        start_date: args.start_date.unwrap_or_default(),
+        end_date: args.end_date.unwrap_or_default(),
+        obfuscate: args.obfuscate.unwrap_or(false),
     };
 
-    let mut config = build_exporter_config(&source, &path, &output_dir, &options)?;
+    let output_dir = args.output_dir;
+    let mut config = build_exporter_config(&args.source, &args.path, &output_dir, &options)?;
 
     // Clear a leftover cancel from a previous job. Otherwise this new export
     // would stop immediately.

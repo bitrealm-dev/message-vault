@@ -30,7 +30,7 @@ use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
 };
 use crate::guest_pool::{self, GuestPoolState};
-use crate::import::{self, ImportMode, ImportOptions, ImportStats};
+use crate::import::{self, FixedImportArgs, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2437,18 +2437,18 @@ async fn run_import_path(
             (Some(id), true)
         };
 
-        let mut opts = ImportOptions::fixed(
-            &cfg.paths.db,
-            &assets_dir,
-            &asset_root_owned,
-            None,
-            false,
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &cfg.paths.db,
+            assets_dir: &assets_dir,
+            asset_root: &asset_root_owned,
+            contacts: None,
+            overwrite_contacts: false,
             mode,
-            &source_id,
-            &account,
-            do_dedupe,
+            source: &source_id,
+            account_id: &account,
+            fill_content_keys: do_dedupe,
             import_id,
-        );
+        });
         opts.contact_name_mode = contact_name_mode;
         // Dedicated connection for the long import so we do not hold `state.db`
         // across JSONL / asset IO / promote (export and session SQL stay free).

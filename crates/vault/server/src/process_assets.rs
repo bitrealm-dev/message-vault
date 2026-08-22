@@ -132,16 +132,16 @@ pub fn run(cfg: &Config, opts: &ProcessAssetsOptions) -> Result<ProcessAssetsSta
             let rows = list_attachments(&conn, account_id, &source_id)?;
             for row in rows {
                 stats.scanned += 1;
-                match process_one(
-                    &mut conn,
+                match process_one(ProcessOneArgs {
+                    conn: &mut conn,
                     opts,
-                    work.path(),
+                    work_dir: work.path(),
                     account_id,
-                    &source_id,
-                    &assets_dir,
-                    &converted_dir,
-                    &row,
-                ) {
+                    source_id: &source_id,
+                    assets_dir: &assets_dir,
+                    converted_dir: &converted_dir,
+                    row: &row,
+                }) {
                     Ok(Outcome::Derived) => stats.derived += 1,
                     Ok(Outcome::Skipped) => stats.skipped += 1,
                     Err(err) => {
@@ -172,17 +172,28 @@ enum Outcome {
     Skipped,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn process_one(
-    conn: &mut Connection,
-    opts: &ProcessAssetsOptions,
-    work_dir: &Path,
-    account_id: &str,
-    source_id: &str,
-    assets_dir: &Path,
-    converted_dir: &Path,
-    row: &AssetRow,
-) -> Result<Outcome> {
+struct ProcessOneArgs<'a> {
+    conn: &'a mut Connection,
+    opts: &'a ProcessAssetsOptions,
+    work_dir: &'a Path,
+    account_id: &'a str,
+    source_id: &'a str,
+    assets_dir: &'a Path,
+    converted_dir: &'a Path,
+    row: &'a AssetRow,
+}
+
+fn process_one(args: ProcessOneArgs<'_>) -> Result<Outcome> {
+    let ProcessOneArgs {
+        conn,
+        opts,
+        work_dir,
+        account_id,
+        source_id,
+        assets_dir,
+        converted_dir,
+        row,
+    } = args;
     // Incomplete transfers / aborted uploads — never hand these to ffmpeg.
     if is_part_path(&row.assets_path) {
         let source_path = assets_dir.join(&row.assets_path);
