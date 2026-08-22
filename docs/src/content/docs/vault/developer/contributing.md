@@ -179,7 +179,9 @@ git push -u origin feat/short-name
 
 Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
-After the vault compiles, [Vault Design](/vault/developer/vault-design/) maps the tree, binaries, and processes. [Message Transfer](/vault/developer/message-transfer/) covers exporter → JSONL → import.
+Once the vault is running, [Vault Design](/vault/developer/vault-design/) shows how the project is laid out. It names the folders a first change usually touches, lists the programs a build creates, and shows how the website and the vault talk to each other.
+
+Phone backups do not go into the vault as raw files. A converter reads the backup and writes a folder of chat files (one file per conversation, one message per line). Import loads that folder into the vault. [Message Transfer](/vault/developer/message-transfer/) explains that path and which converters are ready to use.
 
 ### Preview the guidebook
 
@@ -249,7 +251,7 @@ GitHub runs checks. Fix failing checks. Reply to review comments on the same pul
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
 5. **Respect licenses.** See [License](#license).
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
-7. **Put the product map in Developer docs.** Tree, C4, and message transfer live on [Vault Design](/vault/developer/vault-design/) and [Message Transfer](/vault/developer/message-transfer/). Long format contracts such as [message-ir](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/message-ir.md) stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
+7. **Point people at Developer docs for how the product is built.** Folder layout and how the vault talks to the UI are on [Vault Design](/vault/developer/vault-design/). How backups become chat files and then enter the vault is on [Message Transfer](/vault/developer/message-transfer/). Long notes about the shared chat file format stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
 8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
 
 ## License
