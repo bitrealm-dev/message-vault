@@ -268,3 +268,36 @@ GitHub runs checks. Fix failing checks. Reply to review comments on the same pul
 ## License
 
 Distributed under the Fair Core License. See [LICENSE.md](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) for the full text.
+
+## Release Process
+
+For maintainers. Skip this section when opening a first pull request.
+
+### What ships
+
+One product version ([Semantic Versioning](https://semver.org/spec/v2.0.0.html): `MAJOR.MINOR.PATCH`). Two artifacts:
+
+- Vault image `bitrealm/message-vault:<version>` on Docker Hub (also `<major>.<minor>`, `latest`, and `sha-…`). The Docker tag has no `v` prefix (`0.8.0`, not `v0.8.0`).
+- Unsigned desktop installers on [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases): Linux `.deb` and AppImage, Windows `.msi`, macOS `.dmg`.
+
+Nothing is published to npm or PyPI. Pushing git tag `v<version>` is what runs the release jobs. A merge to `main` does not ship.
+
+JSONL schema version 3 is independent of the product version. Leave other `Cargo.toml` files at `0.1.0`. Do not bump `crates/message-vault-io-gui/` or `web-next/` for a product release.
+
+### Before tagging
+
+1. Merge the work to `main`. Wait until CI on `main` is green (`fmt`, workspace tests, `web` tests). `./scripts/check-pr.sh` is optional locally.
+2. Move `[Unreleased]` entries in `CHANGELOG.md` under the new version heading ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)).
+3. Set these four files to the same number (example `0.8.0`):
+   - `src-tauri/Cargo.toml`
+   - `src-tauri/tauri.conf.json`
+   - `web/package.json`
+   - `crates/vault/server/Cargo.toml`
+4. Commit and push that bump on `main`.
+5. Tag that commit `v0.8.0` and push the tag.
+
+### After the tag
+
+GitHub Actions builds the image and the installers and opens a GitHub Release named `Message Vault v0.8.0`. Installers are not code-signed. Users may see SmartScreen or Gatekeeper warnings.
+
+Do not create or push tags unless a release should ship.

@@ -1,44 +1,48 @@
 ---
 title: Install the desktop app
-description: Download the desktop app from GitHub Releases, or build it from source.
+description: Download the desktop app from GitHub Releases, install FFmpeg and wtsexporter, or build from source.
 ---
 
-The desktop app reads phone backups and imports them into the vault. Browsing can stay in the website; Import and Export need this app.
+The desktop app reads phone backups and imports them into the vault. Browsing can stay in the website; Import and Export need this app. Run the vault with Docker first — see [Try the vault](/vault/user/get-started/try-the-vault/).
 
 ## Download
 
-Open the [latest release on GitHub](https://github.com/bitrealm-io/message-vault/releases) and download the archive for your operating system.
+Open the [latest release on GitHub](https://github.com/bitrealm-io/message-vault/releases) and install the build for the operating system.
 
 ### Linux
 
-1. Download the `.tgz` archive.
-2. Extract it into a folder you plan to keep (`tar -xzf message-vault-*.tgz`).
-3. Run the binary from that folder.
+1. Download the `.deb` (Debian/Ubuntu) or the AppImage.
+2. Install the `.deb`, or mark the AppImage executable and run it.
 
 ### Windows
 
-1. Download the `.zip` archive.
-2. Extract it to a folder you plan to keep — do not run the app from inside the archive.
-3. Open the extracted folder and run the `.exe`.
-4. If SmartScreen shows a warning, choose the option to run it once — the app is not code-signed yet.
+1. Download the `.msi` installer and run it.
+2. If SmartScreen shows a warning, choose the option to run it once — the app is not code-signed yet.
 
 ### macOS
 
-1. Download the `.zip` archive for Apple Silicon (M-series and later).
-2. Extract it to a folder you plan to keep.
-3. Run the app from that folder.
-4. If Gatekeeper blocks the app, allow it once in the security prompt — it is not code-signed yet.
+1. Download the `.dmg` for Apple Silicon (M-series and later).
+2. Open the disk image and install the app.
+3. If Gatekeeper blocks the app, allow it once in the security prompt — it is not code-signed yet.
 
-## What is in the archive
+## Helpers for Convert and WhatsApp
 
-Keep all the files together. The app looks for helpers next to itself:
+**Convert** / **Compress** need FFmpeg (`ffmpeg` and `ffprobe`). WhatsApp extract needs `wtsexporter`. The desktop app looks for both on `PATH`. The Docker vault already includes FFmpeg for playback in the browser.
 
-- **The desktop app** — the program you run
-- **`ffmpeg` and `ffprobe`** — convert and compress media
-- **`wtsexporter`** — extracts WhatsApp messages
-- **License notices**
+| Tool | Windows | Linux | macOS |
+|------|---------|-------|-------|
+| FFmpeg | `winget install -e --id Gyan.FFmpeg` | `sudo apt-get install ffmpeg` | `brew install ffmpeg` |
+| wtsexporter | `pipx install "whatsapp-chat-exporter[android_backup,crypt15]"` | same command | same command |
 
-If you move the app without its helpers, media conversion and WhatsApp extraction will not work.
+If those commands fail, download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) and `wtsexporter` from [WhatsApp-Chat-Exporter releases](https://github.com/KnugiHK/WhatsApp-Chat-Exporter/releases) or [wts.knugi.dev](https://wts.knugi.dev/). Put the programs on `PATH`.
+
+Confirm the tools are visible:
+
+```bash title="Check helpers"
+ffmpeg -version
+ffprobe -version
+wtsexporter --help
+```
 
 ## Build from source
 
@@ -46,4 +50,4 @@ Compiling the app and the vault from a git checkout: [Run from source](/vault/de
 
 ## Next
 
-Sign in with **http://127.0.0.1:8080** and your vault username and password, then [Import from a backup](/vault/user/import-from-a-backup/). The desktop app uses the IPv4 address because `localhost` can resolve to IPv6, which a local Docker vault does not listen on.
+Sign in with **http://127.0.0.1:8080** and the vault username and password, then [Import from a backup](/vault/user/import-from-a-backup/). The desktop app uses the IPv4 address because `localhost` can resolve to IPv6, which a local Docker vault does not listen on.

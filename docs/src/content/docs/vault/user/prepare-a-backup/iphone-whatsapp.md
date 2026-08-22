@@ -8,7 +8,7 @@ WhatsApp data on iPhone lives inside the device backup you make with iTunes or F
 ## What you need
 
 - An iPhone backup (unencrypted or encrypted) that includes WhatsApp data
-- The desktop app with `wtsexporter` — it ships in the release archive
+- The desktop app, with `wtsexporter` installed — see [Install the desktop app](/vault/user/get-started/install-the-desktop-app/)
 
 ## How to get the data
 
@@ -23,7 +23,7 @@ The desktop app runs `wtsexporter` to extract WhatsApp messages from the backup,
 ## Known limitations
 
 - The desktop app cannot cancel `wtsexporter` mid-run — wait for it to finish or stop it manually
-- WhatsApp import needs the `wtsexporter` helper next to the app binary
+- WhatsApp import needs `wtsexporter` on `PATH`
 
 ## Next step
 
