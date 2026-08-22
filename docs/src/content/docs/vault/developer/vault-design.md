@@ -5,7 +5,7 @@ description: Repository layout, binaries, C4 views, and developer session sequen
 
 Message Vault is two processes: the **vault** (HTTP API and SQLite) and the **UI** that talks to it. This page is the map for someone who already compiles. Setup, tests, and pull requests stay on [Contributing](/vault/developer/contributing/). How messages move in and out is on [Message Transfer](/vault/developer/message-transfer/).
 
-Related contracts: [HTTP API](/vault/developer/reference/api/), [Database](/vault/developer/reference/database/), [Export structure](/vault/developer/reference/export-structure/), and the [shared message model](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/message-ir.md).
+Related contracts: [HTTP API](/vault/developer/reference/api/), [Database](/vault/developer/reference/database/), [Export structure](/vault/developer/reference/export-structure/), and [Common message](/vault/developer/architecture/common-message/).
 
 ## Directory map
 
@@ -43,27 +43,25 @@ message-vault
 | `message-reexporter` | `crates/libs/reexport/` | Convert an existing export folder |
 | `vault-push` / `vault-pull` | `crates/cli/` | JSONL → running vault / vault → JSONL |
 
-C4 PlantUML sources stay in [`docs/maintainers/architecture/puml/`](https://github.com/bitrealm-io/message-vault/tree/main/docs/maintainers/architecture/puml). Edit the `.puml` file, export SVG, and copy the SVG into `docs/src/assets/vault-design/` in the same change.
-
-Session sequence sources stay in [`docs/maintainers/architecture/sequence_diagram.md`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/sequence_diagram.md). Copy Mermaid changes onto this page in the same change.
+C4 PlantUML sources and SVG exports live in [`docs/src/assets/architecture/`](https://github.com/bitrealm-io/message-vault/tree/main/docs/src/assets/architecture). Edit the `.puml` file, export SVG into the same folder, and commit both in one change.
 
 ## System context
 
 A person uses the UI to import and view messages. The UI stores and retrieves them through the vault backend.
 
-![System context: a user talks to the user interface, which talks to the Message Vault backend.](../../../../assets/vault-design/vault_1_system_diagram.svg)
+![System context: a user talks to the user interface, which talks to the Message Vault backend.](../../../../assets/architecture/vault_1_system_diagram.svg)
 
 ## Containers
 
 Inside Message Vault the webpage and desktop app share `web/`. Both call the Rust API. The API reads and writes SQLite and attachment files.
 
-![Container diagram: webpage and desktop app in a user-interface boundary, backend API, SQLite, and attachment storage.](../../../../assets/vault-design/vault_2_container_diagram.svg)
+![Container diagram: webpage and desktop app in a user-interface boundary, backend API, SQLite, and attachment storage.](../../../../assets/architecture/vault_2_container_diagram.svg)
 
 ## Deployment (from source)
 
 On a developer workstation the vault process listens on `127.0.0.1:8080`. `cargo tauri dev` starts a native window and Vite on `:5173`. A browser can also load the UI from the vault.
 
-![Deployment: developer workstation with browser, Tauri plus Vite, vault server process, and the repo filesystem.](../../../../assets/vault-design/vault_4_deployment_diagram.svg)
+![Deployment: developer workstation with browser, Tauri plus Vite, vault server process, and the repo filesystem.](../../../../assets/architecture/vault_4_deployment_diagram.svg)
 
 ## Session sequences
 

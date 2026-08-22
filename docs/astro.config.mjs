@@ -55,8 +55,14 @@ const userGuideItems = [
 const developerItems = [
   'vault/developer',
   'vault/developer/contributing',
-  'vault/developer/vault-design',
-  'vault/developer/message-transfer',
+  {
+    label: 'Architecture',
+    items: [
+      'vault/developer/vault-design',
+      'vault/developer/message-transfer',
+      'vault/developer/architecture/common-message',
+    ],
+  },
   'vault/developer/run-from-source',
   'vault/developer/docker-compose',
   {

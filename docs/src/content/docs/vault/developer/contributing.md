@@ -262,7 +262,7 @@ GitHub runs checks. Fix failing checks. Reply to review comments on the same pul
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
 5. **Respect licenses.** See [License](#license).
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
-7. **Point people at Developer docs for how the product is built.** Folder layout and how the vault talks to the UI are on [Vault Design](/vault/developer/vault-design/). How backups become chat files and then enter the vault is on [Message Transfer](/vault/developer/message-transfer/). Long notes about the shared chat file format stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
+7. **Point people at Developer docs for how the product is built.** Folder layout and how the vault talks to the UI are on [Vault Design](/vault/developer/vault-design/). How backups become chat files and then enter the vault is on [Message Transfer](/vault/developer/message-transfer/). The shared chat file schema is on [Common message](/vault/developer/architecture/common-message/).
 8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
 
 ## License

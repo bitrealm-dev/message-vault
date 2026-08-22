@@ -90,9 +90,9 @@ message-vault
 ├── docker/                 # Dockerfile and Compose for a release-shaped vault image
 ├── docs/                   # Astro Starlight site (bitrealm.io)
 │   ├── img/                # images used in README / docs
-│   ├── maintainers/        # architecture notes and C4 diagrams
 │   ├── public/             # CNAME and other files copied as-is
 │   ├── src/                # landing page + User Guide + Developer guidebook
+│   │   └── assets/architecture/  # C4 PlantUML sources and exported SVGs
 │   └── superpowers/        # design specs and implementation plans
 ├── schema/                 # SQLite schema for the vault
 │   └── sql/                # CREATE TABLE sources embedded by the server

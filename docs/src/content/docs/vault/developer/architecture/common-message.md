@@ -1,14 +1,17 @@
-# Common message (schema / JSON / JSONL)
+---
+title: Common message
+description: Shared ConversationDocument schema, JSON and JSONL layout, and format projectors used by every exporter.
+---
 
-**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [What’s inside an export](../../src/content/docs/vault/developer/reference/export-structure.md).
+**Common message** is the shared per-conversation structure after source parse and before packaging (CSV / EML / MBOX / JSON / JSONL / XML). End-user overview: [Export structure](/vault/developer/reference/export-structure/).
 
 Three crates:
 
 | Package | Path | Owns |
 |---------|------|------|
-| **`message-ir`** | [`crates/libs/ir/`](../../../crates/libs/ir/) | Schema types only (`ConversationDocument`, `Ir*` bags, helpers) |
-| **`message-ir-format`** | [`crates/libs/ir-format/`](../../../crates/libs/ir-format/) | `FormatSink`, readers/writers, transforms, `CSV_HEADERS` |
-| **`message-reexport`** | [`crates/libs/reexport/`](../../../crates/libs/reexport/) | Directory convert + `message-reexporter` binary |
+| **`message-ir`** | [`crates/libs/ir/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir) | Schema types only (`ConversationDocument`, `Ir*` bags, helpers) |
+| **`message-ir-format`** | [`crates/libs/ir-format/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir-format) | `FormatSink`, readers/writers, transforms, `CSV_HEADERS` |
+| **`message-reexport`** | [`crates/libs/reexport/`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) | Directory convert + `message-reexporter` binary |
 
 On-disk forms:
 
@@ -119,13 +122,13 @@ Line 1 is the header (includes `conversation.stats`; no `messages` array). Each 
 |--------|--------|--------|
 | JSON | pretty-printed `ConversationDocument` | `read_conversation_json` |
 | JSONL | header + one message per line | `read_conversation_jsonl` |
-| CSV | unified [`CSV_HEADERS`](../../../crates/libs/ir-format/src/write.rs) (header from first data row on read) | `read_conversation_csv` |
-| EML / MBOX | common message → `MailMessage` → [`message-mail`](../../../crates/libs/mail/) | `read_conversation_eml_dir` / `read_conversation_mbox` |
-| XML | single `smses.xml` via [`FormatSink`](../../../crates/libs/ir-format/) + [`message-sbr`](../../../crates/libs/sbr/) | `message_ir_format::read_sbr_documents` (owner inferred when omitted) |
+| CSV | unified [`CSV_HEADERS`](https://github.com/bitrealm-io/message-vault/blob/main/crates/libs/ir-format/src/write.rs) (header from first data row on read) | `read_conversation_csv` |
+| EML / MBOX | common message → `MailMessage` → [`message-mail`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/mail) | `read_conversation_eml_dir` / `read_conversation_mbox` |
+| XML | single `smses.xml` via [`FormatSink`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/ir-format) + [`message-sbr`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/sbr) | `message_ir_format::read_sbr_documents` (owner inferred when omitted) |
 
-**Directory convert:** [`message-reexport`](../../../crates/libs/reexport/) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
+**Directory convert:** [`message-reexport`](https://github.com/bitrealm-io/message-vault/tree/main/crates/libs/reexport) powers the `message-reexporter` command. It auto-detects one format in an export folder and writes another via `FormatSink` (GUI **Format** tab / CLI).
 
-**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/).
+**XML packaging differs:** one SyncTech backup for the whole export (not per conversation). iMessage-only fields are dropped. See [SMS Backup & Restore XML output](/vault/developer/formats/sms-backup-restore-xml/).
 
 ## Content round-trip
 
@@ -133,7 +136,7 @@ Library APIs support content-preserving cycles:
 
 `ConversationDocument` → CSV \| EML \| MBOX \| JSON \| JSONL → `ConversationDocument`
 
-Use the [`message-reexporter` command](https://bitrealm.io/vault/developer/formats/convert/) to convert a whole export directory between formats.
+Use the [`message-reexporter` command](/vault/developer/formats/convert/) to convert a whole export directory between formats.
 
 XML is **lossy** for non-Android common messages (Apple bags omitted). SBR-origin `source.fields` can restore many SyncTech attrs on write-back.
 
@@ -147,11 +150,11 @@ After `normalize_document_for_compare`:
 
 **Not required:** filename stem / pretty-print identity, packaging suffix in the JSON body, embedding attachment bytes in JSON. EML `X-ME-Attachment-Meta` currently omits on-disk `path` (bytes may still round-trip in memory for re-export).
 
-CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](../../src/content/docs/vault/developer/reference/csv-columns.md).
+CSV nested bags use empty string when absent (never literal `null`). See [CSV columns](/vault/developer/reference/csv-columns/).
 
 ## Related
 
-- [Mail archive format](https://bitrealm.io/vault/developer/formats/mail-archive/) — EML/MBOX packaging
-- [SMS Backup & Restore XML output](https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
-- [CSV columns](../../src/content/docs/vault/developer/reference/csv-columns.md) — user-facing CSV conventions
-- [Converter capabilities](https://bitrealm.io/vault/developer/formats/)
+- [Mail archive format](/vault/developer/formats/mail-archive/) — EML/MBOX packaging
+- [SMS Backup & Restore XML output](/vault/developer/formats/sms-backup-restore-xml/) — SyncTech `smses.xml` output
+- [CSV columns](/vault/developer/reference/csv-columns/) — user-facing CSV conventions
+- [Converter capabilities](/vault/developer/formats/)
