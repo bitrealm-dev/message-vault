@@ -62,6 +62,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!hydrated) return;
+    void prefersDark;
     applyTheme(mode, seeds);
   }, [hydrated, mode, seeds, prefersDark]);
 

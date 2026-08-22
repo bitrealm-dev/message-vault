@@ -133,10 +133,8 @@ fn ingest_chat(
     };
 
     let mut peer_phones: BTreeSet<String> = BTreeSet::new();
-    if !group {
-        if let Some(e164) = jid_to_e164(jid) {
-            peer_phones.insert(e164);
-        }
+    if !group && let Some(e164) = jid_to_e164(jid) {
+        peer_phones.insert(e164);
     }
 
     let mut pending = PendingConversation {
@@ -155,7 +153,7 @@ fn ingest_chat(
 
     let display_fallback = chat.name.clone().unwrap_or_default();
 
-    for (_id, msg) in &chat.messages {
+    for msg in chat.messages.values() {
         let Some(ts_raw) = msg.timestamp else {
             report.skipped_invalid_date += 1;
             continue;
@@ -173,12 +171,11 @@ fn ingest_chat(
         let is_from_me = msg.from_me;
         let (sender_handle, sender_display_name) =
             resolve_sender(msg, is_from_me, &chat_id, &display_fallback, group);
-        if group {
-            if let Some(e164) = jid_to_e164(sender_handle.as_str())
+        if group
+            && let Some(e164) = jid_to_e164(sender_handle.as_str())
                 .or_else(|| msg.sender.as_deref().and_then(jid_to_e164))
-            {
-                peer_phones.insert(e164);
-            }
+        {
+            peer_phones.insert(e164);
         }
 
         let text = message_text(msg);

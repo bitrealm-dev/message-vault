@@ -30,7 +30,7 @@ use crate::export_api::{
     self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
 };
 use crate::guest_pool::{self, GuestPoolState};
-use crate::import::{self, ImportMode, ImportOptions, ImportStats};
+use crate::import::{self, FixedImportArgs, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -893,9 +893,7 @@ async fn resolve_import_account(
 }
 
 fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
-    let Some(raw) = value else {
-        return None;
-    };
+    let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -910,9 +908,7 @@ fn content_type_base(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn upload_content_type(headers: &HeaderMap) -> Option<String> {
-    let Some(base) = content_type_base(headers) else {
-        return None;
-    };
+    let base = content_type_base(headers)?;
     if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
         None
     } else {
@@ -1634,7 +1630,7 @@ async fn imports_complete_handler(
 
 fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
     match summary_json {
-        Some(raw) => serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw)),
+        Some(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)),
         None => serde_json::Value::Null,
     }
 }
@@ -2441,18 +2437,18 @@ async fn run_import_path(
             (Some(id), true)
         };
 
-        let mut opts = ImportOptions::fixed(
-            &cfg.paths.db,
-            &assets_dir,
-            &asset_root_owned,
-            None,
-            false,
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            db_path: &cfg.paths.db,
+            assets_dir: &assets_dir,
+            asset_root: &asset_root_owned,
+            contacts: None,
+            overwrite_contacts: false,
             mode,
-            &source_id,
-            &account,
-            do_dedupe,
+            source: &source_id,
+            account_id: &account,
+            fill_content_keys: do_dedupe,
             import_id,
-        );
+        });
         opts.contact_name_mode = contact_name_mode;
         // Dedicated connection for the long import so we do not hold `state.db`
         // across JSONL / asset IO / promote (export and session SQL stay free).

@@ -923,62 +923,64 @@ mod tests {
         conn
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn insert_msg(
-        conn: &Connection,
-        source: &str,
-        guid: &str,
-        utc: &str,
-        local: &str,
+    struct InsertMsgArgs<'a> {
+        conn: &'a Connection,
+        source: &'a str,
+        guid: &'a str,
+        utc: &'a str,
+        local: &'a str,
         from_me: i64,
-        body: &str,
+        body: &'a str,
         sort_order: i64,
-    ) -> i64 {
-        conn.execute(
-            r#"
+    }
+
+    fn insert_msg(args: InsertMsgArgs<'_>) -> i64 {
+        args.conn
+            .execute(
+                r#"
             INSERT INTO messages (
                 conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
                 sender_handle_id, subject, body, sort_order
             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
             "#,
-            params![
-                TEST_ACCOUNT_ID,
-                source,
-                guid,
-                local,
-                utc,
-                from_me,
-                body,
-                sort_order
-            ],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
+                params![
+                    TEST_ACCOUNT_ID,
+                    args.source,
+                    args.guid,
+                    args.local,
+                    args.utc,
+                    args.from_me,
+                    args.body,
+                    args.sort_order
+                ],
+            )
+            .unwrap();
+        args.conn.last_insert_rowid()
     }
 
     #[test]
     fn integration_exact_flags_cross_source() {
         let mut conn = setup_db();
-        let a = insert_msg(
-            &conn,
-            "go-sms-pro",
-            "g1",
-            "2015-03-12T18:04:22Z",
-            "2015-03-12T14:04:22-04:00",
-            1,
-            "Running late",
-            0,
-        );
-        let b = insert_msg(
-            &conn,
-            "sms-backup-plus",
-            "g2",
-            "2015-03-12T18:04:22+00:00",
-            "2015-03-12T14:04:22-04:00",
-            1,
-            "Running late",
-            0,
-        );
+        let a = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "go-sms-pro",
+            guid: "g1",
+            utc: "2015-03-12T18:04:22Z",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 1,
+            body: "Running late",
+            sort_order: 0,
+        });
+        let b = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "sms-backup-plus",
+            guid: "g2",
+            utc: "2015-03-12T18:04:22+00:00",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 1,
+            body: "Running late",
+            sort_order: 0,
+        });
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
         let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_groups, 1);
@@ -1004,26 +1006,26 @@ mod tests {
     #[test]
     fn integration_near_flags_within_window() {
         let mut conn = setup_db();
-        let a = insert_msg(
-            &conn,
-            "go-sms-pro",
-            "g1",
-            "2015-03-12T18:04:22Z",
-            "2015-03-12T14:04:22-04:00",
-            0,
-            "On my way",
-            0,
-        );
-        let b = insert_msg(
-            &conn,
-            "sms-backup-plus",
-            "g2",
-            "2015-03-12T18:04:24Z",
-            "2015-03-12T14:04:24-04:00",
-            0,
-            "On my way",
-            1,
-        );
+        let a = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "go-sms-pro",
+            guid: "g1",
+            utc: "2015-03-12T18:04:22Z",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 0,
+            body: "On my way",
+            sort_order: 0,
+        });
+        let b = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "sms-backup-plus",
+            guid: "g2",
+            utc: "2015-03-12T18:04:24Z",
+            local: "2015-03-12T14:04:24-04:00",
+            from_me: 0,
+            body: "On my way",
+            sort_order: 1,
+        });
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
         let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_flagged, 0);
@@ -1041,26 +1043,26 @@ mod tests {
     #[test]
     fn integration_negative_far_apart_not_flagged() {
         let mut conn = setup_db();
-        insert_msg(
-            &conn,
-            "go-sms-pro",
-            "g1",
-            "2015-03-12T18:04:22Z",
-            "2015-03-12T14:04:22-04:00",
-            0,
-            "On my way",
-            0,
-        );
-        insert_msg(
-            &conn,
-            "sms-backup-plus",
-            "g2",
-            "2015-03-12T18:05:22Z",
-            "2015-03-12T14:05:22-04:00",
-            0,
-            "On my way",
-            1,
-        );
+        insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "go-sms-pro",
+            guid: "g1",
+            utc: "2015-03-12T18:04:22Z",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 0,
+            body: "On my way",
+            sort_order: 0,
+        });
+        insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "sms-backup-plus",
+            guid: "g2",
+            utc: "2015-03-12T18:05:22Z",
+            local: "2015-03-12T14:05:22-04:00",
+            from_me: 0,
+            body: "On my way",
+            sort_order: 1,
+        });
         let priority = ["go-sms-pro".into(), "sms-backup-plus".into()];
         let stats = dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, Some(&priority), 2).unwrap();
         assert_eq!(stats.exact_flagged, 0);
@@ -1079,26 +1081,26 @@ mod tests {
     fn integration_priority_prefers_first_imported_source() {
         let mut conn = setup_db();
         // First row wins when priority is derived from min(message id) per source.
-        let first_imported = insert_msg(
-            &conn,
-            "sms-backup-plus",
-            "g1",
-            "2015-03-12T18:04:22Z",
-            "2015-03-12T14:04:22-04:00",
-            1,
-            "Hello",
-            0,
-        );
-        let second_imported = insert_msg(
-            &conn,
-            "go-sms-pro",
-            "g2",
-            "2015-03-12T18:04:22Z",
-            "2015-03-12T14:04:22-04:00",
-            1,
-            "Hello",
-            1,
-        );
+        let first_imported = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "sms-backup-plus",
+            guid: "g1",
+            utc: "2015-03-12T18:04:22Z",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 1,
+            body: "Hello",
+            sort_order: 0,
+        });
+        let second_imported = insert_msg(InsertMsgArgs {
+            conn: &conn,
+            source: "go-sms-pro",
+            guid: "g2",
+            utc: "2015-03-12T18:04:22Z",
+            local: "2015-03-12T14:04:22-04:00",
+            from_me: 1,
+            body: "Hello",
+            sort_order: 1,
+        });
         dedupe_cross_source(&mut conn, TEST_ACCOUNT_ID, None, 2).unwrap();
         let dup_first: Option<i64> = conn
             .query_row(

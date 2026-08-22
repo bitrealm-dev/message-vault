@@ -96,5 +96,6 @@ export function contactAvatarColor(input: {
     normalizeName([input.firstName, input.lastName].filter(Boolean).join(" "));
   const handle = normalizeHandle(input.preferredHandle);
   const seed = `${name}\0${handle}`;
-  return AVATAR_COLORS[hashString(seed) % AVATAR_COLORS.length]!;
+  const color = AVATAR_COLORS[hashString(seed) % AVATAR_COLORS.length];
+  return color ?? AVATAR_COLORS[0] ?? "#c45c6a";
 }

@@ -1,10 +1,27 @@
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
+use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
+use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn convert(
+    input: &Path,
+    output: &Path,
+    book: &ContactsBook,
+) -> Result<(ExportReport, FormatSinkResult)> {
+    convert_export(ConvertExportArgs {
+        input,
+        output,
+        book,
+        date_range: &DateRange::default(),
+        transforms: ExportTransforms::none(),
+        output_format: OutputFormat::Csv,
+        cancel: None,
+    })
+}
 
 #[test]
 fn output_equals_input_dir_bails_before_cleaning() {
@@ -14,16 +31,7 @@ fn output_equals_input_dir_bails_before_cleaning() {
     let book = ContactsBook::empty();
     // Output = fixture dir that holds the source CSV — open_prepared would
     // delete every *.csv before discovery.
-    let err = convert_export(
-        &fixture,
-        &fixture,
-        &book,
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect_err("output == input must fail");
+    let err = convert(&fixture, &fixture, &book).expect_err("output == input must fail");
     assert!(
         err.to_string()
             .contains("must not be the same as, or contain"),
@@ -46,16 +54,7 @@ fn convert_all_conversations_with_vcf() {
 
     let book = ContactsBook::load_vcf(&vcf).expect("load vcf");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (report, _) = convert_export(
-        &csv,
-        tmp.path(),
-        &book,
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect("convert");
+    let (report, _) = convert(&csv, tmp.path(), &book).expect("convert");
 
     assert_eq!(report.conversations, 1);
     assert_eq!(report.messages, 2);

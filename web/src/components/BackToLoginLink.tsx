@@ -7,6 +7,7 @@ export default function BackToLoginLink({ onBack }: { onBack?: () => void }) {
 
   return (
     <button
+      type="button"
       onClick={onBack}
       className="mb-4 cursor-pointer border-none bg-none p-0 text-[0.875rem] text-accent"
     >

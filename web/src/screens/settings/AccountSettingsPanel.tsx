@@ -75,33 +75,39 @@ export function AccountSettingsPanel() {
         <>
           <h3 className={sectionTitleClass}>Change Password</h3>
           <div className="mb-6 max-w-[360px]">
-            <label className="mb-1 block text-[0.813rem] font-medium">Current password</label>
-            <input
-              type="password"
-              value={currentPw}
-              onChange={(e) => setCurrentPw(e.target.value)}
-              autoComplete="current-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
-            <label className="mb-1 block text-[0.813rem] font-medium">New password</label>
-            <input
-              type="password"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              autoComplete="new-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
-            <label className="mb-1 block text-[0.813rem] font-medium">Confirm new password</label>
-            <input
-              type="password"
-              value={confirmPw}
-              onChange={(e) => setConfirmPw(e.target.value)}
-              autoComplete="new-password"
-              disabled={isDemo}
-              className={`${inputClassName} mb-2`}
-            />
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">Current password</span>
+              <input
+                type="password"
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                autoComplete="current-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
+            </label>
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">New password</span>
+              <input
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                autoComplete="new-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
+            </label>
+            <label className="mb-2 block">
+              <span className="mb-1 block text-[0.813rem] font-medium">Confirm new password</span>
+              <input
+                type="password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                autoComplete="new-password"
+                disabled={isDemo}
+                className={inputClassName}
+              />
+            </label>
             <Button
               variant="primary"
               onClick={handleChangePassword}

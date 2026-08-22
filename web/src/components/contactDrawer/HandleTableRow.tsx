@@ -58,7 +58,7 @@ export function renderHandleTableRow(
           onClick={
             opts.onBrowse
               ? () =>
-                  opts.onBrowse!({
+                  opts.onBrowse?.({
                     kind: "all",
                     handle: h.handle,
                     service: inferService(h.handle, h.service),

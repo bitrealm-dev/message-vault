@@ -27,9 +27,9 @@ export default function ImessageBubble({
         <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
         {hasReactions ? (
           <div className={`flex flex-wrap gap-1 ${hasAttachments ? "mt-1" : "mt-0"}`}>
-            {message.reactions!.map((r, i) => (
+            {message.reactions?.map((r) => (
               <span
-                key={i}
+                key={r.emoji}
                 className="rounded-full border border-border bg-elevated px-[0.35rem] py-[0.1rem] text-[0.75rem] text-text"
               >
                 {r.emoji} {r.count}

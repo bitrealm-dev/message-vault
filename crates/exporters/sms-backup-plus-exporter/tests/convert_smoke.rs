@@ -1,11 +1,12 @@
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
+use anyhow::Result;
 use contacts::{ContactsBook, NameMapping};
 use message_csv::DateRange;
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
+use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -19,6 +20,23 @@ fn empty_mapping() -> NameMapping {
     NameMapping::empty()
 }
 
+fn convert(inputs: &[&Path], output_dir: &Path) -> Result<(ExportReport, FormatSinkResult)> {
+    convert_export(ConvertExportArgs {
+        inputs,
+        output_dir,
+        owner_phones: &["+15555550100".into()],
+        owner_emails: &["owner@example.com".into()],
+        contacts: &empty_book(),
+        name_mapping: &empty_mapping(),
+        date_range: &DateRange::default(),
+        verbose: false,
+        transforms: ExportTransforms::none(),
+        output_format: OutputFormat::Csv,
+        cancel: None,
+        log: None,
+    })
+}
+
 #[test]
 fn output_equals_input_bails_before_cleaning() {
     let input = fixtures();
@@ -28,21 +46,7 @@ fn output_equals_input_bails_before_cleaning() {
         "missing fixtures under {}",
         input.display()
     );
-    let err = convert_export(
-        &[input.as_path()],
-        input.as_path(),
-        &["+15555550100".into()],
-        &["owner@example.com".into()],
-        &empty_book(),
-        &empty_mapping(),
-        &DateRange::default(),
-        false,
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-        None,
-    )
-    .expect_err("output == input must fail");
+    let err = convert(&[input.as_path()], input.as_path()).expect_err("output == input must fail");
     assert!(
         err.to_string()
             .contains("must not be the same as, or contain"),
@@ -60,21 +64,7 @@ fn output_equals_input_bails_before_cleaning() {
 fn convert_smoke_writes_csv_not_json() {
     let input = fixtures();
     let tmp = tempfile::tempdir().unwrap();
-    let (report, _) = convert_export(
-        &[input.as_path()],
-        tmp.path(),
-        &["+15555550100".into()],
-        &["owner@example.com".into()],
-        &empty_book(),
-        &empty_mapping(),
-        &DateRange::default(),
-        false,
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-        None,
-    )
-    .unwrap();
+    let (report, _) = convert(&[input.as_path()], tmp.path()).unwrap();
 
     assert!(report.conversations >= 1);
     let flat = report.extra.get("flat_eml").copied().unwrap_or(0);
@@ -142,21 +132,7 @@ fn end_dedupe_collapses_duplicate_flats() {
     fs::write(input_dir.join("b.eml"), &bytes).unwrap();
 
     let out = tmp.path().join("out");
-    let (report, _) = convert_export(
-        &[input_dir.as_path()],
-        &out,
-        &["+15555550100".into()],
-        &["owner@example.com".into()],
-        &empty_book(),
-        &empty_mapping(),
-        &DateRange::default(),
-        false,
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-        None,
-    )
-    .unwrap();
+    let (report, _) = convert(&[input_dir.as_path()], &out).unwrap();
 
     assert_eq!(report.extra.get("flat_eml").copied().unwrap_or(0), 2);
     assert_eq!(
@@ -219,21 +195,7 @@ Will do\r\n"
     .unwrap();
 
     let out = tmp.path().join("out");
-    let (report, _) = convert_export(
-        &[input_dir.as_path()],
-        &out,
-        &["+15555550100".into()],
-        &["owner@example.com".into()],
-        &empty_book(),
-        &empty_mapping(),
-        &DateRange::default(),
-        false,
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-        None,
-    )
-    .unwrap();
+    let (report, _) = convert(&[input_dir.as_path()], &out).unwrap();
 
     assert_eq!(
         report

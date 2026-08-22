@@ -16,6 +16,7 @@ export function useHandleMutations({
   const [removeTarget, setRemoveTarget] = useState<RemoveIdentityTarget | null>(null);
 
   useEffect(() => {
+    void contactId;
     setAdding(false);
     setBusy(false);
     setRemoveTarget(null);

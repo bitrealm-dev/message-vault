@@ -50,7 +50,9 @@ use message_vault_io_core::{CancelFlag, check_cancel};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::http::{self, AssetPutRequest, AuthInfo, HttpSession};
+use crate::http::{
+    self, AssetPutRequest, AuthInfo, CompleteImportArgs, HttpSession, PostImportArgs,
+};
 use crate::journal::{self, JournalEvent, JournalMessage, JournalState};
 use crate::project;
 
@@ -540,7 +542,7 @@ fn list_jsonl_files(dir: &Path, exclude: &[&Path]) -> Result<Vec<PathBuf>> {
 
 /// True when `path` is a conversation JSON Lines file, not a push log or report.
 fn is_conversation_jsonl(path: &Path, exclude: &[&Path]) -> bool {
-    if exclude.iter().any(|x| *x == path) {
+    if exclude.contains(&path) {
         return false;
     }
     let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
@@ -609,17 +611,30 @@ fn hash_file(path: &Path) -> Result<String> {
 ///
 /// Returns an error when the file cannot be hashed, or when `verify_digests` is
 /// on and the on-disk hash does not match the export claim.
-fn resolve_attachment_digest(
-    abs: &Path,
-    claimed_raw: Option<&str>,
+struct ResolveAttachmentDigestArgs<'a> {
+    abs: &'a Path,
+    claimed_raw: Option<&'a str>,
     claimed_size: Option<u64>,
     verify_digests: bool,
     trust_export: bool,
-    cache: &DigestCache,
-    name: &str,
-    rel: &str,
-    warn: &mut dyn FnMut(String),
-) -> Result<String> {
+    cache: &'a DigestCache,
+    name: &'a str,
+    rel: &'a str,
+    warn: &'a mut dyn FnMut(String),
+}
+
+fn resolve_attachment_digest(args: ResolveAttachmentDigestArgs<'_>) -> Result<String> {
+    let ResolveAttachmentDigestArgs {
+        abs,
+        claimed_raw,
+        claimed_size,
+        verify_digests,
+        trust_export,
+        cache,
+        name,
+        rel,
+        warn,
+    } = args;
     // Fast path: another conversation already hashed this absolute path
     // during this run. Always trust the cache — it was computed from disk.
     if let Some(digest) = cache
@@ -1037,15 +1052,15 @@ fn finish_run(
     if cfg.import_id.is_none()
         && let Some(import_id) = import_id
     {
-        match http.complete_import(
-            &url,
-            &cfg.key,
+        match http.complete_import(CompleteImportArgs {
+            base_url: &url,
+            key: &cfg.key,
             import_id,
-            report.ok,
-            report.messages,
-            attachments,
-            assets_bytes,
-        ) {
+            ok: report.ok,
+            message_count: report.messages,
+            attachment_count: attachments,
+            bytes_uploaded: assets_bytes,
+        }) {
             Ok(()) => log.line(&format!("vault import session {import_id} completed")),
             Err(error) => log.line(&format!(
                 "warning: could not complete vault import session {import_id}: {error}"
@@ -1250,7 +1265,6 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             // Cancel must still join in-flight import and write a report (abort path).
             if check_cancel(cfg.cancel.as_ref()).is_err() {
                 aborted = true;
-                stop_submitting = true;
                 break;
             }
 
@@ -1261,11 +1275,11 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
             }) {
                 let request_ok = flush_imports!(wait: false)?;
-                if !request_ok {
-                    if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                        aborted = true;
-                        stop_submitting = true;
-                    }
+                if !request_ok
+                    && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error)
+                {
+                    aborted = true;
+                    stop_submitting = true;
                 }
             }
 
@@ -1420,12 +1434,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     .is_some_and(|batch| batch.source != prepared.source)
                 {
                     let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                    if !request_ok {
-                        if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                            aborted = true;
-                            stop_submitting = true;
-                            break;
-                        }
+                    if !request_ok
+                        && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error)
+                    {
+                        aborted = true;
+                        stop_submitting = true;
+                        break;
                     }
                 }
 
@@ -1453,13 +1467,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     });
                     if must_flush {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok {
-                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
-                            {
-                                aborted = true;
-                                stop_submitting = true;
-                                break;
-                            }
+                        if !request_ok
+                            && (check_cancel(cfg.cancel.as_ref()).is_err()
+                                || !cfg.continue_on_error)
+                        {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1475,13 +1489,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         || batch.body.len() >= MAX_IMPORT_BODY_BYTES
                     {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok {
-                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
-                            {
-                                aborted = true;
-                                stop_submitting = true;
-                                break;
-                            }
+                        if !request_ok
+                            && (check_cancel(cfg.cancel.as_ref()).is_err()
+                                || !cfg.continue_on_error)
+                        {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1549,10 +1563,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     if !aborted {
         // End of run: send any leftover pending batch and wait for the last import.
         let request_ok = flush_imports!(wait: true)?;
-        if !request_ok {
-            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                aborted = true;
-            }
+        if !request_ok && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error) {
+            aborted = true;
         }
     }
     if aborted {
@@ -1787,17 +1799,17 @@ fn prepare_file(args: PrepareFileArgs<'_>) -> Result<PreparedFile> {
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty());
-                let digest = resolve_attachment_digest(
-                    &abs,
-                    claimed,
-                    att.size_bytes,
-                    cfg.verify_digests,
-                    cfg.trust_export,
-                    digest_cache,
+                let digest = resolve_attachment_digest(ResolveAttachmentDigestArgs {
+                    abs: &abs,
+                    claimed_raw: claimed,
+                    claimed_size: att.size_bytes,
+                    verify_digests: cfg.verify_digests,
+                    trust_export: cfg.trust_export,
+                    cache: digest_cache,
                     name,
                     rel,
-                    &mut |msg| warnings.push(msg),
-                )?;
+                    warn: &mut |msg| warnings.push(msg),
+                })?;
                 unique
                     .entry(digest.clone())
                     .or_insert_with(|| (rel.to_string(), att.mime_type.clone()));
@@ -2518,16 +2530,16 @@ fn spawn_import_http(args: SpawnImportHttp) -> InFlightImport {
         let body_bytes = batch.body.len();
         let message_count = batch.messages.len();
         let response = http::with_retries(max_retries, || {
-            http.post_import(
-                &url,
-                &key,
-                &username,
-                &batch.source,
-                &mode,
+            http.post_import(PostImportArgs {
+                base_url: &url,
+                key: &key,
+                username: &username,
+                source: &batch.source,
+                mode: &mode,
                 import_id,
-                &contact_name_mode,
-                batch.body.clone(),
-            )
+                contact_name_mode: &contact_name_mode,
+                ndjson: batch.body.clone(),
+            })
         })
         .map_err(|error| error.to_string());
         let request_ms = elapsed_ms(request_started);

@@ -55,12 +55,12 @@ function AppRoutes() {
       {/* Protected routes — AuthGuard redirects to /login or /onboarding */}
       <Route element={<AuthGuard />}>
         <Route element={<AppLayout />}>
-          <Route index element={<></>} />
-          <Route path="contacts" element={<></>} />
-          <Route path="group/:slug" element={<></>} />
-          <Route path="no-group" element={<></>} />
-          <Route path="tag/:slug" element={<></>} />
-          <Route path="no-tag" element={<></>} />
+          <Route index element={null} />
+          <Route path="contacts" element={null} />
+          <Route path="group/:slug" element={null} />
+          <Route path="no-group" element={null} />
+          <Route path="tag/:slug" element={null} />
+          <Route path="no-tag" element={null} />
           <Route path="trash" element={<TrashScreen />} />
           <Route
             path="import"

@@ -27,9 +27,9 @@ export default function DiscordBubble({
 
       {message.embeds &&
         message.embeds.length > 0 &&
-        message.embeds.map((embed, i) => (
+        message.embeds.map((embed) => (
           <div
-            key={i}
+            key={[embed.type, embed.url, embed.title, embed.description].filter(Boolean).join("|")}
             className="mt-2 rounded-r-[4px] border-l-4 border-l-[#5865f2] bg-hover px-3 py-2"
           >
             {embed.title && (
@@ -51,8 +51,8 @@ export default function DiscordBubble({
 
       {message.reactions && message.reactions.length > 0 && (
         <div className="mt-1 flex gap-1.5">
-          {message.reactions.map((r, i) => (
-            <span key={i} className="rounded bg-border px-1 py-0.5 text-[0.75rem]">
+          {message.reactions.map((r) => (
+            <span key={r.emoji} className="rounded bg-border px-1 py-0.5 text-[0.75rem]">
               {r.emoji} {r.count}
             </span>
           ))}

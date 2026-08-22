@@ -53,14 +53,12 @@ export default function AttachmentLightbox({
         <Dialog
           aria-label="Attachment viewer"
           className="flex items-center justify-center outline-none"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") onPrev();
+            else if (e.key === "ArrowRight") onNext();
+          }}
         >
-          <div
-            className="flex items-center justify-center outline-none"
-            onKeyDown={(e) => {
-              if (e.key === "ArrowLeft") onPrev();
-              else if (e.key === "ArrowRight") onNext();
-            }}
-          >
+          <div className="flex items-center justify-center outline-none">
             {items.length > 1 && (
               <button
                 type="button"

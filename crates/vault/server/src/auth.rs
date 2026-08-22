@@ -42,6 +42,7 @@ const AUTH_RATE_MAX: usize = 20;
 const TRY_DEMO_PER_IP_RATE_MAX: usize = 60;
 /// Whole-process Try it cap. Login stays at 20.
 const TRY_DEMO_RATE_MAX: usize = 2000;
+const _: () = assert!(TRY_DEMO_RATE_MAX > AUTH_RATE_MAX);
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(300);
 const JWKS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -101,10 +102,10 @@ fn parse_single_ip(raw: &str) -> Option<IpAddr> {
 
 #[cfg(test)]
 fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
-    if let Ok(mut guard) = AUTH_RATE_LIMITS.lock() {
-        if let Some(map) = guard.as_mut() {
-            map.remove(bucket);
-        }
+    if let Ok(mut guard) = AUTH_RATE_LIMITS.lock()
+        && let Some(map) = guard.as_mut()
+    {
+        map.remove(bucket);
     }
 }
 
@@ -285,9 +286,7 @@ fn is_valid_username(s: &str) -> bool {
 }
 
 fn nonempty_trimmed(value: Option<&str>) -> Option<String> {
-    let Some(raw) = value else {
-        return None;
-    };
+    let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -854,10 +853,7 @@ pub async fn delete_account_handler(
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let conn = schema::open_configured(&db)?;
         let password_hash = account_profile::load_password_hash(&conn, &account_id)?;
-        let has_local_password = match password_hash.as_deref() {
-            Some(hash) if !hash.is_empty() => true,
-            _ => false,
-        };
+        let has_local_password = matches!(password_hash.as_deref(), Some(hash) if !hash.is_empty());
         if has_local_password {
             let Some(pw) = current_password.as_deref() else {
                 bail!("current password is required to delete this account");
@@ -973,7 +969,6 @@ mod tests {
     fn try_demo_rate_limit_allows_more_than_login() {
         let bucket = "test:try-demo-rate-limit";
         reset_auth_rate_limit_bucket_for_test(bucket);
-        assert!(TRY_DEMO_RATE_MAX > AUTH_RATE_MAX);
         for _ in 0..TRY_DEMO_RATE_MAX {
             check_auth_rate_limit_max(bucket, TRY_DEMO_RATE_MAX).unwrap();
         }

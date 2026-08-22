@@ -58,30 +58,41 @@ export default function ConversationHeader({
 
       {participantsOpen && displayParticipants.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {displayParticipants.map((p, i) =>
-            p.contact_id ? (
-              <button
-                key={`${p.contact_id}-${p.label}-${i}`}
-                type="button"
-                onClick={() => onOpenContact?.(p.contact_id!)}
-                title={`Open contact for ${p.label}`}
-                className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
-              >
-                {p.label}
-              </button>
-            ) : (
-              <span
-                key={`${p.label}-${i}`}
-                className="rounded-full border border-border bg-elevated px-2 py-0.5 text-[0.75rem] text-muted"
-              >
-                {p.label}
-              </span>
-            ),
-          )}
+          {(() => {
+            const seen = new Map<string, number>();
+            return displayParticipants.map((p) => {
+              const contactId = p.contact_id;
+              const base = contactId ? `c:${contactId}:${p.label}` : `l:${p.label}`;
+              const n = seen.get(base) ?? 0;
+              seen.set(base, n + 1);
+              const key = n === 0 ? base : `${base}#${n}`;
+              if (contactId) {
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onOpenContact?.(contactId)}
+                    title={`Open contact for ${p.label}`}
+                    className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
+                  >
+                    {p.label}
+                  </button>
+                );
+              }
+              return (
+                <span
+                  key={key}
+                  className="rounded-full border border-border bg-elevated px-2 py-0.5 text-[0.75rem] text-muted"
+                >
+                  {p.label}
+                </span>
+              );
+            });
+          })()}
         </div>
       )}
 
-      <div role="separator" aria-hidden className="my-3 h-px bg-border" />
+      <hr className="my-3 border-0 border-t border-border" />
 
       <div className="flex flex-wrap gap-4 text-[0.75rem] text-muted">
         <span>{sourceLabel}</span>

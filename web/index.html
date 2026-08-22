@@ -5,27 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Message Vault</title>
     <script>
-    (function () {
+    (() => {
       try {
-        var mk = "mv-theme";
-        var sk = "mv-theme-seeds";
-        var defH = "#222426";
-        var defA = "#5ea1ff";
-        var defLH = "#e6e9ee";
-        var defLA = "#2b7fff";
-        var mode = localStorage.getItem(mk);
+        const mk = "mv-theme";
+        const sk = "mv-theme-seeds";
+        const defH = "#222426";
+        const defA = "#5ea1ff";
+        const defLH = "#e6e9ee";
+        const defLA = "#2b7fff";
+        let mode = localStorage.getItem(mk);
         if (mode !== "light" && mode !== "dark" && mode !== "system") mode = "dark";
-        var dark =
+        const dark =
           mode === "dark" ||
           (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        var seeds = null;
+        let seeds = null;
         try {
-          var raw = localStorage.getItem(sk);
+          const raw = localStorage.getItem(sk);
           if (raw) {
             if (raw.charAt(0) === "{") {
               seeds = JSON.parse(raw);
             } else {
-              var p = raw.split(/[,\s]+/).filter(Boolean);
+              const p = raw.split(/[,\s]+/).filter(Boolean);
               if (p.length === 4)
                 seeds = {
                   lightHeader: p[0],
@@ -35,15 +35,15 @@
                 };
             }
           }
-        } catch (e) {}
-        var h = dark ? (seeds && seeds.darkHeader) || defH : (seeds && seeds.lightHeader) || defLH;
-        var a = dark ? (seeds && seeds.darkAccent) || defA : (seeds && seeds.lightAccent) || defLA;
-        var r = document.documentElement;
+        } catch (_e) {}
+        const h = dark ? seeds?.darkHeader || defH : seeds?.lightHeader || defLH;
+        const a = dark ? seeds?.darkAccent || defA : seeds?.lightAccent || defLA;
+        const r = document.documentElement;
         r.setAttribute("data-theme", dark ? "dark" : "light");
         r.style.setProperty("--header", h);
         r.style.setProperty("--accent", a);
-      } catch (e) {
-        var r2 = document.documentElement;
+      } catch (_e) {
+        const r2 = document.documentElement;
         r2.setAttribute("data-theme", "dark");
         r2.style.setProperty("--header", "#222426");
         r2.style.setProperty("--accent", "#5ea1ff");

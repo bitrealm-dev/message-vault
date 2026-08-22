@@ -62,7 +62,7 @@ function GroupNames({ conv }: { conv: Conversation }) {
       {conv.participants.map((p, i) => {
         const label = participantLabel(p, useAliases);
         return (
-          <span key={`${p.handle}-${i}`}>
+          <span key={p.handle}>
             {i > 0 ? ", " : null}
             <span className="whitespace-nowrap">{label}</span>
           </span>
@@ -131,6 +131,7 @@ export default function ConversationRow({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`box-border flex w-full cursor-pointer items-start gap-2 border-none px-[0.85rem] py-[0.7rem] text-left ${listRowDividers} ${
         isSelected ? "bg-hover" : "bg-transparent"

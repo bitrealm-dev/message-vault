@@ -11,6 +11,18 @@ use vault_pull::{ProgressEvent, VaultPullConfig, run as run_pull};
 use super::events::ExtractErrorEvent;
 use crate::state::AppState;
 
+/// User-facing parameters for the `pull` command.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullArgs {
+    pub base_url: String,
+    pub username: String,
+    pub key: String,
+    pub out_dir: String,
+    pub query: String,
+    pub skip_attachments: bool,
+}
+
 /// Ask this process to download conversations from a vault server.
 ///
 /// Returns as soon as the background thread starts. Log lines and the final
@@ -25,12 +37,7 @@ use crate::state::AppState;
 pub async fn pull(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
-    base_url: String,
-    username: String,
-    key: String,
-    out_dir: String,
-    query: String,
-    skip_attachments: bool,
+    args: PullArgs,
 ) -> Result<(), String> {
     {
         let st = state.lock().map_err(|e| e.to_string())?;
@@ -46,15 +53,15 @@ pub async fn pull(
 
     thread::spawn(move || {
         let cfg = VaultPullConfig {
-            out_dir: PathBuf::from(&out_dir),
-            base_url,
-            username,
-            key,
-            query,
+            out_dir: PathBuf::from(&args.out_dir),
+            base_url: args.base_url,
+            username: args.username,
+            key: args.key,
+            query: args.query,
             after: None,
             before: None,
             source: None,
-            skip_attachments,
+            skip_attachments: args.skip_attachments,
             page_limit: 100,
             expected_messages: None,
             cancel: Some(cancel),

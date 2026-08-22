@@ -564,7 +564,7 @@ enum ParsedEmlKind {
         path_display: String,
     },
     Flat {
-        msg: ParsedMessage,
+        msg: Box<ParsedMessage>,
         path_display: String,
     },
     FlatNone,
@@ -622,7 +622,10 @@ fn parse_one_eml(
                 let _ = apply_name_mapping(&mut msg, name_mapping, contacts);
                 let _ = fill_unknown_phone(&mut msg, contacts);
                 enrich_display_names(&mut msg, contacts);
-                ParsedEmlKind::Flat { msg, path_display }
+                ParsedEmlKind::Flat {
+                    msg: Box::new(msg),
+                    path_display,
+                }
             }
             Ok(None) => ParsedEmlKind::FlatNone,
             Err(err) => ParsedEmlKind::ParseError(format!("{path_display}: {err:#}")),
@@ -650,6 +653,22 @@ fn report_progress(verbose: bool, log: Option<&LogSink>, label: &str, processed:
     }
 }
 
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a, P: AsRef<Path>> {
+    pub inputs: &'a [P],
+    pub output_dir: &'a Path,
+    pub owner_phones: &'a [String],
+    pub owner_emails: &'a [String],
+    pub contacts: &'a ContactsBook,
+    pub name_mapping: &'a NameMapping,
+    pub date_range: &'a DateRange,
+    pub verbose: bool,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
+    pub log: Option<&'a LogSink>,
+}
+
 /// Convert SMS Backup+ EML tree(s) into the shared conversation structure, then
 /// write the chosen output format.
 ///
@@ -663,19 +682,22 @@ fn report_progress(verbose: bool, log: Option<&LogSink>, label: &str, processed:
 /// Returns an error when no `.eml` files are found, output overlaps an input,
 /// a file cannot be read or written, or the user cancels.
 pub(crate) fn convert_export<P: AsRef<Path>>(
-    inputs: &[P],
-    output_dir: &Path,
-    owner_phones: &[String],
-    owner_emails: &[String],
-    contacts: &ContactsBook,
-    name_mapping: &NameMapping,
-    date_range: &DateRange,
-    verbose: bool,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
-    log: Option<&LogSink>,
+    args: ConvertExportArgs<'_, P>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
+    let ConvertExportArgs {
+        inputs,
+        output_dir,
+        owner_phones,
+        owner_emails,
+        contacts,
+        name_mapping,
+        date_range,
+        verbose,
+        transforms,
+        output_format,
+        cancel,
+        log,
+    } = args;
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let primary = owners
         .primary_phone_digit()
@@ -828,7 +850,13 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                         copy_attachments,
                         &path_display,
                     );
-                    add_message(&mut conversations, &mut by_identity, msg, atts, &mut report);
+                    add_message(
+                        &mut conversations,
+                        &mut by_identity,
+                        *msg,
+                        atts,
+                        &mut report,
+                    );
                 }
                 ParsedEmlKind::FlatNone => {
                     bump(&mut report, "skipped_parse_error", 1);

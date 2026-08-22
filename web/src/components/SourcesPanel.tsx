@@ -48,6 +48,7 @@ export default function SourcesPanel({
       <div className="mb-4 flex justify-between">
         <h2 className="m-0 text-[1.125rem]">Sources</h2>
         <button
+          type="button"
           onClick={onClose}
           className="cursor-pointer border-none bg-none text-[1.25rem] text-muted"
         >
@@ -65,8 +66,8 @@ export default function SourcesPanel({
         <div className="text-[0.875rem] text-muted">No source data available.</div>
       ) : (
         <>
-          {sources.map((s, i) => (
-            <div key={i} className="mb-3 rounded bg-elevated p-2">
+          {sources.map((s) => (
+            <div key={s.backup_name} className="mb-3 rounded bg-elevated p-2">
               <div className="text-[0.875rem] font-medium">{s.backup_name}</div>
               <div className="text-[0.75rem] text-muted">
                 {s.message_count.toLocaleString()} messages ({s.percentage}% of total)

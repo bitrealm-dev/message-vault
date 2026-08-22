@@ -8,7 +8,6 @@ use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
-use crate::db::account_profile;
 use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
@@ -685,7 +684,7 @@ pub fn list_contacts(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            groups.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+            groups.sort_by_key(|a| a.to_ascii_lowercase());
             Ok(ContactSummary {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -1198,6 +1197,7 @@ mod tests {
     use super::*;
     use rusqlite::params;
 
+    use crate::db::account_profile;
     use crate::db::schema;
 
     fn setup() -> (Connection, String) {

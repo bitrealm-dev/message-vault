@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ConversationRow from "../components/ConversationRow";
 import ListRangeHeader from "../components/ListRangeHeader";
-import { useSetRightToolbar } from "../components/RightToolbarContext";
 import TagsMenu from "../components/TagsMenu";
+import { useSetRightToolbar } from "../components/useRightToolbar";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
 import { apiClient } from "../lib/api";
 import { checksFromMembers } from "../lib/membershipChecks";
@@ -38,6 +38,7 @@ export default function ConversationList({
   const setRightToolbar = useSetRightToolbar();
 
   useEffect(() => {
+    void query;
     setCheckedIds(new Set());
     setTagOverrides({});
   }, [query]);

@@ -67,6 +67,7 @@ export default function MessageView({
   );
 
   useEffect(() => {
+    void conversation.id;
     setParticipantsOpen(true);
   }, [conversation.id]);
 

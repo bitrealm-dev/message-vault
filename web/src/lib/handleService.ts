@@ -36,7 +36,7 @@ export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
  * Emails contain `@`. Phone-like values are mostly digits.
  */
 export function inferService(handle: string, service: string | null | undefined): string {
-  if (service && service.trim()) return service.trim().toLowerCase();
+  if (service?.trim()) return service.trim().toLowerCase();
   const h = handle.trim();
   if (h.includes("@") && !h.startsWith("@")) return "email";
   if (/^\+?\d[\d\s().-]{6,}$/.test(h)) return "phone";

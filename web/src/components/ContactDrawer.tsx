@@ -16,8 +16,6 @@ import {
 } from "./contactDrawer/contactDrawerTypes";
 import { PencilIcon } from "./icons";
 
-export type { ContactBrowseKind, ContactPreview };
-
 type ContactDetail = CachedContactDetail;
 
 const iconBtnClass =
@@ -103,7 +101,7 @@ export default function ContactDrawer({
   const detailMatches = !!contactId && !!detail && String(detail.id) === String(contactId);
   const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
 
-  const displayName = detailMatches ? detail!.name : previewMatches ? preview!.name : "Loading…";
+  const displayName = detailMatches ? detail?.name : previewMatches ? preview?.name : "Loading…";
   const loading = !detailMatches;
 
   const loadDetail = () => {
@@ -166,7 +164,7 @@ export default function ContactDrawer({
   useEffect(() => {
     setNameValue(displayName === "Loading…" ? "" : displayName);
     setEditingName(false);
-  }, [displayName, contactId]);
+  }, [displayName]);
 
   useEffect(() => {
     if (!contactId) return;
@@ -174,7 +172,7 @@ export default function ContactDrawer({
       if (e.key !== "Escape") return;
       if (editingName) {
         setEditingName(false);
-        setNameValue(detailMatches ? detail!.name : nameValue);
+        setNameValue(detailMatches ? detail?.name : nameValue);
         return;
       }
       onClose();
@@ -186,8 +184,8 @@ export default function ContactDrawer({
   if (!contactId) return null;
 
   const handleRows: ContactDetail["handles"] = detailMatches
-    ? detail!.handles
-    : ((previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
+    ? detail?.handles
+    : ((previewMatches ? preview?.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
 
   const browse = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => {
     if (!onBrowseConversations || !contactId) return;
@@ -201,7 +199,7 @@ export default function ContactDrawer({
   };
 
   const saveName = async () => {
-    if (!detailMatches || nameValue === detail!.name) {
+    if (!detailMatches || nameValue === detail?.name) {
       setEditingName(false);
       return;
     }
@@ -247,13 +245,12 @@ export default function ContactDrawer({
                   e.preventDefault();
                   e.stopPropagation();
                   setEditingName(false);
-                  setNameValue(detail!.name);
+                  setNameValue(detail?.name);
                 }
               }}
               onBlur={() => {
                 void saveName();
               }}
-              autoFocus
               className="box-border w-full min-w-0 rounded border border-border bg-elevated p-1 text-[1.125rem] font-semibold text-text"
             />
           ) : (
@@ -282,8 +279,8 @@ export default function ContactDrawer({
                 </span>
               </div>
               <div className="flex min-h-6 flex-wrap items-center gap-1.5">
-                {(detail!.groups ?? []).length > 0 ? (
-                  (detail!.groups ?? []).map((name) => (
+                {(detail?.groups ?? []).length > 0 ? (
+                  (detail?.groups ?? []).map((name) => (
                     <span
                       key={name}
                       className="rounded-full bg-elevated px-2 py-0.5 text-[0.75rem] leading-4 text-text"

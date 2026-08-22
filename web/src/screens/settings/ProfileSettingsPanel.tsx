@@ -136,9 +136,9 @@ export function ProfileSettingsPanel() {
         </div>
       ) : (
         <div className="mb-3">
-          {handles.map((h, i) => (
+          {handles.map((h) => (
             <div
-              key={`${h.service}-${h.handle}-${i}`}
+              key={`${h.service}-${h.handle}`}
               className="flex items-center gap-3 border-b border-border py-1.5 text-[0.875rem]"
             >
               <span className="min-w-[7rem] shrink-0 text-muted">{h.service}</span>

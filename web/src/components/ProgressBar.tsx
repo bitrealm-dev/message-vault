@@ -25,9 +25,7 @@ export default function ProgressBar({ log, running }: ProgressBarProps) {
       )}
       {log.length > 0 && (
         <pre className="m-0 max-h-[300px] overflow-auto whitespace-pre-wrap break-words rounded bg-hover p-2 text-[0.75rem]">
-          {log.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
+          {log.join("\n")}
         </pre>
       )}
     </div>

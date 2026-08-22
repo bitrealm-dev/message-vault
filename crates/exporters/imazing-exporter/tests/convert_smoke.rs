@@ -1,10 +1,28 @@
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
+use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
+use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn convert(
+    input: &Path,
+    output: &Path,
+    book: &ContactsBook,
+) -> Result<(ExportReport, FormatSinkResult)> {
+    convert_export(ConvertExportArgs {
+        input,
+        output,
+        book,
+        timezone: Some("UTC"),
+        date_range: &DateRange::default(),
+        transforms: ExportTransforms::none(),
+        output_format: OutputFormat::Csv,
+        cancel: None,
+    })
+}
 
 #[test]
 fn convert_messages_with_vcard_csv_contacts() {
@@ -16,17 +34,7 @@ fn convert_messages_with_vcard_csv_contacts() {
 
     let book = ContactsBook::load_vcard_csv(&contacts).expect("load contacts");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (report, _) = convert_export(
-        &messages,
-        tmp.path(),
-        &book,
-        Some("UTC"),
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect("convert");
+    let (report, _) = convert(&messages, tmp.path(), &book).expect("convert");
 
     assert_eq!(report.conversations, 1);
     assert_eq!(report.messages, 3);
@@ -59,17 +67,7 @@ fn convert_whatsapp_csv_direct() {
     let contacts = fixture.join("contacts.csv");
     let book = ContactsBook::load_vcard_csv(&contacts).expect("load contacts");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (report, _) = convert_export(
-        &whatsapp,
-        tmp.path(),
-        &book,
-        Some("UTC"),
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect("convert");
+    let (report, _) = convert(&whatsapp, tmp.path(), &book).expect("convert");
 
     assert_eq!(report.conversations, 1);
     assert_eq!(report.messages, 3);
@@ -88,17 +86,7 @@ fn convert_export_root_recursively_keeps_services_separate() {
     let contacts = root.join("Contacts/All contacts/All/Contacts - synthetic.csv");
     let book = ContactsBook::load_vcard_csv(&contacts).expect("load contacts");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (report, _) = convert_export(
-        &root,
-        tmp.path(),
-        &book,
-        Some("UTC"),
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect("convert");
+    let (report, _) = convert(&root, tmp.path(), &book).expect("convert");
 
     assert_eq!(report.extra.get("messages_files").copied().unwrap_or(0), 2);
     assert_eq!(report.extra.get("whatsapp_files").copied().unwrap_or(0), 1);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { normalizeHex, type ThemeSeeds } from "../../lib/theme";
 
 export function ColorRow({
@@ -10,6 +10,7 @@ export function ColorRow({
   value: string;
   onChange: (hex: string) => void;
 }) {
+  const colorId = useId();
   const [text, setText] = useState(value);
   const [prevValue, setPrevValue] = useState(value);
   if (value !== prevValue) {
@@ -19,8 +20,11 @@ export function ColorRow({
 
   return (
     <div className="flex items-center gap-3">
-      <label className="w-[7rem] shrink-0 text-[0.813rem] text-muted">{label}</label>
+      <label htmlFor={colorId} className="w-[7rem] shrink-0 text-[0.813rem] text-muted">
+        {label}
+      </label>
       <input
+        id={colorId}
         type="color"
         value={normalizeHex(value) ?? "#000000"}
         onChange={(e) => onChange(e.target.value)}
@@ -31,6 +35,7 @@ export function ColorRow({
         type="text"
         value={text}
         spellCheck={false}
+        aria-label={`${label} hex`}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => {
           const hex = normalizeHex(text);

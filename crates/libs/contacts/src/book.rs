@@ -257,10 +257,10 @@ pub(crate) fn split_csv_line(line: &str) -> Vec<String> {
 /// Collect sanitized digit strings from semicolon-separated fields and `+E.164` tokens in free text.
 fn push_phones_from_raw(raw: &str, out: &mut Vec<String>) {
     for part in raw.split([';', ',', '|']) {
-        if let Some(digits) = sanitize_number(part.trim()) {
-            if !out.contains(&digits) {
-                out.push(digits);
-            }
+        if let Some(digits) = sanitize_number(part.trim())
+            && !out.contains(&digits)
+        {
+            out.push(digits);
         }
     }
     // Scrape bare +digits runs (PROP-ID notes, trailing phones in Notes blobs).
@@ -273,12 +273,11 @@ fn push_phones_from_raw(raw: &str, out: &mut Vec<String>) {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i > start + 1 {
-                if let Some(digits) = sanitize_number(&raw[start..i]) {
-                    if !out.contains(&digits) {
-                        out.push(digits);
-                    }
-                }
+            if i > start + 1
+                && let Some(digits) = sanitize_number(&raw[start..i])
+                && !out.contains(&digits)
+            {
+                out.push(digits);
             }
         } else {
             i += 1;

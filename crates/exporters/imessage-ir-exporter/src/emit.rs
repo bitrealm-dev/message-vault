@@ -391,125 +391,6 @@ fn mail_message_to_ir(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn jsonl_progress_is_less_frequent_than_other_formats() {
-        assert_eq!(
-            message_progress_every(OutputFormat::Jsonl),
-            JSONL_MESSAGE_PROGRESS_EVERY
-        );
-        assert_eq!(
-            message_progress_every(OutputFormat::Json),
-            DEFAULT_MESSAGE_PROGRESS_EVERY
-        );
-    }
-
-    #[test]
-    fn persist_attachment_uses_temp_then_rename() {
-        let dir = tempfile::tempdir().unwrap();
-        let bytes = b"hello-attachment-bytes";
-        let (rel, digest, len) =
-            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
-        assert_eq!(len, bytes.len() as u64);
-        assert_eq!(digest, hex::encode(Sha256::digest(bytes)));
-        let name = rel.strip_prefix("attachments/").expect("rel path prefix");
-        let dest = dir.path().join(name);
-        assert!(dest.is_file());
-        assert_eq!(fs::read(&dest).unwrap(), bytes);
-        assert!(!dir.path().join(format!("{name}.tmp")).exists());
-
-        // Incomplete dest (wrong length) must be rewritten.
-        fs::write(&dest, b"x").unwrap();
-        assert_ne!(fs::metadata(&dest).unwrap().len(), bytes.len() as u64);
-        let (rel2, digest2, _) =
-            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
-        assert_eq!(rel2, rel);
-        assert_eq!(digest2, digest);
-        assert_eq!(fs::read(&dest).unwrap(), bytes);
-        assert!(!dir.path().join(format!("{name}.tmp")).exists());
-    }
-
-    fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {
-        MailMessage::sms(mail::SmsMailFields {
-            chat_identifier: "+15555550122".into(),
-            conversation_type: "individual".into(),
-            group_title: None,
-            participants: vec![],
-            guid: "guid-1".into(),
-            timestamp_unix_ms: 1_609_459_200_000,
-            direction: MailDirection::Incoming,
-            service: "SMS".into(),
-            message_kind: "sms".into(),
-            sender_handle: Some("+15555550122".into()),
-            sender_display_name: None,
-            owner_handle: "+15555550100".into(),
-            subject: None,
-            text: "hi".into(),
-            android_type: None,
-            source_fields_json: None,
-            export_source: "imessage".into(),
-            export_tool: "test".into(),
-            export_tool_version: "0".into(),
-            attachments: vec![MailAttachment {
-                bytes,
-                original_name: Some("a.jpg".into()),
-                mime_type: Some("image/jpeg".into()),
-                digest_sha256: None,
-                is_sticker: false,
-                transcription: None,
-                sticker_effect: None,
-            }],
-            filename_suffix: None,
-        })
-    }
-
-    #[test]
-    fn missing_reason_reflects_embed_and_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let with_bytes = sample_mail_with_attachment(b"abc".to_vec());
-        let ir = mail_message_to_ir(
-            &with_bytes,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Embed,
-            true,
-        )
-        .unwrap();
-        assert_eq!(ir.attachments[0].missing_reason, None);
-        assert!(ir.attachments[0].path.is_some());
-
-        let empty = sample_mail_with_attachment(Vec::new());
-        let ir_missing = mail_message_to_ir(
-            &empty,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Embed,
-            true,
-        )
-        .unwrap();
-        assert_eq!(
-            ir_missing.attachments[0].missing_reason.as_deref(),
-            Some("file_missing")
-        );
-
-        let ir_disabled = mail_message_to_ir(
-            &with_bytes,
-            dir.path(),
-            OutputFormat::Jsonl,
-            AttachmentEmbed::Disabled,
-            true,
-        )
-        .unwrap();
-        assert_eq!(
-            ir_disabled.attachments[0].missing_reason.as_deref(),
-            Some("embed_disabled")
-        );
-    }
-}
-
 /// Build typed [`IrImessage`] from `MailMessage` extension fields.
 ///
 /// Nested Apple blobs (`parts` / `edits` / `tapbacks` / `app`) are parsed from
@@ -1194,4 +1075,123 @@ fn build_mail_message(
         tapback_emoji,
         tapback_action,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsonl_progress_is_less_frequent_than_other_formats() {
+        assert_eq!(
+            message_progress_every(OutputFormat::Jsonl),
+            JSONL_MESSAGE_PROGRESS_EVERY
+        );
+        assert_eq!(
+            message_progress_every(OutputFormat::Json),
+            DEFAULT_MESSAGE_PROGRESS_EVERY
+        );
+    }
+
+    #[test]
+    fn persist_attachment_uses_temp_then_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = b"hello-attachment-bytes";
+        let (rel, digest, len) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(len, bytes.len() as u64);
+        assert_eq!(digest, hex::encode(Sha256::digest(bytes)));
+        let name = rel.strip_prefix("attachments/").expect("rel path prefix");
+        let dest = dir.path().join(name);
+        assert!(dest.is_file());
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+
+        // Incomplete dest (wrong length) must be rewritten.
+        fs::write(&dest, b"x").unwrap();
+        assert_ne!(fs::metadata(&dest).unwrap().len(), bytes.len() as u64);
+        let (rel2, digest2, _) =
+            persist_attachment(dir.path(), 1_609_459_200_000, bytes, Some("photo.jpg")).unwrap();
+        assert_eq!(rel2, rel);
+        assert_eq!(digest2, digest);
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
+        assert!(!dir.path().join(format!("{name}.tmp")).exists());
+    }
+
+    fn sample_mail_with_attachment(bytes: Vec<u8>) -> MailMessage {
+        MailMessage::sms(mail::SmsMailFields {
+            chat_identifier: "+15555550122".into(),
+            conversation_type: "individual".into(),
+            group_title: None,
+            participants: vec![],
+            guid: "guid-1".into(),
+            timestamp_unix_ms: 1_609_459_200_000,
+            direction: MailDirection::Incoming,
+            service: "SMS".into(),
+            message_kind: "sms".into(),
+            sender_handle: Some("+15555550122".into()),
+            sender_display_name: None,
+            owner_handle: "+15555550100".into(),
+            subject: None,
+            text: "hi".into(),
+            android_type: None,
+            source_fields_json: None,
+            export_source: "imessage".into(),
+            export_tool: "test".into(),
+            export_tool_version: "0".into(),
+            attachments: vec![MailAttachment {
+                bytes,
+                original_name: Some("a.jpg".into()),
+                mime_type: Some("image/jpeg".into()),
+                digest_sha256: None,
+                is_sticker: false,
+                transcription: None,
+                sticker_effect: None,
+            }],
+            filename_suffix: None,
+        })
+    }
+
+    #[test]
+    fn missing_reason_reflects_embed_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let with_bytes = sample_mail_with_attachment(b"abc".to_vec());
+        let ir = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(ir.attachments[0].missing_reason, None);
+        assert!(ir.attachments[0].path.is_some());
+
+        let empty = sample_mail_with_attachment(Vec::new());
+        let ir_missing = mail_message_to_ir(
+            &empty,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Embed,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_missing.attachments[0].missing_reason.as_deref(),
+            Some("file_missing")
+        );
+
+        let ir_disabled = mail_message_to_ir(
+            &with_bytes,
+            dir.path(),
+            OutputFormat::Jsonl,
+            AttachmentEmbed::Disabled,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            ir_disabled.attachments[0].missing_reason.as_deref(),
+            Some("embed_disabled")
+        );
+    }
 }

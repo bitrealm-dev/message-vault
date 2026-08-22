@@ -74,8 +74,8 @@ describe("saveImportSavedGroup", () => {
     });
     window.removeEventListener(SAVED_GROUPS_CHANGED_EVENT, onChange);
     expect(g).toBeTruthy();
-    expect(g!.name).toBe("Import imessage-ios 2026-08-11");
-    expect(g!.query).toBe("import:7");
+    expect(g?.name).toBe("Import imessage-ios 2026-08-11");
+    expect(g?.query).toBe("import:7");
     expect(listGroups()).toHaveLength(1);
     expect(notified).toBe(1);
   });

@@ -91,6 +91,29 @@ pub struct AssetPutRequest<'a> {
     pub multipart_threshold: usize,
 }
 
+/// Arguments for [`HttpSession::post_import`].
+pub(crate) struct PostImportArgs<'a> {
+    pub base_url: &'a str,
+    pub key: &'a str,
+    pub username: &'a str,
+    pub source: &'a str,
+    pub mode: &'a str,
+    pub import_id: Option<i64>,
+    pub contact_name_mode: &'a str,
+    pub ndjson: Vec<u8>,
+}
+
+/// Arguments for [`HttpSession::complete_import`].
+pub(crate) struct CompleteImportArgs<'a> {
+    pub base_url: &'a str,
+    pub key: &'a str,
+    pub import_id: i64,
+    pub ok: bool,
+    pub message_count: u64,
+    pub attachment_count: u64,
+    pub bytes_uploaded: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct UploadStartResponse {
     ok: bool,
@@ -530,17 +553,17 @@ impl HttpSession {
     ///
     /// Returns an error when the body is too large, the vault rejects the batch,
     /// or the response cannot be parsed.
-    pub fn post_import(
-        &self,
-        base_url: &str,
-        key: &str,
-        username: &str,
-        source: &str,
-        mode: &str,
-        import_id: Option<i64>,
-        contact_name_mode: &str,
-        ndjson: Vec<u8>,
-    ) -> Result<ImportResponse> {
+    pub fn post_import(&self, args: PostImportArgs<'_>) -> Result<ImportResponse> {
+        let PostImportArgs {
+            base_url,
+            key,
+            username,
+            source,
+            mode,
+            import_id,
+            contact_name_mode,
+            ndjson,
+        } = args;
         let body_len = ndjson.len();
         if body_len > crate::run::MAX_PROXY_BODY_BYTES {
             bail!("{}", payload_too_large_message("import", Some(body_len)));
@@ -660,16 +683,16 @@ impl HttpSession {
     /// # Errors
     ///
     /// Returns an error when the vault rejects the request (other than 404).
-    pub fn complete_import(
-        &self,
-        base_url: &str,
-        key: &str,
-        import_id: i64,
-        ok: bool,
-        message_count: u64,
-        attachment_count: u64,
-        bytes_uploaded: u64,
-    ) -> Result<()> {
+    pub fn complete_import(&self, args: CompleteImportArgs<'_>) -> Result<()> {
+        let CompleteImportArgs {
+            base_url,
+            key,
+            import_id,
+            ok,
+            message_count,
+            attachment_count,
+            bytes_uploaded,
+        } = args;
         #[derive(Deserialize)]
         struct Resp {
             ok: bool,

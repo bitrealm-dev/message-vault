@@ -126,18 +126,23 @@ export default function LeftPanel({
       <div className="min-h-0 flex-1 overflow-auto">
         {/* Browse */}
         <div className="px-3 py-2">
-          <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
+          <button type="button" className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
             <ConversationsIcon />
             Messages
           </button>
           <button
+            type="button"
             className={linkClass(isActive("/contacts"))}
             onClick={() => navigate("/contacts")}
           >
             <ContactsIcon />
             Contacts
           </button>
-          <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
+          <button
+            type="button"
+            className={linkClass(isActive("/trash"))}
+            onClick={() => navigate("/trash")}
+          >
             <TrashIcon size={15} />
             Trash
           </button>
@@ -147,11 +152,19 @@ export default function LeftPanel({
         {canUseImportExportWithProfile(isTauri(), profile) && (
           <div className="px-3 py-2">
             <div className={sectionHeaderClass}>Messages</div>
-            <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
+            <button
+              type="button"
+              className={linkClass(isActive("/import"))}
+              onClick={() => navigate("/import")}
+            >
               <ImportIcon />
               Import
             </button>
-            <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
+            <button
+              type="button"
+              className={linkClass(isActive("/export"))}
+              onClick={() => navigate("/export")}
+            >
               <ExportIcon />
               Export
             </button>
@@ -174,6 +187,7 @@ export default function LeftPanel({
             groups.map((g) => (
               <div key={g.id} className="flex items-center gap-1 pl-3">
                 <button
+                  type="button"
                   onClick={() => {
                     onSearchChange(g.query);
                     navigate(`/?q=${encodeURIComponent(g.query)}`);

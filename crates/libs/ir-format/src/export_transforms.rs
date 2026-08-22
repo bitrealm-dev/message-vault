@@ -70,16 +70,16 @@ pub(crate) fn apply_media_remap(doc: &mut ConversationDocument, remap: &HashMap<
     }
     for msg in &mut doc.messages {
         for att in &mut msg.attachments {
-            if let Some(path) = att.path.as_mut() {
-                if let Some(new_rel) = remap.get(path.as_str()) {
-                    *path = new_rel.clone();
-                    // Bytes on disk changed (possibly same path); drop stale digests.
-                    att.digest_sha256 = None;
-                    att.size_bytes = None;
-                    att.bytes = None;
-                    if let Some(mime) = mime_for_rel(new_rel) {
-                        att.mime_type = Some(mime);
-                    }
+            if let Some(path) = att.path.as_mut()
+                && let Some(new_rel) = remap.get(path.as_str())
+            {
+                *path = new_rel.clone();
+                // Bytes on disk changed (possibly same path); drop stale digests.
+                att.digest_sha256 = None;
+                att.size_bytes = None;
+                att.bytes = None;
+                if let Some(mime) = mime_for_rel(new_rel) {
+                    att.mime_type = Some(mime);
                 }
             }
         }
@@ -139,10 +139,10 @@ pub(crate) fn obfuscate_document(doc: &mut ConversationDocument, anon: &mut Obfu
             *s = anon.obfuscate_text(s);
         }
         msg.text = anon.obfuscate_text(&msg.text);
-        if let Some(im) = msg.imessage.as_mut() {
-            if let Some(a) = im.announcement.as_mut() {
-                *a = anon.obfuscate_text(a);
-            }
+        if let Some(im) = msg.imessage.as_mut()
+            && let Some(a) = im.announcement.as_mut()
+        {
+            *a = anon.obfuscate_text(a);
         }
         for att in &mut msg.attachments {
             obfuscate_attachment(att);

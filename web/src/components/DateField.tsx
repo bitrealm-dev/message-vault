@@ -1,5 +1,5 @@
 import { parseDate } from "@internationalized/date";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   Button,
   Calendar,

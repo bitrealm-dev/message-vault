@@ -74,6 +74,7 @@ export function ContactDrawerHandles({
   }, [handleRows, sortDescriptor]);
 
   useEffect(() => {
+    void contactId;
     setSortDescriptor(null);
   }, [contactId]);
 

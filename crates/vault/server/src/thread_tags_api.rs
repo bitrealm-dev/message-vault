@@ -90,6 +90,7 @@ pub fn list_tags(conn: &Connection, account_id: &str) -> Result<Vec<String>, Tag
 }
 
 /// Tags on one conversation, A–Z.
+#[cfg(test)]
 pub fn tags_for_conversation(
     conn: &Connection,
     account_id: &str,

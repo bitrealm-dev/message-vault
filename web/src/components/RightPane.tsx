@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
-import { useRightToolbar } from "./RightToolbarContext";
+import { useRightToolbar } from "./useRightToolbar";
 
 /** Remaining width: toolbar row, then the drawer, selection list, or placeholder. */
 export default function RightPane({ children }: { children: ReactNode }) {

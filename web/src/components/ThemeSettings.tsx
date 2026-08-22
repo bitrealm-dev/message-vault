@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Checkbox, Radio, RadioGroup, ToggleButton } from "react-aria-components";
 import { parseSelectKey } from "../lib/selectKey";
 import { useTheme } from "../lib/ThemeProvider";
-import { type ThemeSeeds } from "../lib/theme";
+import type { ThemeSeeds } from "../lib/theme";
 import { ColorRow, formatCompare } from "./theme/ThemeColorRow";
 
 const SEED_FIELDS: {

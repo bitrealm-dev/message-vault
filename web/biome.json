@@ -37,26 +37,13 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "a11y": {
-        "noAutofocus": "warn",
-        "noLabelWithoutControl": "warn",
-        "noStaticElementInteractions": "warn",
-        "useAriaPropsForRole": "warn",
-        "useAriaPropsSupportedByRole": "warn",
-        "useButtonType": "warn",
-        "useFocusableInteractive": "warn",
-        "useKeyWithClickEvents": "warn",
-        "useMediaCaption": "warn",
-        "useSemanticElements": "warn"
-      },
       "correctness": {
-        "noInnerDeclarations": "warn",
-        "useExhaustiveDependencies": "warn",
-        "useHookAtTopLevel": "error"
+        "useHookAtTopLevel": "error",
+        "useExhaustiveDependencies": "error"
       },
       "style": {
         "useComponentExportOnlyModules": {
-          "level": "warn",
+          "level": "error",
           "options": {
             "allowConstantExport": true,
             "allowExportNames": [
@@ -78,10 +65,6 @@
             ]
           }
         }
-      },
-      "suspicious": {
-        "noArrayIndexKey": "warn",
-        "useIterableCallbackReturn": "warn"
       }
     }
   },

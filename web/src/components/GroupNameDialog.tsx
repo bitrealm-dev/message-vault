@@ -52,7 +52,6 @@ export default function GroupNameDialog({
         }}
         placeholder={placeholder}
         disabled={busy}
-        autoFocus
         className="mb-2 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.875rem] text-text"
       />
       {error ? (

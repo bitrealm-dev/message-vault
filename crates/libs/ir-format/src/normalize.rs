@@ -55,10 +55,10 @@ fn clear_attachment_ephemera(att: &mut IrAttachment) {
 /// Replace a blank or whitespace-only string with `None`.
 #[cfg(test)]
 fn empty_to_none(v: &mut Option<String>) {
-    if let Some(s) = v.as_ref() {
-        if s.trim().is_empty() {
-            *v = None;
-        }
+    if let Some(s) = v.as_ref()
+        && s.trim().is_empty()
+    {
+        *v = None;
     }
 }
 

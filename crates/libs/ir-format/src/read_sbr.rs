@@ -122,20 +122,20 @@ fn stage_attachments(
     }
     let mut out = Vec::with_capacity(blobs.len());
     for blob in blobs {
-        if options.copy_attachments {
-            if let Some(dir) = options.attachments_dir {
-                let path = dir.join(&blob.filename);
-                if !path.exists() {
-                    // Stage atomically: a crash mid-write would otherwise leave
-                    // a truncated file under the content-addressed name, which
-                    // every later run would see as already staged and reuse
-                    // forever. Media transforms skip *.tmp names, and the next
-                    // run's cleanup drops the whole attachments/ directory.
-                    let tmp = path.with_extension("tmp");
-                    fs::write(&tmp, blob.data.as_ref())?;
-                    fs::rename(&tmp, &path)?;
-                    report.attachments_saved += 1;
-                }
+        if options.copy_attachments
+            && let Some(dir) = options.attachments_dir
+        {
+            let path = dir.join(&blob.filename);
+            if !path.exists() {
+                // Stage atomically: a crash mid-write would otherwise leave
+                // a truncated file under the content-addressed name, which
+                // every later run would see as already staged and reuse
+                // forever. Media transforms skip *.tmp names, and the next
+                // run's cleanup drops the whole attachments/ directory.
+                let tmp = path.with_extension("tmp");
+                fs::write(&tmp, blob.data.as_ref())?;
+                fs::rename(&tmp, &path)?;
+                report.attachments_saved += 1;
             }
         }
         out.push(PendingAttachment {
@@ -424,10 +424,10 @@ pub fn read_sbr_documents(
         let guarded = phone::normalize_guarded(primary, phone::PhoneRegion::Usa);
         (owners.all_phone_digits(), Some(guarded.normalized))
     };
-    if options.copy_attachments {
-        if let Some(dir) = options.attachments_dir {
-            fs::create_dir_all(dir)?;
-        }
+    if options.copy_attachments
+        && let Some(dir) = options.attachments_dir
+    {
+        fs::create_dir_all(dir)?;
     }
 
     let mut report = SbrReadReport::default();

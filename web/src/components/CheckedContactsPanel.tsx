@@ -11,8 +11,7 @@ import {
 import { apiClient } from "../lib/api";
 import { getCachedContactDetail } from "../lib/contactDetailCache";
 import Button from "./Button";
-import type { ContactPreview } from "./ContactDrawer";
-import { sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
+import { type ContactPreview, sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
 import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
 import { conversationCount, handleDateCell } from "./contactDrawer/handleTableLogic";
 import {
@@ -118,6 +117,7 @@ export default function CheckedContactsPanel({
   contactsRef.current = contacts;
 
   useEffect(() => {
+    void contactKey;
     const selected = contactsRef.current;
     const ac = new AbortController();
     const seeded: Record<string, RowMetrics> = {};

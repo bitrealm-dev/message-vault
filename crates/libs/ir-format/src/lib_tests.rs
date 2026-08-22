@@ -269,7 +269,7 @@ fn unified_csv_headers_for_all_sources() {
     let sbr_csv_path = write_format(tmp.path(), OutputFormat::Csv, sbr_doc).unwrap();
     let sbr_csv = fs::read_to_string(&sbr_csv_path).unwrap();
     assert_eq!(sbr_csv.lines().next().unwrap(), CSV_HEADERS.join(","));
-    assert!(sbr_csv.contains("xml_fields_json") == false);
+    assert!(!sbr_csv.contains("xml_fields_json"));
     assert!(sbr_csv.contains("source_fields_json"));
 }
 

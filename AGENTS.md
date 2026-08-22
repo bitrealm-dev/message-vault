@@ -227,7 +227,8 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 # Rewrite Rust (workspace + src-tauri) and web/ (Biome)
 ./scripts/format-all.sh
 
-# Clippy (workspace + src-tauri) and web lint (Biome). Warnings do not fail.
+# Clippy (workspace except Slint GUI + src-tauri) and web lint (Biome).
+# Warnings do not fail.
 ./scripts/lint-all.sh
 
 cargo build --workspace
@@ -238,7 +239,7 @@ cargo build --manifest-path src-tauri/Cargo.toml
 
 #### Frontend
 
-Frontend (`web/`) — Biome (`web/biome.json`) lints and formats TypeScript, JavaScript, CSS, JSON, and HTML. TypeScript (`npm run build` runs `tsc` then Vite). CI runs `biome ci .` (lint errors and format drift fail; warnings do not). Prefer a real fix over `biome-ignore`. Prefix unused bindings with `_`.
+Frontend (`web/`) — Biome (`web/biome.json`) lints and formats TypeScript, JavaScript, CSS, JSON, and HTML. TypeScript (`npm run build` runs `tsc` then Vite). CI runs `biome ci .` (lint and format drift fail). Prefer a real fix over `biome-ignore`. Prefix unused bindings with `_`.
 
 ```bash
 cd web
@@ -252,7 +253,7 @@ npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
 
-From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace + `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
+From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/lint-all.sh` runs Clippy (workspace except `message-vault-io-gui`, plus `src-tauri`) then the web linter. `./scripts/check-pr.sh` calls `format-all.sh`, then build/test/lint. CI does not run Clippy.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 

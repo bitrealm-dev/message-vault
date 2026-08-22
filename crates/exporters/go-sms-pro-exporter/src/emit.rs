@@ -712,6 +712,18 @@ fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMes
     }
 }
 
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input_dir: &'a Path,
+    pub output_dir: &'a Path,
+    pub owner_phones: &'a [String],
+    pub contacts: &'a ContactsBook,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
+}
+
 /// Convert a GO SMS Pro export directory into the shared conversation structure
 /// ([`ConversationDocument`]), then write the chosen output format.
 ///
@@ -723,15 +735,18 @@ fn enrich_pending_names(book: &ContactsBook, chat_id: &str, msg: &mut PendingMes
 /// Returns an error when the input is not a directory, output overlaps input,
 /// a file cannot be read or written, or the user cancels.
 pub(crate) fn convert_export(
-    input_dir: &Path,
-    output_dir: &Path,
-    owner_phones: &[String],
-    contacts: &ContactsBook,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
+    let ConvertExportArgs {
+        input_dir,
+        output_dir,
+        owner_phones,
+        contacts,
+        date_range,
+        transforms,
+        output_format,
+        cancel,
+    } = args;
     if !input_dir.is_dir() {
         bail!("input is not a directory: {}", input_dir.display());
     }

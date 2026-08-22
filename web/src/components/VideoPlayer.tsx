@@ -23,8 +23,14 @@ export default function VideoPlayer({
 
   return (
     <div className="mt-1.5 max-w-[400px]">
-      <video controls preload="metadata" className="w-full rounded-md">
+      <video
+        controls
+        preload="metadata"
+        className="w-full rounded-md"
+        aria-label={attachment.original_name || "Video attachment"}
+      >
         <source src={url} type={attachment.mime_type || undefined} />
+        <track kind="captions" />
       </video>
     </div>
   );

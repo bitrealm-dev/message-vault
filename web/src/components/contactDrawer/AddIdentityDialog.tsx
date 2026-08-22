@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   CONTACT_IDENTITY_SERVICE_OPTIONS,
   CONTACT_IDENTITY_SERVICES,
@@ -47,6 +47,7 @@ export default function AddIdentityDialog({
 }) {
   const [service, setService] = useState<ContactIdentityService>("phone");
   const [handle, setHandle] = useState("");
+  const serviceId = useId();
 
   useEffect(() => {
     if (open) {
@@ -85,9 +86,12 @@ export default function AddIdentityDialog({
       </button>
       <h2 className="mb-4 pr-6 text-[1.125rem] font-semibold text-text">Add identity</h2>
 
-      <label className="mb-4 block">
-        <span className={fieldLabelClass}>Service</span>
+      <div className="mb-4">
+        <label htmlFor={serviceId} className={fieldLabelClass}>
+          Service
+        </label>
         <Select
+          id={serviceId}
           selectedKey={service}
           onSelectionChange={(k) => {
             const next = parseSelectKey(k, CONTACT_IDENTITY_SERVICES);
@@ -106,7 +110,7 @@ export default function AddIdentityDialog({
             </ListBoxItem>
           ))}
         </Select>
-      </label>
+      </div>
 
       <label className="block">
         <span className={fieldLabelClass}>Identity</span>
@@ -121,7 +125,6 @@ export default function AddIdentityDialog({
             }
           }}
           disabled={busy}
-          autoFocus
           autoComplete="off"
           spellCheck={false}
           placeholder="Enter a user id, phone number, or similar"

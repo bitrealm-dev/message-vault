@@ -71,6 +71,18 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
     }
 }
 
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input: &'a Path,
+    pub output_dir: &'a Path,
+    pub owner_phones: &'a [String],
+    pub contacts: &'a ContactsBook,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
+}
+
 /// Convert SMS Backup & Restore XML into the shared conversation structure,
 /// then write the chosen output format.
 ///
@@ -79,31 +91,24 @@ fn enrich_contacts(book: &ContactsBook, documents: &mut [ConversationDocument]) 
 /// Returns an error when the XML cannot be read, a conversation cannot be
 /// written, or the user cancels.
 pub(crate) fn convert_export(
-    input: &Path,
-    output_dir: &Path,
-    owner_phones: &[String],
-    contacts: &ContactsBook,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
-    let copy_attachments = transforms.copies_attachments();
+    let copy_attachments = args.transforms.copies_attachments();
     let (mut sink, attachments_dir) =
-        FormatSink::open_prepared(output_dir, output_format, transforms)?;
+        FormatSink::open_prepared(args.output_dir, args.output_format, args.transforms)?;
     let (mut documents, report) = read_sbr_documents(
-        input,
+        args.input,
         SbrReadOptions {
-            owner_phones,
-            date_range,
+            owner_phones: args.owner_phones,
+            date_range: args.date_range,
             attachments_dir: Some(&attachments_dir),
             copy_attachments,
             // FormatSink reloads staged bytes after media transforms.
             keep_attachment_bytes: false,
-            cancel,
+            cancel: args.cancel,
         },
     )?;
-    enrich_contacts(contacts, &mut documents);
+    enrich_contacts(args.contacts, &mut documents);
 
     for document in documents {
         sink.write_document(document)?;

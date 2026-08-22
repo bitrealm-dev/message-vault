@@ -78,6 +78,18 @@ fn export_meta(source: &str) -> ExportMeta {
     }
 }
 
+/// Arguments for [`write_all`].
+pub struct WriteAllArgs<'a, R: Rng> {
+    pub imessage_staging: &'a Path,
+    pub sbr_staging: &'a Path,
+    pub whatsapp_staging: &'a Path,
+    pub roster: &'a Roster,
+    pub cfg: &'a SeedConfig,
+    pub corpus: &'a Corpus,
+    pub rng: &'a mut R,
+    pub attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write every conversation file into the three backup folders and return counts.
 ///
 /// One-to-one contacts are split into iMessage-only, Android-only, and overlap.
@@ -87,16 +99,17 @@ fn export_meta(source: &str) -> ExportMeta {
 /// # Errors
 ///
 /// Returns an error if a conversation file cannot be created or written.
-pub fn write_all(
-    imessage_staging: &Path,
-    sbr_staging: &Path,
-    whatsapp_staging: &Path,
-    roster: &Roster,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<GenStats> {
+pub fn write_all<R: Rng>(args: WriteAllArgs<'_, R>) -> Result<GenStats> {
+    let WriteAllArgs {
+        imessage_staging,
+        sbr_staging,
+        whatsapp_staging,
+        roster,
+        cfg,
+        corpus,
+        rng,
+        attachment_digests,
+    } = args;
     let mut stats = GenStats {
         contacts: roster.contacts.len(),
         groups: roster.groups.len(),
@@ -116,75 +129,75 @@ pub fn write_all(
     let (android_only, imessage_only) = rest.split_at(android_only_count);
 
     for contact in imessage_only {
-        write_individual(
-            imessage_staging,
-            contact.primary_phone(),
-            contact.display_hint(),
-            contact.span_years,
-            contact.message_count(),
-            SourceFlavor::IMessage,
+        write_individual(WriteIndividualArgs {
+            staging: imessage_staging,
+            chat_id: contact.primary_phone(),
+            display: contact.display_hint(),
+            span_years: contact.span_years,
+            msg_count: contact.message_count(),
+            flavor: SourceFlavor::IMessage,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     for contact in android_only {
-        write_individual(
-            sbr_staging,
-            contact.primary_phone(),
-            contact.display_hint(),
-            contact.span_years,
-            contact.message_count(),
-            SourceFlavor::SmsBackupRestore,
+        write_individual(WriteIndividualArgs {
+            staging: sbr_staging,
+            chat_id: contact.primary_phone(),
+            display: contact.display_hint(),
+            span_years: contact.span_years,
+            msg_count: contact.message_count(),
+            flavor: SourceFlavor::SmsBackupRestore,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     for contact in overlap {
-        write_overlap_individual(
+        write_overlap_individual(WriteOverlapIndividualArgs {
             imessage_staging,
             sbr_staging,
             contact,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     for ua in &roster.unassigned {
         let count = rng.random_range(4..16);
-        write_unassigned(
-            imessage_staging,
+        write_unassigned(WriteUnassignedArgs {
+            staging: imessage_staging,
             ua,
-            count,
+            msg_count: count,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     for group in &roster.groups {
-        write_group(
-            imessage_staging,
+        write_group(WriteGroupArgs {
+            staging: imessage_staging,
             roster,
             group,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     write_orphaned(imessage_staging, cfg, corpus, rng, &mut stats)?;
@@ -217,19 +230,19 @@ pub fn write_all(
             continue;
         }
         let wa_count = contact.message_count().clamp(20, 80);
-        write_individual(
-            whatsapp_staging,
-            contact.primary_phone(),
-            contact.display_hint(),
-            contact.span_years.min(3.0),
-            wa_count,
-            SourceFlavor::Whatsapp,
+        write_individual(WriteIndividualArgs {
+            staging: whatsapp_staging,
+            chat_id: contact.primary_phone(),
+            display: contact.display_hint(),
+            span_years: contact.span_years.min(3.0),
+            msg_count: wa_count,
+            flavor: SourceFlavor::Whatsapp,
             cfg,
             corpus,
             rng,
-            &mut stats,
+            stats: &mut stats,
             attachment_digests,
-        )?;
+        })?;
     }
 
     Ok(stats)
@@ -277,25 +290,40 @@ fn is_json_conversation_file(path: &Path) -> bool {
     }
 }
 
+/// Arguments for [`write_individual`].
+struct WriteIndividualArgs<'a, R: Rng> {
+    staging: &'a Path,
+    chat_id: &'a str,
+    display: String,
+    span_years: f64,
+    msg_count: usize,
+    flavor: SourceFlavor,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write one one-to-one conversation for a single backup source.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be created or a line cannot be written.
-#[allow(clippy::too_many_arguments)]
-fn write_individual(
-    staging: &Path,
-    chat_id: &str,
-    display: String,
-    span_years: f64,
-    msg_count: usize,
-    flavor: SourceFlavor,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_individual<R: Rng>(args: WriteIndividualArgs<'_, R>) -> Result<()> {
+    let WriteIndividualArgs {
+        staging,
+        chat_id,
+        display,
+        span_years,
+        msg_count,
+        flavor,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let source = source_id(flavor);
     let display_name = optional_display_name(display);
     let participants = individual_participants(chat_id, display_name);
@@ -322,21 +350,30 @@ fn write_individual(
     for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 3 != 0;
         let guid = format!("{}1to1-{chat_id}-{i}", guid_prefix(flavor));
-        let mut msg = text_message(&guid, ts, from_me, chat_id, cfg, corpus, rng, flavor);
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: ts,
+            from_me,
+            peer: chat_id,
+            cfg,
+            corpus,
+            rng,
+            flavor,
+        });
         match flavor {
             SourceFlavor::IMessage => {
-                decorate_message(
-                    &mut msg,
+                decorate_message(DecorateMessageArgs {
+                    msg: &mut msg,
                     i,
                     msg_count,
-                    chat_id,
+                    peer: chat_id,
                     from_me,
                     cfg,
                     rng,
                     stats,
-                    &mut origin_guid,
+                    origin_guid: &mut origin_guid,
                     attachment_digests,
-                );
+                });
             }
             SourceFlavor::SmsBackupRestore => {
                 decorate_android_message(
@@ -360,6 +397,18 @@ fn write_individual(
     Ok(())
 }
 
+/// Arguments for [`write_overlap_individual`].
+struct WriteOverlapIndividualArgs<'a, R: Rng> {
+    imessage_staging: &'a Path,
+    sbr_staging: &'a Path,
+    contact: &'a Contact,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write the same contact into both the iMessage and Android folders.
 ///
 /// Shared messages use the same text and time so import can treat them as
@@ -368,17 +417,17 @@ fn write_individual(
 /// # Errors
 ///
 /// Returns an error if either conversation file cannot be written.
-#[allow(clippy::too_many_arguments)]
-fn write_overlap_individual(
-    imessage_staging: &Path,
-    sbr_staging: &Path,
-    contact: &Contact,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_overlap_individual<R: Rng>(args: WriteOverlapIndividualArgs<'_, R>) -> Result<()> {
+    let WriteOverlapIndividualArgs {
+        imessage_staging,
+        sbr_staging,
+        contact,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let chat_id = contact.primary_phone();
     let display_name = optional_display_name(contact.display_hint());
     let msg_count = contact.message_count().max(1);
@@ -397,33 +446,32 @@ fn write_overlap_individual(
         rng,
     );
     let mut shared: Vec<(i64, bool, String)> = Vec::with_capacity(shared_n);
-    for i in 0..shared_n {
-        let timestamp = timestamps[i];
+    for (i, &timestamp) in timestamps.iter().take(shared_n).enumerate() {
         let from_me = i % 3 != 0;
         let text = format!("Shared demo message {i} with {chat_id}");
         shared.push((timestamp, from_me, text));
     }
 
-    write_overlap_imessage(
+    write_overlap_imessage(WriteOverlapImessageArgs {
         imessage_staging,
         chat_id,
-        display_name.clone(),
+        display_name: display_name.clone(),
         msg_count,
-        &timestamps,
-        &shared,
+        timestamps: &timestamps,
+        shared: &shared,
         shared_n,
         cfg,
         corpus,
         rng,
         stats,
         attachment_digests,
-    )?;
-    write_overlap_android(
+    })?;
+    write_overlap_android(WriteOverlapAndroidArgs {
         sbr_staging,
         chat_id,
         display_name,
-        &timestamps,
-        &shared,
+        timestamps: &timestamps,
+        shared: &shared,
         shared_n,
         extra_n,
         cfg,
@@ -431,9 +479,25 @@ fn write_overlap_individual(
         rng,
         stats,
         attachment_digests,
-    )?;
+    })?;
 
     Ok(())
+}
+
+/// Arguments for [`write_overlap_imessage`].
+struct WriteOverlapImessageArgs<'a, R: Rng> {
+    imessage_staging: &'a Path,
+    chat_id: &'a str,
+    display_name: Option<String>,
+    msg_count: usize,
+    timestamps: &'a [i64],
+    shared: &'a [(i64, bool, String)],
+    shared_n: usize,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
 }
 
 /// Write the iMessage side of an overlapping conversation: shared rows, then the rest.
@@ -441,21 +505,21 @@ fn write_overlap_individual(
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
-#[allow(clippy::too_many_arguments)]
-fn write_overlap_imessage(
-    imessage_staging: &Path,
-    chat_id: &str,
-    display_name: Option<String>,
-    msg_count: usize,
-    timestamps: &[i64],
-    shared: &[(i64, bool, String)],
-    shared_n: usize,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_overlap_imessage<R: Rng>(args: WriteOverlapImessageArgs<'_, R>) -> Result<()> {
+    let WriteOverlapImessageArgs {
+        imessage_staging,
+        chat_id,
+        display_name,
+        msg_count,
+        timestamps,
+        shared,
+        shared_n,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let path = imessage_staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
     write_conversation_header(
@@ -482,32 +546,36 @@ fn write_overlap_imessage(
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
-    for i in shared_n..msg_count {
-        let timestamp = timestamps[i];
+    for (i, &timestamp) in timestamps
+        .iter()
+        .enumerate()
+        .skip(shared_n)
+        .take(msg_count.saturating_sub(shared_n))
+    {
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
-        let mut msg = text_message(
-            &guid,
-            timestamp,
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: timestamp,
             from_me,
-            chat_id,
+            peer: chat_id,
             cfg,
             corpus,
             rng,
-            SourceFlavor::IMessage,
-        );
-        decorate_message(
-            &mut msg,
+            flavor: SourceFlavor::IMessage,
+        });
+        decorate_message(DecorateMessageArgs {
+            msg: &mut msg,
             i,
             msg_count,
-            chat_id,
+            peer: chat_id,
             from_me,
             cfg,
             rng,
             stats,
-            &mut origin_guid,
+            origin_guid: &mut origin_guid,
             attachment_digests,
-        );
+        });
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
@@ -515,26 +583,42 @@ fn write_overlap_imessage(
     Ok(())
 }
 
+/// Arguments for [`write_overlap_android`].
+struct WriteOverlapAndroidArgs<'a, R: Rng> {
+    sbr_staging: &'a Path,
+    chat_id: &'a str,
+    display_name: Option<String>,
+    timestamps: &'a [i64],
+    shared: &'a [(i64, bool, String)],
+    shared_n: usize,
+    extra_n: usize,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write the Android side of an overlapping conversation: shared rows, then extra messages.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
-#[allow(clippy::too_many_arguments)]
-fn write_overlap_android(
-    sbr_staging: &Path,
-    chat_id: &str,
-    display_name: Option<String>,
-    timestamps: &[i64],
-    shared: &[(i64, bool, String)],
-    shared_n: usize,
-    extra_n: usize,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_overlap_android<R: Rng>(args: WriteOverlapAndroidArgs<'_, R>) -> Result<()> {
+    let WriteOverlapAndroidArgs {
+        sbr_staging,
+        chat_id,
+        display_name,
+        timestamps,
+        shared,
+        shared_n,
+        extra_n,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let android_total = shared_n + extra_n;
     let path = sbr_staging.join(sanitize_filename(chat_id) + ".jsonl");
     let mut file = open_jsonl(&path)?;
@@ -566,16 +650,16 @@ fn write_overlap_android(
         let timestamp = base_ts + ((j as i64) + 1) * 60_000;
         let from_me = j % 4 == 0;
         let guid = format!("sbr-extra-{chat_id}-{j}");
-        let mut msg = text_message(
-            &guid,
-            timestamp,
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: timestamp,
             from_me,
-            chat_id,
+            peer: chat_id,
             cfg,
             corpus,
             rng,
-            SourceFlavor::SmsBackupRestore,
-        );
+            flavor: SourceFlavor::SmsBackupRestore,
+        });
         decorate_android_message(&mut msg, j, extra_n, cfg, rng, stats, attachment_digests);
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -665,21 +749,34 @@ fn guid_prefix(flavor: SourceFlavor) -> &'static str {
     }
 }
 
+/// Arguments for [`write_unassigned`].
+struct WriteUnassignedArgs<'a, R: Rng> {
+    staging: &'a Path,
+    ua: &'a Unassigned,
+    msg_count: usize,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write a conversation for a phone or email that has no contact card.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
-fn write_unassigned(
-    staging: &Path,
-    ua: &Unassigned,
-    msg_count: usize,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_unassigned<R: Rng>(args: WriteUnassignedArgs<'_, R>) -> Result<()> {
+    let WriteUnassignedArgs {
+        staging,
+        ua,
+        msg_count,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let chat_id = &ua.handle;
     let participants = individual_participants(chat_id, ua.name_alias.clone());
     let fname = if ua.email_only {
@@ -710,16 +807,16 @@ fn write_unassigned(
     for (i, &ts) in timestamps.iter().enumerate() {
         let from_me = i % 4 == 0;
         let guid = format!("unassigned-{chat_id}-{i}");
-        let mut msg = text_message(
-            &guid,
-            ts,
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: ts,
             from_me,
-            chat_id,
+            peer: chat_id,
             cfg,
             corpus,
             rng,
-            SourceFlavor::IMessage,
-        );
+            flavor: SourceFlavor::IMessage,
+        });
         if i == 2 && ua.name_alias.is_some() && !from_me {
             msg.sender_handle = Some(String::new());
         }
@@ -733,21 +830,34 @@ fn write_unassigned(
     Ok(())
 }
 
+/// Arguments for [`write_group`].
+struct WriteGroupArgs<'a, R: Rng> {
+    staging: &'a Path,
+    roster: &'a Roster,
+    group: &'a crate::personas::GroupSpec,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
 /// Write one group conversation. The first group starts with a rename announcement.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
-fn write_group(
-    staging: &Path,
-    roster: &Roster,
-    group: &crate::personas::GroupSpec,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) -> Result<()> {
+fn write_group<R: Rng>(args: WriteGroupArgs<'_, R>) -> Result<()> {
+    let WriteGroupArgs {
+        staging,
+        roster,
+        group,
+        cfg,
+        corpus,
+        rng,
+        stats,
+        attachment_digests,
+    } = args;
     let chat_id = group_chat_id(group.index);
     let participants = group_participants(roster, group);
     if participants.len() < 2 && !group.phone_only {
@@ -790,16 +900,16 @@ fn write_group(
             None => cfg.reference_time.timestamp_millis(),
         };
         let announcement_ts = first_message_ts - 60_000;
-        let mut ann = text_message(
-            "grp-0-rename",
-            announcement_ts,
-            true,
-            OWNER_PHONE,
+        let mut ann = text_message(TextMessageArgs {
+            guid: "grp-0-rename",
+            timestamp_unix_ms: announcement_ts,
+            from_me: true,
+            peer: OWNER_PHONE,
             cfg,
             corpus,
             rng,
-            SourceFlavor::IMessage,
-        );
+            flavor: SourceFlavor::IMessage,
+        });
         ann.text.clear();
         ann.message_kind = IrMessageKind::Announcement;
         let im = ann.imessage.get_or_insert_with(IrImessage::default);
@@ -821,16 +931,16 @@ fn write_group(
             Some(handle) => handle,
             None => OWNER_PHONE,
         };
-        let mut msg = text_message(
-            &guid,
-            timestamps[i],
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: timestamps[i],
             from_me,
             peer,
             cfg,
             corpus,
             rng,
-            SourceFlavor::IMessage,
-        );
+            flavor: SourceFlavor::IMessage,
+        });
         msg.sender_handle = sender;
         if should_attach_jpg(i, msg_count, cfg) {
             add_jpg_attachment(&mut msg, i + group.index, stats, attachment_digests);
@@ -932,16 +1042,16 @@ fn write_orphaned(
     let timestamps = bursty_timestamps(n, 2.0, cfg.reference_time, sample_direct_day_burst, rng);
     for (i, &ts) in timestamps.iter().enumerate() {
         let guid = format!("orphan-{i}");
-        let mut msg = text_message(
-            &guid,
-            ts,
-            i % 2 == 0,
-            ORPHAN_SENDER,
+        let mut msg = text_message(TextMessageArgs {
+            guid: &guid,
+            timestamp_unix_ms: ts,
+            from_me: i % 2 == 0,
+            peer: ORPHAN_SENDER,
             cfg,
             corpus,
             rng,
-            SourceFlavor::IMessage,
-        );
+            flavor: SourceFlavor::IMessage,
+        });
         msg.text = format!("Orphaned message #{i} (no conversation association)");
         write_message(&mut file, msg)?;
         stats.messages += 1;
@@ -976,20 +1086,34 @@ fn write_header_only(
     Ok(())
 }
 
-/// Add photos, other files, tapbacks, replies, and occasional SMS/RCS labels to an iMessage.
-#[allow(clippy::too_many_arguments)]
-fn decorate_message(
-    msg: &mut IrMessage,
+/// Arguments for [`decorate_message`].
+struct DecorateMessageArgs<'a, R: Rng> {
+    msg: &'a mut IrMessage,
     i: usize,
     msg_count: usize,
-    peer: &str,
+    peer: &'a str,
     from_me: bool,
-    cfg: &SeedConfig,
-    rng: &mut impl Rng,
-    stats: &mut GenStats,
-    origin_guid: &mut Option<String>,
-    attachment_digests: &HashMap<String, (String, u64)>,
-) {
+    cfg: &'a SeedConfig,
+    rng: &'a mut R,
+    stats: &'a mut GenStats,
+    origin_guid: &'a mut Option<String>,
+    attachment_digests: &'a HashMap<String, (String, u64)>,
+}
+
+/// Add photos, other files, tapbacks, replies, and occasional SMS/RCS labels to an iMessage.
+fn decorate_message<R: Rng>(args: DecorateMessageArgs<'_, R>) {
+    let DecorateMessageArgs {
+        msg,
+        i,
+        msg_count,
+        peer,
+        from_me,
+        cfg,
+        rng,
+        stats,
+        origin_guid,
+        attachment_digests,
+    } = args;
     if should_attach_jpg(i, msg_count, cfg) {
         add_jpg_attachment(msg, i, stats, attachment_digests);
         if i > 0 && i.is_multiple_of(40) {
@@ -1102,17 +1226,30 @@ fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
     Ok(())
 }
 
-/// Build a text message with a body from the book, or sometimes only an emoji.
-fn text_message(
-    guid: &str,
+/// Arguments for [`text_message`].
+struct TextMessageArgs<'a, R: Rng> {
+    guid: &'a str,
     timestamp_unix_ms: i64,
     from_me: bool,
-    peer: &str,
-    cfg: &SeedConfig,
-    corpus: &Corpus,
-    rng: &mut impl Rng,
+    peer: &'a str,
+    cfg: &'a SeedConfig,
+    corpus: &'a Corpus,
+    rng: &'a mut R,
     flavor: SourceFlavor,
-) -> IrMessage {
+}
+
+/// Build a text message with a body from the book, or sometimes only an emoji.
+fn text_message<R: Rng>(args: TextMessageArgs<'_, R>) -> IrMessage {
+    let TextMessageArgs {
+        guid,
+        timestamp_unix_ms,
+        from_me,
+        peer,
+        cfg,
+        corpus,
+        rng,
+        flavor,
+    } = args;
     let text = if rng.random_bool(cfg.messages.emoji_probability) {
         (*EMOJI_ONLY.choose(rng).unwrap()).to_string()
     } else {

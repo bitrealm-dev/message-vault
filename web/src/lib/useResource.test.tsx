@@ -42,4 +42,22 @@ describe("useResource", () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBe("");
   });
+
+  it("refetches when reload is called", async () => {
+    let n = 0;
+    const { result } = renderHook(() =>
+      useResource("k1", async () => {
+        n += 1;
+        return `v${n}`;
+      }),
+    );
+
+    await waitFor(() => expect(result.current.data).toBe("v1"));
+
+    act(() => {
+      result.current.reload();
+    });
+
+    await waitFor(() => expect(result.current.data).toBe("v2"));
+  });
 });

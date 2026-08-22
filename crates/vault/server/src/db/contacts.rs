@@ -76,9 +76,7 @@ fn normalize_phone_guarded(num: &str) -> Option<(String, Option<String>)> {
         return None;
     }
     // No usable digits (e.g. a bare `+`): not a phone at all.
-    if phone::sanitize_number(trimmed).is_none() {
-        return None;
-    }
+    phone::sanitize_number(trimmed)?;
     let guarded = phone::normalize_guarded(trimmed, phone::PhoneRegion::for_raw(trimmed));
     Some((guarded.normalized, guarded.note))
 }
@@ -101,16 +99,19 @@ fn phone_handles_only(handles: &[String]) -> Vec<(String, Option<String>)> {
     out
 }
 
+/// Phones on a contact, plus email `(handle_id, raw)` pairs for restore.
+type ContactPhonesAndEmails = (HashSet<String>, Vec<(i64, String)>);
+
 /// Emails attached to a contact, keyed for restore by that contact's phone set.
 #[derive(Debug, Default)]
 struct EmailSnapshot {
     /// One entry per contact that had emails: (phones on that contact, emails).
     /// Emails are (handle_id, raw) so restore can re-link the `handles` row.
-    entries: Vec<(HashSet<String>, Vec<(i64, String)>)>,
+    entries: Vec<ContactPhonesAndEmails>,
 }
 
 fn snapshot_email_handles(conn: &Connection, account_id: &str) -> Result<EmailSnapshot> {
-    let mut by_contact: HashMap<i64, (HashSet<String>, Vec<(i64, String)>)> = HashMap::new();
+    let mut by_contact: HashMap<i64, ContactPhonesAndEmails> = HashMap::new();
 
     let mut stmt = conn.prepare(
         "SELECT ch.contact_id, h.id, h.raw, h.normalized, h.handle_type
@@ -547,7 +548,6 @@ fn ensure_group(conn: &Connection, account_id: &str, name: &str) -> Result<i64> 
 /// Contacts are now resolved through the `handles` table during import (Task 10 of the
 /// handle-identity-model plan); backfilling unknown contacts from conversation data and
 /// filling empty names from participant hints happen there, not here.
-
 #[cfg(test)]
 mod tests {
     use super::*;

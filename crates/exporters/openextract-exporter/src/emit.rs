@@ -34,6 +34,17 @@ fn count(report: &ExportReport, key: &str) -> u64 {
     report.extra.get(key).copied().unwrap_or(0)
 }
 
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input: &'a Path,
+    pub output: &'a Path,
+    pub book: &'a ContactsBook,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
+}
+
 /// Convert OpenExtract CSV(s) under `input` using `book` (from VCF/contacts).
 ///
 /// When `cancel` is set, cooperative cancellation is checked between CSV files
@@ -44,14 +55,17 @@ fn count(report: &ExportReport, key: &str) -> u64 {
 /// Returns an error when output overlaps input, a CSV cannot be parsed, or the
 /// user cancels.
 pub(crate) fn convert_export(
-    input: &Path,
-    output: &Path,
-    book: &ContactsBook,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
+    let ConvertExportArgs {
+        input,
+        output,
+        book,
+        date_range,
+        transforms,
+        output_format,
+        cancel,
+    } = args;
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
     // Resolve to absolute paths so relative inputs work and so the output/input
     // overlap check uses the same path form. Cleaning the output before reading
@@ -468,6 +482,23 @@ mod tests {
         path
     }
 
+    fn convert(
+        input: &std::path::Path,
+        output: &std::path::Path,
+        book: &ContactsBook,
+        date_range: &DateRange,
+    ) -> Result<(ExportReport, FormatSinkResult)> {
+        convert_export(ConvertExportArgs {
+            input,
+            output,
+            book,
+            date_range,
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Csv,
+            cancel: None,
+        })
+    }
+
     #[test]
     fn phone_peer_gets_vcf_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -486,16 +517,7 @@ TEL;TYPE=CELL:+1-555-555-0122\nEND:VCARD\n",
         );
         let book = ContactsBook::load_vcf(&vcf).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         let csv_path = out.join("+15555550122.csv");
@@ -522,16 +544,7 @@ TEL:+15555550999\nEND:VCARD\n",
         );
         let book = ContactsBook::load_vcf(&vcf).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         let csv_path = out.join("Cathy_Arp.csv");
@@ -554,16 +567,7 @@ TEL:+15555550999\nEND:VCARD\n",
         let range =
             DateRange::parse_optional_tz(Some("2020-01-01"), Some("2020-01-02"), Some("UTC"))
                 .unwrap();
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &range,
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &range).unwrap();
         assert_eq!(report.skipped_out_of_range, 2);
         assert_eq!(report.messages, 1);
         let body = fs::read_to_string(out.join("+15555550122.csv")).unwrap();
@@ -585,16 +589,7 @@ TEL:+15555550999\nEND:VCARD\n",
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book, &DateRange::default()).unwrap();
         assert_eq!(report.duplicates_dropped, 1);
         assert_eq!(report.messages, 2);
         assert_eq!(report.conversations, 1);

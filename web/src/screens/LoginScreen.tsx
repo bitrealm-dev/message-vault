@@ -9,7 +9,7 @@ import { apiClient, setBaseUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { type AuthMode, initialLoginServerUrl, isAuthMode } from "../lib/authGuards";
 import { isTauri } from "../lib/tauri-check";
-import { authCard, authLabel, authTitle, mutedText, pageCenter } from "../lib/uiStyles";
+import { authCard, authTitle, mutedText, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import ExtractScreen from "./Extract";
 import FormatScreen from "./Format";
@@ -164,8 +164,8 @@ export default function LoginScreen() {
               <span className={orTextClass}>OR</span>
               <span className={orLineClass} />
             </div>
-            <label className={authLabel}>Server URL</label>
             <TextField
+              label="Server URL"
               value={serverUrl}
               onChange={setServerUrl}
               onKeyDown={(e) => e.key === "Enter" && detectMode()}
@@ -217,16 +217,17 @@ export default function LoginScreen() {
               <TryItButton busy={busy} onClick={handleTryDemo} />
               <p className={`${mutedText} mt-2`}>Open a sample account.</p>
             </div>
-            <label className={authLabel}>Username</label>
             <TextField
+              label="Username"
               value={username}
               onChange={setUsername}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}
               autoComplete="username"
             />
 
-            <label className={`${authLabel} mt-3`}>Password</label>
             <PasswordField
+              label="Password"
+              className="mt-3"
               value={password}
               onChange={setPassword}
               onKeyDown={(e) => e.key === "Enter" && handleLocalLogin()}

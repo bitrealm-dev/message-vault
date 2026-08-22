@@ -16,7 +16,7 @@ use crate::db::account_profile;
 use crate::db::schema;
 use crate::dedupe;
 use crate::guest_pool;
-use crate::import::{self, ImportMode};
+use crate::import::{self, ImportExportArgs, ImportMode};
 use crate::process_assets::{self, ProcessAssetsOptions};
 
 /// Stable demo account id used when `reset-demo` runs without `--account`.
@@ -265,37 +265,37 @@ fn reset_prepared_bundle(
     let whatsapp_assets = temporary_cfg
         .paths
         .assets_dir_for_account(account_id, WHATSAPP_SOURCE);
-    let mut import_stats = import::import_export(
-        &prepared.imessage_dir,
-        &prepared_db,
-        &imessage_assets,
-        Some(&prepared.contacts_vcf),
-        true,
-        ImportMode::Replace,
-        IMESSAGE_SOURCE,
+    let mut import_stats = import::import_export(&ImportExportArgs {
+        export_dir: &prepared.imessage_dir,
+        db_path: &prepared_db,
+        assets_dir: &imessage_assets,
+        contacts: Some(&prepared.contacts_vcf),
+        overwrite_contacts: true,
+        mode: ImportMode::Replace,
+        source: IMESSAGE_SOURCE,
         account_id,
-    )?;
-    let sbr_stats = import::import_export(
-        &prepared.sbr_dir,
-        &prepared_db,
-        &sbr_assets,
-        None,
-        false,
-        ImportMode::Append,
-        SBR_SOURCE,
+    })?;
+    let sbr_stats = import::import_export(&ImportExportArgs {
+        export_dir: &prepared.sbr_dir,
+        db_path: &prepared_db,
+        assets_dir: &sbr_assets,
+        contacts: None,
+        overwrite_contacts: false,
+        mode: ImportMode::Append,
+        source: SBR_SOURCE,
         account_id,
-    )?;
+    })?;
     merge_import_stats(&mut import_stats, &sbr_stats);
-    let whatsapp_stats = import::import_export(
-        &prepared.whatsapp_dir,
-        &prepared_db,
-        &whatsapp_assets,
-        None,
-        false,
-        ImportMode::Append,
-        WHATSAPP_SOURCE,
+    let whatsapp_stats = import::import_export(&ImportExportArgs {
+        export_dir: &prepared.whatsapp_dir,
+        db_path: &prepared_db,
+        assets_dir: &whatsapp_assets,
+        contacts: None,
+        overwrite_contacts: false,
+        mode: ImportMode::Append,
+        source: WHATSAPP_SOURCE,
         account_id,
-    )?;
+    })?;
     merge_import_stats(&mut import_stats, &whatsapp_stats);
 
     let dedupe_stats = dedupe::run_dedupe(&prepared_db, account_id, 2)?;
@@ -321,14 +321,16 @@ fn reset_prepared_bundle(
     }
 
     verify_non_demo_state_preserved(&cfg.paths.db, &prepared_db, account_id)?;
-    let replacement = install_reset_state(
-        &cfg.paths.db,
-        &prepared_db,
-        &cfg.paths.data_dir.join(account_id),
-        &temporary_cfg.paths.data_dir.join(account_id),
-        config_dest,
+    let active_account = cfg.paths.data_dir.join(account_id);
+    let prepared_account = temporary_cfg.paths.data_dir.join(account_id);
+    let replacement = install_reset_state(&ResetPaths {
+        active_db: &cfg.paths.db,
+        prepared_db: &prepared_db,
+        active_account: &active_account,
+        prepared_account: &prepared_account,
+        active_config: config_dest,
         prepared_config,
-    );
+    });
     if let Err(error) = replacement {
         let config_backup = sqlite_sidecar(prepared_config, ".previous-active");
         let previous_state_still_in_work = db_work.path().join("previous-vault.db").exists()
@@ -537,67 +539,44 @@ fn non_demo_state(db: &Path, demo_id: &str) -> Result<BTreeMap<String, i64>> {
     Ok(state)
 }
 
-fn install_reset_state(
-    active_db: &Path,
-    prepared_db: &Path,
-    active_account: &Path,
-    prepared_account: &Path,
-    active_config: &Path,
-    prepared_config: &Path,
-) -> Result<()> {
-    install_reset_state_with(
-        active_db,
-        prepared_db,
-        active_account,
-        prepared_account,
-        active_config,
-        prepared_config,
-        rename_prepared_path,
-    )
+#[derive(Clone, Copy)]
+struct ResetPaths<'a> {
+    active_db: &'a Path,
+    prepared_db: &'a Path,
+    active_account: &'a Path,
+    prepared_account: &'a Path,
+    active_config: &'a Path,
+    prepared_config: &'a Path,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn install_reset_state_with<F>(
-    active_db: &Path,
-    prepared_db: &Path,
-    active_account: &Path,
-    prepared_account: &Path,
-    active_config: &Path,
-    prepared_config: &Path,
-    rename: F,
-) -> Result<()>
+fn install_reset_state(paths: &ResetPaths<'_>) -> Result<()> {
+    install_reset_state_with(paths, rename_prepared_path)
+}
+
+fn install_reset_state_with<F>(paths: &ResetPaths<'_>, rename: F) -> Result<()>
 where
     F: FnMut(&Path, &Path) -> Result<()>,
 {
-    checkpoint_and_clean_sidecars(prepared_db, "before installing the prepared database")?;
+    checkpoint_and_clean_sidecars(paths.prepared_db, "before installing the prepared database")?;
     checkpoint_and_clean_sidecars(
-        active_db,
+        paths.active_db,
         "immediately before replacing the active database",
     )?;
-    replace_reset_state_with(
+    replace_reset_state_with(paths, rename)
+}
+
+fn replace_reset_state_with<F>(paths: &ResetPaths<'_>, mut rename: F) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> Result<()>,
+{
+    let ResetPaths {
         active_db,
         prepared_db,
         active_account,
         prepared_account,
         active_config,
         prepared_config,
-        rename,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn replace_reset_state_with<F>(
-    active_db: &Path,
-    prepared_db: &Path,
-    active_account: &Path,
-    prepared_account: &Path,
-    active_config: &Path,
-    prepared_config: &Path,
-    mut rename: F,
-) -> Result<()>
-where
-    F: FnMut(&Path, &Path) -> Result<()>,
-{
+    } = *paths;
     if !prepared_db.is_file() || !prepared_account.is_dir() || !prepared_config.is_file() {
         bail!("prepared reset state is incomplete");
     }
@@ -678,21 +657,20 @@ where
                 active_config.display()
             ));
         }
-        if installed_account {
-            if let Err(rollback_error) = remove_any_if_exists(active_account) {
-                rollback_errors.push(format!(
-                    "remove installed account directory {}: {rollback_error:#}",
-                    active_account.display()
-                ));
-            }
+        if installed_account && let Err(rollback_error) = remove_any_if_exists(active_account) {
+            rollback_errors.push(format!(
+                "remove installed account directory {}: {rollback_error:#}",
+                active_account.display()
+            ));
         }
-        if installed_db && active_db.exists() {
-            if let Err(rollback_error) = remove_any_if_exists(active_db) {
-                rollback_errors.push(format!(
-                    "remove installed database {}: {rollback_error:#}",
-                    active_db.display()
-                ));
-            }
+        if installed_db
+            && active_db.exists()
+            && let Err(rollback_error) = remove_any_if_exists(active_db)
+        {
+            rollback_errors.push(format!(
+                "remove installed database {}: {rollback_error:#}",
+                active_db.display()
+            ));
         }
         if had_config
             && config_backup.exists()
@@ -703,21 +681,23 @@ where
                 active_config.display()
             ));
         }
-        if had_account && account_backup.exists() {
-            if let Err(rollback_error) = rename(&account_backup, active_account) {
-                rollback_errors.push(format!(
-                    "restore previous account directory {}: {rollback_error:#}",
-                    active_account.display()
-                ));
-            }
+        if had_account
+            && account_backup.exists()
+            && let Err(rollback_error) = rename(&account_backup, active_account)
+        {
+            rollback_errors.push(format!(
+                "restore previous account directory {}: {rollback_error:#}",
+                active_account.display()
+            ));
         }
-        if had_db && db_backup.exists() {
-            if let Err(rollback_error) = rename(&db_backup, active_db) {
-                rollback_errors.push(format!(
-                    "restore previous database {}: {rollback_error:#}",
-                    active_db.display()
-                ));
-            }
+        if had_db
+            && db_backup.exists()
+            && let Err(rollback_error) = rename(&db_backup, active_db)
+        {
+            rollback_errors.push(format!(
+                "restore previous database {}: {rollback_error:#}",
+                active_db.display()
+            ));
         }
         if rollback_errors.is_empty() {
             cleanup_reset_backups(&db_backup, &account_backup, &config_backup);
@@ -1225,12 +1205,14 @@ mod tests {
             fs::write(&prepared_config, b"new config").expect("write new config");
 
             let result = replace_reset_state_with(
-                &active_db,
-                &prepared_db,
-                &active_account,
-                &prepared_account,
-                &active_config,
-                &prepared_config,
+                &ResetPaths {
+                    active_db: &active_db,
+                    prepared_db: &prepared_db,
+                    active_account: &active_account,
+                    prepared_account: &prepared_account,
+                    active_config: &active_config,
+                    prepared_config: &prepared_config,
+                },
                 |source, destination| {
                     if failure_point == ResetInstallFailure::AfterDatabase
                         && source == prepared_account
@@ -1299,12 +1281,14 @@ mod tests {
         let mut observed_clean_boundary = false;
 
         let result = install_reset_state_with(
-            &active_db,
-            &prepared_db,
-            &active_account,
-            &prepared_account,
-            &active_config,
-            &prepared_config,
+            &ResetPaths {
+                active_db: &active_db,
+                prepared_db: &prepared_db,
+                active_account: &active_account,
+                prepared_account: &prepared_account,
+                active_config: &active_config,
+                prepared_config: &prepared_config,
+            },
             |source, destination| {
                 if source == active_db {
                     observed_clean_boundary = !active_wal.exists() && !active_shm.exists();
@@ -1351,12 +1335,14 @@ mod tests {
         let mut database_restore_attempted = false;
 
         let result = replace_reset_state_with(
-            &active_db,
-            &prepared_db,
-            &active_account,
-            &prepared_account,
-            &active_config,
-            &prepared_config,
+            &ResetPaths {
+                active_db: &active_db,
+                prepared_db: &prepared_db,
+                active_account: &active_account,
+                prepared_account: &prepared_account,
+                active_config: &active_config,
+                prepared_config: &prepared_config,
+            },
             |source, destination| {
                 if source == prepared_config {
                     bail!("injected config install failure");

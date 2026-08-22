@@ -178,10 +178,10 @@ pub(crate) fn parts_are_trivial_text_duplicate(message_text: &str, parts: Option
     if part_text != message_text {
         return false;
     }
-    match obj.get("kind").and_then(|v| v.as_str()) {
-        None | Some("run") | Some("text") => true,
-        _ => false,
-    }
+    matches!(
+        obj.get("kind").and_then(|v| v.as_str()),
+        None | Some("run") | Some("text")
+    )
 }
 
 fn value_as_string(v: Option<&Value>) -> Option<String> {

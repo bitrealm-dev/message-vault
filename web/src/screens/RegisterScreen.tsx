@@ -7,7 +7,7 @@ import PasswordField from "../components/PasswordField";
 import TextField from "../components/TextField";
 import { apiClient, setBaseUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { authCard, authLabel, authTitle, pageCenter } from "../lib/uiStyles";
+import { authCard, authTitle, pageCenter } from "../lib/uiStyles";
 import { useAsyncAction } from "../lib/useAsyncAction";
 
 export default function RegisterScreen() {
@@ -50,16 +50,17 @@ export default function RegisterScreen() {
       <div className={authCard}>
         <h1 className={authTitle}>Create Account</h1>
 
-        <label className={authLabel}>Username</label>
         <TextField
+          label="Username"
           value={username}
           onChange={setUsername}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
           autoComplete="username"
         />
 
-        <label className={`${authLabel} mt-3`}>Password</label>
         <PasswordField
+          label="Password"
+          className="mt-3"
           value={password}
           onChange={setPassword}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}
@@ -68,8 +69,9 @@ export default function RegisterScreen() {
           onToggle={() => setShowPassword((v) => !v)}
         />
 
-        <label className={`${authLabel} mt-3`}>Confirm Password</label>
         <PasswordField
+          label="Confirm Password"
+          className="mt-3"
           value={confirmPassword}
           onChange={setConfirmPassword}
           onKeyDown={(e) => e.key === "Enter" && handleRegister()}

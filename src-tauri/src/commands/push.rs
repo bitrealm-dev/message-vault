@@ -53,6 +53,23 @@ fn finished_push_events(
     (progress, summary)
 }
 
+/// User-facing parameters for the `push` command.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushArgs {
+    pub base_url: String,
+    pub username: String,
+    pub key: String,
+    pub input_dir: String,
+    pub mode: String,
+    pub force: bool,
+    pub continue_on_error: bool,
+    pub skip_attachments: bool,
+    pub trust_export: bool,
+    pub contact_name_mode: Option<String>,
+    pub import_id: Option<i64>,
+}
+
 /// Ask this process to upload extracted conversations to a vault server.
 ///
 /// Returns as soon as the background thread starts. Upload progress uses the
@@ -66,32 +83,24 @@ fn finished_push_events(
 pub async fn push(
     _state: tauri::State<'_, Arc<Mutex<AppState>>>,
     app: tauri::AppHandle,
-    base_url: String,
-    username: String,
-    key: String,
-    input_dir: String,
-    mode: String,
-    force: bool,
-    continue_on_error: bool,
-    skip_attachments: bool,
-    trust_export: bool,
-    contact_name_mode: Option<String>,
-    import_id: Option<i64>,
+    args: PushArgs,
 ) -> Result<(), String> {
     let app_handle = app.clone();
-    let contact_name_mode = contact_name_mode.unwrap_or_else(|| "fill_missing".into());
+    let contact_name_mode = args
+        .contact_name_mode
+        .unwrap_or_else(|| "fill_missing".into());
 
     thread::spawn(move || {
         let cfg = VaultPushConfig {
-            input: PathBuf::from(&input_dir),
-            base_url,
-            username,
-            key,
-            mode,
-            continue_on_error,
-            force,
-            skip_attachments,
-            trust_export,
+            input: PathBuf::from(&args.input_dir),
+            base_url: args.base_url,
+            username: args.username,
+            key: args.key,
+            mode: args.mode,
+            continue_on_error: args.continue_on_error,
+            force: args.force,
+            skip_attachments: args.skip_attachments,
+            trust_export: args.trust_export,
             verify_digests: false,
             max_retries: 3,
             batch_size: 100,
@@ -103,7 +112,7 @@ pub async fn push(
             journal_path: None,
             cancel: None,
             contact_name_mode,
-            import_id,
+            import_id: args.import_id,
         };
 
         let mut progress = |event: ProgressEvent| match event {
@@ -145,10 +154,7 @@ pub async fn push(
             ProgressEvent::Finished(report) => {
                 for result in &report.results {
                     if result.status == "failed" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "upload failed",
-                        };
+                        let reason = result.error.as_deref().unwrap_or("upload failed");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
@@ -159,10 +165,10 @@ pub async fn push(
                             }),
                         );
                     } else if result.status == "skipped" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "already imported or skipped",
-                        };
+                        let reason = result
+                            .error
+                            .as_deref()
+                            .unwrap_or("already imported or skipped");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({

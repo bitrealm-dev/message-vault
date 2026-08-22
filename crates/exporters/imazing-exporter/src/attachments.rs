@@ -95,6 +95,19 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
+/// Inputs for [`resolve_attachment_cell`].
+pub(crate) struct ResolveAttachmentArgs<'a> {
+    pub csv_name: &'a str,
+    pub attachment_type: &'a str,
+    pub csv_parent: &'a Path,
+    pub index: Option<&'a AttachmentIndex>,
+    pub attachments_dir: &'a Path,
+    pub copy_attachments: bool,
+    pub message_secs: i64,
+    pub attachments_saved: &'a mut u64,
+    pub copy_failures: &'a mut u64,
+}
+
 /// Resolve a CSV attachment name into an [`AttachmentCell`].
 ///
 /// Lookup order (unchanged):
@@ -103,17 +116,18 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
 ///
 /// When `copy_attachments` is false, keep the CSV name only. On copy failure or
 /// a missing file, fall back to the CSV name so the row still projects.
-pub(crate) fn resolve_attachment_cell(
-    csv_name: &str,
-    attachment_type: &str,
-    csv_parent: &Path,
-    index: Option<&AttachmentIndex>,
-    attachments_dir: &Path,
-    copy_attachments: bool,
-    message_secs: i64,
-    attachments_saved: &mut u64,
-    copy_failures: &mut u64,
-) -> AttachmentCell {
+pub(crate) fn resolve_attachment_cell(args: ResolveAttachmentArgs<'_>) -> AttachmentCell {
+    let ResolveAttachmentArgs {
+        csv_name,
+        attachment_type,
+        csv_parent,
+        index,
+        attachments_dir,
+        copy_attachments,
+        message_secs,
+        attachments_saved,
+        copy_failures,
+    } = args;
     let mime = mime_hint(attachment_type, csv_name);
     let is_sticker = attachment_type.eq_ignore_ascii_case("sticker");
     if !copy_attachments {
@@ -321,17 +335,17 @@ mod tests {
         let index = AttachmentIndex::build(dir.path());
         let mut saved = 0;
         let mut failures = 0;
-        let cell = resolve_attachment_cell(
-            "photo.jpg",
-            "image",
-            &chat,
-            Some(&index),
-            &attachments,
-            true,
-            1_600_000_000,
-            &mut saved,
-            &mut failures,
-        );
+        let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+            csv_name: "photo.jpg",
+            attachment_type: "image",
+            csv_parent: &chat,
+            index: Some(&index),
+            attachments_dir: &attachments,
+            copy_attachments: true,
+            message_secs: 1_600_000_000,
+            attachments_saved: &mut saved,
+            copy_failures: &mut failures,
+        });
         assert_eq!(saved, 1);
         assert_eq!(failures, 0);
         let digest = cell.digest_sha256.expect("digest set after copy");

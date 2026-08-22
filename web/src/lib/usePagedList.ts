@@ -62,6 +62,7 @@ export function usePagedList<T>(
   const loadingMoreRef = useRef(false);
 
   useEffect(() => {
+    void queryKey;
     const ac = new AbortController();
     sessionAcRef.current = ac;
     loadingMoreRef.current = false;
