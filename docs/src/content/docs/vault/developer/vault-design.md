@@ -45,6 +45,8 @@ message-vault
 
 C4 PlantUML sources stay in [`docs/maintainers/architecture/puml/`](https://github.com/bitrealm-io/message-vault/tree/main/docs/maintainers/architecture/puml). Edit the `.puml` file, export SVG, and copy the SVG into `docs/src/assets/vault-design/` in the same change.
 
+Session sequence sources stay in [`docs/maintainers/architecture/sequence_diagram.md`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/sequence_diagram.md). Copy Mermaid changes onto this page in the same change.
+
 ## System context
 
 A person uses the UI to import and view messages. The UI stores and retrieves them through the vault backend.
@@ -105,7 +107,7 @@ sequenceDiagram
 - Desktop App is running.
   - Vite is serving the WebView on `:5173`.
 
-Credentials are typed in the SPA. Login is an Auth API call to the vault, not a sign-in to Tauri.
+The developer types credentials in the SPA. Login is an Auth API call to the vault, not a sign-in to Tauri.
 
 ```mermaid
 sequenceDiagram

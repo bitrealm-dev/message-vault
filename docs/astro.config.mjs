@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
+import mermaid from 'astro-mermaid';
 
 const limitedBadge = {
   text: 'Limited',
@@ -152,6 +153,10 @@ const developerItems = [
 export default defineConfig({
   site: 'https://bitrealm.io',
   integrations: [
+    mermaid({
+      autoTheme: true,
+      enableLog: false,
+    }),
     starlight({
       title: 'Message Vault',
       description:
