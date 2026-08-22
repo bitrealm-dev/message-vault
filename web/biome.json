@@ -1,0 +1,96 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "root": ".."
+  },
+  "files": {
+    "includes": ["**", "!!**/dist", "!package-lock.json"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "html": {
+    "formatter": {
+      "enabled": true
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        "noAutofocus": "warn",
+        "noLabelWithoutControl": "warn",
+        "noStaticElementInteractions": "warn",
+        "useAriaPropsForRole": "warn",
+        "useAriaPropsSupportedByRole": "warn",
+        "useButtonType": "warn",
+        "useFocusableInteractive": "warn",
+        "useKeyWithClickEvents": "warn",
+        "useMediaCaption": "warn",
+        "useSemanticElements": "warn"
+      },
+      "correctness": {
+        "noInnerDeclarations": "warn",
+        "useExhaustiveDependencies": "warn",
+        "useHookAtTopLevel": "error"
+      },
+      "style": {
+        "useComponentExportOnlyModules": {
+          "level": "warn",
+          "options": {
+            "allowConstantExport": true,
+            "allowExportNames": [
+              "ATTACHMENT_OPTIONS",
+              "ListBoxItem",
+              "RESOLUTION_OPTIONS",
+              "bubbleBody",
+              "completionTextFor",
+              "fieldStyle",
+              "formatCompare",
+              "formatMessageTime",
+              "hintStyle",
+              "isGroupConversation",
+              "sectionGap",
+              "selectItemClassName",
+              "senderName",
+              "useAuth",
+              "useTheme"
+            ]
+          }
+        }
+      },
+      "suspicious": {
+        "noArrayIndexKey": "warn",
+        "useIterableCallbackReturn": "warn"
+      }
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}
