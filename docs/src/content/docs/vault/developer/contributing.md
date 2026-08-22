@@ -179,7 +179,18 @@ git push -u origin feat/short-name
 
 Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
-Once the vault is running, [Vault Design](/vault/developer/vault-design/) shows how the project is laid out. It names the folders a first change usually touches, lists the programs a build creates, and shows how the website and the vault talk to each other.
+Most first PRs touch one of these:
+
+- **Vault API or database** — `crates/vault/server/` and `schema/sql/`
+- **Website or desktop screens** — `web/`
+- **Import from a phone backup** — `crates/exporters/` and, for the native file dialogs, `src-tauri/`
+- **This guidebook** — `docs/src/content/docs/`
+
+Do not start in `crates/message-vault-io-gui/` or `web-next/`. Those are old UIs still in the tree.
+
+The full folder list is on [Vault Design → Directory map](/vault/developer/vault-design/#directory-map).
+
+Once the vault is running, [Vault Design](/vault/developer/vault-design/) also lists the programs a build creates and shows how the website and the vault talk to each other.
 
 Phone backups do not go into the vault as raw files. A converter reads the backup and writes a folder of chat files (one file per conversation, one message per line). Import loads that folder into the vault. [Message Transfer](/vault/developer/message-transfer/) explains that path and which converters are ready to use.
 

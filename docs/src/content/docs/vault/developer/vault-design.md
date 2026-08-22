@@ -9,14 +9,7 @@ Related contracts: [HTTP API](/vault/developer/reference/api/), [Database](/vaul
 
 ## Directory map
 
-Most first PRs touch one of these:
-
-- **Vault API or database** — `crates/vault/server/` and `schema/sql/`
-- **Website or desktop screens** — `web/`
-- **Import from a phone backup** — `crates/exporters/` and, for the native file dialogs, `src-tauri/`
-- **This guidebook** — `docs/src/content/docs/`
-
-Do not start in `crates/message-vault-io-gui/` or `web-next/`. Those are old UIs still in the tree.
+These are the folders in the repository. [Contributing](/vault/developer/contributing/) says which ones a first change should use.
 
 ```text title="Repository layout"
 message-vault
