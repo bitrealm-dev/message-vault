@@ -46,7 +46,7 @@ wtsexporter --help
 
 ## Build from source
 
-Compiling the app and the vault from a git checkout: [Run from source](/vault/developer/run-from-source/). Linux system libraries and WSL notes are on [Contributing](/vault/developer/contributing/).
+Compiling the app and the vault from a git checkout: [Contributing](/vault/developer/contributing/#build-and-run).
 
 ## Next
 
