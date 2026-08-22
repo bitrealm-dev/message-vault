@@ -42,7 +42,7 @@ A contributor who opens GitHub finds a short `CONTRIBUTING.md` that sends them t
 3. **Developer sidebar order** (after the Developer index): Contributing, Vault Design, Message Transfer, then the existing Run from source / Docker / CLI / Formats / internals pages.
 4. **Vault Design** is `/vault/developer/vault-design/`. One page. Intro (two processes), directory map, binaries from `cargo build --workspace`, three C4 SVGs with short captions, four Mermaid session sequences (start vault, sign in, import, export).
 5. **C4 stays PlantUML.** Commit the existing SVGs into Starlight assets (`docs/src/assets/vault-design/`). Leave `.puml` files in `docs/maintainers/architecture/puml/` as the edit source. Re-export SVG and commit both when a diagram changes. Do not run PlantUML during the docs build.
-6. **Session sequences stay Mermaid.** Move the four diagrams from `docs/maintainers/architecture/sequence_diagram.md` onto Vault Design. Replace that maintainer file with a pointer to the published page so there is one reading copy.
+6. **Session sequences stay Mermaid.** Move the four diagrams from `docs/maintainers/architecture/sequence_diagram.md` onto Vault Design. Delete `sequence_diagram.md`. Readers use [Vault Design](https://bitrealm.io/vault/developer/vault-design/).
 7. **Message Transfer** is `/vault/developer/message-transfer/`. Pipeline picture (simple three-box flow, not C4): **Exporter → JSONL folder → Import** (`vault-push` or desktop Import). Also the reverse: **vault-pull → JSONL folder**. JSONL shape in brief (one file per chat, header line then messages, `attachments/`, schema v3) plus a small sample, then a link to Export structure. Link lists: **Supported** (iMessage, SMS Backup & Restore, WhatsApp) and **Rescue / experimental** (GO SMS Pro, iMazing, OpenExtract, SMS Backup+). `message-reexporter`, `vault-push`, and `vault-pull` sit on this page as transfer tools, not in those two backup-source lists.
 8. **CLI sidebar matches that split.** Group exporter CLI pages under Supported vs Rescue / experimental. Leave `message-reexporter`, `vault-push`, and `vault-pull` in a third group (vault JSONL tools). The CLI index page uses the same headings. Do not rewrite flag tables on those pages in this change.
 9. **Maintainer index.** `docs/maintainers/README.md` points at the published Vault Design and Message Transfer pages instead of treating C4/sequences as the place people read. `message-ir.md` stays under maintainers and keeps being linked from Formats pages.
@@ -62,7 +62,7 @@ A contributor who opens GitHub finds a short `CONTRIBUTING.md` that sends them t
 | `docs/src/content/docs/vault/developer/index.md` | Link Vault Design and Message Transfer |
 | `docs/src/content/docs/vault/developer/reference/cli/index.md` | Supported vs rescue headings |
 | `docs/maintainers/README.md` | Point at published pages |
-| `docs/maintainers/architecture/sequence_diagram.md` | Replace body with a pointer |
+| `docs/maintainers/architecture/sequence_diagram.md` | Delete. Sequences live on Vault Design. |
 | `README.md` | Leave the hosted contributing link as it is. Do not add Vault Design or Message Transfer there; the Developer index owns those links. |
 
 `docs/src/content/docs/vault/developer/run-from-source.md` already points at Contributing. Leave that link. It does not need to grow a directory map.
