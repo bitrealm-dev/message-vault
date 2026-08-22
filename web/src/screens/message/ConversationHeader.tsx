@@ -58,30 +58,37 @@ export default function ConversationHeader({
 
       {participantsOpen && displayParticipants.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {displayParticipants.map((p) => {
-            const contactId = p.contact_id;
-            if (contactId) {
+          {(() => {
+            const seen = new Map<string, number>();
+            return displayParticipants.map((p) => {
+              const contactId = p.contact_id;
+              const base = contactId ? `c:${contactId}:${p.label}` : `l:${p.label}`;
+              const n = seen.get(base) ?? 0;
+              seen.set(base, n + 1);
+              const key = n === 0 ? base : `${base}#${n}`;
+              if (contactId) {
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onOpenContact?.(contactId)}
+                    title={`Open contact for ${p.label}`}
+                    className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
+                  >
+                    {p.label}
+                  </button>
+                );
+              }
               return (
-                <button
-                  key={contactId}
-                  type="button"
-                  onClick={() => onOpenContact?.(contactId)}
-                  title={`Open contact for ${p.label}`}
-                  className="cursor-pointer rounded-full border border-border bg-panel px-2 py-0.5 text-[0.75rem] text-accent"
+                <span
+                  key={key}
+                  className="rounded-full border border-border bg-elevated px-2 py-0.5 text-[0.75rem] text-muted"
                 >
                   {p.label}
-                </button>
+                </span>
               );
-            }
-            return (
-              <span
-                key={p.label}
-                className="rounded-full border border-border bg-elevated px-2 py-0.5 text-[0.75rem] text-muted"
-              >
-                {p.label}
-              </span>
-            );
-          })}
+            });
+          })()}
         </div>
       )}
 
