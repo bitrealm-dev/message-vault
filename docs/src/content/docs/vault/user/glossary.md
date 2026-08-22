@@ -3,7 +3,7 @@ title: Glossary
 description: Plain-language definitions of the formats and terms you will meet in this guide.
 ---
 
-Short definitions of terms used in the User Guide. Command flags and vendor field names live under [Developer](/vault/developer/run-from-source/).
+Short definitions of terms used in the User Guide. Command flags and vendor field names live under [Developer](/vault/developer/).
 
 ## Formats
 

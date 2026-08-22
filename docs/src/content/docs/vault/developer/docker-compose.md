@@ -3,7 +3,7 @@ title: Operator Docker
 description: Build a release-shaped vault image from a git checkout, or run the published image with Compose.
 ---
 
-Day-to-day work from a clone uses [`./scripts/run-vault-dev.sh`](https://github.com/bitrealm-io/message-vault/blob/main/scripts/run-vault-dev.sh) on the host — see [Run from source](/vault/developer/run-from-source/). This page is Docker: a checkout that should look like a shipped install, or the published Hub image without compiling.
+Day-to-day work from a clone uses [`./scripts/run-vault-dev.sh`](https://github.com/bitrealm-io/message-vault/blob/main/scripts/run-vault-dev.sh) on the host — see [Contributing](/vault/developer/contributing/#build-and-run). This page is Docker: a checkout that should look like a shipped install, or the published Hub image without compiling.
 
 To try the published image without cloning, save [`docker/compose.yml`](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml) as described on [Try the vault](/vault/user/get-started/try-the-vault/). That sample pulls `bitrealm/message-vault`.
 
@@ -39,7 +39,7 @@ The image `bitrealm/message-vault:latest` is the User Guide path. Sample data se
 | FFmpeg | Media conversion for browser playback |
 | Demo dataset | Sample conversations when `DEMO_DATA=true` and the volume is new |
 
-The vault process runs inside the image. The desktop app stays on the host. For local development without Docker, use [Run from source](/vault/developer/run-from-source/).
+The vault process runs inside the image. The desktop app stays on the host. For local development without Docker, use [Contributing](/vault/developer/contributing/#build-and-run).
 
 ```mermaid
 sequenceDiagram
@@ -64,6 +64,6 @@ sequenceDiagram
 
 ## Related
 
-- [Run from source](/vault/developer/run-from-source/)
+- [Contributing](/vault/developer/contributing/#build-and-run)
 - [HTTP API](/vault/developer/reference/api/)
 - [Config and accounts](/vault/developer/reference/config-and-accounts/)

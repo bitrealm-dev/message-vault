@@ -126,6 +126,26 @@ Open **http://localhost:5173**. Sign in as username `demo` with an empty passwor
 
 Later sessions, skip `npm ci` unless `web/package-lock.json` changed. Skip `--reset-demo` unless the sample message data should be rebuilt.
 
+#### Vault flags
+
+First run uses `--reset-demo`. Later sessions, start without flags so `data/` stays:
+
+```bash title="Start the vault, keep data"
+./scripts/run-vault-dev.sh
+```
+
+`--reset` wipes `data/` and starts empty (no sample inbox). Do not combine `--reset` and `--reset-demo`. `--sqlweb` still works with any of these.
+
+#### Serve the website from the vault (optional)
+
+Vite is the usual UI. To have the vault itself serve the website at **http://127.0.0.1:8080**:
+
+```bash title="Build the website into static/"
+./scripts/build-static.sh
+```
+
+That copies `web/dist` into `static/`. Do not run the host vault and `docker compose -f docker/compose.release.yml` at the same time; both use port 8080.
+
 **Desktop app**
 
 The desktop app is a native window (Tauri) around the same `web/` UI. Use it when changing `src-tauri/` or testing import from a backup. Do not run `npm run dev` in another terminal at the same time; Tauri starts Vite itself.
@@ -136,6 +156,14 @@ cargo tauri dev
 ```
 
 When the window opens, point it at **http://127.0.0.1:8080**. The first compile of the desktop app also takes several minutes.
+
+For a release-shaped desktop binary (faster on real backups, or when packaging installers):
+
+```bash title="Build a release-shaped desktop app"
+cargo tauri build
+```
+
+Do not use `cargo tauri build` for day-to-day UI work. `cargo tauri dev` reloads. The build command does not.
 
 #### Stopping and restarting
 

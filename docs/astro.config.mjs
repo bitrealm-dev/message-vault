@@ -63,7 +63,6 @@ const developerItems = [
       'vault/developer/architecture/common-message',
     ],
   },
-  'vault/developer/run-from-source',
   'vault/developer/docker-compose',
   {
     label: 'CLI tools',
