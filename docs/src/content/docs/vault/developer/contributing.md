@@ -179,6 +179,37 @@ git push -u origin feat/short-name
 
 Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
+### Directory map
+
+The product is two processes: the vault (HTTP API and SQLite) and the UI that talks to it. Most first PRs touch one of these:
+
+- **Vault API or database** — `crates/vault/server/` and `schema/sql/`
+- **Website or desktop screens** — `web/`
+- **Import from a phone backup** — `crates/exporters/` and, for the native file dialogs, `src-tauri/`
+- **This guidebook** — `docs/src/content/docs/`
+
+Do not start in `crates/message-vault-io-gui/` or `web-next/`. Those are old UIs still in the tree.
+
+```text
+message-vault
+├── config/                 # copy example → config.toml to run the vault locally
+├── crates/                 # Rust crates Cargo builds together (src-tauri is not in this set)
+│   ├── cli/                # vault-push / vault-pull: load messages into a vault or write them out
+│   ├── core/               # shared import/export job settings used by CLI and the desktop app
+│   ├── exporters/          # parse iMessage, WhatsApp, SMS, and other backups into JSONL
+│   ├── libs/               # shared code those exporters and the vault use (format, contacts, media)
+│   ├── message-vault-io-gui/  # old Slint desktop app — skip for new work
+│   └── vault/              # message-vault-server (API + SQLite) and demo-seed (sample inbox)
+├── docker/                 # image and Compose file that look like a published vault
+├── docs/                   # bitrealm.io (User Guide, Developer docs, landing page)
+├── schema/                 # SQLite CREATE TABLE files the vault embeds
+├── scripts/                # run-vault-dev, check-pr, build-static, schema sync
+├── src-tauri/              # desktop window around web/ (Tauri; built separately from crates/)
+├── tests/                  # tests that span more than one crate; fixtures are fake data, never personal backups
+├── web/                    # website and desktop UI (same React app)
+└── web-next/               # old Next.js browse UI — ignore
+```
+
 ## Opening a PR
 
 Run the checks, then open a pull request against `main`. Do this after **Making Code Changes**. The first compile and the first `npm ci` each take several minutes.
