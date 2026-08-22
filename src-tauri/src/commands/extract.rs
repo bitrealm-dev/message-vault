@@ -311,26 +311,28 @@ fn build_exporter_config(
 ) -> Result<ExporterConfig, String> {
     match source {
         "imessage-ios" | "imessage-macos" => {
-            let mut form = Form::default();
-            form.db_path = path.to_string();
-            form.output = output_dir.to_string();
-            form.apple_platform = if source == "imessage-ios" {
-                ApplePlatform::Ios
-            } else {
-                ApplePlatform::MacOs
+            let form = Form {
+                db_path: path.to_string(),
+                output: output_dir.to_string(),
+                apple_platform: if source == "imessage-ios" {
+                    ApplePlatform::Ios
+                } else {
+                    ApplePlatform::MacOs
+                },
+                backup_password: options.backup_password.clone(),
+                attachment_media: options.attachment_media,
+                media_max_resolution: options.media_max_resolution,
+                media_max_fps: options.media_max_fps.clone(),
+                media_min_size: options.media_min_size.clone(),
+                conversation_filter: options.conversation_filter.clone(),
+                start_date: options.start_date.clone(),
+                end_date: options.end_date.clone(),
+                obfuscate: options.obfuscate,
+                // Import and Push read conversation files as JSON Lines (one JSON
+                // object per line).
+                output_format: OutputFormat::Jsonl,
+                ..Default::default()
             };
-            form.backup_password = options.backup_password.clone();
-            form.attachment_media = options.attachment_media;
-            form.media_max_resolution = options.media_max_resolution;
-            form.media_max_fps = options.media_max_fps.clone();
-            form.media_min_size = options.media_min_size.clone();
-            form.conversation_filter = options.conversation_filter.clone();
-            form.start_date = options.start_date.clone();
-            form.end_date = options.end_date.clone();
-            form.obfuscate = options.obfuscate;
-            // Import and Push read conversation files as JSON Lines (one JSON
-            // object per line).
-            form.output_format = OutputFormat::Jsonl;
             form.to_config(Exporter::Imessage)
                 .map_err(|errors| errors.join("; "))
         }
@@ -454,9 +456,7 @@ fn extract_progress_from_log(
         });
     }
 
-    let Some((done, total)) = extract_progress_ratio(line) else {
-        return None;
-    };
+    let (done, total) = extract_progress_ratio(line)?;
 
     let current_stage = match stage.lock() {
         Ok(guard) => *guard,

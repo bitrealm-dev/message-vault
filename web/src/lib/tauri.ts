@@ -175,7 +175,9 @@ export function onExtractEvents(callbacks: {
     listen<ExtractErrorEvent>("extract:error", (e) => callbacks.onError(e.payload)),
   ]).then((unlisteners) => {
     return () => {
-      unlisteners.forEach((u) => u());
+      for (const u of unlisteners) {
+        u();
+      }
     };
   });
 }

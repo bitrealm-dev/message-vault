@@ -678,21 +678,20 @@ where
                 active_config.display()
             ));
         }
-        if installed_account {
-            if let Err(rollback_error) = remove_any_if_exists(active_account) {
-                rollback_errors.push(format!(
-                    "remove installed account directory {}: {rollback_error:#}",
-                    active_account.display()
-                ));
-            }
+        if installed_account && let Err(rollback_error) = remove_any_if_exists(active_account) {
+            rollback_errors.push(format!(
+                "remove installed account directory {}: {rollback_error:#}",
+                active_account.display()
+            ));
         }
-        if installed_db && active_db.exists() {
-            if let Err(rollback_error) = remove_any_if_exists(active_db) {
-                rollback_errors.push(format!(
-                    "remove installed database {}: {rollback_error:#}",
-                    active_db.display()
-                ));
-            }
+        if installed_db
+            && active_db.exists()
+            && let Err(rollback_error) = remove_any_if_exists(active_db)
+        {
+            rollback_errors.push(format!(
+                "remove installed database {}: {rollback_error:#}",
+                active_db.display()
+            ));
         }
         if had_config
             && config_backup.exists()
@@ -703,21 +702,23 @@ where
                 active_config.display()
             ));
         }
-        if had_account && account_backup.exists() {
-            if let Err(rollback_error) = rename(&account_backup, active_account) {
-                rollback_errors.push(format!(
-                    "restore previous account directory {}: {rollback_error:#}",
-                    active_account.display()
-                ));
-            }
+        if had_account
+            && account_backup.exists()
+            && let Err(rollback_error) = rename(&account_backup, active_account)
+        {
+            rollback_errors.push(format!(
+                "restore previous account directory {}: {rollback_error:#}",
+                active_account.display()
+            ));
         }
-        if had_db && db_backup.exists() {
-            if let Err(rollback_error) = rename(&db_backup, active_db) {
-                rollback_errors.push(format!(
-                    "restore previous database {}: {rollback_error:#}",
-                    active_db.display()
-                ));
-            }
+        if had_db
+            && db_backup.exists()
+            && let Err(rollback_error) = rename(&db_backup, active_db)
+        {
+            rollback_errors.push(format!(
+                "restore previous database {}: {rollback_error:#}",
+                active_db.display()
+            ));
         }
         if rollback_errors.is_empty() {
             cleanup_reset_backups(&db_backup, &account_backup, &config_backup);

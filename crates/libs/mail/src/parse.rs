@@ -208,18 +208,19 @@ fn extract_text_body(mail: &ParsedMail<'_>) -> Option<String> {
     }
     for part in mail.parts() {
         let mime = part.ctype.mimetype.to_ascii_lowercase();
-        if mime == "text/plain" {
-            if let Ok(body) = part.get_body() {
-                return Some(trim_body(&body));
-            }
+        if mime == "text/plain"
+            && let Ok(body) = part.get_body()
+        {
+            return Some(trim_body(&body));
         }
     }
     // Fallback: first non-multipart body.
     for part in mail.parts() {
-        if part.subparts.is_empty() && part.ctype.mimetype.starts_with("text/") {
-            if let Ok(body) = part.get_body() {
-                return Some(trim_body(&body));
-            }
+        if part.subparts.is_empty()
+            && part.ctype.mimetype.starts_with("text/")
+            && let Ok(body) = part.get_body()
+        {
+            return Some(trim_body(&body));
         }
     }
     None

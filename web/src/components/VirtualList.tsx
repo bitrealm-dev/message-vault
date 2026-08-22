@@ -164,7 +164,7 @@ export default function VirtualList({
     // Depend on start/end numbers, not the range object. A new object each
     // render would restart the timer forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nextRange.start/end
-  }, [nextRange.start, nextRange.end, count, nearEndThreshold]);
+  }, [nextRange.start, nextRange.end, count, nearEndThreshold, nextRange]);
 
   useEffect(() => {
     return () => {
@@ -197,7 +197,7 @@ export default function VirtualList({
     lastScrollHeightRef.current = el.clientHeight;
     setLayoutTick((n) => n + 1);
     return () => ro.disconnect();
-  }, [virtualizer, count, columnResizing]);
+  }, [virtualizer, columnResizing]);
 
   if (count === 0 && empty) {
     return (

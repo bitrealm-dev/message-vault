@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { parseSelectKey } from "../../lib/selectKey";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
@@ -17,9 +18,13 @@ export default function CountField({
   value: CountFilterInput;
   onChange: (next: CountFilterInput) => void;
 }) {
+  const valueId = useId();
+
   return (
     <div>
-      <label className={labelClass}>{label}</label>
+      <label htmlFor={valueId} className={labelClass}>
+        {label}
+      </label>
       <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5">
         <Select
           selectedKey={value.comparator}
@@ -48,6 +53,7 @@ export default function CountField({
           </SelectListBoxItem>
         </Select>
         <input
+          id={valueId}
           type="number"
           min={0}
           step={1}

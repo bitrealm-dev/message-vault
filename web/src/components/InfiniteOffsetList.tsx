@@ -268,31 +268,34 @@ function SectionedLetterList<T>({
   const hasMoreRef = useRef(hasMore);
   hasMoreRef.current = hasMore;
 
-  const publishVisibleRange = (root: HTMLElement) => {
-    const rootRect = root.getBoundingClientRect();
-    const rows = root.querySelectorAll("[data-contact-index]");
-    let start = 0;
-    let end = 0;
-    for (const row of rows) {
-      const rect = row.getBoundingClientRect();
-      if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
-      const raw = row.getAttribute("data-contact-index");
-      const idx = raw == null ? Number.NaN : Number(raw);
-      if (!Number.isFinite(idx)) continue;
-      const oneBased = idx + 1;
-      if (start === 0) start = oneBased;
-      end = oneBased;
-    }
-    onRangeRef.current({ start, end });
-    if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
-      requestMoreRef.current();
-    }
-  };
+  const publishVisibleRange = useCallback(
+    (root: HTMLElement) => {
+      const rootRect = root.getBoundingClientRect();
+      const rows = root.querySelectorAll("[data-contact-index]");
+      let start = 0;
+      let end = 0;
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
+        const raw = row.getAttribute("data-contact-index");
+        const idx = raw == null ? Number.NaN : Number(raw);
+        if (!Number.isFinite(idx)) continue;
+        const oneBased = idx + 1;
+        if (start === 0) start = oneBased;
+        end = oneBased;
+      }
+      onRangeRef.current({ start, end });
+      if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
+        requestMoreRef.current();
+      }
+    },
+    [items.length],
+  );
 
   useLayoutEffect(() => {
     const root = scrollerRef.current;
     if (root) publishVisibleRange(root);
-  }, [items]);
+  }, [publishVisibleRange]);
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     publishVisibleRange(e.currentTarget);
@@ -304,8 +307,8 @@ function SectionedLetterList<T>({
 
   return (
     <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
-      {groups.map(([letter, groupItems], groupIndex) => (
-        <section key={`${letter}-${groupIndex}`} aria-label={`Names starting with ${letter}`}>
+      {groups.map(([letter, groupItems]) => (
+        <section key={letter} aria-label={`Names starting with ${letter}`}>
           {letter !== currentLetter ? (
             <div className={`${LETTER_DIVIDER} gap-2.5`}>
               {sectionLead}

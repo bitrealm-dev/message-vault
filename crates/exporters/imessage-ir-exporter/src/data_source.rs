@@ -112,16 +112,16 @@ impl DataSource {
                         Self::get_contacts_index(contacts_path.as_deref(), log.as_ref())
                             .unwrap_or_default();
 
-                    if let Some(ref cp) = contacts_path {
-                        if let Err(e) = remove_file(cp) {
-                            emit_log(
-                                log.as_ref(),
-                                format!(
-                                    "warning: failed to remove temporary contacts database at {}: {e}",
-                                    cp.display()
-                                ),
-                            );
-                        }
+                    if let Some(ref cp) = contacts_path
+                        && let Err(e) = remove_file(cp)
+                    {
+                        emit_log(
+                            log.as_ref(),
+                            format!(
+                                "warning: failed to remove temporary contacts database at {}: {e}",
+                                cp.display()
+                            ),
+                        );
                     }
 
                     let messages_connection = get_connection(messages_db.path())?;

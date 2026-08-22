@@ -19,7 +19,7 @@ export function useHandleMutations({
     setAdding(false);
     setBusy(false);
     setRemoveTarget(null);
-  }, [contactId]);
+  }, []);
 
   const requestRemoveHandle = (h: CachedContactHandle) => {
     if (busy) return;

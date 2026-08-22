@@ -1,7 +1,7 @@
 //! Convert iMazing Messages / WhatsApp rows into the shared conversation
 //! structure, then write the chosen output format via [`FormatSink`].
 
-use crate::attachments::{AttachmentIndex, resolve_attachment_cell};
+use crate::attachments::{AttachmentIndex, ResolveAttachmentArgs, resolve_attachment_cell};
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
 use anyhow::{Context, Result, bail};
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
@@ -58,6 +58,18 @@ impl TransportFamily {
     }
 }
 
+/// Inputs for [`convert_export`].
+pub(crate) struct ConvertExportArgs<'a> {
+    pub input: &'a Path,
+    pub output: &'a Path,
+    pub book: &'a ContactsBook,
+    pub timezone: Option<&'a str>,
+    pub date_range: &'a DateRange,
+    pub transforms: ExportTransforms,
+    pub output_format: OutputFormat,
+    pub cancel: Option<&'a CancelFlag>,
+}
+
 /// Convert iMazing Messages / WhatsApp CSV(s) under `input` using `book` from a contacts VCF/vCard CSV.
 ///
 /// `timezone`: fixed UTC offset (e.g. `UTC-05:00`). When `None`, use the host local zone.
@@ -69,15 +81,18 @@ impl TransportFamily {
 /// Returns an error when output overlaps input, a CSV cannot be parsed, or the
 /// user cancels.
 pub(crate) fn convert_export(
-    input: &Path,
-    output: &Path,
-    book: &ContactsBook,
-    timezone: Option<&str>,
-    date_range: &DateRange,
-    transforms: ExportTransforms,
-    output_format: OutputFormat,
-    cancel: Option<&CancelFlag>,
+    args: ConvertExportArgs<'_>,
 ) -> Result<(ExportReport, FormatSinkResult)> {
+    let ConvertExportArgs {
+        input,
+        output,
+        book,
+        timezone,
+        date_range,
+        transforms,
+        output_format,
+        cancel,
+    } = args;
     let tz = resolve_tz(timezone)?;
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
     // Resolve to absolute paths so relative inputs work, `parent()` below is
@@ -191,17 +206,17 @@ pub(crate) fn convert_export(
                 if !row.attachment.is_empty() {
                     let csv_parent = discovered.path.parent().unwrap_or_else(|| Path::new("."));
                     let mut copy_failures = 0u64;
-                    let cell = resolve_attachment_cell(
-                        &row.attachment,
-                        &row.attachment_type,
+                    let cell = resolve_attachment_cell(ResolveAttachmentArgs {
+                        csv_name: &row.attachment,
+                        attachment_type: &row.attachment_type,
                         csv_parent,
-                        attachment_index.as_ref(),
-                        &attachments_dir,
+                        index: attachment_index.as_ref(),
+                        attachments_dir: &attachments_dir,
                         copy_attachments,
-                        secs,
-                        &mut report.attachments_saved,
-                        &mut copy_failures,
-                    );
+                        message_secs: secs,
+                        attachments_saved: &mut report.attachments_saved,
+                        copy_failures: &mut copy_failures,
+                    });
                     if copy_failures > 0 {
                         bump(&mut report, "attachment-copy-failures", copy_failures);
                     }
@@ -461,16 +476,14 @@ fn phones_in_text(text: &str) -> Vec<String> {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i > start + 1 {
-                if sanitize_number(&text[start..i]).is_some() {
-                    let e164 = phone::normalize_guarded(
-                        &text[start..i],
-                        phone::PhoneRegion::for_raw(&text[start..i]),
-                    )
-                    .normalized;
-                    if !out.contains(&e164) {
-                        out.push(e164);
-                    }
+            if i > start + 1 && sanitize_number(&text[start..i]).is_some() {
+                let e164 = phone::normalize_guarded(
+                    &text[start..i],
+                    phone::PhoneRegion::for_raw(&text[start..i]),
+                )
+                .normalized;
+                if !out.contains(&e164) {
+                    out.push(e164);
                 }
             }
         } else {
@@ -588,24 +601,24 @@ fn resolve_sender(
         && (chat_id.starts_with('+') || sanitize_number(chat_id).is_some())
     {
         handle = phone::normalize_guarded(chat_id, phone::PhoneRegion::for_raw(chat_id)).normalized;
-    } else if !row.sender_name.is_empty() {
-        if let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name) {
-            handle = e164;
-        }
+    } else if !row.sender_name.is_empty()
+        && let Some((e164, _)) = book.lookup_handle_by_name(&row.sender_name)
+    {
+        handle = e164;
     }
 
     let mut display = row.sender_name.trim().to_string();
-    if display.is_empty() {
-        if let Some(digits) = sanitize_number(&handle) {
-            // The book keys entries by its own US-digit form.
-            display = book
-                .lookup_name_by_handle(
-                    &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
-                    HandleType::Phone,
-                )
-                .unwrap_or("")
-                .to_string();
-        }
+    if display.is_empty()
+        && let Some(digits) = sanitize_number(&handle)
+    {
+        // The book keys entries by its own US-digit form.
+        display = book
+            .lookup_name_by_handle(
+                &phone::normalize_guarded(&digits, phone::PhoneRegion::Usa).normalized,
+                HandleType::Phone,
+            )
+            .unwrap_or("")
+            .to_string();
     }
     if display.is_empty() && !contact_name.is_empty() {
         display = contact_name.to_string();
@@ -872,6 +885,23 @@ mod tests {
         path
     }
 
+    fn convert(
+        input: &std::path::Path,
+        output: &std::path::Path,
+        book: &ContactsBook,
+    ) -> Result<(ExportReport, FormatSinkResult)> {
+        convert_export(ConvertExportArgs {
+            input,
+            output,
+            book,
+            timezone: Some("UTC"),
+            date_range: &DateRange::default(),
+            transforms: ExportTransforms::none(),
+            output_format: OutputFormat::Csv,
+            cancel: None,
+        })
+    }
+
     fn pending_att(rel_path: &str, digest: Option<&str>) -> PendingAttachment {
         PendingAttachment {
             rel_path: rel_path.into(),
@@ -929,17 +959,7 @@ Bob,,McRoy,+13212462167,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_chat_phone"), 0);
         assert_eq!(report.messages, 2);
@@ -969,17 +989,7 @@ Other,,Person,+15555550999,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert!(count(&report, "unresolved_chat_phone") >= 1);
         assert_eq!(report.conversations, 1);
         assert!(out.join("Mystery_Person.csv").is_file());
@@ -1003,17 +1013,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 1);
         assert_eq!(report.duplicates_dropped, 1);
     }
@@ -1036,17 +1036,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 2);
         assert_eq!(report.duplicates_dropped, 0);
     }
@@ -1071,17 +1061,7 @@ Carol,,Silent,+15555550133,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_group_participants"), 0);
         let body = fs::read_to_string(out.join("group_+15555550111_+15555550122_+15555550133.csv"))
@@ -1109,17 +1089,7 @@ Bob,,Example,+15555550122,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(count(&report, "unresolved_group_participants"), 1);
     }
@@ -1147,17 +1117,7 @@ Bob,,,+15555550100,\n",
         );
         let book = ContactsBook::load_vcard_csv(&contacts).unwrap();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 2);
         assert_eq!(count(&report, "messages_files"), 1);
         assert_eq!(count(&report, "whatsapp_files"), 1);
@@ -1188,17 +1148,7 @@ Bob McRoy,2020-01-01 12:00:00,,,,,SMS,Incoming,+15555550100,Bob,Read,,,Hi,,image
         fs::write(chat.join("ABC123_image000000.jpg"), b"fake-jpeg-bytes").unwrap();
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            &chat,
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(&chat, &out, &book).unwrap();
         assert_eq!(report.attachments_saved, 1);
         assert_eq!(report.messages, 1);
         let att_dir = out.join("attachments");
@@ -1221,17 +1171,7 @@ Bob McRoy,2020-01-01 12:01:00,iMessage,Outgoing,,,Read,,,Hi,,,\n",
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.conversations, 1);
         assert_eq!(report.messages, 2);
         // Chat id stays the full email; the CSV filename stems `@` to `_`.
@@ -1262,17 +1202,7 @@ Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550122,Bob,Read,,,Same,,,
         );
         let book = ContactsBook::empty();
         let out = dir.path().join("out");
-        let (report, _) = convert_export(
-            dir.path(),
-            &out,
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap();
+        let (report, _) = convert(dir.path(), &out, &book).unwrap();
         assert_eq!(report.messages, 2);
         assert_eq!(report.duplicates_dropped, 0);
     }
@@ -1287,17 +1217,7 @@ Group Chat,2020-01-01 12:00:00,iMessage,Incoming,+15555550122,Bob,Read,,,Same,,,
 Bob,2020-01-01 12:00:00,SMS,Incoming,+13212462167,Bob,Read,,,Hello,,,\n",
         );
         let book = ContactsBook::empty();
-        let err = convert_export(
-            dir.path(),
-            dir.path(),
-            &book,
-            Some("UTC"),
-            &DateRange::default(),
-            ExportTransforms::none(),
-            OutputFormat::Csv,
-            None,
-        )
-        .unwrap_err();
+        let err = convert(dir.path(), dir.path(), &book).unwrap_err();
         assert!(err.to_string().contains("must not be the same as"), "{err}");
         // Source CSV must survive the refused run.
         assert!(dir.path().join("Messages - Bob.csv").is_file());

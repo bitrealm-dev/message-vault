@@ -87,6 +87,7 @@ fn export_meta(source: &str) -> ExportMeta {
 /// # Errors
 ///
 /// Returns an error if a conversation file cannot be created or written.
+#[allow(clippy::too_many_arguments)]
 pub fn write_all(
     imessage_staging: &Path,
     sbr_staging: &Path,
@@ -397,8 +398,7 @@ fn write_overlap_individual(
         rng,
     );
     let mut shared: Vec<(i64, bool, String)> = Vec::with_capacity(shared_n);
-    for i in 0..shared_n {
-        let timestamp = timestamps[i];
+    for (i, &timestamp) in timestamps.iter().take(shared_n).enumerate() {
         let from_me = i % 3 != 0;
         let text = format!("Shared demo message {i} with {chat_id}");
         shared.push((timestamp, from_me, text));
@@ -482,8 +482,12 @@ fn write_overlap_imessage(
         write_message(&mut file, msg)?;
         stats.messages += 1;
     }
-    for i in shared_n..msg_count {
-        let timestamp = timestamps[i];
+    for (i, &timestamp) in timestamps
+        .iter()
+        .enumerate()
+        .skip(shared_n)
+        .take(msg_count.saturating_sub(shared_n))
+    {
         let from_me = i % 3 != 0;
         let guid = format!("1to1-{chat_id}-{i}");
         let mut msg = text_message(
@@ -670,6 +674,7 @@ fn guid_prefix(flavor: SourceFlavor) -> &'static str {
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
+#[allow(clippy::too_many_arguments)]
 fn write_unassigned(
     staging: &Path,
     ua: &Unassigned,
@@ -738,6 +743,7 @@ fn write_unassigned(
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
+#[allow(clippy::too_many_arguments)]
 fn write_group(
     staging: &Path,
     roster: &Roster,
@@ -1103,6 +1109,7 @@ fn write_message(file: &mut BufWriter<File>, mut msg: IrMessage) -> Result<()> {
 }
 
 /// Build a text message with a body from the book, or sometimes only an emoji.
+#[allow(clippy::too_many_arguments)]
 fn text_message(
     guid: &str,
     timestamp_unix_ms: i64,

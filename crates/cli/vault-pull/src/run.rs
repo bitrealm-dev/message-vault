@@ -571,6 +571,7 @@ fn assets_needing_download(
 ///
 /// Returns an error when a download fails, a dest path cannot be created, or
 /// cancel is requested.
+#[allow(clippy::too_many_arguments)]
 fn download_assets_parallel(
     session: &crate::http::HttpSession,
     base_url: &str,

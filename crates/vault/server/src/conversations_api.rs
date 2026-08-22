@@ -256,16 +256,16 @@ fn parse_conversation_list_query(q: &str) -> ConversationListQuery {
                 out.service = Some(rest.to_string());
             }
         } else if lower.starts_with("participants:") {
-            if let Some((_, value)) = token.split_once(':') {
-                if let Some(cmp) = parse_participants_comparison(value) {
-                    out.participants = Some(cmp);
-                }
+            if let Some((_, value)) = token.split_once(':')
+                && let Some(cmp) = parse_participants_comparison(value)
+            {
+                out.participants = Some(cmp);
             }
         } else if let Some(rest) = lower.strip_prefix("import:") {
-            if let Ok(id) = rest.trim().parse::<i64>() {
-                if id > 0 {
-                    out.import_id = Some(id);
-                }
+            if let Ok(id) = rest.trim().parse::<i64>()
+                && id > 0
+            {
+                out.import_id = Some(id);
             }
         } else if let Some((_, id_part)) = token.split_once(':') {
             if lower.starts_with("contact:") {

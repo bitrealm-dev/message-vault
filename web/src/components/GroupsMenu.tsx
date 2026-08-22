@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
@@ -55,10 +55,13 @@ export default function GroupsMenu({
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
-  const setOpen = (next: boolean) => {
-    if (openProp === undefined) setUncontrolledOpen(next);
-    onOpenChange?.(next);
-  };
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (openProp === undefined) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [openProp, onOpenChange],
+  );
   const boxesDisabled = checksDisabled ?? disabled;
   const [mode, setMode] = useState<"list" | "create">("list");
   const [query, setQuery] = useState("");
@@ -86,7 +89,7 @@ export default function GroupsMenu({
       document.removeEventListener("mousedown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, openProp, onOpenChange]);
+  }, [open, setOpen]);
 
   useEffect(() => {
     if (!open) return;

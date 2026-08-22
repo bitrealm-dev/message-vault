@@ -663,20 +663,17 @@ pub fn infer_owner_phones(path: &Path) -> Result<Vec<String>> {
                         let a = attrs(&e);
                         if get(&a, "type").trim() == MMS_ADDR_FROM {
                             let raw = get(&a, "address");
-                            if !raw.eq_ignore_ascii_case(INSERT_ADDRESS_TOKEN) {
-                                if let Some(digits) = sanitize_number(raw).filter(|d| d != "0") {
-                                    // Guarded (US-digit form, matching
-                                    // OwnerPhoneSet): never a fabricated `+0…`.
-                                    *counts
-                                        .entry(
-                                            phone::normalize_guarded(
-                                                &digits,
-                                                phone::PhoneRegion::Usa,
-                                            )
+                            if !raw.eq_ignore_ascii_case(INSERT_ADDRESS_TOKEN)
+                                && let Some(digits) = sanitize_number(raw).filter(|d| d != "0")
+                            {
+                                // Guarded (US-digit form, matching
+                                // OwnerPhoneSet): never a fabricated `+0…`.
+                                *counts
+                                    .entry(
+                                        phone::normalize_guarded(&digits, phone::PhoneRegion::Usa)
                                             .normalized,
-                                        )
-                                        .or_default() += 1;
-                                }
+                                    )
+                                    .or_default() += 1;
                             }
                         }
                     }

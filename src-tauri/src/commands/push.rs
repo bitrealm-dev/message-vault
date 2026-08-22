@@ -62,6 +62,7 @@ fn finished_push_events(
 ///
 /// This command always returns `Ok` after the thread starts. Failures during
 /// the upload are sent as `extract:error`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn push(
     _state: tauri::State<'_, Arc<Mutex<AppState>>>,
@@ -145,10 +146,7 @@ pub async fn push(
             ProgressEvent::Finished(report) => {
                 for result in &report.results {
                     if result.status == "failed" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "upload failed",
-                        };
+                        let reason = result.error.as_deref().unwrap_or("upload failed");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({
@@ -159,10 +157,10 @@ pub async fn push(
                             }),
                         );
                     } else if result.status == "skipped" {
-                        let reason = match result.error.as_deref() {
-                            Some(error) => error,
-                            None => "already imported or skipped",
-                        };
+                        let reason = result
+                            .error
+                            .as_deref()
+                            .unwrap_or("already imported or skipped");
                         let _ = app_handle.emit(
                             "extract:issue",
                             serde_json::json!({

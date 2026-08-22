@@ -128,11 +128,13 @@ export default function ContactSearch({
         <input
           ref={inputRef}
           type="search"
+          role="combobox"
           value={value}
           placeholder="Search contacts"
           aria-label="Search contacts"
           aria-expanded={popdownOpen}
           aria-controls="contact-search-popdown"
+          aria-autocomplete="list"
           onChange={(e) => onChange(e.target.value)}
           onFocus={openPopdown}
           onClick={openPopdown}

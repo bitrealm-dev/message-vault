@@ -1,11 +1,31 @@
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
+use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
+use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn convert(
+    input: &Path,
+    output: &Path,
+    contacts: &ContactsBook,
+    owner_phones: &[String],
+    output_format: OutputFormat,
+) -> Result<(ExportReport, FormatSinkResult)> {
+    convert_export(ConvertExportArgs {
+        input,
+        output_dir: output,
+        owner_phones,
+        contacts,
+        date_range: &DateRange::default(),
+        transforms: ExportTransforms::none(),
+        output_format,
+        cancel: None,
+    })
+}
 
 fn empty_contacts(dir: &tempfile::TempDir) -> ContactsBook {
     let path = dir.path().join("contacts.csv");
@@ -21,15 +41,12 @@ fn convert_export_smoke_on_sample_fixture() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
-    let (report, _) = convert_export(
+    let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &["+15555550100".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["+15555550100".into()],
         OutputFormat::Csv,
-        None,
     )
     .expect("convert_export should succeed");
 
@@ -116,15 +133,12 @@ fn dedupes_overlapping_xml_files() {
 
     let out = tmp.path().join("out");
     let contacts = empty_contacts(&tmp);
-    let (report, _) = convert_export(
+    let (report, _) = convert(
         &input_dir,
         &out,
-        &["+15555550100".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["+15555550100".into()],
         OutputFormat::Csv,
-        None,
     )
     .unwrap();
     assert_eq!(report.extra.get("sms_seen").copied().unwrap_or(0), 2);
@@ -143,15 +157,12 @@ fn rejects_owner_phone_without_digits() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.xml");
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
-    let err = convert_export(
+    let err = convert(
         &fixture,
         tmp.path(),
-        &["not-a-phone".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["not-a-phone".into()],
         OutputFormat::Csv,
-        None,
     )
     .unwrap_err();
     assert!(
@@ -167,15 +178,12 @@ fn convert_export_eml_writes_conversation_folder() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
-    let (report, _) = convert_export(
+    let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &["+15555550100".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["+15555550100".into()],
         OutputFormat::Eml,
-        None,
     )
     .expect("convert_export eml should succeed");
 
@@ -232,15 +240,12 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
 
-    let (report, _) = convert_export(
+    let (report, _) = convert(
         &fixture,
         tmp.path(),
-        &["+15555550100".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["+15555550100".into()],
         OutputFormat::Json,
-        None,
     )
     .expect("json export");
 
@@ -280,15 +285,12 @@ fn convert_export_json_and_jsonl_use_pristine_v3() {
 
     let out_jsonl = tmp.path().join("jsonl-out");
     fs::create_dir_all(&out_jsonl).unwrap();
-    let (_report, _) = convert_export(
+    let (_report, _) = convert(
         &fixture,
         &out_jsonl,
-        &["+15555550100".into()],
         &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
+        &["+15555550100".into()],
         OutputFormat::Jsonl,
-        None,
     )
     .expect("jsonl export");
 

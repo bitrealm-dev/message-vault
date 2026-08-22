@@ -222,7 +222,7 @@ From the repository root:
 
 That script runs `./scripts/format-all.sh` first (rustfmt on the workspace and `src-tauri/`, then Biome on `web/`; it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt or Biome changed files, commit those changes before opening the pull request.
 
-Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace and `src-tauri/`, then the web linter.
+Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace (except the legacy Slint GUI crate) and `src-tauri/`, then the web linter.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures. Personal phone backups are not required.
 

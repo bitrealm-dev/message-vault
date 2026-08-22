@@ -74,24 +74,24 @@ fn ir_message_to_sbr(
     owner: &str,
     output_dir: &Path,
 ) -> Result<SbrMessage> {
-    if let Some(fields) = msg.source.as_ref().map(|s| &s.fields) {
-        if let Some(kind) = fields.get("kind").and_then(|v| v.as_str()) {
-            match kind {
-                "sms" => {
-                    if let Some(restored) = restore_sms(fields, msg) {
-                        return Ok(restored);
-                    }
+    if let Some(fields) = msg.source.as_ref().map(|s| &s.fields)
+        && let Some(kind) = fields.get("kind").and_then(|v| v.as_str())
+    {
+        match kind {
+            "sms" => {
+                if let Some(restored) = restore_sms(fields, msg) {
+                    return Ok(restored);
                 }
-                "mms" => {
-                    if let Some(restored) = restore_mms(fields, doc, msg, owner, output_dir)? {
-                        return Ok(restored);
-                    }
-                }
-                _ => {}
             }
+            "mms" => {
+                if let Some(restored) = restore_mms(fields, doc, msg, owner, output_dir)? {
+                    return Ok(restored);
+                }
+            }
+            _ => {}
         }
     }
-    Ok(synthesize_sbr(doc, msg, owner, output_dir)?)
+    synthesize_sbr(doc, msg, owner, output_dir)
 }
 
 fn restore_sms(fields: &serde_json::Map<String, Value>, msg: &IrMessage) -> Option<SbrMessage> {
@@ -357,10 +357,10 @@ fn mms_address_field(doc: &ConversationDocument) -> String {
 }
 
 fn contact_name_alias(doc: &ConversationDocument, msg: &IrMessage) -> Option<String> {
-    if msg.direction == IrDirection::Incoming {
-        if let Some(n) = msg.sender_display_name.as_deref().filter(|s| !s.is_empty()) {
-            return Some(n.to_string());
-        }
+    if msg.direction == IrDirection::Incoming
+        && let Some(n) = msg.sender_display_name.as_deref().filter(|s| !s.is_empty())
+    {
+        return Some(n.to_string());
     }
     doc.conversation
         .participants

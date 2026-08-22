@@ -191,21 +191,6 @@ pub fn revoke_session_token(conn: &Connection, token: &str) -> Result<bool> {
     Ok(n > 0)
 }
 
-/// Revoke every session for an account (e.g. after password change).
-/// Delete the account's session token row.
-///
-/// # Errors
-///
-/// Returns an error when the delete fails.
-pub fn delete_account_session_token(conn: &Connection, account_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM account_session_tokens WHERE account_id = ?1",
-        params![account_id],
-    )
-    .with_context(|| format!("delete session token for {account_id}"))?;
-    Ok(())
-}
-
 pub(crate) fn unix_secs_string() -> String {
     format!("{}", now_unix_secs())
 }

@@ -540,7 +540,7 @@ fn list_jsonl_files(dir: &Path, exclude: &[&Path]) -> Result<Vec<PathBuf>> {
 
 /// True when `path` is a conversation JSON Lines file, not a push log or report.
 fn is_conversation_jsonl(path: &Path, exclude: &[&Path]) -> bool {
-    if exclude.iter().any(|x| *x == path) {
+    if exclude.contains(&path) {
         return false;
     }
     let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
@@ -609,6 +609,7 @@ fn hash_file(path: &Path) -> Result<String> {
 ///
 /// Returns an error when the file cannot be hashed, or when `verify_digests` is
 /// on and the on-disk hash does not match the export claim.
+#[allow(clippy::too_many_arguments)]
 fn resolve_attachment_digest(
     abs: &Path,
     claimed_raw: Option<&str>,
@@ -1250,7 +1251,6 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
             // Cancel must still join in-flight import and write a report (abort path).
             if check_cancel(cfg.cancel.as_ref()).is_err() {
                 aborted = true;
-                stop_submitting = true;
                 break;
             }
 
@@ -1261,11 +1261,11 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     || batch.body.len() >= OVERLAP_FLUSH_MIN_BODY_BYTES
             }) {
                 let request_ok = flush_imports!(wait: false)?;
-                if !request_ok {
-                    if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                        aborted = true;
-                        stop_submitting = true;
-                    }
+                if !request_ok
+                    && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error)
+                {
+                    aborted = true;
+                    stop_submitting = true;
                 }
             }
 
@@ -1420,12 +1420,12 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     .is_some_and(|batch| batch.source != prepared.source)
                 {
                     let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                    if !request_ok {
-                        if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                            aborted = true;
-                            stop_submitting = true;
-                            break;
-                        }
+                    if !request_ok
+                        && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error)
+                    {
+                        aborted = true;
+                        stop_submitting = true;
+                        break;
                     }
                 }
 
@@ -1453,13 +1453,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                     });
                     if must_flush {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok {
-                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
-                            {
-                                aborted = true;
-                                stop_submitting = true;
-                                break;
-                            }
+                        if !request_ok
+                            && (check_cancel(cfg.cancel.as_ref()).is_err()
+                                || !cfg.continue_on_error)
+                        {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1475,13 +1475,13 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
                         || batch.body.len() >= MAX_IMPORT_BODY_BYTES
                     {
                         let request_ok = flush_imports!(wait: !cfg.continue_on_error)?;
-                        if !request_ok {
-                            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error
-                            {
-                                aborted = true;
-                                stop_submitting = true;
-                                break;
-                            }
+                        if !request_ok
+                            && (check_cancel(cfg.cancel.as_ref()).is_err()
+                                || !cfg.continue_on_error)
+                        {
+                            aborted = true;
+                            stop_submitting = true;
+                            break;
                         }
                         if trackers[idx]
                             .as_ref()
@@ -1549,10 +1549,8 @@ pub fn run(cfg: &VaultPushConfig, mut progress: Option<&mut ProgressFn<'_>>) -> 
     if !aborted {
         // End of run: send any leftover pending batch and wait for the last import.
         let request_ok = flush_imports!(wait: true)?;
-        if !request_ok {
-            if check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error {
-                aborted = true;
-            }
+        if !request_ok && (check_cancel(cfg.cancel.as_ref()).is_err() || !cfg.continue_on_error) {
+            aborted = true;
         }
     }
     if aborted {

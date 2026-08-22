@@ -431,6 +431,7 @@ fn emit_uncertain_sections(log_lines: &mut Vec<String>, unable: &[UnableEntry]) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_phone_token(
     raw: &str,
     // Label for duplicate tracking (includes row).
@@ -480,6 +481,7 @@ fn rewrite_phone_token(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_phone_list(
     raw: &str,
     contact_dup: &str,
@@ -515,6 +517,7 @@ fn rewrite_phone_list(
     parts.join(&sep.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_vcf(
     input: &Path,
     output: &Path,
@@ -573,20 +576,20 @@ fn rewrite_vcf(
             continue;
         }
         // TEL;TYPE=CELL:+1-555… or TEL:+1…
-        if upper.starts_with("TEL") {
-            if let Some((prefix, value)) = trimmed.split_once(':') {
-                let label = contact_label(card_index, &current_name);
-                let display = contact_display_name(card_index, &current_name);
-                let new_val = rewrite_phone_token(
-                    value, &label, &display, region, rewritten, uncertain, log_lines, unable,
-                    by_e164, true,
-                );
-                out.push_str(prefix);
-                out.push(':');
-                out.push_str(&new_val);
-                out.push('\n');
-                continue;
-            }
+        if upper.starts_with("TEL")
+            && let Some((prefix, value)) = trimmed.split_once(':')
+        {
+            let label = contact_label(card_index, &current_name);
+            let display = contact_display_name(card_index, &current_name);
+            let new_val = rewrite_phone_token(
+                value, &label, &display, region, rewritten, uncertain, log_lines, unable, by_e164,
+                true,
+            );
+            out.push_str(prefix);
+            out.push(':');
+            out.push_str(&new_val);
+            out.push('\n');
+            continue;
         }
         out.push_str(line);
         out.push('\n');
@@ -631,6 +634,7 @@ fn vcf_escape(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_vcard_csv(
     input: &Path,
     output: &Path,

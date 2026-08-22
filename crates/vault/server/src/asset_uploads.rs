@@ -153,6 +153,7 @@ fn lock_session(session: &Path) -> Result<ManifestLock> {
     let path = session.join("manifest.lock");
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&path)

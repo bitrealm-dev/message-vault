@@ -106,10 +106,11 @@ fn header_from_row(headers: &[String], row: &csv::StringRecord) -> Result<Conver
     // single-participant conversations, fall back to the per-row
     // `handle_type` column (the sender's inferred type) so the peer keeps
     // a type. Group chats have no single type, so they are left untouched.
-    if participants.len() == 1 && participants[0].handle_type.is_none() {
-        if let Some(t) = parse_handle_type_cell(get("handle_type")) {
-            participants[0].handle_type = Some(t);
-        }
+    if participants.len() == 1
+        && participants[0].handle_type.is_none()
+        && let Some(t) = parse_handle_type_cell(get("handle_type"))
+    {
+        participants[0].handle_type = Some(t);
     }
     let group_title = {
         let t = get("group_title");

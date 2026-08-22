@@ -3,7 +3,7 @@ import ContactInitialCircle from "../components/ContactInitialCircle";
 import ContactSortMenu from "../components/ContactSortMenu";
 import GroupsMenu from "../components/GroupsMenu";
 import InfiniteOffsetList from "../components/InfiniteOffsetList";
-import { useSetRightToolbar } from "../components/RightToolbarContext";
+import { useSetRightToolbar } from "../components/useRightToolbar";
 import { apiClient } from "../lib/api";
 import { getCachedContactDetail, updateCachedContactGroups } from "../lib/contactDetailCache";
 import {
@@ -223,7 +223,7 @@ export default function ContactList({
 
   useEffect(() => {
     setCheckedIds(new Set());
-  }, [filter, groupFilter]);
+  }, []);
 
   useEffect(() => {
     if (clearCheckedRev === 0) return;
@@ -252,7 +252,7 @@ export default function ContactList({
 
     const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [filter, catalogComplete, advancedActive, groupFilter, groupActive]);
+  }, [filter, advancedActive, groupFilter, groupActive]);
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
@@ -412,7 +412,6 @@ export default function ContactList({
   }, [
     allGroups,
     applyMembership,
-    assignTargets,
     clearAllMembership,
     groupChecks,
     groupsMenuOpen,
@@ -491,19 +490,18 @@ export default function ContactList({
         const checked = checkedIds.has(c.id);
         return (
           <>
-            <span
+            <label
               className="group/avatar relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 skipRowSelectRef.current = true;
-                toggleChecked(c.id);
-                // The row click is suppressed only for this press. A later
-                // click on the name must still toggle the row.
+                // Checkbox toggles via the label association; only suppress the row click.
                 queueMicrotask(() => {
                   skipRowSelectRef.current = false;
                 });
               }}
+              onKeyDown={(e) => e.stopPropagation()}
             >
               <span className={checked ? "invisible" : "group-hover/avatar:invisible"}>
                 <ContactInitialCircle
@@ -520,7 +518,7 @@ export default function ContactList({
                   checked ? "" : "invisible group-hover/avatar:visible"
                 }`}
               />
-            </span>
+            </label>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[0.875rem] font-medium">
                 {filterActive && nameMarkTerm ? highlightText(c.name, nameMarkTerm) : c.name}

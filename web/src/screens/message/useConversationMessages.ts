@@ -136,7 +136,7 @@ export function useConversationMessages(conversationId: string) {
     setFindTerm("");
     setActiveMatch(0);
     void fetchConversationPage(0);
-  }, [conversationId, fetchConversationPage]);
+  }, [fetchConversationPage]);
 
   const selectAllYears = () => {
     setActiveYear(null);

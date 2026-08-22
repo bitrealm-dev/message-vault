@@ -197,6 +197,7 @@ impl HttpSession {
     /// # Errors
     ///
     /// Returns an error when the request fails or the body is not valid JSON.
+    #[allow(clippy::too_many_arguments)]
     pub fn export_messages(
         &self,
         base_url: &str,

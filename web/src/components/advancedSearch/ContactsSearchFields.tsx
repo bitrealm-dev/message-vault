@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { Key } from "react-aria-components";
 import { parseSelectKey } from "../../lib/selectKey";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
@@ -72,17 +73,21 @@ export default function ContactsSearchFields({
     } | null,
   ) => void;
 }) {
+  const activityId = useId();
+
   return (
     <div className={contactStackClass}>
       <div className="min-w-0">
-        <label className={labelClass}>Name</label>
-        <input
-          className={`${inputClass} ${noPreferredName ? "cursor-not-allowed opacity-40" : ""}`}
-          value={contactName}
-          disabled={noPreferredName}
-          onChange={(e) => onContactNameChange(e.target.value)}
-          placeholder={noPreferredName ? undefined : "Pat Lee"}
-        />
+        <label className="block">
+          <span className={labelClass}>Name</span>
+          <input
+            className={`${inputClass} ${noPreferredName ? "cursor-not-allowed opacity-40" : ""}`}
+            value={contactName}
+            disabled={noPreferredName}
+            onChange={(e) => onContactNameChange(e.target.value)}
+            placeholder={noPreferredName ? undefined : "Pat Lee"}
+          />
+        </label>
         <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
           <input
             type="checkbox"
@@ -105,14 +110,16 @@ export default function ContactsSearchFields({
         </label>
       </div>
       <div className="min-w-0">
-        <label className={labelClass}>Identity</label>
-        <input
-          className={`${inputClass} ${noHandle ? "cursor-not-allowed opacity-40" : ""}`}
-          value={handle}
-          disabled={noHandle}
-          onChange={(e) => onHandleChange(e.target.value)}
-          placeholder={noHandle ? undefined : "+15555550100"}
-        />
+        <label className="block">
+          <span className={labelClass}>Identity</span>
+          <input
+            className={`${inputClass} ${noHandle ? "cursor-not-allowed opacity-40" : ""}`}
+            value={handle}
+            disabled={noHandle}
+            onChange={(e) => onHandleChange(e.target.value)}
+            placeholder={noHandle ? undefined : "+15555550100"}
+          />
+        </label>
         <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[0.813rem] text-text">
           <input
             type="checkbox"
@@ -165,8 +172,11 @@ export default function ContactsSearchFields({
         isDisabled={noHandle}
       />
       <div className={`min-w-0 ${noHandle ? "opacity-40" : ""}`}>
-        <label className={labelClass}>Activity</label>
+        <label htmlFor={activityId} className={labelClass}>
+          Activity
+        </label>
         <Select
+          id={activityId}
           selectedKey={activity}
           onSelectionChange={(k) => {
             const next = parseSelectKey(k, ["any", "messages", "no-messages"] as const);

@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { parseSelectKey } from "../../lib/selectKey";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
@@ -28,29 +29,38 @@ export default function MessagesSearchFields({
   participants: CountFilterInput;
   onParticipantsChange: (value: CountFilterInput) => void;
 }) {
+  const msgTypeId = useId();
+
   return (
     <div className="grid grid-cols-2 gap-3">
       <div className="col-span-2">
-        <label className={labelClass}>Name or title</label>
-        <input
-          className={inputClass}
-          value={nameOrHandle}
-          onChange={(e) => onNameOrHandleChange(e.target.value)}
-          placeholder="Gregory Coleman"
-        />
+        <label className="block">
+          <span className={labelClass}>Name or title</span>
+          <input
+            className={inputClass}
+            value={nameOrHandle}
+            onChange={(e) => onNameOrHandleChange(e.target.value)}
+            placeholder="Gregory Coleman"
+          />
+        </label>
       </div>
       <div>
-        <label className={labelClass}>Identity</label>
-        <input
-          className={inputClass}
-          value={handle}
-          onChange={(e) => onHandleChange(e.target.value)}
-          placeholder="+15555550100"
-        />
+        <label className="block">
+          <span className={labelClass}>Identity</span>
+          <input
+            className={inputClass}
+            value={handle}
+            onChange={(e) => onHandleChange(e.target.value)}
+            placeholder="+15555550100"
+          />
+        </label>
       </div>
       <div>
-        <label className={labelClass}>Conversation type</label>
+        <label htmlFor={msgTypeId} className={labelClass}>
+          Conversation type
+        </label>
         <Select
+          id={msgTypeId}
           selectedKey={msgType}
           onSelectionChange={(k) => {
             const next = parseSelectKey(k, ["all", "direct", "group"] as const);

@@ -108,6 +108,7 @@ export default function ListColumn({ children }: { children: ReactNode }) {
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
 
+        {/* biome-ignore lint/a11y/useSemanticElements: interactive column resize grip cannot use native hr */}
         <div
           role="separator"
           aria-orientation="vertical"

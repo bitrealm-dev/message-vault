@@ -21,6 +21,7 @@ use crate::state::AppState;
 ///
 /// Returns an error if another thread panicked while holding the shared
 /// state lock. Failures during the download are sent as `extract:error`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn pull(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,

@@ -299,11 +299,11 @@ impl ExportIniState {
     pub fn save(&mut self, form: &Form) -> Result<(), String> {
         self.capture_form_section(form);
         let ini = build_ini(self, form);
-        if let Some(parent) = self.path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
-            }
+        if let Some(parent) = self.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
         }
         write_ini_restricted(&self.path, &ini)
     }
@@ -375,12 +375,12 @@ fn resolve_export_ini_path() -> PathBuf {
             return candidate;
         }
     }
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(EXPORT_INI_NAME);
-            if candidate.is_file() {
-                return candidate;
-            }
+    if let Ok(exe) = env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(EXPORT_INI_NAME);
+        if candidate.is_file() {
+            return candidate;
         }
     }
     env::current_dir()
@@ -677,7 +677,7 @@ mod tests {
         let (loaded, loaded_form) = ExportIniState::load(file.path()).unwrap();
         assert_eq!(loaded.exporter, Exporter::SmsBackupPlus);
         assert_eq!(loaded_form.start_date, "2020-01-01");
-        assert_eq!(loaded_form.obfuscate, true);
+        assert!(loaded_form.obfuscate);
         assert_eq!(loaded_form.output_format, OutputFormat::Eml);
         assert_eq!(loaded_form.owner_phones, "+15555550100\n+15555550101");
         assert_eq!(loaded_form.input, "/data/plus");

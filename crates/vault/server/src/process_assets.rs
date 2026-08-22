@@ -550,9 +550,7 @@ fn kind_of(assets_path: &str, mime: Option<&str>, name_hints: &[Option<&str>]) -
 }
 
 fn nonempty_mime(mime: Option<&str>) -> Option<&str> {
-    let Some(raw) = mime else {
-        return None;
-    };
+    let raw = mime?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None

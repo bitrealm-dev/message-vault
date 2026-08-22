@@ -468,9 +468,7 @@ pub fn import_jsonl_files_on_conn(
 }
 
 fn nonempty_rel(path: &Option<String>) -> Option<&str> {
-    let Some(raw) = path.as_deref() else {
-        return None;
-    };
+    let raw = path.as_deref()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -718,9 +716,7 @@ fn contact_preferred_name(
 }
 
 fn trim_nonempty(value: Option<String>) -> Option<String> {
-    let Some(raw) = value else {
-        return None;
-    };
+    let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -2005,7 +2001,7 @@ mod tests {
         );
 
         for _ in 0..2 {
-            import_jsonl_files(&[second.clone()], &options).unwrap();
+            import_jsonl_files(std::slice::from_ref(&second), &options).unwrap();
         }
 
         let conn = Connection::open(&db).unwrap();
@@ -2871,12 +2867,13 @@ mod tests {
         fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
         fs::write(&corrupt, b"corrupt-asset").unwrap();
 
+        let message = format!(
+            r#"{{"guid":"g-corrupt-asset","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"missing asset","attachments":[{{"path":"attachments/missing.bin","original_name":"missing.bin","mime_type":"application/octet-stream","digest_sha256":"{sha}","is_sticker":false,"transcription":null,"sticker_effect":null}}],"imessage":null,"source":null}}"#
+        );
         let jsonl = format!(
             "{}\n{}\n",
             r#"{"schema_version":3,"export":{"source":"imessage","tool":"test","tool_version":"0","owner_handle":null,"owner_display_name":null},"conversation":{"chat_identifier":"+15555550123","conversation_type":"individual","group_title":null,"participants":[{"handle":"+15555550123","display_name":null}],"stats":{"message_count":1,"attachment_count":1,"first_timestamp_unix_ms":1426183462000,"last_timestamp_unix_ms":1426183462000}}}"#,
-            format!(
-                r#"{{"guid":"g-corrupt-asset","timestamp_unix_ms":1426183462000,"direction":"incoming","service":"imessage","message_kind":"imessage","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"missing asset","attachments":[{{"path":"attachments/missing.bin","original_name":"missing.bin","mime_type":"application/octet-stream","digest_sha256":"{sha}","is_sticker":false,"transcription":null,"sticker_effect":null}}],"imessage":null,"source":null}}"#
-            )
+            message
         );
         let path = write_jsonl(tmp.path(), "corrupt-existing.jsonl", &jsonl);
 

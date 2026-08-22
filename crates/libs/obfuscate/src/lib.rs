@@ -95,7 +95,7 @@ fn split_country_calling_code(digits: &str, had_plus: bool) -> (&str, &str) {
 
 /// Trim trailing sentence punctuation often glued to URLs/emails in message text.
 fn trim_trailing_glue(s: &str) -> &str {
-    s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\''))
+    s.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '\''])
 }
 
 /// Media class for placeholder substitution.
@@ -800,10 +800,10 @@ fn obfuscate_attachments_json(raw: &str) -> String {
                     let _ = stem;
                     obj.insert("original_name".into(), json!(format!("attachment.{ext}")));
                 }
-                if let Some(t) = obj.get_mut("transcription") {
-                    if t.as_str().is_some_and(|s| !s.is_empty()) {
-                        *t = json!("[redacted]");
-                    }
+                if let Some(t) = obj.get_mut("transcription")
+                    && t.as_str().is_some_and(|s| !s.is_empty())
+                {
+                    *t = json!("[redacted]");
                 }
             }
         }

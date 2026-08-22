@@ -11,8 +11,7 @@ import {
 import { apiClient } from "../lib/api";
 import { getCachedContactDetail } from "../lib/contactDetailCache";
 import Button from "./Button";
-import type { ContactPreview } from "./ContactDrawer";
-import { sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
+import { type ContactPreview, sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
 import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
 import { conversationCount, handleDateCell } from "./contactDrawer/handleTableLogic";
 import {
@@ -113,7 +112,7 @@ export default function CheckedContactsPanel({
     contacts.length === 1 ? "1 contact selected" : `${contacts.length} contacts selected`;
   const [metrics, setMetrics] = useState<Record<string, RowMetrics>>({});
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
-  const contactKey = contacts.map((c) => c.id).join(",");
+  const _contactKey = contacts.map((c) => c.id).join(",");
   const contactsRef = useRef(contacts);
   contactsRef.current = contacts;
 
@@ -168,7 +167,7 @@ export default function CheckedContactsPanel({
         /* aborted or failed — uncached rows stay on em dash until a later load */
       });
     return () => ac.abort();
-  }, [contactKey]);
+  }, []);
 
   const rows = useMemo<ContactRow[]>(() => {
     const built = contacts.map((c) => {

@@ -75,7 +75,7 @@ export function ContactDrawerHandles({
 
   useEffect(() => {
     setSortDescriptor(null);
-  }, [contactId]);
+  }, []);
 
   const footerAsHandle: CachedContactHandle = {
     ...emptyHandleRow(""),

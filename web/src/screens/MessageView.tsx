@@ -68,7 +68,7 @@ export default function MessageView({
 
   useEffect(() => {
     setParticipantsOpen(true);
-  }, [conversation.id]);
+  }, []);
 
   /** Prefer list-API participants; fall back to the loaded page's conversation header. */
   const useAliases = useNameAliases();

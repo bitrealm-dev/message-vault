@@ -283,14 +283,14 @@ fn resolve_forwarded_paths(args: &WtsexporterArgs) -> Result<ForwardedPaths> {
 /// Returns an error when `input` does not exist.
 fn input_search_root(input: &Path) -> Result<PathBuf> {
     if input.is_dir() {
-        return Ok(absolutize(input)?);
+        return absolutize(input);
     }
     if input.is_file() {
         let parent = input
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        return Ok(absolutize(parent)?);
+        return absolutize(parent);
     }
     bail!("input path does not exist: {}", input.display());
 }

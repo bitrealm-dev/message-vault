@@ -893,9 +893,7 @@ async fn resolve_import_account(
 }
 
 fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
-    let Some(raw) = value else {
-        return None;
-    };
+    let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -910,9 +908,7 @@ fn content_type_base(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn upload_content_type(headers: &HeaderMap) -> Option<String> {
-    let Some(base) = content_type_base(headers) else {
-        return None;
-    };
+    let base = content_type_base(headers)?;
     if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
         None
     } else {
@@ -1634,7 +1630,7 @@ async fn imports_complete_handler(
 
 fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
     match summary_json {
-        Some(raw) => serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw)),
+        Some(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)),
         None => serde_json::Value::Null,
     }
 }

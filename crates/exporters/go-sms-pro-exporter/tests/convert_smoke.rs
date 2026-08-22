@@ -1,11 +1,29 @@
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
+use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
-use message_ir_format::ExportTransforms;
-use message_vault_io_core::OutputFormat;
+use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::{ExportReport, OutputFormat};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn convert(
+    input_dir: &Path,
+    output_dir: &Path,
+    contacts: &ContactsBook,
+) -> Result<(ExportReport, FormatSinkResult)> {
+    convert_export(ConvertExportArgs {
+        input_dir,
+        output_dir,
+        owner_phones: &["+15555550100".into()],
+        contacts,
+        date_range: &DateRange::default(),
+        transforms: ExportTransforms::none(),
+        output_format: OutputFormat::Csv,
+        cancel: None,
+    })
+}
 
 fn empty_contacts(dir: &tempfile::TempDir) -> ContactsBook {
     let path = dir.path().join("contacts.csv");
@@ -21,17 +39,8 @@ fn convert_smoke_writes_csv_not_json() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
-    let (report, _) = convert_export(
-        input.as_path(),
-        tmp.path(),
-        &["+15555550100".into()],
-        &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect("convert_export should succeed");
+    let (report, _) =
+        convert(input.as_path(), tmp.path(), &contacts).expect("convert_export should succeed");
     assert!(report.conversations >= 1);
     assert!(report.extra.get("xml_messages_seen").copied().unwrap_or(0) >= 2);
 
@@ -75,17 +84,8 @@ fn output_equals_input_bails_before_cleaning() {
     let input = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_export");
     let tmp = tempfile::tempdir().expect("tempdir");
     let contacts = empty_contacts(&tmp);
-    let err = convert_export(
-        input.as_path(),
-        input.as_path(),
-        &["+15555550100".into()],
-        &contacts,
-        &DateRange::default(),
-        ExportTransforms::none(),
-        OutputFormat::Csv,
-        None,
-    )
-    .expect_err("output == input must fail");
+    let err = convert(input.as_path(), input.as_path(), &contacts)
+        .expect_err("output == input must fail");
     assert!(
         err.to_string()
             .contains("must not be the same as, or contain"),

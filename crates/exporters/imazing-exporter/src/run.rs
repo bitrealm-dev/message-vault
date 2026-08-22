@@ -1,6 +1,6 @@
 //! Full export pipeline for CLI and in-process GUI.
 
-use crate::emit::convert_export;
+use crate::emit::{ConvertExportArgs, convert_export};
 use anyhow::{Result, bail};
 use contacts::ContactsBook;
 use message_ir_format::ExportTransforms;
@@ -41,16 +41,16 @@ pub fn run(config: &ExporterConfig) -> Result<RunResult> {
 
     let mut transforms = ExportTransforms::from_configs(&config.media, &config.obfuscate);
     transforms.log = config.log.clone();
-    let (report, sink) = convert_export(
+    let (report, sink) = convert_export(ConvertExportArgs {
         input,
-        &config.output,
-        &book,
-        config.timezone.as_deref(),
-        &config.date_range,
+        output: &config.output,
+        book: &book,
+        timezone: config.timezone.as_deref(),
+        date_range: &config.date_range,
         transforms,
-        config.output_format,
-        config.cancel.as_ref(),
-    )?;
+        output_format: config.output_format,
+        cancel: config.cancel.as_ref(),
+    })?;
     if !sink.media.errors.is_empty() && sink.media.processed == 0 && config.media.mode.needs_tools()
     {
         anyhow::bail!("media processing failed for all candidate files");

@@ -205,9 +205,7 @@ fn unique_ids(ids: impl IntoIterator<Item = i64>) -> Vec<i64> {
 }
 
 fn nonempty_source(source: Option<&str>) -> Option<&str> {
-    let Some(raw) = source else {
-        return None;
-    };
+    let raw = source?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None

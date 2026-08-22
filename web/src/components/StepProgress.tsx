@@ -97,7 +97,7 @@ export default function StepProgress({ steps, completionText }: StepProgressProp
       <ol className="m-0 grid w-fit max-w-full grid-cols-[1.5rem_minmax(0,max-content)_max-content] gap-x-2 gap-y-3 p-0">
         {steps.map((step, i) => (
           <li
-            key={i}
+            key={step.label}
             aria-current={step.status === "active" ? "step" : undefined}
             className="col-span-3 grid grid-cols-subgrid items-start"
           >

@@ -530,6 +530,7 @@ impl HttpSession {
     ///
     /// Returns an error when the body is too large, the vault rejects the batch,
     /// or the response cannot be parsed.
+    #[allow(clippy::too_many_arguments)]
     pub fn post_import(
         &self,
         base_url: &str,
@@ -660,6 +661,7 @@ impl HttpSession {
     /// # Errors
     ///
     /// Returns an error when the vault rejects the request (other than 404).
+    #[allow(clippy::too_many_arguments)]
     pub fn complete_import(
         &self,
         base_url: &str,

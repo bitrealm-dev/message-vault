@@ -64,23 +64,23 @@ pub(crate) fn apply_name_mapping(
 
 /// Fill blank/unknown display names from phone→name when the peer phone is known.
 pub(crate) fn enrich_display_names(msg: &mut ParsedMessage, book: &ContactsBook) {
-    if let Some(ref digits) = msg.sender_digits {
-        if let Some(name) = book.enrich_display_name(
+    if let Some(ref digits) = msg.sender_digits
+        && let Some(name) = book.enrich_display_name(
             digits,
             HandleType::Phone,
             msg.name_alias.as_deref().unwrap_or(""),
-        ) {
-            msg.name_alias = Some(name);
-        }
+        )
+    {
+        msg.name_alias = Some(name);
     }
-    if !msg.chat_key.is_empty() {
-        if let Some(name) = book.enrich_display_name(
+    if !msg.chat_key.is_empty()
+        && let Some(name) = book.enrich_display_name(
             &msg.chat_key,
             HandleType::Phone,
             msg.name_alias.as_deref().unwrap_or(""),
-        ) {
-            msg.name_alias = Some(name);
-        }
+        )
+    {
+        msg.name_alias = Some(name);
     }
     for (digits, name) in &mut msg.participant_digits {
         let current = name.as_deref().unwrap_or("");

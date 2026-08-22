@@ -585,11 +585,11 @@ fn open_nofollow_read(path: &Path) -> Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        return OpenOptions::new()
+        OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)
-            .with_context(|| format!("open {}", path.display()));
+            .with_context(|| format!("open {}", path.display()))
     }
     #[cfg(not(unix))]
     {

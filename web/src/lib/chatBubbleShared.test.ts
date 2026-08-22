@@ -47,7 +47,7 @@ describe("bubbleBody", () => {
   it("returns highlighted nodes when a term is set", () => {
     const nodes = bubbleBody("hello world", "hello");
     expect(Array.isArray(nodes)).toBe(true);
-    expect(nodes!.length).toBeGreaterThan(0);
+    expect(nodes?.length).toBeGreaterThan(0);
   });
 });
 
