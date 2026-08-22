@@ -38,7 +38,7 @@ A contributor who opens GitHub finds a short `CONTRIBUTING.md` that sends them t
 ## Decisions
 
 1. **Contributing source of truth stays Starlight.** `docs/src/content/docs/vault/developer/contributing.md` keeps environment setup, run the vault, tests, PR rules, and preview-the-guidebook. It drops the directory map. It links to Vault Design (and Message Transfer) for people who already compile.
-2. **Root `CONTRIBUTING.md` is a stub.** Move `.github/CONTRIBUTING.md` to the repository root and keep it minimal: hosted URL `https://bitrealm.io/vault/developer/contributing/`, plus a local path to the Starlight source. Delete `.github/CONTRIBUTING.md` so GitHub has one contributing file.
+2. **Root `CONTRIBUTING.md` is a stub.** Move `.github/CONTRIBUTING.md` to the repository root without rewriting it. The only edit is the local path (`../docs/…` becomes `docs/…` because the file is no longer under `.github/`). Delete `.github/CONTRIBUTING.md` so GitHub has one contributing file.
 3. **Developer sidebar order** (after the Developer index): Contributing, Vault Design, Message Transfer, then the existing Run from source / Docker / CLI / Formats / internals pages.
 4. **Vault Design** is `/vault/developer/vault-design/`. One page. Intro (two processes), directory map, binaries from `cargo build --workspace`, three C4 SVGs with short captions, four Mermaid session sequences (start vault, sign in, import, export).
 5. **C4 stays PlantUML.** Commit the existing SVGs into Starlight assets (`docs/src/assets/vault-design/`). Leave `.puml` files in `docs/maintainers/architecture/puml/` as the edit source. Re-export SVG and commit both when a diagram changes. Do not run PlantUML during the docs build.
@@ -108,15 +108,17 @@ Do not paste the converter capabilities tables here. Link [Converter capabilitie
 
 ## Root CONTRIBUTING.md (intended copy)
 
+Port `.github/CONTRIBUTING.md` as-is. Only the local relative path changes:
+
 ```markdown
 # How to Contribute
 
-Contribution guidelines live in the Developer docs:
+Thank you for your interest in contributing to the Message Vault!
 
-- Hosted: https://bitrealm.io/vault/developer/contributing/
-- In this clone: `docs/src/content/docs/vault/developer/contributing.md`
+Get started by reviewing our contribution guidelines in one of these ways:
 
-After the vault compiles, [Vault Design](https://bitrealm.io/vault/developer/vault-design/) maps the tree and processes. [Message Transfer](https://bitrealm.io/vault/developer/message-transfer/) covers exporter → JSONL → import.
+- [Developer docs](https://bitrealm.io/vault/developer/contributing/) (hosted)
+- [contributing.md](docs/src/content/docs/vault/developer/contributing.md) (local)
 ```
 
 Keep the Starlight contributing page’s existing setup/PR prose except the directory-map subsection.

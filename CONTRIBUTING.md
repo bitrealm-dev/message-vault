@@ -1,8 +1,8 @@
 # How to Contribute
 
-Contribution guidelines live in the Developer docs:
+Thank you for your interest in contributing to the Message Vault!
 
-- Hosted: https://bitrealm.io/vault/developer/contributing/
-- In this clone: `docs/src/content/docs/vault/developer/contributing.md`
+Get started by reviewing our contribution guidelines in one of these ways:
 
-After the vault compiles, [Vault Design](https://bitrealm.io/vault/developer/vault-design/) maps the tree and processes. [Message Transfer](https://bitrealm.io/vault/developer/message-transfer/) covers exporter → JSONL → import.
+- [Developer docs](https://bitrealm.io/vault/developer/contributing/) (hosted)
+- [contributing.md](docs/src/content/docs/vault/developer/contributing.md) (local)
