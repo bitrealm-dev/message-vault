@@ -88,7 +88,7 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
-  # ── Always: web ESLint ────────────────────────────────────────────────
+  # ── Always: web Biome (lint + format) ─────────────────────────────────
   web-lint:
     name: Lint (web)
     runs-on: ubuntu-latest
@@ -103,11 +103,11 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Lint web frontend
+      - name: Lint and format-check web frontend
         run: |
           cd web
           npm ci
-          npm run lint
+          npx biome ci .
 
   # ── Always: web Vitest ────────────────────────────────────────────────
   web-test:
