@@ -179,36 +179,51 @@ git push -u origin feat/short-name
 
 Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
-### Test before a pull request
+## Opening a PR
+
+Run the checks, then open a pull request against `main`. Do this after **Making Code Changes**. The first compile and the first `npm ci` each take several minutes.
+
+**Before it is ready**
+
+From the repository root:
 
 ```bash
-cargo fmt --all -- --check
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo build --workspace
-cargo test --workspace
+./scripts/check-pr.sh
 ```
 
-Single crate:
+That script applies rustfmt to the workspace and to `src-tauri/` (it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It does not auto-format `web/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt changed files, commit those changes before opening the pull request.
+
+While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures. Personal phone backups are not required.
+
+**Keep the branch current**
+
+If `main` has moved, update the branch before asking for review:
 
 ```bash
-cargo test -p go-sms-pro-exporter
+git fetch upstream
+git merge upstream/main
+git push
 ```
 
-Exporter smoke tests under `crates/*/tests/convert_smoke.rs` use committed fixtures. Personal phone backups are not required.
+Rebase is allowed. Merge is enough. Do not force-push unless the branch is only used by that one contributor.
 
-If `web/` changed:
+**Open the pull request**
+
+A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form. GitHub fills in the default template. That default is enough for most changes. Feature and bug-fix templates also exist; they are not required.
+
+Link the issue (`Ref: #123`). Write `Fixes #123` in the description if this change should close that issue.
+
+Prefer `feat:`, `fix:`, or `docs:` at the start of the title when it fits.
+
+From the repository root, this also works:
 
 ```bash
-cd web && npm ci && npm run lint && npm test
+gh pr create --base main --title "feat: add support for x" --body "Ref: #123"
 ```
 
-If `docs/` changed:
+**After it is open**
 
-```bash
-cd docs && npm ci && npm run check && npm run build
-```
-
-CI on `main` runs the Rust fmt/build/test path above (including `src-tauri` fmt) and the web lint/test jobs when those trees change. Docs deploy from [`.github/workflows/docs.yml`](https://github.com/bitrealm-io/message-vault/blob/main/.github/workflows/docs.yml).
+GitHub runs checks. Fix failing checks. Reply to review comments on the same pull request.
 
 ## Docs site
 
@@ -247,7 +262,7 @@ Pages custom domain and DNS cutover notes belong in maintainer ops, not in every
 
 1. **Keep changes focused.** Prefer small PRs that do one job.
 2. **Match existing style.** Follow nearby crates; avoid drive-by renames.
-3. **Verify before opening a PR.** Use the checklist in [Test before a pull request](#test-before-a-pull-request).
+3. **Verify before opening a PR.** Use [Opening a PR](#opening-a-pr).
 4. **No secrets or personal data.** Do not commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
 5. **Respect licenses.** See [License](#license).
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
