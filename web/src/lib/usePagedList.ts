@@ -39,7 +39,7 @@ type UsePagedListOptions = {
  * cancels any request that is still running.
  */
 export function usePagedList<T>(
-  _queryKey: string,
+  queryKey: string,
   fetchPage: PagedFetchPage<T>,
   options?: UsePagedListOptions,
 ): UsePagedListResult<T> {
@@ -62,6 +62,7 @@ export function usePagedList<T>(
   const loadingMoreRef = useRef(false);
 
   useEffect(() => {
+    void queryKey;
     const ac = new AbortController();
     sessionAcRef.current = ac;
     loadingMoreRef.current = false;
@@ -112,7 +113,7 @@ export function usePagedList<T>(
       ac.abort();
       if (sessionAcRef.current === ac) sessionAcRef.current = null;
     };
-  }, [firstPageSize]);
+  }, [queryKey, firstPageSize]);
 
   const loadMore = useCallback(() => {
     const ac = sessionAcRef.current;
