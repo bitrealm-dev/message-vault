@@ -12,7 +12,7 @@ Pull messages from a running Message Vault into a local **JSONL** export folder 
 
 ### Synopsis
 
-```bash
+```bash title="Synopsis"
 vault-pull \
   --url http://127.0.0.1:8080 \
   --key "$VAULT_KEY" \

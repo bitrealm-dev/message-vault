@@ -24,7 +24,7 @@ Most tenant-scoped commands take:
 
 ## `import`
 
-```bash
+```bash title="import"
 cargo run --release -- import \
   --account yourusername \
   --input /path/to/jsonl-dir \
@@ -60,7 +60,7 @@ Summary counters mean:
 | `left_as_is` | Already converted, non-media (PDF, etc.), or small JPEG that needs no rewrite |
 | `conversion_failures` | ffmpeg (or related) error for that file |
 
-```bash
+```bash title="process-assets"
 cargo run --release -- process-assets [--force] [--dry-run] \
   [--skip-image] [--skip-video] [--skip-audio] \
   [--source <id>] [--db <path>]
@@ -80,7 +80,7 @@ cargo run --release -- process-assets [--force] [--dry-run] \
 
 Regenerate the demo bundle, clear demo account data, import, and process assets.
 
-```bash
+```bash title="reset-demo"
 cargo run --release -- reset-demo \
   [--bundle crates/vault/demo-seed] \
   [--config config/config.toml]
@@ -102,7 +102,7 @@ After running `reset-demo`, copy `config/config.toml.example` back (or uncomment
 
 ## Examples
 
-```bash
+```bash title="Examples"
 cargo run --release -- import \
   --account yourusername \
   --input staging/imessage \

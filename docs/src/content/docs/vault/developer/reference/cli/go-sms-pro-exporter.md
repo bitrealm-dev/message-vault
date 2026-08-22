@@ -12,7 +12,7 @@ go-sms-pro-exporter - convert GO SMS Pro XML+PDU backups via common message to J
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 go-sms-pro-exporter --input <DIR> --output <DIR> --owner-phone <PHONE>...
     [--format json|jsonl|csv|eml|mbox|xml]
     [--contacts <PATH> | --vcf <PATH>]
@@ -97,7 +97,7 @@ Exits non-zero on invalid arguments, missing paths, convert failure, or when med
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 go-sms-pro-exporter \
   --input /path/to/gosms_export \
   --output ./staging/go-sms-pro \

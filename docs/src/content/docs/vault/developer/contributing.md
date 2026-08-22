@@ -23,7 +23,7 @@ Here are instructions for Ubuntu Linux:
 
 ### Install Apt Packages
 
-```bash
+```bash title="Install Ubuntu packages"
 sudo apt update
 
 # Rust native crates need a C compiler. libssl-dev is for OpenSSL
@@ -50,12 +50,12 @@ Required minimum version: 1.85
 
 Install rust via `rustup`.
 
-```bash
+```bash title="Install Rust with rustup"
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-```bash
+```bash title="Install tauri-cli"
 # Tauri - Native Window app which bundles web gui
 cargo install tauri-cli --version "^2"
 ```
@@ -66,7 +66,7 @@ cargo install tauri-cli --version "^2"
 
 Required minimum version: 22
 
-```bash
+```bash title="Install Node.js 22"
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source ~/.bashrc   # or open a new terminal
 nvm install 22
@@ -79,7 +79,7 @@ npm -v
 
 `wtsexporter` is used to extract `WhatsApp` messages.
 
-```bash
+```bash title="Install pipx helpers"
 sudo apt install -y pipx
 pipx ensurepath
 
@@ -106,7 +106,7 @@ Work from the repository root in both terminals. The first compile of the server
 
 `--reset-demo` deletes `data/` and loads a sample inbox. Use it on the first run, or when a fresh sample inbox is wanted.
 
-```bash
+```bash title="Start the vault"
 ./scripts/run-vault-dev.sh --reset-demo
 ```
 
@@ -118,7 +118,7 @@ To browse tables while developing, add `--sqlweb` (needs `sqlite-web` from the p
 
 Install frontend packages once, then start the Vite UI. Vite is the local web server for `web/`.
 
-```bash
+```bash title="Start the website"
 cd web && npm ci && npm run dev
 ```
 
@@ -130,7 +130,7 @@ Later sessions, skip `npm ci` unless `web/package-lock.json` changed. Skip `--re
 
 The desktop app is a native window (Tauri) around the same `web/` UI. Use it when changing `src-tauri/` or testing import from a backup. Do not run `npm run dev` in another terminal at the same time; Tauri starts Vite itself.
 
-```bash
+```bash title="Start the desktop app"
 cd web && npm ci && cd ..
 cargo tauri dev
 ```
@@ -167,7 +167,7 @@ Prefer `feat:`, `fix:`, or `docs:` at the start of the subject when it fits. Oth
 
 After the fork is cloned, from the repository root:
 
-```bash
+```bash title="Create a feature branch"
 git remote add upstream https://github.com/bitrealm-io/message-vault.git
 git fetch upstream
 git checkout -b feat/short-name upstream/main
@@ -190,7 +190,7 @@ The product is two processes: the vault (HTTP API and SQLite) and the UI that ta
 
 Do not start in `crates/message-vault-io-gui/` or `web-next/`. Those are old UIs still in the tree.
 
-```text
+```text title="Repository layout"
 message-vault
 ├── config/                 # copy example → config.toml to run the vault locally
 ├── crates/                 # Rust crates Cargo builds together (src-tauri is not in this set)
@@ -216,7 +216,7 @@ Edit guidebook pages under `docs/src/content/docs/vault/`. Those pages show up a
 
 To preview locally:
 
-```bash
+```bash title="Preview the guidebook"
 cd docs
 npm ci
 npm run dev
@@ -232,7 +232,7 @@ Run the checks, then open a pull request against `main`. Do this after **Making 
 
 From the repository root:
 
-```bash
+```bash title="Run pull-request checks"
 ./scripts/check-pr.sh
 ```
 
@@ -244,7 +244,7 @@ While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exp
 
 If `main` has moved, update the branch before asking for review:
 
-```bash
+```bash title="Update the branch from main"
 git fetch upstream
 git merge upstream/main
 git push
@@ -262,7 +262,7 @@ Prefer `feat:`, `fix:`, or `docs:` at the start of the title when it fits.
 
 From the repository root, this also works:
 
-```bash
+```bash title="Open a pull request"
 gh pr create --base main --title "feat: add support for x" --body "Ref: #123"
 ```
 

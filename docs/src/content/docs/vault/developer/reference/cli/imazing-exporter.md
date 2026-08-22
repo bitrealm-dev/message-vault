@@ -12,7 +12,7 @@ imazing-exporter - convert iMazing Messages / WhatsApp CSV exports via common me
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 imazing-exporter --input <PATH> --output <DIR>
     [--format json|jsonl|csv|eml|mbox|xml]
     [--contacts <PATH>] [--timezone <OFFSET>]
@@ -77,7 +77,7 @@ Non-zero on missing paths, convert failure, invalid timezone/dates, or total med
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 imazing-exporter \
   --input "/path/to/Device Export Root" \
   --output ./staging/imazing \

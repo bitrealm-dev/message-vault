@@ -16,7 +16,7 @@ To try the published image without cloning, save [`docker/compose.yml`](https://
 
 Run from the **repository root**. `docker/compose.release.yml` builds `docker/Dockerfile` from this tree (website baked in). After a code change, rebuild.
 
-```bash
+```bash title="Build the checkout image"
 docker compose -f docker/compose.release.yml up --build
 ```
 

@@ -12,7 +12,7 @@ sms-backup-restore-exporter - convert SMS Backup & Restore XML via common messag
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 sms-backup-restore-exporter --input <PATH> --output <DIR> --owner-phone <PHONE>...
     [--format json|jsonl|csv|eml|mbox|xml]
     [--contacts <PATH> | --vcf <PATH>]
@@ -99,7 +99,7 @@ Exits non-zero on invalid arguments, missing input, convert failure, or total me
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 cargo run --release -p sms-backup-restore-exporter -- \
   --input /path/to/sms-20210328165031.xml \
   --output ./staging/sms-backup-restore \

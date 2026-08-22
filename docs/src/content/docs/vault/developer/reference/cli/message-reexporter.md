@@ -12,7 +12,7 @@ message-reexporter - convert an existing Message Vault output directory to anoth
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 message-reexporter --input <DIR> --output <DIR>
     [--format json|jsonl|csv|eml|mbox|xml]
     [--media-mode disabled|clone|convert|compress]
@@ -66,7 +66,7 @@ Exits non-zero when arguments are invalid, input and output paths are the same, 
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 cargo run -p message-reexport --bin message-reexporter -- \
   --input /path/to/prior-export \
   --output /path/to/new-export \

@@ -12,7 +12,7 @@ sms-backup-plus-exporter - convert SMS Backup+ EML exports via common message to
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 sms-backup-plus-exporter [-v|--verbose] [--no-summary] convert
     --output <DIR>
     [--format json|jsonl|csv|eml|mbox|xml]
@@ -104,7 +104,7 @@ Non-zero on missing identity/input, convert errors, or total media-tool failure.
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 sms-backup-plus-exporter -v convert \
   --input /path/to/eml_export \
   --output ./staging/sms-backup-plus \

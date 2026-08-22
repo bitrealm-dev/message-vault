@@ -12,7 +12,7 @@ imessage-ir-exporter - export Apple Messages (chat.db / iOS backup) via common m
 
 ## SYNOPSIS
 
-```text
+```text title="Synopsis"
 imessage-ir-exporter --output <DIR>
     [--format json|jsonl|csv|eml|mbox|xml]
     [--input <PATH>] [--platform macOS|iOS|auto]
@@ -85,7 +85,7 @@ Exits non-zero when arguments are invalid, the Messages database or backup canno
 
 ## EXAMPLES
 
-```bash
+```bash title="Examples"
 cargo run -p imessage-ir-exporter -- --output ./staging/imessage
 
 imessage-ir-exporter --format csv --copy-method clone --output ./staging/imessage

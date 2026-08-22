@@ -9,7 +9,7 @@ Exporters can project the common message into a **single** SyncTech-style backup
 
 Root structure:
 
-```xml
+```xml title="smses.xml"
 <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <smses count="N">
   <sms … />

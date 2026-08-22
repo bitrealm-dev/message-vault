@@ -68,13 +68,13 @@ Example group address string: `+15555550101~+15555550102` with two From/To addrs
 
 ### SMS
 
-```json
+```json title="SMS source_fields_json"
 { "kind": "sms", "attrs": { /* every <sms> attribute */ } }
 ```
 
 ### MMS
 
-```json
+```json title="MMS source_fields_json"
 {
   "kind": "mms",
   "attrs": { /* every <mms> attribute */ },

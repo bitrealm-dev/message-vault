@@ -7,7 +7,7 @@ description: Upgrade the published Docker image and the desktop app without losi
 
 Stop the container, pull the new image, and start it again on the **same** named volume:
 
-```bash
+```bash title="Upgrade with docker run"
 docker stop message-vault
 docker rm message-vault
 docker pull bitrealm/message-vault:latest
@@ -23,7 +23,7 @@ Copy the database and `data/` directory somewhere safe before you upgrade.
 
 If you started from [docker/compose.yml](https://github.com/bitrealm-io/message-vault/blob/main/docker/compose.yml), upgrade in that same folder:
 
-```bash
+```bash title="Upgrade with Compose"
 docker compose pull
 docker compose up -d
 ```
