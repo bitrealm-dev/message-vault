@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { shouldIgnoreOutsideDismiss } from "./portaledOverlay";
 
 function clickEvent(path: EventTarget[]): MouseEvent {
@@ -20,9 +20,7 @@ describe("shouldIgnoreOutsideDismiss", () => {
     const child = document.createElement("button");
     root.appendChild(child);
     document.body.appendChild(root);
-    expect(shouldIgnoreOutsideDismiss(clickEvent([child, root]), root)).toBe(
-      true,
-    );
+    expect(shouldIgnoreOutsideDismiss(clickEvent([child, root]), root)).toBe(true);
     root.remove();
   });
 

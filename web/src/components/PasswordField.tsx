@@ -1,4 +1,4 @@
-import { TextField, Input, type TextFieldProps } from "react-aria-components";
+import { Input, TextField, type TextFieldProps } from "react-aria-components";
 import Button from "./Button";
 import { textInputClassName } from "./TextField";
 
@@ -48,10 +48,7 @@ export default function PasswordField(
   const { showPassword, onToggle, className, ...rest } = props;
   return (
     <TextField {...rest} className={`relative block w-full ${className ?? ""}`}>
-      <Input
-        type={showPassword ? "text" : "password"}
-        className={`${textInputClassName} pr-11`}
-      />
+      <Input type={showPassword ? "text" : "password"} className={`${textInputClassName} pr-11`} />
       <Button
         variant="ghost"
         onPress={onToggle}

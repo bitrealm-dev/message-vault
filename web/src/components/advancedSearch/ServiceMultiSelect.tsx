@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Button as AriaButton,
+  type Key,
   Label,
   ListBox,
   ListBoxItem,
   Popover,
   Select as RACSelect,
-  type Key,
 } from "react-aria-components";
 import { popupShadow } from "../../lib/uiStyles";
-import {
-  compactSelectItemClassName,
-  labelClass,
-} from "./advancedSearchStyles";
+import { compactSelectItemClassName, labelClass } from "./advancedSearchStyles";
 
 const SERVICE_ITEMS = [
   { id: "phone", name: "Text message" },
@@ -85,10 +82,14 @@ export default function ServiceMultiSelect({
           isDisabled ? "cursor-not-allowed" : ""
         }`}
       >
-        <span className="min-w-0 truncate text-muted">
-          {value.length > 0 ? "Select…" : "Any"}
-        </span>
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden className="ml-1 shrink-0 text-muted">
+        <span className="min-w-0 truncate text-muted">{value.length > 0 ? "Select…" : "Any"}</span>
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          aria-hidden
+          className="ml-1 shrink-0 text-muted"
+        >
           <path
             d="M2.5 3.5 5 6l2.5-2.5"
             fill="none"

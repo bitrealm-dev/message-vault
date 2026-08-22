@@ -27,9 +27,7 @@ export function listGroups(): SavedGroup[] {
       if (typeof g !== "object" || g === null) return false;
       const row = g as Record<string, unknown>;
       return (
-        typeof row.id === "string" &&
-        typeof row.name === "string" &&
-        typeof row.query === "string"
+        typeof row.id === "string" && typeof row.name === "string" && typeof row.query === "string"
       );
     });
   } catch {
@@ -79,11 +77,7 @@ export function shouldSaveImportGroup(
   importSessionId: number | null | undefined,
   messagesInserted: number | null | undefined,
 ): boolean {
-  return (
-    importSessionId != null &&
-    importSessionId > 0 &&
-    (messagesInserted ?? 0) > 0
-  );
+  return importSessionId != null && importSessionId > 0 && (messagesInserted ?? 0) > 0;
 }
 
 /** Local calendar date as YYYY-MM-DD. */

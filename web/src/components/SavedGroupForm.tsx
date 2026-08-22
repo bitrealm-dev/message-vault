@@ -1,6 +1,6 @@
 import { useState } from "react";
-import ModalShell from "./ModalShell";
 import Button from "./Button";
+import ModalShell from "./ModalShell";
 
 interface SavedGroupFormProps {
   onSave: (name: string, query: string) => void;
@@ -30,9 +30,7 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
         {initial ? "Edit saved search" : "New saved search"}
       </h3>
 
-      <label className="mb-1 block text-[0.813rem] font-medium text-text">
-        Name
-      </label>
+      <label className="mb-1 block text-[0.813rem] font-medium text-text">Name</label>
       <input
         type="text"
         value={name}
@@ -43,9 +41,7 @@ export default function SavedGroupForm({ onSave, onCancel, initial }: SavedGroup
         autoFocus
       />
 
-      <label className="mb-1 block text-[0.813rem] font-medium text-text">
-        Query
-      </label>
+      <label className="mb-1 block text-[0.813rem] font-medium text-text">Query</label>
       <input
         type="text"
         value={query}

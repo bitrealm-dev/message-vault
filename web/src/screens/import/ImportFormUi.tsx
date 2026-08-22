@@ -1,12 +1,9 @@
 import type { ReactNode } from "react";
-import {
-  Button,
-  Disclosure,
-  DisclosurePanel,
-} from "react-aria-components";
-import type { AttachmentMediaMode } from "../../lib/types";
+import { Button, Disclosure, DisclosurePanel } from "react-aria-components";
 import FormField from "../../components/FormField";
 import { textInputClassName } from "../../components/TextField";
+import type { AttachmentMediaMode } from "../../lib/types";
+
 export { default as DateField } from "../../components/DateField";
 
 export const ATTACHMENT_OPTIONS: { id: AttachmentMediaMode; label: string }[] = [

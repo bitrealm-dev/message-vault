@@ -15,8 +15,7 @@ export const dateGroupClass =
 export const selectTriggerClass = "!rounded-md !bg-bg";
 
 /** Compact Select trigger matching filter field padding/size. */
-export const compactFieldTriggerClass =
-  `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
+export const compactFieldTriggerClass = `!box-border !min-w-0 !px-2 !py-1 !text-[0.813rem] ${selectTriggerClass}`;
 
 /** Single-column stack used for every contacts filter block. */
 export const contactStackClass = "flex min-w-0 flex-col gap-3";

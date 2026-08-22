@@ -1,8 +1,5 @@
-import { describe, it, expect } from "vitest";
-import {
-  canUseImportExport,
-  canUseImportExportWithProfile,
-} from "./desktopFeatures.ts";
+import { describe, expect, it } from "vitest";
+import { canUseImportExport, canUseImportExportWithProfile } from "./desktopFeatures.ts";
 
 describe("canUseImportExport", () => {
   it("is true only in the desktop app for a non-guest account", () => {

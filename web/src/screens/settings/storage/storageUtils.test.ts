@@ -1,14 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   formatBytes,
   formatImportDate,
-  toImportSummaryView,
   type ImportDetailResponse,
+  toImportSummaryView,
 } from "./storageUtils";
 
-function detail(
-  partial: Partial<ImportDetailResponse> = {},
-): ImportDetailResponse {
+function detail(partial: Partial<ImportDetailResponse> = {}): ImportDetailResponse {
   return {
     id: 1,
     source: "imessage-ios",
@@ -73,15 +71,11 @@ describe("toImportSummaryView", () => {
   });
 
   it("treats unknown status as failed", () => {
-    expect(toImportSummaryView(detail({ status: "exploded" })).status).toBe(
-      "failed",
-    );
+    expect(toImportSummaryView(detail({ status: "exploded" })).status).toBe("failed");
   });
 
   it("falls back messagesInserted to message_count", () => {
-    expect(toImportSummaryView(detail({ message_count: 42 })).messagesInserted).toBe(
-      42,
-    );
+    expect(toImportSummaryView(detail({ message_count: 42 })).messagesInserted).toBe(42);
   });
 
   it("sums stage timings when duration_ms is missing", () => {

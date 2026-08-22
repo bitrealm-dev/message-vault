@@ -1,5 +1,5 @@
-import Button from "../../components/Button";
 import ApiTokenRevealDialog from "../../components/ApiTokenRevealDialog";
+import Button from "../../components/Button";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { ApiTokenCreateForm, ApiTokenRenameDialog } from "./ApiTokenForms";
 import ApiTokensTable from "./ApiTokensTable";
@@ -47,9 +47,7 @@ export function ApiTokensSection() {
         )}
       </div>
 
-      {loadError && (
-        <div className="mb-3 text-[0.75rem] text-danger">{loadError}</div>
-      )}
+      {loadError && <div className="mb-3 text-[0.75rem] text-danger">{loadError}</div>}
       {actionError && (
         <div className="mb-3 text-[0.75rem] text-danger" role="alert">
           {actionError}
@@ -75,9 +73,8 @@ export function ApiTokensSection() {
       />
 
       <p className="mt-3 text-[0.75rem] leading-relaxed text-muted">
-        API keys give secure, programmatic access so vault tools can import and export
-        message data. Treat them like passwords: keep them private and never share them
-        publicly.
+        API keys give secure, programmatic access so vault tools can import and export message data.
+        Treat them like passwords: keep them private and never share them publicly.
       </p>
 
       <ApiTokenRevealDialog

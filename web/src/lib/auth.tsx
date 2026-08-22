@@ -1,17 +1,17 @@
 import {
   createContext,
-  useContext,
-  useState,
+  type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useRef,
-  type ReactNode,
+  useState,
 } from "react";
-import { setBaseUrl, setToken, apiClient } from "./api";
+import { apiClient, setBaseUrl, setToken } from "./api";
+import { parsePersistedAuth } from "./authGuards";
 import { clearContactDetailCache } from "./contactDetailCache";
 import { invalidateContactGroups } from "./contactGroups";
 import { invalidateThreadTags } from "./threadTags";
-import { parsePersistedAuth } from "./authGuards";
 
 interface AuthState {
   serverUrl: string;
@@ -99,11 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() => {
     const persisted = loadPersisted();
     // An empty server URL is allowed: it means "same host as this page".
-    if (
-      persisted?.token &&
-      persisted?.accountId &&
-      typeof persisted.serverUrl === "string"
-    ) {
+    if (persisted?.token && persisted?.accountId && typeof persisted.serverUrl === "string") {
       // Apply before children mount. Otherwise Contact Groups loads without
       // a token, fails, and the sidebar stays on "No group" only.
       setBaseUrl(persisted.serverUrl);
@@ -187,39 +183,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, serverUrl: url }));
   }, []);
 
-  const login = useCallback(
-    async (serverUrl: string, token: string, accountId: string) => {
-      const epoch = ++authEpoch.current;
-      clearContactDetailCache();
-      invalidateContactGroups();
-      invalidateThreadTags();
-      setBaseUrl(serverUrl);
-      setToken(token);
+  const login = useCallback(async (serverUrl: string, token: string, accountId: string) => {
+    const epoch = ++authEpoch.current;
+    clearContactDetailCache();
+    invalidateContactGroups();
+    invalidateThreadTags();
+    setBaseUrl(serverUrl);
+    setToken(token);
 
-      // New accounts have no profile yet, so send them through setup.
-      let needsOnboarding = false;
-      try {
-        const profile = await apiClient.get<Profile>("/v1/account/profile");
-        needsOnboarding = profileNeedsOnboarding(profile);
-      } catch {
-        // Profile request failed. Assume a profile exists so the user is not locked out.
-      }
+    // New accounts have no profile yet, so send them through setup.
+    let needsOnboarding = false;
+    try {
+      const profile = await apiClient.get<Profile>("/v1/account/profile");
+      needsOnboarding = profileNeedsOnboarding(profile);
+    } catch {
+      // Profile request failed. Assume a profile exists so the user is not locked out.
+    }
 
-      if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
+    if (authEpoch.current !== epoch) return; // A later login or logout replaced this one.
 
-      const newState: AuthState = {
-        serverUrl,
-        token,
-        accountId,
-        isAuthenticated: true,
-        needsOnboarding,
-      };
-      persistState(newState);
-      setState(newState);
-      setRestored(true);
-    },
-    [],
-  );
+    const newState: AuthState = {
+      serverUrl,
+      token,
+      accountId,
+      isAuthenticated: true,
+      needsOnboarding,
+    };
+    persistState(newState);
+    setState(newState);
+    setRestored(true);
+  }, []);
 
   const updateToken = useCallback((token: string) => {
     setToken(token);

@@ -1,13 +1,6 @@
 import type { Key } from "react-aria-components";
-import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import { parseSelectKey } from "../../lib/selectKey";
-import type {
-  ActivityFilter,
-  DateBoundFilter,
-} from "./buildAdvancedQuery";
-import { EMPTY_DATE_BOUND } from "./buildAdvancedQuery";
-import DateBoundField from "./DateBoundField";
-import ServiceMultiSelect from "./ServiceMultiSelect";
+import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
   compactFieldTriggerClass,
   compactSelectItemClassName,
@@ -15,6 +8,10 @@ import {
   inputClass,
   labelClass,
 } from "./advancedSearchStyles";
+import type { ActivityFilter, DateBoundFilter } from "./buildAdvancedQuery";
+import { EMPTY_DATE_BOUND } from "./buildAdvancedQuery";
+import DateBoundField from "./DateBoundField";
+import ServiceMultiSelect from "./ServiceMultiSelect";
 
 export default function ContactsSearchFields({
   contactName,
@@ -154,11 +151,7 @@ export default function ContactsSearchFields({
           No identity
         </label>
       </div>
-      <ServiceMultiSelect
-        value={services}
-        onChange={onServicesChange}
-        isDisabled={noHandle}
-      />
+      <ServiceMultiSelect value={services} onChange={onServicesChange} isDisabled={noHandle} />
       <DateBoundField
         label="First Seen"
         value={firstMsgBound}
@@ -184,9 +177,15 @@ export default function ContactsSearchFields({
           triggerClassName={compactFieldTriggerClass}
           isDisabled={noHandle}
         >
-          <SelectListBoxItem id="any" className={compactSelectItemClassName}>Any</SelectListBoxItem>
-          <SelectListBoxItem id="messages" className={compactSelectItemClassName}>Has messages</SelectListBoxItem>
-          <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>Never messaged</SelectListBoxItem>
+          <SelectListBoxItem id="any" className={compactSelectItemClassName}>
+            Any
+          </SelectListBoxItem>
+          <SelectListBoxItem id="messages" className={compactSelectItemClassName}>
+            Has messages
+          </SelectListBoxItem>
+          <SelectListBoxItem id="no-messages" className={compactSelectItemClassName}>
+            Never messaged
+          </SelectListBoxItem>
         </Select>
       </div>
     </div>

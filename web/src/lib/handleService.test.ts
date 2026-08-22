@@ -1,21 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  HANDLE_SERVICES,
-  HANDLE_SERVICE_OPTIONS,
   CONTACT_IDENTITY_SERVICES,
-  inferService,
   formatHandleServiceLabel,
+  HANDLE_SERVICE_OPTIONS,
+  HANDLE_SERVICES,
   handleServiceSelectValue,
+  inferService,
 } from "./handleService";
 
 describe("handleService", () => {
   it("lists phone, email, whatsapp for profile/onboarding", () => {
     expect([...HANDLE_SERVICES]).toEqual(["phone", "email", "whatsapp"]);
-    expect(HANDLE_SERVICE_OPTIONS.map((o) => o.value)).toEqual([
-      "phone",
-      "email",
-      "whatsapp",
-    ]);
+    expect(HANDLE_SERVICE_OPTIONS.map((o) => o.value)).toEqual(["phone", "email", "whatsapp"]);
   });
 
   it("lists phone and whatsapp for contact identity picker", () => {

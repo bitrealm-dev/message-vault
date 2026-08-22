@@ -84,8 +84,7 @@ export function groupFromSlug(slug: string, groups: readonly string[]): string |
 }
 
 /** Search words the contact list must send to the server (cannot filter locally). */
-export const GROUP_FILTER_TOKEN_RE =
-  /\b(?:group|label|within):(?:"[^"]*"|[^\s]+)/gi;
+export const GROUP_FILTER_TOKEN_RE = /\b(?:group|label|within):(?:"[^"]*"|[^\s]+)/gi;
 
 /** True when the typed filter includes `group:`, `label:`, or `within:`. */
 export function hasGroupFilterToken(raw: string): boolean {
@@ -105,10 +104,7 @@ export function contactBelongsToGroup(
 }
 
 /** Build the contact-list query for a group page plus optional typed search. */
-export function groupListQuery(
-  group: string | "none" | null,
-  search: string,
-): string {
+export function groupListQuery(group: string | "none" | null, search: string): string {
   const parts: string[] = [];
   if (group === "none") {
     parts.push("group:none");

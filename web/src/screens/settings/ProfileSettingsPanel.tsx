@@ -1,15 +1,15 @@
-import { useState, useEffect } from "react";
-import { apiClient } from "../../lib/api";
+import { useEffect, useState } from "react";
+import Button from "../../components/Button";
+import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import type { AccountProfile } from "../../lib/account";
-import { useAccountProfile } from "../../lib/useAccountProfile";
+import { apiClient } from "../../lib/api";
 import {
   HANDLE_SERVICE_OPTIONS,
   HANDLE_SERVICES,
   type HandleService,
 } from "../../lib/handleService";
-import Button from "../../components/Button";
-import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { parseSelectKey } from "../../lib/selectKey";
+import { useAccountProfile } from "../../lib/useAccountProfile";
 import { inputClassName, sectionTitleClass } from "./profileStyles";
 
 /** Profile settings: display name and phone/email/WhatsApp handles. */
@@ -29,11 +29,7 @@ export function ProfileSettingsPanel() {
   }, [profile]);
 
   if (loadError) {
-    return (
-      <div className="text-danger">
-        Could not load profile: {loadError}
-      </div>
-    );
+    return <div className="text-danger">Could not load profile: {loadError}</div>;
   }
 
   if (loading || !profile) {
@@ -126,19 +122,11 @@ export function ProfileSettingsPanel() {
           onChange={(e) => setName(e.target.value)}
           className={`${inputClassName} flex-1`}
         />
-        <Button
-          variant="primary"
-          onClick={handleSaveName}
-          className="!px-4 !py-1"
-        >
+        <Button variant="primary" onClick={handleSaveName} className="!px-4 !py-1">
           {nameSaved ? "Saved" : "Save"}
         </Button>
       </div>
-      {nameError && (
-        <div className="mb-6 text-[0.813rem] text-danger">
-          {nameError}
-        </div>
-      )}
+      {nameError && <div className="mb-6 text-[0.813rem] text-danger">{nameError}</div>}
       {!nameError && <div className="mb-6" />}
 
       <h3 className={sectionTitleClass}>My Handles</h3>
@@ -153,9 +141,7 @@ export function ProfileSettingsPanel() {
               key={`${h.service}-${h.handle}-${i}`}
               className="flex items-center gap-3 border-b border-border py-1.5 text-[0.875rem]"
             >
-              <span className="min-w-[7rem] shrink-0 text-muted">
-                {h.service}
-              </span>
+              <span className="min-w-[7rem] shrink-0 text-muted">{h.service}</span>
               <span className="min-w-0 flex-1">{h.handle}</span>
               <Button
                 variant="ghost"
@@ -190,9 +176,7 @@ export function ProfileSettingsPanel() {
           type="text"
           value={newHandle}
           onChange={(e) => setNewHandle(e.target.value)}
-          placeholder={
-            newHandleService === "email" ? "name@example.com" : "+1 555 555 0100"
-          }
+          placeholder={newHandleService === "email" ? "name@example.com" : "+1 555 555 0100"}
           className={`${inputClassName} min-w-[12rem] flex-1`}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -210,11 +194,7 @@ export function ProfileSettingsPanel() {
           Add
         </Button>
       </div>
-      {handleError && (
-        <div className="mb-6 text-[0.813rem] text-danger">
-          {handleError}
-        </div>
-      )}
+      {handleError && <div className="mb-6 text-[0.813rem] text-danger">{handleError}</div>}
     </div>
   );
 }

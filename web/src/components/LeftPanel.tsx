@@ -1,23 +1,18 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { canUseImportExportWithProfile } from "../lib/desktopFeatures";
+import { addGroup, listGroups, removeGroup, SAVED_GROUPS_CHANGED_EVENT } from "../lib/savedGroups";
 import { isTauri } from "../lib/tauri-check";
 import { useAccountProfile } from "../lib/useAccountProfile";
-import {
-  listGroups,
-  addGroup,
-  removeGroup,
-  SAVED_GROUPS_CHANGED_EVENT,
-} from "../lib/savedGroups";
 import { useContactGroups } from "../lib/useContactGroups";
 import { useThreadTags } from "../lib/useThreadTags";
 import GroupsNav from "./GroupsNav";
+import { TrashIcon } from "./icons";
 import { LIST_TOOLBAR_CLASS } from "./ListRangeHeader";
-import ThreadTagsNav from "./ThreadTagsNav";
 import NavCollapsibleSection from "./NavCollapsibleSection";
 import NavGlyphButton from "./NavGlyphButton";
 import SavedGroupForm from "./SavedGroupForm";
-import { TrashIcon } from "./icons";
+import ThreadTagsNav from "./ThreadTagsNav";
 
 function NavIcon({ children }: { children: ReactNode }) {
   return (
@@ -129,36 +124,39 @@ export default function LeftPanel({
     <div className="flex h-full w-[220px] shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text">
       <div className={LIST_TOOLBAR_CLASS} aria-hidden />
       <div className="min-h-0 flex-1 overflow-auto">
-      {/* Browse */}
-      <div className="px-3 py-2">
-        <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
-          <ConversationsIcon />
-          Messages
-        </button>
-        <button className={linkClass(isActive("/contacts"))} onClick={() => navigate("/contacts")}>
-          <ContactsIcon />
-          Contacts
-        </button>
-        <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
-          <TrashIcon size={15} />
-          Trash
-        </button>
-      </div>
-
-      {/* Import/Export — desktop app only, never on a guest session */}
-      {canUseImportExportWithProfile(isTauri(), profile) && (
+        {/* Browse */}
         <div className="px-3 py-2">
-          <div className={sectionHeaderClass}>Messages</div>
-          <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
-            <ImportIcon />
-            Import
+          <button className={linkClass(isActive("/"))} onClick={() => navigate("/")}>
+            <ConversationsIcon />
+            Messages
           </button>
-          <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
-            <ExportIcon />
-            Export
+          <button
+            className={linkClass(isActive("/contacts"))}
+            onClick={() => navigate("/contacts")}
+          >
+            <ContactsIcon />
+            Contacts
+          </button>
+          <button className={linkClass(isActive("/trash"))} onClick={() => navigate("/trash")}>
+            <TrashIcon size={15} />
+            Trash
           </button>
         </div>
-      )}
+
+        {/* Import/Export — desktop app only, never on a guest session */}
+        {canUseImportExportWithProfile(isTauri(), profile) && (
+          <div className="px-3 py-2">
+            <div className={sectionHeaderClass}>Messages</div>
+            <button className={linkClass(isActive("/import"))} onClick={() => navigate("/import")}>
+              <ImportIcon />
+              Import
+            </button>
+            <button className={linkClass(isActive("/export"))} onClick={() => navigate("/export")}>
+              <ExportIcon />
+              Export
+            </button>
+          </div>
+        )}
 
         <GroupsNav groups={contactGroups} />
 

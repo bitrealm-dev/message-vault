@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../../lib/api";
 import type { CachedContactHandle } from "../../lib/contactDetailCache";
-import {
-  formatHandleServiceLabel,
-  handleServiceSelectValue,
-} from "./contactDrawerTypes";
-import {
-  conversationCount,
-  type RemoveIdentityTarget,
-} from "./handleTableLogic";
+import { formatHandleServiceLabel, handleServiceSelectValue } from "./contactDrawerTypes";
+import { conversationCount, type RemoveIdentityTarget } from "./handleTableLogic";
 
 export function useHandleMutations({
   contactId,

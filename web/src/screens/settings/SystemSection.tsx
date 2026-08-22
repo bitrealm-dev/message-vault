@@ -1,29 +1,24 @@
-import { useState, useEffect } from "react";
-import { isTauri } from "../../lib/tauri-check";
-import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
-import {
-  getVaultWorkingDir,
-  setVaultWorkingDir,
-  getHomeDir,
-  getRememberImporterPaths,
-  setRememberImporterPaths,
-} from "../../lib/system-settings";
-import {
-  probeFfmpegTools,
-  setFfmpegToolsDir,
-  type FfmpegToolsProbe,
-} from "../../lib/tauri";
+import { useEffect, useState } from "react";
+import Button from "../../components/Button";
 import FormRow from "../../components/FormRow";
 import PathPicker from "../../components/PathPicker";
-import Button from "../../components/Button";
+import { FFMPEG_TOOLS_STORAGE_KEY } from "../../lib/ffmpeg-tools";
+import {
+  getHomeDir,
+  getRememberImporterPaths,
+  getVaultWorkingDir,
+  setRememberImporterPaths,
+  setVaultWorkingDir,
+} from "../../lib/system-settings";
+import { type FfmpegToolsProbe, probeFfmpegTools, setFfmpegToolsDir } from "../../lib/tauri";
+import { isTauri } from "../../lib/tauri-check";
 
 type Status =
   | { type: "idle" }
   | { type: "success"; message: string }
   | { type: "error"; message: string };
 
-const sectionHeading =
-  "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted";
+const sectionHeading = "m-0 mb-2 text-[12px] font-semibold uppercase tracking-[0.05em] text-muted";
 
 function formatProbePaths(probe: FfmpegToolsProbe): string {
   const parts: string[] = [];
@@ -219,15 +214,13 @@ export function SystemSection() {
       </div>
 
       <div className="mt-6 flex items-center gap-3">
-        <Button
-          onClick={() => void handleSave()}
-          disabled={saving}
-          className="!px-6 !py-2"
-        >
+        <Button onClick={() => void handleSave()} disabled={saving} className="!px-6 !py-2">
           {saving ? "Saving…" : "Save"}
         </Button>
         {status.type !== "idle" && (
-          <span className="text-[0.875rem]" style={{ color: statusColor(status) }}>{status.message}</span>
+          <span className="text-[0.875rem]" style={{ color: statusColor(status) }}>
+            {status.message}
+          </span>
         )}
       </div>
     </div>

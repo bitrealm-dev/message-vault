@@ -1,7 +1,4 @@
-import {
-  dataCardBodyCellClass,
-  dataCardHeaderCellClass,
-} from "../DataCard";
+import { dataCardBodyCellClass, dataCardHeaderCellClass } from "../DataCard";
 
 export const thClass = dataCardHeaderCellClass;
 export const tdClass = dataCardBodyCellClass;

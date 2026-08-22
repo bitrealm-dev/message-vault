@@ -1,21 +1,20 @@
 import type { Message, MessageAttachment } from "../lib/types";
-import SmsBubble from "./messages/SmsBubble";
-import ImessageBubble from "./messages/ImessageBubble";
 import DiscordBubble from "./messages/DiscordBubble";
-import WhatsAppBubble from "./messages/WhatsAppBubble";
+import ImessageBubble from "./messages/ImessageBubble";
 import InstagramBubble from "./messages/InstagramBubble";
+import SmsBubble from "./messages/SmsBubble";
+import WhatsAppBubble from "./messages/WhatsAppBubble";
 
-export type AttachmentClickHandler = (
-  attachment: MessageAttachment,
-  source: string,
-) => void;
+export type AttachmentClickHandler = (attachment: MessageAttachment, source: string) => void;
 
 function normalizeToken(value: string | null | undefined): string {
   return (value || "").trim().toLowerCase();
 }
 
 /** Pick bubble style from each message's transport and import source. */
-function resolveBubbleKind(message: Message): "imessage" | "discord" | "whatsapp" | "instagram" | "sms" {
+function resolveBubbleKind(
+  message: Message,
+): "imessage" | "discord" | "whatsapp" | "instagram" | "sms" {
   const service = normalizeToken(message.service);
   const source = normalizeToken(message.source);
 

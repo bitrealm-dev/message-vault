@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TAURI_VAULT_URL,
   initialLoginServerUrl,
@@ -32,12 +32,8 @@ describe("initialLoginServerUrl", () => {
   });
 
   it("rewrites the old localhost default and keeps any other saved URL", () => {
-    expect(initialLoginServerUrl("http://localhost:8080", true)).toBe(
-      DEFAULT_TAURI_VAULT_URL,
-    );
-    expect(initialLoginServerUrl("http://localhost:8080/", false)).toBe(
-      DEFAULT_TAURI_VAULT_URL,
-    );
+    expect(initialLoginServerUrl("http://localhost:8080", true)).toBe(DEFAULT_TAURI_VAULT_URL);
+    expect(initialLoginServerUrl("http://localhost:8080/", false)).toBe(DEFAULT_TAURI_VAULT_URL);
     expect(initialLoginServerUrl("https://vault.example.com", true)).toBe(
       "https://vault.example.com",
     );
@@ -75,6 +71,8 @@ describe("parsePersistedAuth", () => {
     expect(parsePersistedAuth("{")).toBeNull();
     expect(parsePersistedAuth("not json")).toBeNull();
     expect(parsePersistedAuth(JSON.stringify({ token: "t" }))).toBeNull();
-    expect(parsePersistedAuth(JSON.stringify({ serverUrl: "", token: "", accountId: "" }))).toBeNull();
+    expect(
+      parsePersistedAuth(JSON.stringify({ serverUrl: "", token: "", accountId: "" })),
+    ).toBeNull();
   });
 });

@@ -1,8 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  isReservedGroupName,
-  reservedGroupError,
-} from "../lib/contactGroups";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { isReservedGroupName, reservedGroupError } from "../lib/contactGroups";
 import type { MembershipCheckState } from "../lib/membershipChecks";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
@@ -243,9 +240,7 @@ export default function GroupsMenu({
             disabled={disabled}
             className="mt-2 box-border w-full rounded border border-border bg-elevated px-2 py-1.5 text-[0.813rem] text-text"
           />
-          {createError ? (
-            <p className="mt-1 text-[0.75rem] text-danger">{createError}</p>
-          ) : null}
+          {createError ? <p className="mt-1 text-[0.75rem] text-danger">{createError}</p> : null}
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"

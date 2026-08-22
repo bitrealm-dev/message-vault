@@ -1,17 +1,11 @@
 import { useState } from "react";
-import {
-  Tabs,
-  TabList,
-  Tab,
-  TabPanel,
-  SelectionIndicator,
-} from "react-aria-components";
+import { SelectionIndicator, Tab, TabList, TabPanel, Tabs } from "react-aria-components";
+import { parseSelectKey } from "../lib/selectKey";
 import { AccountSettingsPanel } from "./settings/AccountSettingsPanel";
+import { AppearanceSection } from "./settings/AppearanceSection";
 import { ProfileSettingsPanel } from "./settings/ProfileSettingsPanel";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
-import { AppearanceSection } from "./settings/AppearanceSection";
-import { parseSelectKey } from "../lib/selectKey";
 
 type SettingsTab = "account" | "profile" | "storage" | "system" | "appearance";
 
@@ -44,7 +38,13 @@ export default function SettingsScreen() {
       <Tabs
         selectedKey={tab}
         onSelectionChange={(key) => {
-          const next = parseSelectKey(key, ["account", "profile", "storage", "system", "appearance"] as const);
+          const next = parseSelectKey(key, [
+            "account",
+            "profile",
+            "storage",
+            "system",
+            "appearance",
+          ] as const);
           if (next) setTab(next);
         }}
       >
@@ -55,9 +55,7 @@ export default function SettingsScreen() {
           {TABS.map((t) => (
             <Tab key={t.id} id={t.id} className={tabClassName}>
               {t.label}
-              <SelectionIndicator
-                className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-accent transition-[translate,width] duration-200 motion-reduce:transition-none"
-              />
+              <SelectionIndicator className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-accent transition-[translate,width] duration-200 motion-reduce:transition-none" />
             </Tab>
           ))}
         </TabList>

@@ -32,10 +32,7 @@ export function splitContactName(name: string): { first: string; last: string } 
 }
 
 /** A–Z from the active name field, or `#` for numbers and symbols. */
-export function contactSortLetter(
-  name: string,
-  sort: ContactNameSort,
-): string {
+export function contactSortLetter(name: string, sort: ContactNameSort): string {
   const parts = splitContactName(name);
   const src = sort === "first" ? parts.first : parts.last;
   const ch = src.charAt(0).toUpperCase();

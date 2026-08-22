@@ -1,8 +1,8 @@
-import StepProgress from "../../components/StepProgress";
 import Button from "../../components/Button";
 import ImportSummaryPanel, {
   type ImportSummaryView,
 } from "../../components/import/ImportSummaryPanel";
+import StepProgress from "../../components/StepProgress";
 import type { ImportPhase, ImportStep } from "./useImportJob";
 import { PUSH_LOG_NAME } from "./useImportJob";
 
@@ -33,11 +33,7 @@ export default function ImportProgressView({
         {running ? (
           <Button onClick={onCancel}>Cancel</Button>
         ) : (
-          <Button
-            variant="ghost"
-            onClick={onBack}
-            className="!px-3 !py-[0.35rem] !text-[0.875rem]"
-          >
+          <Button variant="ghost" onClick={onBack} className="!px-3 !py-[0.35rem] !text-[0.875rem]">
             ← Back
           </Button>
         )}
@@ -51,11 +47,7 @@ export default function ImportProgressView({
             logPath={stagingDir ? `${stagingDir}/${PUSH_LOG_NAME}` : null}
           />
           <div className="mt-4">
-            <Button
-              variant="primary"
-              onClick={onBack}
-              className="!px-6 !py-2"
-            >
+            <Button variant="primary" onClick={onBack} className="!px-6 !py-2">
               Import another
             </Button>
           </div>

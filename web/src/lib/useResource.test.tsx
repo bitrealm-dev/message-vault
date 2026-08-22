@@ -1,13 +1,12 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
+
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { useResource } from "./useResource";
 
 describe("useResource", () => {
   it("loads data for a key", async () => {
-    const { result } = renderHook(() =>
-      useResource("k1", async () => "hello"),
-    );
+    const { result } = renderHook(() => useResource("k1", async () => "hello"));
 
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -29,8 +28,7 @@ describe("useResource", () => {
 
   it("clears state when key becomes null", async () => {
     const { result, rerender } = renderHook(
-      ({ key }: { key: string | null }) =>
-        useResource(key, async () => "hello"),
+      ({ key }: { key: string | null }) => useResource(key, async () => "hello"),
       { initialProps: { key: "k1" as string | null } },
     );
 

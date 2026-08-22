@@ -56,9 +56,7 @@ export default function ImportHistoryTable({
                 return (
                   <Fragment key={row.id}>
                     <tr
-                      className={`cursor-pointer ${
-                        isSelected ? "bg-hover" : "hover:bg-hover"
-                      }`}
+                      className={`cursor-pointer ${isSelected ? "bg-hover" : "hover:bg-hover"}`}
                       onClick={() => onToggle(row.id)}
                     >
                       <td className={tdStyle}>

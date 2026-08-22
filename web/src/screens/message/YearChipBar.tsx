@@ -33,11 +33,7 @@ export default function YearChipBar({
           key={year}
           type="button"
           onClick={() => onSelectYear(year)}
-          title={
-            activeYear === year
-              ? `Clear ${year} filter`
-              : `Load all messages from ${year}`
-          }
+          title={activeYear === year ? `Clear ${year} filter` : `Load all messages from ${year}`}
           className={chipClass(activeYear === year)}
         >
           {year}

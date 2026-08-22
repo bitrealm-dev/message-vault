@@ -1,13 +1,13 @@
+import { parseSelectKey } from "../../lib/selectKey";
 import DateField from "../DateField";
 import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
-import { parseSelectKey } from "../../lib/selectKey";
-import type { DateBoundFilter, DateBoundOp } from "./buildAdvancedQuery";
 import {
   compactFieldTriggerClass,
   compactSelectItemClassName,
   dateGroupClass,
   labelClass,
 } from "./advancedSearchStyles";
+import type { DateBoundFilter, DateBoundOp } from "./buildAdvancedQuery";
 
 /** Compact DateField used under First/Last Seen operators (label is sr-only). */
 function BoundDateInput({

@@ -1,24 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Table,
-  TableHeader,
-  TableBody,
+  Cell,
   Column,
   Row,
-  Cell,
   type SortDescriptor,
+  Table,
+  TableBody,
+  TableHeader,
 } from "react-aria-components";
 import { apiClient } from "../lib/api";
 import { getCachedContactDetail } from "../lib/contactDetailCache";
 import Button from "./Button";
-import DataCard, { dataCardHeaderRowClass } from "./DataCard";
 import type { ContactPreview } from "./ContactDrawer";
 import { sumHandleTotals } from "./contactDrawer/contactDrawerTypes";
 import { CountCell, SortableColumn } from "./contactDrawer/handleTableHelpers";
-import {
-  conversationCount,
-  handleDateCell,
-} from "./contactDrawer/handleTableLogic";
+import { conversationCount, handleDateCell } from "./contactDrawer/handleTableLogic";
 import {
   mutedClass,
   tdCenterClass,
@@ -26,6 +22,7 @@ import {
   tdRightClass,
   thClass,
 } from "./contactDrawer/handleTableStyles";
+import DataCard, { dataCardHeaderRowClass } from "./DataCard";
 
 type ContactTotals = ReturnType<typeof sumHandleTotals>;
 
@@ -97,13 +94,7 @@ function sortValue(row: ContactRow, col: string): string | number {
   }
 }
 
-function MetricCell({
-  loaded,
-  children,
-}: {
-  loaded: boolean;
-  children: ReactNode;
-}) {
+function MetricCell({ loaded, children }: { loaded: boolean; children: ReactNode }) {
   if (!loaded) {
     return <span className={mutedClass}>—</span>;
   }
@@ -119,13 +110,9 @@ export default function CheckedContactsPanel({
   onClear: () => void;
 }) {
   const heading =
-    contacts.length === 1
-      ? "1 contact selected"
-      : `${contacts.length} contacts selected`;
+    contacts.length === 1 ? "1 contact selected" : `${contacts.length} contacts selected`;
   const [metrics, setMetrics] = useState<Record<string, RowMetrics>>({});
-  const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(
-    null,
-  );
+  const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
   const contactKey = contacts.map((c) => c.id).join(",");
   const contactsRef = useRef(contacts);
   contactsRef.current = contacts;
@@ -148,9 +135,7 @@ export default function CheckedContactsPanel({
     }
     setMetrics(seeded);
     const batches = chunkIds(missing, SUMMARY_BATCH_SIZE)
-      .map((ids) =>
-        ids.map(Number).filter((id) => Number.isFinite(id) && id > 0),
-      )
+      .map((ids) => ids.map(Number).filter((id) => Number.isFinite(id) && id > 0))
       .filter((ids) => ids.length > 0);
     if (batches.length === 0) {
       return () => ac.abort();
@@ -212,15 +197,9 @@ export default function CheckedContactsPanel({
       aria-label={heading}
     >
       <DataCard
-        title={
-          <h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>
-        }
+        title={<h2 className="m-0 text-[1.125rem] font-semibold">{heading}</h2>}
         toolbar={
-          <Button
-            variant="secondary"
-            onClick={onClear}
-            className="!px-2.5 !py-1 !text-[0.75rem]"
-          >
+          <Button variant="secondary" onClick={onClear} className="!px-2.5 !py-1 !text-[0.75rem]">
             Clear contacts
           </Button>
         }
@@ -233,12 +212,7 @@ export default function CheckedContactsPanel({
           onSortChange={setSortDescriptor}
         >
           <TableHeader className={dataCardHeaderRowClass}>
-            <Column
-              id="name"
-              isRowHeader
-              allowsSorting
-              className={`${thClass} w-[28%] !text-left`}
-            >
+            <Column id="name" isRowHeader allowsSorting className={`${thClass} w-[28%] !text-left`}>
               {({ sortDirection }) => (
                 <span className="relative inline-flex items-center justify-start">
                   <span className="text-left leading-tight">Contact</span>
@@ -295,16 +269,12 @@ export default function CheckedContactsPanel({
                 </Cell>
                 <Cell className={tdRightClass}>
                   <MetricCell loaded={row.totals != null}>
-                    <CountCell
-                      value={row.totals ? conversationCount(row.totals) : 0}
-                    />
+                    <CountCell value={row.totals ? conversationCount(row.totals) : 0} />
                   </MetricCell>
                 </Cell>
                 <Cell className={tdRightClass}>
                   <MetricCell loaded={row.totals != null}>
-                    <CountCell
-                      value={row.totals?.individual_message_count ?? 0}
-                    />
+                    <CountCell value={row.totals?.individual_message_count ?? 0} />
                   </MetricCell>
                 </Cell>
                 <Cell className={tdRightClass}>

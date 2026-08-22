@@ -47,7 +47,12 @@ export default function SourcesPanel({
     >
       <div className="mb-4 flex justify-between">
         <h2 className="m-0 text-[1.125rem]">Sources</h2>
-        <button onClick={onClose} className="cursor-pointer border-none bg-none text-[1.25rem] text-muted">×</button>
+        <button
+          onClick={onClose}
+          className="cursor-pointer border-none bg-none text-[1.25rem] text-muted"
+        >
+          ×
+        </button>
       </div>
 
       {loading ? (

@@ -1,7 +1,11 @@
 /** Messaging service ids used on profiles, setup, and contacts. */
 export type HandleService = "phone" | "email" | "whatsapp";
 
-export const HANDLE_SERVICES = ["phone", "email", "whatsapp"] as const satisfies readonly HandleService[];
+export const HANDLE_SERVICES = [
+  "phone",
+  "email",
+  "whatsapp",
+] as const satisfies readonly HandleService[];
 
 /** Contact drawer identity picker: phone and WhatsApp only. */
 export type ContactIdentityService = "phone" | "whatsapp";
@@ -31,10 +35,7 @@ export const CONTACT_IDENTITY_SERVICE_OPTIONS = [
  * Guess the service for a handle when the stored service is empty.
  * Emails contain `@`. Phone-like values are mostly digits.
  */
-export function inferService(
-  handle: string,
-  service: string | null | undefined,
-): string {
+export function inferService(handle: string, service: string | null | undefined): string {
   if (service && service.trim()) return service.trim().toLowerCase();
   const h = handle.trim();
   if (h.includes("@") && !h.startsWith("@")) return "email";

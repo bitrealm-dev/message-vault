@@ -1,26 +1,22 @@
 import { useRef, useState } from "react";
-import { useAuth } from "../../lib/auth";
-import { apiClient, getBaseUrl } from "../../lib/api";
 import {
-  invokeExtract,
-  invokePush,
-  type TauriJobResult,
-} from "../../lib/tauri";
+  completionTextFor,
+  type ImportIssue,
+  type ImportSummaryView,
+} from "../../components/import/ImportSummaryPanel";
 import { useTauriJob } from "../../hooks/useTauriJob";
-import { isTauri } from "../../lib/tauri-check";
-import { resolveImportStagingDir } from "../../lib/system-settings";
+import { apiClient, getBaseUrl } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { saveImportSavedGroup } from "../../lib/savedGroups";
+import { resolveImportStagingDir } from "../../lib/system-settings";
+import { invokeExtract, invokePush, type TauriJobResult } from "../../lib/tauri";
+import { isTauri } from "../../lib/tauri-check";
 import type {
   AttachmentMediaMode,
   ContactNameMode,
   ImportIssueEvent,
   ImportProgressEvent,
 } from "../../lib/types";
-import {
-  completionTextFor,
-  type ImportIssue,
-  type ImportSummaryView,
-} from "../../components/import/ImportSummaryPanel";
 
 export type ImportStep = {
   label: string;
@@ -78,8 +74,7 @@ function stageDurations(
   timing: StageTiming,
   extractFinishedAt: number,
 ): { parseMs: number; convertMs: number } {
-  const parseStart =
-    timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
+  const parseStart = timing.parseStartedAt ?? timing.extractStartedAt ?? extractFinishedAt;
   if (timing.convertStartedAt != null) {
     return {
       parseMs: Math.max(0, (timing.parseEndedAt ?? timing.convertStartedAt) - parseStart),
@@ -306,9 +301,7 @@ export function useImportJob() {
         { kind: "error", step: activeStepRef.current, item: "Import", reason: msg },
       ];
       setSteps((current) =>
-        current.map((step) =>
-          step.status === "active" ? { ...step, status: "error" } : step,
-        ),
+        current.map((step) => (step.status === "active" ? { ...step, status: "error" } : step)),
       );
     } finally {
       const durationMs = performance.now() - importStartedAt;

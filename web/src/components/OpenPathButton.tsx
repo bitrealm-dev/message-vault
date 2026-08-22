@@ -9,12 +9,7 @@ type OpenPathButtonProps = {
 };
 
 /** Text button that opens a file or directory in the OS explorer. */
-export default function OpenPathButton({
-  path,
-  children,
-  className,
-  title,
-}: OpenPathButtonProps) {
+export default function OpenPathButton({ path, children, className, title }: OpenPathButtonProps) {
   async function onClick(event: MouseEvent<HTMLButtonElement>): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
@@ -26,12 +21,7 @@ export default function OpenPathButton({
   }
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title ?? path}
-      className={className}
-    >
+    <button type="button" onClick={onClick} title={title ?? path} className={className}>
       {children}
     </button>
   );

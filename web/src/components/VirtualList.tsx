@@ -1,11 +1,5 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { useListColumnResizing } from "./ListColumnResizeContext";
 
 /** How often the x–y of z label may update while scrolling. */
@@ -126,12 +120,7 @@ export default function VirtualList({
   const virtualItems = virtualizer.getVirtualItems();
   const scrollOffset = parentRef.current?.scrollTop ?? 0;
   const viewportHeight = parentRef.current?.clientHeight ?? 0;
-  const nextRange = rangeFromVirtualItems(
-    virtualItems,
-    scrollOffset,
-    viewportHeight,
-    count,
-  );
+  const nextRange = rangeFromVirtualItems(virtualItems, scrollOffset, viewportHeight, count);
   void layoutTick;
 
   useEffect(() => {
@@ -144,11 +133,7 @@ export default function VirtualList({
     const publish = (range: VisibleRange) => {
       publishedRef.current = range;
       onRangeRef.current?.(range);
-      if (
-        range.end >= 1 &&
-        count > 0 &&
-        range.end >= count - nearEndThreshold
-      ) {
+      if (range.end >= 1 && count > 0 && range.end >= count - nearEndThreshold) {
         onNearEndRef.current?.();
       }
     };

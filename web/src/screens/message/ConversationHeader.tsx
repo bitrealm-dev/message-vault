@@ -1,5 +1,5 @@
-import type { Conversation } from "../../lib/types";
 import { formatMonthYear } from "../../lib/formatDate";
+import type { Conversation } from "../../lib/types";
 import YearChipBar from "./YearChipBar";
 
 export default function ConversationHeader({
@@ -81,11 +81,7 @@ export default function ConversationHeader({
         </div>
       )}
 
-      <div
-        role="separator"
-        aria-hidden
-        className="my-3 h-px bg-border"
-      />
+      <div role="separator" aria-hidden className="my-3 h-px bg-border" />
 
       <div className="flex flex-wrap gap-4 text-[0.75rem] text-muted">
         <span>{sourceLabel}</span>

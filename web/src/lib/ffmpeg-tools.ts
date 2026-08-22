@@ -1,5 +1,5 @@
-import { isTauri } from "./tauri-check";
 import { setFfmpegToolsDir } from "./tauri";
+import { isTauri } from "./tauri-check";
 
 export const FFMPEG_TOOLS_STORAGE_KEY = "mv-ffmpeg-path";
 

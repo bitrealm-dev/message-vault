@@ -1,21 +1,16 @@
 import {
+  type ReactNode,
+  type UIEvent,
   useCallback,
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
-  type UIEvent,
 } from "react";
-import {
-  ListBox,
-  ListBoxItem,
-  ListLayout,
-  Virtualizer,
-} from "react-aria-components";
+import { ListBox, ListBoxItem, ListLayout, Virtualizer } from "react-aria-components";
 import { groupByLetter } from "../lib/contactSort";
-import { formatVisibleRange } from "../lib/usePagedList";
 import { isTauri } from "../lib/tauri-check";
 import { listRowDividersThin } from "../lib/tw";
+import { formatVisibleRange } from "../lib/usePagedList";
 import ListRangeHeader from "./ListRangeHeader";
 import VirtualList, { type VisibleRange } from "./VirtualList";
 
@@ -77,10 +72,7 @@ function rangeFromScroll(
     return { start: 0, end: 0 };
   }
   const startIdx = Math.floor(scrollTop / estimateSize);
-  const endIdx = Math.min(
-    count - 1,
-    Math.ceil((scrollTop + clientHeight) / estimateSize) - 1,
-  );
+  const endIdx = Math.min(count - 1, Math.ceil((scrollTop + clientHeight) / estimateSize) - 1);
   return { start: startIdx + 1, end: Math.max(startIdx, endIdx) + 1 };
 }
 
@@ -127,12 +119,7 @@ function RacVirtualList<T extends object>({
 
   const onScroll = (e: UIEvent<HTMLElement>) => {
     const el = e.currentTarget;
-    const range = rangeFromScroll(
-      el.scrollTop,
-      el.clientHeight,
-      estimateSize,
-      items.length,
-    );
+    const range = rangeFromScroll(el.scrollTop, el.clientHeight, estimateSize, items.length);
     onVisibleRangeChange(range);
     maybeRequestMore(range.end);
   };
@@ -167,11 +154,7 @@ function RacVirtualList<T extends object>({
               className={({ isSelected, isHovered }) =>
                 rowClass(isRowHighlighted?.(item) ?? isSelected, isHovered)
               }
-              style={
-                dynamicSize
-                  ? { minHeight: estimateSize }
-                  : { height: "100%", minHeight: 0 }
-              }
+              style={dynamicSize ? { minHeight: estimateSize } : { height: "100%", minHeight: 0 }}
             >
               {renderRow(item)}
             </ListBoxItem>
@@ -244,8 +227,7 @@ function TanStackVirtualList<T>({
   );
 }
 
-const LETTER_DIVIDER =
-  "flex items-center border-b border-border bg-panel px-3 py-1";
+const LETTER_DIVIDER = "flex items-center border-b border-border bg-panel px-3 py-1";
 
 function SectionedLetterList<T>({
   items,
@@ -302,11 +284,7 @@ function SectionedLetterList<T>({
       end = oneBased;
     }
     onRangeRef.current({ start, end });
-    if (
-      hasMoreRef.current &&
-      items.length > 0 &&
-      end >= items.length - NEAR_END_THRESHOLD
-    ) {
+    if (hasMoreRef.current && items.length > 0 && end >= items.length - NEAR_END_THRESHOLD) {
       requestMoreRef.current();
     }
   };
@@ -325,11 +303,7 @@ function SectionedLetterList<T>({
   }
 
   return (
-    <div
-      ref={scrollerRef}
-      className="min-h-0 flex-1 overflow-auto"
-      onScroll={onScroll}
-    >
+    <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
       {groups.map(([letter, groupItems], groupIndex) => (
         <section key={`${letter}-${groupIndex}`} aria-label={`Names starting with ${letter}`}>
           {letter !== currentLetter ? (
@@ -400,20 +374,11 @@ export default function InfiniteOffsetList<T extends object>({
   const rangeLabel =
     loading && items.length === 0
       ? "Loading…"
-      : formatVisibleRange(
-          visibleRange.start,
-          visibleRange.end,
-          denom,
-          items.length,
-        );
+      : formatVisibleRange(visibleRange.start, visibleRange.end, denom, items.length);
 
-  const firstVisibleIndex =
-    visibleRange.start > 0 ? visibleRange.start - 1 : 0;
+  const firstVisibleIndex = visibleRange.start > 0 ? visibleRange.start - 1 : 0;
   const firstVisible = items[firstVisibleIndex];
-  const headerLetter =
-    getSectionLetter && firstVisible
-      ? getSectionLetter(firstVisible)
-      : null;
+  const headerLetter = getSectionLetter && firstVisible ? getSectionLetter(firstVisible) : null;
 
   if (error && items.length === 0) {
     return (

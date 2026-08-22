@@ -101,40 +101,38 @@ export default function ListColumn({ children }: { children: ReactNode }) {
 
   return (
     <ListColumnResizeContext.Provider value={dragging}>
-    <div
-      data-list-column
-      style={{ width: `${width}px` }}
-      className="relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text"
-    >
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {children}
-      </div>
-
       <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize list column"
-        aria-valuenow={width}
-        aria-valuemin={MIN_WIDTH}
-        aria-valuemax={MAX_WIDTH}
-        tabIndex={0}
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-        onKeyDown={onResizeKeyDown}
-        onMouseEnter={() => setHandleHover(true)}
-        onMouseLeave={() => setHandleHover(false)}
-        className="absolute top-0 right-0 z-[60] h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent"
+        data-list-column
+        style={{ width: `${width}px` }}
+        className="relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-panel text-text"
       >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+
         <div
-          aria-hidden
-          className={`pointer-events-none absolute top-0 bottom-0 left-0 w-px ${
-            dragging || handleHover ? "bg-accent" : "bg-transparent"
-          }`}
-        />
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize list column"
+          aria-valuenow={width}
+          aria-valuemin={MIN_WIDTH}
+          aria-valuemax={MAX_WIDTH}
+          tabIndex={0}
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          onPointerCancel={onResizePointerUp}
+          onKeyDown={onResizeKeyDown}
+          onMouseEnter={() => setHandleHover(true)}
+          onMouseLeave={() => setHandleHover(false)}
+          className="absolute top-0 right-0 z-[60] h-full w-3 translate-x-full touch-none cursor-col-resize bg-transparent"
+        >
+          <div
+            aria-hidden
+            className={`pointer-events-none absolute top-0 bottom-0 left-0 w-px ${
+              dragging || handleHover ? "bg-accent" : "bg-transparent"
+            }`}
+          />
+        </div>
       </div>
-    </div>
     </ListColumnResizeContext.Provider>
   );
 }

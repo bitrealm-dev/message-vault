@@ -1,9 +1,9 @@
-import { useEffect, useCallback, useMemo, useState } from "react";
-import type { Conversation, MessageAttachment } from "../lib/types";
-import { personDisplayLabel } from "../lib/nameAliases";
-import { useNameAliases } from "../lib/useNameAliases";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AttachmentLightbox, { type LightboxItem } from "../components/AttachmentLightbox";
 import SourcesPanel from "../components/SourcesPanel";
+import { personDisplayLabel } from "../lib/nameAliases";
+import type { Conversation, MessageAttachment } from "../lib/types";
+import { useNameAliases } from "../lib/useNameAliases";
 import ConversationHeader from "./message/ConversationHeader";
 import MessageFindBar from "./message/MessageFindBar";
 import MessageThread from "./message/MessageThread";
@@ -39,9 +39,7 @@ export default function MessageView({
 
   const [lightboxItems, setLightboxItems] = useState<LightboxItem[] | null>(null);
   // Fallback source label from the first loaded message until the header has a better one.
-  const sourceLabel = messages[0]
-    ? displaySourceLabel(messages[0].source)
-    : "unknown";
+  const sourceLabel = messages[0] ? displaySourceLabel(messages[0].source) : "unknown";
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [showSources, setShowSources] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(true);
@@ -52,18 +50,21 @@ export default function MessageView({
   );
 
   // Open the image viewer at the clicked photo. Previous/next walks this page's images.
-  const handleAttachmentClick = useCallback((att: MessageAttachment, source: string) => {
-    const images = messages.flatMap((m) =>
-      (m.attachments || [])
-        .filter((a) => a.sha256 && a.mime_type?.startsWith("image/"))
-        .map((a) => ({ attachment: a, source: m.source })),
-    );
-    const idx = images.findIndex(
-      (item) => item.attachment.sha256 === att.sha256 && item.source === source,
-    );
-    setLightboxItems(images.length > 0 ? images : [{ attachment: att, source }]);
-    setLightboxIndex(idx >= 0 ? idx : 0);
-  }, [messages]);
+  const handleAttachmentClick = useCallback(
+    (att: MessageAttachment, source: string) => {
+      const images = messages.flatMap((m) =>
+        (m.attachments || [])
+          .filter((a) => a.sha256 && a.mime_type?.startsWith("image/"))
+          .map((a) => ({ attachment: a, source: m.source })),
+      );
+      const idx = images.findIndex(
+        (item) => item.attachment.sha256 === att.sha256 && item.source === source,
+      );
+      setLightboxItems(images.length > 0 ? images : [{ attachment: att, source }]);
+      setLightboxIndex(idx >= 0 ? idx : 0);
+    },
+    [messages],
+  );
 
   useEffect(() => {
     setParticipantsOpen(true);
@@ -103,9 +104,7 @@ export default function MessageView({
   const matchIds = useMemo(() => {
     const t = findTerm.trim().toLowerCase();
     if (!t) return [];
-    return messages
-      .filter((m) => (m.text || "").toLowerCase().includes(t))
-      .map((m) => m.id);
+    return messages.filter((m) => (m.text || "").toLowerCase().includes(t)).map((m) => m.id);
   }, [messages, findTerm]);
 
   // Scroll the current find match into view.
@@ -143,9 +142,7 @@ export default function MessageView({
         matchCount={matchIds.length}
         activeMatch={activeMatch}
         yearMode={yearMode}
-        onPrevMatch={() =>
-          setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)
-        }
+        onPrevMatch={() => setActiveMatch((a) => (a - 1 + matchIds.length) % matchIds.length)}
         onNextMatch={() => setActiveMatch((a) => (a + 1) % matchIds.length)}
       />
 
@@ -169,7 +166,9 @@ export default function MessageView({
           items={lightboxItems}
           currentIndex={lightboxIndex}
           onClose={() => setLightboxItems(null)}
-          onPrev={() => setLightboxIndex((i) => (i - 1 + lightboxItems.length) % lightboxItems.length)}
+          onPrev={() =>
+            setLightboxIndex((i) => (i - 1 + lightboxItems.length) % lightboxItems.length)
+          }
           onNext={() => setLightboxIndex((i) => (i + 1) % lightboxItems.length)}
         />
       )}

@@ -1,12 +1,12 @@
+import type { InputHTMLAttributes, KeyboardEventHandler } from "react";
 import {
-  TextField as RACTextField,
+  FieldError,
   Input,
   Label,
-  FieldError,
-  Text,
+  TextField as RACTextField,
   type TextFieldProps as RACTextFieldProps,
+  Text,
 } from "react-aria-components";
-import type { InputHTMLAttributes, KeyboardEventHandler } from "react";
 
 /** Shared chrome for text inputs (settings, forms, PathPicker, etc.). */
 export const textInputClassName =
@@ -47,10 +47,12 @@ export default function TextField({
   return (
     <RACTextField {...props} className={className}>
       {label && <Label className="mb-1 block text-[0.875rem] font-medium text-text">{label}</Label>}
-      <Input
-        className={`${textInputClassName} ${inputClassName ?? ""}`}
-      />
-      {hint && <Text slot="description" className="mt-1 block text-[0.75rem] text-muted">{hint}</Text>}
+      <Input className={`${textInputClassName} ${inputClassName ?? ""}`} />
+      {hint && (
+        <Text slot="description" className="mt-1 block text-[0.75rem] text-muted">
+          {hint}
+        </Text>
+      )}
       <FieldError className="mt-1 block text-[0.75rem] text-danger" />
     </RACTextField>
   );

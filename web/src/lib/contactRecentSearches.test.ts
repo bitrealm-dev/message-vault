@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearContactRecentSearches,
   loadContactRecentSearches,
@@ -40,9 +40,7 @@ describe("contactRecentSearches", () => {
     expect(list[9]).toBe("q2");
     pushContactRecentSearch("q5");
     expect(loadContactRecentSearches()[0]).toBe("q5");
-    expect(loadContactRecentSearches().filter((q) => q === "q5")).toHaveLength(
-      1,
-    );
+    expect(loadContactRecentSearches().filter((q) => q === "q5")).toHaveLength(1);
   });
 
   it("ignores empty and whitespace-only pushes", () => {

@@ -4,8 +4,8 @@ import {
   ChatBubbleRow,
   formatMessageTime,
   isGroupConversation,
-  senderName,
   type MessageBubbleProps,
+  senderName,
 } from "./chatBubbleShared";
 
 /** SMS / MMS / RCS / Android Messages — green sent bubbles. */
@@ -31,11 +31,7 @@ export default function SmsBubble({
       showSender={!mine && group}
       senderLabel={senderName(message)}
       timeLabel={time}
-      meta={
-        service ? (
-          <span className="uppercase tracking-[0.04em]">{service}</span>
-        ) : null
-      }
+      meta={service ? <span className="uppercase tracking-[0.04em]">{service}</span> : null}
       footer={
         hasAttachments ? (
           <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { apiClient } from "./api";
 import type { AccountProfile } from "./account";
+import { apiClient } from "./api";
 import { useResource } from "./useResource";
 
 /**
@@ -15,18 +15,12 @@ export function useAccountProfile(): {
   reload: () => void;
 } {
   const fetchProfile = useCallback(
-    (signal: AbortSignal) =>
-      apiClient.get<AccountProfile>("/v1/account/profile", { signal }),
+    (signal: AbortSignal) => apiClient.get<AccountProfile>("/v1/account/profile", { signal }),
     [],
   );
 
-  const { data, loading, error, reload } = useResource(
-    "account/profile",
-    fetchProfile,
-  );
-  const [override, setOverride] = useState<AccountProfile | null | undefined>(
-    undefined,
-  );
+  const { data, loading, error, reload } = useResource("account/profile", fetchProfile);
+  const [override, setOverride] = useState<AccountProfile | null | undefined>(undefined);
 
   const setProfile = useCallback((profile: AccountProfile | null) => {
     setOverride(profile);

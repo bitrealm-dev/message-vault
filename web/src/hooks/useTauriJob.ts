@@ -1,11 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import {
-  awaitTauriJob,
-  invokeCancel,
-  onExtractEvents,
-  type TauriJobResult,
-} from "../lib/tauri";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { awaitTauriJob, invokeCancel, onExtractEvents, type TauriJobResult } from "../lib/tauri";
 import type { ImportIssueEvent, ImportProgressEvent } from "../lib/types";
 
 export type TauriJobRunCallbacks = {
@@ -35,10 +30,7 @@ export function useTauriJob(options?: {
    * Wait for one desktop job to finish. Stops any listeners from a previous
    * `start` call first. Throws if the job reports an error; the caller handles that.
    */
-  run: (
-    invokeFn: () => Promise<void>,
-    callbacks?: TauriJobRunCallbacks,
-  ) => Promise<TauriJobResult>;
+  run: (invokeFn: () => Promise<void>, callbacks?: TauriJobRunCallbacks) => Promise<TauriJobResult>;
   cancel: () => Promise<void>;
 } {
   const onError = options?.onError;
@@ -91,7 +83,10 @@ export function useTauriJob(options?: {
       try {
         await invokeFn();
       } catch (err: unknown) {
-        setLog((prev) => [...prev, `${startErrorLabel}: ${err instanceof Error ? err.message : String(err)}`]);
+        setLog((prev) => [
+          ...prev,
+          `${startErrorLabel}: ${err instanceof Error ? err.message : String(err)}`,
+        ]);
         setRunning(false);
         setFinished(false);
         tearDown();

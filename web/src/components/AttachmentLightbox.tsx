@@ -1,11 +1,7 @@
 import type { ReactNode } from "react";
-import {
-  Dialog,
-  Modal,
-  ModalOverlay,
-} from "react-aria-components";
-import type { MessageAttachment } from "../lib/types";
+import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
+import type { MessageAttachment } from "../lib/types";
 
 export type LightboxItem = {
   attachment: MessageAttachment;
@@ -27,18 +23,13 @@ export default function AttachmentLightbox({
 }) {
   const item = items[currentIndex];
   const attachment = item?.attachment;
-  const { url, loading, error } = useAssetObjectUrl(
-    attachment?.sha256,
-    item?.source,
-  );
+  const { url, loading, error } = useAssetObjectUrl(attachment?.sha256, item?.source);
 
   if (!attachment) return null;
 
   let media: ReactNode;
   if (error) {
-    media = (
-      <div className="text-[0.875rem] text-white">Failed to load attachment</div>
-    );
+    media = <div className="text-[0.875rem] text-white">Failed to load attachment</div>;
   } else if (loading || !url) {
     media = <div className="text-[0.875rem] text-white">Loading…</div>;
   } else {
@@ -70,43 +61,43 @@ export default function AttachmentLightbox({
               else if (e.key === "ArrowRight") onNext();
             }}
           >
-          {items.length > 1 && (
-            <button
-              type="button"
-              onClick={onPrev}
-              aria-label="Previous attachment"
-              className="absolute left-4 top-1/2 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[2rem] text-white"
-            >
-              ‹
-            </button>
-          )}
+            {items.length > 1 && (
+              <button
+                type="button"
+                onClick={onPrev}
+                aria-label="Previous attachment"
+                className="absolute left-4 top-1/2 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[2rem] text-white"
+              >
+                ‹
+              </button>
+            )}
 
-          {media}
+            {media}
 
-          {items.length > 1 && (
-            <button
-              type="button"
-              onClick={onNext}
-              aria-label="Next attachment"
-              className="absolute right-4 top-1/2 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[2rem] text-white"
-            >
-              ›
-            </button>
-          )}
+            {items.length > 1 && (
+              <button
+                type="button"
+                onClick={onNext}
+                aria-label="Next attachment"
+                className="absolute right-4 top-1/2 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[2rem] text-white"
+              >
+                ›
+              </button>
+            )}
 
-          <div className="absolute right-4 top-4 flex items-center gap-4">
-            <span className="text-[0.875rem] text-white">
-              {currentIndex + 1} / {items.length}
-            </span>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close attachment viewer"
-              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[1.5rem] text-white"
-            >
-              ×
-            </button>
-          </div>
+            <div className="absolute right-4 top-4 flex items-center gap-4">
+              <span className="text-[0.875rem] text-white">
+                {currentIndex + 1} / {items.length}
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close attachment viewer"
+                className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border-none bg-[rgba(255,255,255,0.2)] text-[1.5rem] text-white"
+              >
+                ×
+              </button>
+            </div>
           </div>
         </Dialog>
       </Modal>

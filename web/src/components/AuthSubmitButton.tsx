@@ -10,7 +10,13 @@ export default function AuthSubmitButton({
   onClick?: () => void;
 }) {
   return (
-    <Button variant="primary" isDisabled={disabled} onPress={onClick} className="mt-6 w-full" type="submit">
+    <Button
+      variant="primary"
+      isDisabled={disabled}
+      onPress={onClick}
+      className="mt-6 w-full"
+      type="submit"
+    >
       {children}
     </Button>
   );

@@ -103,9 +103,7 @@ export default function StepProgress({ steps, completionText }: StepProgressProp
           >
             <StepGlyph status={step.status} index={i} />
             <div className="min-w-0 max-w-[min(36rem,70vw)]">
-              <div className={`text-[0.875rem] ${stepLabelClass(step.status)}`}>
-                {step.label}
-              </div>
+              <div className={`text-[0.875rem] ${stepLabelClass(step.status)}`}>{step.label}</div>
               {step.pathLink ? (
                 <OpenPathButton
                   path={step.pathLink}

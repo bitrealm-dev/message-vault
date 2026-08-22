@@ -1,11 +1,6 @@
 import type { ReactNode } from "react";
 import { Column } from "react-aria-components";
-import {
-  linkClass,
-  mutedClass,
-  thClass,
-  thRightClass,
-} from "./handleTableStyles";
+import { linkClass, mutedClass, thClass, thRightClass } from "./handleTableStyles";
 
 export function SortableColumn({
   id,
@@ -47,13 +42,7 @@ export function SortableColumn({
   );
 }
 
-export function CountCell({
-  value,
-  onClick,
-}: {
-  value: number;
-  onClick?: () => void;
-}) {
+export function CountCell({ value, onClick }: { value: number; onClick?: () => void }) {
   const text = value.toLocaleString();
   if (value > 0 && onClick) {
     return (

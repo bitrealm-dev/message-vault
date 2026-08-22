@@ -19,11 +19,7 @@ export function ColorRow({
 
   return (
     <div className="flex items-center gap-3">
-      <label
-        className="w-[7rem] shrink-0 text-[0.813rem] text-muted"
-      >
-        {label}
-      </label>
+      <label className="w-[7rem] shrink-0 text-[0.813rem] text-muted">{label}</label>
       <input
         type="color"
         value={normalizeHex(value) ?? "#000000"}
@@ -53,12 +49,7 @@ export function ColorRow({
 }
 
 export function formatCompare(seeds: ThemeSeeds): string {
-  return [
-    seeds.lightHeader,
-    seeds.lightAccent,
-    seeds.darkHeader,
-    seeds.darkAccent,
-  ]
+  return [seeds.lightHeader, seeds.lightAccent, seeds.darkHeader, seeds.darkAccent]
     .map((h) => h.toLowerCase())
     .join(",");
 }

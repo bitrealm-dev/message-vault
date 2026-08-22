@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { useAuth } from "../lib/auth";
-import { getBaseUrl } from "../lib/api";
-import { invokePull } from "../lib/tauri";
-import { useTauriJob } from "../hooks/useTauriJob";
-import TauriJobFormShell from "../components/TauriJobFormShell";
 import FormRow from "../components/FormRow";
 import PathPicker from "../components/PathPicker";
+import TauriJobFormShell from "../components/TauriJobFormShell";
+import { useTauriJob } from "../hooks/useTauriJob";
+import { getBaseUrl } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { invokePull } from "../lib/tauri";
 
 /**
  * Desktop export via vault-pull. Always writes JSONL (and attachments)

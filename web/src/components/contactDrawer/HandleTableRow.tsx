@@ -3,9 +3,9 @@ import type { CachedContactHandle } from "../../lib/contactDetailCache";
 import Button from "../Button";
 import { TrashIcon } from "../icons";
 import {
+  type ContactBrowseKind,
   formatHandleServiceLabel,
   inferService,
-  type ContactBrowseKind,
 } from "./contactDrawerTypes";
 import { CountCell } from "./handleTableHelpers";
 import { conversationCount, handleDateCell } from "./handleTableLogic";
@@ -17,11 +17,7 @@ import {
   tdRightClass,
 } from "./handleTableStyles";
 
-type BrowseFn = (args: {
-  kind: ContactBrowseKind;
-  handle?: string;
-  service?: string;
-}) => void;
+type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
 
 /** Returns a RAC `Row` element (must stay a direct TableBody child). */
 export function renderHandleTableRow(
@@ -38,9 +34,7 @@ export function renderHandleTableRow(
   return (
     <Row id={h.id} className="group/handle-row outline-none">
       <Cell className={`${tdClass} overflow-hidden`}>
-        <span>
-          {formatHandleServiceLabel(h.handle, h.service)}
-        </span>
+        <span>{formatHandleServiceLabel(h.handle, h.service)}</span>
       </Cell>
       <Cell className={`${tdClass} overflow-hidden`}>
         <span className="break-all" title={h.handle}>
@@ -80,9 +74,7 @@ export function renderHandleTableRow(
         <CountCell value={h.group_message_count} />
       </Cell>
       <Cell className={`${tdClass} whitespace-nowrap`}>
-        <div
-          className={`flex items-center justify-center ${rowActionsRevealClass}`}
-        >
+        <div className={`flex items-center justify-center ${rowActionsRevealClass}`}>
           <Button
             variant="ghost"
             disabled={opts.busy || opts.loading}
@@ -99,10 +91,7 @@ export function renderHandleTableRow(
   );
 }
 
-export function renderHandleSummaryRow(
-  totals: CachedContactHandle,
-  onBrowse?: BrowseFn,
-) {
+export function renderHandleSummaryRow(totals: CachedContactHandle, onBrowse?: BrowseFn) {
   return (
     <Row id="handles-total" className="outline-none">
       <Cell className={`${tdClass} font-semibold`}>Summary</Cell>
@@ -118,9 +107,7 @@ export function renderHandleSummaryRow(
         <CountCell
           value={conversationCount(totals)}
           onClick={
-            onBrowse && conversationCount(totals) > 0
-              ? () => onBrowse({ kind: "all" })
-              : undefined
+            onBrowse && conversationCount(totals) > 0 ? () => onBrowse({ kind: "all" }) : undefined
           }
         />
       </Cell>

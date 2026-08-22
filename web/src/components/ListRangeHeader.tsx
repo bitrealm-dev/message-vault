@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 /** Same height on the sidebar spacer, list toolbar, and right-pane toolbar. */
 export const LIST_TOOLBAR_CLASS =

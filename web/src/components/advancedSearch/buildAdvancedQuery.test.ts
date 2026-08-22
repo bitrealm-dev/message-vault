@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildContactsQuery,
   buildMessagesQuery,
@@ -53,10 +53,7 @@ describe("pushDateBoundTokens", () => {
       start: "2020-01-01",
       end: "2021-01-01",
     });
-    expect(between).toEqual([
-      "first-contact:>=2020-01-01",
-      "first-contact:<2021-01-01",
-    ]);
+    expect(between).toEqual(["first-contact:>=2020-01-01", "first-contact:<2021-01-01"]);
   });
 });
 

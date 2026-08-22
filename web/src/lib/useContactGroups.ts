@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "./auth";
-import {
-  CONTACT_GROUPS_CHANGED_EVENT,
-  fetchContactGroups,
-} from "./contactGroups";
+import { CONTACT_GROUPS_CHANGED_EVENT, fetchContactGroups } from "./contactGroups";
 
 /** Live list of contact groups for the signed-in account. */
 export function useContactGroups(): {

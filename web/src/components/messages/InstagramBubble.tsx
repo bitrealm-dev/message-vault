@@ -1,8 +1,8 @@
 import MessageAttachments from "../MessageAttachments";
 import {
+  type MessageBubbleProps,
   ServiceBubbleShell,
   ServiceMessageText,
-  type MessageBubbleProps,
 } from "./chatBubbleShared";
 
 export default function InstagramBubble({
@@ -23,17 +23,11 @@ export default function InstagramBubble({
           {message.is_story_reply && (
             <span className="text-[0.688rem] text-[#e4405f]">Story reply</span>
           )}
-          {message.forwarded && (
-            <span className="text-[0.688rem] text-muted">Forwarded</span>
-          )}
+          {message.forwarded && <span className="text-[0.688rem] text-muted">Forwarded</span>}
         </>
       }
     >
-      <ServiceMessageText
-        text={message.text || ""}
-        highlight={highlight}
-        mine={mine}
-      />
+      <ServiceMessageText text={message.text || ""} highlight={highlight} mine={mine} />
 
       <MessageAttachments message={message} onAttachmentClick={onAttachmentClick} />
     </ServiceBubbleShell>

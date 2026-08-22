@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   formatDateSpan,
   formatDay,
@@ -45,9 +45,7 @@ describe("formatDateSpan", () => {
   it("joins distinct formatted ends with an en dash", () => {
     const start = "2024-01-01T12:00:00.000Z";
     const end = "2024-12-31T12:00:00.000Z";
-    expect(formatDateSpan(start, end)).toBe(
-      `${formatDay(start)} – ${formatDay(end)}`,
-    );
+    expect(formatDateSpan(start, end)).toBe(`${formatDay(start)} – ${formatDay(end)}`);
   });
 });
 
@@ -60,9 +58,7 @@ describe("formatUnixDate", () => {
   });
 
   it("formats positive unix seconds", () => {
-    expect(formatUnixDate("1700000000")).toBe(
-      new Date(1700000000 * 1000).toLocaleDateString(),
-    );
+    expect(formatUnixDate("1700000000")).toBe(new Date(1700000000 * 1000).toLocaleDateString());
   });
 });
 

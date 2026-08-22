@@ -1,21 +1,21 @@
 import { useState } from "react";
 import type { Key } from "react-aria-components";
-import Button from "./Button";
 import { popupShadow } from "../lib/uiStyles";
 import {
-  buildContactsQuery,
-  buildMessagesQuery,
-  canSubmitContacts,
-  canSubmitMessages,
-  EMPTY_COUNT,
-  EMPTY_DATE_BOUND,
   type ActivityFilter,
   type AdvancedSearchMode,
+  buildContactsQuery,
+  buildMessagesQuery,
   type CountFilterInput,
+  canSubmitContacts,
+  canSubmitMessages,
   type DateBoundFilter,
+  EMPTY_COUNT,
+  EMPTY_DATE_BOUND,
 } from "./advancedSearch/buildAdvancedQuery";
 import ContactsSearchFields from "./advancedSearch/ContactsSearchFields";
 import MessagesSearchFields from "./advancedSearch/MessagesSearchFields";
+import Button from "./Button";
 
 export type { AdvancedSearchMode } from "./advancedSearch/buildAdvancedQuery";
 
@@ -154,7 +154,9 @@ export default function AdvancedSearchForm({
         >
           Search
         </Button>
-        <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">Cancel</Button>
+        <Button onClick={onClose} className="!px-3 !py-1.5 !text-[0.813rem]">
+          Cancel
+        </Button>
       </div>
     </div>
   );
