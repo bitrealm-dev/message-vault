@@ -19,6 +19,7 @@ export function useResource<T>(
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
 
   useEffect(() => {
+    void reloadToken;
     if (key === null) {
       setData(null);
       setLoading(false);

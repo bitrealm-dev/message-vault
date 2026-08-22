@@ -222,8 +222,10 @@ export default function ContactList({
   const advancedActive = hasAdvancedContactTokens(filter) || hasGroupFilterToken(filter);
 
   useEffect(() => {
+    void filter;
+    void groupFilter;
     setCheckedIds(new Set());
-  }, []);
+  }, [filter, groupFilter]);
 
   useEffect(() => {
     if (clearCheckedRev === 0) return;
@@ -231,6 +233,7 @@ export default function ContactList({
   }, [clearCheckedRev]);
 
   useEffect(() => {
+    void catalogComplete;
     setGroupOverrides({});
     const combined = groupListQuery(groupFilter, filter);
     // Empty filter: load the full catalog.
@@ -252,7 +255,7 @@ export default function ContactList({
 
     const t = window.setTimeout(() => setServerQ(combined), FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [filter, advancedActive, groupFilter, groupActive]);
+  }, [filter, catalogComplete, advancedActive, groupFilter, groupActive]);
 
   const filterActive = filter.trim().length > 0;
   const needles = filterNeedles(filter);
@@ -496,7 +499,7 @@ export default function ContactList({
               onClick={(e) => {
                 e.stopPropagation();
                 skipRowSelectRef.current = true;
-                // Checkbox toggles via the label association; only suppress the row click.
+                toggleChecked(c.id);
                 queueMicrotask(() => {
                   skipRowSelectRef.current = false;
                 });

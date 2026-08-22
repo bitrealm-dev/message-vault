@@ -38,9 +38,10 @@ export default function ConversationList({
   const setRightToolbar = useSetRightToolbar();
 
   useEffect(() => {
+    void query;
     setCheckedIds(new Set());
     setTagOverrides({});
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     // Filters like contact: and handle: apply immediately so the list does not flash empty.

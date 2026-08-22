@@ -112,11 +112,12 @@ export default function CheckedContactsPanel({
     contacts.length === 1 ? "1 contact selected" : `${contacts.length} contacts selected`;
   const [metrics, setMetrics] = useState<Record<string, RowMetrics>>({});
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor | null>(null);
-  const _contactKey = contacts.map((c) => c.id).join(",");
+  const contactKey = contacts.map((c) => c.id).join(",");
   const contactsRef = useRef(contacts);
   contactsRef.current = contacts;
 
   useEffect(() => {
+    void contactKey;
     const selected = contactsRef.current;
     const ac = new AbortController();
     const seeded: Record<string, RowMetrics> = {};
@@ -167,7 +168,7 @@ export default function CheckedContactsPanel({
         /* aborted or failed — uncached rows stay on em dash until a later load */
       });
     return () => ac.abort();
-  }, []);
+  }, [contactKey]);
 
   const rows = useMemo<ContactRow[]>(() => {
     const built = contacts.map((c) => {
