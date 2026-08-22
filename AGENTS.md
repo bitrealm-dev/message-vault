@@ -225,7 +225,7 @@ Rust formatter is `rustfmt`. CI does not run Clippy. `src-tauri/` is not a works
 cargo fmt --all -- --check
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-# Rewrite Rust (workspace + src-tauri) and web/ (Biome; not a CI gate yet)
+# Rewrite Rust (workspace + src-tauri) and web/ (Biome)
 ./scripts/format-all.sh
 
 cargo build --workspace
@@ -236,21 +236,21 @@ cargo build --manifest-path src-tauri/Cargo.toml
 
 #### Frontend
 
-Frontend (`web/`) — ESLint (`web/eslint.config.js`) is still the CI linter. Biome (`web/biome.json`) formats TypeScript, JavaScript, CSS, JSON, and HTML. CI does not check web format yet. Lint errors fail CI; warnings do not. Prefer a real fix over `eslint-disable` or `biome-ignore`. Prefix unused bindings with `_`.
+Frontend (`web/`) — Biome (`web/biome.json`) lints and formats TypeScript, JavaScript, CSS, JSON, and HTML. TypeScript (`npm run build` runs `tsc` then Vite). CI runs `biome ci .` (lint errors and format drift fail; warnings do not). Prefer a real fix over `biome-ignore`. Prefix unused bindings with `_`.
 
 ```bash
 cd web
 npm ci                    # first time, or after package-lock.json changes
-npm run lint              # eslint . (CI gate)
-npm run format            # biome format --write .
-npm run format:check      # biome format (no write)
+npm run lint              # biome lint .
+npm run format            # rewrite format + import order
+npm run format:check      # format + import order, no write
 npm test                  # vitest run (src/**/*.{test,spec}.{ts,tsx})
 npm run test:watch
 npm run build             # tsc && vite build
 npm run dev               # Vite on http://localhost:5173 (proxies /v1 to :8080)
 ```
 
-From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/check-pr.sh` still does not auto-format `web/`.
+From the repository root, `./scripts/format-all.sh` runs rustfmt then the web formatter. `./scripts/check-pr.sh` calls that script, then build/test/lint.
 
 Do not start a separate `npm run dev` while `cargo tauri dev` is running. Tauri starts Vite itself.
 

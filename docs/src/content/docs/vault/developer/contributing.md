@@ -220,7 +220,7 @@ From the repository root:
 ./scripts/check-pr.sh
 ```
 
-That script applies rustfmt to the workspace and to `src-tauri/` (it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It does not auto-format `web/` yet. Format `web/` with `cd web && npm run format`, or format Rust and `web/` together with `./scripts/format-all.sh`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt changed files, commit those changes before opening the pull request.
+That script runs `./scripts/format-all.sh` first (rustfmt on the workspace and `src-tauri/`, then Biome on `web/`; it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt or Biome changed files, commit those changes before opening the pull request.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures. Personal phone backups are not required.
 
