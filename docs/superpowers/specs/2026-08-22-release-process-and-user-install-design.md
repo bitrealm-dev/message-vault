@@ -1,7 +1,7 @@
 # Release process and user install path
 
 **Date:** 2026-08-22  
-**Status:** Approved for planning
+**Status:** Implemented
 
 ## Context
 

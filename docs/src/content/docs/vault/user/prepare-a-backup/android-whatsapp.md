@@ -16,7 +16,7 @@ One of these:
 
 Use files from the same backup. A mismatched key will not decrypt.
 
-The desktop app ships with `wtsexporter` — no separate install.
+Install `wtsexporter` before Import. Commands are on [Install the desktop app](/vault/user/get-started/install-the-desktop-app/).
 
 ## How to get the data
 

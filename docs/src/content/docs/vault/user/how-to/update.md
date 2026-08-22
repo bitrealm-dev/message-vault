@@ -32,9 +32,9 @@ A release-shaped image from a git checkout: [Operator Docker](/vault/developer/d
 
 ## Updating the desktop app
 
-Download the new [release archive](https://github.com/bitrealm-io/message-vault/releases) for your platform. Extract it to the same folder you use now — keep all the files together.
+Download the new installer from [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases) and install it over the current app (`.deb` / AppImage, `.msi`, or `.dmg`).
 
-If you use Import, the `.vault-import-state.jsonl` journal in the work directory is forward-compatible.
+If Import is in use, the `.vault-import-state.jsonl` journal in the work directory is forward-compatible.
 
 ## Compatibility
 

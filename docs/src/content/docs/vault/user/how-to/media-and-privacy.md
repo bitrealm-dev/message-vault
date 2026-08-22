@@ -14,7 +14,7 @@ Choose attachment and privacy settings on **Import**, **Extract**, or **Format**
 | **Convert** | Converts media to common formats — `.jpg`, `.mp4`, or `.mp3`. |
 | **Convert & compress** | Re-encodes media with size and quality limits you choose — resolution, frame rate, minimum file size. |
 
-**Convert** and **Convert & compress** need `ffmpeg` and `ffprobe`. The desktop app release archive includes both — keep them next to the app binary.
+**Convert** and **Convert & compress** need `ffmpeg` and `ffprobe` on `PATH`. Install them with the commands on [Install the desktop app](/vault/user/get-started/install-the-desktop-app/).
 
 When compression is on, you can set:
 
