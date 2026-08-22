@@ -44,8 +44,7 @@ sudo apt install -y ffmpeg
 
 ### Install Rust Packages
 
-> [!Note]
-> The `apt` version will likely be too old.
+**Note** The version available from `apt` is typically to old.
 
 Required minimum version: 1.85
 
@@ -63,8 +62,7 @@ cargo install tauri-cli --version "^2"
 
 ### Install Node
 
-> [!Note]
-> The `apt` version will likely be too old.
+**Note** The version available from `apt` is typically to old.
 
 Required minimum version: 22
 
@@ -94,74 +92,92 @@ pipx install sqlite-web
 
 ### Fork and Clone Repo
 
-Fork and clone the [Message Vault repo](https://github.com/bitrealm-io/message-vault).
+Fork and clone the [Message Vault repo](https://github.com/bitrealm-io/message-vault) `https://github.com/bitrealm-io/message-vault`. If you've never forked a repo before, see [this guide](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo).
 
-If you've never forked a repo before, see [this guide](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo).
-
-> [!Note]
-> Make sure to only copy the default "main" branch when forking.
+*Note:* You only need to copy the default "main" branch when forking.
 
 ### Build and Run
 
-This path starts the vault backend which serves the HTTP API, loads the sample inbox once, opens a SQLite browser, and opens the desktop window (Tauri). Tauri is a small native shell around the same UI that also runs in a web browser. The vault process must be running before the desktop app can log in.
+Two processes have to run at the same time: the vault, and a UI that talks to it. The vault is the HTTP API and the SQLite database. It must be running before anyone can sign in.
 
-Work from the repository root after the clone. The first compile of the server and of the desktop app each take several minutes.
+Work from the repository root in both terminals. The first compile of the server takes several minutes.
 
-**Terminal 1 — vault API, sample inbox, SQLite UI**
+**Terminal 1 — start the vault**
 
-`--reset-demo` deletes `data/` and writes a sample inbox. Use it only on the first run, or when a fresh sample inbox is wanted. `--sqlweb` starts a table browser at **http://127.0.0.1:8081** after the server is ready. Omit `--sqlweb` if `sqlite_web` is not installed.
+`--reset-demo` deletes `data/` and loads a sample inbox. Use it on the first run, or when a fresh sample inbox is wanted.
 
 ```bash
-cd message-vault
-./scripts/run-vault-dev.sh --reset-demo --sqlweb
+./scripts/run-vault-dev.sh --reset-demo
 ```
 
-Leave this terminal running. The API listens at **http://127.0.0.1:8080**. The SQLite UI is **http://127.0.0.1:8081**.
+Leave this terminal running. The API listens at **http://127.0.0.1:8080**.
 
-Later sessions, keep the existing database:
+To browse tables while developing, add `--sqlweb` (needs `sqlite-web` from the previous step). That UI is **http://127.0.0.1:8081**.
+
+**Terminal 2 — open the website**
+
+Install frontend packages once, then start the Vite UI. Vite is the local web server for `web/`.
 
 ```bash
-./scripts/run-vault-dev.sh --sqlweb
+cd web && npm ci && npm run dev
 ```
 
-**Terminal 2 — desktop app**
+Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account is read-only. Create a separate account to test import or other writes.
 
-Install the frontend packages once (`npm ci` reads `web/package-lock.json` and fills `web/node_modules`). `cargo tauri dev` then compiles the native window and starts the Vite frontend itself. Do not start a separate `npm run dev` in another terminal while Tauri is running.
+Later sessions, skip `npm ci` unless `web/package-lock.json` changed. Skip `--reset-demo` unless the sample message data should be rebuilt.
+
+**Desktop app**
+
+The desktop app is a native window (Tauri) around the same `web/` UI. Use it when changing `src-tauri/` or testing import from a backup. Do not run `npm run dev` in another terminal at the same time; Tauri starts Vite itself.
 
 ```bash
-cd message-vault
 cd web && npm ci && cd ..
 cargo tauri dev
 ```
 
-When the window opens, point it at **http://127.0.0.1:8080** (the vault from terminal 1). Create an account in that window, or sign in if the sample inbox already has one.
+When the window opens, point it at **http://127.0.0.1:8080**. The first compile of the desktop app also takes several minutes.
 
-Later sessions, skip `npm ci` unless `web/package-lock.json` changed:
+**Stopping and restarting**
+
+Ctrl+C in terminal 1 stops the vault (and the SQLite UI if it was started). Ctrl+C in terminal 2 stops the website or the desktop app.
+
+After edits under `crates/vault/server/`, restart terminal 1. After edits under `web/` or `src-tauri/`, the UI usually reloads. Restart `cargo tauri dev` if it does not.
+
+## Making Code Changes
+
+Open a GitHub issue before starting the work, so the later pull request can link to it. Use the bug report or feature request form. Do not wait for a reply before coding. If the issue has no reply after 5 business days, comment on that same issue.
+
+**Branch**
+
+Start from the latest `main`. Do not commit on `main`. Name the branch with a prefix:
+
+- `feat/short-name` — new behavior
+- `fix/short-name` — a bug
+- `docs/short-name` — documentation only
+
+Keep the branch current with `main` while working (merge or rebase). One pull request should do one job.
+
+**Commits**
+
+Each commit should be one idea. Do not mix a bug fix with a rename, or a feature with formatting of unrelated files.
+
+Prefer `feat:`, `fix:`, or `docs:` at the start of the subject when it fits. Other prefixes are optional. The subject should say what changed. Add a short body when the reason is not obvious. Mention the issue (`Ref: #123`).
+
+**Example**
+
+After the fork is cloned, from the repository root:
 
 ```bash
-cargo tauri dev
+git remote add upstream https://github.com/bitrealm-io/message-vault.git
+git fetch upstream
+git checkout -b feat/short-name upstream/main
+git commit -m "feat: add support for x
+
+Ref: #123"
+git push -u origin feat/short-name
 ```
 
-Stop terminal 1 with Ctrl+C to stop both the vault and the SQLite UI. Stop terminal 2 with Ctrl+C to close the desktop app. After edits under `crates/vault/server/`, restart terminal 1. After edits under `web/` or `src-tauri/`, the Tauri/Vite processes usually reload; a full restart of `cargo tauri dev` is the fallback.
-
-## Before You Code
-
-For anything beyond typos:
-- Open an issue first and describe your idea
-- Wait for a maintainer to signal it's welcome
-- This saves your time and ours!
-
-## Making Changes
-
-Branch naming:
-- feat/description - new features
-- fix/description - bug fixes
-- docs/description - documentation
-
-Commit messages (Conventional Commits):
-- feat: add user authentication
-- fix: handle null values in parser
-- docs: improve setup instructions
+Add `upstream` once. For later branches: `git fetch upstream`, then `git checkout -b … upstream/main`.
 
 ## Code Standards
 
@@ -199,88 +215,6 @@ Thank you for making this project better! 💚
 
 
 ---------------------------------
-
-Thank you for contributing to Message Vault.
-
-- **Product overview and install paths:** [User Guide](/vault/user/) and the repository [README](https://github.com/bitrealm-io/message-vault/blob/main/README.md)
-- **Clone and run without the full checklist:** [Run from source](/vault/developer/run-from-source/)
-- **Release-shaped Docker / published image:** [Operator Docker](/vault/developer/docker-compose/)
-- **Architecture and maintainer notes:** [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
-
-Before contributing, read the [Code of Conduct](https://github.com/bitrealm-io/message-vault/blob/main/.github/CODE_OF_CONDUCT.md).
-
-## Prerequisites
-
-| Tool              | Notes                                                                                                                                            |
-|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Rust**          | Stable toolchain via [rustup](https://rustup.rs/). Edition **2024** needs **Rust 1.85+**. CI uses the latest stable.                             |
-| **Windows**       | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
-| **macOS**         | Xcode Command Line Tools (`xcode-select --install`).                                                                                             |
-| **Linux**         | C toolchain plus GUI system libraries (see [Linux packages](#linux-packages)).                                                                   |
-| **Node.js 22+**   | Desktop frontend (`web/`) and the docs site (`docs/`).                                                                                           |
-| **tauri-cli 2.x** | `cargo install tauri-cli --version "^2"` for `cargo tauri dev` / `cargo tauri build`.                                                            |
-
-### WSL2
-
-Use WSL2 with WSLg (Windows 11) or an X server such as VcXsrv (Windows 10). Keep the repository under the Linux filesystem (`~/…`), not `/mnt/c`. Install Rust and Node.js inside WSL; do not call Windows `cargo` or `npm.cmd` from a Linux checkout.
-
-If a standalone X server is required:
-
-```bash
-export DISPLAY=$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):0
-cargo tauri dev
-```
-
-## Build and run (contributor path)
-
-Day-to-day vault + website steps are on [Run from source](/vault/developer/run-from-source/) (`./scripts/run-vault-dev.sh`, `cd web && npm run dev`, `cargo tauri dev`).
-
-Workspace compile (first run can take several minutes):
-
-```bash
-git clone https://github.com/bitrealm-io/message-vault.git
-cd message-vault
-cargo build --workspace
-```
-
-`src-tauri/` is **not** a workspace member. Format and build it separately when changing the desktop shell:
-
-```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo build --manifest-path src-tauri/Cargo.toml
-```
-
-Desktop packaging for installers is `cargo tauri build` (not a substitute for `cargo build --workspace`). The Tauri package name is `message-vault-io-tauri`; after a release-profile Tauri build, the binary under `src-tauri`’s target directory is named from that package (not a top-level `message-vault` crate).
-
-Use a **release** profile when timing real exports. Debug builds compile faster but parsing, hashing, and serialization are slower.
-
-## Helper binaries and environment variables
-
-Most export work runs in-process as Rust libraries. A few features still shell out:
-
-| Helper               | Used for                 |
-|----------------------|--------------------------|
-| `wtsexporter`        | WhatsApp extract         |
-| `ffmpeg` / `ffprobe` | Media convert / compress |
-
-Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI (or `../lib/` from `cli/`) → legacy one directory up → directory in `MESSAGE_VAULT_IO_BIN` → `PATH`. WhatsApp also accepts an explicit `WTSEXPORTER` path.
-
-| Variable               | Purpose                                 |
-|------------------------|-----------------------------------------|
-| `MESSAGE_VAULT_IO_BIN` | Directory that contains helper binaries |
-| `WTSEXPORTER`          | Full path to the WhatsApp extractor     |
-
-Local options:
-
-- Install WhatsApp helper: `pip install 'whatsapp-chat-exporter>=0.13'`
-- Install system `ffmpeg` / `ffprobe`, or copy them from a [release archive](https://github.com/bitrealm-io/message-vault/releases) next to the built GUI
-- After a release build, point helpers at the directory that holds those binaries, for example:
-
-```bash
-export MESSAGE_VAULT_IO_BIN="$PWD/target/release"
-```
-
-Desktop form settings persist in `export.ini` (working directory or next to the binary). Passwords are never written. Example layout: [`crates/message-vault-io-gui/export.example.ini`](https://github.com/bitrealm-io/message-vault/blob/main/crates/message-vault-io-gui/export.example.ini) (legacy Slint GUI example; field names still illustrate the ini shape).
 
 ## Test before a pull request
 
@@ -356,22 +290,3 @@ Pages custom domain and DNS cutover notes belong in maintainer ops, not in every
 6. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
 7. **Put design depth in maintainer docs.** Architecture and long format contracts stay under [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md).
 8. **Use a pull request template.** Default plus feature and bug-fix forms live under [`.github/`](https://github.com/bitrealm-io/message-vault/tree/main/.github).
-
-## Troubleshooting
-
-| Symptom                                         | What to try                                                                         |
-|-------------------------------------------------|-------------------------------------------------------------------------------------|
-| `webkit2gtk` / `libsoup` not found              | Install the packages under [Install Apt Packages](#install-apt-packages)            |
-| "Could not find wtsexporter / ffmpeg / ffprobe" | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
-| Windows linker / `link.exe` errors              | Install MSVC Build Tools with the C++ desktop workload                              |
-| `cargo tauri` not found                         | `cargo install tauri-cli --version "^2"`                                            |
-| Frontend blank in `cargo tauri dev`             | `cd web && npm ci`, then retry                                                      |
-| Docs links 404 locally                          | Open `/vault/…` paths (or `/`), not only the old apex article paths                 |
-
-## Further reading
-
-- [Run from source](/vault/developer/run-from-source/)
-- [Operator Docker](/vault/developer/docker-compose/)
-- [Formats](/vault/developer/formats/)
-- [Maintainer index](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
-- [User Guide](/vault/user/)
