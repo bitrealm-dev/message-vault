@@ -4,9 +4,10 @@
 #   ./scripts/lint-all.sh
 #
 # Stops on the first failure. Clippy covers the workspace (except the legacy
-# Slint GUI crate) and src-tauri. Biome lints web/. Warnings do not fail the
-# script (same as CI for web). Does not format, test, or build. Runs npm ci in
-# web/ only when that tree has no node_modules yet.
+# Slint GUI crate) and src-tauri. Biome lints web/; recommended rules are
+# errors (same as CI `biome ci`). Clippy warnings do not fail this script.
+# Does not format, test, or build. Runs npm ci in web/ only when that tree
+# has no node_modules yet.
 #
 # Skips docs/, web-next/, and message-vault-io-gui (not the product path).
 # CI does not run Clippy. This script is the local Clippy + web lint command.
