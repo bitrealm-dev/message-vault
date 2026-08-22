@@ -3,6 +3,203 @@ title: Contributing
 description: Set up a development environment, run tests, and open pull requests for Message Vault.
 ---
 
+## Contributing to the Message Vault
+
+Thank you for considering contributing!
+Every contribution - big or small - makes this project better.
+
+## Reporting Bugs or Requesting Features
+
+- **Found a bug?** Open a [bug report](https://github.com/bitrealm-io/message-vault/issues/new?template=bug_report.md) on GitHub with steps to reproduce the issue.
+- **Have a feature idea?** Submit a [feature request](https://github.com/bitrealm-io/message-vault/issues/new?template=feature_request.md) on GitHub describing what you'd like to see.
+
+When opening an issue, use the provided issue form to ensure that you provide all the necessary details. These details are important for maintainers to understand and reproduce the issue.
+
+## Environment Setup
+
+Setting up a development environment depends upon your OS.
+
+Here are instructions for Ubuntu Linux:
+
+### Install Apt Packages
+
+```bash
+sudo apt update
+
+# Rust native crates need a C compiler. libssl-dev is for OpenSSL
+sudo apt install -y curl git build-essential pkg-config libssl-dev
+
+# Needed for Rust tests `cargo test --workspace`
+sudo apt install -y libfontconfig1-dev libxkbcommon-dev
+
+# Desktop app (cargo tauri dev / cargo tauri build) — WebKit/GTK
+sudo apt install -y \
+  libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libappindicator3-dev librsvg2-dev patchelf \
+  libjavascriptcoregtk-4.1-dev libsoup-3.0-dev
+
+# Media conversion / compression
+sudo apt install -y ffmpeg
+```
+
+### Install Rust Packages
+
+> [!Note]
+> The `apt` version will likely be too old.
+
+Required minimum version: 1.85
+
+Install rust via `rustup`.
+
+```bash
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+```bash
+# Tauri - Native Window app which bundles web gui
+cargo install tauri-cli --version "^2"
+```
+
+### Install Node
+
+> [!Note]
+> The `apt` version will likely be too old.
+
+Required minimum version: 22
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+source ~/.bashrc   # or open a new terminal
+nvm install 22
+nvm use 22
+node -v            # should print v22.x
+npm -v
+```
+
+### Additional Packages
+
+`wtsexporter` is used to extract `WhatsApp` messages.
+
+```bash
+sudo apt install -y pipx
+pipx ensurepath
+
+# reopen the shell, or: source ~/.bashrc
+pipx install 'whatsapp-chat-exporter[android_backup,crypt15]'
+
+# Used to connect and view the sqlite db
+pipx install sqlite-web
+```
+
+### Fork and Clone Repo
+
+Fork and clone the [Message Vault repo](https://github.com/bitrealm-io/message-vault).
+
+If you've never forked a repo before, see [this guide](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo).
+
+> [!Note]
+> Make sure to only copy the default "main" branch when forking.
+
+### Build and Run
+
+This path starts the vault backend which serves the HTTP API, loads the sample inbox once, opens a SQLite browser, and opens the desktop window (Tauri). Tauri is a small native shell around the same UI that also runs in a web browser. The vault process must be running before the desktop app can log in.
+
+Work from the repository root after the clone. The first compile of the server and of the desktop app each take several minutes.
+
+**Terminal 1 — vault API, sample inbox, SQLite UI**
+
+`--reset-demo` deletes `data/` and writes a sample inbox. Use it only on the first run, or when a fresh sample inbox is wanted. `--sqlweb` starts a table browser at **http://127.0.0.1:8081** after the server is ready. Omit `--sqlweb` if `sqlite_web` is not installed.
+
+```bash
+cd message-vault
+./scripts/run-vault-dev.sh --reset-demo --sqlweb
+```
+
+Leave this terminal running. The API listens at **http://127.0.0.1:8080**. The SQLite UI is **http://127.0.0.1:8081**.
+
+Later sessions, keep the existing database:
+
+```bash
+./scripts/run-vault-dev.sh --sqlweb
+```
+
+**Terminal 2 — desktop app**
+
+Install the frontend packages once (`npm ci` reads `web/package-lock.json` and fills `web/node_modules`). `cargo tauri dev` then compiles the native window and starts the Vite frontend itself. Do not start a separate `npm run dev` in another terminal while Tauri is running.
+
+```bash
+cd message-vault
+cd web && npm ci && cd ..
+cargo tauri dev
+```
+
+When the window opens, point it at **http://127.0.0.1:8080** (the vault from terminal 1). Create an account in that window, or sign in if the sample inbox already has one.
+
+Later sessions, skip `npm ci` unless `web/package-lock.json` changed:
+
+```bash
+cargo tauri dev
+```
+
+Stop terminal 1 with Ctrl+C to stop both the vault and the SQLite UI. Stop terminal 2 with Ctrl+C to close the desktop app. After edits under `crates/vault/server/`, restart terminal 1. After edits under `web/` or `src-tauri/`, the Tauri/Vite processes usually reload; a full restart of `cargo tauri dev` is the fallback.
+
+## Before You Code
+
+For anything beyond typos:
+- Open an issue first and describe your idea
+- Wait for a maintainer to signal it's welcome
+- This saves your time and ours!
+
+## Making Changes
+
+Branch naming:
+- feat/description - new features
+- fix/description - bug fixes
+- docs/description - documentation
+
+Commit messages (Conventional Commits):
+- feat: add user authentication
+- fix: handle null values in parser
+- docs: improve setup instructions
+
+## Code Standards
+
+- PHP PSR-12 formatting (run `composer lint`)
+- Tests required for new features (Pest framework)
+- Keep PRs focused — one thing per PR
+- PRs need a description: what changed and WHY
+
+## Pull Request Checklist
+
+□ Tests pass locally
+□ Code follows our style guide
+□ PR description explains the change
+□ Linked to related issue (if applicable)
+
+## Response Time
+
+We review PRs every Monday and Thursday.
+Expect feedback within 5 business days.
+
+## First-Time Contributors
+
+Look for issues labeled `good first issue`.
+These are specifically curated for newcomers!
+Feel free to ask questions in the issue thread —
+we love helping new contributors get started! 🌱
+
+## Questions?
+
+Open a GitHub Discussion or email [maintainer@project.com]
+
+Thank you for making this project better! 💚
+
+
+
+
+---------------------------------
+
 Thank you for contributing to Message Vault.
 
 - **Product overview and install paths:** [User Guide](/vault/user/) and the repository [README](https://github.com/bitrealm-io/message-vault/blob/main/README.md)
@@ -10,43 +207,18 @@ Thank you for contributing to Message Vault.
 - **Release-shaped Docker / published image:** [Operator Docker](/vault/developer/docker-compose/)
 - **Architecture and maintainer notes:** [`docs/maintainers/`](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/README.md)
 
-Before contributing, read the [Code of Conduct](https://github.com/bitrealm-io/message-vault/blob/main/CODE_OF_CONDUCT.md).
+Before contributing, read the [Code of Conduct](https://github.com/bitrealm-io/message-vault/blob/main/.github/CODE_OF_CONDUCT.md).
 
 ## Prerequisites
 
-| Tool | Notes |
-|------|--------|
-| **Rust** | Stable toolchain via [rustup](https://rustup.rs/). Edition **2024** needs **Rust 1.85+**. CI uses the latest stable. |
-| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
-| **macOS** | Xcode Command Line Tools (`xcode-select --install`). |
-| **Linux** | C toolchain plus GUI system libraries (see [Linux packages](#linux-packages)). |
-| **Node.js 22+** | Desktop frontend (`web/`) and the docs site (`docs/`). |
-| **tauri-cli 2.x** | `cargo install tauri-cli --version "^2"` for `cargo tauri dev` / `cargo tauri build`. |
-
-Optional while developing WhatsApp extract or media convert/compress: Python (`pip`) for `wtsexporter`, and `ffmpeg` / `ffprobe` on `PATH` (or see [Helper binaries](#helper-binaries-and-environment-variables)).
-
-### Linux packages
-
-The Tauri desktop app needs a C toolchain and WebKit2GTK at **build time** and **runtime**. On Debian/Ubuntu:
-
-```bash
-sudo apt update
-sudo apt install \
-  build-essential pkg-config \
-  libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libappindicator3-dev librsvg2-dev patchelf \
-  libssl-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev
-```
-
-On Fedora:
-
-```bash
-sudo dnf install \
-  gcc pkgconf-pkg-config \
-  webkit2gtk4.1-devel gtk3-devel \
-  libappindicator-gtk3-devel librsvg2-devel \
-  openssl-devel javascriptcoregtk4.1-devel libsoup3-devel
-```
+| Tool              | Notes                                                                                                                                            |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Rust**          | Stable toolchain via [rustup](https://rustup.rs/). Edition **2024** needs **Rust 1.85+**. CI uses the latest stable.                             |
+| **Windows**       | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload (MSVC). |
+| **macOS**         | Xcode Command Line Tools (`xcode-select --install`).                                                                                             |
+| **Linux**         | C toolchain plus GUI system libraries (see [Linux packages](#linux-packages)).                                                                   |
+| **Node.js 22+**   | Desktop frontend (`web/`) and the docs site (`docs/`).                                                                                           |
+| **tauri-cli 2.x** | `cargo install tauri-cli --version "^2"` for `cargo tauri dev` / `cargo tauri build`.                                                            |
 
 ### WSL2
 
@@ -86,17 +258,17 @@ Use a **release** profile when timing real exports. Debug builds compile faster 
 
 Most export work runs in-process as Rust libraries. A few features still shell out:
 
-| Helper | Used for |
-|--------|----------|
-| `wtsexporter` | WhatsApp extract |
+| Helper               | Used for                 |
+|----------------------|--------------------------|
+| `wtsexporter`        | WhatsApp extract         |
 | `ffmpeg` / `ffprobe` | Media convert / compress |
 
 Lookup order: beside the current executable → `lib/` / `cli/` next to the GUI (or `../lib/` from `cli/`) → legacy one directory up → directory in `MESSAGE_VAULT_IO_BIN` → `PATH`. WhatsApp also accepts an explicit `WTSEXPORTER` path.
 
-| Variable | Purpose |
-|----------|---------|
+| Variable               | Purpose                                 |
+|------------------------|-----------------------------------------|
 | `MESSAGE_VAULT_IO_BIN` | Directory that contains helper binaries |
-| `WTSEXPORTER` | Full path to the WhatsApp extractor |
+| `WTSEXPORTER`          | Full path to the WhatsApp extractor     |
 
 Local options:
 
@@ -187,14 +359,14 @@ Pages custom domain and DNS cutover notes belong in maintainer ops, not in every
 
 ## Troubleshooting
 
-| Symptom | What to try |
-|---------|-------------|
-| `webkit2gtk` / `libsoup` not found | Install the packages under [Linux packages](#linux-packages) |
+| Symptom                                         | What to try                                                                         |
+|-------------------------------------------------|-------------------------------------------------------------------------------------|
+| `webkit2gtk` / `libsoup` not found              | Install the packages under [Install Apt Packages](#install-apt-packages)            |
 | "Could not find wtsexporter / ffmpeg / ffprobe" | Install the helper, put it on `PATH`, or set `MESSAGE_VAULT_IO_BIN` / `WTSEXPORTER` |
-| Windows linker / `link.exe` errors | Install MSVC Build Tools with the C++ desktop workload |
-| `cargo tauri` not found | `cargo install tauri-cli --version "^2"` |
-| Frontend blank in `cargo tauri dev` | `cd web && npm ci`, then retry |
-| Docs links 404 locally | Open `/vault/…` paths (or `/`), not only the old apex article paths |
+| Windows linker / `link.exe` errors              | Install MSVC Build Tools with the C++ desktop workload                              |
+| `cargo tauri` not found                         | `cargo install tauri-cli --version "^2"`                                            |
+| Frontend blank in `cargo tauri dev`             | `cd web && npm ci`, then retry                                                      |
+| Docs links 404 locally                          | Open `/vault/…` paths (or `/`), not only the old apex article paths                 |
 
 ## Further reading
 
