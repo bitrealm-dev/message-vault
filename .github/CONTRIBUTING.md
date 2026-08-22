@@ -1,10 +1,8 @@
 # How to Contribute
 
-Thank you for wanting to improve the Message Vault.
+Thank you for your interest in contributing to the Message Vault!
 
-Full setup, tests, and pull-request rules:
+Get started by reviewing our contribution guidelines in one of these ways:
 
-- **Hosted:** [Contributing](https://bitrealm.io/vault/developer/contributing/)
-- **In this repo:** [`docs/src/content/docs/vault/developer/contributing.md`](../docs/src/content/docs/vault/developer/contributing.md)
-
-Also read the [Code of Conduct](CODE_OF_CONDUCT.md).
+- [Developer docs](https://bitrealm.io/vault/developer/contributing/) (hosted)
+- [contributing.md](../docs/src/content/docs/vault/developer/contributing.md) (local)

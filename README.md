@@ -112,7 +112,7 @@ See the [Developer Guide](https://bitrealm.io/vault/developer/) to setup a local
 
 Contributions are **greatly appreciated** and make the open source community the great place that it is.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to contribute.
+See [contributing.md](docs/src/content/docs/vault/developer/contributing.md) if you'd like to contribute.
 
 ## Additional documentation
 
