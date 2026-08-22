@@ -11,7 +11,7 @@ export function useResource<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(key !== null);
   const [error, setError] = useState("");
-  const [_reloadToken, setReloadToken] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
@@ -50,7 +50,7 @@ export function useResource<T>(
       });
 
     return () => controller.abort();
-  }, [key]);
+  }, [key, reloadToken]);
 
   return { data, loading, error, reload };
 }
