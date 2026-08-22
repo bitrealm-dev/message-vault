@@ -39,6 +39,29 @@ The image `bitrealm/message-vault:latest` is the User Guide path. Sample data se
 | FFmpeg | Media conversion for browser playback |
 | Demo dataset | Sample conversations when `DEMO_DATA=true` and the volume is new |
 
+The vault process runs inside the image. The desktop app stays on the host. For local development without Docker, use [Run from source](/vault/developer/run-from-source/).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant Browser
+    participant App as Desktop App (host)
+    participant Vault as Vault container :8080
+    participant Data as volume /app/data
+    participant Staging as ./staging
+
+    Dev->>Vault: docker compose up
+    Note over Vault: Baked image. Rebuild to pick up checkout changes.
+    Vault->>Data: SQLite and assets
+    Dev->>Browser: http://127.0.0.1:8080
+    Browser->>Vault: Website and /v1
+    Dev->>App: cargo tauri dev (optional)
+    App->>Vault: Login and import
+    Dev->>Staging: Drop JSONL
+    Vault->>Staging: Read /app/staging
+```
+
 ## Related
 
 - [Run from source](/vault/developer/run-from-source/)

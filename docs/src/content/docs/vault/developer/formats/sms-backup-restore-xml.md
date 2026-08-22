@@ -41,6 +41,6 @@ Exporters use `FormatSink::open` → `write_document` per conversation → `fini
 
 ## Related
 
-- [Message-ir architecture](https://github.com/bitrealm-io/message-vault/blob/main/docs/maintainers/architecture/message-ir.md) — shared model and projectors
+- [Message-ir architecture](/vault/developer/architecture/common-message/) — shared model and projectors
 - [What’s inside an export](/vault/developer/reference/export-structure/) — end-user workflow
 - [SMS Backup & Restore import mapping](/vault/developer/formats/sms-backup-restore/mapping/) — XML source → shared model
