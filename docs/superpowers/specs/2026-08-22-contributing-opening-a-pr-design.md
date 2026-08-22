@@ -26,19 +26,20 @@ A contributor who has pushed a topic branch can: run one script that matches the
 - `--fixup` or `--force-with-lease` recipes
 - Flags such as `--skip-docs` on the script
 - Putting `cargo test -p …` into the script
+- Web or docs auto-format (no Prettier, no `eslint --fix`). Web stays lint + test only.
 - Runtime, exporter, desktop app, or vault-server product code
 
 ## Decisions
 
 1. **Tests live under Opening a PR.** Remove `### Test before a pull request` from **Making Code Changes**. **Making Code Changes** ends after the `upstream` git example.
 2. **One script, always everything.** Add `scripts/check-pr.sh`. From the repository root it runs, in order, and stops on the first failure:
-   1. `cargo fmt --all -- --check`
-   2. `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
+   1. `cargo fmt --all` (rewrites files; not `--check`)
+   2. `cargo fmt --manifest-path src-tauri/Cargo.toml` (rewrites files; not `--check`)
    3. `cargo build --workspace`
    4. `cargo test --workspace`
-   5. `web/`: `npm ci` if `web/node_modules` is missing, then `npm run lint` and `npm test`
+   5. `web/`: `npm ci` if `web/node_modules` is missing, then `npm run lint` and `npm test` (no format rewrite)
    6. `docs/`: `npm ci` if `docs/node_modules` is missing, then `npm run check` and `npm run build`
-3. **No skip flags.** First run takes several minutes. Later runs skip `npm ci` when `node_modules` already exists.
+3. **No skip flags.** First run takes several minutes. Later runs skip `npm ci` when `node_modules` already exists. If rustfmt changed files, those changes must be committed before opening the PR. CI still uses `cargo fmt -- --check`.
 4. **Single-crate tests stay optional** in the docs only (`cargo test -p …` while iterating). Not in the script.
 5. **Open against `main`.** Default GitHub template is enough. Feature and bug-fix templates exist and are not required.
 6. **Link the issue.** `Ref: #123`. `Fixes #123` if this change should close that issue.
@@ -61,11 +62,13 @@ Do not edit `.github/pull_request_template.md` or files under `.github/PULL_REQU
 
 ```bash
 #!/usr/bin/env bash
-# Local pre-PR check: rustfmt, workspace build/test, web lint/test, docs check/build.
+# Local pre-PR check: apply rustfmt, then workspace build/test, web lint/test,
+# docs check/build.
 #
 #   ./scripts/check-pr.sh
 #
-# Stops on the first failure. Runs npm ci in web/ and docs/ only when
+# Stops on the first failure. rustfmt rewrites files (not --check).
+# Web formatting is not applied. Runs npm ci in web/ and docs/ only when
 # that tree has no node_modules yet.
 set -euo pipefail
 
@@ -74,10 +77,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 echo "==> cargo fmt (workspace)"
-cargo fmt --all -- --check
+cargo fmt --all
 
 echo "==> cargo fmt (src-tauri)"
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo fmt --manifest-path src-tauri/Cargo.toml
 
 echo "==> cargo build --workspace"
 cargo build --workspace
@@ -120,7 +123,7 @@ From the repository root:
 ./scripts/check-pr.sh
 ```
 
-That script checks Rust formatting (workspace and `src-tauri`), builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet.
+That script applies rustfmt to the workspace and to `src-tauri/` (it rewrites files). Then it builds and tests the workspace, lints and tests `web/`, and checks and builds `docs/`. It does not auto-format `web/`. It stops on the first failure. It runs `npm ci` in `web/` or `docs/` only when that tree has no `node_modules` yet. If rustfmt changed files, commit those changes before opening the pull request.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures. Personal phone backups are not required.
 
@@ -162,7 +165,7 @@ Match the rest of the new contributing page: short sentences, concrete commands,
 
 - **Making Code Changes** ends at the `upstream` git example
 - **Opening a PR** sits before **Docs site** and includes **Before it is ready**, **Keep the branch current**, **Open the pull request**, **After it is open**
-- `scripts/check-pr.sh` exists, is executable, and matches the script in this spec
+- `scripts/check-pr.sh` exists, is executable, and matches the script in this spec (rustfmt without `--check`; no web format step)
 - Contribution rules no longer link `#test-before-a-pull-request`
 - Default template is enough; feature/bug-fix templates optional
 - No DCO, draft-PR requirement, or `--force-with-lease` cookbook
