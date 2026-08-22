@@ -289,7 +289,7 @@ function SectionedLetterList<T>({
         requestMoreRef.current();
       }
     },
-    [items.length],
+    [items],
   );
 
   useLayoutEffect(() => {

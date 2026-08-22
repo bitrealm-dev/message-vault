@@ -122,34 +122,38 @@ export default function VirtualList({
   const viewportHeight = parentRef.current?.clientHeight ?? 0;
   const nextRange = rangeFromVirtualItems(virtualItems, scrollOffset, viewportHeight, count);
   void layoutTick;
+  const nextRangeStart = nextRange.start;
+  const nextRangeEnd = nextRange.end;
 
   useEffect(() => {
     const prev = publishedRef.current;
-    if (prev.start === nextRange.start && prev.end === nextRange.end) {
+    if (prev.start === nextRangeStart && prev.end === nextRangeEnd) {
       pendingRef.current = null;
       return;
     }
 
-    const publish = (range: VisibleRange) => {
-      publishedRef.current = range;
-      onRangeRef.current?.(range);
-      if (range.end >= 1 && count > 0 && range.end >= count - nearEndThreshold) {
+    const range: VisibleRange = { start: nextRangeStart, end: nextRangeEnd };
+
+    const publish = (published: VisibleRange) => {
+      publishedRef.current = published;
+      onRangeRef.current?.(published);
+      if (published.end >= 1 && count > 0 && published.end >= count - nearEndThreshold) {
         onNearEndRef.current?.();
       }
     };
 
     // First real measurement: publish immediately so the label is not stuck on "… of N".
-    if (prev.start < 1 && nextRange.start >= 1) {
+    if (prev.start < 1 && nextRangeStart >= 1) {
       if (throttleTimerRef.current != null) {
         window.clearTimeout(throttleTimerRef.current);
         throttleTimerRef.current = null;
       }
       pendingRef.current = null;
-      publish(nextRange);
+      publish(range);
       return;
     }
 
-    pendingRef.current = nextRange;
+    pendingRef.current = range;
     if (throttleTimerRef.current != null) return;
 
     throttleTimerRef.current = window.setTimeout(() => {
@@ -161,10 +165,7 @@ export default function VirtualList({
       if (last.start === pending.start && last.end === pending.end) return;
       publish(pending);
     }, RANGE_REPORT_MS);
-    // Depend on start/end numbers, not the range object. A new object each
-    // render would restart the timer forever.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- nextRange.start/end
-  }, [nextRange.start, nextRange.end, count, nearEndThreshold, nextRange]);
+  }, [nextRangeStart, nextRangeEnd, count, nearEndThreshold]);
 
   useEffect(() => {
     return () => {
@@ -175,6 +176,7 @@ export default function VirtualList({
   }, []);
 
   useEffect(() => {
+    void count;
     const el = parentRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
@@ -197,7 +199,7 @@ export default function VirtualList({
     lastScrollHeightRef.current = el.clientHeight;
     setLayoutTick((n) => n + 1);
     return () => ro.disconnect();
-  }, [virtualizer, columnResizing]);
+  }, [virtualizer, count, columnResizing]);
 
   if (count === 0 && empty) {
     return (

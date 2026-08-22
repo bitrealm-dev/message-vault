@@ -29,8 +29,10 @@ export default function VirtualizedImportIssuesTable({ issues }: { issues: Impor
   const viewportHeight = Math.min(issues.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
 
   useEffect(() => {
+    void expandedIndex;
+    void issues;
     virtualizer.measure();
-  }, [virtualizer]);
+  }, [expandedIndex, issues, virtualizer]);
 
   const toggleRow = (index: number) => {
     setExpandedIndex((current) => (current === index ? null : index));
