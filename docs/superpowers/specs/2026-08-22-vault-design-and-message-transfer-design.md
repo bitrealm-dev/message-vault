@@ -1,7 +1,7 @@
 # Vault Design, Message Transfer, and contributing placement
 
 **Date:** 2026-08-22  
-**Status:** Draft for review
+**Status:** Implemented
 
 ## Context
 

@@ -54,22 +54,51 @@ const userGuideItems = [
 const developerItems = [
   'vault/developer',
   'vault/developer/contributing',
+  'vault/developer/vault-design',
+  'vault/developer/message-transfer',
   'vault/developer/run-from-source',
   'vault/developer/docker-compose',
   {
     label: 'CLI tools',
     items: [
       'vault/developer/reference/cli',
-      'vault/developer/reference/cli/imessage-ir-exporter',
-      'vault/developer/reference/cli/sms-backup-restore-exporter',
-      'vault/developer/reference/cli/whatsapp-exporter',
-      'vault/developer/reference/cli/message-reexporter',
-      'vault/developer/reference/cli/vault-push',
-      'vault/developer/reference/cli/vault-pull',
-      'vault/developer/reference/cli/go-sms-pro-exporter',
-      'vault/developer/reference/cli/imazing-exporter',
-      'vault/developer/reference/cli/openextract-exporter',
-      'vault/developer/reference/cli/sms-backup-plus-exporter',
+      {
+        label: 'Supported',
+        items: [
+          'vault/developer/reference/cli/imessage-ir-exporter',
+          'vault/developer/reference/cli/sms-backup-restore-exporter',
+          'vault/developer/reference/cli/whatsapp-exporter',
+        ],
+      },
+      {
+        label: 'Rescue / experimental',
+        items: [
+          {
+            slug: 'vault/developer/reference/cli/go-sms-pro-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/imazing-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/openextract-exporter',
+            badge: limitedBadge,
+          },
+          {
+            slug: 'vault/developer/reference/cli/sms-backup-plus-exporter',
+            badge: limitedBadge,
+          },
+        ],
+      },
+      {
+        label: 'Vault JSONL',
+        items: [
+          'vault/developer/reference/cli/message-reexporter',
+          'vault/developer/reference/cli/vault-push',
+          'vault/developer/reference/cli/vault-pull',
+        ],
+      },
     ],
   },
   'vault/developer/reference/api',
