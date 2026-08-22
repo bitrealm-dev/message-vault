@@ -201,8 +201,7 @@ export async function awaitTauriJob(
             onProgress,
             onIssue,
             onFinished: (summary) => resolve(parseTauriJobResult(summary)),
-            onError: (err) =>
-              reject(new Error(err.user_message ?? err.detail)),
+            onError: (err) => reject(new Error(err.user_message ?? err.detail)),
           });
           await invokeFn();
         } catch (e: unknown) {

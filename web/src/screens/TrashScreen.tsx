@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
+import Button from "../components/Button";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { apiClient } from "../lib/api";
 import { formatLocaleDate } from "../lib/formatDate";
 import { useResource } from "../lib/useResource";
-import Button from "../components/Button";
-import ConfirmDialog from "../components/ConfirmDialog";
 
 interface TrashEntry {
   id: string;
@@ -27,10 +27,7 @@ export default function TrashScreen() {
     return res.trash;
   }, []);
 
-  const { data, loading, error, reload } = useResource(
-    TRASH_RESOURCE_KEY,
-    fetchTrash,
-  );
+  const { data, loading, error, reload } = useResource(TRASH_RESOURCE_KEY, fetchTrash);
 
   const entries = data ?? [];
 
@@ -59,8 +56,12 @@ export default function TrashScreen() {
       <div className="mb-6 flex items-center justify-between">
         <h2 className="m-0">Trash</h2>
         {entries.length > 0 && (
-          <Button variant="danger" disabled={deleting} onClick={() => setConfirmOpen(true)}
-            className="!px-3 !py-1.5 !text-[0.813rem]">
+          <Button
+            variant="danger"
+            disabled={deleting}
+            onClick={() => setConfirmOpen(true)}
+            className="!px-3 !py-1.5 !text-[0.813rem]"
+          >
             Empty trash
           </Button>
         )}
@@ -79,11 +80,15 @@ export default function TrashScreen() {
         <div className="text-[0.875rem] text-muted">Trash is empty.</div>
       ) : (
         entries.map((entry) => (
-          <div key={entry.id} className="flex items-center justify-between border-b border-border p-3">
+          <div
+            key={entry.id}
+            className="flex items-center justify-between border-b border-border p-3"
+          >
             <div>
               <div className="text-[0.875rem] font-medium">{entry.label}</div>
               <div className="text-[0.75rem] text-muted">
-                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted {formatLocaleDate(entry.deleted_at)}
+                {entry.message_count} message{entry.message_count !== 1 ? "s" : ""} · deleted{" "}
+                {formatLocaleDate(entry.deleted_at)}
               </div>
             </div>
             <Button onClick={() => restore(entry.id)} className="!px-3 !py-1 !text-[0.813rem]">

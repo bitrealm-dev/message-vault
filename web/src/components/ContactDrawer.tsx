@@ -1,22 +1,22 @@
-import { useState, useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { apiClient } from "../lib/api";
 import {
+  type CachedContactDetail,
   CONTACT_DETAIL_CHANGED_EVENT,
   fetchContactDetail,
   getCachedContactDetail,
   invalidateContactDetail,
-  type CachedContactDetail,
 } from "../lib/contactDetailCache";
 import Button from "./Button";
-import { PencilIcon } from "./icons";
 import { ContactDrawerHandles } from "./contactDrawer/ContactDrawerHandles";
 import {
-  type ContactPreview,
   type ContactBrowseKind,
+  type ContactPreview,
   emptyHandleRow,
 } from "./contactDrawer/contactDrawerTypes";
+import { PencilIcon } from "./icons";
 
-export type { ContactPreview, ContactBrowseKind };
+export type { ContactBrowseKind, ContactPreview };
 
 type ContactDetail = CachedContactDetail;
 
@@ -100,24 +100,16 @@ export default function ContactDrawer({
   const [nameValue, setNameValue] = useState("");
   const drawerLeft = useDrawerLeft(variant === "overlay" && !!contactId);
 
-  const detailMatches =
-    !!contactId && !!detail && String(detail.id) === String(contactId);
-  const previewMatches =
-    !!contactId && !!preview && String(preview.id) === String(contactId);
+  const detailMatches = !!contactId && !!detail && String(detail.id) === String(contactId);
+  const previewMatches = !!contactId && !!preview && String(preview.id) === String(contactId);
 
-  const displayName = detailMatches
-    ? detail!.name
-    : previewMatches
-      ? preview!.name
-      : "Loading…";
+  const displayName = detailMatches ? detail!.name : previewMatches ? preview!.name : "Loading…";
   const loading = !detailMatches;
 
   const loadDetail = () => {
     if (!contactId) return;
     invalidateContactDetail(contactId);
-    void fetchContactDetail(contactId, (path, opts) =>
-      apiClient.get<ContactDetail>(path, opts),
-    )
+    void fetchContactDetail(contactId, (path, opts) => apiClient.get<ContactDetail>(path, opts))
       .then((next) => {
         if (String(next.id) !== String(contactId)) return;
         setDetail(next);
@@ -168,8 +160,7 @@ export default function ContactDrawer({
       });
     };
     globalThis.addEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
-    return () =>
-      globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
+    return () => globalThis.removeEventListener(CONTACT_DETAIL_CHANGED_EVENT, onChange);
   }, [contactId]);
 
   useEffect(() => {
@@ -196,14 +187,9 @@ export default function ContactDrawer({
 
   const handleRows: ContactDetail["handles"] = detailMatches
     ? detail!.handles
-    : (previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ??
-      [];
+    : ((previewMatches ? preview!.handles : undefined)?.map((h) => emptyHandleRow(h)) ?? []);
 
-  const browse = (args: {
-    kind: ContactBrowseKind;
-    handle?: string;
-    service?: string;
-  }) => {
+  const browse = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => {
     if (!onBrowseConversations || !contactId) return;
     onBrowseConversations({
       contactId,
@@ -240,12 +226,7 @@ export default function ContactDrawer({
       : undefined;
 
   return (
-    <aside
-      role="dialog"
-      aria-label={displayName}
-      className={panelClass}
-      style={panelStyle}
-    >
+    <aside role="dialog" aria-label={displayName} className={panelClass} style={panelStyle}>
       <ContactDrawerHandles
         contactId={contactId}
         handleRows={handleRows}
@@ -277,9 +258,7 @@ export default function ContactDrawer({
             />
           ) : (
             <div className="flex min-w-0 items-center gap-2">
-              <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">
-                {displayName}
-              </h2>
+              <h2 className="m-0 min-w-0 truncate text-[1.125rem] font-semibold">{displayName}</h2>
               {detailMatches ? (
                 <Button
                   variant="ghost"
@@ -313,9 +292,7 @@ export default function ContactDrawer({
                     </span>
                   ))
                 ) : (
-                  <span className="py-0.5 text-[0.75rem] leading-4 text-muted">
-                    No groups
-                  </span>
+                  <span className="py-0.5 text-[0.75rem] leading-4 text-muted">No groups</span>
                 )}
               </div>
             </div>

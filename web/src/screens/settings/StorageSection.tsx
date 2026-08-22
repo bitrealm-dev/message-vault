@@ -1,7 +1,7 @@
 import ImportHistoryTable from "./storage/ImportHistoryTable";
 import StorageUsageCard from "./storage/StorageUsageCard";
-import TopAttachmentsTable from "./storage/TopAttachmentsTable";
 import { toImportSummaryView } from "./storage/storageUtils";
+import TopAttachmentsTable from "./storage/TopAttachmentsTable";
 import { useStorageData } from "./storage/useStorageData";
 
 export function StorageSection() {
@@ -49,11 +49,7 @@ export function StorageSection() {
         onCloseDetail={closeImportDetail}
       />
 
-      <TopAttachmentsTable
-        topAttachments={topAttachments}
-        page={page}
-        onPageChange={setPage}
-      />
+      <TopAttachmentsTable topAttachments={topAttachments} page={page} onPageChange={setPage} />
     </div>
   );
 }

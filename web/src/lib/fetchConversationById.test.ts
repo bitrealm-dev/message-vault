@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchConversationById } from "./fetchConversationById";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "./api";
+import { fetchConversationById } from "./fetchConversationById";
 import type { Conversation } from "./types";
 
 vi.mock("./api", () => ({

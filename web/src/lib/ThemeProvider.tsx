@@ -1,29 +1,29 @@
 import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
   applyTheme,
   DEFAULT_MODE,
   DEFAULT_SEEDS,
   formatThemeShare,
   parseThemeShare,
+  type ResolvedTheme,
   readStoredMode,
   readStoredSeeds,
   resolveMode,
   THEME_MODE_KEY,
   THEME_PRESETS,
   THEME_SEEDS_KEY,
-  type ResolvedTheme,
   type ThemeMode,
   type ThemePreset,
   type ThemeSeeds,
 } from "./theme";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
 
 export type UseThemeResult = {
   mode: ThemeMode;
@@ -126,9 +126,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return (
-    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 /** Current theme. Must be called under ThemeProvider. */

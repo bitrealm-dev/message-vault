@@ -20,9 +20,7 @@ export default function FormField({
     return (
       <div className="mb-[1.1rem]">
         <div className="flex items-baseline gap-3">
-          <label className="mb-1 block flex-1 text-[0.875rem] font-medium text-text">
-            {label}
-          </label>
+          <label className="mb-1 block flex-1 text-[0.875rem] font-medium text-text">{label}</label>
           {trailing}
         </div>
         {children}
@@ -32,9 +30,7 @@ export default function FormField({
 
   return (
     <div className="mb-3 flex items-center gap-3">
-      <label className="w-[140px] shrink-0 text-[0.875rem] font-medium text-text">
-        {label}
-      </label>
+      <label className="w-[140px] shrink-0 text-[0.875rem] font-medium text-text">{label}</label>
       <div className="flex-1">{children}</div>
     </div>
   );

@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api";
-import type {
-  ImportDetailResponse,
-  ImportRow,
-  TopAttachment,
-} from "./storageUtils";
+import type { ImportDetailResponse, ImportRow, TopAttachment } from "./storageUtils";
 
 export function useStorageData() {
   const [imports, setImports] = useState<ImportRow[]>([]);

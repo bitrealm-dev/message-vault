@@ -38,11 +38,7 @@ export default function TauriJobFormShell({
   intro,
 }: TauriJobFormShellProps) {
   if (requireTauri && !isTauri()) {
-    return (
-      <div className="max-w-[700px] p-6 text-muted">
-        Export requires the desktop app.
-      </div>
-    );
+    return <div className="max-w-[700px] p-6 text-muted">Export requires the desktop app.</div>;
   }
 
   const disabled = running || startDisabled;
@@ -55,12 +51,7 @@ export default function TauriJobFormShell({
       {children}
 
       <div className="mt-6 flex gap-3">
-        <Button
-          variant="primary"
-          onClick={onStart}
-          disabled={disabled}
-          className="!px-6 !py-2"
-        >
+        <Button variant="primary" onClick={onStart} disabled={disabled} className="!px-6 !py-2">
           {running ? (runningLabel ?? `${startLabel}…`) : startLabel}
         </Button>
         <Button onClick={onCancel} disabled={!running} className="!px-6 !py-2">

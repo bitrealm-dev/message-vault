@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { Message, MessageAttachment } from "../../lib/types";
-import { personDisplayLabel, readUseNameAliases } from "../../lib/nameAliases";
 import { highlightText } from "../../lib/highlightText";
+import { personDisplayLabel, readUseNameAliases } from "../../lib/nameAliases";
+import type { Message, MessageAttachment } from "../../lib/types";
 
 type BubblePalette = "imessage" | "sms";
 
@@ -25,10 +25,7 @@ export function formatMessageTime(timestamp: string, withYear = false): string {
 }
 
 /** Message text with search matches marked, or nothing when the body is empty. */
-export function bubbleBody(
-  body: string,
-  highlight: string | undefined,
-): ReactNode | undefined {
+export function bubbleBody(body: string, highlight: string | undefined): ReactNode | undefined {
   if (!body) return undefined;
   return highlight ? highlightText(body, highlight) : body;
 }
@@ -58,10 +55,7 @@ export function senderName(m: Message): string {
 }
 
 export function isGroupConversation(m: Message): boolean {
-  return (
-    m.conversation.conversation_type === "group" ||
-    m.conversation.participants.length > 1
-  );
+  return m.conversation.conversation_type === "group" || m.conversation.participants.length > 1;
 }
 
 /** Bubble fill/text color per palette (theme vars switch with data-theme). */
@@ -76,9 +70,7 @@ function bubbleColorClasses(palette: BubblePalette, mine: boolean): string {
 
 /** Sender-label color for the palette (same sent color as the bubble). */
 function senderColorClass(palette: BubblePalette): string {
-  return palette === "imessage"
-    ? "text-[var(--imessage-sent)]"
-    : "text-[var(--sms-sent)]";
+  return palette === "imessage" ? "text-[var(--imessage-sent)]" : "text-[var(--sms-sent)]";
 }
 
 /** Chat-row chrome: aligned bubble, optional sender label, timestamp under bubble. */
@@ -105,9 +97,7 @@ export function ChatBubbleRow({
   children?: ReactNode;
   footer?: ReactNode;
 }) {
-  const radius = mine
-    ? "rounded-[18px] rounded-br-[4px]"
-    : "rounded-[18px] rounded-bl-[4px]";
+  const radius = mine ? "rounded-[18px] rounded-br-[4px]" : "rounded-[18px] rounded-bl-[4px]";
   const hasBubble = children != null && children !== false && children !== "";
 
   return (
@@ -213,9 +203,7 @@ export function ServiceBubbleShell({
         >
           {senderName(message)}
         </span>
-        <span className={timeClassName}>
-          {formatMessageTime(message.timestamp)}
-        </span>
+        <span className={timeClassName}>{formatMessageTime(message.timestamp)}</span>
         {headerExtra}
       </div>
       {children}

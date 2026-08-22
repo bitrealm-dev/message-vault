@@ -1,13 +1,13 @@
-import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import { parseSelectKey } from "../../lib/selectKey";
-import type { CountFilterInput } from "./buildAdvancedQuery";
-import CountField from "./CountField";
+import Select, { ListBoxItem as SelectListBoxItem } from "../Select";
 import {
   compactSelectItemClassName,
   inputClass,
   labelClass,
   selectTriggerClass,
 } from "./advancedSearchStyles";
+import type { CountFilterInput } from "./buildAdvancedQuery";
+import CountField from "./CountField";
 
 export default function MessagesSearchFields({
   nameOrHandle,
@@ -59,16 +59,18 @@ export default function MessagesSearchFields({
           aria-label="Conversation type"
           triggerClassName={selectTriggerClass}
         >
-          <SelectListBoxItem id="all" className={compactSelectItemClassName}>All</SelectListBoxItem>
-          <SelectListBoxItem id="direct" className={compactSelectItemClassName}>Direct</SelectListBoxItem>
-          <SelectListBoxItem id="group" className={compactSelectItemClassName}>Group</SelectListBoxItem>
+          <SelectListBoxItem id="all" className={compactSelectItemClassName}>
+            All
+          </SelectListBoxItem>
+          <SelectListBoxItem id="direct" className={compactSelectItemClassName}>
+            Direct
+          </SelectListBoxItem>
+          <SelectListBoxItem id="group" className={compactSelectItemClassName}>
+            Group
+          </SelectListBoxItem>
         </Select>
       </div>
-      <CountField
-        label="Group participants"
-        value={participants}
-        onChange={onParticipantsChange}
-      />
+      <CountField label="Group participants" value={participants} onChange={onParticipantsChange} />
     </div>
   );
 }

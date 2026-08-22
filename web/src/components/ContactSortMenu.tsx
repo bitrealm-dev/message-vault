@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type {
-  ContactNameSort,
-  ContactNameSortState,
-  ContactSortOrder,
-} from "../lib/contactSort";
+import type { ContactNameSort, ContactNameSortState, ContactSortOrder } from "../lib/contactSort";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
 
@@ -56,9 +52,7 @@ export default function ContactSortMenu({
           data-mv-overlay=""
           className={`absolute top-full right-0 z-[100] mt-1 min-w-[10.5rem] rounded-xl border border-border bg-popover py-2 ${popupShadow}`}
         >
-          <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">
-            Sort By
-          </div>
+          <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">Sort By</div>
           {FIELDS.map((field) => (
             <SortOption
               key={field.id}
@@ -71,9 +65,7 @@ export default function ContactSortMenu({
             />
           ))}
           <div className="my-1.5 border-t border-border" />
-          <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">
-            Order
-          </div>
+          <div className="px-3 pb-1.5 text-[0.75rem] font-semibold text-text">Order</div>
           <SortOption
             label="Ascending"
             selected={order === "asc"}
@@ -113,9 +105,7 @@ function SortOption({
       onClick={onSelect}
       className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.813rem] text-text hover:bg-hover-strong"
     >
-      <span className="flex w-4 justify-center text-accent">
-        {selected ? <CheckIcon /> : null}
-      </span>
+      <span className="flex w-4 justify-center text-accent">{selected ? <CheckIcon /> : null}</span>
       {label}
     </button>
   );

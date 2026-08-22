@@ -1,39 +1,26 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
-  Table,
-  TableHeader,
-  TableBody,
+  Cell,
   Column,
   Row,
-  Cell,
   type SortDescriptor,
+  Table,
+  TableBody,
+  TableHeader,
 } from "react-aria-components";
 import type { CachedContactDetail, CachedContactHandle } from "../../lib/contactDetailCache";
 import Button from "../Button";
 import ConfirmDialog from "../ConfirmDialog";
-import DataCard, {
-  dataCardHeaderRowClass,
-} from "../DataCard";
+import DataCard, { dataCardHeaderRowClass } from "../DataCard";
 import AddIdentityDialog from "./AddIdentityDialog";
-import {
-  emptyHandleRow,
-  sumHandleTotals,
-  type ContactBrowseKind,
-} from "./contactDrawerTypes";
+import { type ContactBrowseKind, emptyHandleRow, sumHandleTotals } from "./contactDrawerTypes";
 import { renderHandleSummaryRow, renderHandleTableRow } from "./HandleTableRow";
 import { SortableColumn } from "./handleTableHelpers";
-import {
-  removeIdentityConfirmBody,
-  sortValue,
-} from "./handleTableLogic";
+import { removeIdentityConfirmBody, sortValue } from "./handleTableLogic";
 import { tdClass, thClass } from "./handleTableStyles";
 import { useHandleMutations } from "./useHandleMutations";
 
-type BrowseFn = (args: {
-  kind: ContactBrowseKind;
-  handle?: string;
-  service?: string;
-}) => void;
+type BrowseFn = (args: { kind: ContactBrowseKind; handle?: string; service?: string }) => void;
 
 export function ContactDrawerHandles({
   contactId,
@@ -147,9 +134,7 @@ export function ContactDrawerHandles({
         {handleRows.length === 0 ? (
           <TableBody className="[&_tr]:border-b [&_tr]:border-border">
             <Row id="handles-empty" className="outline-none">
-              <Cell className={`${tdClass} text-muted`}>
-                {loading ? "Loading…" : "No handles"}
-              </Cell>
+              <Cell className={`${tdClass} text-muted`}>{loading ? "Loading…" : "No handles"}</Cell>
               <Cell className={tdClass} />
               <Cell className={tdClass} />
               <Cell className={tdClass} />

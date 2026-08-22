@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import ModalShell from "./ModalShell";
 import Button from "./Button";
+import ModalShell from "./ModalShell";
 
 export default function DeleteAccountDialog({
   open,
@@ -26,8 +26,7 @@ export default function DeleteAccountDialog({
   }, [open]);
 
   const expected = username.trim();
-  const matches =
-    expected.length > 0 && typedUsername === expected && password.length > 0;
+  const matches = expected.length > 0 && typedUsername === expected && password.length > 0;
 
   return (
     <ModalShell
@@ -51,14 +50,13 @@ export default function DeleteAccountDialog({
       <h2 className="mb-2 pr-6 text-[1rem] font-semibold text-text">Delete your account?</h2>
 
       <p className="mt-3 text-[0.875rem] leading-relaxed text-muted">
-        This cannot be undone. Your messages, contacts, group chats, profile,
-        and attachments will be permanently deleted.
+        This cannot be undone. Your messages, contacts, group chats, profile, and attachments will
+        be permanently deleted.
       </p>
 
       <label className="mt-5 block">
         <span className="text-[0.875rem] text-text">
-          Type your user ID{" "}
-          {expected ? <strong>{expected}</strong> : null} to confirm.
+          Type your user ID {expected ? <strong>{expected}</strong> : null} to confirm.
         </span>
         <input
           type="text"

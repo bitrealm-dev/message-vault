@@ -1,22 +1,15 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { apiClient } from "../lib/api";
-import type { Conversation } from "../lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ConversationRow from "../components/ConversationRow";
-import { checksFromMembers } from "../lib/membershipChecks";
 import ListRangeHeader from "../components/ListRangeHeader";
-import TagsMenu from "../components/TagsMenu";
 import { useSetRightToolbar } from "../components/RightToolbarContext";
+import TagsMenu from "../components/TagsMenu";
 import VirtualList, { type VisibleRange } from "../components/VirtualList";
-import {
-  createThreadTag,
-  setConversationTagMembership,
-} from "../lib/threadTags";
+import { apiClient } from "../lib/api";
+import { checksFromMembers } from "../lib/membershipChecks";
+import { createThreadTag, setConversationTagMembership } from "../lib/threadTags";
+import type { Conversation } from "../lib/types";
+import { formatVisibleRange, type PagedFetchPage, usePagedList } from "../lib/usePagedList";
 import { useThreadTags } from "../lib/useThreadTags";
-import {
-  formatVisibleRange,
-  usePagedList,
-  type PagedFetchPage,
-} from "../lib/usePagedList";
 
 const QUERY_DEBOUNCE_MS = 300;
 
@@ -70,10 +63,9 @@ export default function ConversationList({
         limit: String(limit),
         offset: String(offset),
       });
-      const res = await apiClient.get<ConversationsPage>(
-        `/v1/export/conversations?${params}`,
-        { signal },
-      );
+      const res = await apiClient.get<ConversationsPage>(`/v1/export/conversations?${params}`, {
+        signal,
+      });
       return {
         items: res.conversations || [],
         total: res.total ?? 0,
@@ -94,15 +86,11 @@ export default function ConversationList({
   } = usePagedList(`${debouncedQ}#${membershipRev}`, fetchPage);
 
   const displayConversations = useMemo(
-    () =>
-      conversations.map((c) =>
-        tagOverrides[c.id] ? { ...c, tags: tagOverrides[c.id] } : c,
-      ),
+    () => conversations.map((c) => (tagOverrides[c.id] ? { ...c, tags: tagOverrides[c.id] } : c)),
     [conversations, tagOverrides],
   );
 
-  const selectedConversation =
-    displayConversations.find((c) => c.id === selectedId) ?? null;
+  const selectedConversation = displayConversations.find((c) => c.id === selectedId) ?? null;
   const targetConversations = useMemo(() => {
     if (checkedIds.size > 0) {
       return displayConversations.filter((c) => checkedIds.has(c.id));
@@ -118,28 +106,31 @@ export default function ConversationList({
     [allTags, targetConversations],
   );
 
-  const applyMembership = useCallback(async (name: string, enable: boolean) => {
-    const ids = targetConversations
-      .map((c) => Number(c.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
-    if (ids.length === 0) return;
-    await setConversationTagMembership(ids, name, enable);
-    setTagOverrides((prev) => {
-      const next = { ...prev };
-      for (const c of targetConversations) {
-        const current = next[c.id] ?? c.tags ?? [];
-        next[c.id] = enable
-          ? current.some((t) => t.toLowerCase() === name.toLowerCase())
-            ? current
-            : [...current, name]
-          : current.filter((t) => t.toLowerCase() !== name.toLowerCase());
+  const applyMembership = useCallback(
+    async (name: string, enable: boolean) => {
+      const ids = targetConversations
+        .map((c) => Number(c.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (ids.length === 0) return;
+      await setConversationTagMembership(ids, name, enable);
+      setTagOverrides((prev) => {
+        const next = { ...prev };
+        for (const c of targetConversations) {
+          const current = next[c.id] ?? c.tags ?? [];
+          next[c.id] = enable
+            ? current.some((t) => t.toLowerCase() === name.toLowerCase())
+              ? current
+              : [...current, name]
+            : current.filter((t) => t.toLowerCase() !== name.toLowerCase());
+        }
+        return next;
+      });
+      if (/\b(?:-?tag:|-?people:|within:|label:)/i.test(query)) {
+        setMembershipRev((n) => n + 1);
       }
-      return next;
-    });
-    if (/\b(?:-?tag:|-?people:|within:|label:)/i.test(query)) {
-      setMembershipRev((n) => n + 1);
-    }
-  }, [query, targetConversations]);
+    },
+    [query, targetConversations],
+  );
 
   useEffect(() => {
     setRightToolbar(
@@ -153,9 +144,7 @@ export default function ConversationList({
         }}
         onCreate={(name) => {
           void (async () => {
-            const existing = allTags.find(
-              (t) => t.toLowerCase() === name.toLowerCase(),
-            );
+            const existing = allTags.find((t) => t.toLowerCase() === name.toLowerCase());
             if (!existing) {
               await createThreadTag(name);
             }
@@ -179,27 +168,18 @@ export default function ConversationList({
   }, [allTags, applyMembership, setRightToolbar, tagChecks, targetConversations]);
 
   const selectAllChecked =
-    displayConversations.length > 0 &&
-    displayConversations.every((c) => checkedIds.has(c.id));
+    displayConversations.length > 0 && displayConversations.every((c) => checkedIds.has(c.id));
   const selectAllIndeterminate =
-    !selectAllChecked &&
-    displayConversations.some((c) => checkedIds.has(c.id));
+    !selectAllChecked && displayConversations.some((c) => checkedIds.has(c.id));
 
   const rangeLabel =
     loading && conversations.length === 0
       ? "Loading…"
-      : formatVisibleRange(
-          visibleRange.start,
-          visibleRange.end,
-          total,
-          conversations.length,
-        );
+      : formatVisibleRange(visibleRange.start, visibleRange.end, total, conversations.length);
 
   if (error && conversations.length === 0) {
     return (
-      <div className="p-4 text-[0.813rem] text-danger">
-        Could not load conversations: {error}
-      </div>
+      <div className="p-4 text-[0.813rem] text-danger">Could not load conversations: {error}</div>
     );
   }
 
@@ -212,9 +192,7 @@ export default function ConversationList({
         selectAllChecked={selectAllChecked}
         selectAllIndeterminate={selectAllIndeterminate}
         onSelectAllChange={(on) => {
-          setCheckedIds(
-            on ? new Set(displayConversations.map((c) => c.id)) : new Set(),
-          );
+          setCheckedIds(on ? new Set(displayConversations.map((c) => c.id)) : new Set());
         }}
         selectAllLabel="Select all conversations"
         selectAllDisabled={displayConversations.length === 0}
@@ -228,11 +206,7 @@ export default function ConversationList({
           if (hasMore) loadMore();
         }}
         empty={
-          !loading ? (
-            <div className="p-4 text-[0.813rem] text-muted">
-              No conversations
-            </div>
-          ) : null
+          !loading ? <div className="p-4 text-[0.813rem] text-muted">No conversations</div> : null
         }
         renderItem={(index) => {
           const c = displayConversations[index];

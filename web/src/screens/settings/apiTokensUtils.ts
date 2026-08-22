@@ -40,8 +40,7 @@ export type ApiTokenItem = {
   last_accessed_at?: string | null;
 };
 
-export const thClass =
-  "px-3 py-2 text-left text-[0.75rem] font-bold text-muted";
+export const thClass = "px-3 py-2 text-left text-[0.75rem] font-bold text-muted";
 export const tdClass = "px-3 py-2 text-[0.75rem] text-text align-middle";
 export const tdMuted = "px-3 py-2 text-[0.75rem] text-muted align-middle";
 export const iconBtnClass =

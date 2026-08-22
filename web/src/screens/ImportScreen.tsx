@@ -1,10 +1,6 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { getImporterPath, getRememberImporterPaths, setImporterPath } from "../lib/system-settings";
 import type { AttachmentMediaMode, ContactNameMode } from "../lib/types";
-import {
-  getRememberImporterPaths,
-  getImporterPath,
-  setImporterPath,
-} from "../lib/system-settings";
 import ImportFormFields from "./import/ImportFormFields";
 import ImportProgressView from "./import/ImportProgressView";
 import { useImportJob } from "./import/useImportJob";

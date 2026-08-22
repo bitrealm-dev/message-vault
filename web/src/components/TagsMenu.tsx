@@ -1,7 +1,7 @@
+import type { MembershipCheckState } from "../lib/membershipChecks";
+import { isReservedTagName, reservedTagError } from "../lib/threadTags";
 import GroupsMenu from "./GroupsMenu";
 import { TagIcon } from "./icons";
-import { isReservedTagName, reservedTagError } from "../lib/threadTags";
-import type { MembershipCheckState } from "../lib/membershipChecks";
 
 /** Assign or remove thread tags on the selected conversations. */
 export default function TagsMenu({

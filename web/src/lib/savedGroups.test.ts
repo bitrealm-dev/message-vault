@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   listGroups,
-  uniqueImportGroupName,
-  shouldSaveImportGroup,
-  saveImportSavedGroup,
   SAVED_GROUPS_CHANGED_EVENT,
+  saveImportSavedGroup,
+  shouldSaveImportGroup,
+  uniqueImportGroupName,
 } from "./savedGroups.ts";
 
 const mem = new Map<string, string>();

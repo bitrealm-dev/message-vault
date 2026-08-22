@@ -1,5 +1,4 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import AdvancedSearchForm from "./AdvancedSearchForm";
 import {
   clearContactRecentSearches,
   loadContactRecentSearches,
@@ -7,6 +6,7 @@ import {
 } from "../lib/contactRecentSearches";
 import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import { popupShadow } from "../lib/uiStyles";
+import AdvancedSearchForm from "./AdvancedSearchForm";
 
 function MagnifyingGlassIcon() {
   return (

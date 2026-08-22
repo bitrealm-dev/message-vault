@@ -1,6 +1,6 @@
-import type { MessageAttachment } from "../lib/types";
-import { missingAttachmentChipLabel } from "../lib/missingAttachmentLabel";
 import { useAssetObjectUrl } from "../hooks/useAssetObjectUrl";
+import { missingAttachmentChipLabel } from "../lib/missingAttachmentLabel";
+import type { MessageAttachment } from "../lib/types";
 
 export default function AttachmentThumbnail({
   attachment,

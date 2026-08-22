@@ -47,10 +47,7 @@ function formatCount(value: number | undefined): string {
   return value.toLocaleString();
 }
 
-function difference(
-  total: number | undefined,
-  accounted: number | undefined,
-): number | undefined {
+function difference(total: number | undefined, accounted: number | undefined): number | undefined {
   if (total == null || accounted == null) return undefined;
   return total - accounted;
 }
@@ -76,8 +73,7 @@ function historySteps(summary: ImportSummaryView): Step[] {
   if (summary.status === "failed") {
     uploadStatus = "error";
   } else if (running) {
-    uploadStatus =
-      summary.convertMs != null || summary.parseMs != null ? "active" : "pending";
+    uploadStatus = summary.convertMs != null || summary.parseMs != null ? "active" : "pending";
   }
 
   return [
@@ -154,9 +150,7 @@ export default function ImportSummaryPanel({
             <tbody>
               {messageRows.map((row) => (
                 <tr key={row.key} className="border-b border-border last:border-b-0">
-                  <td
-                    className={`px-3 py-2 text-text ${row.indent ? "pl-8 text-muted" : ""}`}
-                  >
+                  <td className={`px-3 py-2 text-text ${row.indent ? "pl-8 text-muted" : ""}`}>
                     {row.label}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-text">
@@ -174,8 +168,7 @@ export default function ImportSummaryPanel({
             {hasIssues ? (
               <>
                 <p className="mb-0 mt-1 text-[0.75rem] text-muted">
-                  Error messages show two lines. Click a row to expand or collapse the full
-                  message.
+                  Error messages show two lines. Click a row to expand or collapse the full message.
                 </p>
                 <VirtualizedImportIssuesTable issues={summary.issues} />
               </>
@@ -194,8 +187,7 @@ export default function ImportSummaryPanel({
 
       {attemptMismatch ? (
         <p className="mt-2 text-[0.813rem] text-danger">
-          Message accounting mismatch: attempted does not equal new uploaded + duplicate +
-          failed.
+          Message accounting mismatch: attempted does not equal new uploaded + duplicate + failed.
         </p>
       ) : null}
       {parseMismatch ? (

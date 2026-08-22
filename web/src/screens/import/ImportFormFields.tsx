@@ -1,19 +1,19 @@
-import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
+import Button from "../../components/Button";
+import PasswordField from "../../components/PasswordField";
+import PathPicker from "../../components/PathPicker";
+import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
 import { EXPORT_SOURCES } from "../../lib/exportSources";
 import { parseSelectKey } from "../../lib/selectKey";
-import PathPicker from "../../components/PathPicker";
-import PasswordField from "../../components/PasswordField";
-import Button from "../../components/Button";
-import Select, { ListBoxItem, selectItemClassName } from "../../components/Select";
+import type { AttachmentMediaMode, ContactNameMode } from "../../lib/types";
 import {
   ATTACHMENT_OPTIONS,
-  RESOLUTION_OPTIONS,
-  fieldStyle,
-  hintStyle,
-  sectionGap,
-  StackedField,
   CollapsibleSection,
   DateField,
+  fieldStyle,
+  hintStyle,
+  RESOLUTION_OPTIONS,
+  StackedField,
+  sectionGap,
 } from "./ImportFormUi";
 
 export type ImportFormFieldsProps = {
@@ -68,12 +68,8 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
 
   return (
     <>
-      <h1 className="m-0 mb-1 text-2xl font-bold">
-        Import Messages
-      </h1>
-      <p className="m-0 mb-5 text-[0.875rem] text-muted">
-        Select your messages.
-      </p>
+      <h1 className="m-0 mb-1 text-2xl font-bold">Import Messages</h1>
+      <p className="m-0 mb-5 text-[0.875rem] text-muted">Select your messages.</p>
 
       <CollapsibleSection
         title="Import Messages"
@@ -151,9 +147,7 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
                       </ListBoxItem>
                     ))}
                   </Select>
-                  <p className={hintStyle}>
-                    Maximum video resolution; videos are not upscaled.
-                  </p>
+                  <p className={hintStyle}>Maximum video resolution; videos are not upscaled.</p>
                 </StackedField>
                 <StackedField label="Max FPS">
                   <input
@@ -222,12 +216,16 @@ export default function ImportFormFields(props: ImportFormFieldsProps) {
               className={fieldStyle}
             />
             <p className={hintStyle}>
-              Only conversations with the specified participants are imported, including
-              group conversations.
+              Only conversations with the specified participants are imported, including group
+              conversations.
             </p>
           </StackedField>
           <div className="mb-[1.1rem] flex flex-wrap gap-3">
-            <DateField label="Start Date" value={props.startDate} onChange={props.onStartDateChange} />
+            <DateField
+              label="Start Date"
+              value={props.startDate}
+              onChange={props.onStartDateChange}
+            />
             <DateField
               label="End Date (exclusive)"
               value={props.endDate}

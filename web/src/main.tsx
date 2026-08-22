@@ -1,7 +1,7 @@
 import React from "react";
+import { I18nProvider } from "react-aria-components";
 import ReactDOM from "react-dom/client";
 import { HashRouter } from "react-router-dom";
-import { I18nProvider } from "react-aria-components";
 import App from "./App";
 import { initFfmpegToolsFromStorage } from "./lib/ffmpeg-tools";
 import "./theme.css";

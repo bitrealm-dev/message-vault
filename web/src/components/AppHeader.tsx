@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 import AdvancedSearchForm, { type AdvancedSearchMode } from "./AdvancedSearchForm";
 import AppAccountMenu from "./AppAccountMenu";
 import ContactSearch from "./ContactSearch";
 import GlobalSearch from "./GlobalSearch";
-import { shouldIgnoreOutsideDismiss } from "../lib/portaledOverlay";
 
 /** Full-width bar: app name on the left, search in the remaining space. */
 export default function AppHeader({
@@ -39,11 +39,7 @@ export default function AppHeader({
       <div className="flex min-w-0 flex-1 items-center justify-center px-3 py-2">
         <div className="w-full max-w-xl">
           {isContacts ? (
-            <ContactSearch
-              value={searchQuery}
-              onChange={onSearchChange}
-              onSubmit={onSearch}
-            />
+            <ContactSearch value={searchQuery} onChange={onSearchChange} onSubmit={onSearch} />
           ) : (
             <div ref={conversationsAdvancedRef} className="relative flex items-center gap-2">
               <div className="min-w-0 flex-1">

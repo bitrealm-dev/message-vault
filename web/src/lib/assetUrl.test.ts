@@ -1,11 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildAssetPath } from "./assetUrl.ts";
 
 describe("buildAssetPath", () => {
   it("includes sha and required source query", () => {
-    expect(buildAssetPath("abc123", "imessage")).toBe(
-      "/v1/assets/abc123?source=imessage",
-    );
+    expect(buildAssetPath("abc123", "imessage")).toBe("/v1/assets/abc123?source=imessage");
   });
 
   it("encodes special characters", () => {

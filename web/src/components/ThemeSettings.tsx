@@ -1,14 +1,9 @@
 import { useState } from "react";
-import {
-  Checkbox,
-  Radio,
-  RadioGroup,
-  ToggleButton,
-} from "react-aria-components";
-import { type ThemeSeeds } from "../lib/theme";
-import { useTheme } from "../lib/ThemeProvider";
-import { ColorRow, formatCompare } from "./theme/ThemeColorRow";
+import { Checkbox, Radio, RadioGroup, ToggleButton } from "react-aria-components";
 import { parseSelectKey } from "../lib/selectKey";
+import { useTheme } from "../lib/ThemeProvider";
+import { type ThemeSeeds } from "../lib/theme";
+import { ColorRow, formatCompare } from "./theme/ThemeColorRow";
 
 const SEED_FIELDS: {
   key: keyof ThemeSeeds;
@@ -25,8 +20,7 @@ const MODE_OPTIONS = [
   { value: "dark" as const, label: "Dark" },
 ];
 
-const sectionTitleClass =
-  "m-0 text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted";
+const sectionTitleClass = "m-0 text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted";
 
 const mutedTextClass = "mt-1 text-[0.813rem] text-muted";
 
@@ -107,19 +101,13 @@ export default function ThemeSettings() {
                 <div
                   className="flex h-20 items-end gap-1 px-3 pb-2"
                   style={{
-                    background:
-                      opt.value === "light"
-                        ? seeds.lightHeader
-                        : seeds.darkHeader,
+                    background: opt.value === "light" ? seeds.lightHeader : seeds.darkHeader,
                   }}
                 >
                   <span
                     className="h-6 flex-1 rounded-[2px]"
                     style={{
-                      background:
-                        opt.value === "light"
-                          ? seeds.lightAccent
-                          : seeds.darkAccent,
+                      background: opt.value === "light" ? seeds.lightAccent : seeds.darkAccent,
                     }}
                   />
                   <span className="h-6 w-10 rounded-[2px] bg-text opacity-80" />
@@ -135,9 +123,7 @@ export default function ThemeSettings() {
                   >
                     {isSelected ? <CheckIcon className="h-3 w-3" /> : null}
                   </span>
-                  <span className="text-[0.875rem] font-medium text-text">
-                    {opt.label}
-                  </span>
+                  <span className="text-[0.875rem] font-medium text-text">{opt.label}</span>
                 </div>
               </>
             )}
@@ -231,8 +217,7 @@ export default function ThemeSettings() {
         <div className={sectionTitleClass}>Tried and true</div>
         <div className="mt-3 flex flex-wrap gap-3">
           {presets.map((preset) => {
-            const active =
-              formatCompare(seeds) === formatCompare(preset.seeds);
+            const active = formatCompare(seeds) === formatCompare(preset.seeds);
             return (
               <ToggleButton
                 key={preset.id}

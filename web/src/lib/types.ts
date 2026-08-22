@@ -57,7 +57,7 @@ export interface MessageTapback {
 export interface Reaction {
   emoji: string;
   count: number;
-  users: string[];  // display names
+  users: string[]; // display names
 }
 
 export interface MessageRef {
@@ -95,15 +95,15 @@ export interface Message {
   tapbacks: MessageTapback[];
 
   // Extra fields that only some messaging apps send.
-  reactions?: Reaction[];        // iMessage tapbacks, Discord reactions
+  reactions?: Reaction[]; // iMessage tapbacks, Discord reactions
   reply_to_message?: MessageRef; // WhatsApp reply chains
-  embeds?: Embed[];              // Discord embeds
-  edit_history?: EditEntry[];    // iMessage edit history
-  deleted_indicator?: boolean;   // WhatsApp "this message was deleted"
-  effect?: string;               // iMessage screen effect
-  role_color?: string;           // Discord role color
-  is_story_reply?: boolean;      // Instagram story reply
-  forwarded?: boolean;           // Instagram forwarding indicator
+  embeds?: Embed[]; // Discord embeds
+  edit_history?: EditEntry[]; // iMessage edit history
+  deleted_indicator?: boolean; // WhatsApp "this message was deleted"
+  effect?: string; // iMessage screen effect
+  role_color?: string; // Discord role color
+  is_story_reply?: boolean; // Instagram story reply
+  forwarded?: boolean; // Instagram forwarding indicator
 }
 
 export type AttachmentMediaMode = "copy" | "convert" | "compress" | "skip";

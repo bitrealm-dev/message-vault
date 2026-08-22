@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { ImportIssue } from "./ImportSummaryPanel";
 
 /** Collapsed row: file + step + two lines of error text. */
@@ -13,11 +13,7 @@ function estimateExpandedHeight(reason: string): number {
   return Math.min(220, 20 + lines * 18);
 }
 
-export default function VirtualizedImportIssuesTable({
-  issues,
-}: {
-  issues: ImportIssue[];
-}) {
+export default function VirtualizedImportIssuesTable({ issues }: { issues: ImportIssue[] }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const virtualizer = useVirtualizer({
@@ -30,8 +26,7 @@ export default function VirtualizedImportIssuesTable({
     overscan: 6,
   });
   const virtualRows = virtualizer.getVirtualItems();
-  const viewportHeight =
-    Math.min(issues.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
+  const viewportHeight = Math.min(issues.length, MAX_VISIBLE_ROWS) * COLLAPSED_ROW_HEIGHT;
 
   useEffect(() => {
     virtualizer.measure();
@@ -74,10 +69,7 @@ export default function VirtualizedImportIssuesTable({
         className="overflow-x-hidden overflow-y-auto outline-none"
         style={{ height: viewportHeight }}
       >
-        <div
-          className="relative w-full min-w-0"
-          style={{ height: virtualizer.getTotalSize() }}
-        >
+        <div className="relative w-full min-w-0" style={{ height: virtualizer.getTotalSize() }}>
           {virtualRows.map((virtualRow) => {
             const issue = issues[virtualRow.index];
             const expanded = expandedIndex === virtualRow.index;

@@ -30,14 +30,8 @@ export function contactInitials(c: {
   displayName?: string;
 }): string {
   const preferred = (c.preferredName ?? c.displayName ?? "").trim();
-  const first =
-    firstLetter(c.firstName) ||
-    firstLetter(c.sortFirst) ||
-    firstLetter(preferred);
-  const last =
-    firstLetter(c.lastName) ||
-    firstLetter(c.sortLast) ||
-    "";
+  const first = firstLetter(c.firstName) || firstLetter(c.sortFirst) || firstLetter(preferred);
+  const last = firstLetter(c.lastName) || firstLetter(c.sortLast) || "";
 
   if (first && last && first !== last) return `${first}${last}`;
   if (first && last) return first;
@@ -99,9 +93,7 @@ export function contactAvatarColor(input: {
   const name =
     normalizeName(input.preferredName) ||
     normalizeName(input.displayName) ||
-    normalizeName(
-      [input.firstName, input.lastName].filter(Boolean).join(" "),
-    );
+    normalizeName([input.firstName, input.lastName].filter(Boolean).join(" "));
   const handle = normalizeHandle(input.preferredHandle);
   const seed = `${name}\0${handle}`;
   return AVATAR_COLORS[hashString(seed) % AVATAR_COLORS.length]!;

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, vi } from "vitest";
+
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import ListRangeHeader from "./ListRangeHeader";
 
 describe("ListRangeHeader", () => {
@@ -11,9 +12,7 @@ describe("ListRangeHeader", () => {
   });
 
   it("appends updating and loading suffixes", () => {
-    const { rerender } = render(
-      <ListRangeHeader rangeLabel="1–20 of 100" refreshing />,
-    );
+    const { rerender } = render(<ListRangeHeader rangeLabel="1–20 of 100" refreshing />);
     expect(screen.getByText(/updating…/)).toBeInTheDocument();
 
     rerender(<ListRangeHeader rangeLabel="1–20 of 100" filling />);

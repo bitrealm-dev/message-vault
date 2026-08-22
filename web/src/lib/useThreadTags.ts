@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "./auth";
-import { THREAD_TAGS_CHANGED_EVENT, fetchThreadTags } from "./threadTags";
+import { fetchThreadTags, THREAD_TAGS_CHANGED_EVENT } from "./threadTags";
 
 /** Live list of thread tags for the signed-in account. */
 export function useThreadTags(): {

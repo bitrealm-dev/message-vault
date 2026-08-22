@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { ChevronRightIcon, PlusIcon } from "./icons";
 import NavGlyphButton from "./NavGlyphButton";
 
@@ -66,11 +66,7 @@ export default function NavCollapsibleSection({
           />
           <span className="truncate">{title}</span>
         </button>
-        <NavGlyphButton
-          aria-label={addLabel}
-          disabled={addDisabled}
-          onClick={onAdd}
-        >
+        <NavGlyphButton aria-label={addLabel} disabled={addDisabled} onClick={onAdd}>
           <PlusIcon size={14} />
         </NavGlyphButton>
       </div>

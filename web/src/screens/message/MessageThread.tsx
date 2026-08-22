@@ -1,6 +1,6 @@
-import type { Message, MessageAttachment } from "../../lib/types";
-import MessageBubble from "../../components/MessageBubble";
 import Button from "../../components/Button";
+import MessageBubble from "../../components/MessageBubble";
+import type { Message, MessageAttachment } from "../../lib/types";
 import { PAGE_SIZE } from "./useConversationMessages";
 
 export default function MessageThread({

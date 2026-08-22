@@ -9,8 +9,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "biome format --write .",
-    "format:check": "biome format .",
+    "format": "biome check --write --linter-enabled=false .",
+    "format:check": "biome check --linter-enabled=false .",
     "test": "vitest run",
     "test:watch": "vitest"
   },

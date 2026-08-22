@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import Button from "../Button";
-import ModalShell from "../ModalShell";
-import Select, { ListBoxItem, selectItemClassName } from "../Select";
 import {
   CONTACT_IDENTITY_SERVICE_OPTIONS,
   CONTACT_IDENTITY_SERVICES,
-  handleServiceSelectValue,
   type ContactIdentityService,
+  handleServiceSelectValue,
 } from "../../lib/handleService";
 import { parseSelectKey } from "../../lib/selectKey";
+import Button from "../Button";
+import ModalShell from "../ModalShell";
+import Select, { ListBoxItem, selectItemClassName } from "../Select";
 
 const fieldLabelClass = "mb-1 block text-[0.813rem] font-medium text-text";
 const inputClass =

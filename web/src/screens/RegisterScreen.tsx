@@ -1,19 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../lib/auth";
-import { apiClient, setBaseUrl } from "../lib/api";
-import { useAsyncAction } from "../lib/useAsyncAction";
-import TextField from "../components/TextField";
-import PasswordField from "../components/PasswordField";
-import AuthSubmitButton from "../components/AuthSubmitButton";
 import AuthBackButton from "../components/AuthBackButton";
 import AuthErrorFooter from "../components/AuthErrorFooter";
-import {
-  authCard,
-  authLabel,
-  authTitle,
-  pageCenter,
-} from "../lib/uiStyles";
+import AuthSubmitButton from "../components/AuthSubmitButton";
+import PasswordField from "../components/PasswordField";
+import TextField from "../components/TextField";
+import { apiClient, setBaseUrl } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { authCard, authLabel, authTitle, pageCenter } from "../lib/uiStyles";
+import { useAsyncAction } from "../lib/useAsyncAction";
 
 export default function RegisterScreen() {
   const navigate = useNavigate();

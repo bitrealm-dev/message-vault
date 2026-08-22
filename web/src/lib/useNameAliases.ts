@@ -1,9 +1,5 @@
 import { useSyncExternalStore } from "react";
-import {
-  USE_NAME_ALIASES_KEY,
-  readUseNameAliases,
-  writeUseNameAliases,
-} from "./nameAliases";
+import { readUseNameAliases, USE_NAME_ALIASES_KEY, writeUseNameAliases } from "./nameAliases";
 
 const listeners = new Set<() => void>();
 
