@@ -16,7 +16,9 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, LogSink, OutputFormat, emit_log};
+use message_vault_io_core::{
+    CancelFlag, ExportReport, LogSink, OutputFormat, emit_log, prepare_outputs,
+};
 use phone::OwnerHandleSet;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -727,38 +729,21 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
     );
     vlog(verbose, log, format!("output: {}", output_dir.display()));
 
-    fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
-    // Resolve to absolute paths so relative inputs work and so the output/input
-    // overlap check uses the same path form. Cleaning the output before reading
-    // the input would otherwise delete leftover export CSVs/JSON inside a backup
-    // tree when output points at (or contains) an input root.
-    let output_dir = fs::canonicalize(output_dir)
-        .with_context(|| format!("resolve {}", output_dir.display()))?;
-    for input in inputs {
-        let input = input.as_ref();
-        let input =
-            fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-        if output_dir == input || input.starts_with(&output_dir) {
-            bail!(
-                "output {} must not be the same as, or contain, the input {}",
-                output_dir.display(),
-                input.display()
-            );
-        }
-    }
+    let input_paths: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
+    let (inputs, output_dir) = prepare_outputs(&input_paths, output_dir)?;
 
     let copy_attachments = transforms.copies_attachments();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
-    let input_roots: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
+    let input_roots = inputs.clone();
     let file_inputs: HashSet<PathBuf> = input_roots
         .iter()
         .filter(|p| p.is_file())
         .cloned()
         .collect();
 
-    let eml_paths = collect_eml_paths(inputs, cancel)?;
+    let eml_paths = collect_eml_paths(&inputs, cancel)?;
     let total = eml_paths.len() as u64;
     vlog(
         verbose,

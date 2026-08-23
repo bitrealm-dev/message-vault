@@ -2,7 +2,7 @@
 //! the chosen output format via [`FormatSink`].
 
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use chrono::DateTime;
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, stable_guid};
@@ -12,11 +12,10 @@ use message_ir::{
     PendingConversation, PendingMessage, SCHEMA_VERSION, owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::sanitize_number;
 use serde_json::{Map, json};
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "openextract";
@@ -61,26 +60,13 @@ pub(crate) fn convert_export(
         output_format,
         cancel,
     } = args;
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Resolve to absolute paths so relative inputs work and so the output/input
-    // overlap check uses the same path form. Cleaning the output before reading
-    // the input would otherwise delete source CSVs when both paths are the same
-    // (or the input file lives inside the output directory).
-    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-    let output =
-        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
-    if output == input || input.starts_with(&output) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output.display(),
-            input.display()
-        );
-    }
+    let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
+    let input = &inputs[0];
 
     let (mut sink, _attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
 
-    let files = discover_csv_files(&input)?;
+    let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     // Dedupe duplicate CSV rows: same chat + second + direction + text.

@@ -15,7 +15,7 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::OwnerHandleSet;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -738,22 +738,8 @@ pub(crate) fn convert_export(
         bail!("input is not a directory: {}", input_dir.display());
     }
 
-    fs::create_dir_all(output_dir)?;
-    // Resolve to absolute paths so relative inputs work and so the output/input
-    // overlap check uses the same path form. Cleaning the output before reading
-    // the input would otherwise delete the backup itself when both paths are
-    // the same.
-    let input_dir =
-        fs::canonicalize(input_dir).with_context(|| format!("resolve {}", input_dir.display()))?;
-    let output_dir = fs::canonicalize(output_dir)
-        .with_context(|| format!("resolve {}", output_dir.display()))?;
-    if output_dir == input_dir || input_dir.starts_with(&output_dir) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output_dir.display(),
-            input_dir.display()
-        );
-    }
+    let (inputs, output_dir) = prepare_outputs(&[input_dir.to_path_buf()], output_dir)?;
+    let input_dir = &inputs[0];
 
     let owners = OwnerHandleSet::from_phones(owner_phones)?;
     let owner_handle = guarded_phone(
@@ -770,7 +756,7 @@ pub(crate) fn convert_export(
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output_dir, output_format, transforms)?;
 
-    let mut xml_paths = message_vault_io_core::discover_files(&input_dir, &is_xml_file)?;
+    let mut xml_paths = message_vault_io_core::discover_files(input_dir, &is_xml_file)?;
     xml_paths.sort();
 
     for xml_path in xml_paths {
@@ -808,7 +794,7 @@ pub(crate) fn convert_export(
         }
     }
 
-    let mut pdu_paths = message_vault_io_core::discover_files(&input_dir, &is_pdu_file)?;
+    let mut pdu_paths = message_vault_io_core::discover_files(input_dir, &is_pdu_file)?;
     pdu_paths.sort();
 
     for pdu_path in pdu_paths {

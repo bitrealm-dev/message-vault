@@ -28,7 +28,7 @@ pub use exporters::{
 };
 pub use pipeline::{
     ExportReport, RunResult, discover_files, name_stem, parse_date_range, parse_date_range_tz,
-    print_result,
+    prepare_outputs, print_result,
 };
 pub use process::{
     CancelFlag, JobError, LogSink, ProcessControl, ProcessEvent, check_cancel, emit_log,

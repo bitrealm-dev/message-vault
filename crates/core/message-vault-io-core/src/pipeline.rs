@@ -1,9 +1,12 @@
 //! Helpers shared by exporter command-line tools and in-process runners.
 //!
-//! This module avoids `anyhow` so the desktop app stays lightweight. Callers
-//! map `String` errors at the edge when needed.
+//! This module keeps its dependency surface small (only `anyhow` for
+//! context-rich path errors) so the desktop app stays lightweight. Callers map
+//! `String` errors at the edge when needed.
 
+use anyhow::{Context, bail};
 use message_csv::DateRange;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Recursively walk `root`, collecting files that match `predicate`.
@@ -182,6 +185,38 @@ pub fn name_stem(value: &str) -> String {
     } else {
         raw
     }
+}
+
+/// Create and canonicalize the output directory, canonicalize every input,
+/// and bail when the output is the same as, or contains, an input.
+///
+/// Returns the canonicalized `(inputs, output)` paths.
+///
+/// # Errors
+///
+/// Returns an error when the output directory cannot be created, a path
+/// cannot be resolved, or the output overlaps an input.
+pub fn prepare_outputs(
+    inputs: &[std::path::PathBuf],
+    output: &std::path::Path,
+) -> anyhow::Result<(Vec<std::path::PathBuf>, std::path::PathBuf)> {
+    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
+    let output =
+        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
+    let mut resolved = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let input =
+            fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
+        if output == input || input.starts_with(&output) {
+            bail!(
+                "output {} must not be the same as, or contain, the input {}",
+                output.display(),
+                input.display()
+            );
+        }
+        resolved.push(input);
+    }
+    Ok((resolved, output))
 }
 
 #[cfg(test)]

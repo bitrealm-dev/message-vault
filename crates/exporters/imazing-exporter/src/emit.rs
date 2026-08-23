@@ -3,7 +3,7 @@
 
 use crate::attachments::{AttachmentIndex, ResolveAttachmentArgs, resolve_attachment_cell};
 use crate::parse::{RawRow, SourceKind, discover_csv_files, parse_csv_file};
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use chrono::{FixedOffset, Local, LocalResult, NaiveDateTime, TimeZone};
 use contacts::ContactsBook;
 use message_csv::{DateRange, format_local_ts, parse_utc_offset, stable_guid};
@@ -14,11 +14,10 @@ use message_ir::{
     owner_sender,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::sanitize_number;
 use serde_json::Map;
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
 use std::path::Path;
 
 const EXPORT_SOURCE: &str = "imazing";
@@ -89,26 +88,15 @@ pub(crate) fn convert_export(
         cancel,
     } = args;
     let tz = resolve_tz(timezone)?;
-    fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
-    // Resolve to absolute paths so relative inputs work, `parent()` below is
-    // absolute, and the output/input overlap check uses the same path form.
-    let input = fs::canonicalize(input).with_context(|| format!("resolve {}", input.display()))?;
-    let output =
-        fs::canonicalize(output).with_context(|| format!("resolve {}", output.display()))?;
-    if output == input || input.starts_with(&output) {
-        bail!(
-            "output {} must not be the same as, or contain, the input {}",
-            output.display(),
-            input.display()
-        );
-    }
+    let (inputs, output) = prepare_outputs(&[input.to_path_buf()], output)?;
+    let input = &inputs[0];
     let copy_attachments = transforms.copies_attachments();
     let (mut sink, attachments_dir) =
         FormatSink::open_prepared(&output, output_format, transforms)?;
     // Walk the input tree once; per-attachment lookups hit this index.
-    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(&input));
+    let attachment_index = copy_attachments.then(|| AttachmentIndex::build(input));
 
-    let files = discover_csv_files(&input)?;
+    let files = discover_csv_files(input)?;
     let mut report = ExportReport::default();
     let mut conversations: BTreeMap<String, PendingConversation> = BTreeMap::new();
     // Parse-time dedupe state keyed by conversation key (the shared
@@ -865,7 +853,7 @@ fn pending_to_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
 
