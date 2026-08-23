@@ -5,8 +5,10 @@
     "Avenir Next", "Segoe UI", "Helvetica Neue", ui-sans-serif, system-ui,
     sans-serif;
   --sl-font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
-  /* Default Starlight is 45rem; grow with the window so wide trees are not clipped. */
-  --sl-content-width: min(70rem, calc(100vw - 34rem));
+  /* Starlight's default is 45rem. Grow with the window on wide screens so
+     trees are not clipped, but never below the default — below 34rem of
+     viewport the calc goes negative and collapses the content column. */
+  --sl-content-width: max(45rem, min(70rem, calc(100vw - 34rem)));
 
   /* Landing: --mv-brand #14b8a6, --mv-bg #070b12, --mv-bg-deep #05080d */
   --sl-color-accent-low: #0f2f2c;
