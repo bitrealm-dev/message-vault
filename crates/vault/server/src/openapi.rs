@@ -123,13 +123,13 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::import::imports_get_handler))
         .routes(routes!(crate::import::imports_complete_handler))
         .routes(routes!(crate::import::import_handler))
-        .routes(routes!(crate::server::asset_head_handler))
-        .routes(routes!(crate::server::asset_get_handler))
-        .routes(routes!(crate::server::asset_put_handler))
-        .routes(routes!(crate::server::asset_upload_start_handler))
-        .routes(routes!(crate::server::asset_upload_part_handler))
-        .routes(routes!(crate::server::asset_upload_complete_handler))
-        .routes(routes!(crate::server::asset_upload_abort_handler))
+        .routes(routes!(crate::assets::asset_head_handler))
+        .routes(routes!(crate::assets::asset_get_handler))
+        .routes(routes!(crate::assets::asset_put_handler))
+        .routes(routes!(crate::assets::asset_upload_start_handler))
+        .routes(routes!(crate::assets::asset_upload_part_handler))
+        .routes(routes!(crate::assets::asset_upload_complete_handler))
+        .routes(routes!(crate::assets::asset_upload_abort_handler))
 }
 
 /// The full OpenAPI router: public auth endpoints for `auth` plus the
