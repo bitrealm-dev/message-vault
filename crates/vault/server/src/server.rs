@@ -2541,6 +2541,7 @@ mod tests {
                     asset_part_size: 1024 * 1024,
                     asset_hash_threshold_bytes: 1024 * 1024,
                     cors_origins: Vec::new(),
+                    openapi_ui: false,
                 }),
             }),
             db: Arc::new(StdMutex::new(conn)),

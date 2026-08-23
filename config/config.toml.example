@@ -35,3 +35,7 @@ bind = "127.0.0.1:8080"
 # API on 8080 — list those origins or Connect fails in the WebKit window.
 # Use ["*"] only for local debugging.
 # cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+# Serve an interactive OpenAPI explorer at /docs (and /openapi.json).
+# Default false. Calls from the explorer still need a Bearer token.
+# openapi_ui = false
