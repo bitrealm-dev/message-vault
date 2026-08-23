@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use rand::Rng;
+use rand::RngExt;
 use rand::seq::IndexedRandom;
 
 /// Demo owner phone number. Matches the value in `crates/vault/demo-seed/config/seed.toml`.
