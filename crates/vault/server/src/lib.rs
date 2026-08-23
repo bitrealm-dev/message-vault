@@ -21,6 +21,7 @@ pub mod import_media;
 pub mod jsonl;
 pub mod media_tools;
 pub mod models;
+pub(crate) mod named_membership;
 pub mod openapi;
 pub mod operation_lock;
 pub(crate) mod page_limits;
