@@ -3503,6 +3503,7 @@ dependencies = [
  "hex",
  "imessage-database",
  "mail",
+ "media",
  "message-csv",
  "message-ir",
  "message-ir-format",
