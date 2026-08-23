@@ -1,60 +1,59 @@
-use std::collections::HashMap;
+//! Import message-ir JSONL into the vault.
+//!
+//! The pipeline runs in three stages: `staging` parses JSONL files and writes
+//! staging rows, `promote` copies staging rows into the production tables, and
+//! `contact_name` links handles to vault contacts and merges display names.
+//! The HTTP handlers for `POST /v1/import` and the `/v1/imports` session
+//! routes live at the end of this module.
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use message_ir::{HandleService, HandleType};
-use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params, params_from_iter};
-use serde::Serialize;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
-use crate::assets::{self, AssetStats, StoredAsset};
+use axum::Json;
+use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
+use axum::http::HeaderMap;
+use tokio::sync::Mutex;
+
+use crate::assets::AssetStats;
 use crate::config::{PathsConfig, validate_source_id};
 use crate::db::contacts;
-use crate::db::handles::{infer_handle_type_from_shape as infer_handle_type, upsert_handle_row};
 use crate::db::schema;
-use crate::db::sql::{SQLITE_IN_CHUNK, pair_placeholders};
 use crate::db::vault_imports::{self, CompleteImportArgs};
-use crate::import_media::{self, MediaMode};
-use crate::jsonl;
-use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
+use crate::import_media::MediaMode;
 
+pub mod contact_name;
+pub mod promote;
+pub mod staging;
+
+pub use contact_name::ContactNameMode;
+pub use staging::is_orphaned_export;
+
+use staging::StagingInserts;
+
+use crate::dedupe;
+use crate::import::{self};
+use crate::server::{
+    ApiError, AppState, JoinBlocking, content_type_base, is_jsonl_content_type,
+    is_multipart_content_type, lock_conn, lock_import_conn, reject_if_guest_account,
+    require_import_access, resolve_auth, resolve_import_account, safe_rel_path,
+    stream_body_to_file, stream_field_to_file, with_locked_conn,
+};
+
+/// What happens to a source's messages that were imported before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMode {
+    /// Wipe the source's existing messages before importing.
     Replace,
+    /// Keep existing messages and add only new ones.
     Append,
-}
-
-/// How account contacts supply participant display names during import.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ContactNameMode {
-    /// Use the vault contact name only when the import name is empty.
-    #[default]
-    FillMissing,
-    /// Prefer the vault contact name whenever one exists for the handle.
-    Overwrite,
-    /// Keep the import display name unchanged (including empty / unknown).
-    AsIs,
-}
-
-impl ContactNameMode {
-    /// Parse `fill_missing`, `overwrite`, or `as_is` (including hyphenated spellings).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `s` is not one of those values.
-    pub fn parse(s: &str) -> Result<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "" | "fill_missing" | "fill-missing" => Ok(Self::FillMissing),
-            "overwrite" => Ok(Self::Overwrite),
-            "as_is" | "as-is" | "leave" | "keep_import" | "keep-import" => Ok(Self::AsIs),
-            other => bail!(
-                "invalid contact_name_mode '{other}' (expected fill_missing, overwrite, or as_is)"
-            ),
-        }
-    }
 }
 
 impl ImportMode {
@@ -71,6 +70,7 @@ impl ImportMode {
         }
     }
 
+    /// Canonical flag value (`replace` or `append`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Replace => "replace",
@@ -79,21 +79,22 @@ impl ImportMode {
     }
 }
 
+/// Full import settings: paths, mode, media handling, and contact naming.
 #[derive(Debug, Clone)]
 pub struct ImportOptions<'a> {
-    /// Used by [`import_jsonl_files`] (CLI/tests). Warm HTTP path opens its own connection.
-    #[allow(dead_code)]
-    pub db_path: &'a Path,
     /// Content-addressed asset store when [`Self::source_from_jsonl`] is false.
     pub assets_dir: &'a Path,
     /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
     /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
     /// Fixed source id (HTTP / `--source` override). Ignored when `source_from_jsonl`.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
     /// Fill missing `content_key` values during promote (needed before cross-source dedupe).
     pub fill_content_keys: bool,
@@ -103,6 +104,7 @@ pub struct ImportOptions<'a> {
     pub source_from_jsonl: bool,
     /// Required when `source_from_jsonl` to resolve per-source asset dirs.
     pub paths: Option<&'a PathsConfig>,
+    /// Attachment handling mode: copy, none, convert, compress.
     pub media: MediaMode,
     /// When `source_from_jsonl` + Replace: wipe these sources before import.
     pub wipe_sources: Option<Vec<String>>,
@@ -113,15 +115,23 @@ pub struct ImportOptions<'a> {
 /// Path/mode fields for [`ImportOptions::fixed`].
 #[derive(Debug, Clone, Copy)]
 pub struct FixedImportArgs<'a> {
-    pub db_path: &'a Path,
+    /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
+    /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
+    /// Fixed source id applied to every conversation.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
+    /// Fill missing `content_key` values during promote.
     pub fill_content_keys: bool,
+    /// Optional vault import session id (messages stamped on promote).
     pub import_id: Option<i64>,
 }
 
@@ -129,7 +139,6 @@ impl<'a> ImportOptions<'a> {
     /// HTTP / tests / reset-demo: fixed source + assets dir, copy media.
     pub fn fixed(args: FixedImportArgs<'a>) -> Self {
         Self {
-            db_path: args.db_path,
             assets_dir: args.assets_dir,
             asset_root: args.asset_root,
             contacts: args.contacts,
@@ -148,23 +157,40 @@ impl<'a> ImportOptions<'a> {
     }
 }
 
+/// Counters for one import run (staging and promote results).
 #[derive(Debug, Default, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportStats {
+    /// Conversations imported.
     pub conversations: u64,
+    /// Participant rows imported.
     pub participants: u64,
+    /// Messages imported.
     pub messages: u64,
+    /// Attachment records (message–media links) imported.
     pub attachments: u64,
+    /// Tapback reactions imported.
     pub tapbacks: u64,
+    /// JSONL files imported.
     pub files: u64,
+    /// Unique media files written to the asset store.
     pub assets_copied: u64,
+    /// Media files already present under the same fingerprint, skipped.
     pub assets_deduped: u64,
+    /// Attachment files referenced but not found on disk.
     pub assets_missing: u64,
+    /// Contacts loaded from the address book.
     pub contacts: u64,
+    /// Contact–handle links created.
     pub contact_handles: u64,
+    /// Contact–group links created.
     pub contact_group_links: u64,
+    /// True when the address book was not loaded (already present or no file).
     pub contacts_skipped: bool,
+    /// Messages hidden as duplicates within this import.
     pub messages_deduped: u64,
+    /// Messages added by an append-mode import.
     pub messages_appended: u64,
+    /// Import mode string (`replace` or `append`).
     pub mode: String,
     /// Flagged phone handles (ambiguous; review note set) inserted by this import.
     pub phones_needing_review: u64,
@@ -182,21 +208,24 @@ impl ImportStats {
     }
 }
 
-struct PreparedAttachment {
-    record: AttachmentRecord,
-    stored: Option<StoredAsset>,
-}
-
 /// Arguments for [`import_export`].
 #[derive(Debug, Clone, Copy)]
 pub struct ImportExportArgs<'a> {
+    /// Folder of `*.jsonl` conversation files to import.
     pub export_dir: &'a Path,
+    /// Database path.
     pub db_path: &'a Path,
+    /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
+    /// Fixed source id applied to every conversation.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
 }
 
@@ -234,7 +263,6 @@ pub fn import_export(args: &ImportExportArgs<'_>) -> Result<ImportStats> {
         &mut conn,
         &paths,
         &ImportOptions::fixed(FixedImportArgs {
-            db_path: args.db_path,
             assets_dir: args.assets_dir,
             asset_root: args.export_dir,
             contacts: args.contacts,
@@ -266,26 +294,28 @@ pub enum ImportSchemaMode {
     AssumeReady,
 }
 
-/// Import one or more JSON Lines files. Attachment relative paths resolve against `opts.asset_root`.
+/// Test helper: open a configured database and run one import.
 ///
-/// # Errors
-///
-/// Returns an error when options are invalid, the database cannot be opened, or
-/// import fails.
-#[allow(dead_code)] // CLI/tests; HTTP serve uses [`import_jsonl_files_on_conn`]
-pub fn import_jsonl_files(paths: &[PathBuf], opts: &ImportOptions<'_>) -> Result<ImportStats> {
+/// Production paths use [`import_jsonl_files_on_conn`] on their own
+/// connection (HTTP serve) or [`import_export`] (CLI directory import).
+#[cfg(test)]
+pub(crate) fn import_jsonl_files(
+    db_path: &Path,
+    paths: &[PathBuf],
+    opts: &ImportOptions<'_>,
+) -> Result<ImportStats> {
     validate_import_options(opts)?;
 
-    if let Some(parent) = opts.db_path.parent()
+    if let Some(parent) = db_path.parent()
         && !parent.as_os_str().is_empty()
     {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let mut conn = schema::open_configured(opts.db_path)
-        .with_context(|| format!("failed to open database {}", opts.db_path.display()))?;
-    println!("  sql:      opened {}", opts.db_path.display());
+    let mut conn = schema::open_configured(db_path)
+        .with_context(|| format!("failed to open database {}", db_path.display()))?;
+    println!("  sql:      opened {}", db_path.display());
     let _ = io::stdout().flush();
     import_jsonl_files_on_conn(&mut conn, paths, opts, ImportSchemaMode::Ensure)
 }
@@ -401,7 +431,7 @@ pub fn import_jsonl_files_on_conn(
     let mut stmts = StagingInserts::prepare(&tx, opts.account_id, opts.import_id)?;
 
     for (idx, path) in paths.iter().enumerate() {
-        let file_stats = import_file_to_staging(
+        let file_stats = staging::import_file_to_staging(
             &tx,
             &mut stmts,
             opts,
@@ -441,7 +471,7 @@ pub fn import_jsonl_files_on_conn(
         started.elapsed().as_secs_f64()
     );
     let _ = io::stdout().flush();
-    let promote_stats = promote_append(
+    let promote_stats = promote::promote_append(
         conn,
         opts.mode,
         opts.account_id,
@@ -476,1403 +506,703 @@ pub fn import_jsonl_files_on_conn(
     Ok(stats)
 }
 
-fn nonempty_rel(path: &Option<String>) -> Option<&str> {
-    let raw = path.as_deref()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-fn nonempty_str(value: Option<&str>) -> Option<&str> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-fn stored_size_bytes(assets_dir: &Path, assets_path: Option<&str>) -> Option<i64> {
-    let rel = assets_path?;
-    let meta = std::fs::metadata(assets_dir.join(rel)).ok()?;
-    Some(meta.len() as i64)
-}
-
-/// Convert/compress when requested; `None` means fall through to claimed-sha / path store.
-fn try_store_converted(
-    att: &mut AttachmentRecord,
-    export_dir: &Path,
-    assets_dir: &Path,
-    asset_stats: &mut AssetStats,
-    media: MediaMode,
-    media_work: &Path,
-) -> Result<Option<StoredAsset>> {
-    if !matches!(media, MediaMode::Convert | MediaMode::Compress) {
-        return Ok(None);
-    }
-    let Some(rel) = nonempty_rel(&att.path) else {
-        return Ok(None);
-    };
-    let source = crate::config::resolve_under_root(export_dir, rel)?;
-    if !source.is_file() {
-        return Ok(None);
-    }
-    let Some(resolved) =
-        import_media::resolve_for_store(&source, att.mime_type.as_deref(), media, media_work)?
-    else {
-        return Ok(None);
-    };
-    // Bytes may have changed; drop any claimed SHA-256 fingerprint from the export.
-    att.sha256 = None;
-    att.mime_type = resolved.mime_type.or(att.mime_type.take());
-    assets::hash_and_store(
-        &resolved.path,
-        assets_dir,
-        att.mime_type.as_deref(),
-        asset_stats,
-    )
-}
-
-fn store_claimed_or_path(
-    att: &AttachmentRecord,
-    export_dir: &Path,
-    assets_dir: &Path,
-    asset_stats: &mut AssetStats,
-) -> Result<Option<StoredAsset>> {
-    if let Some(sha) = nonempty_rel(&att.sha256) {
-        if let Some(found) = assets::lookup_by_sha256(assets_dir, sha) {
-            asset_stats.deduped += 1;
-            return Ok(Some(StoredAsset {
-                mime_type: att.mime_type.clone().or(found.mime_type),
-                ..found
-            }));
-        }
-        if let Some(rel) = nonempty_rel(&att.path) {
-            let source = crate::config::resolve_under_root(export_dir, rel)?;
-            return match assets::store_verified(
-                &source,
-                sha,
-                assets_dir,
-                att.mime_type.as_deref(),
-                false,
-                false,
-            ) {
-                Ok((stored, already)) => {
-                    if already {
-                        asset_stats.deduped += 1;
-                    } else {
-                        asset_stats.copied += 1;
-                    }
-                    Ok(Some(stored))
-                }
-                Err(_) if !source.is_file() => {
-                    asset_stats.missing += 1;
-                    Ok(None)
-                }
-                Err(e) => Err(e),
-            };
-        }
-        asset_stats.missing += 1;
-        return Ok(None);
-    }
-
-    if let Some(rel) = att.path.as_deref() {
-        let source = crate::config::resolve_under_root(export_dir, rel)?;
-        return assets::hash_and_store(&source, assets_dir, att.mime_type.as_deref(), asset_stats);
-    }
-    asset_stats.missing += 1;
-    Ok(None)
-}
-
-fn prepare_attachments(
-    export_dir: &Path,
-    assets_dir: &Path,
-    attachments: Vec<AttachmentRecord>,
-    asset_stats: &mut AssetStats,
-    media: MediaMode,
-    media_work: &Path,
-) -> Result<Vec<PreparedAttachment>> {
-    if media == MediaMode::None {
-        return Ok(Vec::new());
-    }
-
-    let mut prepared = Vec::with_capacity(attachments.len());
-    for mut att in attachments {
-        let stored = match try_store_converted(
-            &mut att,
-            export_dir,
-            assets_dir,
-            asset_stats,
-            media,
-            media_work,
-        )? {
-            Some(stored) => Some(stored),
-            None => store_claimed_or_path(&att, export_dir, assets_dir, asset_stats)?,
-        };
-        prepared.push(PreparedAttachment {
-            record: att,
-            stored,
-        });
-    }
-    Ok(prepared)
-}
-
-fn resolve_incoming_sender_handle(
-    tx: &Transaction<'_>,
-    account_id: &str,
-    is_from_me: bool,
-    sender: Option<&str>,
-    handle_type: Option<HandleType>,
-    platform: &str,
-    stats: &mut ImportStats,
-) -> Result<Option<i64>> {
-    if is_from_me {
-        return Ok(None);
-    }
-    let Some(sender) = nonempty_str(sender) else {
-        return Ok(None);
-    };
-    let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(sender));
-    let (handle_id, flagged) =
-        upsert_handle_row(tx, account_id, sender, handle_type, Some(platform))?;
-    if flagged {
-        stats.phones_needing_review += 1;
-    }
-    let _ = ensure_sibling_contact_link(tx, account_id, handle_id)?;
-    Ok(Some(handle_id))
-}
-
-/// If this handle has no contact but a sibling handle (same normalized + type,
-/// different platform service) is already linked, attach this handle to that contact.
-fn ensure_sibling_contact_link(
-    conn: &Connection,
-    account_id: &str,
-    handle_id: i64,
-) -> Result<Option<i64>> {
-    if let Some(existing) = contacts::contact_id_for_handle(conn, account_id, handle_id)? {
-        return Ok(Some(existing));
-    }
-    let sibling_contact: Option<i64> = conn
-        .query_row(
-            "SELECT ch.contact_id
-             FROM handles h
-             JOIN handles h2
-               ON h2.account_id = h.account_id
-              AND h2.normalized = h.normalized
-              AND h2.handle_type = h.handle_type
-              AND h2.id != h.id
-             JOIN contact_handles ch
-               ON ch.account_id = h.account_id AND ch.handle_id = h2.id
-             WHERE h.id = ?1 AND h.account_id = ?2
-             LIMIT 1",
-            params![handle_id, account_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(contact_id) = sibling_contact else {
-        return Ok(None);
-    };
-    let inserted = conn.execute(
-        "INSERT OR IGNORE INTO contact_handles (account_id, handle_id, contact_id)
-         VALUES (?1, ?2, ?3)",
-        params![account_id, handle_id, contact_id],
-    )?;
-    if inserted > 0 {
-        crate::db::contacts::touch_contact(conn, account_id, contact_id)?;
-    }
-    Ok(Some(contact_id))
-}
-
-/// First-wins seed of `contact_handles.name_alias` from an import display name.
-/// Only fills when the linked row exists and `name_alias` is empty.
-fn seed_contact_handle_alias(
-    conn: &Connection,
-    account_id: &str,
-    handle_id: i64,
-    import_display: Option<&str>,
-) -> Result<()> {
-    let Some(alias) = nonempty_str(import_display) else {
-        return Ok(());
-    };
-    conn.execute(
-        "UPDATE contact_handles
-         SET name_alias = ?1
-         WHERE account_id = ?2
-           AND handle_id = ?3
-           AND (name_alias IS NULL OR trim(name_alias) = '')",
-        params![alias, account_id, handle_id],
-    )?;
-    Ok(())
-}
-
-fn contact_preferred_name(
-    conn: &Connection,
-    account_id: &str,
-    contact_id: i64,
-) -> Result<Option<String>> {
-    let name: Option<String> = conn
-        .query_row(
-            "SELECT preferred_name FROM contacts WHERE account_id = ?1 AND id = ?2",
-            params![account_id, contact_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    Ok(trim_nonempty(name))
-}
-
-fn trim_nonempty(value: Option<String>) -> Option<String> {
-    let raw = value?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-/// Merge an import display name with a vault contact name per [`ContactNameMode`].
-pub fn apply_contact_name_mode(
-    mode: ContactNameMode,
-    import_name: Option<String>,
-    vault_name: Option<String>,
-) -> Option<String> {
-    let import_empty = match import_name.as_deref() {
-        Some(s) => s.trim().is_empty(),
-        None => true,
-    };
-    match mode {
-        ContactNameMode::FillMissing => {
-            if import_empty {
-                vault_name.or(import_name)
-            } else {
-                import_name
-            }
-        }
-        ContactNameMode::Overwrite => vault_name.or(import_name),
-        ContactNameMode::AsIs => import_name,
-    }
-}
-
-struct StagingInserts<'conn> {
-    account_id: String,
+#[derive(Debug, Deserialize)]
+pub(crate) struct ImportQuery {
+    source: String,
+    /// Username or UUID. Optional; when set must match the Bearer token's account.
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default = "default_import_mode")]
+    mode: String,
+    /// Run cross-source soft-dedupe after import.
+    #[serde(default)]
+    dedupe: bool,
+    /// Optional vault import session id from POST /v1/imports.
+    #[serde(default)]
     import_id: Option<i64>,
-    conv: Statement<'conn>,
-    part: Statement<'conn>,
-    msg: Statement<'conn>,
-    att: Statement<'conn>,
-    tap: Statement<'conn>,
+    /// How vault contacts supply participant names (`fill_missing`, `overwrite`, or `as_is`).
+    #[serde(default = "default_contact_name_mode")]
+    contact_name_mode: String,
 }
 
-impl<'conn> StagingInserts<'conn> {
-    fn prepare(
-        tx: &'conn Transaction<'_>,
-        account_id: &str,
-        import_id: Option<i64>,
-    ) -> Result<Self> {
-        Ok(Self {
-            account_id: account_id.to_string(),
-            import_id,
-            conv: tx.prepare(
-                r#"
-                INSERT INTO staging_conversations (
-                    account_id, chat_handle_id, conversation_type, group_title, exported_at, source_file
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
-            )?,
-            part: tx.prepare(
-                r#"
-                INSERT INTO staging_participants (conversation_id, handle_id, contact_id, name_alias)
-                VALUES (?1, ?2, ?3, ?4)
-                "#,
-            )?,
-            msg: tx.prepare(
-                r#"
-                INSERT OR IGNORE INTO staging_messages (
-                    conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                    sender_handle_id, service, subject, body, is_announcement, is_reply,
-                    thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
-                )
-                "#,
-            )?,
-            att: tx.prepare(
-                r#"
-                INSERT INTO staging_attachments (
-                    message_id, path, original_name, mime_type, is_sticker, transcription,
-                    sha256, assets_path, size_bytes, missing_reason
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                "#,
-            )?,
-            tap: tx.prepare(
-                r#"
-                INSERT INTO staging_tapbacks (
-                    message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
-            )?,
-        })
-    }
+fn default_contact_name_mode() -> String {
+    "fill_missing".to_string()
 }
 
-/// chat_identifier, platform_service, conversation_type, group_title, exported_at, participants, source
-/// Participants are (handle, name_alias, handle_type).
-/// `platform_service` is `phone` | `whatsapp` for handle rows.
-type ConversationHeader = (
-    String,
-    Option<String>,
-    String,
-    Option<String>,
-    Option<String>,
-    Vec<(String, Option<String>, Option<HandleType>)>,
-    String,
-);
-
-fn resolve_conversation_source(
-    opts: &ImportOptions<'_>,
-    path: &Path,
-    chat_identifier: &str,
-    export_source: Option<&str>,
-) -> Result<String> {
-    if opts.source_from_jsonl {
-        let Some(source) = nonempty_str(export_source) else {
-            bail!(
-                "{}: conversation '{}' is missing export.source \
-                 (required for CLI directory import)",
-                path.display(),
-                chat_identifier
-            );
-        };
-        validate_source_id(source)?;
-        Ok(source.to_string())
-    } else {
-        Ok(opts.source.to_string())
-    }
+fn default_import_mode() -> String {
+    "append".to_string()
 }
 
-fn assets_dir_for_source(opts: &ImportOptions<'_>, source: &str) -> Result<PathBuf> {
-    if opts.source_from_jsonl {
-        let paths = opts
-            .paths
-            .ok_or_else(|| anyhow::anyhow!("source_from_jsonl requires config paths"))?;
-        let dir = paths.assets_dir_for_account(opts.account_id, source);
-        fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-        Ok(dir)
-    } else {
-        Ok(opts.assets_dir.to_path_buf())
-    }
+/// Import result: stats plus optional dedupe counts.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportResponse {
+    ok: bool,
+    source: String,
+    account: String,
+    #[serde(flatten)]
+    stats: ImportStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dedupe: Option<DedupeResponse>,
 }
 
-/// Messages with no conversation of their own live in `orphaned.jsonl`
-/// (older bundles used `orphaned.json`), so they may omit a conversation header.
-pub fn is_orphaned_export(path: &Path) -> bool {
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    stem.eq_ignore_ascii_case("orphaned")
+/// Cross-source dedupe outcome.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct DedupeResponse {
+    keys_filled: u64,
+    exact_groups: u64,
+    exact_flagged: u64,
+    near_flagged: u64,
 }
 
-fn import_file_to_staging<'conn>(
-    tx: &Transaction<'conn>,
-    stmts: &mut StagingInserts<'conn>,
-    opts: &ImportOptions<'_>,
-    path: &Path,
-    asset_stats: &mut AssetStats,
-    media_work: &Path,
-) -> Result<ImportStats> {
-    let source_file = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => name.to_string(),
-        None => "unknown.jsonl".to_string(),
-    };
-    let is_orphaned = is_orphaned_export(path);
+/// Source, mode, tool, and optional account for a new import session.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateImportBody {
+    pub(crate) source: String,
+    #[serde(default = "default_import_mode")]
+    pub(crate) mode: String,
+    #[serde(default)]
+    pub(crate) tool: Option<String>,
+    #[serde(default)]
+    pub(crate) account: Option<String>,
+}
 
-    let records = jsonl::read_records(path)?;
-    let mut stats = ImportStats::default();
-    let mut pending: Option<ConversationHeader> = None;
-    let mut messages: Vec<MessageRecord> = Vec::new();
+/// The new import session id.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CreateImportResponse {
+    ok: bool,
+    id: i64,
+}
 
-    for record in records {
-        match record {
-            ExportRecord::Conversation(c) => {
-                if let Some(header) = pending.take() {
-                    stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-                        tx,
-                        stmts,
-                        opts,
-                        source_file: &source_file,
-                        conversation: header,
-                        messages: std::mem::take(&mut messages),
-                        asset_stats,
-                        media_work,
-                    })?);
-                }
-                let source = resolve_conversation_source(
-                    opts,
-                    path,
-                    &c.chat_identifier,
-                    c.export_source.as_deref(),
-                )?;
-                pending = Some((
-                    c.chat_identifier,
-                    c.service,
-                    c.conversation_type,
-                    c.group_title,
-                    c.exported_at,
-                    c.participants
-                        .into_iter()
-                        .map(|p| (p.handle, p.name_alias, p.handle_type))
-                        .collect(),
-                    source,
-                ));
-            }
-            ExportRecord::Message(m) => {
-                if pending.is_none() && !is_orphaned {
-                    bail!(
-                        "{} is missing a conversation header (expected before messages)",
-                        path.display()
-                    );
-                }
-                messages.push(m);
+/// Final stats and issues for a finished import session.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportBody {
+    #[serde(default = "default_true")]
+    pub(crate) ok: bool,
+    #[serde(default)]
+    pub(crate) message_count: Option<i64>,
+    #[serde(default)]
+    pub(crate) attachment_count: Option<i64>,
+    #[serde(default)]
+    pub(crate) bytes_uploaded: Option<i64>,
+    #[serde(default)]
+    pub(crate) duration_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) parse_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) convert_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) upload_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) summary: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) issues: Vec<CompleteImportIssueBody>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// One parse/convert/upload issue from the import.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportIssueBody {
+    pub(crate) kind: String,
+    pub(crate) step: String,
+    pub(crate) item: String,
+    pub(crate) reason: String,
+}
+
+fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result<(), ApiError> {
+    for issue in issues {
+        match issue.kind.as_str() {
+            "error" | "skip" => {}
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "invalid import issue kind '{other}'; expected 'error' or 'skip'"
+                )));
             }
         }
     }
-
-    if let Some(header) = pending.take() {
-        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-            tx,
-            stmts,
-            opts,
-            source_file: &source_file,
-            conversation: header,
-            messages,
-            asset_stats,
-            media_work,
-        })?);
-    } else if is_orphaned {
-        if opts.source_from_jsonl {
-            bail!(
-                "{}: orphaned.jsonl without a conversation header cannot supply export.source",
-                path.display()
-            );
-        }
-        stats.merge_file(&import_conversation_to_staging(ImportConversationArgs {
-            tx,
-            stmts,
-            opts,
-            source_file: &source_file,
-            conversation: (
-                "orphaned".to_string(),
-                None,
-                "orphaned".to_string(),
-                None,
-                None,
-                Vec::new(),
-                opts.source.to_string(),
-            ),
-            messages,
-            asset_stats,
-            media_work,
-        })?);
-    } else if messages.is_empty() {
-        bail!(
-            "{} has no conversation header and no messages",
-            path.display()
-        );
-    } else {
-        bail!(
-            "{} is missing a conversation header (expected first record)",
-            path.display()
-        );
-    }
-
-    Ok(stats)
-}
-
-struct ImportConversationArgs<'a, 'conn> {
-    tx: &'a Transaction<'conn>,
-    stmts: &'a mut StagingInserts<'conn>,
-    opts: &'a ImportOptions<'a>,
-    source_file: &'a str,
-    conversation: ConversationHeader,
-    messages: Vec<MessageRecord>,
-    asset_stats: &'a mut AssetStats,
-    media_work: &'a Path,
-}
-
-fn import_conversation_to_staging(args: ImportConversationArgs<'_, '_>) -> Result<ImportStats> {
-    let ImportConversationArgs {
-        tx,
-        stmts,
-        opts,
-        source_file,
-        conversation,
-        messages,
-        asset_stats,
-        media_work,
-    } = args;
-    let (
-        chat_identifier,
-        platform_service,
-        conversation_type,
-        group_title,
-        exported_at,
-        participants,
-        source,
-    ) = conversation;
-
-    let assets_dir = assets_dir_for_source(opts, &source)?;
-    let mut stats = ImportStats::default();
-    let kept_participants = participants;
-
-    // Platform for chat/participant handles: conversation hint, else export source.
-    let platform = platform_service
-        .as_deref()
-        .map(HandleService::parse)
-        .unwrap_or_else(|| {
-            if source.eq_ignore_ascii_case("whatsapp") {
-                HandleService::Whatsapp
-            } else {
-                HandleService::Phone
-            }
-        });
-    let platform_str = platform.as_str();
-
-    let mut prepared_messages = Vec::with_capacity(messages.len());
-    for mut msg in messages {
-        let attachments = prepare_attachments(
-            opts.asset_root,
-            &assets_dir,
-            std::mem::take(&mut msg.attachments),
-            asset_stats,
-            opts.media,
-            media_work,
-        )?;
-        prepared_messages.push((msg, attachments));
-    }
-
-    // Conversation identity: the chat handle, typed from its shape (Phone for
-    // SMS/iMessage/WhatsApp numbers, Email for `@`, Other for group ids).
-    let (chat_handle_id, flagged) = upsert_handle_row(
-        tx,
-        &stmts.account_id,
-        &chat_identifier,
-        infer_handle_type(&chat_identifier),
-        Some(platform_str),
-    )?;
-    if flagged {
-        stats.phones_needing_review += 1;
-    }
-    let _ = ensure_sibling_contact_link(tx, &stmts.account_id, chat_handle_id)?;
-
-    stmts.conv.execute(params![
-        stmts.account_id,
-        chat_handle_id,
-        conversation_type,
-        group_title,
-        exported_at,
-        source_file,
-    ])?;
-    let conversation_id = tx.last_insert_rowid();
-    stats.conversations = 1;
-
-    for (handle, name_alias, handle_type) in kept_participants {
-        // Prefer the source-provided type; fall back to shape inference.
-        let handle_type = handle_type.unwrap_or_else(|| infer_handle_type(&handle));
-        let (handle_id, flagged) = upsert_handle_row(
-            tx,
-            &stmts.account_id,
-            &handle,
-            handle_type,
-            Some(platform_str),
-        )?;
-        if flagged {
-            stats.phones_needing_review += 1;
-        }
-        let contact_id = ensure_sibling_contact_link(tx, &stmts.account_id, handle_id)?;
-        // Seed contact identity alias from the import display name (first wins).
-        seed_contact_handle_alias(tx, &stmts.account_id, handle_id, name_alias.as_deref())?;
-        let vault_name = match contact_id {
-            Some(id) => contact_preferred_name(tx, &stmts.account_id, id)?,
-            None => None,
-        };
-        let name_alias = apply_contact_name_mode(opts.contact_name_mode, name_alias, vault_name);
-        stmts
-            .part
-            .execute(params![conversation_id, handle_id, contact_id, name_alias])?;
-        stats.participants += 1;
-    }
-
-    for (sort_order, (msg, attachments)) in prepared_messages.into_iter().enumerate() {
-        let body = if msg.is_announcement {
-            clean_body(msg.announcement.as_deref()).or_else(|| clean_body(msg.text.as_deref()))
-        } else {
-            clean_body(msg.text.as_deref())
-        };
-
-        // Sender identity: platform from message transport (whatsapp vs phone).
-        let sender_platform = msg
-            .service
-            .as_deref()
-            .map(HandleService::parse)
-            .unwrap_or(platform);
-        let sender_handle_id = resolve_incoming_sender_handle(
-            tx,
-            &stmts.account_id,
-            msg.is_from_me,
-            msg.sender.as_deref(),
-            msg.sender_handle_type,
-            sender_platform.as_str(),
-            &mut stats,
-        )?;
-
-        let inserted = stmts.msg.execute(params![
-            conversation_id,
-            &stmts.account_id,
-            source,
-            msg.guid,
-            msg.timestamp,
-            msg.timestamp_utc,
-            msg.is_from_me as i64,
-            sender_handle_id,
-            msg.service,
-            msg.subject,
-            body,
-            msg.is_announcement as i64,
-            msg.is_reply as i64,
-            msg.thread_originator_guid,
-            msg.thread_originator_part,
-            msg.num_replies,
-            sort_order as i64,
-            stmts.import_id,
-        ])?;
-
-        if inserted == 0 {
-            stats.messages_deduped += 1;
-            continue;
-        }
-
-        let message_id = tx.last_insert_rowid();
-        stats.messages += 1;
-
-        for prepared in attachments {
-            let att = prepared.record;
-            let (sha256, assets_path, mime_type) = match prepared.stored {
-                Some(stored) => (
-                    Some(stored.sha256),
-                    Some(stored.assets_path),
-                    stored.mime_type.or(att.mime_type),
-                ),
-                None => (None, None, att.mime_type),
-            };
-
-            let size_bytes = stored_size_bytes(&assets_dir, assets_path.as_deref())
-                .or_else(|| att.size_bytes.map(|n| n as i64));
-
-            // Bytes absent and reason set: keep metadata-only placeholder rows.
-            let missing_reason = if sha256.is_none() {
-                att.missing_reason
-            } else {
-                None
-            };
-
-            stmts.att.execute(params![
-                message_id,
-                att.path,
-                att.original_name,
-                mime_type,
-                att.is_sticker as i64,
-                att.transcription,
-                sha256,
-                assets_path,
-                size_bytes,
-                missing_reason,
-            ])?;
-            stats.attachments += 1;
-        }
-
-        for tap in msg.tapbacks {
-            // Tapback sender: resolved to a handle row (NULL for own tapbacks,
-            // matching the message `sender_handle_id` convention).
-            let sender_handle_id = resolve_incoming_sender_handle(
-                tx,
-                &stmts.account_id,
-                tap.is_from_me,
-                tap.sender.as_deref(),
-                None,
-                sender_platform.as_str(),
-                &mut stats,
-            )?;
-            stmts.tap.execute(params![
-                message_id,
-                tap.part_index,
-                tap.kind,
-                tap.emoji,
-                tap.is_from_me as i64,
-                sender_handle_id,
-            ])?;
-            stats.tapbacks += 1;
-        }
-    }
-
-    Ok(stats)
-}
-
-#[derive(Debug, Default)]
-struct PromoteStats {
-    conversations: u64,
-    participants: u64,
-    messages: u64,
-    attachments: u64,
-    tapbacks: u64,
-    messages_deduped: u64,
-    messages_appended: u64,
-}
-
-fn promote_append(
-    conn: &mut Connection,
-    mode: ImportMode,
-    account_id: &str,
-    fill_content_keys: bool,
-    wipe_sources: &[String],
-) -> Result<PromoteStats> {
-    let mut stats = PromoteStats::default();
-    let started = Instant::now();
-
-    let tx = conn.transaction()?;
-
-    if mode == ImportMode::Replace {
-        for source in wipe_sources {
-            println!("  sql:      deleting existing messages for source '{source}'…");
-            let _ = io::stdout().flush();
-            schema::delete_messages_for_source(&tx, account_id, source)?;
-        }
-        if !wipe_sources.is_empty() {
-            println!("  sql:      wipe complete (inside promote transaction)");
-            let _ = io::stdout().flush();
-        }
-    }
-
-    // Staging→prod conversation id map for set-based inserts.
-    tx.execute_batch(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS _promote_conv_map (
-            staging_id INTEGER PRIMARY KEY,
-            prod_id INTEGER NOT NULL
-        );
-        DELETE FROM _promote_conv_map;
-        "#,
-    )?;
-
-    let staging_conv_count: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM staging_conversations WHERE account_id = ?1",
-        params![account_id],
-        |r| r.get(0),
-    )?;
-    promote_log(format_args!(
-        "{staging_conv_count} staging conversations → production…"
-    ));
-
-    let max_conv_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM conversations", [], |r| {
-            r.get(0)
-        })?;
-    tx.execute(
-        r#"
-        INSERT INTO conversations (
-            account_id, chat_handle_id, conversation_type,
-            group_title, exported_at, source_file
-        )
-        SELECT
-            account_id, chat_handle_id, conversation_type,
-            group_title, exported_at, source_file
-        FROM staging_conversations
-        WHERE account_id = ?1
-        ON CONFLICT(account_id, chat_handle_id) DO UPDATE SET
-            conversation_type = excluded.conversation_type,
-            group_title = COALESCE(excluded.group_title, conversations.group_title),
-            exported_at = COALESCE(excluded.exported_at, conversations.exported_at),
-            source_file = excluded.source_file
-        "#,
-        params![account_id],
-    )?;
-    tx.execute(
-        r#"
-        INSERT INTO _promote_conv_map (staging_id, prod_id)
-        SELECT sc.id, c.id
-        FROM staging_conversations sc
-        JOIN conversations c
-          ON c.account_id = sc.account_id
-         AND c.chat_handle_id = sc.chat_handle_id
-        WHERE sc.account_id = ?1
-        "#,
-        params![account_id],
-    )?;
-    let new_conversations: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM _promote_conv_map WHERE prod_id > ?1",
-        params![max_conv_before],
-        |r| r.get(0),
-    )?;
-    stats.conversations = u64::try_from(new_conversations).unwrap_or(0);
-    promote_log(format_args!(
-        "conversations done (new={})  ({:.1}s)",
-        stats.conversations,
-        started.elapsed().as_secs_f64()
-    ));
-
-    let staging_part_count: i64 = tx.query_row(
-        r#"
-        SELECT COUNT(*) FROM staging_participants
-        WHERE conversation_id IN (
-            SELECT id FROM staging_conversations WHERE account_id = ?1
-        )
-        "#,
-        params![account_id],
-        |r| r.get(0),
-    )?;
-    promote_log(format_args!(
-        "{staging_part_count} staging participants → production…"
-    ));
-    stats.participants = u64::try_from(tx.execute(
-        r#"
-        INSERT OR IGNORE INTO participants (conversation_id, handle_id, contact_id, name_alias)
-        SELECT cm.prod_id, sp.handle_id, sp.contact_id, sp.name_alias
-        FROM staging_participants sp
-        JOIN _promote_conv_map cm ON cm.staging_id = sp.conversation_id
-        "#,
-        [],
-    )?)
-    .unwrap_or(0);
-    promote_log(format_args!(
-        "participants done (new={})  ({:.1}s)",
-        stats.participants,
-        started.elapsed().as_secs_f64()
-    ));
-
-    let total_msgs: i64 = tx.query_row(
-        r#"
-        SELECT COUNT(*) FROM staging_messages
-        WHERE conversation_id IN (
-            SELECT id FROM staging_conversations WHERE account_id = ?1
-        )
-        "#,
-        params![account_id],
-        |r| r.get(0),
-    )?;
-    promote_log(format_args!(
-        "{total_msgs} staging messages → production ({})…",
-        mode.as_str()
-    ));
-
-    // Skip per-row full-text search trigger work during bulk message/attachment
-    // inserts; index once after.
-    let phase = Instant::now();
-    promote_log("pausing FTS triggers…");
-    schema::drop_messages_fts_triggers(&tx)?;
-    promote_phase_done(started, phase, "FTS triggers paused");
-
-    let existing_msgs: i64 = tx.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
-    let drop_secondary = should_drop_messages_secondary_indexes(total_msgs, existing_msgs);
-    if drop_secondary {
-        let phase = Instant::now();
-        promote_log(format_args!(
-            "dropping secondary message indexes (staging={total_msgs} existing={existing_msgs})…"
-        ));
-        schema::drop_messages_secondary_indexes(&tx)?;
-        promote_phase_done(started, phase, "secondary indexes dropped");
-    } else {
-        promote_log(format_args!(
-            "keeping secondary message indexes (staging={total_msgs} existing={existing_msgs})"
-        ));
-    }
-
-    // Highest message id that exists before this promotion inserts anything
-    // (after the replace-mode wipe). Every row inserted below lands above it,
-    // which is how full-text search indexing tells new rows apart from the already indexed
-    // rows that `_promote_msg_map` also targets for attachments and tapbacks.
-    let max_msg_id_before_promote: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-
-    let msg_map = promote_messages_chunked(&tx, mode, account_id, total_msgs, &mut stats, started)?;
-
-    if drop_secondary {
-        let phase = Instant::now();
-        promote_log("rebuilding secondary message indexes…");
-        schema::create_messages_secondary_indexes(&tx)?;
-        promote_phase_done(
-            started,
-            phase,
-            format!(
-                "secondary indexes rebuilt (inserted={} skipped={})",
-                stats.messages, stats.messages_deduped
-            ),
-        );
-    } else {
-        promote_log(format_args!(
-            "messages done (inserted={} skipped={})  (total {:.1}s)",
-            stats.messages,
-            stats.messages_deduped,
-            started.elapsed().as_secs_f64()
-        ));
-    }
-
-    let phase = Instant::now();
-    promote_log(format_args!(
-        "writing message id map ({} pairs)…",
-        msg_map.len()
-    ));
-    fill_promote_msg_map(&tx, account_id, &msg_map)?;
-    promote_phase_done(started, phase, "message id map written");
-
-    let phase = Instant::now();
-    promote_log("bulk-inserting attachments…");
-    let att_inserted = tx.execute(
-        r#"
-        INSERT INTO attachments (
-            message_id, path, original_name, mime_type, is_sticker, transcription,
-            sha256, assets_path, size_bytes, missing_reason
-        )
-        SELECT
-            mm.prod_id, sa.path, sa.original_name, sa.mime_type, sa.is_sticker, sa.transcription,
-            sa.sha256, sa.assets_path, sa.size_bytes, sa.missing_reason
-        FROM staging_attachments sa
-        JOIN _promote_msg_map mm ON mm.staging_id = sa.message_id
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM attachments a
-            WHERE a.message_id = mm.prod_id
-              AND a.path IS sa.path
-              AND a.original_name IS sa.original_name
-              AND a.mime_type IS sa.mime_type
-              AND a.is_sticker = sa.is_sticker
-              AND a.transcription IS sa.transcription
-              AND a.sha256 IS sa.sha256
-              AND a.assets_path IS sa.assets_path
-              AND a.size_bytes IS sa.size_bytes
-              AND a.missing_reason IS sa.missing_reason
-        )
-        "#,
-        [],
-    )?;
-    stats.attachments = att_inserted as u64;
-    promote_phase_done(
-        started,
-        phase,
-        format!("attachments done (inserted={})", stats.attachments),
-    );
-
-    let phase = Instant::now();
-    promote_log("bulk-inserting tapbacks…");
-    let tap_inserted = tx.execute(
-        r#"
-        INSERT INTO tapbacks (
-            message_id, part_index, kind, emoji, is_from_me, sender_handle_id
-        )
-        SELECT
-            mm.prod_id, st.part_index, st.kind, st.emoji, st.is_from_me, st.sender_handle_id
-        FROM staging_tapbacks st
-        JOIN _promote_msg_map mm ON mm.staging_id = st.message_id
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM tapbacks t
-            WHERE t.message_id = mm.prod_id
-              AND t.part_index = st.part_index
-              AND t.kind = st.kind
-              AND t.emoji IS st.emoji
-              AND t.is_from_me = st.is_from_me
-              AND t.sender_handle_id IS st.sender_handle_id
-        )
-        "#,
-        [],
-    )?;
-    stats.tapbacks = tap_inserted as u64;
-    promote_phase_done(
-        started,
-        phase,
-        format!("tapbacks done (inserted={})", stats.tapbacks),
-    );
-
-    let phase = Instant::now();
-    promote_log("bulk-indexing FTS for new messages…");
-    let fts_indexed = schema::index_messages_fts_from_promote_map(&tx, max_msg_id_before_promote)?;
-    schema::install_messages_fts_triggers(&tx)?;
-    promote_phase_done(
-        started,
-        phase,
-        format!("FTS indexed={fts_indexed} (triggers restored)"),
-    );
-
-    if fill_content_keys {
-        let phase = Instant::now();
-        promote_log("filling content keys…");
-        let keys = crate::dedupe::fill_missing_content_keys(&tx, account_id)?;
-        promote_phase_done(started, phase, format!("content keys filled={keys}"));
-    }
-
-    let phase = Instant::now();
-    promote_log("committing transaction…");
-    tx.commit()?;
-    promote_phase_done(
-        started,
-        phase,
-        format!(
-            "committed  convs={} parts={} msgs={} atts={} taps={}",
-            stats.conversations,
-            stats.participants,
-            stats.messages,
-            stats.attachments,
-            stats.tapbacks
-        ),
-    );
-
-    Ok(stats)
-}
-
-/// Staging rows per set-based insert window (progress plus smaller write-ahead
-/// log spikes).
-const PROMOTE_MESSAGE_BATCH: i64 = 10_000;
-/// Pairs per multi-row INSERT into `_promote_msg_map` (SQLite default max variables is 999).
-/// Drop secondary indexes only for large promotes relative to the existing table.
-const PROMOTE_INDEX_DROP_MIN_STAGING: i64 = 5_000;
-
-/// Announce a promote phase. Flushed so piped output streams during long imports.
-fn promote_log(msg: impl std::fmt::Display) {
-    println!("  sql:      promote: {msg}");
-    let _ = io::stdout().flush();
-}
-
-fn promote_phase_done(total: Instant, phase: Instant, msg: impl std::fmt::Display) {
-    promote_log(format_args!(
-        "{msg}  (phase {:.1}s, total {:.1}s)",
-        phase.elapsed().as_secs_f64(),
-        total.elapsed().as_secs_f64()
-    ));
-}
-
-fn should_drop_messages_secondary_indexes(staging_count: i64, existing_count: i64) -> bool {
-    staging_count >= PROMOTE_INDEX_DROP_MIN_STAGING
-        && staging_count.saturating_mul(5) >= existing_count.max(1)
-}
-
-fn promote_messages_chunked(
-    tx: &Transaction<'_>,
-    mode: ImportMode,
-    account_id: &str,
-    total_msgs: i64,
-    stats: &mut PromoteStats,
-    started: Instant,
-) -> Result<HashMap<i64, i64>> {
-    let bounds: (Option<i64>, Option<i64>) = tx.query_row(
-        r#"
-        SELECT MIN(sm.id), MAX(sm.id)
-        FROM staging_messages sm
-        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
-        "#,
-        params![account_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let (Some(min_id), Some(max_id)) = bounds else {
-        stats.messages = 0;
-        stats.messages_appended = 0;
-        stats.messages_deduped = 0;
-        return Ok(HashMap::new());
-    };
-
-    if mode == ImportMode::Replace {
-        promote_messages_replace_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
-    } else {
-        promote_messages_append_chunked(tx, account_id, min_id, max_id, total_msgs, stats, started)
-    }
-}
-
-fn promote_messages_replace_chunked(
-    tx: &Transaction<'_>,
-    account_id: &str,
-    min_id: i64,
-    max_id: i64,
-    total_msgs: i64,
-    stats: &mut PromoteStats,
-    started: Instant,
-) -> Result<HashMap<i64, i64>> {
-    let mut msg_map = HashMap::new();
-    let mut max_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-    let mut inserted_total = 0u64;
-    let mut lo = min_id - 1;
-    let mut chunk_idx = 0u32;
-
-    while lo < max_id {
-        chunk_idx += 1;
-        let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
-        let phase = Instant::now();
-        promote_log(format_args!(
-            "inserting messages chunk {chunk_idx} (staging id {}..{}, replace)…",
-            lo + 1,
-            hi
-        ));
-
-        let inserted = tx.execute(
-            r#"
-            INSERT INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, service, subject, body, is_announcement, is_reply,
-                thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-            )
-            SELECT
-                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-                sm.import_id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND sm.id > ?2
-              AND sm.id <= ?3
-            ORDER BY sm.id
-            "#,
-            params![account_id, lo, hi],
-        )?;
-        inserted_total += inserted as u64;
-
-        let staging_ids: Vec<i64> = tx
-            .prepare(
-                r#"
-                SELECT sm.id
-                FROM staging_messages sm
-                JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-                WHERE sm.account_id = ?1
-                  AND sm.id > ?2
-                  AND sm.id <= ?3
-                ORDER BY sm.id
-                "#,
-            )?
-            .query_map(params![account_id, lo, hi], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        max_before = zip_new_message_ids(
-            tx,
-            &mut msg_map,
-            staging_ids,
-            account_id,
-            max_before,
-            |n, p| {
-                format!(
-                    "promote replace message id map mismatch: staging={n} new_prod={p} (chunk staging id {}..{hi})",
-                    lo + 1
-                )
-            },
-        )?;
-
-        promote_phase_done(
-            started,
-            phase,
-            format!("chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"),
-        );
-        lo = hi;
-    }
-
-    stats.messages = inserted_total;
-    stats.messages_appended = inserted_total;
-    Ok(msg_map)
-}
-
-fn promote_messages_append_chunked(
-    tx: &Transaction<'_>,
-    account_id: &str,
-    min_id: i64,
-    max_id: i64,
-    total_msgs: i64,
-    stats: &mut PromoteStats,
-    started: Instant,
-) -> Result<HashMap<i64, i64>> {
-    // Append: rely on partial unique index ix_messages_account_source_guid via
-    // INSERT OR IGNORE. Correlated NOT EXISTS / JOIN anti-joins mis-plan onto
-    // ix_messages_source and scan the whole source (~10s+ at 50k+ rows).
-    let mut msg_map = HashMap::new();
-    let mut inserted_total = 0u64;
-    let mut lo = min_id - 1;
-    let mut chunk_idx = 0u32;
-
-    while lo < max_id {
-        chunk_idx += 1;
-        let hi = (lo + PROMOTE_MESSAGE_BATCH).min(max_id);
-        let phase = Instant::now();
-        promote_log(format_args!(
-            "inserting messages chunk {chunk_idx} (staging id {}..{}, append)…",
-            lo + 1,
-            hi
-        ));
-
-        let inserted = tx.execute(
-            r#"
-            INSERT OR IGNORE INTO messages (
-                conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-                sender_handle_id, service, subject, body, is_announcement, is_reply,
-                thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-            )
-            SELECT
-                cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-                sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-                sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-                sm.import_id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND sm.guid IS NOT NULL
-              AND sm.guid != ''
-              AND sm.id > ?2
-              AND sm.id <= ?3
-            ORDER BY sm.id
-            "#,
-            params![account_id, lo, hi],
-        )?;
-        inserted_total += inserted as u64;
-
-        promote_phase_done(
-            started,
-            phase,
-            format!("chunk {chunk_idx} inserted={inserted} running={inserted_total}/{total_msgs}"),
-        );
-        lo = hi;
-    }
-
-    // Null/empty guids are outside the partial unique index — always insert.
-    let phase = Instant::now();
-    promote_log("inserting messages with empty guids…");
-    let empty_max_before: i64 =
-        tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
-    let inserted_empty = tx.execute(
-        r#"
-        INSERT INTO messages (
-            conversation_id, account_id, source, guid, timestamp, timestamp_utc, is_from_me,
-            sender_handle_id, service, subject, body, is_announcement, is_reply,
-            thread_originator_guid, thread_originator_part, num_replies, sort_order, import_id
-        )
-        SELECT
-            cm.prod_id, sm.account_id, sm.source, sm.guid, sm.timestamp, sm.timestamp_utc, sm.is_from_me,
-            sm.sender_handle_id, sm.service, sm.subject, sm.body, sm.is_announcement, sm.is_reply,
-            sm.thread_originator_guid, sm.thread_originator_part, sm.num_replies, sm.sort_order,
-            sm.import_id
-        FROM staging_messages sm
-        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
-          AND (sm.guid IS NULL OR sm.guid = '')
-        ORDER BY sm.id
-        "#,
-        params![account_id],
-    )?;
-    inserted_total += inserted_empty as u64;
-
-    let empty_staging_ids: Vec<i64> = tx
-        .prepare(
-            r#"
-            SELECT sm.id
-            FROM staging_messages sm
-            JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-            WHERE sm.account_id = ?1
-              AND (sm.guid IS NULL OR sm.guid = '')
-            ORDER BY sm.id
-            "#,
-        )?
-        .query_map(params![account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    zip_new_message_ids(
-        tx,
-        &mut msg_map,
-        empty_staging_ids,
-        account_id,
-        empty_max_before,
-        |n, p| format!("promote append empty-guid id map mismatch: staging={n} new_prod={p}"),
-    )?;
-    promote_phase_done(
-        started,
-        phase,
-        format!("empty-guid messages inserted={inserted_empty}"),
-    );
-
-    stats.messages = inserted_total;
-    stats.messages_appended = inserted_total;
-    stats.messages_deduped = (total_msgs as u64).saturating_sub(inserted_total);
-    Ok(msg_map)
-}
-
-fn zip_new_message_ids(
-    tx: &Transaction<'_>,
-    msg_map: &mut HashMap<i64, i64>,
-    staging_ids: Vec<i64>,
-    account_id: &str,
-    max_before: i64,
-    mismatch: impl FnOnce(usize, usize) -> String,
-) -> Result<i64> {
-    let prod_ids: Vec<i64> = tx
-        .prepare("SELECT id FROM messages WHERE id > ?1 AND account_id = ?2 ORDER BY id")?
-        .query_map(params![max_before, account_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    if staging_ids.len() != prod_ids.len() {
-        bail!("{}", mismatch(staging_ids.len(), prod_ids.len()));
-    }
-    for (staging_id, prod_id) in staging_ids.into_iter().zip(prod_ids) {
-        msg_map.insert(staging_id, prod_id);
-    }
-    Ok(tx.query_row("SELECT IFNULL(MAX(id), 0) FROM messages", [], |r| r.get(0))?)
-}
-
-fn fill_promote_msg_map(
-    tx: &Transaction<'_>,
-    account_id: &str,
-    msg_map: &HashMap<i64, i64>,
-) -> Result<()> {
-    tx.execute_batch(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS _promote_msg_map (
-            staging_id INTEGER PRIMARY KEY,
-            prod_id INTEGER NOT NULL
-        );
-        DELETE FROM _promote_msg_map;
-        "#,
-    )?;
-    if !msg_map.is_empty() {
-        let pairs: Vec<(i64, i64)> = msg_map.iter().map(|(&s, &p)| (s, p)).collect();
-        for chunk in pairs.chunks(SQLITE_IN_CHUNK) {
-            let sql = format!(
-                "INSERT INTO _promote_msg_map (staging_id, prod_id) VALUES {}",
-                pair_placeholders(chunk.len())
-            );
-            let mut stmt = tx.prepare(&sql)?;
-            let mut vals: Vec<rusqlite::types::Value> = Vec::with_capacity(chunk.len() * 2);
-            for &(staging_id, prod_id) in chunk {
-                vals.push(staging_id.into());
-                vals.push(prod_id.into());
-            }
-            stmt.execute(params_from_iter(vals))?;
-        }
-    }
-
-    tx.execute(
-        r#"
-        INSERT OR REPLACE INTO _promote_msg_map (staging_id, prod_id)
-        SELECT sm.id, m.id
-        FROM staging_messages sm
-        JOIN messages m
-          ON m.account_id = sm.account_id
-         AND m.source = sm.source
-         AND m.guid = sm.guid
-        JOIN _promote_conv_map cm ON cm.staging_id = sm.conversation_id
-        WHERE sm.account_id = ?1
-          AND sm.guid IS NOT NULL
-          AND sm.guid != ''
-        "#,
-        params![account_id],
-    )?;
     Ok(())
+}
+
+/// Stored session status after completion.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CompleteImportResponse {
+    ok: bool,
+    id: i64,
+    pub(crate) status: String,
+    pub(crate) message_count: i64,
+    pub(crate) attachment_count: i64,
+    pub(crate) bytes_uploaded: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ListImportsQuery {
+    #[serde(default)]
+    account: Option<String>,
+}
+
+/// Past import sessions.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportsListResponse {
+    imports: Vec<crate::db::vault_imports::ImportSummary>,
+}
+
+/// One stored import issue.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportDetailIssueResponse {
+    pub(crate) kind: String,
+    pub(crate) step: String,
+    item: String,
+    reason: String,
+}
+
+/// Full import session record.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportDetailResponse {
+    pub(crate) id: i64,
+    source: String,
+    tool: Option<String>,
+    mode: String,
+    status: String,
+    started_at: String,
+    finished_at: Option<String>,
+    message_count: i64,
+    attachment_count: i64,
+    bytes_uploaded: i64,
+    pub(crate) duration_ms: Option<i64>,
+    pub(crate) parse_ms: Option<i64>,
+    pub(crate) convert_ms: Option<i64>,
+    pub(crate) upload_ms: Option<i64>,
+    pub(crate) summary: serde_json::Value,
+    pub(crate) issues: Vec<ImportDetailIssueResponse>,
+}
+
+/// List past import sessions for the account with their stats.
+#[utoipa::path(
+    get,
+    path = "/v1/imports",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("account" = Option<String>, Query)),
+    responses(
+        (status = 200, body = ImportsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListImportsQuery>,
+) -> Result<Json<ImportsListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+
+    let db = Arc::clone(&state.db);
+    let imports = with_locked_conn(db, "list imports task", move |conn| {
+        crate::db::vault_imports::list_imports(conn, &account)
+    })
+    .await?;
+
+    Ok(Json(ImportsListResponse { imports }))
+}
+
+/// Status, timings, and issues for one import session.
+#[utoipa::path(
+    get,
+    path = "/v1/imports/{id}",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
+    responses(
+        (status = 200, body = ImportDetailResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_get_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+) -> Result<Json<ImportDetailResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let detail = tokio::task::spawn_blocking(move || {
+        let conn = lock_conn(&db)?;
+        crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
+    })
+    .await
+    .join_map("import detail task", ApiError::from)?;
+
+    Ok(Json(import_detail_response(detail)))
+}
+
+/// Start an import session and return its id. Finish the session at
+/// POST /v1/imports/{id}/complete.
+#[utoipa::path(
+    post,
+    path = "/v1/imports",
+    tag = "Import",
+    security(("bearer" = [])),
+    request_body = CreateImportBody,
+    responses(
+        (status = 200, body = CreateImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateImportBody>,
+) -> Result<Json<CreateImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    if body.source.trim().is_empty() {
+        return Err(ApiError::BadRequest("body field source is required".into()));
+    }
+    validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
+
+    let db = Arc::clone(&state.db);
+    let source = body.source.clone();
+    let mode = body.mode.clone();
+    let tool = body.tool.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        let conn = lock_import_conn(&db)?;
+        crate::db::account_profile::ensure_account_row(&conn, &account)?;
+        crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
+    })
+    .await
+    .join_blocking("create import task failed")?;
+
+    Ok(Json(CreateImportResponse { ok: true, id }))
+}
+
+/// Record the outcome of an import session started with POST /v1/imports.
+#[utoipa::path(
+    post,
+    path = "/v1/imports/{id}/complete",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Import session id")),
+    request_body = CompleteImportBody,
+    responses(
+        (status = 200, body = CompleteImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn imports_complete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(import_id): AxumPath<i64>,
+    Json(body): Json<CompleteImportBody>,
+) -> Result<Json<CompleteImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+    let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
+    validate_complete_import_issues(&body.issues)?;
+    let db = Arc::clone(&state.db);
+    let summary_json = match body.summary {
+        Some(summary) => Some(
+            serde_json::to_string(&summary)
+                .map_err(|e| ApiError::Internal(format!("serialize import summary: {e}")))?,
+        ),
+        None => None,
+    };
+    let args = crate::db::vault_imports::CompleteImportArgs {
+        ok: body.ok,
+        message_count: body.message_count,
+        attachment_count: body.attachment_count,
+        bytes_uploaded: body.bytes_uploaded,
+        duration_ms: body.duration_ms,
+        parse_ms: body.parse_ms,
+        convert_ms: body.convert_ms,
+        upload_ms: body.upload_ms,
+        summary_json,
+        issues: body
+            .issues
+            .into_iter()
+            .map(|issue| crate::db::vault_imports::ImportIssueInput {
+                kind: issue.kind,
+                step: issue.step,
+                item: issue.item,
+                reason: issue.reason,
+            })
+            .collect(),
+    };
+    let row = tokio::task::spawn_blocking(move || {
+        let conn = lock_import_conn(&db)?;
+        crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
+    })
+    .await
+    .join_map("complete import task failed", |e| {
+        match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
+            Ok(lookup) => ApiError::from(lookup),
+            Err(other) => ApiError::Internal(other.to_string()),
+        }
+    })?;
+
+    Ok(Json(CompleteImportResponse {
+        ok: true,
+        id: row.id,
+        status: row.status,
+        message_count: row.message_count,
+        attachment_count: row.attachment_count,
+        bytes_uploaded: row.bytes_uploaded,
+    }))
+}
+
+fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
+    match summary_json {
+        Some(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> ImportDetailResponse {
+    let row = detail.row;
+    let issues = detail
+        .issues
+        .into_iter()
+        .map(|issue| ImportDetailIssueResponse {
+            kind: issue.kind,
+            step: issue.step,
+            item: issue.item,
+            reason: issue.reason,
+        })
+        .collect();
+
+    ImportDetailResponse {
+        id: row.id,
+        source: row.source,
+        tool: row.tool,
+        mode: row.mode,
+        status: row.status,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        message_count: row.message_count,
+        attachment_count: row.attachment_count,
+        bytes_uploaded: row.bytes_uploaded,
+        duration_ms: row.duration_ms,
+        parse_ms: row.parse_ms,
+        convert_ms: row.convert_ms,
+        upload_ms: row.upload_ms,
+        summary: parse_summary_json(row.summary_json),
+        issues,
+    }
+}
+
+/// Import one message-ir JSONL body (raw or multipart) into the vault.
+#[utoipa::path(
+    post,
+    path = "/v1/import",
+    tag = "Import",
+    security(("bearer" = [])),
+    params(
+        ("source" = String, Query),
+        ("account" = Option<String>, Query),
+        ("mode" = Option<String>, Query, description = "Default append"),
+        ("dedupe" = Option<bool>, Query),
+        ("import_id" = Option<i64>, Query),
+        ("contact_name_mode" = Option<String>, Query)
+    ),
+    request_body(
+        content(
+            ("application/x-ndjson"),
+            ("application/jsonl"),
+            ("multipart/form-data")
+        ),
+        description = "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted."
+    ),
+    responses(
+        (status = 200, body = ImportResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn import_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(mut query): Query<ImportQuery>,
+    request: Request,
+) -> Result<Json<ImportResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_import_access(&auth)?;
+    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
+
+    let Some(ct) = content_type_base(&headers) else {
+        return Err(ApiError::BadRequest(
+            "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
+                .into(),
+        ));
+    };
+
+    if query.source.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "query param source is required".into(),
+        ));
+    }
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    query.account = Some(account);
+
+    if is_multipart_content_type(ct) {
+        let multipart = Multipart::from_request(request, &state)
+            .await
+            .map_err(|e| ApiError::BadRequest(format!("invalid multipart body: {e}")))?;
+        return import_multipart(state, query, multipart).await;
+    }
+
+    if is_jsonl_content_type(ct) {
+        let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+        let jsonl_path = temp.path().join("_import.jsonl");
+        let n = stream_body_to_file(request.into_body(), &jsonl_path, state.max_body_bytes).await?;
+        if n == 0 {
+            return Err(ApiError::BadRequest("request body is empty".into()));
+        }
+        let response = run_import_path(state, query, jsonl_path, None).await;
+        drop(temp);
+        return response;
+    }
+
+    Err(ApiError::BadRequest(
+        "Content-Type must be application/x-ndjson, application/jsonl, or multipart/form-data"
+            .into(),
+    ))
+}
+
+async fn import_multipart(
+    state: AppState,
+    query: ImportQuery,
+    mut multipart: Multipart,
+) -> Result<Json<ImportResponse>, ApiError> {
+    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
+    let asset_root = temp.path().to_path_buf();
+    let jsonl_path = asset_root.join("_import.jsonl");
+    let mut have_jsonl = false;
+    let mut file_count = 0u64;
+
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("multipart field error: {e}")))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "jsonl" => {
+                let n = stream_field_to_file(field, &jsonl_path).await?;
+                if n == 0 {
+                    return Err(ApiError::BadRequest("jsonl part is empty".into()));
+                }
+                have_jsonl = true;
+            }
+            "file" => {
+                let filename = match field.file_name() {
+                    Some(name) if !name.is_empty() => name.to_string(),
+                    _ => {
+                        return Err(ApiError::BadRequest(
+                            "file part missing filename (use relative path e.g. attachments/a.jpg)"
+                                .into(),
+                        ));
+                    }
+                };
+                let rel = safe_rel_path(&filename)?;
+                let dest = asset_root.join(&rel);
+                stream_field_to_file(field, &dest).await?;
+                file_count += 1;
+            }
+            other => {
+                while let Some(chunk) = field
+                    .chunk()
+                    .await
+                    .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
+                {
+                    let _ = chunk;
+                }
+                eprintln!("import: ignoring unknown multipart field {other:?}");
+            }
+        }
+    }
+
+    if !have_jsonl {
+        return Err(ApiError::BadRequest(
+            "multipart missing required field 'jsonl'".into(),
+        ));
+    }
+    eprintln!("import: multipart jsonl + {file_count} file(s)");
+
+    let response = run_import_path(state, query, jsonl_path, Some(asset_root)).await;
+    drop(temp);
+    response
+}
+
+async fn run_import_path(
+    state: AppState,
+    query: ImportQuery,
+    jsonl_path: PathBuf,
+    asset_root_override: Option<PathBuf>,
+) -> Result<Json<ImportResponse>, ApiError> {
+    let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    let cfg = Arc::clone(&state.cfg);
+    let db = Arc::clone(&state.db);
+    let account = query
+        .account
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("account is required".into()))?;
+    let source_id = query.source.clone();
+    let do_dedupe = query.dedupe;
+    let query_import_id = query.import_id;
+
+    let account_lock = {
+        let mut map = state.account_import_locks.lock().await;
+        map.entry(account.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = account_lock.lock().await;
+
+    // Validate client-owned sessions before staging work so bad ids return 400.
+    if let Some(id) = query_import_id {
+        let db = Arc::clone(&db);
+        let account_check = account.clone();
+        let source_check = source_id.clone();
+        let mode_check = mode.as_str().to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = lock_import_conn(&db)?;
+            crate::db::vault_imports::require_reusable_import(
+                &conn,
+                &account_check,
+                id,
+                &source_check,
+                &mode_check,
+            )
+            .map_err(anyhow::Error::new)?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .join_map("import session check", |e| {
+            let msg = e.to_string();
+            if msg.contains("not found") {
+                ApiError::NotFound(msg)
+            } else if msg.contains("not running") || msg.contains("mismatch") {
+                ApiError::BadRequest(msg)
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
+        // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
+        // Multipart supplies a temp asset_root for relative file parts.
+        let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
+
+        // Client session (vault-push): ownership/status already checked above.
+        // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
+        let (import_id, owns_session) = if let Some(id) = query_import_id {
+            (Some(id), false)
+        } else {
+            let conn = lock_import_conn(&db)?;
+            crate::db::account_profile::ensure_account_row(&conn, &account)?;
+            let id = crate::db::vault_imports::start_import(
+                &conn,
+                &account,
+                &source_id,
+                mode.as_str(),
+                Some("http"),
+            )?;
+            drop(conn);
+            (Some(id), true)
+        };
+
+        let mut opts = ImportOptions::fixed(FixedImportArgs {
+            assets_dir: &assets_dir,
+            asset_root: &asset_root_owned,
+            contacts: None,
+            overwrite_contacts: false,
+            mode,
+            source: &source_id,
+            account_id: &account,
+            fill_content_keys: do_dedupe,
+            import_id,
+        });
+        opts.contact_name_mode = contact_name_mode;
+        // Dedicated connection for the long import so we do not hold `state.db`
+        // across JSONL / asset IO / promote (export and session SQL stay free).
+        let mut conn = schema::open_configured(&cfg.paths.db)
+            .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
+        let import_result = import::import_jsonl_files_on_conn(
+            &mut conn,
+            &[jsonl_path],
+            &opts,
+            import::ImportSchemaMode::AssumeReady,
+        );
+
+        if owns_session && let Some(id) = import_id {
+            let complete_args = match &import_result {
+                Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
+                    stats.messages,
+                    stats.attachments,
+                ),
+                Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
+            };
+            crate::db::vault_imports::complete_import_or_warn(&conn, &account, id, &complete_args);
+        }
+        let stats = import_result?;
+        drop(conn);
+        let dedupe_stats = if do_dedupe {
+            Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
+        } else {
+            None
+        };
+        Ok::<_, anyhow::Error>((stats, dedupe_stats, source_id, account))
+    })
+    .await
+    .join_blocking("import task failed")?;
+
+    let (stats, dedupe_stats, source_id, account) = result;
+    Ok(Json(ImportResponse {
+        ok: true,
+        source: source_id,
+        account,
+        stats,
+        dedupe: dedupe_stats.map(|d| DedupeResponse {
+            keys_filled: d.keys_filled,
+            exact_groups: d.exact_groups,
+            exact_flagged: d.exact_flagged,
+            near_flagged: d.near_flagged,
+        }),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::contact_name::trim_nonempty;
     use super::*;
+    use crate::assets;
+    use rusqlite::{OptionalExtension, params};
     use tempfile::TempDir;
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -1898,9 +1228,9 @@ mod tests {
 "#,
         );
         let first_stats = import_jsonl_files(
+            &db,
             &[first],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1925,9 +1255,9 @@ mod tests {
 "#,
         );
         let second_stats = import_jsonl_files(
+            &db,
             &[second],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -1998,7 +1328,6 @@ mod tests {
             ),
         );
         let options = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2009,7 +1338,7 @@ mod tests {
             fill_content_keys: false,
             import_id: None,
         });
-        import_jsonl_files(&[first], &options).unwrap();
+        import_jsonl_files(&db, &[first], &options).unwrap();
 
         let second = write_jsonl(
             tmp.path(),
@@ -2021,7 +1350,7 @@ mod tests {
         );
 
         for _ in 0..2 {
-            import_jsonl_files(std::slice::from_ref(&second), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&second), &options).unwrap();
         }
 
         let conn = Connection::open(&db).unwrap();
@@ -2057,7 +1386,6 @@ mod tests {
 "#,
         );
         let options = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2069,7 +1397,7 @@ mod tests {
             import_id: None,
         });
 
-        import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+        import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
         // Rows of the full-text search index storage: a redundant re-index writes a new
         // segment even when the indexed text is unchanged.
         let index_rows = || -> i64 {
@@ -2080,7 +1408,7 @@ mod tests {
         };
         let after_first_import = index_rows();
         for _ in 0..2 {
-            import_jsonl_files(std::slice::from_ref(&path), &options).unwrap();
+            import_jsonl_files(&db, std::slice::from_ref(&path), &options).unwrap();
         }
         assert_eq!(
             index_rows(),
@@ -2130,32 +1458,6 @@ mod tests {
     }
 
     #[test]
-    fn promote_message_map_ignores_other_accounts() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE messages (
-                id INTEGER PRIMARY KEY,
-                account_id TEXT NOT NULL
-            );
-            INSERT INTO messages (id, account_id) VALUES
-                (1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-                (2, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
-            "#,
-        )
-        .unwrap();
-        let tx = conn.transaction().unwrap();
-        let mut map = HashMap::new();
-
-        zip_new_message_ids(&tx, &mut map, vec![101], TEST_ACCOUNT, 0, |n, p| {
-            format!("unexpected mapping counts: staging={n} production={p}")
-        })
-        .unwrap();
-
-        assert_eq!(map, HashMap::from([(101, 1)]));
-    }
-
-    #[test]
     fn deferred_fts_indexes_attachment_text_after_promote() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
@@ -2173,9 +1475,9 @@ mod tests {
 "#,
         );
         import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2232,7 +1534,6 @@ mod tests {
             &mut conn,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2311,7 +1612,6 @@ mod tests {
             &mut conn,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2370,9 +1670,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions {
-                db_path: &db,
                 assets_dir: &placeholder,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2430,9 +1730,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions {
-                db_path: &db,
                 assets_dir: &placeholder,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2506,46 +1806,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_contact_name_mode_unit() {
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::FillMissing, None, Some("Vault".into())),
-            Some("Vault".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::FillMissing,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Import".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::Overwrite,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Vault".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::Overwrite, Some("Import".into()), None),
-            Some("Import".into())
-        );
-        assert_eq!(
-            apply_contact_name_mode(ContactNameMode::AsIs, None, Some("Vault".into())),
-            None
-        );
-        assert_eq!(
-            apply_contact_name_mode(
-                ContactNameMode::AsIs,
-                Some("Import".into()),
-                Some("Vault".into())
-            ),
-            Some("Import".into())
-        );
-    }
-
-    #[test]
     fn contact_name_mode_fill_missing_keeps_import_name() {
         let tmp = TempDir::new().unwrap();
         let db = tmp.path().join("vault.db");
@@ -2559,7 +1819,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2571,7 +1830,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Backup Bob"));
     }
 
@@ -2589,7 +1848,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2601,7 +1859,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
     }
 
@@ -2619,7 +1877,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2631,7 +1888,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::AsIs;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db), None);
     }
 
@@ -2649,7 +1906,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2661,46 +1917,8 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::Overwrite;
-        import_jsonl_files(&[path], &opts).unwrap();
+        import_jsonl_files(&db, &[path], &opts).unwrap();
         assert_eq!(participant_name_alias(&db).as_deref(), Some("Vault Alice"));
-    }
-
-    #[test]
-    fn seed_contact_handle_alias_unit_first_wins() {
-        let conn = Connection::open_in_memory().unwrap();
-        schema::configure_connection(&conn).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
-            params![TEST_ACCOUNT],
-        )
-        .unwrap();
-        let contact_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550999', '+15555550999', 'phone', 'phone')",
-            params![TEST_ACCOUNT],
-        )
-        .unwrap();
-        let handle_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![TEST_ACCOUNT, handle_id, contact_id],
-        )
-        .unwrap();
-
-        seed_contact_handle_alias(&conn, TEST_ACCOUNT, handle_id, Some("First")).unwrap();
-        seed_contact_handle_alias(&conn, TEST_ACCOUNT, handle_id, Some("Second")).unwrap();
-        let alias: Option<String> = conn
-            .query_row(
-                "SELECT name_alias FROM contact_handles WHERE handle_id = ?1",
-                [handle_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(alias.as_deref(), Some("First"));
     }
 
     #[test]
@@ -2719,7 +1937,6 @@ mod tests {
 "#,
         );
         let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &db,
             assets_dir: &assets,
             asset_root: tmp.path(),
             contacts: None,
@@ -2731,7 +1948,7 @@ mod tests {
             import_id: None,
         });
         opts.contact_name_mode = ContactNameMode::FillMissing;
-        import_jsonl_files(&[path1], &opts).unwrap();
+        import_jsonl_files(&db, &[path1], &opts).unwrap();
         assert_eq!(
             contact_handle_name_alias(&db).as_deref(),
             Some("Backup Bob")
@@ -2744,85 +1961,11 @@ mod tests {
 {"guid":"g-alias2","timestamp_unix_ms":1426183463000,"direction":"incoming","service":"sms","message_kind":"sms","sender_handle":"+15555550123","sender_display_name":null,"subject":null,"text":"yo","attachments":[],"imessage":null,"source":null}
 "#,
         );
-        import_jsonl_files(&[path2], &opts).unwrap();
+        import_jsonl_files(&db, &[path2], &opts).unwrap();
         assert_eq!(
             contact_handle_name_alias(&db).as_deref(),
             Some("Backup Bob")
         );
-    }
-
-    #[test]
-    fn sibling_contact_link_bumps_last_modified_only_on_insert() {
-        let conn = Connection::open_in_memory().unwrap();
-        schema::configure_connection(&conn).unwrap();
-        schema::ensure_vault_schema(&conn).unwrap();
-        crate::db::account_profile::ensure_account_row(&conn, TEST_ACCOUNT).unwrap();
-
-        conn.execute(
-            "INSERT INTO contacts (account_id, preferred_name) VALUES (?1, 'Pat')",
-            params![TEST_ACCOUNT],
-        )
-        .unwrap();
-        let contact_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'phone')",
-            params![TEST_ACCOUNT],
-        )
-        .unwrap();
-        let phone_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO contact_handles (account_id, handle_id, contact_id)
-             VALUES (?1, ?2, ?3)",
-            params![TEST_ACCOUNT, phone_id, contact_id],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO handles (account_id, raw, normalized, handle_type, service)
-             VALUES (?1, '+15555550100', '+15555550100', 'phone', 'whatsapp')",
-            params![TEST_ACCOUNT],
-        )
-        .unwrap();
-        let wa_id = conn.last_insert_rowid();
-
-        const OLD: &str = "2000-01-01 00:00:00";
-        conn.execute(
-            "UPDATE contacts SET last_modified = ?1 WHERE id = ?2",
-            params![OLD, contact_id],
-        )
-        .unwrap();
-
-        let linked = ensure_sibling_contact_link(&conn, TEST_ACCOUNT, wa_id)
-            .unwrap()
-            .expect("sibling link");
-        assert_eq!(linked, contact_id);
-        let after_insert: String = conn
-            .query_row(
-                "SELECT last_modified FROM contacts WHERE id = ?1",
-                params![contact_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_ne!(after_insert, OLD);
-
-        conn.execute(
-            "UPDATE contacts SET last_modified = ?1 WHERE id = ?2",
-            params![OLD, contact_id],
-        )
-        .unwrap();
-        let again = ensure_sibling_contact_link(&conn, TEST_ACCOUNT, wa_id)
-            .unwrap()
-            .expect("already linked");
-        assert_eq!(again, contact_id);
-        let after_noop: String = conn
-            .query_row(
-                "SELECT last_modified FROM contacts WHERE id = ?1",
-                params![contact_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_noop, OLD);
     }
 
     #[test]
@@ -2840,9 +1983,9 @@ mod tests {
 "#,
         );
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2898,9 +2041,9 @@ mod tests {
         let path = write_jsonl(tmp.path(), "corrupt-existing.jsonl", &jsonl);
 
         let stats = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: tmp.path(),
                 contacts: None,
@@ -2943,9 +2086,9 @@ mod tests {
 "#,
         );
         let err = import_jsonl_files(
+            &db,
             &[path],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,
@@ -2981,9 +2124,9 @@ mod tests {
 "#,
         );
         import_jsonl_files(
+            &db,
             &[first],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,
@@ -3005,9 +2148,9 @@ mod tests {
 "#,
         );
         let err = import_jsonl_files(
+            &db,
             &[bad],
             &ImportOptions::fixed(FixedImportArgs {
-                db_path: &db,
                 assets_dir: &assets,
                 asset_root: &export_dir,
                 contacts: None,

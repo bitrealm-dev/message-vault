@@ -1,9 +1,17 @@
+//! Router assembly, shared state, auth resolution, and HTTP plumbing.
+//!
+//! Domain handlers live in their own modules: `auth` (login and session),
+//! `profile` (account settings), `contacts_api`, `conversations_api`,
+//! `export_api` (messages and counts), `import` (JSONL ingest and import
+//! sessions), and `assets` (asset bytes and multipart uploads). This module
+//! keeps the pieces they share: [`AppState`], [`ApiError`], Bearer token
+//! resolution, body-streaming helpers, and `http_app`, which assembles the
+//! router.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use anyhow::Context;
-use axum::extract::{FromRequest, Multipart, Path as AxumPath, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -18,18 +26,13 @@ use tower_http::services::ServeDir;
 use rusqlite::Connection;
 
 use crate::asset_uploads;
-use crate::assets;
-use crate::config::{AuthMode, Config, GuestDemoSettings, validate_source_id};
+use crate::config::{AuthMode, Config, GuestDemoSettings};
 use crate::db::account_profile;
 use crate::db::api_tokens;
 use crate::db::schema;
 use crate::db::session_tokens;
-use crate::dedupe;
-use crate::export_api::{
-    self, DEFAULT_EXPORT_LIMIT, ExportCountOpts, ExportPageOpts, ExportQueryError,
-};
+use crate::export_api::ExportQueryError;
 use crate::guest_pool::{self, GuestPoolState};
-use crate::import::{self, FixedImportArgs, ImportMode, ImportOptions, ImportStats};
 
 /// What a Bearer credential is allowed to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +46,9 @@ pub enum AuthCapability {
 /// Authenticated vault account from a session token or named API token.
 #[derive(Debug, Clone)]
 pub struct AuthIdentity {
+    /// The authenticated vault account.
     pub account_id: String,
+    /// What this credential is allowed to do.
     pub capability: AuthCapability,
 }
 
@@ -138,25 +143,27 @@ pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiErr
     }
 }
 
+/// Shared server state passed to every HTTP handler.
 #[derive(Clone)]
 pub struct AppState {
+    /// Loaded configuration.
     pub cfg: Arc<Config>,
     /// Warm connection for short import-session SQL only (`POST /v1/imports`,
     /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
     /// export open their own connections so they do not hold this mutex.
-    db: Arc<StdMutex<Connection>>,
+    pub(crate) db: Arc<StdMutex<Connection>>,
     /// Per-account import mutex: same-account imports stay serialized so staging
     /// rows (the temporary import area) for that tenant are not wiped mid-run.
     /// Different accounts may overlap at the lock layer; SQLite write-ahead
     /// logging plus busy_timeout serialize writers.
-    account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pub(crate) account_import_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Serialize multipart complete per (account, sha256) so two clients cannot
     /// race `store_verified` on the same SHA-256 fingerprint.
-    asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pub(crate) asset_complete_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Multipart / asset size limits from `[server]` (env may override part size).
-    upload_limits: asset_uploads::UploadLimits,
+    pub(crate) upload_limits: asset_uploads::UploadLimits,
     /// Axum request body cap (single PUT or one part); equals `asset_max_bytes`.
-    max_body_bytes: usize,
+    pub(crate) max_body_bytes: usize,
     /// Hosted guest-demo pool. Off on self-hosted (`GuestDemoSettings::disabled`).
     pub guest: GuestDemoSettings,
     /// One on-demand template clone at a time (empty-pool Try it).
@@ -165,67 +172,33 @@ pub struct AppState {
     pub guest_demand: Arc<StdMutex<GuestPoolState>>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct ImportQuery {
-    source: String,
-    /// Username or UUID. Optional; when set must match the Bearer token's account.
-    #[serde(default)]
-    account: Option<String>,
-    #[serde(default = "default_import_mode")]
-    mode: String,
-    /// Run cross-source soft-dedupe after import.
-    #[serde(default)]
-    dedupe: bool,
-    /// Optional vault import session id from POST /v1/imports.
-    #[serde(default)]
-    import_id: Option<i64>,
-    /// How vault contacts supply participant names (`fill_missing`, `overwrite`, or `as_is`).
-    #[serde(default = "default_contact_name_mode")]
-    contact_name_mode: String,
-}
-
-fn default_contact_name_mode() -> String {
-    "fill_missing".to_string()
-}
-
-fn default_import_mode() -> String {
-    "append".to_string()
-}
-
+/// API error envelope returned for non-200 responses.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportResponse {
-    ok: bool,
-    source: String,
-    account: String,
-    #[serde(flatten)]
-    stats: ImportStats,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    dedupe: Option<DedupeResponse>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct DedupeResponse {
-    keys_filled: u64,
-    exact_groups: u64,
-    exact_flagged: u64,
-    near_flagged: u64,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ErrorBody {
+pub struct ErrorBody {
+    /// Whether the request succeeded; always `false` for error responses.
     pub ok: bool,
+    /// Human-readable description of the failure.
     pub error: String,
 }
 
+/// API error returned as a JSON envelope with a matching HTTP status.
 #[derive(Debug)]
 pub enum ApiError {
+    /// `401` — no valid session or API token.
     Unauthorized(String),
+    /// `403` — the credential lacks permission for this route.
     Forbidden(String),
+    /// `400` — malformed request or invalid parameter.
     BadRequest(String),
+    /// `409` — the request conflicts with current state.
     Conflict(String),
+    /// `404` — the requested resource does not exist.
     NotFound(String),
+    /// `429` — rate limit hit.
     TooManyRequests(String),
+    /// `503` — a dependency is temporarily unavailable.
     ServiceUnavailable(String),
+    /// `500` — unexpected failure.
     Internal(String),
 }
 
@@ -301,11 +274,13 @@ impl<T, E> JoinBlocking<T, E> for Result<Result<T, E>, tokio::task::JoinError> {
     }
 }
 
-fn lock_conn(db: &StdMutex<Connection>) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+pub(crate) fn lock_conn(
+    db: &StdMutex<Connection>,
+) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
     lock_named(db, "database")
 }
 
-fn lock_import_conn(
+pub(crate) fn lock_import_conn(
     db: &StdMutex<Connection>,
 ) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
     lock_named(db, "import database")
@@ -418,7 +393,11 @@ where
     .join_blocking(task)
 }
 
-async fn with_configured_db_map<T, E, F>(db_path: &Path, task: &str, f: F) -> Result<T, ApiError>
+pub(crate) async fn with_configured_db_map<T, E, F>(
+    db_path: &Path,
+    task: &str,
+    f: F,
+) -> Result<T, ApiError>
 where
     T: Send + 'static,
     E: From<anyhow::Error> + Send + 'static,
@@ -434,7 +413,7 @@ where
     .join_map(task, ApiError::from)
 }
 
-async fn with_locked_conn<T, E, F>(
+pub(crate) async fn with_locked_conn<T, E, F>(
     db: Arc<StdMutex<Connection>>,
     task: &str,
     f: F,
@@ -615,6 +594,7 @@ async fn shutdown_signal() {
     eprintln!("shutting down");
 }
 
+/// Report process liveness.
 #[utoipa::path(
     get,
     path = "/health",
@@ -623,130 +603,6 @@ async fn shutdown_signal() {
 )]
 pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AuthModeResponse {
-    pub mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hanko_api_url: Option<String>,
-    pub try_demo: bool,
-}
-
-/// Returns the server's configured authentication mode so clients
-/// can render the correct login form before authenticating.
-#[utoipa::path(
-    get,
-    path = "/v1/auth/mode",
-    tag = "Auth",
-    responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
-)]
-pub(crate) async fn auth_mode_handler(State(state): State<AppState>) -> Json<AuthModeResponse> {
-    let mode = crate::config::AuthMode::from_env();
-    let hanko_api_url = std::env::var("HANKO_API_URL")
-        .ok()
-        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
-    Json(AuthModeResponse {
-        mode: match mode {
-            crate::config::AuthMode::Hanko => "hanko".into(),
-            crate::config::AuthMode::Local => "local".into(),
-        },
-        hanko_api_url,
-        try_demo: state.guest.enabled,
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct AuthCheckQuery {
-    #[serde(default)]
-    account: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AuthCheckResponse {
-    ok: bool,
-    sources: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_ok: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    admin: Option<bool>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/auth/check",
-    tag = "Auth",
-    security(("bearer" = [])),
-    params(("account" = Option<String>, Query, description = "Must match the token account")),
-    responses(
-        (status = 200, body = AuthCheckResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn auth_check(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<AuthCheckQuery>,
-) -> Result<Json<AuthCheckResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    let account_id = auth.account_id;
-    let username = load_username(&state.cfg.paths.db, &account_id).await?;
-
-    if let Some(q) = nonempty_query_account(query.account.as_deref()) {
-        let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
-        let matches = match resolved {
-            Some(resolved) => resolved == account_id,
-            None => q == account_id,
-        };
-        if !matches {
-            let for_user = username.as_deref().unwrap_or(account_id.as_str());
-            return Err(ApiError::Forbidden(format!(
-                "account query does not match token's account (token is for {for_user})"
-            )));
-        }
-    }
-    let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
-    Ok(Json(AuthCheckResponse {
-        ok: true,
-        sources,
-        account_id: Some(account_id),
-        username,
-        account_ok: Some(true),
-        admin: None,
-    }))
-}
-
-async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
-    let account_id = account_id.to_string();
-    // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
-    with_configured_db(db_path, "sources list task", move |conn| {
-        dedupe::source_priority_from_db(conn, &account_id)
-    })
-    .await
-}
-
-async fn lookup_or_resolve_query(
-    db_path: &Path,
-    account_ref: &str,
-) -> Result<Option<String>, ApiError> {
-    let account_ref = account_ref.to_string();
-    with_configured_db(db_path, "account lookup task", move |conn| {
-        account_profile::lookup_account_ref(conn, &account_ref)
-    })
-    .await
-}
-
-async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
-    let account_id = account_id.to_string();
-    with_configured_db(db_path, "username lookup task", move |conn| {
-        account_profile::username_for_account(conn, &account_id)
-    })
-    .await
 }
 
 async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
@@ -816,9 +672,9 @@ pub async fn resolve_auth(headers: &HeaderMap, state: &AppState) -> Result<AuthI
     resolved.ok_or_else(|| ApiError::Unauthorized("invalid API token".into()))
 }
 
-/// Resolve the account id for an import: Bearer token binds the account.
+/// Resolve the account id for an import or export: Bearer token binds the account.
 /// Optional query may be username or UUID and must match the token.
-async fn resolve_import_account(
+pub(crate) async fn resolve_import_account(
     auth: &AuthIdentity,
     query_account: Option<&str>,
     db_path: &Path,
@@ -835,7 +691,7 @@ async fn resolve_import_account(
     Ok(auth.account_id.clone())
 }
 
-fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
+pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -845,12 +701,12 @@ fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     }
 }
 
-fn content_type_base(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn content_type_base(headers: &HeaderMap) -> Option<&str> {
     let ct = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     Some(ct.split(';').next().unwrap_or(ct).trim())
 }
 
-fn upload_content_type(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn upload_content_type(headers: &HeaderMap) -> Option<String> {
     let base = content_type_base(headers)?;
     if base.is_empty() || base.eq_ignore_ascii_case("application/octet-stream") {
         None
@@ -860,1890 +716,40 @@ fn upload_content_type(headers: &HeaderMap) -> Option<String> {
 }
 
 /// True when the request body is JSON Lines (one JSON object per line).
-fn is_jsonl_content_type(base: &str) -> bool {
+pub(crate) fn is_jsonl_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("application/jsonl")
         || base.eq_ignore_ascii_case("application/x-ndjson")
 }
 
-fn is_multipart_content_type(base: &str) -> bool {
+pub(crate) fn is_multipart_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("multipart/form-data")
 }
 
 /// Reject path traversal; allow only relative Normal/CurDir components.
-fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
+pub(crate) fn safe_rel_path(name: &str) -> Result<PathBuf, ApiError> {
     crate::config::safe_rel_path(name).map_err(|e| ApiError::BadRequest(e.to_string()))
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CreateImportBody {
-    source: String,
-    #[serde(default = "default_import_mode")]
-    mode: String,
-    #[serde(default)]
-    tool: Option<String>,
-    #[serde(default)]
-    account: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct CreateImportResponse {
-    ok: bool,
-    id: i64,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportBody {
-    #[serde(default = "default_true")]
-    ok: bool,
-    #[serde(default)]
-    message_count: Option<i64>,
-    #[serde(default)]
-    attachment_count: Option<i64>,
-    #[serde(default)]
-    bytes_uploaded: Option<i64>,
-    #[serde(default)]
-    duration_ms: Option<i64>,
-    #[serde(default)]
-    parse_ms: Option<i64>,
-    #[serde(default)]
-    convert_ms: Option<i64>,
-    #[serde(default)]
-    upload_ms: Option<i64>,
-    #[serde(default)]
-    summary: Option<serde_json::Value>,
-    #[serde(default)]
-    issues: Vec<CompleteImportIssueBody>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportIssueBody {
-    kind: String,
-    step: String,
-    item: String,
-    reason: String,
-}
-
-fn validate_complete_import_issues(issues: &[CompleteImportIssueBody]) -> Result<(), ApiError> {
-    for issue in issues {
-        match issue.kind.as_str() {
-            "error" | "skip" => {}
-            other => {
-                return Err(ApiError::BadRequest(format!(
-                    "invalid import issue kind '{other}'; expected 'error' or 'skip'"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct CompleteImportResponse {
-    ok: bool,
-    id: i64,
-    status: String,
-    message_count: i64,
-    attachment_count: i64,
-    bytes_uploaded: i64,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ListPageQuery {
     #[serde(default)]
-    q: Option<String>,
+    pub(crate) q: Option<String>,
     #[serde(default)]
-    limit: Option<usize>,
+    pub(crate) limit: Option<usize>,
     #[serde(default)]
-    offset: Option<usize>,
+    pub(crate) offset: Option<usize>,
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/export/contacts",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    params(
-        ("q" = Option<String>, Query, description = "Contact search; empty lists all"),
-        ("limit" = Option<usize>, Query, description = "Page size"),
-        ("offset" = Option<usize>, Query, description = "Page offset")
-    ),
-    responses(
-        (status = 200, body = crate::contacts_api::ContactListPage),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contacts_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ListPageQuery>,
-) -> Result<Json<crate::contacts_api::ContactListPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let q = query.q.unwrap_or_default();
-    let limit = query
-        .limit
-        .unwrap_or(crate::contacts_api::DEFAULT_LIST_LIMIT);
-    let offset = query.offset.unwrap_or(0);
-    let page = with_locked_conn(db, "contacts list task", move |conn| {
-        crate::contacts_api::list_contacts(conn, &auth.account_id, &q, limit, offset)
-    })
-    .await?;
-    Ok(Json(page))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/export/conversations",
-    tag = "Conversations",
-    security(("bearer" = [])),
-    params(
-        ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
-        ("limit" = Option<usize>, Query, description = "Page size"),
-        ("offset" = Option<usize>, Query, description = "Page offset")
-    ),
-    responses(
-        (status = 200, body = crate::conversations_api::ConversationListPage),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn conversations_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ListPageQuery>,
-) -> Result<Json<crate::conversations_api::ConversationListPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let q = query.q.unwrap_or_default();
-    let limit = query
-        .limit
-        .unwrap_or(crate::conversations_api::DEFAULT_LIST_LIMIT);
-    let offset = query.offset.unwrap_or(0);
-    let page = with_locked_conn(db, "conversations list task", move |conn| {
-        crate::conversations_api::list_conversations(conn, &auth.account_id, &q, limit, offset)
-    })
-    .await?;
-    Ok(Json(page))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/export/conversations/{id}/sources",
-    tag = "Conversations",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Conversation id")),
-    responses(
-        (status = 200, body = crate::conversations_api::ConversationSourcesPage),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn conversation_sources_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(conversation_id): AxumPath<i64>,
-) -> Result<Json<crate::conversations_api::ConversationSourcesPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let page = with_locked_conn(db, "conversation sources task", move |conn| {
-        crate::conversations_api::list_conversation_source_stats(
-            conn,
-            &auth.account_id,
-            conversation_id,
-        )
-    })
-    .await?;
-    page.map(Json)
-        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/export/contacts/summaries",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    request_body = crate::contacts_api::ContactSummariesBody,
-    responses(
-        (status = 200, body = crate::contacts_api::ContactSummariesPage),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_summaries_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<crate::contacts_api::ContactSummariesBody>,
-) -> Result<Json<crate::contacts_api::ContactSummariesPage>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    if body.ids.len() > crate::contacts_api::MAX_LIST_LIMIT {
-        return Err(ApiError::BadRequest(format!(
-            "at most {} contact ids",
-            crate::contacts_api::MAX_LIST_LIMIT
-        )));
-    }
-    let db = Arc::clone(&state.db);
-    let page = with_locked_conn(db, "contact summaries task", move |conn| {
-        crate::contacts_api::get_contact_summaries(conn, &auth.account_id, &body.ids)
-            .map(|contacts| crate::contacts_api::ContactSummariesPage { contacts })
-    })
-    .await?;
-    Ok(Json(page))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/export/contacts/{id}",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Contact id")),
-    responses(
-        (status = 200, body = crate::contacts_api::ContactDetail),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_detail_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(contact_id): AxumPath<i64>,
-) -> Result<Json<crate::contacts_api::ContactDetail>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let detail = with_locked_conn(db, "contact detail task", move |conn| {
-        crate::contacts_api::get_contact_detail(conn, &auth.account_id, contact_id)
-    })
-    .await?;
-    detail
-        .map(Json)
-        .ok_or_else(|| ApiError::NotFound("contact not found".into()))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/export/contacts/{id}",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Contact id")),
-    request_body = crate::contacts_api::ContactMutationBody,
-    responses(
-        (status = 200, body = crate::contacts_api::ContactDetail),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_mutate_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(contact_id): AxumPath<i64>,
-    Json(body): Json<crate::contacts_api::ContactMutationBody>,
-) -> Result<Json<crate::contacts_api::ContactDetail>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let account_id = auth.account_id.clone();
-    let detail = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-        match crate::contacts_api::mutate_contact(&conn, &account_id, contact_id, &body) {
-            Ok(false) => Err(ApiError::NotFound("contact not found".into())),
-            Err(e) => Err(ApiError::BadRequest(e.to_string())),
-            Ok(true) => crate::contacts_api::get_contact_detail(&conn, &account_id, contact_id)
-                .map_err(|e| ApiError::Internal(e.to_string()))?
-                .ok_or_else(|| ApiError::Internal("contact missing after mutate".into())),
-        }
-    })
-    .await
-    .join_map("contact mutate task", |e| e)?;
-
-    Ok(Json(detail))
-}
-
-fn map_group_error(err: crate::contact_groups_api::GroupError) -> ApiError {
-    use crate::contact_groups_api::GroupError;
-    match err {
-        GroupError::BadRequest(m) => ApiError::BadRequest(m),
-        GroupError::NotFound(m) => ApiError::NotFound(m),
-        GroupError::Conflict(m) => ApiError::Conflict(m),
-        GroupError::Internal(m) => ApiError::Internal(m),
-    }
-}
-
-async fn with_group_conn<T, F>(
-    db: Arc<StdMutex<Connection>>,
-    task: &'static str,
-    f: F,
-) -> Result<T, ApiError>
-where
-    T: Send + 'static,
-    F: FnOnce(&Connection) -> Result<T, crate::contact_groups_api::GroupError> + Send + 'static,
-{
-    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
-        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-        f(&conn).map_err(map_group_error)
-    })
-    .await
-    .join_map(task, |e| e)
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupNameBody {
-    name: String,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupRenameBody {
-    from: String,
-    to: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ContactGroupMembersQuery {
-    name: String,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupMembershipBody {
-    ids: Vec<i64>,
-    name: String,
-    enable: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupsListResponse {
-    groups: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupNamedListResponse {
-    name: String,
-    groups: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupDeleteResponse {
-    ok: bool,
-    groups: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ContactGroupMembersResponse {
-    name: String,
-    #[serde(rename = "memberContactIds")]
-    member_contact_ids: Vec<i64>,
-}
-
+/// Number of memberships changed.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct MembershipChangedResponse {
-    changed: u64,
+    pub(crate) changed: u64,
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/contact-groups",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    responses(
-        (status = 200, body = ContactGroupsListResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<ContactGroupsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let groups = with_group_conn(db, "contact groups list", move |conn| {
-        crate::contact_groups_api::list_groups(conn, &auth.account_id)
-    })
-    .await?;
-    Ok(Json(ContactGroupsListResponse { groups }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/contact-groups",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    request_body = ContactGroupNameBody,
-    responses(
-        (status = 200, body = ContactGroupNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_create_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ContactGroupNameBody>,
-) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let name = body.name;
-    let (created, groups) = with_group_conn(db, "contact groups create", move |conn| {
-        let created = crate::contact_groups_api::create_group(conn, &auth.account_id, &name)?;
-        let groups = crate::contact_groups_api::list_groups(conn, &auth.account_id)?;
-        Ok((created, groups))
-    })
-    .await?;
-    Ok(Json(ContactGroupNamedListResponse {
-        name: created,
-        groups,
-    }))
-}
-
-#[utoipa::path(
-    patch,
-    path = "/v1/contact-groups",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    request_body = ContactGroupRenameBody,
-    responses(
-        (status = 200, body = ContactGroupNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_rename_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ContactGroupRenameBody>,
-) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let (name, groups) = with_group_conn(db, "contact groups rename", move |conn| {
-        let name =
-            crate::contact_groups_api::rename_group(conn, &auth.account_id, &body.from, &body.to)?;
-        let groups = crate::contact_groups_api::list_groups(conn, &auth.account_id)?;
-        Ok((name, groups))
-    })
-    .await?;
-    Ok(Json(ContactGroupNamedListResponse { name, groups }))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/v1/contact-groups",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    request_body = ContactGroupNameBody,
-    responses(
-        (status = 200, body = ContactGroupDeleteResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_delete_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ContactGroupNameBody>,
-) -> Result<Json<ContactGroupDeleteResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let groups = with_group_conn(db, "contact groups delete", move |conn| {
-        crate::contact_groups_api::delete_group(conn, &auth.account_id, &body.name)?;
-        crate::contact_groups_api::list_groups(conn, &auth.account_id)
-    })
-    .await?;
-    Ok(Json(ContactGroupDeleteResponse { ok: true, groups }))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/contact-groups/members",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    params(("name" = String, Query, description = "Group name")),
-    responses(
-        (status = 200, body = ContactGroupMembersResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_members_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ContactGroupMembersQuery>,
-) -> Result<Json<ContactGroupMembersResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let name = query.name.clone();
-    let member_contact_ids = with_group_conn(db, "contact groups members", move |conn| {
-        crate::contact_groups_api::list_group_member_ids(conn, &auth.account_id, &name)
-    })
-    .await?;
-    Ok(Json(ContactGroupMembersResponse {
-        name: query.name,
-        member_contact_ids,
-    }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/contacts/groups",
-    tag = "Contacts",
-    security(("bearer" = [])),
-    request_body = ContactGroupMembershipBody,
-    responses(
-        (status = 200, body = MembershipChangedResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn contact_groups_membership_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ContactGroupMembershipBody>,
-) -> Result<Json<MembershipChangedResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let changed = with_group_conn(db, "contact groups membership", move |conn| {
-        crate::contact_groups_api::set_contacts_group_membership(
-            conn,
-            &auth.account_id,
-            &body.ids,
-            &body.name,
-            body.enable,
-        )
-    })
-    .await?;
-    Ok(Json(MembershipChangedResponse { changed }))
-}
-
-fn map_tag_error(err: crate::thread_tags_api::TagError) -> ApiError {
-    use crate::thread_tags_api::TagError;
-    match err {
-        TagError::BadRequest(m) => ApiError::BadRequest(m),
-        TagError::NotFound(m) => ApiError::NotFound(m),
-        TagError::Conflict(m) => ApiError::Conflict(m),
-        TagError::Internal(m) => ApiError::Internal(m),
-    }
-}
-
-async fn with_tag_conn<T, F>(
-    db: Arc<StdMutex<Connection>>,
-    task: &'static str,
-    f: F,
-) -> Result<T, ApiError>
-where
-    T: Send + 'static,
-    F: FnOnce(&Connection) -> Result<T, crate::thread_tags_api::TagError> + Send + 'static,
-{
-    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
-        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
-        f(&conn).map_err(map_tag_error)
-    })
-    .await
-    .join_map(task, |e| e)
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagNameBody {
-    name: String,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagRenameBody {
-    from: String,
-    to: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ThreadTagMembersQuery {
-    name: String,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagMembershipBody {
-    ids: Vec<i64>,
-    name: String,
-    enable: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagsListResponse {
-    tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagNamedListResponse {
-    name: String,
-    tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagDeleteResponse {
-    ok: bool,
-    tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ThreadTagMembersResponse {
-    name: String,
-    #[serde(rename = "memberConversationIds")]
-    member_conversation_ids: Vec<i64>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    responses(
-        (status = 200, body = ThreadTagsListResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<ThreadTagsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let tags = with_tag_conn(db, "thread tags list", move |conn| {
-        crate::thread_tags_api::list_tags(conn, &auth.account_id)
-    })
-    .await?;
-    Ok(Json(ThreadTagsListResponse { tags }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    request_body = ThreadTagNameBody,
-    responses(
-        (status = 200, body = ThreadTagNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_create_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let name = body.name;
-    let (created, tags) = with_tag_conn(db, "thread tags create", move |conn| {
-        let created = crate::thread_tags_api::create_tag(conn, &auth.account_id, &name)?;
-        let tags = crate::thread_tags_api::list_tags(conn, &auth.account_id)?;
-        Ok((created, tags))
-    })
-    .await?;
-    Ok(Json(ThreadTagNamedListResponse {
-        name: created,
-        tags,
-    }))
-}
-
-#[utoipa::path(
-    patch,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    request_body = ThreadTagRenameBody,
-    responses(
-        (status = 200, body = ThreadTagNamedListResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody),
-        (status = 409, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_rename_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ThreadTagRenameBody>,
-) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let (name, tags) = with_tag_conn(db, "thread tags rename", move |conn| {
-        let name =
-            crate::thread_tags_api::rename_tag(conn, &auth.account_id, &body.from, &body.to)?;
-        let tags = crate::thread_tags_api::list_tags(conn, &auth.account_id)?;
-        Ok((name, tags))
-    })
-    .await?;
-    Ok(Json(ThreadTagNamedListResponse { name, tags }))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/v1/thread-tags",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    request_body = ThreadTagNameBody,
-    responses(
-        (status = 200, body = ThreadTagDeleteResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_delete_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<ThreadTagDeleteResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let tags = with_tag_conn(db, "thread tags delete", move |conn| {
-        crate::thread_tags_api::delete_tag(conn, &auth.account_id, &body.name)?;
-        crate::thread_tags_api::list_tags(conn, &auth.account_id)
-    })
-    .await?;
-    Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/thread-tags/members",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    params(("name" = String, Query, description = "Tag name")),
-    responses(
-        (status = 200, body = ThreadTagMembersResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_members_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ThreadTagMembersQuery>,
-) -> Result<Json<ThreadTagMembersResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let name = query.name.clone();
-    let member_conversation_ids = with_tag_conn(db, "thread tags members", move |conn| {
-        crate::thread_tags_api::list_tag_member_ids(conn, &auth.account_id, &name)
-    })
-    .await?;
-    Ok(Json(ThreadTagMembersResponse {
-        name: query.name,
-        member_conversation_ids,
-    }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/conversations/tags",
-    tag = "Thread tags",
-    security(("bearer" = [])),
-    request_body = ThreadTagMembershipBody,
-    responses(
-        (status = 200, body = MembershipChangedResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn thread_tags_membership_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ThreadTagMembershipBody>,
-) -> Result<Json<MembershipChangedResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let changed = with_tag_conn(db, "thread tags membership", move |conn| {
-        crate::thread_tags_api::set_conversations_tag_membership(
-            conn,
-            &auth.account_id,
-            &body.ids,
-            &body.name,
-            body.enable,
-        )
-    })
-    .await?;
-    Ok(Json(MembershipChangedResponse { changed }))
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ListImportsQuery {
-    #[serde(default)]
-    account: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportsListResponse {
-    imports: Vec<crate::db::vault_imports::ImportSummary>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportDetailIssueResponse {
-    kind: String,
-    step: String,
-    item: String,
-    reason: String,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ImportDetailResponse {
-    id: i64,
-    source: String,
-    tool: Option<String>,
-    mode: String,
-    status: String,
-    started_at: String,
-    finished_at: Option<String>,
-    message_count: i64,
-    attachment_count: i64,
-    bytes_uploaded: i64,
-    duration_ms: Option<i64>,
-    parse_ms: Option<i64>,
-    convert_ms: Option<i64>,
-    upload_ms: Option<i64>,
-    summary: serde_json::Value,
-    issues: Vec<ImportDetailIssueResponse>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/imports",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("account" = Option<String>, Query)),
-    responses(
-        (status = 200, body = ImportsListResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_list_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ListImportsQuery>,
-) -> Result<Json<ImportsListResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-
-    let db = Arc::clone(&state.db);
-    let imports = with_locked_conn(db, "list imports task", move |conn| {
-        crate::db::vault_imports::list_imports(conn, &account)
-    })
-    .await?;
-
-    Ok(Json(ImportsListResponse { imports }))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/imports/{id}",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Import session id")),
-    responses(
-        (status = 200, body = ImportDetailResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_get_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(import_id): AxumPath<i64>,
-) -> Result<Json<ImportDetailResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    let db = Arc::clone(&state.db);
-    let detail = tokio::task::spawn_blocking(move || {
-        let conn = lock_conn(&db)?;
-        crate::db::vault_imports::get_import_detail(&conn, &auth.account_id, import_id)
-    })
-    .await
-    .join_map("import detail task", ApiError::from)?;
-
-    Ok(Json(import_detail_response(detail)))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AccountStorageResponse {
-    pub total_bytes: i64,
-    pub attachment_count: i64,
-    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
-}
-
-/// `GET /v1/account/storage` — attachment usage + top 100 largest attachments.
-#[utoipa::path(
-    get,
-    path = "/v1/account/storage",
-    tag = "Account",
-    security(("bearer" = [])),
-    responses(
-        (status = 200, body = AccountStorageResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn account_storage_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AccountStorageResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_full_access(&auth)?;
-    let account_id = auth.account_id;
-    let db = Arc::clone(&state.db);
-    let result = with_locked_conn(db, "account storage task", move |conn| {
-        let total_bytes = crate::db::vault_imports::account_attachment_bytes(conn, &account_id)?;
-        let attachment_count =
-            crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
-        let top_attachments =
-            crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
-        Ok::<_, anyhow::Error>(AccountStorageResponse {
-            total_bytes,
-            attachment_count,
-            top_attachments,
-        })
-    })
-    .await?;
-
-    Ok(Json(result))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/imports",
-    tag = "Import",
-    security(("bearer" = [])),
-    request_body = CreateImportBody,
-    responses(
-        (status = 200, body = CreateImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_create_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateImportBody>,
-) -> Result<Json<CreateImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-    if body.source.trim().is_empty() {
-        return Err(ApiError::BadRequest("body field source is required".into()));
-    }
-    validate_source_id(&body.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    ImportMode::parse(&body.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, body.account.as_deref(), &state.cfg.paths.db).await?;
-
-    let db = Arc::clone(&state.db);
-    let source = body.source.clone();
-    let mode = body.mode.clone();
-    let tool = body.tool.clone();
-    let id = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::account_profile::ensure_account_row(&conn, &account)?;
-        crate::db::vault_imports::start_import(&conn, &account, &source, &mode, tool.as_deref())
-    })
-    .await
-    .join_blocking("create import task failed")?;
-
-    Ok(Json(CreateImportResponse { ok: true, id }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/imports/{id}/complete",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(("id" = i64, Path, description = "Import session id")),
-    request_body = CompleteImportBody,
-    responses(
-        (status = 200, body = CompleteImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn imports_complete_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(import_id): AxumPath<i64>,
-    Json(body): Json<CompleteImportBody>,
-) -> Result<Json<CompleteImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-    let account = resolve_import_account(&auth, None, &state.cfg.paths.db).await?;
-    validate_complete_import_issues(&body.issues)?;
-    let db = Arc::clone(&state.db);
-    let summary_json = match body.summary {
-        Some(summary) => Some(
-            serde_json::to_string(&summary)
-                .map_err(|e| ApiError::Internal(format!("serialize import summary: {e}")))?,
-        ),
-        None => None,
-    };
-    let args = crate::db::vault_imports::CompleteImportArgs {
-        ok: body.ok,
-        message_count: body.message_count,
-        attachment_count: body.attachment_count,
-        bytes_uploaded: body.bytes_uploaded,
-        duration_ms: body.duration_ms,
-        parse_ms: body.parse_ms,
-        convert_ms: body.convert_ms,
-        upload_ms: body.upload_ms,
-        summary_json,
-        issues: body
-            .issues
-            .into_iter()
-            .map(|issue| crate::db::vault_imports::ImportIssueInput {
-                kind: issue.kind,
-                step: issue.step,
-                item: issue.item,
-                reason: issue.reason,
-            })
-            .collect(),
-    };
-    let row = tokio::task::spawn_blocking(move || {
-        let conn = lock_import_conn(&db)?;
-        crate::db::vault_imports::complete_import(&conn, &account, import_id, &args)
-    })
-    .await
-    .join_map("complete import task failed", |e| {
-        match e.downcast::<crate::db::vault_imports::ImportLookupError>() {
-            Ok(lookup) => ApiError::from(lookup),
-            Err(other) => ApiError::Internal(other.to_string()),
-        }
-    })?;
-
-    Ok(Json(CompleteImportResponse {
-        ok: true,
-        id: row.id,
-        status: row.status,
-        message_count: row.message_count,
-        attachment_count: row.attachment_count,
-        bytes_uploaded: row.bytes_uploaded,
-    }))
-}
-
-fn parse_summary_json(summary_json: Option<String>) -> serde_json::Value {
-    match summary_json {
-        Some(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)),
-        None => serde_json::Value::Null,
-    }
-}
-
-fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> ImportDetailResponse {
-    let row = detail.row;
-    let issues = detail
-        .issues
-        .into_iter()
-        .map(|issue| ImportDetailIssueResponse {
-            kind: issue.kind,
-            step: issue.step,
-            item: issue.item,
-            reason: issue.reason,
-        })
-        .collect();
-
-    ImportDetailResponse {
-        id: row.id,
-        source: row.source,
-        tool: row.tool,
-        mode: row.mode,
-        status: row.status,
-        started_at: row.started_at,
-        finished_at: row.finished_at,
-        message_count: row.message_count,
-        attachment_count: row.attachment_count,
-        bytes_uploaded: row.bytes_uploaded,
-        duration_ms: row.duration_ms,
-        parse_ms: row.parse_ms,
-        convert_ms: row.convert_ms,
-        upload_ms: row.upload_ms,
-        summary: parse_summary_json(row.summary_json),
-        issues,
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/import",
-    tag = "Import",
-    security(("bearer" = [])),
-    params(
-        ("source" = String, Query),
-        ("account" = Option<String>, Query),
-        ("mode" = Option<String>, Query, description = "Default append"),
-        ("dedupe" = Option<bool>, Query),
-        ("import_id" = Option<i64>, Query),
-        ("contact_name_mode" = Option<String>, Query)
-    ),
-    request_body(
-        content(
-            ("application/x-ndjson"),
-            ("application/jsonl"),
-            ("multipart/form-data")
-        ),
-        description = "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted."
-    ),
-    responses(
-        (status = 200, body = ImportResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn import_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(mut query): Query<ImportQuery>,
-    request: Request,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_import_access(&auth)?;
-    reject_if_guest_account(&state.cfg.paths.db, &auth.account_id).await?;
-
-    let Some(ct) = content_type_base(&headers) else {
-        return Err(ApiError::BadRequest(
-            "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
-                .into(),
-        ));
-    };
-
-    if query.source.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "query param source is required".into(),
-        ));
-    }
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-    query.account = Some(account);
-
-    if is_multipart_content_type(ct) {
-        let multipart = Multipart::from_request(request, &state)
-            .await
-            .map_err(|e| ApiError::BadRequest(format!("invalid multipart body: {e}")))?;
-        return import_multipart(state, query, multipart).await;
-    }
-
-    if is_jsonl_content_type(ct) {
-        let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-        let jsonl_path = temp.path().join("_import.jsonl");
-        let n = stream_body_to_file(request.into_body(), &jsonl_path, state.max_body_bytes).await?;
-        if n == 0 {
-            return Err(ApiError::BadRequest("request body is empty".into()));
-        }
-        let response = run_import_path(state, query, jsonl_path, None).await;
-        drop(temp);
-        return response;
-    }
-
-    Err(ApiError::BadRequest(
-        "Content-Type must be application/x-ndjson, application/jsonl, or multipart/form-data"
-            .into(),
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct AssetPutQuery {
-    source: String,
-    #[serde(default)]
-    account: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AssetPutResponse {
-    ok: bool,
-    sha256: String,
-    assets_path: String,
-    already_present: bool,
-}
-
-impl AssetPutResponse {
-    fn stored(asset: assets::StoredAsset, already_present: bool) -> Json<Self> {
-        Json(Self {
-            ok: true,
-            sha256: asset.sha256,
-            assets_path: asset.assets_path,
-            already_present,
-        })
-    }
-}
-
-enum AssetAccess {
-    /// GET asset bytes — needs export (or full session).
-    Read,
-    /// PUT / multipart upload — needs import (or full session).
-    Write,
-    /// HEAD probe — import or export.
-    Probe,
-}
-
-async fn resolve_asset_lookup(
-    state: &AppState,
-    headers: &HeaderMap,
-    sha256: &str,
-    query: &AssetPutQuery,
-    access: AssetAccess,
-) -> Result<(String, String, Option<assets::StoredAsset>), ApiError> {
-    let auth = resolve_auth(headers, state).await?;
-    // A download streams the file itself, so hashing it during lookup would read
-    // every byte twice. Probe and write lookups decide whether a client may skip
-    // sending bytes, so those keep verifying the stored blob.
-    let verify_stored_bytes = match access {
-        AssetAccess::Read => {
-            require_export_access(&auth)?;
-            false
-        }
-        AssetAccess::Write => {
-            require_import_access(&auth)?;
-            true
-        }
-        AssetAccess::Probe => {
-            require_import_or_export_access(&auth)?;
-            true
-        }
-    };
-    if query.source.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "query param source is required".into(),
-        ));
-    }
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-    let source_id = query.source.clone();
-
-    let cfg = Arc::clone(&state.cfg);
-    let sha_lookup = sha256.to_string();
-    let account_lookup = account.clone();
-    let source_lookup = source_id.clone();
-    let existing = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg
-            .paths
-            .assets_dir_for_account(&account_lookup, &source_lookup);
-        if verify_stored_bytes {
-            assets::lookup_by_sha256(&assets_dir, &sha_lookup)
-        } else {
-            assets::lookup_by_sha256_unverified(&assets_dir, &sha_lookup)
-        }
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
-    Ok((account, source_id, existing))
-}
-
-/// Probe whether a content-addressed asset is already stored (no body).
-#[utoipa::path(
-    head,
-    path = "/v1/assets/{sha256}",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, body = AssetPutResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_head_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(sha256): AxumPath<String>,
-    Query(query): Query<AssetPutQuery>,
-) -> Result<Json<AssetPutResponse>, ApiError> {
-    let (_account, _source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Probe).await?;
-    let Some(stored) = existing else {
-        return Err(ApiError::NotFound("asset not found".into()));
-    };
-    Ok(AssetPutResponse::stored(stored, true))
-}
-
-/// Download a previously stored content-addressed asset (read-only).
-#[utoipa::path(
-    get,
-    path = "/v1/assets/{sha256}",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, description = "Raw asset bytes", content_type = "application/octet-stream"),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody),
-        (status = 404, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_get_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(sha256): AxumPath<String>,
-    Query(query): Query<AssetPutQuery>,
-) -> Result<Response, ApiError> {
-    let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Read).await?;
-    let Some(stored) = existing else {
-        return Err(ApiError::NotFound("asset not found".into()));
-    };
-
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let path = assets_dir.join(&stored.assets_path);
-    // Reject symlinks / missing files before streaming.
-    let meta = tokio::fs::symlink_metadata(&path).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ApiError::NotFound("asset file missing on disk".into())
-        } else {
-            ApiError::Internal(format!("stat {}: {e}", path.display()))
-        }
-    })?;
-    if meta.file_type().is_symlink() || !meta.is_file() {
-        return Err(ApiError::NotFound("asset file missing on disk".into()));
-    }
-
-    let mime = stored
-        .mime_type
-        .clone()
-        .unwrap_or_else(|| "application/octet-stream".into());
-    let file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("open {}: {e}", path.display())))?;
-    let stream = tokio_util::io::ReaderStream::new(file);
-    let body = axum::body::Body::from_stream(stream);
-
-    let mut response = Response::new(body);
-    *response.status_mut() = StatusCode::OK;
-    let headers_mut = response.headers_mut();
-    if let Ok(value) = header::HeaderValue::from_str(&mime) {
-        headers_mut.insert(header::CONTENT_TYPE, value);
-    }
-    headers_mut.insert(
-        header::HeaderName::from_static("x-content-type-options"),
-        header::HeaderValue::from_static("nosniff"),
-    );
-    // Force download-ish disposition with a fixed safe name (never echo client paths).
-    headers_mut.insert(
-        header::CONTENT_DISPOSITION,
-        header::HeaderValue::from_static("attachment; filename=\"asset\""),
-    );
-    if meta.len() > 0 {
-        headers_mut.insert(
-            header::CONTENT_LENGTH,
-            header::HeaderValue::from(meta.len()),
-        );
-    }
-    Ok(response)
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ExportMessagesQuery {
-    #[serde(default)]
-    q: String,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    offset: Option<usize>,
-    #[serde(default)]
-    cursor: Option<String>,
-    #[serde(default)]
-    account: Option<String>,
-    #[serde(default)]
-    source: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ExportMessagesCountQuery {
-    #[serde(default)]
-    q: String,
-    #[serde(default)]
-    account: Option<String>,
-    #[serde(default)]
-    source: Option<String>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/export/messages/count",
-    tag = "Export",
-    security(("bearer" = [])),
-    params(
-        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
-        ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, body = crate::export_api::ExportCountResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn export_messages_count_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ExportMessagesCountQuery>,
-) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-    let q = query.q.clone();
-    let source = query.source.clone();
-
-    let body = with_configured_db_map(&state.cfg.paths.db, "export count task", move |conn| {
-        export_api::export_message_count(
-            conn,
-            ExportCountOpts {
-                account_id: &account,
-                query: &q,
-                source_override: source.as_deref(),
-            },
-        )
-    })
-    .await?;
-    Ok(Json(body))
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/export/messages",
-    tag = "Export",
-    security(("bearer" = [])),
-    params(
-        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
-        ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
-        ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
-        ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
-        ("account" = Option<String>, Query),
-        ("source" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, body = crate::export_api::ExportMessagesResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn export_messages_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ExportMessagesQuery>,
-) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    require_export_access(&auth)?;
-    let account =
-        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
-    let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
-    let offset = query.offset;
-    let q = query.q.clone();
-    let cursor = query.cursor.clone();
-    let source = query.source.clone();
-
-    let body = with_configured_db_map(&state.cfg.paths.db, "export task", move |conn| {
-        export_api::export_messages(
-            conn,
-            ExportPageOpts {
-                account_id: &account,
-                query: &q,
-                limit,
-                offset,
-                cursor: cursor.as_deref(),
-                source_override: source.as_deref(),
-            },
-        )
-    })
-    .await?;
-    Ok(Json(body))
-}
-
-#[utoipa::path(
-    put,
-    path = "/v1/assets/{sha256}",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    request_body(content_type = "application/octet-stream", description = "Raw asset bytes"),
-    responses(
-        (status = 200, body = AssetPutResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_put_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(sha256): AxumPath<String>,
-    Query(query): Query<AssetPutQuery>,
-    request: Request,
-) -> Result<Json<AssetPutResponse>, ApiError> {
-    let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
-
-    let mime = upload_content_type(&headers);
-
-    if let Some(stored) = existing {
-        discard_body(request.into_body(), state.max_body_bytes).await?;
-        return Ok(AssetPutResponse::stored(stored, true));
-    }
-
-    // Write the upload into the account assets tree so verify can rename into place
-    // instead of copying across filesystems (tempfile often lives on another mount).
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let incoming_dir = assets_dir.join(".incoming");
-    tokio::fs::create_dir_all(&incoming_dir)
-        .await
-        .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", incoming_dir.display())))?;
-    let tmp_path = incoming_dir.join(format!(
-        "{sha256}-{}.part",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    let n = match stream_body_to_file(request.into_body(), &tmp_path, state.max_body_bytes).await {
-        Ok(n) => n,
-        Err(err) => {
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(err);
-        }
-    };
-    if n == 0 {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(ApiError::BadRequest("request body is empty".into()));
-    }
-
-    let sha = sha256.clone();
-    let tmp_for_store = tmp_path.clone();
-    let assets_dir_store = assets_dir.clone();
-    let (stored, already_present) = tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&assets_dir_store)?;
-        assets::store_verified(
-            &tmp_for_store,
-            &sha,
-            &assets_dir_store,
-            mime.as_deref(),
-            true,
-            false,
-        )
-    })
-    .await
-    .join_map("asset upload task", |e| ApiError::BadRequest(e.to_string()))?;
-
-    // Rename consumes the temp file; remove leftovers after errors / already_present races.
-    let _ = tokio::fs::remove_file(&tmp_path).await;
-    Ok(AssetPutResponse::stored(stored, already_present))
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct AssetUploadStartBody {
-    bytes: u64,
-    #[serde(default)]
-    mime: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AssetUploadStartResponse {
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    upload_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    part_size: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    assets_path: Option<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    already_present: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AssetUploadPartResponse {
-    ok: bool,
-    part: u32,
-    bytes: u64,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AssetUploadAbortResponse {
-    ok: bool,
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/assets/{sha256}/uploads",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    request_body = AssetUploadStartBody,
-    responses(
-        (status = 200, body = AssetUploadStartResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_upload_start_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath(sha256): AxumPath<String>,
-    Query(query): Query<AssetPutQuery>,
-    Json(body): Json<AssetUploadStartBody>,
-) -> Result<Json<AssetUploadStartResponse>, ApiError> {
-    let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let mime = body.mime.clone();
-    let bytes = body.bytes;
-    let sha = sha256.clone();
-    let limits = state.upload_limits;
-    let result = tokio::task::spawn_blocking(move || {
-        asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
-    })
-    .await
-    .join_map("upload start task", |e| ApiError::BadRequest(e.to_string()))?;
-
-    match result {
-        (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
-            ok: true,
-            upload_id: None,
-            part_size: None,
-            sha256: Some(stored.sha256),
-            assets_path: Some(stored.assets_path),
-            already_present: true,
-        })),
-        (None, Some(start)) => Ok(Json(AssetUploadStartResponse {
-            ok: true,
-            upload_id: Some(start.upload_id),
-            part_size: Some(start.part_size),
-            sha256: None,
-            assets_path: None,
-            already_present: false,
-        })),
-        _ => Err(ApiError::Internal(
-            "upload start returned inconsistent state".into(),
-        )),
-    }
-}
-
-#[utoipa::path(
-    put,
-    path = "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("upload_id" = String, Path),
-        ("part" = u32, Path),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    request_body(content_type = "application/octet-stream", description = "Raw part bytes"),
-    responses(
-        (status = 200, body = AssetUploadPartResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_upload_part_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath((sha256, upload_id, part)): AxumPath<(String, String, u32)>,
-    Query(query): Query<AssetPutQuery>,
-    request: Request,
-) -> Result<Json<AssetUploadPartResponse>, ApiError> {
-    let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
-    if part == 0 {
-        return Err(ApiError::BadRequest("part number must be >= 1".into()));
-    }
-    let body = read_body_limited(request.into_body(), state.upload_limits.part_size).await?;
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let sha = sha256.clone();
-    let uid = upload_id.clone();
-    let written = tokio::task::spawn_blocking(move || {
-        asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
-    })
-    .await
-    .join_map("upload part task", |e| ApiError::BadRequest(e.to_string()))?;
-    Ok(Json(AssetUploadPartResponse {
-        ok: true,
-        part,
-        bytes: written,
-    }))
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/assets/{sha256}/uploads/{upload_id}/complete",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("upload_id" = String, Path),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, body = AssetPutResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_upload_complete_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
-    Query(query): Query<AssetPutQuery>,
-) -> Result<Json<AssetPutResponse>, ApiError> {
-    let (account, source_id, existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
-    if let Some(stored) = existing {
-        // Drop staging if a concurrent single-PUT won the race.
-        let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-        let sha = sha256.clone();
-        let uid = upload_id.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            asset_uploads::abort_upload(&assets_dir, &sha, &uid)
-        })
-        .await;
-        return Ok(AssetPutResponse::stored(stored, true));
-    }
-
-    let lock_key = format!("{account}:{sha256}");
-    let complete_lock = {
-        let mut map = state.asset_complete_locks.lock().await;
-        map.entry(lock_key)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = complete_lock.lock().await;
-
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let sha = sha256.clone();
-    let uid = upload_id.clone();
-    let limits = state.upload_limits;
-    let (stored, already_present) = tokio::task::spawn_blocking(move || {
-        asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
-    })
-    .await
-    .join_map("upload complete task", |e| {
-        ApiError::BadRequest(e.to_string())
-    })?;
-
-    Ok(AssetPutResponse::stored(stored, already_present))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/v1/assets/{sha256}/uploads/{upload_id}",
-    tag = "Assets",
-    security(("bearer" = [])),
-    params(
-        ("sha256" = String, Path, description = "Content SHA-256 hex"),
-        ("upload_id" = String, Path),
-        ("source" = String, Query),
-        ("account" = Option<String>, Query)
-    ),
-    responses(
-        (status = 200, body = AssetUploadAbortResponse),
-        (status = 400, body = crate::server::ErrorBody),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn asset_upload_abort_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
-    Query(query): Query<AssetPutQuery>,
-) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
-    let (account, source_id, _existing) =
-        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
-    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
-    let sha = sha256.clone();
-    let uid = upload_id.clone();
-    tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
-        .await
-        .join_map("upload abort task", |e| ApiError::BadRequest(e.to_string()))?;
-    Ok(Json(AssetUploadAbortResponse { ok: true }))
-}
-
-async fn read_body_limited(body: axum::body::Body, max_bytes: usize) -> Result<Vec<u8>, ApiError> {
+pub(crate) async fn read_body_limited(
+    body: axum::body::Body,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -2757,7 +763,10 @@ async fn read_body_limited(body: axum::body::Body, max_bytes: usize) -> Result<V
 }
 
 /// Drain request body without retaining it (used when asset already exists).
-async fn discard_body(body: axum::body::Body, max_body_bytes: usize) -> Result<(), ApiError> {
+pub(crate) async fn discard_body(
+    body: axum::body::Body,
+    max_body_bytes: usize,
+) -> Result<(), ApiError> {
     let mut stream = body.into_data_stream();
     let mut seen = 0usize;
     while let Some(chunk) = stream.next().await {
@@ -2781,7 +790,7 @@ async fn create_dest_file(dest: &Path) -> Result<tokio::fs::File, ApiError> {
         .map_err(|e| ApiError::Internal(format!("create {}: {e}", dest.display())))
 }
 
-async fn stream_body_to_file(
+pub(crate) async fn stream_body_to_file(
     body: axum::body::Body,
     dest: &Path,
     max_body_bytes: usize,
@@ -2805,7 +814,7 @@ async fn stream_body_to_file(
     Ok(written)
 }
 
-async fn stream_field_to_file(
+pub(crate) async fn stream_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     dest: &Path,
 ) -> Result<u64, ApiError> {
@@ -2827,219 +836,14 @@ async fn stream_field_to_file(
     Ok(written)
 }
 
-async fn import_multipart(
-    state: AppState,
-    query: ImportQuery,
-    mut multipart: Multipart,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let temp = tempfile::tempdir().map_err(|e| ApiError::Internal(format!("temp dir: {e}")))?;
-    let asset_root = temp.path().to_path_buf();
-    let jsonl_path = asset_root.join("_import.jsonl");
-    let mut have_jsonl = false;
-    let mut file_count = 0u64;
-
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("multipart field error: {e}")))?
-    {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "jsonl" => {
-                let n = stream_field_to_file(field, &jsonl_path).await?;
-                if n == 0 {
-                    return Err(ApiError::BadRequest("jsonl part is empty".into()));
-                }
-                have_jsonl = true;
-            }
-            "file" => {
-                let filename = match field.file_name() {
-                    Some(name) if !name.is_empty() => name.to_string(),
-                    _ => {
-                        return Err(ApiError::BadRequest(
-                            "file part missing filename (use relative path e.g. attachments/a.jpg)"
-                                .into(),
-                        ));
-                    }
-                };
-                let rel = safe_rel_path(&filename)?;
-                let dest = asset_root.join(&rel);
-                stream_field_to_file(field, &dest).await?;
-                file_count += 1;
-            }
-            other => {
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| ApiError::BadRequest(format!("multipart chunk: {e}")))?
-                {
-                    let _ = chunk;
-                }
-                eprintln!("import: ignoring unknown multipart field {other:?}");
-            }
-        }
-    }
-
-    if !have_jsonl {
-        return Err(ApiError::BadRequest(
-            "multipart missing required field 'jsonl'".into(),
-        ));
-    }
-    eprintln!("import: multipart jsonl + {file_count} file(s)");
-
-    let response = run_import_path(state, query, jsonl_path, Some(asset_root)).await;
-    drop(temp);
-    response
-}
-
-async fn run_import_path(
-    state: AppState,
-    query: ImportQuery,
-    jsonl_path: PathBuf,
-    asset_root_override: Option<PathBuf>,
-) -> Result<Json<ImportResponse>, ApiError> {
-    let mode = ImportMode::parse(&query.mode).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    let contact_name_mode = import::ContactNameMode::parse(&query.contact_name_mode)
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-
-    let cfg = Arc::clone(&state.cfg);
-    let db = Arc::clone(&state.db);
-    let account = query
-        .account
-        .clone()
-        .ok_or_else(|| ApiError::BadRequest("account is required".into()))?;
-    let source_id = query.source.clone();
-    let do_dedupe = query.dedupe;
-    let query_import_id = query.import_id;
-
-    let account_lock = {
-        let mut map = state.account_import_locks.lock().await;
-        map.entry(account.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let _guard = account_lock.lock().await;
-
-    // Validate client-owned sessions before staging work so bad ids return 400.
-    if let Some(id) = query_import_id {
-        let db = Arc::clone(&db);
-        let account_check = account.clone();
-        let source_check = source_id.clone();
-        let mode_check = mode.as_str().to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = lock_import_conn(&db)?;
-            crate::db::vault_imports::require_reusable_import(
-                &conn,
-                &account_check,
-                id,
-                &source_check,
-                &mode_check,
-            )
-            .map_err(anyhow::Error::new)?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .join_map("import session check", |e| {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                ApiError::NotFound(msg)
-            } else if msg.contains("not running") || msg.contains("mismatch") {
-                ApiError::BadRequest(msg)
-            } else {
-                ApiError::Internal(msg)
-            }
-        })?;
-    }
-
-    let result = tokio::task::spawn_blocking(move || {
-        let assets_dir = cfg.paths.assets_dir_for_account(&account, &source_id);
-        // Raw body imports resolve attachment paths only via pre-uploaded sha256 assets.
-        // Multipart supplies a temp asset_root for relative file parts.
-        let asset_root_owned = asset_root_override.unwrap_or_else(|| assets_dir.clone());
-
-        // Client session (vault-push): ownership/status already checked above.
-        // Otherwise start a one-shot vault_imports row so Storage history works for curl / single POSTs.
-        let (import_id, owns_session) = if let Some(id) = query_import_id {
-            (Some(id), false)
-        } else {
-            let conn = lock_import_conn(&db)?;
-            crate::db::account_profile::ensure_account_row(&conn, &account)?;
-            let id = crate::db::vault_imports::start_import(
-                &conn,
-                &account,
-                &source_id,
-                mode.as_str(),
-                Some("http"),
-            )?;
-            drop(conn);
-            (Some(id), true)
-        };
-
-        let mut opts = ImportOptions::fixed(FixedImportArgs {
-            db_path: &cfg.paths.db,
-            assets_dir: &assets_dir,
-            asset_root: &asset_root_owned,
-            contacts: None,
-            overwrite_contacts: false,
-            mode,
-            source: &source_id,
-            account_id: &account,
-            fill_content_keys: do_dedupe,
-            import_id,
-        });
-        opts.contact_name_mode = contact_name_mode;
-        // Dedicated connection for the long import so we do not hold `state.db`
-        // across JSONL / asset IO / promote (export and session SQL stay free).
-        let mut conn = schema::open_configured(&cfg.paths.db)
-            .with_context(|| format!("open import database {}", cfg.paths.db.display()))?;
-        let import_result = import::import_jsonl_files_on_conn(
-            &mut conn,
-            &[jsonl_path],
-            &opts,
-            import::ImportSchemaMode::AssumeReady,
-        );
-
-        if owns_session && let Some(id) = import_id {
-            let complete_args = match &import_result {
-                Ok(stats) => crate::db::vault_imports::CompleteImportArgs::succeeded(
-                    stats.messages,
-                    stats.attachments,
-                ),
-                Err(_) => crate::db::vault_imports::CompleteImportArgs::failed(),
-            };
-            crate::db::vault_imports::complete_import_or_warn(&conn, &account, id, &complete_args);
-        }
-        let stats = import_result?;
-        drop(conn);
-        let dedupe_stats = if do_dedupe {
-            Some(dedupe::run_dedupe(&cfg.paths.db, &account, 2)?)
-        } else {
-            None
-        };
-        Ok::<_, anyhow::Error>((stats, dedupe_stats, source_id, account))
-    })
-    .await
-    .join_blocking("import task failed")?;
-
-    let (stats, dedupe_stats, source_id, account) = result;
-    Ok(Json(ImportResponse {
-        ok: true,
-        source: source_id,
-        account,
-        stats,
-        dedupe: dedupe_stats.map(|d| DedupeResponse {
-            keys_filled: d.keys_filled,
-            exact_groups: d.exact_groups,
-            exact_flagged: d.exact_flagged,
-            near_flagged: d.near_flagged,
-        }),
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::{
+        CompleteImportBody, CompleteImportIssueBody, CreateImportBody, imports_complete_handler,
+        imports_create_handler, imports_get_handler,
+    };
+    use axum::extract::{Path as AxumPath, Query, State};
     use rusqlite::params;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
@@ -3191,7 +995,7 @@ mod tests {
     #[tokio::test]
     async fn auth_mode_includes_try_demo_flag() {
         let (_tmp, state, _token, _import_id) = test_state();
-        let Json(value) = auth_mode_handler(State(state)).await;
+        let Json(value) = crate::auth::auth_mode_handler(State(state)).await;
         assert!(!value.try_demo);
         assert!(!value.mode.is_empty());
     }
@@ -3264,10 +1068,10 @@ mod tests {
             other => panic!("expected forbidden on POST /v1/imports, got {other:?}"),
         }
 
-        let export = export_messages_handler(
+        let export = crate::export_api::export_messages_handler(
             State(state),
             auth_headers(&token),
-            Query(ExportMessagesQuery {
+            Query(crate::export_api::ExportMessagesQuery {
                 q: "hello".into(),
                 limit: None,
                 offset: None,

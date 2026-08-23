@@ -26,6 +26,7 @@ pub struct GuestPoolState {
 }
 
 impl GuestPoolState {
+    /// Create an empty assignment counter.
     pub fn new() -> Self {
         Self::default()
     }

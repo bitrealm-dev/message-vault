@@ -10,6 +10,7 @@ use crate::media_tools::{
     probe_video_efficient,
 };
 
+/// How attachment files are handled during import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MediaMode {
     /// Hash/copy attachment files as-is (default).
@@ -24,6 +25,9 @@ pub enum MediaMode {
 }
 
 impl MediaMode {
+    /// Parse a `--media` value: `copy`, `none`, `convert`, or `compress`;
+    /// anything else is an error. Accepts the aliases `clone`, `skip`, and
+    /// `disabled`.
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
             "copy" | "clone" => Ok(Self::Copy),
@@ -34,6 +38,7 @@ impl MediaMode {
         }
     }
 
+    /// Canonical flag value for this mode (`copy`, `none`, `convert`, or `compress`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Copy => "copy",
@@ -44,9 +49,12 @@ impl MediaMode {
     }
 }
 
+/// The file to store for one attachment, after the mode's transformation.
 #[derive(Debug)]
 pub struct ResolvedMedia {
+    /// Path of the file to store in the vault.
     pub path: PathBuf,
+    /// MIME type of the attachment, when known.
     pub mime_type: Option<String>,
 }
 

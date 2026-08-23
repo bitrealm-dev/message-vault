@@ -1,52 +1,75 @@
 //! Read-only conversation list used by `GET /v1/export/conversations`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
+use axum::Json;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
 use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparison, parse_count_comparison};
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth, with_locked_conn};
 
-pub const DEFAULT_LIST_LIMIT: usize = 40;
-pub const MAX_LIST_LIMIT: usize = 100;
-/// Cap expensive OFFSET skips on conversation list pages.
-pub const MAX_LIST_OFFSET: usize = 50_000;
+pub use crate::page_limits::{
+    DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
+};
 
+/// One page of the conversation list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationListPage {
+    /// Conversations on this page.
     pub conversations: Vec<ConversationSummary>,
+    /// Total conversations matching the query.
     pub total: u64,
+    /// Page size used.
     pub limit: usize,
+    /// Page offset used.
     pub offset: usize,
 }
 
+/// One participant with display name and handle.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationParticipant {
+    /// Display name from the import or the vault contact.
     pub name: Option<String>,
     /// Per service+identity alias from `contact_handles` when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Raw handle value (phone, email, or username).
     pub handle: String,
+    /// Platform service, e.g. `imessage`.
     pub service: String,
+    /// Linked vault contact id, when the handle is linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
 }
 
+/// Conversation row for the list: participants, counts, tags.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSummary {
     /// Numeric `conversations.id`, serialized as a string for `in:<id>` queries.
     pub id: String,
+    /// Participants with names and handles.
     pub participants: Vec<ConversationParticipant>,
+    /// Messages in the conversation (excluding hidden duplicates).
     pub message_count: u64,
+    /// Timestamp of the last message.
     pub last_message_at: String,
+    /// Timestamp of the conversation's first message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_range_start: Option<String>,
+    /// Timestamp of the conversation's last message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_range_end: Option<String>,
+    /// Platform service of the conversation, e.g. `imessage`.
     pub service: String,
+    /// True for group conversations.
     pub is_group: bool,
+    /// Group label from the export, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Thread tags on this conversation.
@@ -712,16 +735,23 @@ fn load_conversation_sources(
     })
 }
 
+/// One backup source with message counts and share.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourceInfo {
+    /// Backup source name.
     pub backup_name: String,
+    /// Messages in this conversation from this source.
     pub message_count: u64,
+    /// Messages only this source has (not hidden duplicates).
     pub unique_count: u64,
+    /// Share of the conversation's unique messages, 0–100.
     pub percentage: f64,
 }
 
+/// Per-source counts for one conversation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourcesPage {
+    /// One entry per source that contributed messages.
     pub sources: Vec<ConversationSourceInfo>,
 }
 
@@ -777,6 +807,73 @@ pub fn list_conversation_source_stats(
         })
         .collect();
     Ok(Some(ConversationSourcesPage { sources }))
+}
+
+/// Page through conversations (newest first) with participants, message
+/// counts, and tags.
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversations_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::server::ListPageQuery>,
+) -> Result<Json<ConversationListPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let q = query.q.unwrap_or_default();
+    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = with_locked_conn(db, "conversations list task", move |conn| {
+        list_conversations(conn, &auth.account_id, &q, limit, offset)
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// Per-backup message counts for one conversation (the Sources panel).
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations/{id}/sources",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationSourcesPage),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_sources_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<Json<ConversationSourcesPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let page = with_locked_conn(db, "conversation sources task", move |conn| {
+        list_conversation_source_stats(conn, &auth.account_id, conversation_id)
+    })
+    .await?;
+    page.map(Json)
+        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
 #[cfg(test)]

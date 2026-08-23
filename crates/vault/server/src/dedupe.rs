@@ -105,11 +105,16 @@ fn resolve_utc_secs(timestamp_utc: Option<&str>, timestamp: &str) -> Option<i64>
         .or_else(|| parse_rfc3339_utc_secs(timestamp.trim()))
 }
 
+/// Counts reported by one cross-source dedupe pass.
 #[derive(Debug, Default)]
 pub struct DedupeStats {
+    /// Content keys written (one per message; not a duplicate count).
     pub keys_filled: u64,
+    /// Groups of messages sharing one content key.
     pub exact_groups: u64,
+    /// Messages hidden as exact duplicates (all but the survivor per group).
     pub exact_flagged: u64,
+    /// Messages flagged as near duplicates.
     pub near_flagged: u64,
 }
 

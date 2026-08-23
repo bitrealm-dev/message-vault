@@ -26,11 +26,16 @@ const IMESSAGE_SOURCE: &str = "imessage";
 const SBR_SOURCE: &str = "sms-backup-restore";
 const WHATSAPP_SOURCE: &str = "whatsapp";
 
+/// Counts reported when a demo reset finishes.
 #[derive(Debug)]
 pub struct ResetDemoStats {
+    /// Stats from regenerating the demo bundle.
     pub seed: demo_seed::GenStats,
+    /// Stats from importing the regenerated bundle.
     pub import: import::ImportStats,
+    /// Dedupe content keys filled during the reset (one per message; not a duplicate count).
     pub dedupe_keys_filled: u64,
+    /// Stats from the post-import media processing pass.
     pub process_assets: process_assets::ProcessAssetsStats,
 }
 

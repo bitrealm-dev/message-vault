@@ -9,41 +9,70 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+/// One row of `vault_imports`: a per-account import session record.
 #[allow(dead_code)]
 pub struct VaultImportRow {
+    /// Import session id.
     pub id: i64,
+    /// Vault account that owns the session.
     pub account_id: String,
+    /// Source id the session imports.
     pub source: String,
+    /// Importing tool, e.g. `vault-push`.
     pub tool: Option<String>,
+    /// Import mode (`replace` or `append`).
     pub mode: String,
+    /// Lifecycle status (`running`, `completed`, or `failed`).
     pub status: String,
+    /// UTC time the session started.
     pub started_at: String,
+    /// UTC time the session finished, when it has.
     pub finished_at: Option<String>,
+    /// Messages counted for the session.
     pub message_count: i64,
+    /// Attachments counted for the session.
     pub attachment_count: i64,
+    /// Bytes uploaded so far.
     pub bytes_uploaded: i64,
+    /// Total wall-clock duration, when finished.
     pub duration_ms: Option<i64>,
+    /// Time spent parsing JSONL, when finished.
     pub parse_ms: Option<i64>,
+    /// Time spent converting media, when finished.
     pub convert_ms: Option<i64>,
+    /// Time spent uploading assets, when finished.
     pub upload_ms: Option<i64>,
+    /// Client-provided summary payload.
     pub summary_json: Option<String>,
 }
 
+/// Outcome fields written when a session completes.
 #[derive(Debug, Clone, Default)]
 pub struct CompleteImportArgs {
+    /// True when the import finished successfully.
     pub ok: bool,
+    /// Messages imported; counted from the database when omitted.
     pub message_count: Option<i64>,
+    /// Attachments imported; counted from the database when omitted.
     pub attachment_count: Option<i64>,
+    /// Bytes uploaded.
     pub bytes_uploaded: Option<i64>,
+    /// Total wall-clock duration.
     pub duration_ms: Option<i64>,
+    /// Time spent parsing JSONL.
     pub parse_ms: Option<i64>,
+    /// Time spent converting media.
     pub convert_ms: Option<i64>,
+    /// Time spent uploading assets.
     pub upload_ms: Option<i64>,
+    /// Client-provided summary payload.
     pub summary_json: Option<String>,
+    /// Per-file issues to record against the session.
     pub issues: Vec<ImportIssueInput>,
 }
 
 impl CompleteImportArgs {
+    /// Build a success outcome from message and attachment counts.
     pub fn succeeded(messages: u64, attachments: u64) -> Self {
         Self {
             ok: true,
@@ -53,6 +82,7 @@ impl CompleteImportArgs {
         }
     }
 
+    /// Build a failure outcome; nothing else is recorded.
     pub fn failed() -> Self {
         Self {
             ok: false,
@@ -90,40 +120,61 @@ pub fn complete_import_or_warn(
     }
 }
 
+/// One problem to record against an import session.
 #[derive(Debug, Clone)]
 pub struct ImportIssueInput {
+    /// Issue category, e.g. `file_missing`.
     pub kind: String,
+    /// Pipeline stage that reported it.
     pub step: String,
+    /// The file or message the issue is about.
     pub item: String,
+    /// Human-readable explanation.
     pub reason: String,
 }
 
+/// One stored `vault_import_issues` row.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportIssueRow {
+    /// Issue row id.
     pub id: i64,
+    /// Session the issue belongs to.
     pub import_id: i64,
+    /// Issue category, e.g. `file_missing`.
     pub kind: String,
+    /// Pipeline stage that reported it.
     pub step: String,
+    /// The file or message the issue is about.
     pub item: String,
+    /// Human-readable explanation.
     pub reason: String,
+    /// UTC time the issue was recorded.
     pub created_at: String,
 }
 
+/// An import session row plus its recorded issues.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportDetail {
+    /// The session.
     pub row: VaultImportRow,
+    /// Issues recorded for it.
     pub issues: Vec<ImportIssueRow>,
 }
 
+/// Failure looking up or reusing an import session.
 #[derive(Debug)]
 pub enum ImportLookupError {
+    /// No session with this id for this account.
     NotFound {
+        /// The session id that was looked up.
         import_id: i64,
     },
     /// Session exists but cannot be reused (wrong status/source/mode).
     InvalidSession {
+        /// Why the session cannot be reused.
         message: String,
     },
+    /// Database failure.
     Db(anyhow::Error),
 }
 
@@ -399,18 +450,30 @@ pub fn get_import_detail(
     Ok(ImportDetail { row, issues })
 }
 
+/// Serializable slice of a session used in list responses.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportSummary {
+    /// Import session id.
     pub id: i64,
+    /// Source id the session imports.
     pub source: String,
+    /// Importing tool, e.g. `vault-push`.
     pub tool: Option<String>,
+    /// Import mode (`replace` or `append`).
     pub mode: String,
+    /// Lifecycle status (`running`, `completed`, or `failed`).
     pub status: String,
+    /// UTC time the session started.
     pub started_at: String,
+    /// UTC time the session finished, when it has.
     pub finished_at: Option<String>,
+    /// Messages counted for the session.
     pub message_count: i64,
+    /// Attachments counted for the session.
     pub attachment_count: i64,
+    /// Bytes uploaded so far.
     pub bytes_uploaded: i64,
+    /// Total wall-clock duration, when finished.
     pub duration_ms: Option<i64>,
 }
 
@@ -484,13 +547,20 @@ pub fn account_attachment_count(conn: &Connection, account_id: &str) -> Result<i
     Ok(n)
 }
 
+/// One of an account's largest attachments by byte size.
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct TopAttachment {
+    /// Attachment id.
     pub id: i64,
+    /// File name from the export.
     pub original_name: Option<String>,
+    /// MIME type, when known.
     pub mime_type: Option<String>,
+    /// Attachment byte size.
     pub size_bytes: i64,
+    /// Conversation that holds the attachment.
     pub conversation_id: i64,
+    /// Conversation label, when set.
     pub conversation_title: Option<String>,
     /// Raw text of the conversation's chat handle (via `handles`).
     pub chat_identifier: String,

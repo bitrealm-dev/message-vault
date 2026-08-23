@@ -1,5 +1,7 @@
 //! Account profile read + update handlers.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, bail};
 use axum::Json;
 use axum::extract::State;
@@ -9,19 +11,28 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{account_profile, schema};
-use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resolve_auth};
+use crate::server::{
+    ApiError, AppState, JoinBlocking, require_full_access, resolve_auth, with_locked_conn,
+};
 
+/// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountProfileResponse {
+    /// The signed-in account id.
     pub account_id: String,
+    /// Account username (falls back to the account id).
     pub username: String,
+    /// Display name, when set.
     pub preferred_name: Option<String>,
+    /// Phone handles linked to the account.
     pub phones: Vec<String>,
+    /// Email addresses linked to the account.
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
     /// True when `accounts.guest_status` is set (ready or assigned sample copy).
     pub is_guest: bool,
+    /// True when the account is marked read-only.
     pub read_only: bool,
 }
 
@@ -44,12 +55,8 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
     })
 }
 
-/// `GET /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session or the
-/// profile cannot be loaded.
+/// Load the signed-in account's profile: username, display name, linked
+/// handles, and demo/guest flags.
 #[utoipa::path(
     get,
     path = "/v1/account/profile",
@@ -78,14 +85,19 @@ pub async fn account_profile_handler(
     Ok(Json(result))
 }
 
+/// One handle to link or unlink, with its platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileHandleInput {
+    /// Raw handle value, e.g. `+15555550100` or `alex@example.com`.
     pub handle: String,
+    /// Platform the handle belongs to: `phone`, `email`, or `whatsapp`.
     pub service: String,
 }
 
+/// Display name and handle changes.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AccountProfileUpdateRequest {
+    /// Display name to set; `None` (or empty) leaves the current name unchanged.
     #[serde(default)]
     pub preferred_name: Option<String>,
     /// Handles to add/link onto the account profile.
@@ -199,12 +211,8 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
     }
 }
 
-/// `POST /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session, a handle
-/// service is unsupported, or the update fails.
+/// Update the account's display name and linked handles, then return the
+/// reloaded profile.
 #[utoipa::path(
     post,
     path = "/v1/account/profile",
@@ -245,15 +253,21 @@ pub async fn account_profile_update_handler(
     Ok(Json(result))
 }
 
+/// Confirmation flag for deleting all messages.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteMessagesRequest {
+    /// Must be `true`; anything else is rejected with a 400.
     pub confirm: bool,
 }
 
+/// Counts of deleted conversations and attachment rows.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Conversations deleted.
     pub conversations: u64,
+    /// Attachment rows deleted (on-disk files are removed too).
     pub attachments: u64,
 }
 
@@ -287,13 +301,8 @@ fn remove_account_asset_trees(
     Ok(())
 }
 
-/// `POST /v1/account/delete-messages` — delete conversations, messages, and
-/// attachments; keep contacts and account login.
-///
-/// # Errors
-///
-/// Returns an API error when confirmation is missing, the caller is not a
-/// signed-in session, or the delete fails.
+/// Delete every conversation, message, and attachment for the account.
+/// Contacts and the account login survive.
 #[utoipa::path(
     post,
     path = "/v1/account/delete-messages",
@@ -340,6 +349,52 @@ pub async fn delete_messages_handler(
         conversations: stats.conversations,
         attachments: stats.attachments,
     }))
+}
+
+/// Attachment usage and the largest files.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountStorageResponse {
+    pub total_bytes: i64,
+    pub attachment_count: i64,
+    pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
+}
+
+/// Attachment storage usage for the account: total bytes, count, and the 100
+/// largest files.
+#[utoipa::path(
+    get,
+    path = "/v1/account/storage",
+    tag = "Account",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = AccountStorageResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn account_storage_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AccountStorageResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let account_id = auth.account_id;
+    let db = Arc::clone(&state.db);
+    let result = with_locked_conn(db, "account storage task", move |conn| {
+        let total_bytes = crate::db::vault_imports::account_attachment_bytes(conn, &account_id)?;
+        let attachment_count =
+            crate::db::vault_imports::account_attachment_count(conn, &account_id)?;
+        let top_attachments =
+            crate::db::vault_imports::top_attachments_by_size(conn, &account_id, 100)?;
+        Ok::<_, anyhow::Error>(AccountStorageResponse {
+            total_bytes,
+            attachment_count,
+            top_attachments,
+        })
+    })
+    .await?;
+
+    Ok(Json(result))
 }
 
 #[cfg(test)]

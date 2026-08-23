@@ -14,13 +14,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use axum::Json;
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::db::{account_profile, api_tokens, schema, session_tokens};
-use crate::server::{ApiError, AppState, JoinBlocking};
+use crate::dedupe;
+use crate::server::{
+    ApiError, AppState, JoinBlocking, nonempty_query_account, resolve_auth, with_configured_db,
+};
 
 /// How long Try it waits for an on-demand guest clone when the ready pool is empty.
 const TRY_DEMO_CLONE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -113,24 +117,33 @@ fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
 // Request / response types
 // ---------------------------------------------------------------------------
 
+/// Body for local account registration.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
+    /// Login username.
     pub username: String,
+    /// Local password; absent or empty registers an account without one.
     #[serde(default)]
     pub password: Option<String>,
+    /// Display name shown in the vault.
     #[serde(default)]
     pub preferred_name: Option<String>,
+    /// Phone number linked to the account.
     #[serde(default)]
     pub phone: Option<String>,
 }
 
+/// Username and password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
+    /// Login username.
     pub username: String,
+    /// Login password.
     #[serde(default)]
     pub password: String,
 }
 
+/// A raw Hanko session JWT from the client's onSessionCreated callback.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct HankoSessionRequest {
     /// The raw Hanko session JSON Web Token from the client-side
@@ -138,10 +151,14 @@ pub struct HankoSessionRequest {
     pub hanko_jwt: String,
 }
 
+/// Session token plus the account id and username it belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthTokenResponse {
+    /// Session token to send as `Authorization: Bearer …`.
     pub token: String,
+    /// Account id the session belongs to.
     pub account_id: String,
+    /// Account username (falls back to the account id).
     pub username: String,
 }
 
@@ -331,11 +348,139 @@ fn unique_hanko_username(
     }
 }
 
+/// Sign-in mode and Hanko URL so clients can render the right login form.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuthModeResponse {
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanko_api_url: Option<String>,
+    pub try_demo: bool,
+}
+
+/// Returns the server's configured authentication mode so clients
+/// can render the correct login form before authenticating.
+#[utoipa::path(
+    get,
+    path = "/v1/auth/mode",
+    tag = "Auth",
+    responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
+)]
+pub(crate) async fn auth_mode_handler(State(state): State<AppState>) -> Json<AuthModeResponse> {
+    let mode = crate::config::AuthMode::from_env();
+    let hanko_api_url = std::env::var("HANKO_API_URL")
+        .ok()
+        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
+    Json(AuthModeResponse {
+        mode: match mode {
+            crate::config::AuthMode::Hanko => "hanko".into(),
+            crate::config::AuthMode::Local => "local".into(),
+        },
+        hanko_api_url,
+        try_demo: state.guest.enabled,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuthCheckQuery {
+    #[serde(default)]
+    account: Option<String>,
+}
+
+/// Token check result: account, username, sources.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuthCheckResponse {
+    ok: bool,
+    sources: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admin: Option<bool>,
+}
+
+/// Check the Bearer token and return the account it resolves to, its username,
+/// and its import sources.
+#[utoipa::path(
+    get,
+    path = "/v1/auth/check",
+    tag = "Auth",
+    security(("bearer" = [])),
+    params(("account" = Option<String>, Query, description = "Must match the token account")),
+    responses(
+        (status = 200, body = AuthCheckResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn auth_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AuthCheckQuery>,
+) -> Result<Json<AuthCheckResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    let account_id = auth.account_id;
+    let username = load_username(&state.cfg.paths.db, &account_id).await?;
+
+    if let Some(q) = nonempty_query_account(query.account.as_deref()) {
+        let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
+        let matches = match resolved {
+            Some(resolved) => resolved == account_id,
+            None => q == account_id,
+        };
+        if !matches {
+            let for_user = username.as_deref().unwrap_or(account_id.as_str());
+            return Err(ApiError::Forbidden(format!(
+                "account query does not match token's account (token is for {for_user})"
+            )));
+        }
+    }
+    let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
+    Ok(Json(AuthCheckResponse {
+        ok: true,
+        sources,
+        account_id: Some(account_id),
+        username,
+        account_ok: Some(true),
+        admin: None,
+    }))
+}
+
+async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
+    let account_id = account_id.to_string();
+    // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
+    with_configured_db(db_path, "sources list task", move |conn| {
+        dedupe::source_priority_from_db(conn, &account_id)
+    })
+    .await
+}
+
+async fn lookup_or_resolve_query(
+    db_path: &Path,
+    account_ref: &str,
+) -> Result<Option<String>, ApiError> {
+    let account_ref = account_ref.to_string();
+    with_configured_db(db_path, "account lookup task", move |conn| {
+        account_profile::lookup_account_ref(conn, &account_ref)
+    })
+    .await
+}
+
+async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
+    let account_id = account_id.to_string();
+    with_configured_db(db_path, "username lookup task", move |conn| {
+        account_profile::username_for_account(conn, &account_id)
+    })
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// `POST /v1/auth/register` — create an account and return an API token.
+/// Create a local vault account and return its session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/register",
@@ -411,7 +556,7 @@ pub async fn register_handler(
     Ok(Json(result))
 }
 
-/// `POST /v1/auth/login` — authenticate with username + password, return an API token.
+/// Verify a local username and password and return a session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/login",
@@ -474,8 +619,8 @@ pub async fn login_handler(
     Ok(Json(result))
 }
 
-/// `POST /v1/auth/hanko/session` — check a Hanko session JSON Web Token and
-/// return a vault API token.
+/// Verify a Hanko session JSON Web Token and exchange it for a vault session
+/// token.
 #[utoipa::path(
     post,
     path = "/v1/auth/hanko/session",
@@ -653,7 +798,8 @@ fn hosted_demo_login_rejected() -> ApiError {
     ApiError::Unauthorized("use Try it to open a sample account".into())
 }
 
-/// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
+/// Open a sample account session: the shared demo account self-hosted, or a
+/// private guest copy when the hosted pool is enabled.
 #[utoipa::path(
     post,
     path = "/v1/auth/try-demo",
@@ -740,34 +886,45 @@ pub async fn try_demo_handler(
 // Change-password / delete-account request types
 // ---------------------------------------------------------------------------
 
+/// Current and new password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
+    /// The account's current password.
     pub current_password: String,
+    /// Replacement password.
     pub new_password: String,
 }
 
+/// Fresh session token issued after the password change.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
     /// Replacement session token after password change (previous sessions are revoked).
     pub token: String,
 }
 
+/// Confirmation flag and the current password when one is set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteAccountRequest {
+    /// Must be `true`; anything else is rejected.
     pub confirm: bool,
     /// Required when the account has a local password.
     #[serde(default)]
     pub current_password: Option<String>,
 }
 
+/// Deletion acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteAccountResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
 }
 
+/// Revocation acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogoutResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
 }
 
@@ -818,7 +975,8 @@ fn logout_on_conn(conn: &rusqlite::Connection, token: &str, data_dir: &Path) -> 
     Ok(())
 }
 
-/// `POST /v1/auth/logout` — revoke the presented session token.
+/// Revoke the presented session token. Guest account data is deleted with the
+/// session.
 #[utoipa::path(
     post,
     path = "/v1/auth/logout",
@@ -846,7 +1004,8 @@ pub async fn logout_handler(
     Ok(Json(LogoutResponse { ok: true }))
 }
 
-/// `POST /v1/auth/change-password` — verify the current password, set a new one.
+/// Verify the current password, store the new one, revoke API tokens, and
+/// issue a fresh session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/change-password",
@@ -894,7 +1053,7 @@ pub async fn change_password_handler(
     Ok(Json(ChangePasswordResponse { ok: true, token }))
 }
 
-/// `POST /v1/auth/delete-account` — permanently delete the account.
+/// Permanently delete the account and its data directory.
 #[utoipa::path(
     post,
     path = "/v1/auth/delete-account",

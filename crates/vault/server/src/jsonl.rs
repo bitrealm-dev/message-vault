@@ -1,3 +1,5 @@
+//! Read message-ir JSONL files (one JSON object per line) into import records.
+
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;

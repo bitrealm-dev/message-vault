@@ -1,50 +1,78 @@
 //! Read-only message export query used by `GET /v1/export/messages`
 //! and `GET /v1/export/messages/count`.
 
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, params_from_iter};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::sql::group_rows_by_id;
+// Required so the moved handlers' unqualified `export_api::…` paths resolve.
+use crate::export_api::{self};
 #[cfg(test)]
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
+use crate::server::{
+    ApiError, AppState, require_export_access, resolve_auth, resolve_import_account,
+    with_configured_db_map,
+};
 
-pub const DEFAULT_EXPORT_LIMIT: usize = 100;
-pub const MAX_EXPORT_LIMIT: usize = 500;
-/// Cap expensive OFFSET skips (prefer cursor pagination for deep pages).
-pub const MAX_EXPORT_OFFSET: usize = 50_000;
+pub use crate::page_limits::{DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT, MAX_EXPORT_OFFSET};
+
+/// Options for one exported page of messages.
 #[derive(Debug, Clone)]
 pub struct ExportPageOpts<'a> {
+    /// Vault account to export from.
     pub account_id: &'a str,
+    /// Search query string.
     pub query: &'a str,
+    /// Max messages on the page.
     pub limit: usize,
+    /// Row offset; not combined with `cursor`.
     pub offset: Option<usize>,
+    /// Opaque cursor from a previous page.
     pub cursor: Option<&'a str>,
+    /// Force a single source (used by the web layer).
     pub source_override: Option<&'a str>,
 }
 
+/// Options for one export count query.
 #[derive(Debug, Clone)]
 pub struct ExportCountOpts<'a> {
+    /// Vault account to count from.
     pub account_id: &'a str,
+    /// Search query string.
     pub query: &'a str,
+    /// Force a single source (used by the web layer).
     pub source_override: Option<&'a str>,
 }
 
+/// One page of exported messages.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessagesResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Query echoed back.
     pub query: String,
+    /// Messages on this page.
     pub messages: Vec<ExportMessage>,
+    /// Cursor for the next page; absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// True when more rows matched than the page limit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
 }
 
+/// Match counts for an export query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportCountResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Query echoed back.
     pub query: String,
+    /// Matching messages.
     pub messages: u64,
     /// Distinct conversations with at least one matching message.
     pub conversations: u64,
@@ -54,83 +82,132 @@ pub struct ExportCountResponse {
     pub total_bytes: u64,
 }
 
+/// One exported message.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessage {
+    /// Message row id.
     pub id: i64,
+    /// Import source id.
     pub source: String,
+    /// Platform service, e.g. `imessage`, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    /// Export GUID for replies and grouping.
     pub guid: Option<String>,
+    /// Message timestamp (local).
     pub timestamp: String,
+    /// UTC timestamp, when known.
     pub timestamp_utc: Option<String>,
+    /// Ordering key within the conversation.
     pub sort_order: i64,
+    /// True for messages sent by the account owner.
     pub is_from_me: bool,
+    /// Sender handle for incoming messages.
     pub sender: Option<String>,
+    /// Subject line, when set.
     pub subject: Option<String>,
+    /// Body text, when present.
     pub text: Option<String>,
+    /// True for group announcements.
     pub is_announcement: bool,
+    /// True when part of a reply thread.
     pub is_reply: bool,
+    /// GUID of the message this replies to.
     pub thread_originator_guid: Option<String>,
+    /// Part index of the originator (for tapbacks).
     pub thread_originator_part: Option<i64>,
+    /// Replies in this thread.
     pub num_replies: i64,
+    /// The conversation this message belongs to.
     pub conversation: ExportConversation,
+    /// Attachments on this message.
     pub attachments: Vec<ExportAttachment>,
+    /// Reactions on this message.
     pub tapbacks: Vec<ExportTapback>,
 }
 
+/// The conversation a message belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportConversation {
+    /// Conversation row id.
     pub id: i64,
+    /// Original chat id from the export.
     pub chat_identifier: String,
+    /// `individual` or `group`.
     pub conversation_type: String,
+    /// Group label, when set.
     pub group_title: Option<String>,
+    /// Participants of the conversation.
     pub participants: Vec<ExportParticipant>,
 }
 
+/// One participant of an exported conversation.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportParticipant {
+    /// Raw handle value.
     pub handle: String,
+    /// Per-service alias, when linked to a contact.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Vault contact display name, when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_name: Option<String>,
+    /// Linked contact id, when the handle is linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<i64>,
+    /// Handle type (`phone`, `email`, or username).
     pub handle_type: Option<String>,
 }
 
+/// One attachment of an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportAttachment {
+    /// Path inside the export.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// File name from the export.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_name: Option<String>,
+    /// MIME type, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Content fingerprint of the stored bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// True for sticker files.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_sticker: bool,
+    /// OCR/ASR transcription, when processed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription: Option<String>,
+    /// Why the file is missing, when it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_reason: Option<String>,
 }
 
+/// One tapback reaction on an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportTapback {
+    /// Attachment part the reaction applies to.
     pub part_index: i64,
+    /// Reaction type, e.g. `love`.
     pub kind: String,
+    /// Emoji form of the reaction, when one exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emoji: Option<String>,
+    /// True when the account owner reacted.
     pub is_from_me: bool,
+    /// Reactor handle for incoming reactions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
 }
 
+/// Export query failure: caller error or server error.
 #[derive(Debug)]
 pub enum ExportQueryError {
+    /// Invalid or unsupported query.
     BadRequest(String),
+    /// Query execution failed.
     Internal(String),
 }
 
@@ -158,6 +235,7 @@ impl From<rusqlite::Error> for ExportQueryError {
 }
 
 impl ExportQueryError {
+    /// Build a [`ExportQueryError::BadRequest`] from a message.
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }
@@ -1022,6 +1100,130 @@ fn load_tapbacks(
             ))
         },
     )
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportMessagesQuery {
+    #[serde(default)]
+    pub(crate) q: String,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+    #[serde(default)]
+    pub(crate) offset: Option<usize>,
+    #[serde(default)]
+    pub(crate) cursor: Option<String>,
+    #[serde(default)]
+    pub(crate) account: Option<String>,
+    #[serde(default)]
+    pub(crate) source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportMessagesCountQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    account: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+/// Count messages, conversations, and attachment fingerprints matching a
+/// query.
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages/count",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportCountResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_count_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesCountQuery>,
+) -> Result<Json<export_api::ExportCountResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let q = query.q.clone();
+    let source = query.source.clone();
+
+    let body = with_configured_db_map(&state.cfg.paths.db, "export count task", move |conn| {
+        export_api::export_message_count(
+            conn,
+            ExportCountOpts {
+                account_id: &account,
+                query: &q,
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await?;
+    Ok(Json(body))
+}
+
+/// Export messages matching a search query (message mode; cursor paging).
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
+        ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
+        ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportMessagesResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExportMessagesQuery>,
+) -> Result<Json<export_api::ExportMessagesResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_export_access(&auth)?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_EXPORT_LIMIT);
+    let offset = query.offset;
+    let q = query.q.clone();
+    let cursor = query.cursor.clone();
+    let source = query.source.clone();
+
+    let body = with_configured_db_map(&state.cfg.paths.db, "export task", move |conn| {
+        export_api::export_messages(
+            conn,
+            ExportPageOpts {
+                account_id: &account,
+                query: &q,
+                limit,
+                offset,
+                cursor: cursor.as_deref(),
+                source_override: source.as_deref(),
+            },
+        )
+    })
+    .await?;
+    Ok(Json(body))
 }
 
 #[cfg(test)]

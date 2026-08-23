@@ -1,36 +1,44 @@
 //! HTTP API and SQLite storage for browsing imported messages.
+#![warn(missing_docs)]
 
-pub mod api_tokens_api;
-pub mod asset_uploads;
-pub mod assets;
-pub mod auth;
 pub mod cli;
 pub mod config;
-pub mod contact_groups_api;
-pub mod contacts_api;
-pub mod conversations_api;
-pub mod db;
-pub mod dedupe;
-pub mod export_api;
-pub mod guest_clone;
-pub mod guest_pool;
-pub mod import;
-pub mod import_cli;
-pub mod import_media;
-pub mod jsonl;
-pub mod media_tools;
-pub mod models;
-pub mod openapi;
-pub mod operation_lock;
-pub mod process_assets;
-pub mod profile;
-pub mod reset_demo;
-pub mod search_query;
-pub mod server;
-pub mod thread_tags_api;
+
+pub(crate) mod api_tokens_api;
+pub(crate) mod asset_uploads;
+pub(crate) mod assets;
+pub(crate) mod auth;
+pub(crate) mod contact_groups_api;
+pub(crate) mod contacts_api;
+pub(crate) mod conversations_api;
+pub(crate) mod db;
+pub(crate) mod dedupe;
+pub(crate) mod export_api;
+pub(crate) mod guest_clone;
+pub(crate) mod guest_pool;
+pub(crate) mod import;
+pub(crate) mod import_cli;
+pub(crate) mod import_media;
+pub(crate) mod jsonl;
+pub(crate) mod media_tools;
+pub(crate) mod models;
+pub(crate) mod named_membership;
+pub(crate) mod openapi;
+pub(crate) mod operation_lock;
+pub(crate) mod page_limits;
+pub(crate) mod process_assets;
+pub(crate) mod profile;
+pub(crate) mod reset_demo;
+pub(crate) mod search_query;
+pub(crate) mod server;
+pub(crate) mod thread_tags_api;
+
+pub use server::{ApiError, AppState, AuthCapability, AuthIdentity, ErrorBody, resolve_auth, run};
 
 use clap::Command;
 
+/// Clap command definition for the `message-vault-server` CLI; delegates to
+/// [`cli::clap_command`].
 pub fn clap_command() -> Command {
     cli::clap_command()
 }

@@ -15,6 +15,7 @@ use crate::export_api::ExportQueryError;
 
 /// Reject huge search strings before parsing or SQL construction.
 pub const MAX_SEARCH_QUERY_BYTES: usize = 2_048;
+/// Maximum number of plain text terms accepted in one query.
 pub const MAX_SEARCH_TEXT_TERMS: usize = 32;
 /// Hard cap on full-text search expression nodes (guards nested OR/AND abuse).
 pub const MAX_FTS_NODES: usize = 64;
@@ -29,12 +30,16 @@ pub const MAX_RELATIVE_LOOKBACK_DAYS: i64 = 3_650;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Inclusive `from`/`to` date bounds for a message or contact search.
 pub struct DateBounds {
+    /// Earliest date (inclusive).
     pub from: Option<String>,
+    /// Latest date (inclusive).
     pub to: Option<String>,
 }
 
 impl DateBounds {
+    /// True when neither bound is set.
     pub fn is_empty(&self) -> bool {
         self.from.is_none() && self.to.is_none()
     }
@@ -42,12 +47,16 @@ impl DateBounds {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Whether the search targets messages or contacts.
 pub enum SearchMode {
+    /// Search messages.
     Messages,
+    /// Search contacts.
     Contacts,
 }
 
 impl SearchMode {
+    /// Canonical mode string (`messages` or `contacts`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Messages => "messages",
@@ -64,26 +73,36 @@ impl fmt::Display for SearchMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Conversation kind filter (`group:` / `individual:`).
 pub enum ConversationTypeFilter {
+    /// Group conversations only.
     Group,
+    /// 1:1 conversations only.
     Individual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Comparison operator for `group_count:` / `message_count:` filters.
 pub enum CountComparator {
+    /// Equal to (`=`).
     #[serde(rename = "=")]
     Eq,
+    /// Greater than (`>`).
     #[serde(rename = ">")]
     Gt,
+    /// At least (`>=`).
     #[serde(rename = ">=")]
     Gte,
+    /// Less than (`<`).
     #[serde(rename = "<")]
     Lt,
+    /// At most (`<=`).
     #[serde(rename = "<=")]
     Lte,
 }
 
 impl CountComparator {
+    /// The operator's string form (`=`, `>`, `>=`, `<`, `<=`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Eq => "=",
@@ -102,75 +121,122 @@ impl fmt::Display for CountComparator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// One count filter: an operator and the number to compare against.
 pub struct CountComparison {
+    /// Operator to apply.
     pub comparator: CountComparator,
+    /// Count to compare against.
     pub value: u64,
 }
 
+/// How export results are grouped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GroupBy {
+    /// One row per conversation.
     Conversation,
+    /// One row per message.
     None,
 }
 
+/// Result ordering for export queries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SortOrder {
+    /// Newest first.
     DateDesc,
+    /// Oldest first.
     DateAsc,
+    /// Full-text relevance order.
     Relevance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+/// Full-text expression tree: terms, phrases, and AND/OR/NOT combinators.
 pub enum FtsNode {
+    /// One search term, optionally a prefix match (`term*`).
     Term {
+        /// Term text.
         value: String,
+        /// True for prefix matches (`term*`).
         #[serde(skip_serializing_if = "Option::is_none")]
         prefix: Option<bool>,
     },
+    /// Exact quoted phrase (`"two words"`).
     Phrase {
+        /// Phrase text without the quotes.
         value: String,
     },
+    /// All children must match.
     And {
+        /// Sub-expressions combined with AND.
         children: Vec<FtsNode>,
     },
+    /// Any child may match.
     Or {
+        /// Sub-expressions combined with OR.
         children: Vec<FtsNode>,
     },
+    /// The child must not match.
     Not {
+        /// Sub-expression to exclude.
         child: Box<FtsNode>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// A parsed search query: mode, terms, date bounds, and filters.
 pub struct ParsedSearchQuery {
+    /// Search scope (`messages` or `contacts`).
     pub mode: SearchMode,
+    /// Plain search terms.
     pub terms: Vec<String>,
+    /// Exact phrases from quoted text.
     pub phrases: Vec<String>,
+    /// Terms negated with `-`.
     pub exclude: Vec<String>,
+    /// Full-text expression tree, when the query has one.
     pub fts_ast: Option<FtsNode>,
+    /// `from:` — earliest message or contact date.
     pub from: Option<String>,
+    /// `to:` — latest message or contact date.
     pub to: Option<String>,
+    /// `with:` — handle filter.
     #[serde(rename = "with")]
     pub with_person: Option<String>,
+    /// `subject:` filter.
     pub subject: Option<String>,
+    /// `text:` filter.
     pub text: Option<String>,
+    /// `has:attachment` filter.
     pub has_attachment: Option<bool>,
+    /// `filename:` filter.
     pub filename: Option<String>,
+    /// `filetype:` filter.
     pub filetype: Option<String>,
+    /// `larger:` — minimum file size in bytes.
     pub larger_bytes: Option<u64>,
+    /// `smaller:` — maximum file size in bytes.
     pub smaller_bytes: Option<u64>,
+    /// `in:` — conversation id filter.
     pub in_conversation: Option<String>,
+    /// `after:` — relative date like `7d`, normalized to an absolute date.
     pub after: Option<String>,
+    /// `before:` — relative date like `7d`, normalized to an absolute date.
     pub before: Option<String>,
+    /// `source:` filter.
     pub source: Option<String>,
+    /// `is:group` / `is:individual` filter.
     pub conversation_type: Option<ConversationTypeFilter>,
+    /// `group:` — group results by conversation or by message.
     pub group_by: GroupBy,
+    /// `context:` — number of surrounding messages to include (capped at 20).
     pub context: u32,
+    /// `sort:` — `date-desc`, `date-asc`, or `relevance`.
     pub sort: SortOrder,
+    /// `within:` / `people:` — person or contact-group scope.
     pub within: Option<String>,
     /// Hide threads that involve this contact group (`-people:`).
     pub exclude_people: Option<String>,
@@ -178,15 +244,25 @@ pub struct ParsedSearchQuery {
     pub tag: Option<String>,
     /// Hide threads that have this tag (`-tag:`).
     pub exclude_tag: Option<String>,
+    /// `handle:` filter.
     pub handle: Option<String>,
+    /// `first:` — first name filter.
     pub first_name: Option<String>,
+    /// `last:` — last name filter.
     pub last_name: Option<String>,
+    /// `phone:` filter.
     pub phone: Option<String>,
+    /// `is:nofirst` — only contacts without a first name.
     pub no_first_name: bool,
+    /// `is:nolast` — only contacts without a last name.
     pub no_last_name: bool,
+    /// `last-contact:` date bounds.
     pub last_contact: DateBounds,
+    /// `first-contact:` date bounds.
     pub first_contact: DateBounds,
+    /// `group-count:` — filter on a conversation's group count.
     pub group_count: Option<CountComparison>,
+    /// `message-count:` — filter on a conversation's message count.
     pub message_count: Option<CountComparison>,
     /// Retired legacy presentation operator; always false.
     pub show_contact: bool,
@@ -371,12 +447,18 @@ fn append_fts_lexemes(token: &str, out: &mut Vec<FtsLex>) {
     }
 }
 
+/// Full-text expression parse failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FtsParseError {
+    /// A boolean operator is missing its operand.
     IncompleteOperand,
+    /// An opening parenthesis has no matching close.
     UnmatchedOpeningParenthesis,
+    /// A closing parenthesis has no matching open.
     UnmatchedClosingParenthesis,
+    /// Tokens remain after the expression finished.
     UnconsumedTokens,
+    /// Nesting exceeds [`MAX_FTS_DEPTH`] levels.
     TooDeeplyNested,
 }
 
@@ -978,11 +1060,15 @@ pub fn parse_search_query(input: &str) -> Result<ParsedSearchQuery, FtsParseErro
     Ok(out)
 }
 
+/// True when the query has plain text criteria (terms, phrases, exclusions, or
+/// a full-text expression).
 #[cfg(test)]
 pub fn has_metadata_text_criteria(q: &ParsedSearchQuery) -> bool {
     !q.terms.is_empty() || !q.phrases.is_empty() || !q.exclude.is_empty() || q.fts_ast.is_some()
 }
 
+/// True when the query has any criterion at all (text, dates, filters, or a
+/// non-message mode).
 #[cfg(test)]
 pub fn has_search_criteria(q: &ParsedSearchQuery) -> bool {
     q.fts_ast.is_some()

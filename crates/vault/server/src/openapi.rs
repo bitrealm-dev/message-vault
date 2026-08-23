@@ -11,8 +11,6 @@ use utoipa_axum::routes;
 use crate::config::AuthMode;
 use crate::server::AppState;
 
-pub const API_TITLE: &str = "Message Vault HTTP API";
-
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -33,6 +31,7 @@ pub const API_TITLE: &str = "Message Vault HTTP API";
         (name = "Thread tags", description = "Labels on conversations")
     )
 )]
+/// OpenAPI document definition assembled from the utoipa-annotated handlers.
 pub struct ApiDoc;
 
 struct BearerAddon;
@@ -47,8 +46,12 @@ impl Modify for BearerAddon {
     }
 }
 
+/// Which auth endpoints the OpenAPI document includes.
 pub enum SpecAuth {
+    /// Auth endpoints enabled by the running auth mode; local register/login
+    /// only when [`AuthMode::Local`].
     Live(AuthMode),
+    /// Every auth endpoint, including local register/login regardless of mode.
     Full,
 }
 
@@ -75,53 +78,74 @@ pub fn auth_public_openapi(auth: SpecAuth) -> OpenApiRouter<AppState> {
 pub fn api_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::server::health))
-        .routes(routes!(crate::server::auth_mode_handler))
-        .routes(routes!(crate::server::auth_check))
+        .routes(routes!(crate::auth::auth_mode_handler))
+        .routes(routes!(crate::auth::auth_check))
         .routes(routes!(crate::auth::logout_handler))
         .routes(routes!(crate::auth::change_password_handler))
         .routes(routes!(crate::auth::delete_account_handler))
         .routes(routes!(crate::profile::account_profile_handler))
         .routes(routes!(crate::profile::account_profile_update_handler))
         .routes(routes!(crate::profile::delete_messages_handler))
-        .routes(routes!(crate::server::account_storage_handler))
+        .routes(routes!(crate::profile::account_storage_handler))
         .routes(routes!(crate::api_tokens_api::list_api_tokens_handler))
         .routes(routes!(crate::api_tokens_api::create_api_token_handler))
         .routes(routes!(crate::api_tokens_api::delete_api_token_handler))
         .routes(routes!(crate::api_tokens_api::rename_api_token_handler))
-        .routes(routes!(crate::server::export_messages_handler))
-        .routes(routes!(crate::server::export_messages_count_handler))
-        .routes(routes!(crate::server::contacts_list_handler))
-        .routes(routes!(crate::server::contact_summaries_handler))
-        .routes(routes!(crate::server::contact_detail_handler))
-        .routes(routes!(crate::server::contact_mutate_handler))
-        .routes(routes!(crate::server::contact_groups_list_handler))
-        .routes(routes!(crate::server::contact_groups_create_handler))
-        .routes(routes!(crate::server::contact_groups_rename_handler))
-        .routes(routes!(crate::server::contact_groups_delete_handler))
-        .routes(routes!(crate::server::contact_groups_members_handler))
-        .routes(routes!(crate::server::contact_groups_membership_handler))
-        .routes(routes!(crate::server::thread_tags_list_handler))
-        .routes(routes!(crate::server::thread_tags_create_handler))
-        .routes(routes!(crate::server::thread_tags_rename_handler))
-        .routes(routes!(crate::server::thread_tags_delete_handler))
-        .routes(routes!(crate::server::thread_tags_members_handler))
-        .routes(routes!(crate::server::thread_tags_membership_handler))
-        .routes(routes!(crate::server::conversations_list_handler))
-        .routes(routes!(crate::server::conversation_sources_handler))
-        .routes(routes!(crate::server::imports_list_handler))
-        .routes(routes!(crate::server::imports_create_handler))
-        .routes(routes!(crate::server::imports_get_handler))
-        .routes(routes!(crate::server::imports_complete_handler))
-        .routes(routes!(crate::server::import_handler))
-        .routes(routes!(crate::server::asset_head_handler))
-        .routes(routes!(crate::server::asset_get_handler))
-        .routes(routes!(crate::server::asset_put_handler))
-        .routes(routes!(crate::server::asset_upload_start_handler))
-        .routes(routes!(crate::server::asset_upload_part_handler))
-        .routes(routes!(crate::server::asset_upload_complete_handler))
-        .routes(routes!(crate::server::asset_upload_abort_handler))
+        .routes(routes!(crate::export_api::export_messages_handler))
+        .routes(routes!(crate::export_api::export_messages_count_handler))
+        .routes(routes!(crate::contacts_api::contacts_list_handler))
+        .routes(routes!(crate::contacts_api::contact_summaries_handler))
+        .routes(routes!(crate::contacts_api::contact_detail_handler))
+        .routes(routes!(crate::contacts_api::contact_mutate_handler))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_list_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_create_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_rename_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_delete_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_members_handler
+        ))
+        .routes(routes!(
+            crate::contact_groups_api::contact_groups_membership_handler
+        ))
+        .routes(routes!(crate::thread_tags_api::thread_tags_list_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_create_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_rename_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_delete_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_members_handler))
+        .routes(routes!(
+            crate::thread_tags_api::thread_tags_membership_handler
+        ))
+        .routes(routes!(
+            crate::conversations_api::conversations_list_handler
+        ))
+        .routes(routes!(
+            crate::conversations_api::conversation_sources_handler
+        ))
+        .routes(routes!(crate::import::imports_list_handler))
+        .routes(routes!(crate::import::imports_create_handler))
+        .routes(routes!(crate::import::imports_get_handler))
+        .routes(routes!(crate::import::imports_complete_handler))
+        .routes(routes!(crate::import::import_handler))
+        .routes(routes!(crate::assets::asset_head_handler))
+        .routes(routes!(crate::assets::asset_get_handler))
+        .routes(routes!(crate::assets::asset_put_handler))
+        .routes(routes!(crate::assets::asset_upload_start_handler))
+        .routes(routes!(crate::assets::asset_upload_part_handler))
+        .routes(routes!(crate::assets::asset_upload_complete_handler))
+        .routes(routes!(crate::assets::asset_upload_abort_handler))
 }
 
+#[cfg(test)]
+/// The full OpenAPI router: public auth endpoints for `auth` plus the
+/// session-backed API routes.
 pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
     auth_public_openapi(auth).merge(api_openapi())
 }

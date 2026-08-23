@@ -15,27 +15,43 @@ use crate::import_media::MediaMode;
 use crate::jsonl;
 use crate::models::ExportRecord;
 
+/// Options for a CLI directory import.
 #[derive(Debug, Clone)]
 pub struct CliImportOptions {
+    /// Vault account the import writes into.
     pub account_id: String,
+    /// Folder of `*.jsonl` conversation files (+ attachments).
     pub input_dir: PathBuf,
+    /// Database path override; falls back to config when `None`.
     pub db_path: Option<PathBuf>,
+    /// Originals asset store override; per-account default when `None`.
     pub assets_dir: Option<PathBuf>,
     /// When set, force this source for every conversation (ignore IR export.source).
     pub source_override: Option<String>,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
+    /// Attachment handling mode: copy, none, convert, compress.
     pub media: MediaMode,
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<PathBuf>,
+    /// Reload contacts even when the table is non-empty.
     pub overwrite_contacts: bool,
+    /// Skip the cross-source soft-dedupe pass after import.
     pub skip_dedupe: bool,
+    /// Near-time window in seconds for dedupe Pass B.
     pub window_secs: i64,
 }
 
+/// Counts and inputs reported by a CLI directory import.
 #[derive(Debug)]
 pub struct CliImportStats {
+    /// Input folder that was imported.
     pub input_dir: PathBuf,
+    /// Source ids written (one per conversation unless overridden).
     pub sources: Vec<String>,
+    /// Import stage counts.
     pub import: ImportStats,
+    /// Dedupe counts when the pass ran, `None` when skipped.
     pub dedupe: Option<DedupeStats>,
 }
 
@@ -120,7 +136,6 @@ pub fn run(cfg: &Config, opts: &CliImportOptions) -> Result<CliImportStats> {
     )?;
 
     let import_opts = ImportOptions {
-        db_path: &db_path,
         assets_dir: &placeholder_assets,
         asset_root: input,
         contacts: opts.contacts.as_deref(),

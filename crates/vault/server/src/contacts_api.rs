@@ -2,8 +2,12 @@
 //! `GET|POST /v1/export/contacts/{id}`, and `POST /v1/export/contacts/summaries`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::{Result as AnyResult, bail};
+use axum::Json;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
@@ -12,24 +16,34 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
+use crate::server::{
+    ApiError, AppState, JoinBlocking, lock_conn, require_full_access, resolve_auth,
+    with_locked_conn,
+};
 
-pub const DEFAULT_LIST_LIMIT: usize = 40;
-pub const MAX_LIST_LIMIT: usize = 500;
-/// Cap expensive OFFSET skips on contact list pages.
-pub const MAX_LIST_OFFSET: usize = 50_000;
+pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
 
+/// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactListPage {
+    /// Contacts on this page.
     pub contacts: Vec<ContactSummary>,
+    /// Total contacts matching the query.
     pub total: u64,
+    /// Page size used.
     pub limit: usize,
+    /// Page offset used.
     pub offset: usize,
 }
 
+/// Contact row for the list: name, handles, groups.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummary {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Number of handles linked to the contact.
     pub handle_count: u64,
     /// Normalized (and raw when distinct) handle values for client-side filter.
     #[serde(default)]
@@ -41,41 +55,61 @@ pub struct ContactSummary {
     pub groups: Vec<String>,
 }
 
+/// One handle on a contact with service and message stats.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactHandleInfo {
+    /// Normalized handle value.
     pub handle: String,
+    /// Platform service, e.g. `whatsapp`, when the handle is linked with one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    /// Per-service alias from the address book, when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Date of the first message involving this handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
+    /// Date of the last message involving this handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
+    /// 1:1 conversations this handle appears in.
     pub individual_conversations: u64,
+    /// Group conversations this handle appears in.
     pub group_conversations: u64,
+    /// Messages in 1:1 conversations involving this handle.
     pub individual_message_count: u64,
+    /// Messages in group conversations involving this handle.
     pub group_message_count: u64,
 }
 
+/// A handle value plus optional platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactHandlePayload {
+    /// Handle value to link.
     pub handle: String,
+    /// Platform service (`phone`, `email`, or `whatsapp`); inferred when omitted.
     #[serde(default)]
     pub service: Option<String>,
 }
 
+/// The previous and new handle values for a link change.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactUpdateHandlePayload {
+    /// Handle value currently linked.
     pub previous_handle: String,
+    /// Replacement handle value.
     pub handle: String,
+    /// Platform service for the new handle.
     #[serde(default)]
     pub service: Option<String>,
 }
 
+/// The handle to unlink.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactRemoveHandlePayload {
+    /// Handle value to unlink.
     pub handle: String,
+    /// Platform service, when the handle is linked with one.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -83,23 +117,34 @@ pub struct ContactRemoveHandlePayload {
 /// Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactMutationBody {
+    /// New display name; `None` leaves it unchanged.
     #[serde(default)]
     pub name: Option<String>,
+    /// Handle link to add.
     #[serde(default)]
     pub add_handle: Option<ContactHandlePayload>,
+    /// Handle link to replace.
     #[serde(default)]
     pub update_handle: Option<ContactUpdateHandlePayload>,
+    /// Handle link to remove.
     #[serde(default)]
     pub remove_handle: Option<ContactRemoveHandlePayload>,
 }
 
+/// Full contact view: every handle with stats, plus totals across them.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactDetail {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Every handle linked to the contact, with per-handle stats.
     pub handles: Vec<ContactHandleInfo>,
+    /// 1:1 conversations the contact appears in.
     pub direct_conversations: u64,
+    /// Group conversations the contact appears in.
     pub group_conversations: u64,
+    /// Messages across all of the contact's conversations.
     pub total_messages: u64,
     /// When the contact’s address-book shape last changed (`datetime('now')`).
     pub last_modified: String,
@@ -111,6 +156,7 @@ pub struct ContactDetail {
 /// Body for `POST /v1/export/contacts/summaries`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactSummariesBody {
+    /// Contact ids to summarize; an empty list covers every contact.
     #[serde(default)]
     pub ids: Vec<i64>,
 }
@@ -118,21 +164,30 @@ pub struct ContactSummariesBody {
 /// Contact-level first/last seen and message counts for the selection table.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSelectionSummary {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Date of the contact's first message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
+    /// Date of the contact's last message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
+    /// 1:1 conversations with the contact.
     pub individual_conversations: u64,
+    /// Group conversations with the contact.
     pub group_conversations: u64,
+    /// Messages in 1:1 conversations with the contact.
     pub individual_message_count: u64,
+    /// Messages in group conversations with the contact.
     pub group_message_count: u64,
 }
 
 /// Response for `POST /v1/export/contacts/summaries`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummariesPage {
+    /// One summary per requested contact.
     pub contacts: Vec<ContactSelectionSummary>,
 }
 
@@ -1190,6 +1245,152 @@ fn require_handle_available(
 fn touch_ok(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
     contacts::touch_contact(conn, account_id, contact_id)?;
     Ok(true)
+}
+
+/// Page through the account's contacts (id, name, handles, groups).
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Contact search; empty lists all"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = ContactListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contacts_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::server::ListPageQuery>,
+) -> Result<Json<ContactListPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let q = query.q.unwrap_or_default();
+    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = with_locked_conn(db, "contacts list task", move |conn| {
+        list_contacts(conn, &auth.account_id, &q, limit, offset)
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// First/last message dates and counts for a list of contact ids.
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/summaries",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactSummariesBody,
+    responses(
+        (status = 200, body = ContactSummariesPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_summaries_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactSummariesBody>,
+) -> Result<Json<ContactSummariesPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    if body.ids.len() > MAX_LIST_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "at most {} contact ids",
+            MAX_LIST_LIMIT
+        )));
+    }
+    let db = Arc::clone(&state.db);
+    let page = with_locked_conn(db, "contact summaries task", move |conn| {
+        get_contact_summaries(conn, &auth.account_id, &body.ids)
+            .map(|contacts| ContactSummariesPage { contacts })
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// Full contact view: per-handle services, message stats, and group
+/// memberships.
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 200, body = ContactDetail),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_detail_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<Json<ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let detail = with_locked_conn(db, "contact detail task", move |conn| {
+        get_contact_detail(conn, &auth.account_id, contact_id)
+    })
+    .await?;
+    detail
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound("contact not found".into()))
+}
+
+/// Rename a contact or change its linked handles.
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    request_body = ContactMutationBody,
+    responses(
+        (status = 200, body = ContactDetail),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_mutate_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+    Json(body): Json<ContactMutationBody>,
+) -> Result<Json<ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let account_id = auth.account_id.clone();
+    let detail = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        match mutate_contact(&conn, &account_id, contact_id, &body) {
+            Ok(false) => Err(ApiError::NotFound("contact not found".into())),
+            Err(e) => Err(ApiError::BadRequest(e.to_string())),
+            Ok(true) => get_contact_detail(&conn, &account_id, contact_id)
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .ok_or_else(|| ApiError::Internal("contact missing after mutate".into())),
+        }
+    })
+    .await
+    .join_map("contact mutate task", |e| e)?;
+
+    Ok(Json(detail))
 }
 
 #[cfg(test)]

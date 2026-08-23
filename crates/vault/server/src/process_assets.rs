@@ -19,12 +19,18 @@ use crate::media_tools::{
     probe_video_efficient,
 };
 
+/// Options for one derived-media processing pass.
 #[derive(Debug, Clone, Default)]
 pub struct ProcessAssetsOptions {
+    /// Re-convert even when a browser preview already exists.
     pub force: bool,
+    /// Convert and log without writing files or updating the database.
     pub dry_run: bool,
+    /// Skip image conversion.
     pub skip_image: bool,
+    /// Skip video conversion.
     pub skip_video: bool,
+    /// Skip audio conversion.
     pub skip_audio: bool,
     /// Override DB path from config.
     pub db: Option<PathBuf>,
@@ -32,11 +38,16 @@ pub struct ProcessAssetsOptions {
     pub source: Option<String>,
 }
 
+/// Counts reported by one derived-media processing pass.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProcessAssetsStats {
+    /// Attachments examined.
     pub scanned: u64,
+    /// Browser previews written (JPEG/MP4/MP3).
     pub derived: u64,
+    /// Attachments left as-is (already converted, non-media, or small JPEG).
     pub skipped: u64,
+    /// Conversions that failed.
     pub errors: u64,
 }
 

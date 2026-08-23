@@ -1,21 +1,52 @@
+//! Content-addressed asset storage under each account's `assets/` directory.
+//!
+//! Files are stored by SHA-256 fingerprint (`aa/aaaa…ext`) and every reuse
+//! re-checks the bytes against the claimed fingerprint. The HTTP handlers for
+//! `HEAD` / `GET` / `PUT /v1/assets/{sha256}` and the multipart upload routes
+//! also live here; multipart staging itself is in `asset_uploads`.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
 
+use axum::Json;
+use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::Response;
+
+use crate::asset_uploads;
+use crate::config::validate_source_id;
+use crate::server::{
+    ApiError, AppState, JoinBlocking, discard_body, read_body_limited, reject_if_guest_account,
+    require_export_access, require_import_access, require_import_or_export_access, resolve_auth,
+    resolve_import_account, stream_body_to_file, upload_content_type,
+};
+
+/// Counts of files handled during one asset store pass.
 #[derive(Debug, Default)]
 pub struct AssetStats {
+    /// Files written to the asset store.
     pub copied: u64,
+    /// Files already present under the same fingerprint, skipped.
     pub deduped: u64,
+    /// Source files not found on disk.
     pub missing: u64,
 }
 
+/// One stored attachment: fingerprint, relative path, and MIME type.
 #[derive(Debug, Clone)]
 pub struct StoredAsset {
+    /// SHA-256 fingerprint of the stored bytes (64 lowercase hex digits).
     pub sha256: String,
+    /// Path relative to the account's assets root.
     pub assets_path: String,
+    /// MIME type of the file, when known.
     pub mime_type: Option<String>,
 }
 
@@ -595,6 +626,549 @@ fn open_nofollow_read(path: &Path) -> Result<File> {
     {
         File::open(path).with_context(|| format!("open {}", path.display()))
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AssetPutQuery {
+    source: String,
+    #[serde(default)]
+    account: Option<String>,
+}
+
+/// Stored asset fingerprint and path.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetPutResponse {
+    ok: bool,
+    sha256: String,
+    assets_path: String,
+    already_present: bool,
+}
+
+impl AssetPutResponse {
+    fn stored(asset: StoredAsset, already_present: bool) -> Json<Self> {
+        Json(Self {
+            ok: true,
+            sha256: asset.sha256,
+            assets_path: asset.assets_path,
+            already_present,
+        })
+    }
+}
+
+enum AssetAccess {
+    /// GET asset bytes — needs export (or full session).
+    Read,
+    /// PUT / multipart upload — needs import (or full session).
+    Write,
+    /// HEAD probe — import or export.
+    Probe,
+}
+
+async fn resolve_asset_lookup(
+    state: &AppState,
+    headers: &HeaderMap,
+    sha256: &str,
+    query: &AssetPutQuery,
+    access: AssetAccess,
+) -> Result<(String, String, Option<StoredAsset>), ApiError> {
+    let auth = resolve_auth(headers, state).await?;
+    // A download streams the file itself, so hashing it during lookup would read
+    // every byte twice. Probe and write lookups decide whether a client may skip
+    // sending bytes, so those keep verifying the stored blob.
+    let verify_stored_bytes = match access {
+        AssetAccess::Read => {
+            require_export_access(&auth)?;
+            false
+        }
+        AssetAccess::Write => {
+            require_import_access(&auth)?;
+            true
+        }
+        AssetAccess::Probe => {
+            require_import_or_export_access(&auth)?;
+            true
+        }
+    };
+    if query.source.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "query param source is required".into(),
+        ));
+    }
+    validate_source_id(&query.source).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let account =
+        resolve_import_account(&auth, query.account.as_deref(), &state.cfg.paths.db).await?;
+    let source_id = query.source.clone();
+
+    let cfg = Arc::clone(&state.cfg);
+    let sha_lookup = sha256.to_string();
+    let account_lookup = account.clone();
+    let source_lookup = source_id.clone();
+    let existing = tokio::task::spawn_blocking(move || {
+        let assets_dir = cfg
+            .paths
+            .assets_dir_for_account(&account_lookup, &source_lookup);
+        if verify_stored_bytes {
+            lookup_by_sha256(&assets_dir, &sha_lookup)
+        } else {
+            lookup_by_sha256_unverified(&assets_dir, &sha_lookup)
+        }
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("asset lookup task: {e}")))?;
+    Ok((account, source_id, existing))
+}
+
+/// Probe whether a content-addressed asset is already stored (no body).
+///
+/// Clients may skip sending bytes when the asset exists.
+#[utoipa::path(
+    head,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_head_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (_account, _source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Probe).await?;
+    let Some(stored) = existing else {
+        return Err(ApiError::NotFound("asset not found".into()));
+    };
+    Ok(AssetPutResponse::stored(stored, true))
+}
+
+/// Download a previously stored content-addressed asset (read-only).
+///
+/// The body streams the stored bytes; the URL is the SHA-256 fingerprint.
+#[utoipa::path(
+    get,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, description = "Raw asset bytes", content_type = "application/octet-stream"),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_get_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Response, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Read).await?;
+    let Some(stored) = existing else {
+        return Err(ApiError::NotFound("asset not found".into()));
+    };
+
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let path = assets_dir.join(&stored.assets_path);
+    // Reject symlinks / missing files before streaming.
+    let meta = tokio::fs::symlink_metadata(&path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ApiError::NotFound("asset file missing on disk".into())
+        } else {
+            ApiError::Internal(format!("stat {}: {e}", path.display()))
+        }
+    })?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(ApiError::NotFound("asset file missing on disk".into()));
+    }
+
+    let mime = stored
+        .mime_type
+        .clone()
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("open {}: {e}", path.display())))?;
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
+
+    let mut response = Response::new(body);
+    *response.status_mut() = StatusCode::OK;
+    let headers_mut = response.headers_mut();
+    if let Ok(value) = header::HeaderValue::from_str(&mime) {
+        headers_mut.insert(header::CONTENT_TYPE, value);
+    }
+    headers_mut.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        header::HeaderValue::from_static("nosniff"),
+    );
+    // Force download-ish disposition with a fixed safe name (never echo client paths).
+    headers_mut.insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_static("attachment; filename=\"asset\""),
+    );
+    if meta.len() > 0 {
+        headers_mut.insert(
+            header::CONTENT_LENGTH,
+            header::HeaderValue::from(meta.len()),
+        );
+    }
+    Ok(response)
+}
+
+/// Store one asset body under its SHA-256 fingerprint.
+#[utoipa::path(
+    put,
+    path = "/v1/assets/{sha256}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw asset bytes"),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_put_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+    request: Request,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+
+    let mime = upload_content_type(&headers);
+
+    if let Some(stored) = existing {
+        discard_body(request.into_body(), state.max_body_bytes).await?;
+        return Ok(AssetPutResponse::stored(stored, true));
+    }
+
+    // Write the upload into the account assets tree so verify can rename into place
+    // instead of copying across filesystems (tempfile often lives on another mount).
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let incoming_dir = assets_dir.join(".incoming");
+    tokio::fs::create_dir_all(&incoming_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("mkdir {}: {e}", incoming_dir.display())))?;
+    let tmp_path = incoming_dir.join(format!(
+        "{sha256}-{}.part",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let n = match stream_body_to_file(request.into_body(), &tmp_path, state.max_body_bytes).await {
+        Ok(n) => n,
+        Err(err) => {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(err);
+        }
+    };
+    if n == 0 {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(ApiError::BadRequest("request body is empty".into()));
+    }
+
+    let sha = sha256.clone();
+    let tmp_for_store = tmp_path.clone();
+    let assets_dir_store = assets_dir.clone();
+    let (stored, already_present) = tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&assets_dir_store)?;
+        store_verified(
+            &tmp_for_store,
+            &sha,
+            &assets_dir_store,
+            mime.as_deref(),
+            true,
+            false,
+        )
+    })
+    .await
+    .join_map("asset upload task", |e| ApiError::BadRequest(e.to_string()))?;
+
+    // Rename consumes the temp file; remove leftovers after errors / already_present races.
+    let _ = tokio::fs::remove_file(&tmp_path).await;
+    Ok(AssetPutResponse::stored(stored, already_present))
+}
+
+/// Total bytes and optional MIME type for a chunked upload.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadStartBody {
+    bytes: u64,
+    #[serde(default)]
+    mime: Option<String>,
+}
+
+/// Upload id and part size, or the already-stored asset.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadStartResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assets_path: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    already_present: bool,
+}
+
+/// Bytes written for one part.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadPartResponse {
+    ok: bool,
+    part: u32,
+    bytes: u64,
+}
+
+/// Abort acknowledgement.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssetUploadAbortResponse {
+    ok: bool,
+}
+
+/// Start a chunked (multipart) asset upload and get the part size.
+#[utoipa::path(
+    post,
+    path = "/v1/assets/{sha256}/uploads",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body = AssetUploadStartBody,
+    responses(
+        (status = 200, body = AssetUploadStartResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_start_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(sha256): AxumPath<String>,
+    Query(query): Query<AssetPutQuery>,
+    Json(body): Json<AssetUploadStartBody>,
+) -> Result<Json<AssetUploadStartResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let mime = body.mime.clone();
+    let bytes = body.bytes;
+    let sha = sha256.clone();
+    let limits = state.upload_limits;
+    let result = tokio::task::spawn_blocking(move || {
+        asset_uploads::start_upload(&assets_dir, &sha, bytes, mime.as_deref(), limits)
+    })
+    .await
+    .join_map("upload start task", |e| ApiError::BadRequest(e.to_string()))?;
+
+    match result {
+        (Some(stored), None) => Ok(Json(AssetUploadStartResponse {
+            ok: true,
+            upload_id: None,
+            part_size: None,
+            sha256: Some(stored.sha256),
+            assets_path: Some(stored.assets_path),
+            already_present: true,
+        })),
+        (None, Some(start)) => Ok(Json(AssetUploadStartResponse {
+            ok: true,
+            upload_id: Some(start.upload_id),
+            part_size: Some(start.part_size),
+            sha256: None,
+            assets_path: None,
+            already_present: false,
+        })),
+        _ => Err(ApiError::Internal(
+            "upload start returned inconsistent state".into(),
+        )),
+    }
+}
+
+/// Write one part of a chunked asset upload.
+#[utoipa::path(
+    put,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("part" = u32, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw part bytes"),
+    responses(
+        (status = 200, body = AssetUploadPartResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_part_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id, part)): AxumPath<(String, String, u32)>,
+    Query(query): Query<AssetPutQuery>,
+    request: Request,
+) -> Result<Json<AssetUploadPartResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    if part == 0 {
+        return Err(ApiError::BadRequest("part number must be >= 1".into()));
+    }
+    let body = read_body_limited(request.into_body(), state.upload_limits.part_size).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        asset_uploads::put_part(&assets_dir, &sha, &uid, part, &body)
+    })
+    .await
+    .join_map("upload part task", |e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(AssetUploadPartResponse {
+        ok: true,
+        part,
+        bytes: written,
+    }))
+}
+
+/// Assemble the uploaded parts, verify the SHA-256 fingerprint, and install
+/// the asset.
+#[utoipa::path(
+    post,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}/complete",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetPutResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_complete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetPutResponse>, ApiError> {
+    let (account, source_id, existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    reject_if_guest_account(&state.cfg.paths.db, &account).await?;
+    if let Some(stored) = existing {
+        // Drop staging if a concurrent single-PUT won the race.
+        let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+        let sha = sha256.clone();
+        let uid = upload_id.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            asset_uploads::abort_upload(&assets_dir, &sha, &uid)
+        })
+        .await;
+        return Ok(AssetPutResponse::stored(stored, true));
+    }
+
+    let lock_key = format!("{account}:{sha256}");
+    let complete_lock = {
+        let mut map = state.asset_complete_locks.lock().await;
+        map.entry(lock_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = complete_lock.lock().await;
+
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    let limits = state.upload_limits;
+    let (stored, already_present) = tokio::task::spawn_blocking(move || {
+        asset_uploads::complete_upload(&assets_dir, &sha, &uid, limits)
+    })
+    .await
+    .join_map("upload complete task", |e| {
+        ApiError::BadRequest(e.to_string())
+    })?;
+
+    Ok(AssetPutResponse::stored(stored, already_present))
+}
+
+/// Abort and delete a chunked asset upload's staging files.
+#[utoipa::path(
+    delete,
+    path = "/v1/assets/{sha256}/uploads/{upload_id}",
+    tag = "Assets",
+    security(("bearer" = [])),
+    params(
+        ("sha256" = String, Path, description = "Content SHA-256 hex"),
+        ("upload_id" = String, Path),
+        ("source" = String, Query),
+        ("account" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = AssetUploadAbortResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn asset_upload_abort_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((sha256, upload_id)): AxumPath<(String, String)>,
+    Query(query): Query<AssetPutQuery>,
+) -> Result<Json<AssetUploadAbortResponse>, ApiError> {
+    let (account, source_id, _existing) =
+        resolve_asset_lookup(&state, &headers, &sha256, &query, AssetAccess::Write).await?;
+    let assets_dir = state.cfg.paths.assets_dir_for_account(&account, &source_id);
+    let sha = sha256.clone();
+    let uid = upload_id.clone();
+    tokio::task::spawn_blocking(move || asset_uploads::abort_upload(&assets_dir, &sha, &uid))
+        .await
+        .join_map("upload abort task", |e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(AssetUploadAbortResponse { ok: true }))
 }
 
 #[cfg(test)]
