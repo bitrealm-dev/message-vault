@@ -1,13 +1,18 @@
 //! Read-only conversation list used by `GET /v1/export/conversations`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
+use axum::Json;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde::Serialize;
 
 use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparison, parse_count_comparison};
+use crate::server::{ApiError, AppState, require_full_access, resolve_auth, with_locked_conn};
 
 pub use crate::page_limits::{
     DEFAULT_LIST_LIMIT, MAX_CONVERSATION_LIST_LIMIT as MAX_LIST_LIMIT, MAX_LIST_OFFSET,
@@ -802,6 +807,73 @@ pub fn list_conversation_source_stats(
         })
         .collect();
     Ok(Some(ConversationSourcesPage { sources }))
+}
+
+/// Page through conversations (newest first) with participants, message
+/// counts, and tags.
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversations_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::server::ListPageQuery>,
+) -> Result<Json<ConversationListPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let q = query.q.unwrap_or_default();
+    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = with_locked_conn(db, "conversations list task", move |conn| {
+        list_conversations(conn, &auth.account_id, &q, limit, offset)
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// Per-backup message counts for one conversation (the Sources panel).
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations/{id}/sources",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationSourcesPage),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_sources_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(conversation_id): AxumPath<i64>,
+) -> Result<Json<ConversationSourcesPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let page = with_locked_conn(db, "conversation sources task", move |conn| {
+        list_conversation_source_stats(conn, &auth.account_id, conversation_id)
+    })
+    .await?;
+    page.map(Json)
+        .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
 #[cfg(test)]
