@@ -9,6 +9,8 @@
 //! Convert and compress need `ffmpeg` / `ffprobe` beside the running binary,
 //! in `MESSAGE_VAULT_IO_BIN`, or on `PATH`.
 
+#![warn(missing_docs)]
+
 mod process;
 mod size;
 mod tools;
@@ -25,13 +27,17 @@ use std::str::FromStr;
 pub enum MediaMode {
     /// Do not write attachment files during export.
     Disabled,
+    /// Copy attachment files through unchanged; the default (a no-op after export).
     #[default]
     Clone,
+    /// Rewrite images to `.jpg`, videos to `.mp4`, audio to `.mp3`.
     Convert,
+    /// Re-encode attachments to shrink them per `CompressOptions`.
     Compress,
 }
 
 impl MediaMode {
+    /// Canonical lowercase CLI string (`disabled` / `clone` / `convert` / `compress`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Disabled => "disabled",
@@ -41,6 +47,7 @@ impl MediaMode {
         }
     }
 
+    /// Parse a CLI string (case- and whitespace-insensitive); `None` for unknown input.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "disabled" | "none" | "skip" => Some(Self::Disabled),
@@ -51,6 +58,7 @@ impl MediaMode {
         }
     }
 
+    /// True when the mode requires ffmpeg/ffprobe (Convert or Compress).
     pub fn needs_tools(self) -> bool {
         matches!(self, Self::Convert | Self::Compress)
     }
@@ -80,13 +88,17 @@ impl FromStr for MediaMode {
 /// Max long-edge cap for video compress (no upscale).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MaxResolution {
+    /// Cap the video long edge at 1280 px.
     P720,
+    /// Cap the video long edge at 1920 px; the default.
     #[default]
     P1080,
+    /// Cap the video long edge at 3840 px.
     P4k,
 }
 
 impl MaxResolution {
+    /// Canonical string (`720p` / `1080p` / `4k`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::P720 => "720p",
@@ -95,6 +107,7 @@ impl MaxResolution {
         }
     }
 
+    /// Pixel length of the long-edge cap.
     pub fn max_long_edge(self) -> u32 {
         match self {
             Self::P720 => 1280,
@@ -103,6 +116,7 @@ impl MaxResolution {
         }
     }
 
+    /// Parse `720p`/`1080p`/`4k` (or bare numbers); `None` for unknown input.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "720p" | "720" => Some(Self::P720),
@@ -130,6 +144,10 @@ impl FromStr for MaxResolution {
 }
 
 /// Build compress options from CLI-style fields (min_size like `20M`).
+///
+/// # Errors
+///
+/// Returns an error when `min_size` is not a parseable size (like `20M`).
 pub fn compress_options_from_cli(
     max_resolution: MaxResolution,
     max_fps: f32,
@@ -147,9 +165,13 @@ pub fn compress_options_from_cli(
 /// Options applied only when [`MediaMode::Compress`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressOptions {
+    /// Long-edge cap applied when compressing video.
     pub max_resolution: MaxResolution,
+    /// Target frame rate for video compression.
     pub max_fps: f32,
+    /// Videos smaller than this are not compressed.
     pub min_size_bytes: u64,
+    /// Skip already-efficient (HEVC, low bitrate) videos.
     pub skip_efficient: bool,
 }
 
