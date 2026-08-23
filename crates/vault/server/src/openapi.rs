@@ -118,12 +118,14 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(
             crate::contact_groups_api::contact_groups_membership_handler
         ))
-        .routes(routes!(crate::server::thread_tags_list_handler))
-        .routes(routes!(crate::server::thread_tags_create_handler))
-        .routes(routes!(crate::server::thread_tags_rename_handler))
-        .routes(routes!(crate::server::thread_tags_delete_handler))
-        .routes(routes!(crate::server::thread_tags_members_handler))
-        .routes(routes!(crate::server::thread_tags_membership_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_list_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_create_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_rename_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_delete_handler))
+        .routes(routes!(crate::thread_tags_api::thread_tags_members_handler))
+        .routes(routes!(
+            crate::thread_tags_api::thread_tags_membership_handler
+        ))
         .routes(routes!(
             crate::conversations_api::conversations_list_handler
         ))

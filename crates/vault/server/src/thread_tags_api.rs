@@ -1,11 +1,20 @@
 //! Thread tags stored in `conversation_tags` / `conversation_tag_members`.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Result as AnyResult;
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use serde::{Deserialize, Serialize};
 
 use crate::db::sql::{fold_in_id_chunks, in_placeholders};
+use crate::server::{
+    ApiError, AppState, JoinBlocking, MembershipChangedResponse, lock_conn, require_full_access,
+    resolve_auth,
+};
 
 /// Longest allowed tag name (characters).
 pub const MAX_TAG_NAME_LEN: usize = 80;
@@ -338,6 +347,275 @@ pub fn set_conversations_tag_membership(
         }
     }
     Ok(changed)
+}
+
+fn map_tag_error(err: TagError) -> ApiError {
+    match err {
+        TagError::BadRequest(m) => ApiError::BadRequest(m),
+        TagError::NotFound(m) => ApiError::NotFound(m),
+        TagError::Conflict(m) => ApiError::Conflict(m),
+        TagError::Internal(m) => ApiError::Internal(m),
+    }
+}
+
+async fn with_tag_conn<T, F>(
+    db: Arc<StdMutex<Connection>>,
+    task: &'static str,
+    f: F,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, TagError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || -> Result<T, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        f(&conn).map_err(map_tag_error)
+    })
+    .await
+    .join_map(task, |e| e)
+}
+
+/// A tag name.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNameBody {
+    name: String,
+}
+
+/// Old and new tag names.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagRenameBody {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ThreadTagMembersQuery {
+    name: String,
+}
+
+/// Conversation ids, tag name, and enable flag.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembershipBody {
+    ids: Vec<i64>,
+    name: String,
+    enable: bool,
+}
+
+/// The account's tag names.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagsListResponse {
+    tags: Vec<String>,
+}
+
+/// The affected tag plus the updated list.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNamedListResponse {
+    name: String,
+    tags: Vec<String>,
+}
+
+/// The updated list after deletion.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagDeleteResponse {
+    ok: bool,
+    tags: Vec<String>,
+}
+
+/// Conversation ids carrying the named tag.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembersResponse {
+    name: String,
+    #[serde(rename = "memberConversationIds")]
+    member_conversation_ids: Vec<i64>,
+}
+
+/// List the account's thread tags (A–Z, reserved names hidden).
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ThreadTagsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ThreadTagsListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let tags = with_tag_conn(db, "thread tags list", move |conn| {
+        list_tags(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(ThreadTagsListResponse { tags }))
+}
+
+/// Create a thread tag and return the updated list.
+#[utoipa::path(
+    post,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = body.name;
+    let (created, tags) = with_tag_conn(db, "thread tags create", move |conn| {
+        let created = create_tag(conn, &auth.account_id, &name)?;
+        let tags = list_tags(conn, &auth.account_id)?;
+        Ok((created, tags))
+    })
+    .await?;
+    Ok(Json(ThreadTagNamedListResponse {
+        name: created,
+        tags,
+    }))
+}
+
+/// Rename a thread tag and return the updated list.
+#[utoipa::path(
+    patch,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagRenameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagRenameBody>,
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let (name, tags) = with_tag_conn(db, "thread tags rename", move |conn| {
+        let name = rename_tag(conn, &auth.account_id, &body.from, &body.to)?;
+        let tags = list_tags(conn, &auth.account_id)?;
+        Ok((name, tags))
+    })
+    .await?;
+    Ok(Json(ThreadTagNamedListResponse { name, tags }))
+}
+
+/// Delete a thread tag and return the updated list.
+#[utoipa::path(
+    delete,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagDeleteResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_delete_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagNameBody>,
+) -> Result<Json<ThreadTagDeleteResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let tags = with_tag_conn(db, "thread tags delete", move |conn| {
+        delete_tag(conn, &auth.account_id, &body.name)?;
+        list_tags(conn, &auth.account_id)
+    })
+    .await?;
+    Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
+}
+
+/// Conversation ids that carry a named tag.
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags/members",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    params(("name" = String, Query, description = "Tag name")),
+    responses(
+        (status = 200, body = ThreadTagMembersResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_members_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ThreadTagMembersQuery>,
+) -> Result<Json<ThreadTagMembersResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let name = query.name.clone();
+    let member_conversation_ids = with_tag_conn(db, "thread tags members", move |conn| {
+        list_tag_member_ids(conn, &auth.account_id, &name)
+    })
+    .await?;
+    Ok(Json(ThreadTagMembersResponse {
+        name: query.name,
+        member_conversation_ids,
+    }))
+}
+
+/// Add or remove a tag on conversations.
+#[utoipa::path(
+    post,
+    path = "/v1/conversations/tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagMembershipBody,
+    responses(
+        (status = 200, body = MembershipChangedResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_membership_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ThreadTagMembershipBody>,
+) -> Result<Json<MembershipChangedResponse>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let changed = with_tag_conn(db, "thread tags membership", move |conn| {
+        set_conversations_tag_membership(conn, &auth.account_id, &body.ids, &body.name, body.enable)
+    })
+    .await?;
+    Ok(Json(MembershipChangedResponse { changed }))
 }
 
 #[cfg(test)]
