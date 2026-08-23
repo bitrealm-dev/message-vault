@@ -31,7 +31,7 @@ Import and view messages in SQLite
 
 * `import` — Import a message-ir JSONL folder (source from export.source unless --source)
 * `dedupe-cross-source` — Soft-hide the same SMS when it appears under more than one import source
-* `import-contacts` — 
+* `import-contacts` — Import an address book (VCF or vCard CSV) into an existing database
 * `reset-demo` — Regenerate demo bundle, clear demo account data, import, and process assets
 * `serve` — Run HTTP ingest API (`POST /v1/import` with message-ir JSONL)
 * `dump-openapi` — Write the OpenAPI document (JSON) to stdout or --output. Does not open the database
@@ -90,6 +90,8 @@ Soft-hide the same SMS when it appears under more than one import source
 
 
 ## `message-vault-server import-contacts`
+
+Import an address book (VCF or vCard CSV) into an existing database
 
 **Usage:** `message-vault-server import-contacts [OPTIONS] --contacts <CONTACTS> --account <ACCOUNT>`
 
