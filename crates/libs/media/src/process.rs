@@ -7,14 +7,18 @@ use anyhow::{Context, Result};
 use crate::tools::{Probe, probe_video, require_ffmpeg, run_ffmpeg};
 use crate::{CompressOptions, MediaMode};
 
+/// Aggregate counts and errors from one media convert/compress pass.
 #[derive(Debug, Default)]
 pub struct MediaReport {
+    /// Number of files converted or compressed.
     pub processed: usize,
+    /// Number of files left unchanged.
     pub skipped: usize,
     /// Total bytes under `attachments/` before convert/compress (non-temp files).
     pub bytes_before: u64,
     /// Total bytes under `attachments/` after convert/compress (non-temp files).
     pub bytes_after: u64,
+    /// Per-file error messages (`path: error`) from the pass.
     pub errors: Vec<String>,
 }
 
@@ -25,6 +29,11 @@ const MEDIA_PROGRESS_EVERY: usize = 100;
 ///
 /// Returns a path remap (`old_rel` → `new_rel`, forward-slash relative to
 /// `output_dir`) for callers that update IR / CSV themselves.
+///
+/// # Errors
+///
+/// Returns an error when ffmpeg/ffprobe are missing or fail, an input path
+/// escapes the output directory, or IO fails.
 pub fn process_attachments_dir(
     output_dir: &Path,
     mode: MediaMode,
@@ -34,6 +43,11 @@ pub fn process_attachments_dir(
 }
 
 /// Same as [`process_attachments_dir`], with optional progress lines via `log`.
+///
+/// # Errors
+///
+/// Returns an error when ffmpeg/ffprobe are missing or fail, an input path
+/// escapes the output directory, or IO fails.
 pub fn process_attachments_dir_with_log(
     output_dir: &Path,
     mode: MediaMode,

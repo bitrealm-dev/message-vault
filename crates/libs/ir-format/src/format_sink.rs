@@ -14,8 +14,11 @@ use std::path::{Path, PathBuf};
 /// Result of [`FormatSink::finish`].
 #[derive(Debug, Default)]
 pub struct FormatSinkResult {
+    /// Path of the written `smses.xml` when the format is XML.
     pub xml_path: Option<PathBuf>,
+    /// Media pass report from the finish step.
     pub media: MediaReport,
+    /// Number of documents obfuscated.
     pub obfuscated_docs: usize,
 }
 
@@ -186,59 +189,16 @@ fn remove_staged_attachments(output_dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use media::MediaMode;
-    use message_ir::{
-        ConversationMeta, ConversationStats, ExportMeta, IrAttachment, IrConversationType,
-        IrDirection, IrMessage, IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
-    };
+    use message_ir::IrAttachment;
     use std::fs;
-
-    fn tiny_doc(text: &str) -> ConversationDocument {
-        let mut doc = ConversationDocument {
-            schema_version: SCHEMA_VERSION,
-            export: ExportMeta {
-                source: "test".into(),
-                tool: "test".into(),
-                tool_version: "0".into(),
-                owner_handle: Some("+15555550100".into()),
-                owner_display_name: Some("Me".into()),
-            },
-            conversation: ConversationMeta {
-                chat_identifier: "+15555550101".into(),
-                conversation_type: IrConversationType::Individual,
-                group_title: None,
-                participants: vec![IrParticipant {
-                    handle: "+15555550101".into(),
-                    display_name: Some("Sam".into()),
-                    handle_type: None,
-                }],
-                stats: ConversationStats::default(),
-            },
-            messages: vec![IrMessage {
-                guid: "guid-1".into(),
-                timestamp_unix_ms: 1_400_773_261_000,
-                direction: IrDirection::Incoming,
-                service: IrService::Sms,
-                message_kind: IrMessageKind::Sms,
-                sender_handle: Some("+15555550101".into()),
-                sender_display_name: Some("Sam".into()),
-                subject: None,
-                text: text.into(),
-                attachments: vec![],
-                imessage: None,
-                source: None,
-            }],
-            packaging_stem_suffix: None,
-        };
-        doc.finalize_stats();
-        doc
-    }
 
     #[test]
     fn format_sink_csv_writes_per_conversation() {
         let tmp = tempfile::tempdir().unwrap();
         let mut sink =
             FormatSink::open(tmp.path(), OutputFormat::Csv, ExportTransforms::none()).unwrap();
-        sink.write_document(tiny_doc("hello")).unwrap();
+        sink.write_document(message_ir::testutil::sample_document("hello"))
+            .unwrap();
         sink.finish().unwrap();
         assert!(tmp.path().join("+15555550101.csv").is_file());
     }
@@ -248,8 +208,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut sink =
             FormatSink::open(tmp.path(), OutputFormat::Xml, ExportTransforms::none()).unwrap();
-        sink.write_document(tiny_doc("one")).unwrap();
-        let mut doc2 = tiny_doc("two");
+        sink.write_document(message_ir::testutil::sample_document("one"))
+            .unwrap();
+        let mut doc2 = message_ir::testutil::sample_document("two");
         doc2.messages[0].guid = "guid-2".into();
         doc2.messages[0].timestamp_unix_ms = 1_400_773_262_000;
         sink.write_document(doc2).unwrap();
@@ -269,7 +230,7 @@ mod tests {
         let rel = "attachments/photo.jpg";
         fs::write(tmp.path().join(rel), b"jpeg-bytes").unwrap();
 
-        let mut doc = tiny_doc("with media");
+        let mut doc = message_ir::testutil::sample_document("with media");
         doc.messages[0].attachments = vec![IrAttachment {
             path: Some(rel.into()),
             original_name: Some("photo.jpg".into()),
@@ -313,7 +274,8 @@ mod tests {
 
         let mut sink =
             FormatSink::open(tmp.path(), OutputFormat::Csv, ExportTransforms::none()).unwrap();
-        sink.write_document(tiny_doc("hello")).unwrap();
+        sink.write_document(message_ir::testutil::sample_document("hello"))
+            .unwrap();
         sink.finish().unwrap();
         assert!(tmp.path().join("attachments/photo.jpg").is_file());
     }
@@ -327,7 +289,11 @@ mod tests {
             ..ExportTransforms::none()
         };
         let mut sink = FormatSink::open(tmp.path(), OutputFormat::Csv, transforms).unwrap();
-        sink.write_document(tiny_doc("secret")).unwrap();
+        // Obfuscation does not touch `source` bags (vendor leftovers), so drop
+        // the fixture's bag before asserting covered fields are rewritten.
+        let mut doc = message_ir::testutil::sample_document("secret");
+        doc.messages[0].source = None;
+        sink.write_document(doc).unwrap();
         let result = sink.finish().unwrap();
         assert_eq!(result.obfuscated_docs, 1);
         let mut found = false;

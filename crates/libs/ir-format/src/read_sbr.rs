@@ -22,29 +22,49 @@ const EXPORT_TOOL_VERSION: &str = "10.26.003";
 /// Counts from parsing SMS Backup & Restore XML into conversation documents.
 #[derive(Debug, Default)]
 pub struct SbrReadReport {
+    /// Number of conversation documents produced.
     pub conversations: u64,
+    /// SMS elements parsed.
     pub sms_seen: u64,
+    /// MMS elements parsed.
     pub mms_seen: u64,
+    /// Attachment files staged under `attachments/`.
     pub attachments_saved: u64,
+    /// Outgoing messages in produced documents.
     pub sent: u64,
+    /// Incoming messages in produced documents.
     pub received: u64,
+    /// Messages dropped for an invalid date.
     pub skipped_invalid_date: u64,
+    /// Messages dropped outside the configured date range.
     pub skipped_out_of_range: u64,
+    /// Messages dropped with no usable address.
     pub skipped_unknown_address: u64,
+    /// SMS dropped for an unknown `type`.
     pub skipped_unknown_type: u64,
+    /// Draft/outbox/failed/queued messages dropped.
     pub skipped_draft_or_outbox: u64,
+    /// MMS dropped with no participants.
     pub skipped_empty_participants: u64,
+    /// Parts with undecodable base64.
     pub skipped_bad_attachment: u64,
+    /// Per-file error messages from parsing/staging.
     pub errors: Vec<String>,
 }
 
 /// Options for [`read_sbr_documents`].
 pub struct SbrReadOptions<'a> {
+    /// Known owner phone numbers (empty triggers inference).
     pub owner_phones: &'a [String],
+    /// Date window messages must fall inside.
     pub date_range: &'a DateRange,
+    /// Directory staged attachments are written to.
     pub attachments_dir: Option<&'a Path>,
+    /// Whether to write staged attachment files.
     pub copy_attachments: bool,
+    /// Whether to retain decoded bytes in memory on the records.
     pub keep_attachment_bytes: bool,
+    /// Cancellation flag checked between files.
     pub cancel: Option<&'a CancelFlag>,
 }
 

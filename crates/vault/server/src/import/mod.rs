@@ -2102,7 +2102,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("unsafe attachment path"),
+            err.to_string()
+                .contains(message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX),
             "expected path rejection, got: {err}"
         );
     }
@@ -2163,7 +2164,10 @@ mod tests {
             }),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("unsafe attachment path"));
+        assert!(
+            err.to_string()
+                .contains(message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX)
+        );
 
         let conn = Connection::open(&db).unwrap();
         let body: String = conn

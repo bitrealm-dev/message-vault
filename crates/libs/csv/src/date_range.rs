@@ -1,5 +1,6 @@
 //! Inclusive start / exclusive end day filters (`YYYY-MM-DD`).
 
+use anyhow::{Result, bail};
 use chrono::{FixedOffset, Local, NaiveDate, TimeZone};
 
 use crate::parse_utc_offset;
@@ -15,14 +16,16 @@ pub struct DateRange {
 
 impl DateRange {
     /// Parse optional `YYYY-MM-DD` bounds using the host local timezone.
-    pub fn parse(start: Option<&str>, end: Option<&str>) -> Result<Self, String> {
+    pub fn parse(start: Option<&str>, end: Option<&str>) -> Result<Self> {
         Self::parse_with(
             |date| {
                 Local
                     .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
                     .single()
                     .map(|dt| dt.timestamp())
-                    .ok_or_else(|| format!("ambiguous or invalid local midnight for {date}"))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("ambiguous or invalid local midnight for {date}")
+                    })
             },
             start,
             end,
@@ -34,14 +37,16 @@ impl DateRange {
         start: Option<&str>,
         end: Option<&str>,
         offset: FixedOffset,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         Self::parse_with(
             |date| {
                 offset
                     .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
                     .single()
                     .map(|dt| dt.timestamp())
-                    .ok_or_else(|| format!("ambiguous or invalid midnight for {date} in {offset}"))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("ambiguous or invalid midnight for {date} in {offset}")
+                    })
             },
             start,
             end,
@@ -55,7 +60,7 @@ impl DateRange {
         start: Option<&str>,
         end: Option<&str>,
         tz_name: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         match tz_name.map(str::trim).filter(|s| !s.is_empty()) {
             None => Self::parse(start, end),
             Some(name) => {
@@ -66,10 +71,10 @@ impl DateRange {
     }
 
     fn parse_with(
-        midnight_secs: impl Fn(NaiveDate) -> Result<i64, String>,
+        midnight_secs: impl Fn(NaiveDate) -> Result<i64>,
         start: Option<&str>,
         end: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let start_secs = match start.map(str::trim).filter(|s| !s.is_empty()) {
             None => None,
             Some(s) => Some(midnight_secs(parse_ymd(s)?)?),
@@ -81,7 +86,7 @@ impl DateRange {
         if let (Some(s), Some(e)) = (start_secs, end_secs)
             && s >= e
         {
-            return Err("start-date must be before end-date (end is exclusive)".into());
+            bail!("start-date must be before end-date (end is exclusive)");
         }
         Ok(Self {
             start_secs,
@@ -89,10 +94,12 @@ impl DateRange {
         })
     }
 
+    /// True when neither bound is set.
     pub fn is_unbounded(&self) -> bool {
         self.start_secs.is_none() && self.end_secs.is_none()
     }
 
+    /// True when `secs` falls inside `[start, end)`.
     pub fn contains_secs(&self, secs: i64) -> bool {
         if let Some(start) = self.start_secs
             && secs < start
@@ -107,6 +114,8 @@ impl DateRange {
         true
     }
 
+    /// Like `contains_secs`, flooring a float timestamp first; non-finite
+    /// values are outside the range.
     pub fn contains_secs_f64(&self, secs: f64) -> bool {
         if !secs.is_finite() {
             return false;
@@ -115,9 +124,9 @@ impl DateRange {
     }
 }
 
-fn parse_ymd(value: &str) -> Result<NaiveDate, String> {
+fn parse_ymd(value: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .map_err(|_| format!("invalid date '{value}' (expected YYYY-MM-DD)"))
+        .map_err(|_| anyhow::anyhow!("invalid date '{value}' (expected YYYY-MM-DD)"))
 }
 
 #[cfg(test)]
@@ -155,7 +164,7 @@ mod tests {
     fn start_must_precede_end() {
         let err =
             DateRange::parse_in_offset(Some("2020-01-02"), Some("2020-01-02"), utc()).unwrap_err();
-        assert!(err.contains("before end-date"));
+        assert!(err.to_string().contains("before end-date"));
     }
 
     #[test]

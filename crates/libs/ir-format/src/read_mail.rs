@@ -203,22 +203,13 @@ fn ir_message_from_mail(msg: &MailMessage) -> IrMessage {
 
 /// Map one mail attachment into [`IrAttachment`].
 fn attachment_from_mail(a: &mail::MailAttachment) -> IrAttachment {
-    IrAttachment {
-        path: None,
-        original_name: a.original_name.clone(),
-        mime_type: a.mime_type.clone(),
-        digest_sha256: a.digest_sha256.clone(),
-        is_sticker: a.is_sticker,
-        transcription: a.transcription.clone(),
-        sticker_effect: a.sticker_effect.clone(),
-        size_bytes: None,
-        missing_reason: None,
-        bytes: if a.bytes.is_empty() {
-            None
-        } else {
-            Some(a.bytes.clone())
-        },
-    }
+    let mut att: IrAttachment = a.into();
+    att.bytes = if a.bytes.is_empty() {
+        None
+    } else {
+        Some(a.bytes.clone())
+    };
+    att
 }
 
 /// Parse an optional JSON cell, treating blank and `null` as `None`.

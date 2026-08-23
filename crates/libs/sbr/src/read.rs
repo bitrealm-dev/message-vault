@@ -20,21 +20,33 @@ const MMS_BOX_OUTBOX: &str = "4";
 const MMS_BOX_FAILED: &str = "5";
 const MMS_BOX_QUEUED: &str = "6";
 
+/// Individual or group conversation classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConversationKind {
+    /// One-to-one conversation (default).
     #[default]
     Individual,
+    /// Group conversation with multiple participants.
     Group,
 }
 
+/// Raw `<part>` element: content-type, name, location, and payload columns
+/// plus the full attribute map.
 #[derive(Debug, Clone, Default)]
 pub struct MmsPart {
+    /// MIME type from the `ct` attribute.
     pub ct: String,
+    /// Content name from the `name` attribute.
     pub name: String,
+    /// Content-Location from the `cl` attribute.
     pub cl: String,
-    pub fn_attr: String,
+    /// Filename from the XML `fn` attribute (not a function attribute).
+    pub filename_attr: String,
+    /// Text body (SMIL) when present.
     pub text: String,
+    /// Base64 payload when present.
     pub data: String,
+    /// All raw attributes.
     pub attrs: BTreeMap<String, String>,
 }
 
@@ -45,57 +57,98 @@ struct MmsAddr {
     attrs: BTreeMap<String, String>,
 }
 
+/// Decoded MMS attachment with a content-addressed filename.
 #[derive(Debug, Clone)]
 pub struct AttachmentBlob {
+    /// Content-addressed filename (`<sha256><ext>`).
     pub filename: String,
+    /// Original part name from the XML, when present.
     pub original_name: Option<String>,
+    /// MIME type from the part's `ct`.
     pub mime_type: Option<String>,
+    /// Decoded payload bytes shared by reference.
     pub data: Arc<[u8]>,
+    /// Lowercase hex SHA-256 of the payload.
     pub digest_hex: String,
 }
 
+/// Serde-tagged raw source bag (`kind: sms|mms`) preserved for write-back.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind")]
 pub enum SourceFields {
+    /// Raw SMS source bag.
     #[serde(rename = "sms")]
-    Sms { attrs: BTreeMap<String, String> },
+    Sms {
+        /// Raw SMS attributes.
+        attrs: BTreeMap<String, String>,
+    },
+    /// Raw MMS source bag.
     #[serde(rename = "mms")]
     Mms {
+        /// Raw MMS attributes.
         attrs: BTreeMap<String, String>,
+        /// Raw `<part>` attribute maps.
         parts: Vec<BTreeMap<String, String>>,
+        /// Raw `<addr>` attribute maps.
         addrs: Vec<BTreeMap<String, String>>,
     },
 }
 
+/// One parsed SMS/MMS message record.
 #[derive(Debug, Clone)]
 pub struct Record {
+    /// Conversation key (single peer number or group key).
     pub chat_key: String,
+    /// Individual or group classification.
     pub conversation_kind: ConversationKind,
+    /// Generated group title, if group.
     pub group_title: Option<String>,
+    /// (Sanitized digits, display-name hint) pairs for participants.
     pub participant_digits: Vec<(String, Option<String>)>,
+    /// Message timestamp in seconds.
     pub timestamp_secs: f64,
+    /// Whether the message is outgoing.
     pub is_from_me: bool,
+    /// Sender digits for incoming messages.
     pub sender_digits: Option<String>,
+    /// Sender display-name hint, when present.
     pub sender_display_name: Option<String>,
+    /// Message body text (HTML-entity decoded).
     pub text: String,
+    /// Message subject, if any.
     pub subject: String,
+    /// Decoded attachment blobs.
     pub attachments: Vec<AttachmentBlob>,
+    /// `"sms"` or `"mms"`.
     pub message_kind: &'static str,
+    /// Raw `date` attribute in milliseconds.
     pub date_ms: String,
+    /// Raw `contact_name` attribute (may be `"null"`).
     pub contact_name: String,
+    /// Raw `type` (SMS) or `msg_box` (MMS) attribute string.
     pub android_type: String,
+    /// Serde-tagged raw source bag for write-back.
     pub source_fields: SourceFields,
 }
 
+/// Counters for seen and skipped messages.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ParseStats {
+    /// Number of `<sms>` elements encountered.
     pub sms_seen: u64,
+    /// Number of `<mms>` elements encountered.
     pub mms_seen: u64,
+    /// Records dropped for an unparseable `date`.
     pub skipped_invalid_date: u64,
+    /// Records dropped because no usable phone address.
     pub skipped_unknown_address: u64,
+    /// SMS records dropped for an unknown `type`.
     pub skipped_unknown_type: u64,
+    /// Records dropped as draft/outbox/failed/queued.
     pub skipped_draft_or_outbox: u64,
+    /// MMS records dropped with no participants.
     pub skipped_empty_participants: u64,
+    /// Parts with undecodable base64 `data`.
     pub skipped_bad_attachment: u64,
 }
 
@@ -126,7 +179,7 @@ fn part(attrs: &HashMap<String, String>) -> MmsPart {
         ct: get(attrs, "ct").into(),
         name: get(attrs, "name").into(),
         cl: get(attrs, "cl").into(),
-        fn_attr: get(attrs, "fn").into(),
+        filename_attr: get(attrs, "fn").into(),
         text: get(attrs, "text").into(),
         data: get(attrs, "data").into(),
         attrs: btree(attrs),
@@ -177,7 +230,7 @@ fn non_null(value: &str) -> String {
 
 fn content_keys(part: &MmsPart) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
-    for raw in [&part.name, &part.cl, &part.fn_attr] {
+    for raw in [&part.name, &part.cl, &part.filename_attr] {
         let value = raw.trim();
         if value.is_empty()
             || value.eq_ignore_ascii_case("null")
@@ -242,7 +295,7 @@ fn extension(part: &MmsPart) -> String {
         "audio/amr" => ".amr".into(),
         "audio/mpeg" => ".mp3".into(),
         "audio/mp4" => ".m4a".into(),
-        ct => [&part.name, &part.cl, &part.fn_attr]
+        ct => [&part.name, &part.cl, &part.filename_attr]
             .iter()
             .find_map(|n| {
                 valid_filename(n).and_then(|n| {
@@ -286,7 +339,7 @@ fn attachments(parts: &[MmsPart], refs: &[String], stats: &mut ParseStats) -> Ve
         let digest = hex::encode(Sha256::digest(&payload));
         let original = valid_filename(&part.name)
             .or_else(|| valid_filename(&part.cl))
-            .or_else(|| valid_filename(&part.fn_attr));
+            .or_else(|| valid_filename(&part.filename_attr));
         let ext = extension(part);
         let filename = format!("{digest}{ext}");
         let blob = AttachmentBlob {
@@ -582,9 +635,13 @@ fn parse_mms(
 /// held as `Arc<[u8]>` — is buffered in the returned `Vec` before callers
 /// stage the blobs to disk, so peak usage is roughly the sum of all
 /// attachment bytes in the file. The base64 `data` strings are already dropped
-/// from `source_fields` (see [`part_fields`]), so the decoded blobs dominate.
+/// from `source_fields` (see `part_fields`), so the decoded blobs dominate.
 /// A future refactor should stream decode → stage per message so each blob can
 /// be dropped as soon as it is written.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or the XML cannot be parsed.
 pub fn parse_file(path: &Path, owners: &HashSet<String>) -> Result<(Vec<Record>, ParseStats)> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     parse_reader(std::io::BufReader::new(file), owners)
@@ -650,6 +707,10 @@ fn parse_reader<R: BufRead>(
 }
 
 /// Infer owner phones from nested `<addr type="137">` elements in sent MMS.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or parsed.
 pub fn infer_owner_phones(path: &Path) -> Result<Vec<String>> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut xml = Reader::from_reader(std::io::BufReader::new(file));

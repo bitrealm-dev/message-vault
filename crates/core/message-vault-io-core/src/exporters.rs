@@ -606,7 +606,7 @@ impl Form {
         ) {
             Ok(range) => range,
             Err(error) => {
-                errors.push(error);
+                errors.push(error.to_string());
                 DateRange::default()
             }
         };
@@ -937,7 +937,7 @@ fn parse_date_range_local(
     match DateRange::parse(start, end) {
         Ok(range) => range,
         Err(error) => {
-            errors.push(error);
+            errors.push(error.to_string());
             DateRange::default()
         }
     }

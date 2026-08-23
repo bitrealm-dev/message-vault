@@ -332,21 +332,21 @@ fn mail_message_to_ir(
                     attachments_dir,
                     mail.timestamp_unix_ms,
                     &attachment.bytes,
-                    attachment.original_name.as_deref(),
+                    attachment.meta.original_name.as_deref(),
                 )?;
                 (Some(rel_path), Some(digest), Some(size), None)
             } else {
-                (None, attachment.digest_sha256.clone(), None, None)
+                (None, attachment.meta.digest_sha256.clone(), None, None)
             }
         } else {
             let bytes = has_bytes.then(|| attachment.bytes.clone());
             let size = bytes.as_ref().map(|b| b.len() as u64);
-            (None, attachment.digest_sha256.clone(), size, bytes)
+            (None, attachment.meta.digest_sha256.clone(), size, bytes)
         };
         attachments.push(IrAttachment {
             path,
-            original_name: attachment.original_name.clone(),
-            mime_type: attachment.mime_type.clone(),
+            original_name: attachment.meta.original_name.clone(),
+            mime_type: attachment.meta.mime_type.clone(),
             digest_sha256,
             is_sticker: attachment.is_sticker,
             transcription: attachment.transcription.clone(),
@@ -727,9 +727,12 @@ fn try_handwriting_svg(session: &MailSession, message: &Message) -> Option<MailA
     let svg = hw.render_svg();
     Some(MailAttachment {
         bytes: svg.into_bytes(),
-        original_name: Some(format!("{}.svg", message.guid)),
-        mime_type: Some("image/svg+xml".into()),
-        digest_sha256: None,
+        meta: message_ir::AttachmentMeta {
+            path: None,
+            original_name: Some(format!("{}.svg", message.guid)),
+            mime_type: Some("image/svg+xml".into()),
+            digest_sha256: None,
+        },
         is_sticker: false,
         transcription: None,
         sticker_effect: None,
@@ -848,9 +851,12 @@ fn collect_mail_parts_and_attachments(
         );
         mail_attachments.push(MailAttachment {
             bytes,
-            original_name: attachment.transfer_name.clone(),
-            mime_type: attachment.mime_type.clone(),
-            digest_sha256: None,
+            meta: message_ir::AttachmentMeta {
+                path: None,
+                original_name: attachment.transfer_name.clone(),
+                mime_type: attachment.mime_type.clone(),
+                digest_sha256: None,
+            },
             is_sticker: attachment.is_sticker,
             transcription,
             sticker_effect,
@@ -1141,9 +1147,12 @@ mod tests {
             export_tool_version: "0".into(),
             attachments: vec![MailAttachment {
                 bytes,
-                original_name: Some("a.jpg".into()),
-                mime_type: Some("image/jpeg".into()),
-                digest_sha256: None,
+                meta: message_ir::AttachmentMeta {
+                    path: None,
+                    original_name: Some("a.jpg".into()),
+                    mime_type: Some("image/jpeg".into()),
+                    digest_sha256: None,
+                },
                 is_sticker: false,
                 transcription: None,
                 sticker_effect: None,

@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use message_ir_format::UNSAFE_ATTACHMENT_PATH_PREFIX;
 use serde::{Deserialize, Serialize};
 
 /// Complete server configuration, loaded from a TOML file.
@@ -142,7 +143,7 @@ pub fn safe_rel_path(name: &str) -> Result<PathBuf> {
             Component::Normal(s) => out.push(s),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                bail!("unsafe attachment path: {name}");
+                bail!("{UNSAFE_ATTACHMENT_PATH_PREFIX}: {name}");
             }
         }
     }

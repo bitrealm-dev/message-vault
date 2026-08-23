@@ -17,6 +17,7 @@ pub struct NameMapping {
 }
 
 impl NameMapping {
+    /// Construct an empty mapping.
     pub fn empty() -> Self {
         Self {
             incorrect_to_handle: HashMap::new(),
@@ -24,6 +25,11 @@ impl NameMapping {
     }
 
     /// Load `Handle,HandleType,Incorrect Name` CSV (column order flexible; header required).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be opened or read, or when a
+    /// required header (`Handle` / `Incorrect Name`) is missing.
     pub fn load(path: &Path) -> Result<Self> {
         let file =
             File::open(path).with_context(|| format!("open name mapping {}", path.display()))?;
@@ -97,6 +103,12 @@ impl NameMapping {
         Ok(mapping)
     }
 
+    /// Load from a path option, returning the path when loaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be opened or read, or when a
+    /// required header (`Handle` / `Incorrect Name`) is missing.
     pub fn load_optional(path: Option<&Path>) -> Result<(Self, Option<std::path::PathBuf>)> {
         match path {
             Some(path) => Ok((Self::load(path)?, Some(path.to_path_buf()))),
@@ -113,10 +125,12 @@ impl NameMapping {
         self.incorrect_to_handle.get(&key)
     }
 
+    /// Number of incorrect-name entries.
     pub fn len(&self) -> usize {
         self.incorrect_to_handle.len()
     }
 
+    /// Whether the mapping has no entries.
     pub fn is_empty(&self) -> bool {
         self.incorrect_to_handle.is_empty()
     }

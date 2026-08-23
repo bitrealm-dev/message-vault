@@ -1,5 +1,7 @@
 //! Convert an existing Message Vault output directory to another format.
 
+#![warn(missing_docs)]
+
 pub mod cli;
 
 use anyhow::{Context, Result, bail};
@@ -387,60 +389,15 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use message_ir::{
-        ConversationMeta, ConversationStats, ExportMeta, IrConversationType, IrDirection,
-        IrMessage, IrMessageKind, IrParticipant, IrService, SCHEMA_VERSION,
-    };
     use message_ir_format::{read_conversation_csv, read_conversation_json};
     use message_vault_io_core::{FormatConfig, MediaConfig, ObfuscateConfig, SourceConfig};
-
-    /// One-message conversation used by convert tests.
-    fn sample_doc() -> ConversationDocument {
-        let mut document = ConversationDocument {
-            schema_version: SCHEMA_VERSION,
-            export: ExportMeta {
-                source: "sms-backup-restore".into(),
-                tool: "SMS Backup & Restore".into(),
-                tool_version: "10.26.003".into(),
-                owner_handle: Some("+15555550100".into()),
-                owner_display_name: Some("Me".into()),
-            },
-            conversation: ConversationMeta {
-                chat_identifier: "+15555550101".into(),
-                conversation_type: IrConversationType::Individual,
-                group_title: None,
-                participants: vec![IrParticipant {
-                    handle: "+15555550101".into(),
-                    display_name: Some("Sam".into()),
-                    handle_type: None,
-                }],
-                stats: ConversationStats::default(),
-            },
-            messages: vec![IrMessage {
-                guid: "aabbccddeeff00112233445566778899".into(),
-                timestamp_unix_ms: 1_400_773_261_000,
-                direction: IrDirection::Incoming,
-                service: IrService::Sms,
-                message_kind: IrMessageKind::Sms,
-                sender_handle: Some("+15555550101".into()),
-                sender_display_name: Some("Sam".into()),
-                subject: None,
-                text: "hello reexport".into(),
-                attachments: vec![],
-                imessage: None,
-                source: None,
-            }],
-            packaging_stem_suffix: None,
-        };
-        document.finalize_stats();
-        document
-    }
 
     fn write_fixture(dir: &Path, format: OutputFormat) {
         fs::create_dir_all(dir).unwrap();
         clean_previous_ir_output(dir).unwrap();
         let mut sink = FormatSink::open(dir, format, ExportTransforms::none()).unwrap();
-        sink.write_document(sample_doc()).unwrap();
+        sink.write_document(message_ir::testutil::sample_document("hello reexport"))
+            .unwrap();
         sink.finish().unwrap();
     }
 
@@ -563,7 +520,8 @@ mod tests {
         write_fixture(source.path(), OutputFormat::Json);
         let mut sink =
             FormatSink::open(source.path(), OutputFormat::Csv, ExportTransforms::none()).unwrap();
-        sink.write_document(sample_doc()).unwrap();
+        sink.write_document(message_ir::testutil::sample_document("hello reexport"))
+            .unwrap();
         sink.finish().unwrap();
         let error = detect_ir_export(source.path()).unwrap_err().to_string();
         assert!(error.contains("mixed"), "{error}");
