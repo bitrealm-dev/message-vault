@@ -4202,6 +4202,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "contacts",
  "media",
  "message-csv",
  "message-ir",

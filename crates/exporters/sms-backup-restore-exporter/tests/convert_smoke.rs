@@ -3,9 +3,9 @@ use anyhow::Result;
 use contacts::ContactsBook;
 use message_csv::DateRange;
 use message_ir_format::{ExportTransforms, FormatSinkResult};
+use message_vault_io_core::testutil::{assert_csv_header, empty_contacts};
 use message_vault_io_core::{ExportReport, OutputFormat};
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn convert(
@@ -25,13 +25,6 @@ fn convert(
         output_format,
         cancel: None,
     })
-}
-
-fn empty_contacts(dir: &tempfile::TempDir) -> ContactsBook {
-    let path = dir.path().join("contacts.csv");
-    let mut f = File::create(&path).unwrap();
-    writeln!(f, "First Name,Last Name,Mobile Phone").unwrap();
-    ContactsBook::load_vcard_csv(&path).unwrap()
 }
 
 #[test]
@@ -56,49 +49,23 @@ fn convert_export_smoke_on_sample_fixture() {
         report.conversations
     );
 
-    let mut csv_files: Vec<_> = fs::read_dir(tmp.path())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("csv"))
-        .collect();
-    csv_files.sort();
-    assert!(!csv_files.is_empty(), "expected at least one .csv");
-
-    let json_count = fs::read_dir(tmp.path())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension().and_then(|x| x.to_str()) == Some("json")
-                && !p
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.ends_with(".meta.json"))
-        })
-        .count();
-    assert_eq!(json_count, 0);
-
-    let mut contents = String::new();
-    File::open(&csv_files[0])
-        .unwrap()
-        .read_to_string(&mut contents)
-        .unwrap();
-    let header = contents.lines().next().unwrap();
-    assert!(header.contains("chat_identifier"));
-    assert!(header.contains("export_source"));
-    assert!(header.contains("export_tool"));
-    assert!(header.contains("export_tool_version"));
-    assert!(header.contains("message_kind"));
-    assert!(header.contains("timestamp_unix_ms"));
-    assert!(header.contains("source_fields_json"));
-    assert!(header.contains("owner_handle"));
-    assert!(header.contains("participants_json"));
-    assert!(header.contains("subject"));
-    assert!(!header.contains("date_ms"));
-    assert!(!header.contains("contact_name"));
-    assert!(!header.contains("xml_fields_json"));
-    assert!(contents.contains("sms-backup-restore"));
+    assert_csv_header(
+        tmp.path(),
+        &[
+            "chat_identifier",
+            "export_source",
+            "export_tool",
+            "export_tool_version",
+            "message_kind",
+            "timestamp_unix_ms",
+            "source_fields_json",
+            "owner_handle",
+            "participants_json",
+            "subject",
+        ],
+        &["date_ms", "contact_name", "xml_fields_json"],
+        "sms-backup-restore",
+    );
 
     let attachments = tmp.path().join("attachments");
     let mut found = false;

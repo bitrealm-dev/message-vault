@@ -37,4 +37,5 @@ sha2 = "0.11.0"
 toml = "1.1.2"
 
 [dev-dependencies]
+message-vault-io-core = { path = "../../core/message-vault-io-core", features = ["testutil"] }
 tempfile = "3.27.0"

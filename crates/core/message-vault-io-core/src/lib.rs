@@ -13,6 +13,8 @@ mod export_ini;
 mod exporters;
 mod pipeline;
 mod process;
+#[cfg(feature = "testutil")]
+pub mod testutil;
 
 pub use attachments::{attachment_dest_name, copy_if_missing, digest_prefix, write_if_missing};
 #[cfg(feature = "cli")]
