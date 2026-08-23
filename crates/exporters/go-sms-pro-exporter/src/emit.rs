@@ -2,9 +2,10 @@
 //! ([`ConversationDocument`]) every exporter writes, then write the chosen
 //! output format via [`FormatSink`].
 
+use crate::attachments_emit::{pending_attachment_to_ir, save_pdu_attachments};
+use crate::chat_id::{chat_id_group, chat_id_individual, guarded_phone};
 use crate::xml::{SkippedBadAddrDetail, XmlMessage, parse_xml_file};
 use anyhow::{Context, Result, bail};
-use chrono::{Local, TimeZone};
 use contacts::ContactsBook;
 use go_sms_mms::{ParsedPdu, parse_pdu_file};
 use message_csv::{DateRange, format_local_ts, stable_guid};
@@ -15,11 +16,8 @@ use message_ir::{
     owner_sender, parse_android_type,
 };
 use message_ir_format::{ExportTransforms, FormatSink, FormatSinkResult};
-use message_vault_io_core::{
-    CancelFlag, ExportReport, OutputFormat, digest_prefix, prepare_outputs, write_if_missing,
-};
+use message_vault_io_core::{CancelFlag, ExportReport, OutputFormat, prepare_outputs};
 use phone::OwnerHandleSet;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
@@ -67,74 +65,6 @@ pub(crate) struct SkippedNoPartyDetail {
     pub is_sent: bool,
     pub has_from: bool,
     pub has_to: bool,
-}
-
-/// Format as E.164 (the international phone-number format that starts with +)
-/// when the digits are unambiguous for the US-centric crate. Otherwise keep
-/// the digits as-is. Never invent `+0…`.
-fn guarded_phone(digits: &str) -> String {
-    phone::normalize_guarded(digits, phone::PhoneRegion::Usa).normalized
-}
-
-/// Format digit strings as E.164 (the international phone-number format that
-/// starts with +) when unambiguous, then join with `", "`.
-fn join_guarded_phones(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| guarded_phone(d))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Length-prefix each number so `["12","34"]` and `["123","4"]` cannot both
-/// become `12_34`.
-fn group_id_slug(digits: &[String]) -> String {
-    digits
-        .iter()
-        .map(|d| format!("{}:{}", d.len(), d))
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
-/// Chat id for a 1:1 conversation: E.164 when unambiguous.
-fn chat_id_individual(digits: &str) -> String {
-    guarded_phone(digits)
-}
-
-/// Group chat id and display title from participant digits (owner excluded).
-fn chat_id_group(participant_digits: &[String], owners: &OwnerHandleSet) -> (String, String) {
-    let mut others: Vec<String> = participant_digits
-        .iter()
-        .filter(|d| !d.is_empty() && !owners.is_owner(d, HandleType::Phone))
-        .cloned()
-        .collect();
-    others.sort();
-    others.dedup();
-    let title = if others.is_empty() {
-        "Group".to_string()
-    } else if others.len() <= 4 {
-        format!("Group: {}", join_guarded_phones(&others))
-    } else {
-        format!(
-            "Group: {}, and {} others",
-            join_guarded_phones(&others[..4]),
-            others.len() - 4
-        )
-    };
-    let slug = group_id_slug(&others);
-    let id = if slug.is_empty() {
-        "chat-group-unknown".to_string()
-    } else {
-        format!("chat-group-{slug}")
-    };
-    // Keep filesystem-safe length.
-    let id = if id.len() > 180 {
-        let digest = hex::encode(Sha256::digest(id.as_bytes()));
-        format!("chat-group-{}", &digest[..16])
-    } else {
-        id
-    };
-    (id, title)
 }
 
 /// Get or create the pending conversation for `chat_id`.
@@ -193,61 +123,6 @@ fn add_xml_messages(
             },
         });
     }
-}
-
-/// Write PDU (binary SMS/MMS) attachment parts under `attachments_dir`.
-///
-/// # Errors
-///
-/// Returns an error when an attachment file cannot be written.
-fn save_pdu_attachments(
-    parsed: &ParsedPdu,
-    attachments_dir: &Path,
-    report: &mut ExportReport,
-    copy_attachments: bool,
-) -> Result<Vec<PendingAttachment>> {
-    if !copy_attachments {
-        return Ok(Vec::new());
-    }
-    fs::create_dir_all(attachments_dir)?;
-    let date_prefix = Local
-        .timestamp_opt(parsed.timestamp, 0)
-        .single()
-        .map(|t| t.format("%Y%m%d_%H%M%S").to_string())
-        .unwrap_or_else(|| parsed.timestamp.to_string());
-
-    let mut out = Vec::new();
-    for (idx, att) in parsed.attachments.iter().enumerate() {
-        let digest_hex = hex::encode(Sha256::digest(&att.data));
-        let digest_prefix = digest_prefix(&digest_hex);
-        let name = format!(
-            "{}-I_{}_{}_{}{}",
-            date_prefix,
-            parsed.timestamp,
-            digest_prefix,
-            idx + 1,
-            att.ext
-        );
-        let path = attachments_dir.join(&name);
-        // Content-addressed name: rewrite only when missing (same bytes → same path).
-        if write_if_missing(&path, &att.data)? {
-            report.attachments_saved += 1;
-        }
-        out.push(PendingAttachment {
-            rel_path: format!("attachments/{name}"),
-            content_type: media::mime_for_ext(&att.ext)
-                .or(match att.ext.as_str() {
-                    ".wav" => Some("audio/wav"),
-                    _ => None,
-                })
-                .unwrap_or("")
-                .to_string(),
-            extension: att.ext.trim_start_matches('.').to_string(),
-            digest_sha256: Some(digest_hex),
-            name_hint: att.smil_name.clone().or(Some(name)),
-        });
-    }
-    Ok(out)
 }
 
 /// File name of the PDU on disk (for skip-detail rows).
@@ -471,22 +346,6 @@ fn first_contact_name(convo: &PendingConversation) -> Option<String> {
         .map(|m| m.extra_str("contact_name").trim())
         .find(|n| !n.is_empty())
         .map(str::to_string)
-}
-
-/// Map a staged attachment onto the shared [`IrAttachment`] shape.
-fn pending_attachment_to_ir(a: &PendingAttachment) -> IrAttachment {
-    IrAttachment {
-        path: Some(a.rel_path.clone()),
-        original_name: a.name_hint.clone(),
-        mime_type: a.mime_type(),
-        digest_sha256: a.digest_sha256.clone(),
-        is_sticker: false,
-        transcription: None,
-        sticker_effect: None,
-        size_bytes: None,
-        missing_reason: None,
-        bytes: None,
-    }
 }
 
 /// True when the path has a `.xml` extension (any case).
