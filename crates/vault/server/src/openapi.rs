@@ -5,6 +5,11 @@ use std::path::Path;
 
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+
+use crate::config::AuthMode;
+use crate::server::AppState;
 
 pub const API_TITLE: &str = "Message Vault HTTP API";
 
@@ -37,18 +42,24 @@ impl Modify for BearerAddon {
         let components = openapi.components.get_or_insert_default();
         components.add_security_scheme(
             "bearer",
-            SecurityScheme::Http(
-                HttpBuilder::new()
-                    .scheme(HttpAuthScheme::Bearer)
-                    .build(),
-            ),
+            SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
         );
     }
 }
 
+#[allow(dead_code)] // Live(AuthMode) is matched when later tasks filter routes by sign-in mode.
+pub enum SpecAuth {
+    Live(AuthMode),
+    Full,
+}
+
+pub fn openapi_router(_auth: SpecAuth) -> OpenApiRouter<AppState> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi()).routes(routes!(crate::server::health))
+}
+
 /// Pretty OpenAPI JSON. Same string the CLI writes and the stale-spec test compares.
 pub fn dump_openapi_json() -> String {
-    let api = ApiDoc::openapi();
+    let (_router, api) = openapi_router(SpecAuth::Full).split_for_parts();
     serde_json::to_string_pretty(&api).expect("OpenAPI document serializes to JSON")
 }
 
@@ -91,5 +102,14 @@ mod tests {
         let b = dump_openapi_json();
         assert_eq!(a, b);
         assert!(a.contains('\n'), "expected pretty JSON");
+    }
+
+    #[test]
+    fn dump_includes_health() {
+        let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
+        assert!(
+            v["paths"]["/health"]["get"].is_object(),
+            "expected GET /health in dump"
+        );
     }
 }

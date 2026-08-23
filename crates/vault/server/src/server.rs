@@ -212,10 +212,10 @@ struct DedupeResponse {
     near_flagged: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    ok: bool,
-    error: String,
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ErrorBody {
+    pub ok: bool,
+    pub error: String,
 }
 
 #[derive(Debug)]
@@ -371,6 +371,141 @@ fn auth_public_router(mode: AuthMode) -> Router<AppState> {
         .layer(RequestBodyLimitLayer::new(32 * 1024))
 }
 
+pub(crate) fn http_app(state: AppState) -> Router {
+    let openapi_ui = state
+        .cfg
+        .server
+        .as_ref()
+        .map(|s| s.openapi_ui)
+        .unwrap_or(false);
+    let cors_origins = state
+        .cfg
+        .server
+        .as_ref()
+        .map(|s| s.cors_origins.clone())
+        .unwrap_or_default();
+    let mode = AuthMode::from_env();
+    let (doc_router, spec) =
+        crate::openapi::openapi_router(crate::openapi::SpecAuth::Live(mode)).split_for_parts();
+
+    let mut api = Router::new()
+        .merge(doc_router)
+        .merge(auth_public_router(mode))
+        .route("/v1/auth/mode", get(auth_mode_handler))
+        .route("/v1/auth/check", get(auth_check))
+        .route("/v1/auth/logout", post(crate::auth::logout_handler))
+        .route(
+            "/v1/auth/change-password",
+            post(crate::auth::change_password_handler),
+        )
+        .route(
+            "/v1/auth/delete-account",
+            post(crate::auth::delete_account_handler),
+        )
+        .route(
+            "/v1/account/profile",
+            get(crate::profile::account_profile_handler)
+                .post(crate::profile::account_profile_update_handler),
+        )
+        .route(
+            "/v1/account/delete-messages",
+            post(crate::profile::delete_messages_handler),
+        )
+        .route("/v1/account/storage", get(account_storage_handler))
+        .route(
+            "/v1/account/api-tokens",
+            get(crate::api_tokens_api::list_api_tokens_handler)
+                .post(crate::api_tokens_api::create_api_token_handler),
+        )
+        .route(
+            "/v1/account/api-tokens/{id}",
+            delete(crate::api_tokens_api::delete_api_token_handler)
+                .patch(crate::api_tokens_api::rename_api_token_handler),
+        )
+        .route(
+            "/v1/export/messages/count",
+            get(export_messages_count_handler),
+        )
+        .route("/v1/export/messages", get(export_messages_handler))
+        .route("/v1/export/contacts", get(contacts_list_handler))
+        .route(
+            "/v1/export/contacts/summaries",
+            post(contact_summaries_handler),
+        )
+        .route(
+            "/v1/export/contacts/{id}",
+            get(contact_detail_handler).post(contact_mutate_handler),
+        )
+        .route(
+            "/v1/contact-groups",
+            get(contact_groups_list_handler)
+                .post(contact_groups_create_handler)
+                .patch(contact_groups_rename_handler)
+                .delete(contact_groups_delete_handler),
+        )
+        .route(
+            "/v1/contact-groups/members",
+            get(contact_groups_members_handler),
+        )
+        .route(
+            "/v1/contacts/groups",
+            post(contact_groups_membership_handler),
+        )
+        .route(
+            "/v1/thread-tags",
+            get(thread_tags_list_handler)
+                .post(thread_tags_create_handler)
+                .patch(thread_tags_rename_handler)
+                .delete(thread_tags_delete_handler),
+        )
+        .route("/v1/thread-tags/members", get(thread_tags_members_handler))
+        .route(
+            "/v1/conversations/tags",
+            post(thread_tags_membership_handler),
+        )
+        .route("/v1/export/conversations", get(conversations_list_handler))
+        .route(
+            "/v1/export/conversations/{id}/sources",
+            get(conversation_sources_handler),
+        )
+        .route("/v1/imports", get(imports_list_handler))
+        .route("/v1/imports", post(imports_create_handler))
+        .route("/v1/imports/{id}", get(imports_get_handler))
+        .route("/v1/imports/{id}/complete", post(imports_complete_handler))
+        .route("/v1/import", post(import_handler))
+        .route(
+            "/v1/assets/{sha256}",
+            get(asset_get_handler)
+                .put(asset_put_handler)
+                .head(asset_head_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads",
+            post(asset_upload_start_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
+            put(asset_upload_part_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}/complete",
+            post(asset_upload_complete_handler),
+        )
+        .route(
+            "/v1/assets/{sha256}/uploads/{upload_id}",
+            delete(asset_upload_abort_handler),
+        )
+        .fallback_service(ServeDir::new("static"))
+        .layer(build_cors_layer(&cors_origins))
+        .layer(RequestBodyLimitLayer::new(state.max_body_bytes));
+
+    if openapi_ui {
+        api = api.merge(utoipa_swagger_ui::SwaggerUi::new("/docs").url("/openapi.json", spec));
+    }
+
+    api.with_state(state)
+}
+
 /// Open a configured connection, run `f`, and map join/task errors.
 ///
 /// # Errors
@@ -477,120 +612,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         spawn_guest_pool_worker(state.clone());
     }
 
-    let auth_public = auth_public_router(AuthMode::from_env());
-
-    let app = Router::new()
-        .merge(auth_public)
-        .route("/health", get(health))
-        .route("/v1/auth/mode", get(auth_mode_handler))
-        .route("/v1/auth/check", get(auth_check))
-        .route("/v1/auth/logout", post(crate::auth::logout_handler))
-        .route(
-            "/v1/auth/change-password",
-            post(crate::auth::change_password_handler),
-        )
-        .route(
-            "/v1/auth/delete-account",
-            post(crate::auth::delete_account_handler),
-        )
-        .route(
-            "/v1/account/profile",
-            get(crate::profile::account_profile_handler)
-                .post(crate::profile::account_profile_update_handler),
-        )
-        .route(
-            "/v1/account/delete-messages",
-            post(crate::profile::delete_messages_handler),
-        )
-        .route("/v1/account/storage", get(account_storage_handler))
-        .route(
-            "/v1/account/api-tokens",
-            get(crate::api_tokens_api::list_api_tokens_handler)
-                .post(crate::api_tokens_api::create_api_token_handler),
-        )
-        .route(
-            "/v1/account/api-tokens/{id}",
-            delete(crate::api_tokens_api::delete_api_token_handler)
-                .patch(crate::api_tokens_api::rename_api_token_handler),
-        )
-        .route(
-            "/v1/export/messages/count",
-            get(export_messages_count_handler),
-        )
-        .route("/v1/export/messages", get(export_messages_handler))
-        .route("/v1/export/contacts", get(contacts_list_handler))
-        .route(
-            "/v1/export/contacts/summaries",
-            post(contact_summaries_handler),
-        )
-        .route(
-            "/v1/export/contacts/{id}",
-            get(contact_detail_handler).post(contact_mutate_handler),
-        )
-        .route(
-            "/v1/contact-groups",
-            get(contact_groups_list_handler)
-                .post(contact_groups_create_handler)
-                .patch(contact_groups_rename_handler)
-                .delete(contact_groups_delete_handler),
-        )
-        .route(
-            "/v1/contact-groups/members",
-            get(contact_groups_members_handler),
-        )
-        .route(
-            "/v1/contacts/groups",
-            post(contact_groups_membership_handler),
-        )
-        .route(
-            "/v1/thread-tags",
-            get(thread_tags_list_handler)
-                .post(thread_tags_create_handler)
-                .patch(thread_tags_rename_handler)
-                .delete(thread_tags_delete_handler),
-        )
-        .route("/v1/thread-tags/members", get(thread_tags_members_handler))
-        .route(
-            "/v1/conversations/tags",
-            post(thread_tags_membership_handler),
-        )
-        .route("/v1/export/conversations", get(conversations_list_handler))
-        .route(
-            "/v1/export/conversations/{id}/sources",
-            get(conversation_sources_handler),
-        )
-        .route("/v1/imports", get(imports_list_handler))
-        .route("/v1/imports", post(imports_create_handler))
-        .route("/v1/imports/{id}", get(imports_get_handler))
-        .route("/v1/imports/{id}/complete", post(imports_complete_handler))
-        .route("/v1/import", post(import_handler))
-        .route(
-            "/v1/assets/{sha256}",
-            get(asset_get_handler)
-                .put(asset_put_handler)
-                .head(asset_head_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads",
-            post(asset_upload_start_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
-            put(asset_upload_part_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}/complete",
-            post(asset_upload_complete_handler),
-        )
-        .route(
-            "/v1/assets/{sha256}/uploads/{upload_id}",
-            delete(asset_upload_abort_handler),
-        )
-        .fallback_service(ServeDir::new("static"))
-        .layer(build_cors_layer(&server.cors_origins))
-        .layer(RequestBodyLimitLayer::new(max_body_bytes))
-        .with_state(state);
-
+    let app = http_app(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("message-vault-server serve listening on http://{bind}");
     eprintln!("  GET  /health");
@@ -704,7 +726,13 @@ async fn shutdown_signal() {
     eprintln!("shutting down");
 }
 
-async fn health() -> impl IntoResponse {
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Health",
+    responses((status = 200, description = "Process is up", body = String))
+)]
+pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
@@ -2564,6 +2592,58 @@ mod tests {
             format!("Bearer {token}").parse().unwrap(),
         );
         headers
+    }
+
+    async fn get_path(state: AppState, path: &str) -> reqwest::Response {
+        let app = http_app(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}{path}"))
+            .send()
+            .await
+            .unwrap();
+        server.abort();
+        response
+    }
+
+    #[tokio::test]
+    async fn health_still_ok() {
+        let (_tmp, state, _token, _import_id) = test_state();
+        let response = get_path(state, "/health").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "ok\n");
+    }
+
+    #[tokio::test]
+    async fn openapi_ui_off_does_not_serve_spec() {
+        let (_tmp, state, _token, _import_id) = test_state();
+        assert!(!state.cfg.require_server().unwrap().openapi_ui);
+        let response = get_path(state, "/openapi.json").await;
+        assert_ne!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or(""),
+            "application/json"
+        );
+    }
+
+    #[tokio::test]
+    async fn openapi_ui_on_serves_spec_without_token() {
+        let (_tmp, mut state, _token, _import_id) = test_state();
+        {
+            let cfg = Arc::make_mut(&mut state.cfg);
+            cfg.server.as_mut().unwrap().openapi_ui = true;
+        }
+        let response = get_path(state, "/openapi.json").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let v: serde_json::Value = response.json().await.unwrap();
+        assert!(v["openapi"].as_str().unwrap().starts_with("3."));
     }
 
     async fn auth_route_status(mode: AuthMode, path: &str) -> StatusCode {
