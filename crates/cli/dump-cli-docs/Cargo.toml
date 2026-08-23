@@ -9,3 +9,14 @@ publish = false
 anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
 clap-markdown = "0.1.5"
+imessage-ir-exporter = { path = "../../exporters/imessage-ir-exporter", features = ["cli"] }
+sms-backup-restore-exporter = { path = "../../exporters/sms-backup-restore-exporter", features = ["cli"] }
+whatsapp-exporter = { path = "../../exporters/whatsapp-exporter", features = ["cli"] }
+go-sms-pro-exporter = { path = "../../exporters/go-sms-pro-exporter", features = ["cli"] }
+imazing-exporter = { path = "../../exporters/imazing-exporter", features = ["cli"] }
+openextract-exporter = { path = "../../exporters/openextract-exporter", features = ["cli"] }
+sms-backup-plus-exporter = { path = "../../exporters/sms-backup-plus-exporter", features = ["cli"] }
+message-reexport = { path = "../../libs/reexport" }
+vault-push = { path = "../vault-push", features = ["cli"] }
+vault-pull = { path = "../vault-pull", features = ["cli"] }
+message-vault-server = { path = "../../vault/server" }

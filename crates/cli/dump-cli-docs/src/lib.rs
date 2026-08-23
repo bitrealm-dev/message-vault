@@ -86,10 +86,47 @@ pub fn render_page(spec: &PageSpec, command: &Command) -> String {
     )
 }
 
+pub fn command_for(id: &str) -> anyhow::Result<clap::Command> {
+    Ok(match id {
+        "imessage-ir-exporter" => imessage_ir_exporter::clap_command(),
+        "sms-backup-restore-exporter" => sms_backup_restore_exporter::clap_command(),
+        "whatsapp-exporter" => whatsapp_exporter::clap_command(),
+        "go-sms-pro-exporter" => go_sms_pro_exporter::clap_command(),
+        "imazing-exporter" => imazing_exporter::clap_command(),
+        "openextract-exporter" => openextract_exporter::clap_command(),
+        "sms-backup-plus-exporter" => sms_backup_plus_exporter::clap_command(),
+        "message-reexporter" => message_reexport::clap_command(),
+        "vault-push" => vault_push::clap_command(),
+        "vault-pull" => vault_pull::clap_command(),
+        "message-vault-server" => message_vault_server::clap_command(),
+        other => anyhow::bail!("unknown command id {other}"),
+    })
+}
+
+pub fn page_markdown(id: &str) -> anyhow::Result<String> {
+    let spec = PAGE_SPECS
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown page id {id}"))?;
+    Ok(render_page(spec, &command_for(id)?))
+}
+
+pub fn write_pages(output_dir: &std::path::Path) -> anyhow::Result<()> {
+    for spec in PAGE_SPECS {
+        let path = output_dir.join(spec.rel_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, page_markdown(spec.id)?)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::{CommandFactory, Parser};
+    use std::path::PathBuf;
 
     #[derive(Parser)]
     #[command(name = "demo-tool", about = "Demo about")]
@@ -139,5 +176,19 @@ mod tests {
         );
         assert_eq!(PAGE_SPECS[10].rel_path, "server-cli.md");
         assert_eq!(PAGE_SPECS[8].rel_path, "cli/vault-push.md");
+    }
+
+    #[test]
+    fn committed_cli_pages_match_dump() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let output_dir = root.join("docs/src/content/docs/vault/developer/reference");
+        for spec in PAGE_SPECS {
+            let dumped = page_markdown(spec.id).unwrap();
+            let committed = std::fs::read_to_string(output_dir.join(spec.rel_path)).unwrap();
+            assert_eq!(
+                dumped, committed,
+                "run: cargo run -p dump-cli-docs -- --output-dir docs/src/content/docs/vault/developer/reference"
+            );
+        }
     }
 }

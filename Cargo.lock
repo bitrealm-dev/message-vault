@@ -1869,6 +1869,17 @@ dependencies = [
  "anyhow",
  "clap",
  "clap-markdown",
+ "go-sms-pro-exporter",
+ "imazing-exporter",
+ "imessage-ir-exporter",
+ "message-reexport",
+ "message-vault-server",
+ "openextract-exporter",
+ "sms-backup-plus-exporter",
+ "sms-backup-restore-exporter",
+ "vault-pull",
+ "vault-push",
+ "whatsapp-exporter",
 ]
 
 [[package]]
