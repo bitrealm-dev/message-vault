@@ -55,6 +55,7 @@ const userGuideItems = [
 const developerItems = [
   'vault/developer',
   'vault/developer/contributing',
+  'vault/developer/rustdoc-style',
   {
     label: 'Architecture',
     items: [
