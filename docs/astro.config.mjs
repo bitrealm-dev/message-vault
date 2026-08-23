@@ -1,6 +1,5 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import starlightOpenAPI, { openAPISidebarGroups } from 'starlight-openapi';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import mermaid from 'astro-mermaid';
 
@@ -111,7 +110,8 @@ const developerItems = [
   'vault/developer/reference/api',
   {
     label: 'HTTP API reference',
-    items: openAPISidebarGroups,
+    link: '/vault/developer/rustdoc/http/',
+    attrs: { target: '_self' },
   },
   {
     label: 'Rust crate docs',
@@ -189,13 +189,6 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/custom.css'],
       plugins: [
-        starlightOpenAPI([
-          {
-            base: 'vault/developer/reference/http',
-            schema: './src/assets/openapi.json',
-            label: 'HTTP API reference',
-          },
-        ]),
         starlightSidebarTopics(
           [
             {
@@ -215,8 +208,6 @@ export default defineConfig({
           {
             topics: {
               developer: [
-                '/vault/developer/reference/http',
-                '/vault/developer/reference/http/**/*',
                 '/vault/developer/rustdoc',
                 '/vault/developer/rustdoc/**',
               ],

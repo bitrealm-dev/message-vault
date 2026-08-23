@@ -62,6 +62,9 @@ jobs:
         working-directory: docs
         run: npm ci
 
+      - name: Copy HTTP API catalog into rustdoc
+        run: bash docs/scripts/copy-http-api-reference.sh
+
       - name: Check
         working-directory: docs
         run: npm run check
