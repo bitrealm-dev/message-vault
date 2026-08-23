@@ -625,6 +625,7 @@ async fn shutdown_signal() {
     eprintln!("shutting down");
 }
 
+/// Report process liveness.
 #[utoipa::path(
     get,
     path = "/health",
@@ -686,6 +687,8 @@ pub(crate) struct AuthCheckResponse {
     admin: Option<bool>,
 }
 
+/// Check the Bearer token and return the account it resolves to, its username,
+/// and its import sources.
 #[utoipa::path(
     get,
     path = "/v1/auth/check",
@@ -971,6 +974,7 @@ pub(crate) struct ListPageQuery {
     offset: Option<usize>,
 }
 
+/// Page through the account's contacts (id, name, handles, groups).
 #[utoipa::path(
     get,
     path = "/v1/export/contacts",
@@ -1008,6 +1012,8 @@ pub(crate) async fn contacts_list_handler(
     Ok(Json(page))
 }
 
+/// Page through conversations (newest first) with participants, message
+/// counts, and tags.
 #[utoipa::path(
     get,
     path = "/v1/export/conversations",
@@ -1045,6 +1051,7 @@ pub(crate) async fn conversations_list_handler(
     Ok(Json(page))
 }
 
+/// Per-backup message counts for one conversation (the Sources panel).
 #[utoipa::path(
     get,
     path = "/v1/export/conversations/{id}/sources",
@@ -1078,6 +1085,7 @@ pub(crate) async fn conversation_sources_handler(
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
+/// First/last message dates and counts for a list of contact ids.
 #[utoipa::path(
     post,
     path = "/v1/export/contacts/summaries",
@@ -1113,6 +1121,8 @@ pub(crate) async fn contact_summaries_handler(
     Ok(Json(page))
 }
 
+/// Full contact view: per-handle services, message stats, and group
+/// memberships.
 #[utoipa::path(
     get,
     path = "/v1/export/contacts/{id}",
@@ -1143,6 +1153,7 @@ pub(crate) async fn contact_detail_handler(
         .ok_or_else(|| ApiError::NotFound("contact not found".into()))
 }
 
+/// Rename a contact or change its linked handles.
 #[utoipa::path(
     post,
     path = "/v1/export/contacts/{id}",
@@ -1263,6 +1274,7 @@ pub(crate) struct MembershipChangedResponse {
     changed: u64,
 }
 
+/// List the account's contact groups (A–Z, reserved names hidden).
 #[utoipa::path(
     get,
     path = "/v1/contact-groups",
@@ -1288,6 +1300,7 @@ pub(crate) async fn contact_groups_list_handler(
     Ok(Json(ContactGroupsListResponse { groups }))
 }
 
+/// Create a contact group and return the updated list.
 #[utoipa::path(
     post,
     path = "/v1/contact-groups",
@@ -1323,6 +1336,7 @@ pub(crate) async fn contact_groups_create_handler(
     }))
 }
 
+/// Rename a contact group and return the updated list.
 #[utoipa::path(
     patch,
     path = "/v1/contact-groups",
@@ -1356,6 +1370,7 @@ pub(crate) async fn contact_groups_rename_handler(
     Ok(Json(ContactGroupNamedListResponse { name, groups }))
 }
 
+/// Delete a contact group and return the updated list.
 #[utoipa::path(
     delete,
     path = "/v1/contact-groups",
@@ -1386,6 +1401,7 @@ pub(crate) async fn contact_groups_delete_handler(
     Ok(Json(ContactGroupDeleteResponse { ok: true, groups }))
 }
 
+/// Contact ids that belong to a named group.
 #[utoipa::path(
     get,
     path = "/v1/contact-groups/members",
@@ -1418,6 +1434,7 @@ pub(crate) async fn contact_groups_members_handler(
     }))
 }
 
+/// Add or remove contacts in a group.
 #[utoipa::path(
     post,
     path = "/v1/contacts/groups",
@@ -1527,6 +1544,7 @@ pub(crate) struct ThreadTagMembersResponse {
     member_conversation_ids: Vec<i64>,
 }
 
+/// List the account's thread tags (A–Z, reserved names hidden).
 #[utoipa::path(
     get,
     path = "/v1/thread-tags",
@@ -1552,6 +1570,7 @@ pub(crate) async fn thread_tags_list_handler(
     Ok(Json(ThreadTagsListResponse { tags }))
 }
 
+/// Create a thread tag and return the updated list.
 #[utoipa::path(
     post,
     path = "/v1/thread-tags",
@@ -1587,6 +1606,7 @@ pub(crate) async fn thread_tags_create_handler(
     }))
 }
 
+/// Rename a thread tag and return the updated list.
 #[utoipa::path(
     patch,
     path = "/v1/thread-tags",
@@ -1620,6 +1640,7 @@ pub(crate) async fn thread_tags_rename_handler(
     Ok(Json(ThreadTagNamedListResponse { name, tags }))
 }
 
+/// Delete a thread tag and return the updated list.
 #[utoipa::path(
     delete,
     path = "/v1/thread-tags",
@@ -1650,6 +1671,7 @@ pub(crate) async fn thread_tags_delete_handler(
     Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
 }
 
+/// Conversation ids that carry a named tag.
 #[utoipa::path(
     get,
     path = "/v1/thread-tags/members",
@@ -1682,6 +1704,7 @@ pub(crate) async fn thread_tags_members_handler(
     }))
 }
 
+/// Add or remove a tag on conversations.
 #[utoipa::path(
     post,
     path = "/v1/conversations/tags",
@@ -1756,6 +1779,7 @@ pub(crate) struct ImportDetailResponse {
     issues: Vec<ImportDetailIssueResponse>,
 }
 
+/// List past import sessions for the account with their stats.
 #[utoipa::path(
     get,
     path = "/v1/imports",
@@ -1787,6 +1811,7 @@ pub(crate) async fn imports_list_handler(
     Ok(Json(ImportsListResponse { imports }))
 }
 
+/// Status, timings, and issues for one import session.
 #[utoipa::path(
     get,
     path = "/v1/imports/{id}",
@@ -1825,7 +1850,8 @@ pub(crate) struct AccountStorageResponse {
     pub top_attachments: Vec<crate::db::vault_imports::TopAttachment>,
 }
 
-/// `GET /v1/account/storage` — attachment usage + top 100 largest attachments.
+/// Attachment storage usage for the account: total bytes, count, and the 100
+/// largest files.
 #[utoipa::path(
     get,
     path = "/v1/account/storage",
@@ -1862,6 +1888,8 @@ pub(crate) async fn account_storage_handler(
     Ok(Json(result))
 }
 
+/// Start an import session and return its id (see POST /v1/import and
+/// complete).
 #[utoipa::path(
     post,
     path = "/v1/imports",
@@ -1906,6 +1934,7 @@ pub(crate) async fn imports_create_handler(
     Ok(Json(CreateImportResponse { ok: true, id }))
 }
 
+/// Record the outcome of an import session started with POST /v1/imports.
 #[utoipa::path(
     post,
     path = "/v1/imports/{id}/complete",
@@ -2023,6 +2052,7 @@ fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> Imp
     }
 }
 
+/// Import one message-ir JSONL body (raw or multipart) into the vault.
 #[utoipa::path(
     post,
     path = "/v1/import",
@@ -2194,6 +2224,8 @@ async fn resolve_asset_lookup(
 }
 
 /// Probe whether a content-addressed asset is already stored (no body).
+///
+/// Clients may skip sending bytes when the asset exists.
 #[utoipa::path(
     head,
     path = "/v1/assets/{sha256}",
@@ -2227,6 +2259,8 @@ pub(crate) async fn asset_head_handler(
 }
 
 /// Download a previously stored content-addressed asset (read-only).
+///
+/// The body streams the stored bytes; the URL is the SHA-256 fingerprint.
 #[utoipa::path(
     get,
     path = "/v1/assets/{sha256}",
@@ -2331,6 +2365,8 @@ pub(crate) struct ExportMessagesCountQuery {
     source: Option<String>,
 }
 
+/// Count messages, conversations, and attachment fingerprints matching a
+/// query.
 #[utoipa::path(
     get,
     path = "/v1/export/messages/count",
@@ -2374,6 +2410,7 @@ pub(crate) async fn export_messages_count_handler(
     Ok(Json(body))
 }
 
+/// Export messages matching a search query (message mode; cursor paging).
 #[utoipa::path(
     get,
     path = "/v1/export/messages",
@@ -2426,6 +2463,7 @@ pub(crate) async fn export_messages_handler(
     Ok(Json(body))
 }
 
+/// Store one asset body under its SHA-256 fingerprint.
 #[utoipa::path(
     put,
     path = "/v1/assets/{sha256}",
@@ -2544,6 +2582,7 @@ pub(crate) struct AssetUploadAbortResponse {
     ok: bool,
 }
 
+/// Start a chunked (multipart) asset upload and get the part size.
 #[utoipa::path(
     post,
     path = "/v1/assets/{sha256}/uploads",
@@ -2606,6 +2645,7 @@ pub(crate) async fn asset_upload_start_handler(
     }
 }
 
+/// Write one part of a chunked asset upload.
 #[utoipa::path(
     put,
     path = "/v1/assets/{sha256}/uploads/{upload_id}/parts/{part}",
@@ -2655,6 +2695,8 @@ pub(crate) async fn asset_upload_part_handler(
     }))
 }
 
+/// Assemble the uploaded parts, verify the SHA-256 fingerprint, and install
+/// the asset.
 #[utoipa::path(
     post,
     path = "/v1/assets/{sha256}/uploads/{upload_id}/complete",
@@ -2718,6 +2760,7 @@ pub(crate) async fn asset_upload_complete_handler(
     Ok(AssetPutResponse::stored(stored, already_present))
 }
 
+/// Abort and delete a chunked asset upload's staging files.
 #[utoipa::path(
     delete,
     path = "/v1/assets/{sha256}/uploads/{upload_id}",

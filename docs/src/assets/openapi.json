@@ -15,6 +15,7 @@
         "tags": [
           "Health"
         ],
+        "summary": "Report process liveness.",
         "operationId": "health",
         "responses": {
           "200": {
@@ -473,7 +474,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`GET /v1/account/storage` — attachment usage + top 100 largest attachments.",
+        "summary": "Attachment storage usage for the account: total bytes, count, and the 100\nlargest files.",
         "operationId": "account_storage_handler",
         "responses": {
           "200": {
@@ -520,6 +521,7 @@
           "Assets"
         ],
         "summary": "Download a previously stored content-addressed asset (read-only).",
+        "description": "The body streams the stored bytes; the URL is the SHA-256 fingerprint.",
         "operationId": "asset_get_handler",
         "parameters": [
           {
@@ -606,6 +608,7 @@
         "tags": [
           "Assets"
         ],
+        "summary": "Store one asset body under its SHA-256 fingerprint.",
         "operationId": "asset_put_handler",
         "parameters": [
           {
@@ -693,6 +696,7 @@
           "Assets"
         ],
         "summary": "Probe whether a content-addressed asset is already stored (no body).",
+        "description": "Clients may skip sending bytes when the asset exists.",
         "operationId": "asset_head_handler",
         "parameters": [
           {
@@ -785,6 +789,7 @@
         "tags": [
           "Assets"
         ],
+        "summary": "Start a chunked (multipart) asset upload and get the part size.",
         "operationId": "asset_upload_start_handler",
         "parameters": [
           {
@@ -877,6 +882,7 @@
         "tags": [
           "Assets"
         ],
+        "summary": "Abort and delete a chunked asset upload's staging files.",
         "operationId": "asset_upload_abort_handler",
         "parameters": [
           {
@@ -967,6 +973,7 @@
         "tags": [
           "Assets"
         ],
+        "summary": "Assemble the uploaded parts, verify the SHA-256 fingerprint, and install\nthe asset.",
         "operationId": "asset_upload_complete_handler",
         "parameters": [
           {
@@ -1057,6 +1064,7 @@
         "tags": [
           "Assets"
         ],
+        "summary": "Write one part of a chunked asset upload.",
         "operationId": "asset_upload_part_handler",
         "parameters": [
           {
@@ -1229,6 +1237,7 @@
         "tags": [
           "Auth"
         ],
+        "summary": "Check the Bearer token and return the account it resolves to, its username,\nand its import sources.",
         "operationId": "auth_check",
         "parameters": [
           {
@@ -1612,6 +1621,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "List the account's contact groups (A–Z, reserved names hidden).",
         "operationId": "contact_groups_list_handler",
         "responses": {
           "200": {
@@ -1655,6 +1665,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Create a contact group and return the updated list.",
         "operationId": "contact_groups_create_handler",
         "requestBody": {
           "content": {
@@ -1728,6 +1739,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Delete a contact group and return the updated list.",
         "operationId": "contact_groups_delete_handler",
         "requestBody": {
           "content": {
@@ -1801,6 +1813,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Rename a contact group and return the updated list.",
         "operationId": "contact_groups_rename_handler",
         "requestBody": {
           "content": {
@@ -1886,6 +1899,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Contact ids that belong to a named group.",
         "operationId": "contact_groups_members_handler",
         "parameters": [
           {
@@ -1952,6 +1966,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Add or remove contacts in a group.",
         "operationId": "contact_groups_membership_handler",
         "requestBody": {
           "content": {
@@ -2027,6 +2042,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "Add or remove a tag on conversations.",
         "operationId": "thread_tags_membership_handler",
         "requestBody": {
           "content": {
@@ -2102,6 +2118,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Page through the account's contacts (id, name, handles, groups).",
         "operationId": "contacts_list_handler",
         "parameters": [
           {
@@ -2188,6 +2205,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "First/last message dates and counts for a list of contact ids.",
         "operationId": "contact_summaries_handler",
         "requestBody": {
           "content": {
@@ -2253,6 +2271,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Full contact view: per-handle services, message stats, and group\nmemberships.",
         "operationId": "contact_detail_handler",
         "parameters": [
           {
@@ -2318,6 +2337,7 @@
         "tags": [
           "Contacts"
         ],
+        "summary": "Rename a contact or change its linked handles.",
         "operationId": "contact_mutate_handler",
         "parameters": [
           {
@@ -2405,6 +2425,7 @@
         "tags": [
           "Conversations"
         ],
+        "summary": "Page through conversations (newest first) with participants, message\ncounts, and tags.",
         "operationId": "conversations_list_handler",
         "parameters": [
           {
@@ -2491,6 +2512,7 @@
         "tags": [
           "Conversations"
         ],
+        "summary": "Per-backup message counts for one conversation (the Sources panel).",
         "operationId": "conversation_sources_handler",
         "parameters": [
           {
@@ -2558,6 +2580,7 @@
         "tags": [
           "Export"
         ],
+        "summary": "Export messages matching a search query (message mode; cursor paging).",
         "operationId": "export_messages_handler",
         "parameters": [
           {
@@ -2669,6 +2692,7 @@
         "tags": [
           "Export"
         ],
+        "summary": "Count messages, conversations, and attachment fingerprints matching a\nquery.",
         "operationId": "export_messages_count_handler",
         "parameters": [
           {
@@ -2751,6 +2775,7 @@
         "tags": [
           "Import"
         ],
+        "summary": "Import one message-ir JSONL body (raw or multipart) into the vault.",
         "operationId": "import_handler",
         "parameters": [
           {
@@ -2876,6 +2901,7 @@
         "tags": [
           "Import"
         ],
+        "summary": "List past import sessions for the account with their stats.",
         "operationId": "imports_list_handler",
         "parameters": [
           {
@@ -2929,6 +2955,7 @@
         "tags": [
           "Import"
         ],
+        "summary": "Start an import session and return its id (see POST /v1/import and\ncomplete).",
         "operationId": "imports_create_handler",
         "requestBody": {
           "content": {
@@ -2994,6 +3021,7 @@
         "tags": [
           "Import"
         ],
+        "summary": "Status, timings, and issues for one import session.",
         "operationId": "imports_get_handler",
         "parameters": [
           {
@@ -3061,6 +3089,7 @@
         "tags": [
           "Import"
         ],
+        "summary": "Record the outcome of an import session started with POST /v1/imports.",
         "operationId": "imports_complete_handler",
         "parameters": [
           {
@@ -3148,6 +3177,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "List the account's thread tags (A–Z, reserved names hidden).",
         "operationId": "thread_tags_list_handler",
         "responses": {
           "200": {
@@ -3191,6 +3221,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "Create a thread tag and return the updated list.",
         "operationId": "thread_tags_create_handler",
         "requestBody": {
           "content": {
@@ -3264,6 +3295,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "Delete a thread tag and return the updated list.",
         "operationId": "thread_tags_delete_handler",
         "requestBody": {
           "content": {
@@ -3337,6 +3369,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "Rename a thread tag and return the updated list.",
         "operationId": "thread_tags_rename_handler",
         "requestBody": {
           "content": {
@@ -3422,6 +3455,7 @@
         "tags": [
           "Thread tags"
         ],
+        "summary": "Conversation ids that carry a named tag.",
         "operationId": "thread_tags_members_handler",
         "parameters": [
           {
