@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local pre-PR check: format Rust and web, then license consistency, workspace
-# build/test, web lint/test/build, docs check/build.
+# build/test, src-tauri check, web lint/test/build, docs check/build.
 #
 #   ./scripts/check-pr.sh
 #
@@ -30,6 +30,9 @@ cargo build --workspace
 
 echo "==> cargo test --workspace"
 cargo test --workspace
+
+echo "==> cargo check src-tauri"
+cargo check --manifest-path src-tauri/Cargo.toml
 
 echo "==> web lint"
 (cd web && npm run lint)
