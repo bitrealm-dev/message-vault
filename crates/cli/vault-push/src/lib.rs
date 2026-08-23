@@ -4,6 +4,8 @@
 //! `vault-push` command and the desktop app Vault tab both call this crate.
 
 mod auth_error;
+#[cfg(feature = "cli")]
+pub mod cli;
 mod http;
 mod journal;
 mod project;
@@ -18,3 +20,6 @@ pub use run::{
     MAX_PROXY_BODY_BYTES, ProgressEvent, ProgressFn, PushReport, UploadProfile, VaultPushConfig,
     authenticate, detect_source, format_duration_ms, format_push_summary, run,
 };
+
+#[cfg(feature = "cli")]
+pub use cli::clap_command;
