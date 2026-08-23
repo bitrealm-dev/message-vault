@@ -118,6 +118,11 @@ impl ExportReport {
             out.push(format!("  error: {err}"));
         }
     }
+
+    /// Bump a per-exporter extension counter in the `extra` map.
+    pub fn bump(&mut self, key: &str, by: u64) {
+        *self.extra.entry(key.to_string()).or_insert(0) += by;
+    }
 }
 
 /// Print `RunResult` lines with the standard stdout/stderr split:

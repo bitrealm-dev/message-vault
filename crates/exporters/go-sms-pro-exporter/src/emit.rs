@@ -51,11 +51,6 @@ struct SkipDetails {
     no_party_more: u64,
 }
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Diagnostic row for an empty/stub PDU file.
 #[derive(Debug, Clone)]
 pub(crate) struct SkippedEmptyPduDetail {
@@ -291,7 +286,7 @@ fn add_pdu_message(
     skips: &mut SkipDetails,
 ) {
     if is_empty_pdu(&parsed) {
-        bump(report, "skipped_empty_pdu", 1);
+        report.bump("skipped_empty_pdu", 1);
         push_skip_detail(
             &mut skips.empty_pdu,
             &mut skips.empty_pdu_more,
@@ -310,7 +305,7 @@ fn add_pdu_message(
             .cloned()
             .collect();
         if others.is_empty() {
-            bump(report, "skipped_no_other_party", 1);
+            report.bump("skipped_no_other_party", 1);
             push_skip_detail(
                 &mut skips.no_party,
                 &mut skips.no_party_more,
@@ -335,9 +330,9 @@ fn add_pdu_message(
         }
     };
 
-    bump(report, "pdu_messages", 1);
+    report.bump("pdu_messages", 1);
     if targets.iter().any(|(_, is_group, _, _)| *is_group) {
-        bump(report, "pdu_group_messages", 1);
+        report.bump("pdu_group_messages", 1);
     }
 
     let att_names: Vec<String> = attachments.iter().map(|a| a.rel_path.clone()).collect();
@@ -790,18 +785,10 @@ pub(crate) fn convert_export(
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match parse_xml_file(&xml_path) {
             Ok((msgs, stats)) => {
-                bump(&mut report, "xml_messages_seen", stats.messages);
+                report.bump("xml_messages_seen", stats.messages);
                 report.skipped_invalid_date += stats.skipped_invalid_date;
-                bump(
-                    &mut report,
-                    "skipped_unknown_type",
-                    stats.skipped_unknown_type,
-                );
-                bump(
-                    &mut report,
-                    "skipped_unknown_address",
-                    stats.skipped_unknown_address,
-                );
+                report.bump("skipped_unknown_type", stats.skipped_unknown_type);
+                report.bump("skipped_unknown_address", stats.skipped_unknown_address);
                 skips.invalid_address_more += stats.skipped_unknown_address_details_more;
                 for d in stats.skipped_unknown_address_details {
                     push_skip_detail(
@@ -841,7 +828,7 @@ pub(crate) fn convert_export(
             owners.primary_phone_digit().unwrap_or(""),
         ) {
             Ok(None) => {
-                bump(&mut report, "skipped_unparseable_pdu", 1);
+                report.bump("skipped_unparseable_pdu", 1);
                 if report.errors.len() < 20 {
                     report
                         .errors

@@ -27,11 +27,6 @@ const EXPORT_TOOL: &str = "WhatsApp Chat Exporter";
 /// Pinned documented upstream version (JSON convert path; shell-out may differ).
 pub(crate) const EXPORT_TOOL_VERSION: &str = "0.13.0";
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// File extension without the leading dot, e.g. `"jpg"` for `"photo.jpg"`.
 fn ext_of(name: &str) -> String {
     Path::new(name)
@@ -194,7 +189,7 @@ fn ingest_chat(
                         vec![att]
                     }
                     Ok(None) => {
-                        bump(&mut *report, "attachments_missing", 1);
+                        report.bump("attachments_missing", 1);
                         Vec::new()
                     }
                     Err(e) => {

@@ -25,11 +25,6 @@ const EXPORT_SOURCE: &str = "imazing";
 const EXPORT_TOOL: &str = "iMazing";
 const EXPORT_TOOL_VERSION: &str = "3.5.5";
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Read a per-exporter counter from the report's `extra` map (test assertions).
 #[cfg(test)]
 fn count(report: &ExportReport, key: &str) -> u64 {
@@ -123,8 +118,8 @@ pub(crate) fn convert_export(
     for discovered in &files {
         message_vault_io_core::check_cancel(cancel).map_err(anyhow::Error::msg)?;
         match discovered.kind {
-            SourceKind::Messages => bump(&mut report, "messages_files", 1),
-            SourceKind::WhatsApp => bump(&mut report, "whatsapp_files", 1),
+            SourceKind::Messages => report.bump("messages_files", 1),
+            SourceKind::WhatsApp => report.bump("whatsapp_files", 1),
         }
         let rows = match parse_csv_file(&discovered.path, discovered.kind) {
             Ok(r) => r,
@@ -151,10 +146,9 @@ pub(crate) fn convert_export(
         for (session, session_rows) in by_session {
             let peer = collect_peer_info(book, discovered.kind, &session, &session_rows);
             if peer.unresolved_chat {
-                bump(&mut report, "unresolved_chat_phone", 1);
+                report.bump("unresolved_chat_phone", 1);
             }
-            bump(
-                &mut report,
+            report.bump(
                 "unresolved_group_participants",
                 peer.unresolved_roster_labels,
             );
@@ -218,7 +212,7 @@ pub(crate) fn convert_export(
                         copy_failures: &mut copy_failures,
                     });
                     if copy_failures > 0 {
-                        bump(&mut report, "attachment-copy-failures", copy_failures);
+                        report.bump("attachment-copy-failures", copy_failures);
                     }
                     let rel_path = cell.meta.path.clone().unwrap_or_default();
                     attachments.push(PendingAttachment {
@@ -757,7 +751,7 @@ fn pending_to_document(
     for msg in &convo.messages {
         let is_notification = msg.extra_flag("is_notification");
         if is_notification {
-            bump(report, "notifications", 1);
+            report.bump("notifications", 1);
         } else if msg.is_from_me {
             report.sent += 1;
         } else {

@@ -27,11 +27,6 @@ const EXPORT_SOURCE: &str = "sms-backup-plus";
 const EXPORT_TOOL: &str = "SMS Backup+";
 const EXPORT_TOOL_VERSION: &str = "1.5.11";
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Read a per-exporter counter from the report's `extra` map.
 fn count(report: &ExportReport, key: &str) -> u64 {
     report.extra.get(key).copied().unwrap_or(0)
@@ -214,7 +209,7 @@ fn add_message(
         peers,
     );
 
-    bump(report, "messages_before_dedupe", 1);
+    report.bump("messages_before_dedupe", 1);
 
     // Online dedupe state keyed by chat id: fingerprint → index in `messages`
     // (keep earliest `sort_key`). The shared PendingConversation carries
@@ -814,7 +809,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     skipped_dates,
                     path_display,
                 } => {
-                    bump(&mut report, "archive_eml", 1);
+                    report.bump("archive_eml", 1);
                     report.skipped_invalid_date += skipped_dates;
                     for msg in msgs {
                         if !date_range.contains_secs_f64(msg.timestamp_secs) {
@@ -822,7 +817,7 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                             continue;
                         }
                         if msg.chat_key.is_empty() {
-                            bump(&mut report, "unknown_chat_messages", 1);
+                            report.bump("unknown_chat_messages", 1);
                         }
                         let atts = write_attachments(
                             &msg.attachments,
@@ -835,13 +830,13 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     }
                 }
                 ParsedEmlKind::Flat { msg, path_display } => {
-                    bump(&mut report, "flat_eml", 1);
+                    report.bump("flat_eml", 1);
                     if !date_range.contains_secs_f64(msg.timestamp_secs) {
                         report.skipped_out_of_range += 1;
                         continue;
                     }
                     if msg.chat_key.is_empty() {
-                        bump(&mut report, "unknown_chat_messages", 1);
+                        report.bump("unknown_chat_messages", 1);
                     }
                     let atts = write_attachments(
                         &msg.attachments,
@@ -859,16 +854,16 @@ pub(crate) fn convert_export<P: AsRef<Path>>(
                     );
                 }
                 ParsedEmlKind::FlatNone => {
-                    bump(&mut report, "skipped_parse_error", 1);
+                    report.bump("skipped_parse_error", 1);
                 }
                 ParsedEmlKind::NotSms => {
-                    bump(&mut report, "skipped_not_sms_backup_plus", 1);
+                    report.bump("skipped_not_sms_backup_plus", 1);
                 }
                 ParsedEmlKind::IoError(msg) => {
                     report.errors.push(msg);
                 }
                 ParsedEmlKind::ParseError(msg) => {
-                    bump(&mut report, "skipped_parse_error", 1);
+                    report.bump("skipped_parse_error", 1);
                     report.errors.push(msg);
                 }
             }

@@ -23,11 +23,6 @@ const EXPORT_SOURCE: &str = "openextract";
 const EXPORT_TOOL: &str = "OpenExtract";
 const EXPORT_TOOL_VERSION: &str = "0.5.1";
 
-/// Bump a per-exporter counter in the report's `extra` map.
-fn bump(report: &mut ExportReport, key: &str, by: u64) {
-    *report.extra.entry(key.to_string()).or_insert(0) += by;
-}
-
 /// Read a per-exporter counter from the report's `extra` map (test assertions).
 #[cfg(test)]
 fn count(report: &ExportReport, key: &str) -> u64 {
@@ -128,7 +123,7 @@ pub(crate) fn convert_export(
 
             let (chat_id, contact_name, unresolved) = resolve_chat(book, &peer_label);
             if unresolved {
-                bump(&mut report, "unresolved_chat_phone", 1);
+                report.bump("unresolved_chat_phone", 1);
             }
 
             let Some((secs, date_ms)) = parse_timestamp(&row.date) else {
