@@ -174,8 +174,10 @@ pub struct AppState {
 
 /// API error envelope returned for non-200 responses.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct ErrorBody {
+pub struct ErrorBody {
+    /// Whether the request succeeded; always `false` for error responses.
     pub ok: bool,
+    /// Human-readable description of the failure.
     pub error: String,
 }
 

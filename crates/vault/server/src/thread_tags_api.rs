@@ -22,14 +22,6 @@ use crate::server::{
 /// Create / rename / delete / membership failures.
 pub type TagError = MembershipError;
 
-/// Longest allowed tag name (characters).
-pub use crate::named_membership::MAX_NAME_LEN as MAX_TAG_NAME_LEN;
-
-/// True when `name` is reserved and must not be created.
-pub fn is_reserved_tag_name(name: &str) -> bool {
-    named_membership::is_reserved(tag_spec(), name)
-}
-
 /// Tag names for this account, A–Z, excluding reserved leftovers.
 pub fn list_tags(conn: &Connection, account_id: &str) -> Result<Vec<String>, TagError> {
     named_membership::list_names(tag_spec(), conn, account_id)

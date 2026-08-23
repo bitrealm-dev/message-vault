@@ -18,14 +18,6 @@ use crate::server::{
 /// Create / rename / delete / membership failures.
 pub type GroupError = MembershipError;
 
-/// Longest allowed group name (characters).
-pub use crate::named_membership::MAX_NAME_LEN as MAX_GROUP_NAME_LEN;
-
-/// True when `name` is reserved and must not be created.
-pub fn is_reserved_group_name(name: &str) -> bool {
-    named_membership::is_reserved(group_spec(), name)
-}
-
 /// Group names for this account, A–Z, excluding reserved leftovers.
 pub fn list_groups(conn: &Connection, account_id: &str) -> Result<Vec<String>, GroupError> {
     named_membership::list_names(group_spec(), conn, account_id)

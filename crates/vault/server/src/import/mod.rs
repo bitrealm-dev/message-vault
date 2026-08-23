@@ -33,7 +33,7 @@ pub mod contact_name;
 pub mod promote;
 pub mod staging;
 
-pub use contact_name::{ContactNameMode, apply_contact_name_mode};
+pub use contact_name::ContactNameMode;
 pub use staging::is_orphaned_export;
 
 use staging::StagingInserts;

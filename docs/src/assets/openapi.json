@@ -5022,10 +5022,12 @@
         ],
         "properties": {
           "error": {
-            "type": "string"
+            "type": "string",
+            "description": "Human-readable description of the failure."
           },
           "ok": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the request succeeded; always `false` for error responses."
           }
         }
       },

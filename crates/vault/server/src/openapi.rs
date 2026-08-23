@@ -11,9 +11,6 @@ use utoipa_axum::routes;
 use crate::config::AuthMode;
 use crate::server::AppState;
 
-/// Title used in the generated OpenAPI document.
-pub const API_TITLE: &str = "Message Vault HTTP API";
-
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -146,6 +143,7 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::assets::asset_upload_abort_handler))
 }
 
+#[cfg(test)]
 /// The full OpenAPI router: public auth endpoints for `auth` plus the
 /// session-backed API routes.
 pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
