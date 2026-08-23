@@ -4,6 +4,8 @@
 //! key always yields the same remaps; fakes do not embed or encrypt the
 //! original, and no mapping sidecar is written.
 
+#![warn(missing_docs)]
+
 mod names;
 
 use std::collections::HashMap;
@@ -101,8 +103,11 @@ fn trim_trailing_glue(s: &str) -> &str {
 /// Media class for placeholder substitution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaClass {
+    /// Image placeholder bucket.
     Image,
+    /// Video placeholder bucket.
     Video,
+    /// Everything-else placeholder bucket.
     Other,
 }
 
@@ -125,6 +130,7 @@ pub struct Obfuscator {
 }
 
 impl Obfuscator {
+    /// Build an obfuscator from a 32-byte HMAC key.
     pub fn new(key: [u8; 32]) -> Self {
         Self {
             key,
@@ -234,6 +240,7 @@ impl Obfuscator {
         self.obfuscate_display_name(h)
     }
 
+    /// Map an email to `first.last@example.invalid`, keyed case-insensitively.
     pub fn obfuscate_email(&mut self, raw: &str) -> String {
         let key = raw.trim().to_ascii_lowercase();
         if key.is_empty() {
@@ -495,6 +502,8 @@ pub fn classify_attachment(mime: Option<&str>, path: Option<&str>) -> MediaClass
     MediaClass::Other
 }
 
+/// Shared placeholder relative path for a `MediaClass`
+/// (`attachments/placeholder.jpg|.mp4|.bin`).
 pub fn placeholder_rel_path(class: MediaClass) -> &'static str {
     match class {
         MediaClass::Image => REL_IMAGE,
@@ -537,6 +546,7 @@ pub fn materialize_placeholders(output_dir: &Path) -> Result<()> {
 /// Backward-compatible: shorter hex seeds (e.g. legacy 8-char) are still
 /// accepted; their bytes are hashed into the 32-byte working key.
 pub const OBFUSCATE_SEED_BYTES: usize = 32;
+/// Hex length of a 32-byte seed.
 pub const OBFUSCATE_SEED_HEX_LEN: usize = 64;
 
 fn key_from_seed_bytes(bytes: &[u8]) -> [u8; 32] {
