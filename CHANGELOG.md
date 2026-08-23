@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server crate cleanup: rustdoc and HTTP API descriptions rewritten, handlers
   moved out of `server.rs`, thread-tag and contact-group CRUD unified, and
   API-token label validation typed. No API behavior change.
+- **Libraries:** add the `missing_docs` gate to every lib crate and document
+  the full public surface, share one `AttachmentMeta` across the IR, CSV,
+  and mail layers, switch csv parsers to `anyhow` errors, expose the
+  unsafe-attachment-path message as a const, share one test fixture, and
+  split the go-sms-mms unit decoders into their own module. No API behavior
+  change.
 
 Installable builds and release notes also appear on
 [GitHub Releases](https://github.com/bitrealm-io/message-vault/releases).
