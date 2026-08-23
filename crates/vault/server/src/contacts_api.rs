@@ -2,8 +2,12 @@
 //! `GET|POST /v1/export/contacts/{id}`, and `POST /v1/export/contacts/summaries`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::{Result as AnyResult, bail};
+use axum::Json;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use message_ir::HandleType;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
@@ -12,6 +16,10 @@ use crate::db::contacts::{self, contact_id_for_handle};
 use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
+use crate::server::{
+    ApiError, AppState, JoinBlocking, lock_conn, require_full_access, resolve_auth,
+    with_locked_conn,
+};
 
 pub use crate::page_limits::{DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_LIST_OFFSET};
 
@@ -1237,6 +1245,152 @@ fn require_handle_available(
 fn touch_ok(conn: &Connection, account_id: &str, contact_id: i64) -> AnyResult<bool> {
     contacts::touch_contact(conn, account_id, contact_id)?;
     Ok(true)
+}
+
+/// Page through the account's contacts (id, name, handles, groups).
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Contact search; empty lists all"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = ContactListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contacts_list_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<crate::server::ListPageQuery>,
+) -> Result<Json<ContactListPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let q = query.q.unwrap_or_default();
+    let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = with_locked_conn(db, "contacts list task", move |conn| {
+        list_contacts(conn, &auth.account_id, &q, limit, offset)
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// First/last message dates and counts for a list of contact ids.
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/summaries",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactSummariesBody,
+    responses(
+        (status = 200, body = ContactSummariesPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_summaries_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ContactSummariesBody>,
+) -> Result<Json<ContactSummariesPage>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    if body.ids.len() > MAX_LIST_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "at most {} contact ids",
+            MAX_LIST_LIMIT
+        )));
+    }
+    let db = Arc::clone(&state.db);
+    let page = with_locked_conn(db, "contact summaries task", move |conn| {
+        get_contact_summaries(conn, &auth.account_id, &body.ids)
+            .map(|contacts| ContactSummariesPage { contacts })
+    })
+    .await?;
+    Ok(Json(page))
+}
+
+/// Full contact view: per-handle services, message stats, and group
+/// memberships.
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 200, body = ContactDetail),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_detail_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+) -> Result<Json<ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let detail = with_locked_conn(db, "contact detail task", move |conn| {
+        get_contact_detail(conn, &auth.account_id, contact_id)
+    })
+    .await?;
+    detail
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound("contact not found".into()))
+}
+
+/// Rename a contact or change its linked handles.
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    request_body = ContactMutationBody,
+    responses(
+        (status = 200, body = ContactDetail),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_mutate_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(contact_id): AxumPath<i64>,
+    Json(body): Json<ContactMutationBody>,
+) -> Result<Json<ContactDetail>, ApiError> {
+    let auth = resolve_auth(&headers, &state).await?;
+    require_full_access(&auth)?;
+    let db = Arc::clone(&state.db);
+    let account_id = auth.account_id.clone();
+    let detail = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
+        let conn = lock_conn(&db).map_err(|e| ApiError::Internal(e.to_string()))?;
+        match mutate_contact(&conn, &account_id, contact_id, &body) {
+            Ok(false) => Err(ApiError::NotFound("contact not found".into())),
+            Err(e) => Err(ApiError::BadRequest(e.to_string())),
+            Ok(true) => get_contact_detail(&conn, &account_id, contact_id)
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .ok_or_else(|| ApiError::Internal("contact missing after mutate".into())),
+        }
+    })
+    .await
+    .join_map("contact mutate task", |e| e)?;
+
+    Ok(Json(detail))
 }
 
 #[cfg(test)]
