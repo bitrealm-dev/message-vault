@@ -387,52 +387,6 @@ pub(crate) fn http_app(state: AppState) -> Router {
                 // Auth JSON is tiny; keep a tight limit so Argon2/JWKS abuse cannot ship 512 MiB bodies.
                 .layer(RequestBodyLimitLayer::new(32 * 1024)),
         )
-        .route(
-            "/v1/export/messages/count",
-            get(export_messages_count_handler),
-        )
-        .route("/v1/export/messages", get(export_messages_handler))
-        .route("/v1/export/contacts", get(contacts_list_handler))
-        .route(
-            "/v1/export/contacts/summaries",
-            post(contact_summaries_handler),
-        )
-        .route(
-            "/v1/export/contacts/{id}",
-            get(contact_detail_handler).post(contact_mutate_handler),
-        )
-        .route(
-            "/v1/contact-groups",
-            get(contact_groups_list_handler)
-                .post(contact_groups_create_handler)
-                .patch(contact_groups_rename_handler)
-                .delete(contact_groups_delete_handler),
-        )
-        .route(
-            "/v1/contact-groups/members",
-            get(contact_groups_members_handler),
-        )
-        .route(
-            "/v1/contacts/groups",
-            post(contact_groups_membership_handler),
-        )
-        .route(
-            "/v1/thread-tags",
-            get(thread_tags_list_handler)
-                .post(thread_tags_create_handler)
-                .patch(thread_tags_rename_handler)
-                .delete(thread_tags_delete_handler),
-        )
-        .route("/v1/thread-tags/members", get(thread_tags_members_handler))
-        .route(
-            "/v1/conversations/tags",
-            post(thread_tags_membership_handler),
-        )
-        .route("/v1/export/conversations", get(conversations_list_handler))
-        .route(
-            "/v1/export/conversations/{id}/sources",
-            get(conversation_sources_handler),
-        )
         .route("/v1/imports", get(imports_list_handler))
         .route("/v1/imports", post(imports_create_handler))
         .route("/v1/imports/{id}", get(imports_get_handler))
@@ -1027,7 +981,7 @@ struct CompleteImportResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct ListPageQuery {
+pub(crate) struct ListPageQuery {
     #[serde(default)]
     q: Option<String>,
     #[serde(default)]
@@ -1036,11 +990,28 @@ struct ListPageQuery {
     offset: Option<usize>,
 }
 
-async fn contacts_list_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Contact search; empty lists all"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = crate::contacts_api::ContactListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contacts_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ListPageQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<crate::contacts_api::ContactListPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1053,19 +1024,31 @@ async fn contacts_list_handler(
         crate::contacts_api::list_contacts(conn, &auth.account_id, &q, limit, offset)
     })
     .await?;
-    Ok(Json(serde_json::json!({
-        "contacts": page.contacts,
-        "total": page.total,
-        "limit": page.limit,
-        "offset": page.offset,
-    })))
+    Ok(Json(page))
 }
 
-async fn conversations_list_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Conversation search; empty lists all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size"),
+        ("offset" = Option<usize>, Query, description = "Page offset")
+    ),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationListPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversations_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ListPageQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<crate::conversations_api::ConversationListPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1078,19 +1061,27 @@ async fn conversations_list_handler(
         crate::conversations_api::list_conversations(conn, &auth.account_id, &q, limit, offset)
     })
     .await?;
-    Ok(Json(serde_json::json!({
-        "conversations": page.conversations,
-        "total": page.total,
-        "limit": page.limit,
-        "offset": page.offset,
-    })))
+    Ok(Json(page))
 }
 
-async fn conversation_sources_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/conversations/{id}/sources",
+    tag = "Conversations",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Conversation id")),
+    responses(
+        (status = 200, body = crate::conversations_api::ConversationSourcesPage),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn conversation_sources_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(conversation_id): AxumPath<i64>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<crate::conversations_api::ConversationSourcesPage>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1102,11 +1093,24 @@ async fn conversation_sources_handler(
         )
     })
     .await?;
-    page.map(|p| Json(serde_json::json!({ "sources": p.sources })))
+    page.map(Json)
         .ok_or_else(|| ApiError::NotFound("conversation not found".into()))
 }
 
-async fn contact_summaries_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/summaries",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = crate::contacts_api::ContactSummariesBody,
+    responses(
+        (status = 200, body = crate::contacts_api::ContactSummariesPage),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_summaries_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<crate::contacts_api::ContactSummariesBody>,
@@ -1128,7 +1132,20 @@ async fn contact_summaries_handler(
     Ok(Json(page))
 }
 
-async fn contact_detail_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    responses(
+        (status = 200, body = crate::contacts_api::ContactDetail),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_detail_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(contact_id): AxumPath<i64>,
@@ -1145,7 +1162,22 @@ async fn contact_detail_handler(
         .ok_or_else(|| ApiError::NotFound("contact not found".into()))
 }
 
-async fn contact_mutate_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/export/contacts/{id}",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Contact id")),
+    request_body = crate::contacts_api::ContactMutationBody,
+    responses(
+        (status = 200, body = crate::contacts_api::ContactDetail),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_mutate_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(contact_id): AxumPath<i64>,
@@ -1198,33 +1230,73 @@ where
     .join_map(task, |e| e)
 }
 
-#[derive(Debug, Deserialize)]
-struct ContactGroupNameBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupNameBody {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ContactGroupRenameBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupRenameBody {
     from: String,
     to: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ContactGroupMembersQuery {
+pub(crate) struct ContactGroupMembersQuery {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ContactGroupMembershipBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupMembershipBody {
     ids: Vec<i64>,
     name: String,
     enable: bool,
 }
 
-async fn contact_groups_list_handler(
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupsListResponse {
+    groups: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupNamedListResponse {
+    name: String,
+    groups: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupDeleteResponse {
+    ok: bool,
+    groups: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ContactGroupMembersResponse {
+    name: String,
+    #[serde(rename = "memberContactIds")]
+    member_contact_ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct MembershipChangedResponse {
+    changed: u64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ContactGroupsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ContactGroupsListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1232,14 +1304,28 @@ async fn contact_groups_list_handler(
         crate::contact_groups_api::list_groups(conn, &auth.account_id)
     })
     .await?;
-    Ok(Json(serde_json::json!({ "groups": groups })))
+    Ok(Json(ContactGroupsListResponse { groups }))
 }
 
-async fn contact_groups_create_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupNameBody,
+    responses(
+        (status = 200, body = ContactGroupNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_create_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ContactGroupNameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1250,16 +1336,32 @@ async fn contact_groups_create_handler(
         Ok((created, groups))
     })
     .await?;
-    Ok(Json(
-        serde_json::json!({ "name": created, "groups": groups }),
-    ))
+    Ok(Json(ContactGroupNamedListResponse {
+        name: created,
+        groups,
+    }))
 }
 
-async fn contact_groups_rename_handler(
+#[utoipa::path(
+    patch,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupRenameBody,
+    responses(
+        (status = 200, body = ContactGroupNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_rename_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ContactGroupRenameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ContactGroupNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1270,14 +1372,28 @@ async fn contact_groups_rename_handler(
         Ok((name, groups))
     })
     .await?;
-    Ok(Json(serde_json::json!({ "name": name, "groups": groups })))
+    Ok(Json(ContactGroupNamedListResponse { name, groups }))
 }
 
-async fn contact_groups_delete_handler(
+#[utoipa::path(
+    delete,
+    path = "/v1/contact-groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupNameBody,
+    responses(
+        (status = 200, body = ContactGroupDeleteResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_delete_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ContactGroupNameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ContactGroupDeleteResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1286,14 +1402,27 @@ async fn contact_groups_delete_handler(
         crate::contact_groups_api::list_groups(conn, &auth.account_id)
     })
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true, "groups": groups })))
+    Ok(Json(ContactGroupDeleteResponse { ok: true, groups }))
 }
 
-async fn contact_groups_members_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/contact-groups/members",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    params(("name" = String, Query, description = "Group name")),
+    responses(
+        (status = 200, body = ContactGroupMembersResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_members_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ContactGroupMembersQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ContactGroupMembersResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1302,17 +1431,31 @@ async fn contact_groups_members_handler(
         crate::contact_groups_api::list_group_member_ids(conn, &auth.account_id, &name)
     })
     .await?;
-    Ok(Json(serde_json::json!({
-        "name": query.name,
-        "memberContactIds": member_contact_ids,
-    })))
+    Ok(Json(ContactGroupMembersResponse {
+        name: query.name,
+        member_contact_ids,
+    }))
 }
 
-async fn contact_groups_membership_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/contacts/groups",
+    tag = "Contacts",
+    security(("bearer" = [])),
+    request_body = ContactGroupMembershipBody,
+    responses(
+        (status = 200, body = MembershipChangedResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn contact_groups_membership_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ContactGroupMembershipBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<MembershipChangedResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1326,7 +1469,7 @@ async fn contact_groups_membership_handler(
         )
     })
     .await?;
-    Ok(Json(serde_json::json!({ "changed": changed })))
+    Ok(Json(MembershipChangedResponse { changed }))
 }
 
 fn map_tag_error(err: crate::thread_tags_api::TagError) -> ApiError {
@@ -1356,33 +1499,68 @@ where
     .join_map(task, |e| e)
 }
 
-#[derive(Debug, Deserialize)]
-struct ThreadTagNameBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNameBody {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ThreadTagRenameBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagRenameBody {
     from: String,
     to: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ThreadTagMembersQuery {
+pub(crate) struct ThreadTagMembersQuery {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ThreadTagMembershipBody {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembershipBody {
     ids: Vec<i64>,
     name: String,
     enable: bool,
 }
 
-async fn thread_tags_list_handler(
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagsListResponse {
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagNamedListResponse {
+    name: String,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagDeleteResponse {
+    ok: bool,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct ThreadTagMembersResponse {
+    name: String,
+    #[serde(rename = "memberConversationIds")]
+    member_conversation_ids: Vec<i64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = ThreadTagsListResponse),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_list_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ThreadTagsListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1390,14 +1568,28 @@ async fn thread_tags_list_handler(
         crate::thread_tags_api::list_tags(conn, &auth.account_id)
     })
     .await?;
-    Ok(Json(serde_json::json!({ "tags": tags })))
+    Ok(Json(ThreadTagsListResponse { tags }))
 }
 
-async fn thread_tags_create_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_create_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1408,14 +1600,32 @@ async fn thread_tags_create_handler(
         Ok((created, tags))
     })
     .await?;
-    Ok(Json(serde_json::json!({ "name": created, "tags": tags })))
+    Ok(Json(ThreadTagNamedListResponse {
+        name: created,
+        tags,
+    }))
 }
 
-async fn thread_tags_rename_handler(
+#[utoipa::path(
+    patch,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagRenameBody,
+    responses(
+        (status = 200, body = ThreadTagNamedListResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody),
+        (status = 409, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_rename_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ThreadTagRenameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ThreadTagNamedListResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1426,14 +1636,28 @@ async fn thread_tags_rename_handler(
         Ok((name, tags))
     })
     .await?;
-    Ok(Json(serde_json::json!({ "name": name, "tags": tags })))
+    Ok(Json(ThreadTagNamedListResponse { name, tags }))
 }
 
-async fn thread_tags_delete_handler(
+#[utoipa::path(
+    delete,
+    path = "/v1/thread-tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagNameBody,
+    responses(
+        (status = 200, body = ThreadTagDeleteResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_delete_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ThreadTagNameBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ThreadTagDeleteResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1442,14 +1666,27 @@ async fn thread_tags_delete_handler(
         crate::thread_tags_api::list_tags(conn, &auth.account_id)
     })
     .await?;
-    Ok(Json(serde_json::json!({ "ok": true, "tags": tags })))
+    Ok(Json(ThreadTagDeleteResponse { ok: true, tags }))
 }
 
-async fn thread_tags_members_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/thread-tags/members",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    params(("name" = String, Query, description = "Tag name")),
+    responses(
+        (status = 200, body = ThreadTagMembersResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_members_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ThreadTagMembersQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ThreadTagMembersResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1458,17 +1695,31 @@ async fn thread_tags_members_handler(
         crate::thread_tags_api::list_tag_member_ids(conn, &auth.account_id, &name)
     })
     .await?;
-    Ok(Json(serde_json::json!({
-        "name": query.name,
-        "memberConversationIds": member_conversation_ids,
-    })))
+    Ok(Json(ThreadTagMembersResponse {
+        name: query.name,
+        member_conversation_ids,
+    }))
 }
 
-async fn thread_tags_membership_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/conversations/tags",
+    tag = "Thread tags",
+    security(("bearer" = [])),
+    request_body = ThreadTagMembershipBody,
+    responses(
+        (status = 200, body = MembershipChangedResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody),
+        (status = 403, body = crate::server::ErrorBody),
+        (status = 404, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn thread_tags_membership_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ThreadTagMembershipBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<MembershipChangedResponse>, ApiError> {
     let auth = resolve_auth(&headers, &state).await?;
     require_full_access(&auth)?;
     let db = Arc::clone(&state.db);
@@ -1482,7 +1733,7 @@ async fn thread_tags_membership_handler(
         )
     })
     .await?;
-    Ok(Json(serde_json::json!({ "changed": changed })))
+    Ok(Json(MembershipChangedResponse { changed }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1923,7 +2174,7 @@ async fn asset_get_handler(
 }
 
 #[derive(Debug, Deserialize)]
-struct ExportMessagesQuery {
+pub(crate) struct ExportMessagesQuery {
     #[serde(default)]
     q: String,
     #[serde(default)]
@@ -1939,7 +2190,7 @@ struct ExportMessagesQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct ExportMessagesCountQuery {
+pub(crate) struct ExportMessagesCountQuery {
     #[serde(default)]
     q: String,
     #[serde(default)]
@@ -1948,7 +2199,23 @@ struct ExportMessagesCountQuery {
     source: Option<String>,
 }
 
-async fn export_messages_count_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages/count",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportCountResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_count_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ExportMessagesCountQuery>,
@@ -1974,7 +2241,26 @@ async fn export_messages_count_handler(
     Ok(Json(body))
 }
 
-async fn export_messages_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/export/messages",
+    tag = "Export",
+    security(("bearer" = [])),
+    params(
+        ("q" = String, Query, description = "Metadata search subset; empty is all non-trashed"),
+        ("limit" = Option<usize>, Query, description = "Page size, default 100, max 500"),
+        ("offset" = Option<usize>, Query, description = "Legacy offset; prefer cursor"),
+        ("cursor" = Option<String>, Query, description = "Opaque next_cursor from a previous page"),
+        ("account" = Option<String>, Query),
+        ("source" = Option<String>, Query)
+    ),
+    responses(
+        (status = 200, body = crate::export_api::ExportMessagesResponse),
+        (status = 400, body = crate::server::ErrorBody),
+        (status = 401, body = crate::server::ErrorBody)
+    )
+)]
+pub(crate) async fn export_messages_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ExportMessagesQuery>,

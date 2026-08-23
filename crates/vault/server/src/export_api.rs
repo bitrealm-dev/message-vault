@@ -30,7 +30,7 @@ pub struct ExportCountOpts<'a> {
     pub source_override: Option<&'a str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessagesResponse {
     pub ok: bool,
     pub query: String,
@@ -41,7 +41,7 @@ pub struct ExportMessagesResponse {
     pub truncated: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportCountResponse {
     pub ok: bool,
     pub query: String,
@@ -54,7 +54,7 @@ pub struct ExportCountResponse {
     pub total_bytes: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessage {
     pub id: i64,
     pub source: String,
@@ -78,7 +78,7 @@ pub struct ExportMessage {
     pub tapbacks: Vec<ExportTapback>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportConversation {
     pub id: i64,
     pub chat_identifier: String,
@@ -87,7 +87,7 @@ pub struct ExportConversation {
     pub participants: Vec<ExportParticipant>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportParticipant {
     pub handle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,7 +99,7 @@ pub struct ExportParticipant {
     pub handle_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportAttachment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -117,7 +117,7 @@ pub struct ExportAttachment {
     pub missing_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportTapback {
     pub part_index: i64,
     pub kind: String,

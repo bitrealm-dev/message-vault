@@ -71,7 +71,7 @@ pub fn auth_public_openapi(auth: SpecAuth) -> OpenApiRouter<AppState> {
     router
 }
 
-/// Health, session-backed auth, and account settings.
+/// Health, session-backed auth, account settings, and browse routes.
 pub fn api_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::server::health))
@@ -88,6 +88,26 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::api_tokens_api::create_api_token_handler))
         .routes(routes!(crate::api_tokens_api::delete_api_token_handler))
         .routes(routes!(crate::api_tokens_api::rename_api_token_handler))
+        .routes(routes!(crate::server::export_messages_handler))
+        .routes(routes!(crate::server::export_messages_count_handler))
+        .routes(routes!(crate::server::contacts_list_handler))
+        .routes(routes!(crate::server::contact_summaries_handler))
+        .routes(routes!(crate::server::contact_detail_handler))
+        .routes(routes!(crate::server::contact_mutate_handler))
+        .routes(routes!(crate::server::contact_groups_list_handler))
+        .routes(routes!(crate::server::contact_groups_create_handler))
+        .routes(routes!(crate::server::contact_groups_rename_handler))
+        .routes(routes!(crate::server::contact_groups_delete_handler))
+        .routes(routes!(crate::server::contact_groups_members_handler))
+        .routes(routes!(crate::server::contact_groups_membership_handler))
+        .routes(routes!(crate::server::thread_tags_list_handler))
+        .routes(routes!(crate::server::thread_tags_create_handler))
+        .routes(routes!(crate::server::thread_tags_rename_handler))
+        .routes(routes!(crate::server::thread_tags_delete_handler))
+        .routes(routes!(crate::server::thread_tags_members_handler))
+        .routes(routes!(crate::server::thread_tags_membership_handler))
+        .routes(routes!(crate::server::conversations_list_handler))
+        .routes(routes!(crate::server::conversation_sources_handler))
 }
 
 pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
@@ -189,6 +209,29 @@ mod tests {
         op["security"]
             .as_array()
             .is_some_and(|schemes| schemes.iter().any(|s| s.get("bearer").is_some()))
+    }
+
+    #[test]
+    fn dump_includes_browse_paths() {
+        let v: serde_json::Value = serde_json::from_str(&dump_openapi_json()).unwrap();
+        let paths = v["paths"].as_object().unwrap();
+        for p in [
+            "/v1/export/messages",
+            "/v1/export/messages/count",
+            "/v1/export/contacts",
+            "/v1/export/contacts/summaries",
+            "/v1/export/contacts/{id}",
+            "/v1/contact-groups",
+            "/v1/contact-groups/members",
+            "/v1/contacts/groups",
+            "/v1/thread-tags",
+            "/v1/thread-tags/members",
+            "/v1/conversations/tags",
+            "/v1/export/conversations",
+            "/v1/export/conversations/{id}/sources",
+        ] {
+            assert!(paths.contains_key(p), "missing {p}");
+        }
     }
 
     #[test]
