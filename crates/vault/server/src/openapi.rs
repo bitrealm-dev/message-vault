@@ -264,11 +264,16 @@ mod tests {
             assert!(paths.contains_key(p), "missing {p}");
         }
         let import = &paths["/v1/import"]["post"]["requestBody"]["content"];
-        assert!(
-            import.get("application/x-ndjson").is_some()
-                || import.get("application/jsonl").is_some(),
-            "POST /v1/import must document JSONL, not a fake JSON object"
-        );
+        for ct in [
+            "application/x-ndjson",
+            "application/jsonl",
+            "multipart/form-data",
+        ] {
+            assert!(
+                import.get(ct).is_some(),
+                "POST /v1/import must document {ct}"
+            );
+        }
         let put = &paths["/v1/assets/{sha256}"]["put"]["requestBody"]["content"];
         assert!(
             put.get("application/octet-stream").is_some(),

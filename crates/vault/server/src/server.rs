@@ -864,6 +864,7 @@ fn upload_content_type(headers: &HeaderMap) -> Option<String> {
 /// True when the request body is JSON Lines (one JSON object per line).
 fn is_jsonl_content_type(base: &str) -> bool {
     base.eq_ignore_ascii_case("application/jsonl")
+        || base.eq_ignore_ascii_case("application/x-ndjson")
 }
 
 fn is_multipart_content_type(base: &str) -> bool {
@@ -2028,8 +2029,12 @@ fn import_detail_response(detail: crate::db::vault_imports::ImportDetail) -> Imp
         ("contact_name_mode" = Option<String>, Query)
     ),
     request_body(
-        content_type = "application/x-ndjson",
-        description = "message-ir JSONL. application/jsonl and multipart/form-data (field jsonl plus file parts) are also accepted."
+        content(
+            ("application/x-ndjson"),
+            ("application/jsonl"),
+            ("multipart/form-data")
+        ),
+        description = "message-ir JSONL. application/x-ndjson, application/jsonl, and multipart/form-data (field jsonl plus file parts) are accepted."
     ),
     responses(
         (status = 200, body = ImportResponse),
@@ -2051,7 +2056,8 @@ pub(crate) async fn import_handler(
 
     let Some(ct) = content_type_base(&headers) else {
         return Err(ApiError::BadRequest(
-            "Content-Type required (application/jsonl or multipart/form-data)".into(),
+            "Content-Type required (application/x-ndjson, application/jsonl, or multipart/form-data)"
+                .into(),
         ));
     };
 
@@ -2085,7 +2091,8 @@ pub(crate) async fn import_handler(
     }
 
     Err(ApiError::BadRequest(
-        "Content-Type must be application/jsonl or multipart/form-data".into(),
+        "Content-Type must be application/x-ndjson, application/jsonl, or multipart/form-data"
+            .into(),
     ))
 }
 
@@ -3038,6 +3045,15 @@ mod tests {
     use rusqlite::params;
     use std::sync::{Arc, Mutex as StdMutex};
     use tempfile::TempDir;
+
+    #[test]
+    fn jsonl_content_type_accepts_x_ndjson() {
+        assert!(is_jsonl_content_type("application/x-ndjson"));
+        assert!(is_jsonl_content_type("application/jsonl"));
+        assert!(is_jsonl_content_type("Application/X-NDJSON"));
+        assert!(!is_jsonl_content_type("multipart/form-data"));
+        assert!(!is_jsonl_content_type("application/json"));
+    }
 
     const TEST_ACCOUNT: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
