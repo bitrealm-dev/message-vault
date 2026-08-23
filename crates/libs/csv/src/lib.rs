@@ -1,5 +1,7 @@
 //! Shared CSV helpers for writing conversation files.
 
+#![warn(missing_docs)]
+
 mod date_range;
 mod utc_offset;
 
@@ -16,9 +18,12 @@ pub struct AttachmentCell {
     /// Shared attachment metadata (serialized inline — same JSON shape as before).
     #[serde(flatten)]
     pub meta: message_ir::AttachmentMeta,
+    /// Sticker flag.
     #[serde(default)]
     pub is_sticker: bool,
+    /// OCR text of an image attachment.
     pub transcription: Option<String>,
+    /// iMessage sticker effect name.
     pub sticker_effect: Option<String>,
 }
 

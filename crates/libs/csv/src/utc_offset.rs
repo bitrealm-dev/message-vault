@@ -1,5 +1,6 @@
 //! Fixed UTC offset parsing (`UTC±HH:MM`).
 
+use anyhow::{Result, bail};
 use chrono::FixedOffset;
 
 /// Parse a fixed UTC offset string into [`FixedOffset`].
@@ -9,58 +10,58 @@ use chrono::FixedOffset;
 /// - `UTC+00:00`, `UTC-05:00`, `UTC+05:30`, `UTC+05:45`
 ///
 /// IANA names are rejected.
-pub fn parse_utc_offset(raw: &str) -> Result<FixedOffset, String> {
+pub fn parse_utc_offset(raw: &str) -> Result<FixedOffset> {
     let s = raw.trim();
     if s.is_empty() {
-        return Err("empty UTC offset".into());
+        bail!("empty UTC offset");
     }
     let upper = s.to_ascii_uppercase();
     if upper == "UTC" || upper == "Z" {
-        return FixedOffset::east_opt(0).ok_or_else(|| "invalid UTC offset".into());
+        return FixedOffset::east_opt(0).ok_or_else(|| anyhow::anyhow!("invalid UTC offset"));
     }
     let rest = upper
         .strip_prefix("UTC")
-        .ok_or_else(|| format!("expected UTC offset like UTC-05:00, got {raw:?}"))?;
+        .ok_or_else(|| anyhow::anyhow!("expected UTC offset like UTC-05:00, got {raw:?}"))?;
     if rest.is_empty() {
-        return FixedOffset::east_opt(0).ok_or_else(|| "invalid UTC offset".into());
+        return FixedOffset::east_opt(0).ok_or_else(|| anyhow::anyhow!("invalid UTC offset"));
     }
     let (sign, body) = match rest.chars().next() {
         Some('+') => (1i32, &rest[1..]),
         Some('-') => (-1i32, &rest[1..]),
         _ => {
-            return Err(format!("expected UTC±HH:MM (e.g. UTC-05:00), got {raw:?}"));
+            bail!("expected UTC±HH:MM (e.g. UTC-05:00), got {raw:?}");
         }
     };
     let (hours, minutes) = parse_hh_mm(body)?;
     if hours > 14 || (hours == 14 && minutes > 0) {
-        return Err(format!("UTC offset out of range: {raw:?}"));
+        bail!("UTC offset out of range: {raw:?}");
     }
     if minutes >= 60 {
-        return Err(format!("invalid minutes in UTC offset: {raw:?}"));
+        bail!("invalid minutes in UTC offset: {raw:?}");
     }
     let secs = sign * (hours * 3600 + minutes * 60);
-    FixedOffset::east_opt(secs).ok_or_else(|| format!("invalid UTC offset: {raw:?}"))
+    FixedOffset::east_opt(secs).ok_or_else(|| anyhow::anyhow!("invalid UTC offset: {raw:?}"))
 }
 
-fn parse_hh_mm(body: &str) -> Result<(i32, i32), String> {
+fn parse_hh_mm(body: &str) -> Result<(i32, i32)> {
     let parts: Vec<&str> = body.split(':').collect();
     match parts.as_slice() {
         [hh] => {
             let hours: i32 = hh
                 .parse()
-                .map_err(|_| format!("invalid hours in UTC offset: {body:?}"))?;
+                .map_err(|_| anyhow::anyhow!("invalid hours in UTC offset: {body:?}"))?;
             Ok((hours, 0))
         }
         [hh, mm] => {
             let hours: i32 = hh
                 .parse()
-                .map_err(|_| format!("invalid hours in UTC offset: {body:?}"))?;
+                .map_err(|_| anyhow::anyhow!("invalid hours in UTC offset: {body:?}"))?;
             let minutes: i32 = mm
                 .parse()
-                .map_err(|_| format!("invalid minutes in UTC offset: {body:?}"))?;
+                .map_err(|_| anyhow::anyhow!("invalid minutes in UTC offset: {body:?}"))?;
             Ok((hours, minutes))
         }
-        _ => Err(format!("expected HH or HH:MM in UTC offset, got {body:?}")),
+        _ => bail!("expected HH or HH:MM in UTC offset, got {body:?}"),
     }
 }
 

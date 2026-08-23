@@ -358,7 +358,13 @@ mod tests {
         assert_eq!(failures, 0);
         let digest = cell.meta.digest_sha256.expect("digest set after copy");
         assert_eq!(digest.len(), 64);
-        assert!(cell.meta.path.as_deref().unwrap().starts_with("attachments/"));
+        assert!(
+            cell.meta
+                .path
+                .as_deref()
+                .unwrap()
+                .starts_with("attachments/")
+        );
     }
 
     #[cfg(unix)]
