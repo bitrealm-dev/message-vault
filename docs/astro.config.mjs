@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightOpenAPI, { openAPISidebarGroups } from 'starlight-openapi';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import mermaid from 'astro-mermaid';
 
@@ -109,6 +110,10 @@ const developerItems = [
   },
   'vault/developer/reference/api',
   {
+    label: 'HTTP API reference',
+    items: openAPISidebarGroups,
+  },
+  {
     label: 'Formats',
     items: [
       'vault/developer/formats',
@@ -179,20 +184,38 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/custom.css'],
       plugins: [
-        starlightSidebarTopics([
+        starlightOpenAPI([
           {
-            label: 'User Guide',
-            link: '/vault/user/',
-            icon: 'open-book',
-            items: userGuideItems,
-          },
-          {
-            label: 'Developer',
-            link: '/vault/developer/',
-            icon: 'laptop',
-            items: developerItems,
+            base: 'vault/developer/reference/http',
+            schema: './src/assets/openapi.json',
+            label: 'HTTP API reference',
           },
         ]),
+        starlightSidebarTopics(
+          [
+            {
+              label: 'User Guide',
+              link: '/vault/user/',
+              icon: 'open-book',
+              items: userGuideItems,
+            },
+            {
+              label: 'Developer',
+              id: 'developer',
+              link: '/vault/developer/',
+              icon: 'laptop',
+              items: developerItems,
+            },
+          ],
+          {
+            topics: {
+              developer: [
+                '/vault/developer/reference/http',
+                '/vault/developer/reference/http/**/*',
+              ],
+            },
+          },
+        ),
       ],
     }),
   ],
