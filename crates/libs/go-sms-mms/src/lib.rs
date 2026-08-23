@@ -5,6 +5,9 @@
 //! attachments. GO SMS Pro is an Android messaging app whose backups store
 //! MMS this way.
 
+#![warn(missing_docs)]
+
+mod decoders;
 mod emoji;
 mod mms_enc;
 mod pdu;
