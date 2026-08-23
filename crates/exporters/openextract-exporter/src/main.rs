@@ -1,26 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Parser;
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, MediaConfig, OpenExtractConfig, OutputFormat, SourceConfig,
+    ExporterConfig, MediaConfig, OpenExtractConfig, OutputFormat, SourceConfig,
 };
+use openextract_exporter::cli::Cli;
 use openextract_exporter::{parse_date_range, run};
-
-#[derive(Parser, Debug)]
-#[command(name = "openextract-exporter")]
-#[command(
-    about = "Convert OpenExtract conversation CSV (+ VCF) via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// OpenExtract CSV file or directory of conversation_*.csv / all_conversations.csv
-    #[arg(long)]
-    input: PathBuf,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

@@ -1,77 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, MediaConfig, OutputFormat, SourceConfig, WhatsappConfig,
-    WhatsappPlatform,
+    ExporterConfig, MediaConfig, OutputFormat, SourceConfig, WhatsappConfig,
 };
+use whatsapp_exporter::cli::Cli;
 use whatsapp_exporter::{parse_date_range, run};
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum CliPlatform {
-    Android,
-    Ios,
-}
-
-impl From<CliPlatform> for WhatsappPlatform {
-    fn from(value: CliPlatform) -> Self {
-        match value {
-            CliPlatform::Android => WhatsappPlatform::Android,
-            CliPlatform::Ios => WhatsappPlatform::Ios,
-        }
-    }
-}
-
-#[derive(Parser, Debug)]
-#[command(name = "whatsapp-exporter")]
-#[command(
-    about = "Convert WhatsApp DB/backup (via wtsexporter) via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Directory (or msgstore.db file) used to resolve relative defaults such as
-    /// `msgstore.db` / `wa.db` / `WhatsApp/`. Defaults to the process cwd.
-    /// Extraction always runs in a temporary directory (not this path).
-    /// The GUI omits this flag.
-    #[arg(long)]
-    input: Option<PathBuf>,
-
-    /// Android or iOS (required unless --json)
-    #[arg(long, value_enum)]
-    platform: Option<CliPlatform>,
-
-    /// Skip wtsexporter; convert an existing result.json
-    #[arg(long)]
-    json: Option<PathBuf>,
-
-    /// Decryption key file path or crypt15 hex key (forwarded as -k)
-    #[arg(long)]
-    key: Option<String>,
-
-    /// Encrypted backup / iOS backup path (forwarded as -b)
-    #[arg(long)]
-    backup: Option<PathBuf>,
-
-    /// Contacts database wa.db / ContactsV2.sqlite (forwarded as -w)
-    #[arg(long)]
-    wa: Option<PathBuf>,
-
-    /// WhatsApp media folder (forwarded as -m)
-    #[arg(long)]
-    media: Option<PathBuf>,
-
-    /// Explicit msgstore.db path (forwarded as -d)
-    #[arg(long)]
-    db: Option<PathBuf>,
-
-    /// WhatsApp Business defaults
-    #[arg(long)]
-    business: bool,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

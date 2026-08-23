@@ -22,6 +22,7 @@ members = [
     "crates/core/message-vault-io-core",
     "crates/cli/vault-push",
     "crates/cli/vault-pull",
+    "crates/cli/dump-cli-docs",
     "crates/vault/demo-seed",
     "crates/vault/server",
     "crates/message-vault-io-gui",

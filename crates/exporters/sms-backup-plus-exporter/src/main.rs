@@ -1,60 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, MediaConfig, OutputFormat, SmsBackupPlusConfig, SourceConfig,
+    ExporterConfig, MediaConfig, OutputFormat, SmsBackupPlusConfig, SourceConfig,
 };
+use sms_backup_plus_exporter::cli::{Cli, Commands};
 use sms_backup_plus_exporter::{parse_date_range, run};
-
-#[derive(Parser, Debug)]
-#[command(name = "sms-backup-plus-exporter")]
-#[command(
-    about = "Convert SMS Backup+ EML exports via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Log progress to stderr (inputs, scan/write progress, dedupe summary)
-    #[arg(short = 'v', long, global = true)]
-    verbose: bool,
-
-    /// Skip the end-of-run summary on stdout
-    #[arg(long, global = true)]
-    no_summary: bool,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Convert EML tree via common message to the chosen packaging format
-    Convert {
-        /// Path to a .eml file or directory tree of EMLs (Archive/, Sent/, …).
-        /// Repeat for multiple roots; trees are merged and path-deduped.
-        /// Default: source_dirs from config/owner.toml when set.
-        #[arg(long = "input")]
-        input: Vec<PathBuf>,
-
-        /// Owner phone (E.164 or digits). Repeat for multiple owner numbers.
-        /// Default: `phones` in config/owner.toml
-        #[arg(long = "owner-phone")]
-        owner_phones: Vec<String>,
-
-        /// Owner email addresses used to detect sent messages when X-smssync-type is missing.
-        /// Default: `emails` in config/owner.toml
-        #[arg(long = "owner-email", value_name = "EMAIL")]
-        owner_emails: Vec<String>,
-
-        /// Name mapping CSV (`Phone,Incorrect Name`) for EML export aliases.
-        /// Default: config/name-mapping.csv when that file exists.
-        #[arg(long = "name-mapping")]
-        name_mapping: Option<PathBuf>,
-
-        #[command(flatten)]
-        common: CommonCli,
-    },
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

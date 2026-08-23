@@ -114,6 +114,11 @@ const developerItems = [
     items: openAPISidebarGroups,
   },
   {
+    label: 'Rust crate docs',
+    link: '/vault/developer/rustdoc/',
+    attrs: { target: '_self' },
+  },
+  {
     label: 'Formats',
     items: [
       'vault/developer/formats',
@@ -212,6 +217,8 @@ export default defineConfig({
               developer: [
                 '/vault/developer/reference/http',
                 '/vault/developer/reference/http/**/*',
+                '/vault/developer/rustdoc',
+                '/vault/developer/rustdoc/**',
               ],
             },
           },

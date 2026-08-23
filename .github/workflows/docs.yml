@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -20,12 +23,33 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: docs
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-docs-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build rustdoc
+        run: cargo doc --workspace --no-deps --exclude message-vault-io-gui
+
+      - name: Copy rustdoc into the docs site
+        run: |
+          rm -rf docs/public/vault/developer/rustdoc
+          mkdir -p docs/public/vault/developer
+          cp -a target/doc docs/public/vault/developer/rustdoc
+          if [ ! -f docs/public/vault/developer/rustdoc/index.html ]; then
+            printf '%s\n' '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=message_vault_server/index.html"><title>Rust crate docs</title><link rel="canonical" href="message_vault_server/index.html"></head><body><p><a href="message_vault_server/index.html">message-vault-server crate docs</a></p></body></html>' > docs/public/vault/developer/rustdoc/index.html
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -35,12 +59,15 @@ jobs:
           cache-dependency-path: docs/package-lock.json
 
       - name: Install dependencies
+        working-directory: docs
         run: npm ci
 
       - name: Check
+        working-directory: docs
         run: npm run check
 
       - name: Build
+        working-directory: docs
         run: npm run build
 
       - name: Upload Pages artifact

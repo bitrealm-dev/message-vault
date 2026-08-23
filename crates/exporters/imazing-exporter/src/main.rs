@@ -1,30 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Parser;
+use imazing_exporter::cli::Cli;
 use imazing_exporter::{parse_date_range, run};
 use media::compress_options_from_cli;
 use message_vault_io_core::{
-    CommonCli, ExporterConfig, ImazingConfig, MediaConfig, OutputFormat, SourceConfig,
+    ExporterConfig, ImazingConfig, MediaConfig, OutputFormat, SourceConfig,
 };
-
-#[derive(Parser, Debug)]
-#[command(name = "imazing-exporter")]
-#[command(
-    about = "Convert iMazing Messages / WhatsApp CSV exports via common message to JSON/CSV/EML/MBOX/JSONL/XML"
-)]
-struct Cli {
-    /// Messages/WhatsApp export directory (or a single CSV for CLI convenience)
-    #[arg(long)]
-    input: PathBuf,
-
-    /// UTC offset for naive Message Date values (e.g. UTC-05:00). Default: host local.
-    #[arg(long)]
-    timezone: Option<String>,
-
-    #[command(flatten)]
-    common: CommonCli,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
