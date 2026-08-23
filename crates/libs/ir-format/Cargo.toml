@@ -3,7 +3,7 @@ name = "message-ir-format"
 version = "0.1.0"
 edition = "2024"
 description = "FormatSink, readers/writers, and transforms for message-ir ConversationDocument"
-license = "AGPL-3.0-only"
+license = "LicenseRef-FCL-1.0-ALv2"
 
 [dependencies]
 anyhow = "1.0.103"

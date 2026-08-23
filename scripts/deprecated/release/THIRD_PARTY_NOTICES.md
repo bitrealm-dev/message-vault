@@ -21,5 +21,6 @@ works. License texts for those tools live in this `licenses/` directory.
 - Location in archive: `lib/ffmpeg`, `lib/ffprobe`
 - License: GPL (see `THIRD_PARTY_FFMPEG.LICENSE` in this directory)
 
-The Message Vault project itself is AGPL-3.0 — see `LICENSE`. `imessage-ir-exporter`
-still depends on `imessage-database` (GPL-3.0-or-later).
+The Message Vault project itself is licensed under the Fair Core License — see
+`LICENSE.md`. `imessage-ir-exporter` still depends on `imessage-database`
+(GPL-3.0-or-later).

@@ -130,6 +130,17 @@ jobs:
           npm ci
           npm test
 
+  # ── Always: license consistency ───────────────────────────────────────
+  license:
+    name: License consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check license metadata agrees on the Fair Core License
+        run: ./scripts/check-license.sh
+
   # ── Tag only: Docker image → DockerHub ────────────────────────────────
   docker:
     name: Docker image

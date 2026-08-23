@@ -16,4 +16,4 @@ Workspace setup: [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## License
 
-AGPL-3.0. The desktop app that replaced this crate still links `imessage-ir-exporter` (`imessage-database` is GPL-3.0-or-later).
+Fair Core License. See the repository root `LICENSE.md`. This crate links `imessage-ir-exporter`, which depends on `imessage-database` (GPL-3.0-or-later); distributing a binary that includes it must also satisfy the GPL.

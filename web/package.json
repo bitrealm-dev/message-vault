@@ -2,7 +2,7 @@
   "name": "message-vault-io-web",
   "private": true,
   "version": "0.7.3",
-  "license": "AGPL-3.0-only",
+  "license": "SEE LICENSE IN ../LICENSE.md",
   "type": "module",
   "scripts": {
     "dev": "vite",
