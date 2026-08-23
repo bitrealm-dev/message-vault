@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use rand::Rng;
+use rand::RngExt;
 use rand::seq::IndexedRandom;
 
 /// Sentences taken from a public-domain book and used as message bodies.

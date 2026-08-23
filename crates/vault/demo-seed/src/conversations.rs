@@ -15,6 +15,7 @@ use message_ir::{
     IrService, SCHEMA_VERSION,
 };
 use rand::Rng;
+use rand::RngExt;
 use rand::seq::{IndexedRandom, SliceRandom};
 use serde_json::json;
 

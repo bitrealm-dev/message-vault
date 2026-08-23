@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
-use rand::RngCore;
+use rand::Rng;
 use regex::Regex;
 #[cfg(test)]
 use serde_json::{Value, json};

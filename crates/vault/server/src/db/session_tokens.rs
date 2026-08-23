@@ -1,7 +1,7 @@
 //! GUI session Bearer tokens (`mv-user-…`); one per account, rotates on login.
 
 use anyhow::{Context, Result, bail};
-use rand::RngCore;
+use rand::TryRng;
 use rusqlite::{Connection, OptionalExtension, params};
 
 const TOKEN_ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -35,7 +35,7 @@ pub fn hash_api_token(token: &str) -> String {
 }
 
 fn fill_random(buf: &mut [u8]) -> Result<()> {
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(buf)
         .map_err(|e| anyhow::anyhow!("secure random unavailable: {e}"))?;
     if buf.iter().all(|&b| b == 0) {
