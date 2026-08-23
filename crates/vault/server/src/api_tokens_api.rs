@@ -109,12 +109,7 @@ pub struct RenameApiTokenResponse {
     pub label: String,
 }
 
-/// `GET /v1/account/api-tokens`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session or the list
-/// cannot be loaded.
+/// List the account's named API tokens with their scopes and masked secrets.
 #[utoipa::path(
     get,
     path = "/v1/account/api-tokens",
@@ -146,12 +141,8 @@ pub async fn list_api_tokens_handler(
     Ok(Json(ListApiTokensResponse { items }))
 }
 
-/// `POST /v1/account/api-tokens`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session, the label
-/// is invalid, or the insert fails.
+/// Create a named API token. Returns the plaintext secret once, at creation;
+/// it is never returned again.
 #[utoipa::path(
     post,
     path = "/v1/account/api-tokens",
@@ -207,12 +198,7 @@ pub async fn create_api_token_handler(
     }))
 }
 
-/// `DELETE /v1/account/api-tokens/{id}`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session or the token
-/// is missing.
+/// Delete one named API token. Requests using it start failing on the next call.
 #[utoipa::path(
     delete,
     path = "/v1/account/api-tokens/{id}",
@@ -249,12 +235,7 @@ pub async fn delete_api_token_handler(
     Ok(Json(DeleteApiTokenResponse { ok: true }))
 }
 
-/// `PATCH /v1/account/api-tokens/{id}`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session, the label
-/// is invalid, or the token is missing.
+/// Rename one named API token. The label is trimmed before storing.
 #[utoipa::path(
     patch,
     path = "/v1/account/api-tokens/{id}",

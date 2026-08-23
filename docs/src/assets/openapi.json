@@ -35,8 +35,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`GET /v1/account/api-tokens`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session or the list\ncannot be loaded.",
+        "summary": "List the account's named API tokens with their scopes and masked secrets.",
         "operationId": "list_api_tokens_handler",
         "responses": {
           "200": {
@@ -80,8 +79,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`POST /v1/account/api-tokens`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session, the label\nis invalid, or the insert fails.",
+        "summary": "Create a named API token. Returns the plaintext secret once, at creation;\nit is never returned again.",
         "operationId": "create_api_token_handler",
         "requestBody": {
           "content": {
@@ -147,8 +145,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`DELETE /v1/account/api-tokens/{id}`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session or the token\nis missing.",
+        "summary": "Delete one named API token. Requests using it start failing on the next call.",
         "operationId": "delete_api_token_handler",
         "parameters": [
           {
@@ -213,8 +210,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`PATCH /v1/account/api-tokens/{id}`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session, the label\nis invalid, or the token is missing.",
+        "summary": "Rename one named API token. The label is trimmed before storing.",
         "operationId": "rename_api_token_handler",
         "parameters": [
           {
@@ -301,8 +297,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`POST /v1/account/delete-messages` — delete conversations, messages, and\nattachments; keep contacts and account login.",
-        "description": "# Errors\n\nReturns an API error when confirmation is missing, the caller is not a\nsigned-in session, or the delete fails.",
+        "summary": "Delete every conversation, message, and attachment for the account.\nContacts and the account login survive.",
         "operationId": "delete_messages_handler",
         "requestBody": {
           "content": {
@@ -368,8 +363,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`GET /v1/account/profile`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session or the\nprofile cannot be loaded.",
+        "summary": "Load the signed-in account's profile: username, display name, linked\nhandles, and demo/guest flags.",
         "operationId": "account_profile_handler",
         "responses": {
           "200": {
@@ -413,8 +407,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "`POST /v1/account/profile`",
-        "description": "# Errors\n\nReturns an API error when the caller is not a signed-in session, a handle\nservice is unsupported, or the update fails.",
+        "summary": "Update the account's display name and linked handles, then return the\nreloaded profile.",
         "operationId": "account_profile_update_handler",
         "requestBody": {
           "content": {
@@ -1170,7 +1163,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/change-password` — verify the current password, set a new one.",
+        "summary": "Verify the current password, store the new one, revoke API tokens, and\nissue a fresh session token.",
         "operationId": "change_password_handler",
         "requestBody": {
           "content": {
@@ -1292,7 +1285,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/delete-account` — permanently delete the account.",
+        "summary": "Permanently delete the account and its data directory.",
         "operationId": "delete_account_handler",
         "requestBody": {
           "content": {
@@ -1358,7 +1351,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/hanko/session` — check a Hanko session JSON Web Token and\nreturn a vault API token.",
+        "summary": "Verify a Hanko session JSON Web Token and exchange it for a vault session\ntoken.",
         "operationId": "hanko_session_handler",
         "requestBody": {
           "content": {
@@ -1409,7 +1402,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/login` — authenticate with username + password, return an API token.",
+        "summary": "Verify a local username and password and return a session token.",
         "operationId": "login_handler",
         "requestBody": {
           "content": {
@@ -1470,7 +1463,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/logout` — revoke the presented session token.",
+        "summary": "Revoke the presented session token. Guest account data is deleted with the\nsession.",
         "operationId": "logout_handler",
         "responses": {
           "200": {
@@ -1527,7 +1520,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/register` — create an account and return an API token.",
+        "summary": "Create a local vault account and return its session token.",
         "operationId": "register_handler",
         "requestBody": {
           "content": {
@@ -1578,7 +1571,7 @@
         "tags": [
           "Auth"
         ],
-        "summary": "`POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.",
+        "summary": "Open a sample account session: the shared demo account self-hosted, or a\nprivate guest copy when the hosted pool is enabled.",
         "operationId": "try_demo_handler",
         "responses": {
           "200": {

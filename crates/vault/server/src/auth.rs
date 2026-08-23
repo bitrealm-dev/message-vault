@@ -335,7 +335,7 @@ fn unique_hanko_username(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// `POST /v1/auth/register` — create an account and return an API token.
+/// Create a local vault account and return its session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/register",
@@ -411,7 +411,7 @@ pub async fn register_handler(
     Ok(Json(result))
 }
 
-/// `POST /v1/auth/login` — authenticate with username + password, return an API token.
+/// Verify a local username and password and return a session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/login",
@@ -474,8 +474,8 @@ pub async fn login_handler(
     Ok(Json(result))
 }
 
-/// `POST /v1/auth/hanko/session` — check a Hanko session JSON Web Token and
-/// return a vault API token.
+/// Verify a Hanko session JSON Web Token and exchange it for a vault session
+/// token.
 #[utoipa::path(
     post,
     path = "/v1/auth/hanko/session",
@@ -653,7 +653,8 @@ fn hosted_demo_login_rejected() -> ApiError {
     ApiError::Unauthorized("use Try it to open a sample account".into())
 }
 
-/// `POST /v1/auth/try-demo` — self-hosted demo session, or a private guest copy.
+/// Open a sample account session: the shared demo account self-hosted, or a
+/// private guest copy when the hosted pool is enabled.
 #[utoipa::path(
     post,
     path = "/v1/auth/try-demo",
@@ -818,7 +819,8 @@ fn logout_on_conn(conn: &rusqlite::Connection, token: &str, data_dir: &Path) -> 
     Ok(())
 }
 
-/// `POST /v1/auth/logout` — revoke the presented session token.
+/// Revoke the presented session token. Guest account data is deleted with the
+/// session.
 #[utoipa::path(
     post,
     path = "/v1/auth/logout",
@@ -846,7 +848,8 @@ pub async fn logout_handler(
     Ok(Json(LogoutResponse { ok: true }))
 }
 
-/// `POST /v1/auth/change-password` — verify the current password, set a new one.
+/// Verify the current password, store the new one, revoke API tokens, and
+/// issue a fresh session token.
 #[utoipa::path(
     post,
     path = "/v1/auth/change-password",
@@ -894,7 +897,7 @@ pub async fn change_password_handler(
     Ok(Json(ChangePasswordResponse { ok: true, token }))
 }
 
-/// `POST /v1/auth/delete-account` — permanently delete the account.
+/// Permanently delete the account and its data directory.
 #[utoipa::path(
     post,
     path = "/v1/auth/delete-account",

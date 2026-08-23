@@ -44,12 +44,8 @@ fn load_response(conn: &Connection, account_id: &str) -> Result<AccountProfileRe
     })
 }
 
-/// `GET /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session or the
-/// profile cannot be loaded.
+/// Load the signed-in account's profile: username, display name, linked
+/// handles, and demo/guest flags.
 #[utoipa::path(
     get,
     path = "/v1/account/profile",
@@ -199,12 +195,8 @@ fn parse_profile_service(service: &str) -> Result<ProfileHandleKind> {
     }
 }
 
-/// `POST /v1/account/profile`
-///
-/// # Errors
-///
-/// Returns an API error when the caller is not a signed-in session, a handle
-/// service is unsupported, or the update fails.
+/// Update the account's display name and linked handles, then return the
+/// reloaded profile.
 #[utoipa::path(
     post,
     path = "/v1/account/profile",
@@ -287,13 +279,8 @@ fn remove_account_asset_trees(
     Ok(())
 }
 
-/// `POST /v1/account/delete-messages` — delete conversations, messages, and
-/// attachments; keep contacts and account login.
-///
-/// # Errors
-///
-/// Returns an API error when confirmation is missing, the caller is not a
-/// signed-in session, or the delete fails.
+/// Delete every conversation, message, and attachment for the account.
+/// Contacts and the account login survive.
 #[utoipa::path(
     post,
     path = "/v1/account/delete-messages",
