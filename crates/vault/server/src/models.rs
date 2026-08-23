@@ -13,71 +13,116 @@ use serde_json::Value;
 /// One JSONL conversation after IR → vault-row mapping.
 #[derive(Debug, Clone)]
 pub enum ExportRecord {
+    /// A conversation header record.
     Conversation(ConversationRecord),
+    /// One message record.
     Message(MessageRecord),
 }
 
+/// The conversation header of one JSONL conversation.
 #[derive(Debug, Clone)]
 pub struct ConversationRecord {
+    /// Original chat id from the export.
     pub chat_identifier: String,
+    /// Platform service, e.g. `imessage`.
     pub service: Option<String>,
+    /// `individual` or `group`.
     pub conversation_type: String,
+    /// Group label, when set.
     pub group_title: Option<String>,
+    /// Participants of the conversation.
     pub participants: Vec<ParticipantRecord>,
+    /// UTC time the export was produced.
     pub exported_at: Option<String>,
     /// IR `export.source` — used as `messages.source` for directory import.
     pub export_source: Option<String>,
 }
 
+/// One participant of an imported conversation.
 #[derive(Debug, Clone)]
 pub struct ParticipantRecord {
+    /// Raw handle value.
     pub handle: String,
+    /// Display-name alias, when the export supplied one.
     pub name_alias: Option<String>,
+    /// Handle type (phone, email, or username).
     #[allow(dead_code)] // consumed by import-time handle resolution
     pub handle_type: Option<HandleType>,
 }
 
+/// One message of an imported conversation.
 #[derive(Debug, Clone)]
 pub struct MessageRecord {
+    /// Export GUID for replies and grouping.
     pub guid: Option<String>,
+    /// Message timestamp (local).
     pub timestamp: String,
+    /// UTC timestamp, when the export supplied one.
     pub timestamp_utc: Option<String>,
+    /// True for messages sent by the account owner.
     pub is_from_me: bool,
+    /// Sender handle for incoming messages.
     pub sender: Option<String>,
+    /// Sender handle type (phone, email, or username).
     #[allow(dead_code)] // sender identity for import-time handle resolution
     pub sender_handle_type: Option<HandleType>,
     /// Per-message transport (`sms` / `imessage` / `rcs` / `whatsapp` / …).
     pub service: Option<String>,
+    /// Subject line, when set.
     pub subject: Option<String>,
+    /// Body text, when present.
     pub text: Option<String>,
+    /// True for group announcements.
     pub is_announcement: bool,
+    /// Announcement text when `is_announcement`.
     pub announcement: Option<String>,
+    /// Attachments on this message.
     pub attachments: Vec<AttachmentRecord>,
+    /// Reactions on this message.
     pub tapbacks: Vec<TapbackRecord>,
+    /// True when part of a reply thread.
     pub is_reply: bool,
+    /// GUID of the message this replies to.
     pub thread_originator_guid: Option<String>,
+    /// Part index of the originator (for tapbacks).
     pub thread_originator_part: Option<i64>,
+    /// Replies in this thread.
     pub num_replies: i64,
 }
 
+/// One attachment of an imported message.
 #[derive(Debug, Clone)]
 pub struct AttachmentRecord {
+    /// Path inside the export.
     pub path: Option<String>,
+    /// File name from the export.
     pub original_name: Option<String>,
+    /// MIME type, when known.
     pub mime_type: Option<String>,
+    /// Content fingerprint, when the exporter computed one.
     pub sha256: Option<String>,
+    /// True for sticker files.
     pub is_sticker: bool,
+    /// OCR/ASR transcription, when the exporter produced one.
     pub transcription: Option<String>,
+    /// File size in bytes, when known.
     pub size_bytes: Option<u64>,
+    /// Why the file is missing, when it is.
     pub missing_reason: Option<String>,
 }
 
+/// One tapback reaction on an imported message.
 #[derive(Debug, Clone)]
 pub struct TapbackRecord {
+    /// Attachment part the reaction applies to.
     pub part_index: i64,
+    /// Reaction type, e.g. `love`.
     pub kind: String,
+    /// Emoji form of the reaction, when one exists.
     pub emoji: Option<String>,
+    /// True when the account owner reacted.
     pub is_from_me: bool,
+    /// Reactor handle for incoming reactions.
     pub sender: Option<String>,
 }
 

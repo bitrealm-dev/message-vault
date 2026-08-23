@@ -33,9 +33,13 @@ const RESERVED_TAG_NAMES: &[&str] = &[
 /// Create / rename / delete / membership failures.
 #[derive(Debug)]
 pub enum TagError {
+    /// Invalid tag name (empty, reserved, or too long).
     BadRequest(String),
+    /// The tag does not exist.
     NotFound(String),
+    /// A tag with this name already exists.
     Conflict(String),
+    /// Database or unexpected failure.
     Internal(String),
 }
 

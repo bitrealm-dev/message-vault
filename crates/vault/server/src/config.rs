@@ -7,14 +7,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+/// Complete server configuration, loaded from a TOML file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    /// Filesystem locations (database, per-account data).
     pub paths: PathsConfig,
     /// HTTP ingest server (`message-vault-server serve`). Required for `serve`.
     #[serde(default)]
     pub server: Option<ServerConfig>,
 }
 
+/// `[server]` section: HTTP bind address, CORS, and asset upload limits.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     /// Bind address (default `127.0.0.1:8080`).
@@ -64,8 +67,10 @@ fn default_openapi_ui() -> bool {
     false
 }
 
+/// `[paths]` section: database file and per-account data directories.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PathsConfig {
+    /// SQLite database file path.
     pub db: PathBuf,
     /// Root for per-account data (`data/<account_id>/…`).
     #[serde(default = "default_data_dir")]
@@ -175,6 +180,9 @@ impl PathsConfig {
 }
 
 impl Config {
+    /// Read and parse a TOML config file. Relative `paths.db` and
+    /// `paths.data_dir` values resolve against the directory above the config
+    /// file's folder (the repo root for `config/config.toml`).
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
@@ -228,12 +236,17 @@ impl Config {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+/// Sign-in mechanism: local account passwords or Hanko passkeys.
 pub enum AuthMode {
+    /// Hanko passkey sign-in via `POST /v1/auth/hanko/session`.
     Hanko,
+    /// Local vault account login (username and password).
     Local,
 }
 
 impl AuthMode {
+    /// Auth mode from the `VAULT_AUTH` environment variable: `hanko` when set,
+    /// otherwise `local`.
     pub fn from_env() -> Self {
         Self::parse(&std::env::var("VAULT_AUTH").unwrap_or_default())
     }
@@ -246,11 +259,17 @@ impl AuthMode {
     }
 }
 
+/// Hosted Try it demo settings, read from `GUEST_DEMO_POOL`,
+/// `GUEST_POOL_MIN`, `GUEST_POOL_MAX`, and `GUEST_SESSION_SECS`.
 #[derive(Debug, Clone, Copy)]
 pub struct GuestDemoSettings {
+    /// Whether the hosted Try it demo is on.
     pub enabled: bool,
+    /// Minimum unused ready guest accounts kept in the pool.
     pub pool_min: u32,
+    /// Maximum unused ready guest accounts.
     pub pool_max: u32,
+    /// Lifetime of one demo session, in seconds.
     pub session_secs: u64,
 }
 
@@ -262,6 +281,8 @@ fn env_truthy(raw: &str) -> bool {
 }
 
 impl GuestDemoSettings {
+    /// Read demo settings from the environment; unset or malformed values
+    /// fall back to the defaults.
     pub fn from_env() -> Self {
         Self::parse(
             &std::env::var("GUEST_DEMO_POOL").unwrap_or_default(),
@@ -271,6 +292,7 @@ impl GuestDemoSettings {
         )
     }
 
+    /// Demo settings with the hosted Try it demo off (tests only).
     #[cfg(test)]
     pub fn disabled() -> Self {
         Self {

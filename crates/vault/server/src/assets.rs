@@ -12,17 +12,25 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
+/// Counts of files handled during one asset store pass.
 #[derive(Debug, Default)]
 pub struct AssetStats {
+    /// Files written to the asset store.
     pub copied: u64,
+    /// Files already present under the same fingerprint, skipped.
     pub deduped: u64,
+    /// Source files not found on disk.
     pub missing: u64,
 }
 
+/// One stored attachment: fingerprint, relative path, and MIME type.
 #[derive(Debug, Clone)]
 pub struct StoredAsset {
+    /// SHA-256 fingerprint of the stored bytes (64 lowercase hex digits).
     pub sha256: String,
+    /// Path relative to the account's assets root.
     pub assets_path: String,
+    /// MIME type of the file, when known.
     pub mime_type: Option<String>,
 }
 

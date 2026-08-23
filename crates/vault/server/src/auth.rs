@@ -116,11 +116,15 @@ fn reset_auth_rate_limit_bucket_for_test(bucket: &str) {
 /// Body for local account registration.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
+    /// Login username.
     pub username: String,
+    /// Local password; absent or empty registers an account without one.
     #[serde(default)]
     pub password: Option<String>,
+    /// Display name shown in the vault.
     #[serde(default)]
     pub preferred_name: Option<String>,
+    /// Phone number linked to the account.
     #[serde(default)]
     pub phone: Option<String>,
 }
@@ -128,7 +132,9 @@ pub struct RegisterRequest {
 /// Username and password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
+    /// Login username.
     pub username: String,
+    /// Login password.
     #[serde(default)]
     pub password: String,
 }
@@ -144,8 +150,11 @@ pub struct HankoSessionRequest {
 /// Session token plus the account id and username it belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthTokenResponse {
+    /// Session token to send as `Authorization: Bearer …`.
     pub token: String,
+    /// Account id the session belongs to.
     pub account_id: String,
+    /// Account username (falls back to the account id).
     pub username: String,
 }
 
@@ -748,13 +757,16 @@ pub async fn try_demo_handler(
 /// Current and new password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
+    /// The account's current password.
     pub current_password: String,
+    /// Replacement password.
     pub new_password: String,
 }
 
 /// Fresh session token issued after the password change.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChangePasswordResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
     /// Replacement session token after password change (previous sessions are revoked).
     pub token: String,
@@ -763,6 +775,7 @@ pub struct ChangePasswordResponse {
 /// Confirmation flag and the current password when one is set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteAccountRequest {
+    /// Must be `true`; anything else is rejected.
     pub confirm: bool,
     /// Required when the account has a local password.
     #[serde(default)]
@@ -772,12 +785,14 @@ pub struct DeleteAccountRequest {
 /// Deletion acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteAccountResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
 }
 
 /// Revocation acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogoutResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
 }
 

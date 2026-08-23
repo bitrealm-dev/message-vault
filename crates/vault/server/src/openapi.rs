@@ -11,6 +11,7 @@ use utoipa_axum::routes;
 use crate::config::AuthMode;
 use crate::server::AppState;
 
+/// Title used in the generated OpenAPI document.
 pub const API_TITLE: &str = "Message Vault HTTP API";
 
 #[derive(OpenApi)]
@@ -33,6 +34,7 @@ pub const API_TITLE: &str = "Message Vault HTTP API";
         (name = "Thread tags", description = "Labels on conversations")
     )
 )]
+/// OpenAPI document definition assembled from the utoipa-annotated handlers.
 pub struct ApiDoc;
 
 struct BearerAddon;
@@ -47,8 +49,12 @@ impl Modify for BearerAddon {
     }
 }
 
+/// Which auth endpoints the OpenAPI document includes.
 pub enum SpecAuth {
+    /// Auth endpoints enabled by the running auth mode; local register/login
+    /// only when [`AuthMode::Local`].
     Live(AuthMode),
+    /// Every auth endpoint, including local register/login regardless of mode.
     Full,
 }
 
@@ -122,6 +128,8 @@ pub fn api_openapi() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::server::asset_upload_abort_handler))
 }
 
+/// The full OpenAPI router: public auth endpoints for `auth` plus the
+/// session-backed API routes.
 pub fn openapi_router(auth: SpecAuth) -> OpenApiRouter<AppState> {
     auth_public_openapi(auth).merge(api_openapi())
 }

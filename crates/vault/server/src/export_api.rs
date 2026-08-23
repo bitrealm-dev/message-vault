@@ -9,35 +9,54 @@ use crate::db::sql::group_rows_by_id;
 use crate::search_query::MAX_SEARCH_QUERY_BYTES;
 use crate::search_query::{FtsNode, ParsedSearchQuery, SearchMode, validate_search_query};
 
+/// Default page size for an export query.
 pub const DEFAULT_EXPORT_LIMIT: usize = 100;
+/// Largest allowed page size for an export query.
 pub const MAX_EXPORT_LIMIT: usize = 500;
 /// Cap expensive OFFSET skips (prefer cursor pagination for deep pages).
 pub const MAX_EXPORT_OFFSET: usize = 50_000;
+
+/// Options for one exported page of messages.
 #[derive(Debug, Clone)]
 pub struct ExportPageOpts<'a> {
+    /// Vault account to export from.
     pub account_id: &'a str,
+    /// Search query string.
     pub query: &'a str,
+    /// Max messages on the page.
     pub limit: usize,
+    /// Row offset; not combined with `cursor`.
     pub offset: Option<usize>,
+    /// Opaque cursor from a previous page.
     pub cursor: Option<&'a str>,
+    /// Force a single source (used by the web layer).
     pub source_override: Option<&'a str>,
 }
 
+/// Options for one export count query.
 #[derive(Debug, Clone)]
 pub struct ExportCountOpts<'a> {
+    /// Vault account to count from.
     pub account_id: &'a str,
+    /// Search query string.
     pub query: &'a str,
+    /// Force a single source (used by the web layer).
     pub source_override: Option<&'a str>,
 }
 
 /// One page of exported messages.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessagesResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Query echoed back.
     pub query: String,
+    /// Messages on this page.
     pub messages: Vec<ExportMessage>,
+    /// Cursor for the next page; absent on the last page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// True when more rows matched than the page limit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
 }
@@ -45,8 +64,11 @@ pub struct ExportMessagesResponse {
 /// Match counts for an export query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportCountResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Query echoed back.
     pub query: String,
+    /// Matching messages.
     pub messages: u64,
     /// Distinct conversations with at least one matching message.
     pub conversations: u64,
@@ -59,66 +81,102 @@ pub struct ExportCountResponse {
 /// One exported message.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportMessage {
+    /// Message row id.
     pub id: i64,
+    /// Import source id.
     pub source: String,
+    /// Platform service, e.g. `imessage`, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    /// Export GUID for replies and grouping.
     pub guid: Option<String>,
+    /// Message timestamp (local).
     pub timestamp: String,
+    /// UTC timestamp, when known.
     pub timestamp_utc: Option<String>,
+    /// Ordering key within the conversation.
     pub sort_order: i64,
+    /// True for messages sent by the account owner.
     pub is_from_me: bool,
+    /// Sender handle for incoming messages.
     pub sender: Option<String>,
+    /// Subject line, when set.
     pub subject: Option<String>,
+    /// Body text, when present.
     pub text: Option<String>,
+    /// True for group announcements.
     pub is_announcement: bool,
+    /// True when part of a reply thread.
     pub is_reply: bool,
+    /// GUID of the message this replies to.
     pub thread_originator_guid: Option<String>,
+    /// Part index of the originator (for tapbacks).
     pub thread_originator_part: Option<i64>,
+    /// Replies in this thread.
     pub num_replies: i64,
+    /// The conversation this message belongs to.
     pub conversation: ExportConversation,
+    /// Attachments on this message.
     pub attachments: Vec<ExportAttachment>,
+    /// Reactions on this message.
     pub tapbacks: Vec<ExportTapback>,
 }
 
 /// The conversation a message belongs to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ExportConversation {
+    /// Conversation row id.
     pub id: i64,
+    /// Original chat id from the export.
     pub chat_identifier: String,
+    /// `individual` or `group`.
     pub conversation_type: String,
+    /// Group label, when set.
     pub group_title: Option<String>,
+    /// Participants of the conversation.
     pub participants: Vec<ExportParticipant>,
 }
 
 /// One participant of an exported conversation.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportParticipant {
+    /// Raw handle value.
     pub handle: String,
+    /// Per-service alias, when linked to a contact.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Vault contact display name, when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_name: Option<String>,
+    /// Linked contact id, when the handle is linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<i64>,
+    /// Handle type (`phone`, `email`, or username).
     pub handle_type: Option<String>,
 }
 
 /// One attachment of an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportAttachment {
+    /// Path inside the export.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// File name from the export.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_name: Option<String>,
+    /// MIME type, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Content fingerprint of the stored bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// True for sticker files.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_sticker: bool,
+    /// OCR/ASR transcription, when processed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription: Option<String>,
+    /// Why the file is missing, when it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_reason: Option<String>,
 }
@@ -126,18 +184,26 @@ pub struct ExportAttachment {
 /// One tapback reaction on an exported message.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ExportTapback {
+    /// Attachment part the reaction applies to.
     pub part_index: i64,
+    /// Reaction type, e.g. `love`.
     pub kind: String,
+    /// Emoji form of the reaction, when one exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emoji: Option<String>,
+    /// True when the account owner reacted.
     pub is_from_me: bool,
+    /// Reactor handle for incoming reactions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
 }
 
+/// Export query failure: caller error or server error.
 #[derive(Debug)]
 pub enum ExportQueryError {
+    /// Invalid or unsupported query.
     BadRequest(String),
+    /// Query execution failed.
     Internal(String),
 }
 
@@ -165,6 +231,7 @@ impl From<rusqlite::Error> for ExportQueryError {
 }
 
 impl ExportQueryError {
+    /// Build a [`ExportQueryError::BadRequest`] from a message.
     pub fn bad(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }

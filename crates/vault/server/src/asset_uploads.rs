@@ -23,7 +23,9 @@ const STALE_INCOMING_SECS: u64 = 24 * 60 * 60;
 /// Limits for multipart sessions (from `[server]` config; optional env override).
 #[derive(Debug, Clone, Copy)]
 pub struct UploadLimits {
+    /// Multipart part size advertised to clients.
     pub part_size: usize,
+    /// Max total size for one asset.
     pub max_bytes: u64,
     /// Retained for config compatibility. Multipart completion always verifies SHA-256.
     pub hash_threshold_bytes: u64,
@@ -57,20 +59,29 @@ impl UploadLimits {
     }
 }
 
+/// `manifest.json` of an in-progress multipart upload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadManifest {
+    /// SHA-256 fingerprint of the final assembled file.
     pub sha256: String,
+    /// Total byte size of the assembled file.
     pub bytes: u64,
+    /// Part size this upload was started with.
     pub part_size: usize,
+    /// MIME type of the file, when the client provided one.
     #[serde(default)]
     pub mime: Option<String>,
+    /// Part numbers received so far (0-based).
     #[serde(default)]
     pub received: BTreeSet<u32>,
 }
 
+/// Response to a multipart upload start.
 #[derive(Debug, Clone)]
 pub struct StartUpload {
+    /// Upload session id, echoed on every part and the complete request.
     pub upload_id: String,
+    /// Part size to use for this upload.
     pub part_size: usize,
 }
 

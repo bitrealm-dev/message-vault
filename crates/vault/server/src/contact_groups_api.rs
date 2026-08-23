@@ -39,9 +39,13 @@ const RESERVED_GROUP_NAMES: &[&str] = &[
 /// Create / rename / delete / membership failures.
 #[derive(Debug)]
 pub enum GroupError {
+    /// Invalid group name (empty, reserved, or too long).
     BadRequest(String),
+    /// The group does not exist.
     NotFound(String),
+    /// A group with this name already exists.
     Conflict(String),
+    /// Database or unexpected failure.
     Internal(String),
 }
 

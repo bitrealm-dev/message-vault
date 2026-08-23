@@ -29,9 +29,12 @@ use crate::import_media::{self, MediaMode};
 use crate::jsonl;
 use crate::models::{AttachmentRecord, ExportRecord, MessageRecord, clean_body};
 
+/// What happens to a source's messages that were imported before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMode {
+    /// Wipe the source's existing messages before importing.
     Replace,
+    /// Keep existing messages and add only new ones.
     Append,
 }
 
@@ -79,6 +82,7 @@ impl ImportMode {
         }
     }
 
+    /// Canonical flag value (`replace` or `append`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Replace => "replace",
@@ -87,6 +91,7 @@ impl ImportMode {
     }
 }
 
+/// Full import settings: paths, mode, media handling, and contact naming.
 #[derive(Debug, Clone)]
 pub struct ImportOptions<'a> {
     /// Used by [`import_jsonl_files`] (CLI/tests). Warm HTTP path opens its own connection.
@@ -98,10 +103,13 @@ pub struct ImportOptions<'a> {
     pub asset_root: &'a Path,
     /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
     /// Fixed source id (HTTP / `--source` override). Ignored when `source_from_jsonl`.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
     /// Fill missing `content_key` values during promote (needed before cross-source dedupe).
     pub fill_content_keys: bool,
@@ -111,6 +119,7 @@ pub struct ImportOptions<'a> {
     pub source_from_jsonl: bool,
     /// Required when `source_from_jsonl` to resolve per-source asset dirs.
     pub paths: Option<&'a PathsConfig>,
+    /// Attachment handling mode: copy, none, convert, compress.
     pub media: MediaMode,
     /// When `source_from_jsonl` + Replace: wipe these sources before import.
     pub wipe_sources: Option<Vec<String>>,
@@ -121,15 +130,25 @@ pub struct ImportOptions<'a> {
 /// Path/mode fields for [`ImportOptions::fixed`].
 #[derive(Debug, Clone, Copy)]
 pub struct FixedImportArgs<'a> {
+    /// Database path.
     pub db_path: &'a Path,
+    /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
+    /// Root for resolving relative attachment paths in JSONL.
     pub asset_root: &'a Path,
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
+    /// Fixed source id applied to every conversation.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
+    /// Fill missing `content_key` values during promote.
     pub fill_content_keys: bool,
+    /// Optional vault import session id (messages stamped on promote).
     pub import_id: Option<i64>,
 }
 
@@ -159,21 +178,37 @@ impl<'a> ImportOptions<'a> {
 /// Counters for one import run (staging and promote results).
 #[derive(Debug, Default, Clone, Serialize, utoipa::ToSchema)]
 pub struct ImportStats {
+    /// Conversations imported.
     pub conversations: u64,
+    /// Participant rows imported.
     pub participants: u64,
+    /// Messages imported.
     pub messages: u64,
+    /// Attachment records (message–media links) imported.
     pub attachments: u64,
+    /// Tapback reactions imported.
     pub tapbacks: u64,
+    /// JSONL files imported.
     pub files: u64,
+    /// Unique media files written to the asset store.
     pub assets_copied: u64,
+    /// Media files already present under the same fingerprint, skipped.
     pub assets_deduped: u64,
+    /// Attachment files referenced but not found on disk.
     pub assets_missing: u64,
+    /// Contacts loaded from the address book.
     pub contacts: u64,
+    /// Contact–handle links created.
     pub contact_handles: u64,
+    /// Contact–group links created.
     pub contact_group_links: u64,
+    /// True when the address book was not loaded (already present or no file).
     pub contacts_skipped: bool,
+    /// Messages hidden as duplicates within this import.
     pub messages_deduped: u64,
+    /// Messages added by an append-mode import.
     pub messages_appended: u64,
+    /// Import mode string (`replace` or `append`).
     pub mode: String,
     /// Flagged phone handles (ambiguous; review note set) inserted by this import.
     pub phones_needing_review: u64,
@@ -199,13 +234,21 @@ struct PreparedAttachment {
 /// Arguments for [`import_export`].
 #[derive(Debug, Clone, Copy)]
 pub struct ImportExportArgs<'a> {
+    /// Folder of `*.jsonl` conversation files to import.
     pub export_dir: &'a Path,
+    /// Database path.
     pub db_path: &'a Path,
+    /// Content-addressed asset store directory.
     pub assets_dir: &'a Path,
+    /// Optional address book to load: VCF or vCard CSV export.
     pub contacts: Option<&'a Path>,
+    /// Reload the address book even when contacts already exist.
     pub overwrite_contacts: bool,
+    /// Import mode: replace or append.
     pub mode: ImportMode,
+    /// Fixed source id applied to every conversation.
     pub source: &'a str,
+    /// Vault account the import writes into.
     pub account_id: &'a str,
 }
 

@@ -12,11 +12,14 @@ use crate::config::{Config, validate_source_id};
 #[derive(Parser)]
 #[command(name = "message-vault-server")]
 #[command(about = "Import and view messages in SQLite")]
+/// Command-line entry point parsed from argv.
 pub struct Cli {
+    /// Chosen subcommand and its options.
     #[command(subcommand)]
     pub command: Commands,
 }
 
+/// One subcommand per CLI operation: import, serve, and maintenance.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Import a message-ir JSONL folder (source from export.source unless --source)
@@ -88,6 +91,7 @@ pub enum Commands {
         #[arg(long)]
         account: String,
     },
+    /// Import an address book (VCF or vCard CSV) into an existing database.
     ImportContacts {
         /// Path to config.toml
         #[arg(long, default_value = "config/config.toml")]
@@ -166,10 +170,13 @@ pub enum Commands {
     },
 }
 
+/// Build the clap [`Command`] definition for `message-vault-server`.
 pub fn clap_command() -> Command {
     Cli::command()
 }
 
+/// Execute a parsed [`Cli`], dispatching to the matching subcommand
+/// implementation.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Import {

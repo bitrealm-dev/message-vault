@@ -8,8 +8,11 @@ use super::session_tokens::{generate_prefixed_token, hash_api_token, unix_secs_s
 /// Access granted to a named API token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiTokenScopes {
+    /// Import endpoints only.
     Import,
+    /// Export endpoints only.
     Export,
+    /// Both import and export endpoints.
     Both,
 }
 
@@ -28,6 +31,7 @@ impl ApiTokenScopes {
         }
     }
 
+    /// Canonical scope string (`import`, `export`, or `both`) used in token labels.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Import => "import",
@@ -50,16 +54,21 @@ impl ApiTokenScopes {
 /// Metadata for one API token (never includes plaintext or hash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenRow {
+    /// Token id (the secret itself is stored hashed, never in this row).
     pub id: String,
+    /// User-chosen label shown in Settings.
     pub label: String,
+    /// Access granted to the token.
     pub scopes: ApiTokenScopes,
     /// Masked secret for Settings, e.g. `mv-api-Sd..mE`.
     pub token_hint: String,
+    /// Creation time as a Unix-seconds string.
     pub created_at: String,
     /// Unix-seconds string when the token was last used; `None` if never.
     pub last_accessed_at: Option<String>,
     /// Unix-seconds expiry; `None` means no expiry.
     pub expires_at: Option<String>,
+    /// True when the token is disabled and rejects requests.
     pub disabled: bool,
 }
 
@@ -92,7 +101,9 @@ pub fn mask_api_token(token: &str) -> String {
 /// Account + scopes for a presented API token Bearer value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenAuth {
+    /// Account the token belongs to.
     pub account_id: String,
+    /// Access granted to the token.
     pub scopes: ApiTokenScopes,
 }
 

@@ -14,15 +14,21 @@ use crate::server::{ApiError, AppState, JoinBlocking, require_full_access, resol
 /// The signed-in account's profile.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountProfileResponse {
+    /// The signed-in account id.
     pub account_id: String,
+    /// Account username (falls back to the account id).
     pub username: String,
+    /// Display name, when set.
     pub preferred_name: Option<String>,
+    /// Phone handles linked to the account.
     pub phones: Vec<String>,
+    /// Email addresses linked to the account.
     pub emails: Vec<String>,
     /// True for the seeded demo account (cannot be deleted).
     pub is_demo: bool,
     /// True when `accounts.guest_status` is set (ready or assigned sample copy).
     pub is_guest: bool,
+    /// True when the account is marked read-only.
     pub read_only: bool,
 }
 
@@ -78,13 +84,16 @@ pub async fn account_profile_handler(
 /// One handle to link or unlink, with its platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileHandleInput {
+    /// Raw handle value, e.g. `+15555550100` or `alex@example.com`.
     pub handle: String,
+    /// Platform the handle belongs to: `phone`, `email`, or `whatsapp`.
     pub service: String,
 }
 
 /// Display name and handle changes.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AccountProfileUpdateRequest {
+    /// Display name to set; `None` (or empty) leaves the current name unchanged.
     #[serde(default)]
     pub preferred_name: Option<String>,
     /// Handles to add/link onto the account profile.
@@ -243,14 +252,18 @@ pub async fn account_profile_update_handler(
 /// Confirmation flag for deleting all messages.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeleteMessagesRequest {
+    /// Must be `true`; anything else is rejected with a 400.
     pub confirm: bool,
 }
 
 /// Counts of deleted conversations and attachment rows.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteMessagesResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Conversations deleted.
     pub conversations: u64,
+    /// Attachment rows deleted (on-disk files are removed too).
     pub attachments: u64,
 }
 

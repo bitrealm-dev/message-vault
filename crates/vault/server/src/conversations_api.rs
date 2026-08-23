@@ -9,7 +9,9 @@ use crate::db::sql::{fold_in_id_chunks, group_rows_by_id, in_placeholders};
 use crate::export_api::ExportQueryError;
 use crate::search_query::{CountComparison, parse_count_comparison};
 
+/// Default page size for a conversation list request.
 pub const DEFAULT_LIST_LIMIT: usize = 40;
+/// Largest allowed page size for a conversation list request.
 pub const MAX_LIST_LIMIT: usize = 100;
 /// Cap expensive OFFSET skips on conversation list pages.
 pub const MAX_LIST_OFFSET: usize = 50_000;
@@ -17,21 +19,29 @@ pub const MAX_LIST_OFFSET: usize = 50_000;
 /// One page of the conversation list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationListPage {
+    /// Conversations on this page.
     pub conversations: Vec<ConversationSummary>,
+    /// Total conversations matching the query.
     pub total: u64,
+    /// Page size used.
     pub limit: usize,
+    /// Page offset used.
     pub offset: usize,
 }
 
 /// One participant with display name and handle.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationParticipant {
+    /// Display name from the import or the vault contact.
     pub name: Option<String>,
     /// Per service+identity alias from `contact_handles` when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Raw handle value (phone, email, or username).
     pub handle: String,
+    /// Platform service, e.g. `imessage`.
     pub service: String,
+    /// Linked vault contact id, when the handle is linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_id: Option<String>,
 }
@@ -41,15 +51,23 @@ pub struct ConversationParticipant {
 pub struct ConversationSummary {
     /// Numeric `conversations.id`, serialized as a string for `in:<id>` queries.
     pub id: String,
+    /// Participants with names and handles.
     pub participants: Vec<ConversationParticipant>,
+    /// Messages in the conversation (excluding hidden duplicates).
     pub message_count: u64,
+    /// Timestamp of the last message.
     pub last_message_at: String,
+    /// Timestamp of the conversation's first message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_range_start: Option<String>,
+    /// Timestamp of the conversation's last message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_range_end: Option<String>,
+    /// Platform service of the conversation, e.g. `imessage`.
     pub service: String,
+    /// True for group conversations.
     pub is_group: bool,
+    /// Group label from the export, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Thread tags on this conversation.
@@ -718,15 +736,20 @@ fn load_conversation_sources(
 /// One backup source with message counts and share.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourceInfo {
+    /// Backup source name.
     pub backup_name: String,
+    /// Messages in this conversation from this source.
     pub message_count: u64,
+    /// Messages only this source has (not hidden duplicates).
     pub unique_count: u64,
+    /// Share of the conversation's unique messages, 0–100.
     pub percentage: f64,
 }
 
 /// Per-source counts for one conversation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConversationSourcesPage {
+    /// One entry per source that contributed messages.
     pub sources: Vec<ConversationSourceInfo>,
 }
 

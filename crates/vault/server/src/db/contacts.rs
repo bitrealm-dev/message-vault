@@ -35,12 +35,18 @@ pub fn contact_id_for_handle(
         .optional()?)
 }
 
+/// Counts from loading an address book into the vault.
 #[derive(Debug, Default)]
 pub struct ContactLoadStats {
+    /// Contacts written.
     pub contacts: u64,
+    /// Phone handles linked to contacts.
     pub phones: u64,
+    /// Contact–group links created.
     pub groups: u64,
+    /// Emails restored into `account_emails`.
     pub emails_restored: u64,
+    /// True when loading was skipped (contacts already loaded and not forced).
     pub skipped: bool,
     /// Phone handles written with a review note (ambiguous normalized form).
     pub phones_needing_review: u64,

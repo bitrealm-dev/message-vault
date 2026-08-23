@@ -1,4 +1,5 @@
 //! HTTP API and SQLite storage for browsing imported messages.
+#![warn(missing_docs)]
 
 pub mod api_tokens_api;
 pub mod asset_uploads;
@@ -31,6 +32,8 @@ pub mod thread_tags_api;
 
 use clap::Command;
 
+/// Clap command definition for the `message-vault-server` CLI; delegates to
+/// [`cli::clap_command`].
 pub fn clap_command() -> Command {
     cli::clap_command()
 }

@@ -10,7 +10,9 @@ use crate::db::schema;
 /// Contact points linked to an account, for profile display.
 #[derive(Debug, Clone)]
 pub struct AccountProfile {
+    /// Email addresses linked to the account.
     pub emails: Vec<String>,
+    /// Phone handles linked to the account.
     pub phones: Vec<String>,
 }
 
@@ -195,6 +197,7 @@ pub fn delete_account(conn: &Connection, account_id: &str) -> Result<()> {
 /// Stable id for the seeded demo account (`reset-demo`).
 pub const DEMO_ACCOUNT_ID: &str = "00000000-0000-0000-0000-00000000d001";
 
+/// True when `account_id` is the seeded demo account.
 pub fn is_demo_account(account_id: &str) -> bool {
     account_id == DEMO_ACCOUNT_ID
 }
@@ -212,9 +215,12 @@ pub fn account_is_read_only(conn: &Connection, account_id: &str) -> Result<bool>
     Ok(flag.unwrap_or(0) != 0)
 }
 
+/// Counts from deleting one account's messages.
 #[derive(Debug, Clone, Copy)]
 pub struct DeletedMessagesStats {
+    /// Conversations deleted (cascade removes their messages).
     pub conversations: u64,
+    /// Attachment rows deleted (files on disk are removed by the caller).
     pub attachments: u64,
 }
 
@@ -311,6 +317,8 @@ pub fn insert_account(
     Ok(())
 }
 
+/// The account's `guest_status` value (`ready` or `assigned`), or `None` when
+/// the account is not a guest.
 pub fn guest_status(conn: &Connection, account_id: &str) -> Result<Option<String>> {
     schema::ensure_accounts_schema(conn)?;
     let status: Option<Option<String>> = conn
@@ -323,10 +331,13 @@ pub fn guest_status(conn: &Connection, account_id: &str) -> Result<Option<String
     Ok(status.flatten().filter(|s| !s.is_empty()))
 }
 
+/// True when the account has any guest status set.
 pub fn is_guest_account(conn: &Connection, account_id: &str) -> Result<bool> {
     Ok(guest_status(conn, account_id)?.is_some())
 }
 
+/// Insert a new guest account with status `ready`, no password, and
+/// `read_only = 0`.
 pub fn insert_guest_account(
     conn: &Connection,
     id: &str,
@@ -345,6 +356,7 @@ pub fn insert_guest_account(
     Ok(())
 }
 
+/// Overwrite an account's `guest_status` value.
 pub fn set_guest_status(conn: &Connection, account_id: &str, status: &str) -> Result<()> {
     conn.execute(
         "UPDATE accounts SET guest_status = ?2 WHERE id = ?1",

@@ -15,16 +15,23 @@ use crate::server::{
 /// One named API token as shown in Settings: label, scopes, and masked secret.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiTokenItem {
+    /// Token id (the secret itself is stored hashed).
     pub id: String,
+    /// User-chosen label shown in Settings.
     pub label: String,
+    /// Scope string (`import`, `export`, or `both`).
     pub scopes: String,
     /// Masked secret for Settings (e.g. `mv-api-Sd..mE`).
     pub token_hint: String,
+    /// Creation time as a Unix-seconds string.
     pub created_at: String,
+    /// Unix-seconds string of last use; absent when never used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_accessed_at: Option<String>,
+    /// Unix-seconds expiry; absent means no expiry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// True when the token is disabled and rejects requests.
     pub disabled: bool,
 }
 
@@ -56,12 +63,14 @@ fn map_label_error(e: anyhow::Error) -> ApiError {
 /// The account's named API tokens.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListApiTokensResponse {
+    /// The account's tokens.
     pub items: Vec<ApiTokenItem>,
 }
 
 /// Body for creating a token: label, scopes, optional expiry.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateApiTokenRequest {
+    /// User-chosen label shown in Settings.
     pub label: String,
     /// `import`, `export`, or `both` (default `both`).
     #[serde(default = "default_scopes")]
@@ -84,10 +93,15 @@ fn open_accounts_conn(db: &std::path::Path) -> anyhow::Result<Connection> {
 /// The created token, including its plaintext secret (returned once).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateApiTokenResponse {
+    /// Token id.
     pub id: String,
+    /// User-chosen label.
     pub label: String,
+    /// Scope string (`import`, `export`, or `both`).
     pub scopes: String,
+    /// Creation time as a Unix-seconds string.
     pub created_at: String,
+    /// Unix-seconds expiry; absent means no expiry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     /// Plaintext secret — returned once at creation.
@@ -99,20 +113,25 @@ pub struct CreateApiTokenResponse {
 /// Deletion acknowledgement.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteApiTokenResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
 }
 
 /// Body for renaming a token.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RenameApiTokenRequest {
+    /// Replacement label.
     pub label: String,
 }
 
 /// The renamed token's id and stored label.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RenameApiTokenResponse {
+    /// Always true when a response is returned.
     pub ok: bool,
+    /// Token id that was renamed.
     pub id: String,
+    /// Stored label after the rename.
     pub label: String,
 }
 

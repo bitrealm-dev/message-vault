@@ -53,7 +53,9 @@ pub enum AuthCapability {
 /// Authenticated vault account from a session token or named API token.
 #[derive(Debug, Clone)]
 pub struct AuthIdentity {
+    /// The authenticated vault account.
     pub account_id: String,
+    /// What this credential is allowed to do.
     pub capability: AuthCapability,
 }
 
@@ -148,8 +150,10 @@ pub fn require_import_or_export_access(auth: &AuthIdentity) -> Result<(), ApiErr
     }
 }
 
+/// Shared server state passed to every HTTP handler.
 #[derive(Clone)]
 pub struct AppState {
+    /// Loaded configuration.
     pub cfg: Arc<Config>,
     /// Warm connection for short import-session SQL only (`POST /v1/imports`,
     /// complete, import-id verify / one-shot start). Bulk `POST /v1/import` and
@@ -230,15 +234,24 @@ pub(crate) struct ErrorBody {
     pub error: String,
 }
 
+/// API error returned as a JSON envelope with a matching HTTP status.
 #[derive(Debug)]
 pub enum ApiError {
+    /// `401` — no valid session or API token.
     Unauthorized(String),
+    /// `403` — the credential lacks permission for this route.
     Forbidden(String),
+    /// `400` — malformed request or invalid parameter.
     BadRequest(String),
+    /// `409` — the request conflicts with current state.
     Conflict(String),
+    /// `404` — the requested resource does not exist.
     NotFound(String),
+    /// `429` — rate limit hit.
     TooManyRequests(String),
+    /// `503` — a dependency is temporarily unavailable.
     ServiceUnavailable(String),
+    /// `500` — unexpected failure.
     Internal(String),
 }
 

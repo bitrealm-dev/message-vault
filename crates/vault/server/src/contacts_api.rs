@@ -13,7 +13,9 @@ use crate::db::handles::infer_handle_type_from_shape;
 use crate::db::sql::in_placeholders;
 use crate::export_api::ExportQueryError;
 
+/// Default page size for a contact list request.
 pub const DEFAULT_LIST_LIMIT: usize = 40;
+/// Largest allowed page size for a contact list request.
 pub const MAX_LIST_LIMIT: usize = 500;
 /// Cap expensive OFFSET skips on contact list pages.
 pub const MAX_LIST_OFFSET: usize = 50_000;
@@ -21,17 +23,24 @@ pub const MAX_LIST_OFFSET: usize = 50_000;
 /// One page of the contact list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactListPage {
+    /// Contacts on this page.
     pub contacts: Vec<ContactSummary>,
+    /// Total contacts matching the query.
     pub total: u64,
+    /// Page size used.
     pub limit: usize,
+    /// Page offset used.
     pub offset: usize,
 }
 
 /// Contact row for the list: name, handles, groups.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummary {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Number of handles linked to the contact.
     pub handle_count: u64,
     /// Normalized (and raw when distinct) handle values for client-side filter.
     #[serde(default)]
@@ -46,25 +55,36 @@ pub struct ContactSummary {
 /// One handle on a contact with service and message stats.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactHandleInfo {
+    /// Normalized handle value.
     pub handle: String,
+    /// Platform service, e.g. `whatsapp`, when the handle is linked with one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    /// Per-service alias from the address book, when linked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_alias: Option<String>,
+    /// Date of the first message involving this handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
+    /// Date of the last message involving this handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
+    /// 1:1 conversations this handle appears in.
     pub individual_conversations: u64,
+    /// Group conversations this handle appears in.
     pub group_conversations: u64,
+    /// Messages in 1:1 conversations involving this handle.
     pub individual_message_count: u64,
+    /// Messages in group conversations involving this handle.
     pub group_message_count: u64,
 }
 
 /// A handle value plus optional platform service.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactHandlePayload {
+    /// Handle value to link.
     pub handle: String,
+    /// Platform service (`phone`, `email`, or `whatsapp`); inferred when omitted.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -72,8 +92,11 @@ pub struct ContactHandlePayload {
 /// The previous and new handle values for a link change.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactUpdateHandlePayload {
+    /// Handle value currently linked.
     pub previous_handle: String,
+    /// Replacement handle value.
     pub handle: String,
+    /// Platform service for the new handle.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -81,7 +104,9 @@ pub struct ContactUpdateHandlePayload {
 /// The handle to unlink.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactRemoveHandlePayload {
+    /// Handle value to unlink.
     pub handle: String,
+    /// Platform service, when the handle is linked with one.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -89,12 +114,16 @@ pub struct ContactRemoveHandlePayload {
 /// Body for `POST /v1/export/contacts/{id}`. Exactly one mutation field should be set.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactMutationBody {
+    /// New display name; `None` leaves it unchanged.
     #[serde(default)]
     pub name: Option<String>,
+    /// Handle link to add.
     #[serde(default)]
     pub add_handle: Option<ContactHandlePayload>,
+    /// Handle link to replace.
     #[serde(default)]
     pub update_handle: Option<ContactUpdateHandlePayload>,
+    /// Handle link to remove.
     #[serde(default)]
     pub remove_handle: Option<ContactRemoveHandlePayload>,
 }
@@ -102,11 +131,17 @@ pub struct ContactMutationBody {
 /// Full contact view: every handle with stats, plus totals across them.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactDetail {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Every handle linked to the contact, with per-handle stats.
     pub handles: Vec<ContactHandleInfo>,
+    /// 1:1 conversations the contact appears in.
     pub direct_conversations: u64,
+    /// Group conversations the contact appears in.
     pub group_conversations: u64,
+    /// Messages across all of the contact's conversations.
     pub total_messages: u64,
     /// When the contact’s address-book shape last changed (`datetime('now')`).
     pub last_modified: String,
@@ -118,6 +153,7 @@ pub struct ContactDetail {
 /// Body for `POST /v1/export/contacts/summaries`.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ContactSummariesBody {
+    /// Contact ids to summarize; an empty list covers every contact.
     #[serde(default)]
     pub ids: Vec<i64>,
 }
@@ -125,21 +161,30 @@ pub struct ContactSummariesBody {
 /// Contact-level first/last seen and message counts for the selection table.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSelectionSummary {
+    /// Contact id.
     pub id: i64,
+    /// Contact display name.
     pub name: String,
+    /// Date of the contact's first message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_date: Option<String>,
+    /// Date of the contact's last message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_date: Option<String>,
+    /// 1:1 conversations with the contact.
     pub individual_conversations: u64,
+    /// Group conversations with the contact.
     pub group_conversations: u64,
+    /// Messages in 1:1 conversations with the contact.
     pub individual_message_count: u64,
+    /// Messages in group conversations with the contact.
     pub group_message_count: u64,
 }
 
 /// Response for `POST /v1/export/contacts/summaries`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContactSummariesPage {
+    /// One summary per requested contact.
     pub contacts: Vec<ContactSelectionSummary>,
 }
 
