@@ -81,8 +81,8 @@ pub fn auth_public_openapi(auth: SpecAuth) -> OpenApiRouter<AppState> {
 pub fn api_openapi() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(crate::server::health))
-        .routes(routes!(crate::server::auth_mode_handler))
-        .routes(routes!(crate::server::auth_check))
+        .routes(routes!(crate::auth::auth_mode_handler))
+        .routes(routes!(crate::auth::auth_check))
         .routes(routes!(crate::auth::logout_handler))
         .routes(routes!(crate::auth::change_password_handler))
         .routes(routes!(crate::auth::delete_account_handler))

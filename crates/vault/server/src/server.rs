@@ -652,134 +652,6 @@ pub(crate) async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok\n")
 }
 
-/// Sign-in mode and Hanko URL so clients can render the right login form.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AuthModeResponse {
-    pub mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hanko_api_url: Option<String>,
-    pub try_demo: bool,
-}
-
-/// Returns the server's configured authentication mode so clients
-/// can render the correct login form before authenticating.
-#[utoipa::path(
-    get,
-    path = "/v1/auth/mode",
-    tag = "Auth",
-    responses((status = 200, description = "Sign-in mode", body = AuthModeResponse))
-)]
-pub(crate) async fn auth_mode_handler(State(state): State<AppState>) -> Json<AuthModeResponse> {
-    let mode = crate::config::AuthMode::from_env();
-    let hanko_api_url = std::env::var("HANKO_API_URL")
-        .ok()
-        .or_else(|| std::env::var("NEXT_PUBLIC_HANKO_API_URL").ok());
-    Json(AuthModeResponse {
-        mode: match mode {
-            crate::config::AuthMode::Hanko => "hanko".into(),
-            crate::config::AuthMode::Local => "local".into(),
-        },
-        hanko_api_url,
-        try_demo: state.guest.enabled,
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct AuthCheckQuery {
-    #[serde(default)]
-    account: Option<String>,
-}
-
-/// Token check result: account, username, sources.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct AuthCheckResponse {
-    ok: bool,
-    sources: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_ok: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    admin: Option<bool>,
-}
-
-/// Check the Bearer token and return the account it resolves to, its username,
-/// and its import sources.
-#[utoipa::path(
-    get,
-    path = "/v1/auth/check",
-    tag = "Auth",
-    security(("bearer" = [])),
-    params(("account" = Option<String>, Query, description = "Must match the token account")),
-    responses(
-        (status = 200, body = AuthCheckResponse),
-        (status = 401, body = crate::server::ErrorBody),
-        (status = 403, body = crate::server::ErrorBody)
-    )
-)]
-pub(crate) async fn auth_check(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<AuthCheckQuery>,
-) -> Result<Json<AuthCheckResponse>, ApiError> {
-    let auth = resolve_auth(&headers, &state).await?;
-    let account_id = auth.account_id;
-    let username = load_username(&state.cfg.paths.db, &account_id).await?;
-
-    if let Some(q) = nonempty_query_account(query.account.as_deref()) {
-        let resolved = lookup_or_resolve_query(&state.cfg.paths.db, q).await?;
-        let matches = match resolved {
-            Some(resolved) => resolved == account_id,
-            None => q == account_id,
-        };
-        if !matches {
-            let for_user = username.as_deref().unwrap_or(account_id.as_str());
-            return Err(ApiError::Forbidden(format!(
-                "account query does not match token's account (token is for {for_user})"
-            )));
-        }
-    }
-    let sources = list_account_sources(&state.cfg.paths.db, &account_id).await?;
-    Ok(Json(AuthCheckResponse {
-        ok: true,
-        sources,
-        account_id: Some(account_id),
-        username,
-        account_ok: Some(true),
-        admin: None,
-    }))
-}
-
-async fn list_account_sources(db_path: &Path, account_id: &str) -> Result<Vec<String>, ApiError> {
-    let account_id = account_id.to_string();
-    // Read-only: do not run ensure_vault_schema (avoids write locks on auth).
-    with_configured_db(db_path, "sources list task", move |conn| {
-        dedupe::source_priority_from_db(conn, &account_id)
-    })
-    .await
-}
-
-async fn lookup_or_resolve_query(
-    db_path: &Path,
-    account_ref: &str,
-) -> Result<Option<String>, ApiError> {
-    let account_ref = account_ref.to_string();
-    with_configured_db(db_path, "account lookup task", move |conn| {
-        account_profile::lookup_account_ref(conn, &account_ref)
-    })
-    .await
-}
-
-async fn load_username(db_path: &Path, account_id: &str) -> Result<Option<String>, ApiError> {
-    let account_id = account_id.to_string();
-    with_configured_db(db_path, "username lookup task", move |conn| {
-        account_profile::username_for_account(conn, &account_id)
-    })
-    .await
-}
-
 async fn resolve_account_ref_async(db_path: &Path, account_ref: &str) -> Result<String, ApiError> {
     let db = db_path.to_path_buf();
     let account_ref = account_ref.to_string();
@@ -866,7 +738,7 @@ async fn resolve_import_account(
     Ok(auth.account_id.clone())
 }
 
-fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
+pub(crate) fn nonempty_query_account(value: Option<&str>) -> Option<&str> {
     let raw = value?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -3291,7 +3163,7 @@ mod tests {
     #[tokio::test]
     async fn auth_mode_includes_try_demo_flag() {
         let (_tmp, state, _token, _import_id) = test_state();
-        let Json(value) = auth_mode_handler(State(state)).await;
+        let Json(value) = crate::auth::auth_mode_handler(State(state)).await;
         assert!(!value.try_demo);
         assert!(!value.mode.is_empty());
     }
