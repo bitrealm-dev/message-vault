@@ -2339,6 +2339,7 @@ dependencies = [
  "mail-builder",
  "mailparse",
  "message-csv",
+ "message-ir",
  "serde",
  "serde_json",
 ]
@@ -2402,8 +2403,10 @@ dependencies = [
 name = "message-csv"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "hex",
+ "message-ir",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2413,9 +2416,10 @@ dependencies = [
 name = "message-ir"
 version = "0.1.0"
 dependencies = [
- "message-csv",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]
