@@ -1,5 +1,7 @@
 //! Shared US-centric phone-number parsing for message converters.
 
+#![warn(missing_docs)]
+
 use std::collections::HashSet;
 use std::fmt;
 
@@ -31,6 +33,8 @@ impl fmt::Display for PhoneRegion {
 }
 
 impl PhoneRegion {
+    /// Parse a CLI string (`usa`/`us`/`international`/`intl`, case-insensitive);
+    /// `None` for unknown input.
     pub fn parse_cli(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "usa" | "us" => Some(Self::Usa),
@@ -52,7 +56,7 @@ impl PhoneRegion {
 }
 
 /// Strip non-digits and a leading US country code `1`.
-/// Returns `None` when fewer than [`MIN_PHONE_DIGITS`] remain.
+/// Returns `None` when too few digits remain.
 pub fn sanitize_number(num: &str) -> Option<String> {
     if num.is_empty() {
         return None;
@@ -153,7 +157,11 @@ pub fn normalize_uncertain_reason(raw: &str, region: PhoneRegion) -> String {
 /// review note when the value is ambiguous.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardedNormalize {
+    /// The phone value to store: E.164 (`+1…`) when the parse was certain,
+    /// otherwise raw digits without a `+` prefix.
     pub normalized: String,
+    /// `Some(reason)` when the value was ambiguous and stored digits-as-is;
+    /// `None` when certain.
     pub note: Option<String>,
 }
 
@@ -186,6 +194,13 @@ pub struct OwnerHandleSet {
 }
 
 impl OwnerHandleSet {
+    /// Build the set from raw `(value, HandleType)` pairs; errors when the list
+    /// is empty or a phone has no usable digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `handles` is empty, or when a `HandleType::Phone`
+    /// value sanitizes to no usable digits.
     pub fn new(handles: &[(String, HandleType)]) -> Result<Self> {
         if handles.is_empty() {
             bail!("owner handle required: pass --owner-phone or --owner-handle");
@@ -209,6 +224,8 @@ impl OwnerHandleSet {
         Ok(Self { handles: set })
     }
 
+    /// Whether a raw handle value plus type matches an owner in the set after
+    /// the same normalization.
     pub fn is_owner(&self, raw: &str, handle_type: HandleType) -> bool {
         let normalized = match handle_type {
             HandleType::Phone => {
