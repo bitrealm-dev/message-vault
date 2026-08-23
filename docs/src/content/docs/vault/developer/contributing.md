@@ -85,9 +85,9 @@ When forking, you only need the default `main` branch.
 
 You run two processes at the same time: the vault, and a UI that talks to it. The vault is the HTTP API and the SQLite database; it has to be running before anyone can sign in.
 
-Work from the repository root in both terminals. The first server compile takes several minutes.
+Work from the repository root in two terminals. The first server compile takes several minutes.
 
-**Terminal 1 — start the vault**
+### Start the vault (terminal 1)
 
 `--reset-demo` deletes `data/` and loads a sample inbox. Use it on the first run, or whenever you want a fresh sample inbox.
 
@@ -99,19 +99,7 @@ Leave this terminal running. The API listens at **http://127.0.0.1:8080**.
 
 To browse the tables while developing, add `--sqlweb` (needs `sqlite-web` from the previous step). That UI is **http://127.0.0.1:8081**.
 
-**Terminal 2 — open the website**
-
-Install the frontend packages once, then start the Vite UI. Vite is the local web server for `web/`.
-
-```bash title="Start the website"
-cd web && npm ci && npm run dev
-```
-
-Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account is read-only; create a separate account to test import or other writes.
-
-Later sessions, skip `npm ci` unless `web/package-lock.json` changed. Skip `--reset-demo` unless the sample data should be rebuilt.
-
-#### Vault flags
+### Vault flags
 
 The first run uses `--reset-demo`. Later sessions, start with no flags so `data/` stays:
 
@@ -121,19 +109,21 @@ The first run uses `--reset-demo`. Later sessions, start with no flags so `data/
 
 `--reset` wipes `data/` and starts empty (no sample inbox). Don't combine `--reset` and `--reset-demo`. `--sqlweb` works with any of these.
 
-#### Serve the website from the vault (optional)
+### Open the website (terminal 2)
 
-Vite is the usual UI. To have the vault itself serve the website at **http://127.0.0.1:8080**:
+Install the frontend packages once, then start the Vite UI. Vite is the local web server for `web/`.
 
-```bash title="Build the website into static/"
-./scripts/build-static.sh
+```bash title="Start the website"
+cd web && npm ci && npm run dev
 ```
 
-That copies `web/dist` into `static/`. Don't run the host vault and the [Docker](/vault/developer/docker/) Compose stack at the same time; both use port 8080.
+Open **http://localhost:5173**. Sign in as username `demo` with an empty password. That account is read-only; create a separate account to test import or other writes.
 
-**Desktop app**
+Later sessions, skip `npm ci` unless `web/package-lock.json` changed.
 
-The desktop app is a native window (Tauri) around the same `web/` UI. Use it when changing `src-tauri/` or testing import from a backup. Don't run `npm run dev` in another terminal at the same time — Tauri starts Vite itself.
+### Desktop app
+
+The desktop app is the same `web/` UI in a native window (Tauri). Use it instead of the Vite website when changing `src-tauri/` or testing import from a backup. Don't run `npm run dev` at the same time — Tauri starts Vite itself.
 
 ```bash title="Start the desktop app"
 cd web && npm ci && cd ..
@@ -150,7 +140,17 @@ cargo tauri build
 
 `cargo tauri build` is not for day-to-day UI work — it doesn't reload. Use `cargo tauri dev` for that.
 
-#### Stopping and restarting
+### Serve the website from the vault (optional)
+
+Vite is the usual UI. To have the vault itself serve the website at **http://127.0.0.1:8080**:
+
+```bash title="Build the website into static/"
+./scripts/build-static.sh
+```
+
+That copies `web/dist` into `static/`. Don't run the host vault and the [Docker](/vault/developer/docker/) Compose stack at the same time; both use port 8080.
+
+### Stopping and restarting
 
 Ctrl+C in terminal 1 stops the vault (and the SQLite UI if it was started). Ctrl+C in terminal 2 stops the website or the desktop app.
 
@@ -158,7 +158,7 @@ After edits under `crates/vault/server/`, restart terminal 1. After edits under 
 
 ## Make code changes
 
-Rust doc comments and utoipa annotations follow the [Rust doc style](/vault/developer/rustdoc-style/) guide.
+Rust doc comments and utoipa annotations follow the [Rust doc style](/vault/developer/rustdoc-style/) guide. If you change a CLI, update its page under [`reference/cli/`](/vault/developer/reference/cli/).
 
 Open a GitHub issue before starting the work, so the later pull request can link to it. Use the bug report or feature request form. You don't need to wait for a reply before coding. If there's no reply after 5 business days, comment on the issue.
 
@@ -177,6 +177,8 @@ Keep the branch current with `main` while working (merge or rebase). One pull re
 Each commit should be one idea. Don't mix a bug fix with a rename, or a feature with formatting of unrelated files.
 
 Prefer `feat:`, `fix:`, or `docs:` at the start of the subject when it fits; other prefixes are fine too. The subject should say what changed. Add a short body when the reason isn't obvious, and mention the issue (`Ref: #123`).
+
+Never commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Tests use committed fixtures under `crates/*/tests/fixtures/`.
 
 ### Example
 
@@ -227,7 +229,7 @@ Open **http://localhost:4321/** for the home page, or **http://localhost:4321/va
 
 Run the checks, then open the pull request against `main`. The first compile and the first `npm ci` each take several minutes.
 
-### Before it is ready
+### Run the checks
 
 From the repository root:
 
@@ -240,6 +242,14 @@ That script runs `./scripts/format-all.sh` first (rustfmt on the workspace and `
 Clippy is not part of that script or of CI. Run `./scripts/lint-all.sh` locally to run Clippy on the workspace (except the legacy Slint GUI crate) and `src-tauri/`, then the web linter.
 
 While iterating on one crate, `cargo test -p go-sms-pro-exporter` is enough. Exporter smoke tests use committed fixtures; personal phone backups are not required.
+
+### Before you submit
+
+- [ ] Started from the latest `main` on a prefixed branch (`feat/`, `fix/`, `docs/`)
+- [ ] The pull request does one job
+- [ ] `./scripts/check-pr.sh` passes, and formatter rewrites are committed
+- [ ] An issue exists and the pull request links it (`Ref: #123`)
+- [ ] The style matches the surrounding code
 
 ### Keep the branch current
 
@@ -255,7 +265,7 @@ Rebase is allowed; merge is enough. Don't force-push unless the branch is only u
 
 ### Open the pull request
 
-A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form; the default template is enough for most changes. Feature and bug-fix templates also exist, but they aren't required.
+A pull request asks to merge the branch into `main`. Open it against `main` on [bitrealm-io/message-vault](https://github.com/bitrealm-io/message-vault). Use the GitHub pull request form; the default template is enough for most changes. Feature and bug-fix templates also exist, but they aren't required. Open it as a draft if you want early feedback.
 
 Link the issue (`Ref: #123`). Write `Fixes #123` in the description if this change should close that issue.
 
@@ -267,21 +277,15 @@ From the repository root, this also works:
 gh pr create --base main --title "feat: add support for x" --body "Ref: #123"
 ```
 
-### After it is open
+### After you submit
 
-GitHub runs checks. Fix failing checks. Reply to review comments on the same pull request.
-
-## Contribution rules
-
-1. **Keep changes focused.** Prefer small PRs that do one job.
-2. **Match existing style.** Follow nearby crates; avoid drive-by renames.
-3. **No secrets or personal data.** Don't commit passwords, vault keys, certificates, credential `.env` files, or real message backups. Use fixtures under `crates/*/tests/fixtures/`.
-4. **Respect licenses.** See [License](#license).
-5. **Document CLI changes** on the matching page under `docs/src/content/docs/vault/developer/reference/cli/`.
+- [ ] Watch the status checks and fix failures
+- [ ] Reply to review comments on the pull request
+- [ ] Keep the branch current with `main` until it is merged
 
 ## License
 
-Distributed under the Fair Core License. See [LICENSE.md](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) for the full text.
+Distributed under the Fair Core License. Contributions are made under that same license. See [LICENSE.md](https://github.com/bitrealm-io/message-vault/blob/main/LICENSE.md) for the full text.
 
 ## Release
 
