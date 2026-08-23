@@ -195,16 +195,7 @@ fn prepare_conversation(convo: &mut PendingConversation, report: &mut ExportRepo
         return false;
     }
     convo.messages.sort_by_key(|m| m.sort_key);
-    convo.messages.retain(|m| {
-        if format_local_ts(m.sort_key).is_some() {
-            true
-        } else {
-            report.skipped_invalid_date += 1;
-            false
-        }
-    });
-    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
-    !convo.messages.is_empty()
+    message_vault_io_core::prune_and_finish_conversation(convo, report, |k| k)
 }
 
 fn is_me(s: &str) -> bool {
@@ -363,13 +354,19 @@ fn pending_to_document(
         }]
     };
 
-    let export = ExportMeta {
-        source: EXPORT_SOURCE.into(),
-        tool: EXPORT_TOOL.into(),
-        tool_version: EXPORT_TOOL_VERSION.into(),
+    let owner_meta = ExportMeta {
+        source: String::new(),
+        tool: String::new(),
+        tool_version: String::new(),
         owner_handle: None,
         owner_display_name: None,
     };
+    let export = message_vault_io_core::export_meta(
+        EXPORT_SOURCE,
+        EXPORT_TOOL,
+        EXPORT_TOOL_VERSION,
+        &owner_meta,
+    );
     let (owner_handle, owner_display) = owner_sender(&export);
 
     let mut messages = Vec::with_capacity(convo.messages.len());

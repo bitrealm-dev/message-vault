@@ -6,6 +6,7 @@
 
 use anyhow::{Context, bail};
 use message_csv::DateRange;
+use message_ir::PendingConversation;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -217,6 +218,44 @@ pub fn prepare_outputs(
         resolved.push(input);
     }
     Ok((resolved, output))
+}
+
+/// Drop messages with unrepresentable timestamps and finalize a pending
+/// conversation. Returns whether any message remains.
+///
+/// `to_secs` converts a message sort key to Unix seconds (exporters that
+/// store milliseconds pass `|k| k / 1000`).
+pub fn prune_and_finish_conversation(
+    convo: &mut PendingConversation,
+    report: &mut ExportReport,
+    to_secs: impl Fn(i64) -> i64,
+) -> bool {
+    convo.messages.retain(|m| {
+        if message_csv::format_local_ts(to_secs(m.sort_key)).is_some() {
+            true
+        } else {
+            report.skipped_invalid_date += 1;
+            false
+        }
+    });
+    convo.has_attachments = convo.messages.iter().any(|m| !m.attachments.is_empty());
+    !convo.messages.is_empty()
+}
+
+/// Standard export metadata from a pending conversation's provenance.
+pub fn export_meta(
+    source: &str,
+    tool: &str,
+    tool_version: &str,
+    owner: &message_ir::ExportMeta,
+) -> message_ir::ExportMeta {
+    message_ir::ExportMeta {
+        source: source.to_string(),
+        tool: tool.to_string(),
+        tool_version: tool_version.to_string(),
+        owner_handle: owner.owner_handle.clone(),
+        owner_display_name: owner.owner_display_name.clone(),
+    }
 }
 
 #[cfg(test)]

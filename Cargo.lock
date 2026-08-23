@@ -4203,6 +4203,7 @@ dependencies = [
  "clap",
  "media",
  "message-csv",
+ "message-ir",
  "rust-ini",
  "tempfile",
 ]

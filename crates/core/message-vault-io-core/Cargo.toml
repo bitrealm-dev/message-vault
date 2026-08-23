@@ -10,6 +10,7 @@ anyhow = "1.0.103"
 chrono = "0.4.44"
 clap = { version = "4.5", features = ["derive"], optional = true }
 message-csv = { path = "../../libs/csv" }
+message-ir = { path = "../../libs/ir" }
 media = { path = "../../libs/media" }
 rust-ini = "0.21"
 
