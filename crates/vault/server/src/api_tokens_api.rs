@@ -51,12 +51,11 @@ impl From<api_tokens::ApiTokenRow> for ApiTokenItem {
 }
 
 /// Label validation rejections are the caller's fault; anything else is a server error.
-fn map_label_error(e: anyhow::Error) -> ApiError {
-    let msg = e.to_string();
-    if msg.contains("label is required") || msg.contains("at most 120") {
-        ApiError::BadRequest(msg)
-    } else {
-        ApiError::Internal(msg)
+fn map_label_error(e: crate::db::api_tokens::ApiTokenMutationError) -> ApiError {
+    use crate::db::api_tokens::ApiTokenMutationError;
+    match e {
+        ApiTokenMutationError::InvalidLabel(err) => ApiError::BadRequest(err.to_string()),
+        ApiTokenMutationError::Other(err) => ApiError::Internal(err.to_string()),
     }
 }
 
@@ -198,14 +197,15 @@ pub async fn create_api_token_handler(
     let db = state.cfg.paths.db.clone();
 
     let created = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(
+        #[allow(clippy::type_complexity)]
+        move || -> Result<(
             String,
             String,
             ApiTokenScopes,
             String,
             Option<String>,
             String,
-        )> {
+        ), crate::db::api_tokens::ApiTokenMutationError> {
             let conn = open_accounts_conn(&db)?;
             api_tokens::create_api_token(&conn, &account_id, &label, scopes, expires_in_days)
         },
@@ -291,12 +291,14 @@ pub async fn rename_api_token_handler(
     let db = state.cfg.paths.db.clone();
     let id_for_resp = id.clone();
 
-    let updated = tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, String)> {
-        let conn = open_accounts_conn(&db)?;
-        let trimmed = label.trim().to_string();
-        let ok = api_tokens::update_api_token_label(&conn, &account_id, &id, &trimmed)?;
-        Ok((ok, trimmed))
-    })
+    let updated = tokio::task::spawn_blocking(
+        move || -> Result<(bool, String), crate::db::api_tokens::ApiTokenMutationError> {
+            let conn = open_accounts_conn(&db)?;
+            let trimmed = label.trim().to_string();
+            let ok = api_tokens::update_api_token_label(&conn, &account_id, &id, &trimmed)?;
+            Ok((ok, trimmed))
+        },
+    )
     .await
     .join_map("rename API token task", map_label_error)?;
 
@@ -308,4 +310,38 @@ pub async fn rename_api_token_handler(
         id: id_for_resp,
         label: updated.1,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::api_tokens::{ApiTokenLabelError, ApiTokenMutationError};
+
+    #[test]
+    fn label_errors_map_to_bad_request_with_the_same_message() {
+        let err = map_label_error(ApiTokenMutationError::InvalidLabel(
+            ApiTokenLabelError::Required,
+        ));
+        match err {
+            ApiError::BadRequest(msg) => assert_eq!(msg, "label is required"),
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+
+        let err = map_label_error(ApiTokenMutationError::InvalidLabel(
+            ApiTokenLabelError::TooLong,
+        ));
+        match err {
+            ApiError::BadRequest(msg) => assert_eq!(msg, "label must be at most 120 characters"),
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_errors_map_to_internal() {
+        let err = map_label_error(ApiTokenMutationError::Other(anyhow::anyhow!("boom")));
+        match err {
+            ApiError::Internal(msg) => assert_eq!(msg, "boom"),
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
 }
