@@ -3,6 +3,8 @@
 //! Writers produce a single backup file (`smses.xml`) with root
 //! `<smses count="N">`. See the [SMS Backup & Restore XML output](https://bitrealm.io/vault/developer/formats/sms-backup-restore-xml/).
 
+#![warn(missing_docs)]
+
 mod read;
 
 pub use read::{
@@ -20,21 +22,29 @@ use std::path::{Path, PathBuf};
 /// One `<sms>` or `<mms>` element ready to serialize.
 #[derive(Debug, Clone)]
 pub enum SbrMessage {
+    /// One `<sms>` element carrying a raw attribute map.
     Sms {
+        /// Raw XML attributes for the `<sms>` element.
         attrs: BTreeMap<String, String>,
     },
+    /// One `<mms>` element carrying attrs, parts, and addrs.
     Mms {
+        /// Raw XML attributes for the `<mms>` element.
         attrs: BTreeMap<String, String>,
+        /// Raw `<part>` attribute maps.
         parts: Vec<BTreeMap<String, String>>,
+        /// Raw `<addr>` attribute maps.
         addrs: Vec<BTreeMap<String, String>>,
     },
 }
 
 impl SbrMessage {
+    /// Wrap a raw attribute map as an SMS element.
     pub fn sms(attrs: BTreeMap<String, String>) -> Self {
         Self::Sms { attrs }
     }
 
+    /// Wrap attrs/parts/addrs as an MMS element.
     pub fn mms(
         attrs: BTreeMap<String, String>,
         parts: Vec<BTreeMap<String, String>>,
@@ -61,6 +71,11 @@ pub struct SbrBackupWriter {
 
 impl SbrBackupWriter {
     /// Create a new backup at `path` (typically `…/smses.xml`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output directory cannot be created, a stale
+    /// body file cannot be removed, or the body file cannot be opened.
     pub fn create(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -81,10 +96,17 @@ impl SbrBackupWriter {
         })
     }
 
+    /// Number of messages written so far.
     pub fn count(&self) -> u64 {
         self.count
     }
 
+    /// Serialize one SMS/MMS element into the sidecar body file and increment
+    /// the count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body write fails.
     pub fn write_message(&mut self, msg: &SbrMessage) -> Result<()> {
         match msg {
             SbrMessage::Sms { attrs } => {
@@ -103,6 +125,11 @@ impl SbrBackupWriter {
     }
 
     /// Finalize `count`, close `</smses>`, and replace `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when flushing, reading back, writing, or renaming the
+    /// backup files fails.
     pub fn finish(mut self) -> Result<PathBuf> {
         self.body.flush().context("flush sbr body")?;
         drop(self.body);
@@ -204,6 +231,7 @@ fn write_mms(
 /// Default filename for a full-backup projection.
 const DEFAULT_BACKUP_FILENAME: &str = "smses.xml";
 
+/// Join `smses.xml` onto an output directory (the default full-backup filename).
 pub fn default_backup_path(output_dir: &Path) -> PathBuf {
     output_dir.join(DEFAULT_BACKUP_FILENAME)
 }
