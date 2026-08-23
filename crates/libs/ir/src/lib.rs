@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "testutil")]
+pub mod testutil;
+
 /// Schema version written into every [`ConversationDocument`] (currently 3).
 pub const SCHEMA_VERSION: u32 = 3;
 /// One exported chat: export metadata, conversation roster and stats, and messages.

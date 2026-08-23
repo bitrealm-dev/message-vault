@@ -20,4 +20,5 @@ media = { path = "../media" }
 serde_json = "1.0.150"
 
 [dev-dependencies]
+message-ir = { path = "../ir", features = ["testutil"] }
 tempfile = "3.27.0"
